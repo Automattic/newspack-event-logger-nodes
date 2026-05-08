@@ -7,6 +7,12 @@ if ( ! function_exists( 'plugin_dir_path' ) ) {
 	}
 }
 
+if ( ! function_exists( 'plugin_dir_url' ) ) {
+	function plugin_dir_url( string $file ): string {
+		return 'http://localhost/wp-content/plugins/' . basename( dirname( $file ) ) . '/';
+	}
+}
+
 if ( ! function_exists( 'do_action' ) ) {
 	$GLOBALS['_wp_actions'] = [];
 	function do_action( string $hook, ...$args ): void {
@@ -67,6 +73,63 @@ if ( ! function_exists( 'register_rest_route' ) ) {
 if ( ! function_exists( 'current_user_can' ) ) {
 	function current_user_can( string $cap ): bool {
 		return $GLOBALS['_current_user_can'] ?? false;
+	}
+}
+
+if ( ! function_exists( 'is_wp_error' ) ) {
+	function is_wp_error( mixed $thing ): bool {
+		return $thing instanceof \WP_Error;
+	}
+}
+
+if ( ! function_exists( 'sanitize_text_field' ) ) {
+	function sanitize_text_field( mixed $v ): string {
+		return is_string( $v ) ? trim( $v ) : '';
+	}
+}
+
+if ( ! function_exists( 'get_current_user_id' ) ) {
+	function get_current_user_id(): int {
+		return (int) ( $GLOBALS['_current_user_id'] ?? 0 );
+	}
+}
+
+if ( ! function_exists( 'wp_create_nonce' ) ) {
+	function wp_create_nonce( string $action ): string {
+		return 'nonce_' . substr( md5( $action ), 0, 10 );
+	}
+}
+
+if ( ! function_exists( 'rest_url' ) ) {
+	function rest_url( string $path = '' ): string {
+		return 'http://localhost/wp-json/' . ltrim( $path, '/' );
+	}
+}
+
+if ( ! function_exists( 'add_menu_page' ) ) {
+	function add_menu_page( ...$args ): string {
+		$GLOBALS['_admin_menu_pages'][] = $args;
+		return 'newspack-nodes';
+	}
+}
+
+if ( ! function_exists( 'add_submenu_page' ) ) {
+	function add_submenu_page( ...$args ): string {
+		$GLOBALS['_admin_submenu_pages'][] = $args;
+		return 'newspack-nodes-' . ( $args[3] ?? '' );
+	}
+}
+
+if ( ! function_exists( 'wp_enqueue_script' ) ) {
+	function wp_enqueue_script( ...$args ): void {
+		$GLOBALS['_enqueued_scripts'][] = $args;
+	}
+}
+
+if ( ! function_exists( 'wp_localize_script' ) ) {
+	function wp_localize_script( ...$args ): bool {
+		$GLOBALS['_localized_scripts'][] = $args;
+		return true;
 	}
 }
 

@@ -51,7 +51,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_remote_job_rewrite_filter_applied(): void {
-		$GLOBALS['_wp_actions'] = [];
+		// Clear only this hook — wiping all of $GLOBALS['_wp_actions'] would
+		// drop the plugin's topology / spawn / admin filters registered in bootstrap.
+		unset( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] );
 		add_filter( 'newspack_nodes/aggregator_ingest_line', function ( string $line ): string {
 			$decoded = json_decode( $line, true );
 			if ( ( $decoded['k'] ?? '' ) === 'job' ) {
