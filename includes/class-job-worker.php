@@ -1,9 +1,20 @@
 <?php
 /**
- * JobWorker: executes registered handlers; periodic between-jobs callback.
+ * JobWorker: executes registered handlers; fires a between-jobs callback after
+ * every job so the caller can drive periodic maintenance.
  *
- * Per-job LogManager::suspend/resume + gc_collect_cycles + wp_cache_flush every 50
- * deferred — caller registers via set_between_jobs_callback().
+ * The between-jobs callback is the hook for spec-mandated per-job operations:
+ *   - LogManager::suspend()/resume() for re-entrancy
+ *   - gc_collect_cycles() after every job
+ *   - wp_cache_flush() every 50 jobs (memory headroom against the 80% watermark)
+ *
+ * JobWorker does NOT hard-code those — it provides the cadence point and the
+ * caller decides what to do. The callback receives the running jobs_executed
+ * counter as a single argument so cadence is callback-side.
+ *
+ * The callback fires after both success AND exception paths (matching real
+ * Tachikoma's "every job" semantics — you want gc to run even after a handler
+ * blew up, otherwise leaked objects pile up faster than under nominal load).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -18,18 +29,13 @@ use Newspack_Nodes\Node;
 
 class JobWorker extends Node {
 	public const HANDLER_NAME_PATTERN = '/^[a-z][a-z0-9_]*$/';
-	public const MAX_JOB_SIZE = 10485760;
+	public const MAX_JOB_SIZE         = 10485760;
 
 	/** @var array<string,callable> */
 	private array $handlers = [];
 	private int $jobs_executed = 0;
-	private int $between_jobs_every;
 	/** @var callable|null */
 	private $between_jobs_cb = null;
-
-	public function __construct( int $between_jobs_every = 50 ) {
-		$this->between_jobs_every = \max( 1, $between_jobs_every );
-	}
 
 	public function register_handler( string $name, callable $cb ): void {
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
@@ -38,7 +44,13 @@ class JobWorker extends Node {
 		$this->handlers[ $name ] = $cb;
 	}
 
-	public function set_between_jobs_callback( callable $cb ): void {
+	/**
+	 * Register a between-jobs callback that fires after every job. Pass null to
+	 * clear. The callback receives the jobs_executed counter as its single arg
+	 * so it can decide its own cadence (e.g., gc every job, wp_cache_flush every
+	 * 50 jobs, restart-after-watermark every 1000 jobs).
+	 */
+	public function set_between_jobs_callback( ?callable $cb ): void {
 		$this->between_jobs_cb = $cb;
 	}
 
@@ -52,6 +64,7 @@ class JobWorker extends Node {
 			return;
 		}
 		$line = $message[ Message::VALUE ];
+		// Fail-early: oversized lines never get parsed.
 		if ( \strlen( $line ) > self::MAX_JOB_SIZE ) {
 			return;
 		}
@@ -64,6 +77,11 @@ class JobWorker extends Node {
 			Core::print_less_often( "JobWorker: missing or invalid handler: $handler" );
 			return;
 		}
+
+		// Job execution — exceptions are caught so the worker survives a bad
+		// handler. The between-jobs callback fires either way (we always count
+		// the slot, and the caller's gc/cache flush should run after a crashed
+		// handler too — that's when leaks accumulate fastest).
 		try {
 			( $this->handlers[ $handler ] )( $entry['payload'] ?? null );
 		} catch ( \Throwable $e ) {
@@ -71,8 +89,9 @@ class JobWorker extends Node {
 		}
 		++$this->jobs_executed;
 
-		if ( $this->between_jobs_cb !== null && ( $this->jobs_executed % $this->between_jobs_every ) === 0 ) {
-			( $this->between_jobs_cb )();
+		if ( $this->between_jobs_cb !== null ) {
+			// Pass the counter so the callback owns cadence decisions.
+			( $this->between_jobs_cb )( $this->jobs_executed );
 		}
 	}
 }

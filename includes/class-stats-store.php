@@ -1,6 +1,6 @@
 <?php
 /**
- * Stats_Store: 9-namespace memcache schema for performance stats.
+ * Stats_Store: 10-namespace memcache schema for performance stats.
  *
  * Per-key prefix: `evlog[:salt]:p{N}:{namespace}:...`
  *
@@ -14,6 +14,7 @@
  *   url_dim     per-URL dimensional time series
  *   categories  global category time series
  *   url_cat     per-URL category time series
+ *   flame_cache rotated FlameBuilder buckets ({event_name => {count, sum_time}})
  *
  * Sums-not-means storage: every aggregate stores raw sums (count + sum_*),
  * so cross-instance and cross-bucket merge is exact addition. Display layer
@@ -38,15 +39,16 @@ namespace Newspack_Event_Logger_Nodes;
 
 class Stats_Store {
 
-	public const NS_HOURLY     = 'hourly';
-	public const NS_LB         = 'lb';
-	public const NS_LB_S       = 'lb_s';
-	public const NS_URLS       = 'urls';
-	public const NS_URL        = 'url';
-	public const NS_DIM        = 'dim';
-	public const NS_URL_DIM    = 'url_dim';
-	public const NS_CATEGORIES = 'categories';
-	public const NS_URL_CAT    = 'url_cat';
+	public const NS_HOURLY      = 'hourly';
+	public const NS_LB          = 'lb';
+	public const NS_LB_S        = 'lb_s';
+	public const NS_URLS        = 'urls';
+	public const NS_URL         = 'url';
+	public const NS_DIM         = 'dim';
+	public const NS_URL_DIM     = 'url_dim';
+	public const NS_CATEGORIES  = 'categories';
+	public const NS_URL_CAT     = 'url_cat';
+	public const NS_FLAME_CACHE = 'flame_cache';
 
 	public const MAX_CAT_VALUES     = 50;
 	public const MAX_DIM_VALUES     = 20;
@@ -395,6 +397,43 @@ class Stats_Store {
 		$bucket_data[ $category ]['t'] += $time;
 		$bucket_data[ $category ]['c'] += $invocations;
 		++$bucket_data[ $category ]['n'];
+	}
+
+	// -------------------------------------------------------------------------
+	// Flame cache: rotated FlameBuilder buckets keyed by bucket_id (e.g.,
+	// floor(time/200) string). Each bucket stores {event_name => {count, sum_time}}.
+	// One key per (partition, bucket_id). Sums-not-means: cross-bucket merge is
+	// exact addition.
+	// -------------------------------------------------------------------------
+
+	public function get_flame_bucket( string $bucket_id ): array {
+		$val = $this->mc->get( $this->key( self::NS_FLAME_CACHE, $bucket_id ) );
+		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_flame_bucket( string $bucket_id, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_FLAME_CACHE, $bucket_id ), $data, $this->ttl() );
+	}
+
+	/**
+	 * Merge a rotated FlameBuilder bucket into memcache. Additive: if a bucket
+	 * already exists at this key (e.g., a previous worker checkpoint flushed
+	 * partial data), the new sums add to the existing sums.
+	 *
+	 * @param string $bucket_id e.g., "floor(time/200)" as a string.
+	 * @param array  $data      {event_name => {count:int, sum_time:float}}
+	 */
+	public function merge_flame_bucket( string $bucket_id, array $data ): bool {
+		$existing = $this->get_flame_bucket( $bucket_id );
+		foreach ( $data as $name => $entry ) {
+			if ( ! \is_string( $name ) || ! \is_array( $entry ) ) {
+				continue;
+			}
+			$existing[ $name ] ??= [ 'count' => 0, 'sum_time' => 0.0 ];
+			$existing[ $name ]['count']    += (int) ( $entry['count']    ?? 0 );
+			$existing[ $name ]['sum_time'] += (float) ( $entry['sum_time'] ?? 0 );
+		}
+		return $this->set_flame_bucket( $bucket_id, $existing );
 	}
 
 	// -------------------------------------------------------------------------
