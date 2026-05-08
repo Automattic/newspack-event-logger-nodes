@@ -309,9 +309,12 @@ class Stats_Store {
 	 * "Other" is reserved as one of the $max slots: when an unknown value
 	 * arrives and the bucket already has max-1 named entries (or is at max),
 	 * the value rolls into Other. Total slot count is bounded at $max.
+	 *
+	 * "total" is the pseudo-category running grand-total — exempt from the
+	 * cap so the running sum is never lost when many distinct values arrive.
 	 */
 	private function bump_with_cap( array &$bucket_data, string $value, float $req_time, int $max ): void {
-		if ( ! isset( $bucket_data[ $value ] ) ) {
+		if ( $value !== 'total' && ! isset( $bucket_data[ $value ] ) ) {
 			$count = \count( $bucket_data );
 			$has_other = isset( $bucket_data['Other'] );
 			// At cap, or one slot below cap with Other not yet present: redirect.
@@ -376,9 +379,12 @@ class Stats_Store {
 	/**
 	 * Bump a category {t, c, n} entry within a bucket, capping at $max with
 	 * "Other" rollover (same semantics as bump_with_cap).
+	 *
+	 * "total" is the pseudo-category running grand-total — exempt from the
+	 * cap so the running sum is never lost when many distinct categories arrive.
 	 */
 	private function bump_category_with_cap( array &$bucket_data, string $category, float $time, int $invocations, int $max ): void {
-		if ( ! isset( $bucket_data[ $category ] ) ) {
+		if ( $category !== 'total' && ! isset( $bucket_data[ $category ] ) ) {
 			$count     = \count( $bucket_data );
 			$has_other = isset( $bucket_data['Other'] );
 			if ( $count >= $max || ( $count >= $max - 1 && ! $has_other ) ) {

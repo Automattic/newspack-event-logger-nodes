@@ -26,16 +26,6 @@ class FullPipelineTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function rmdir_recursive( string $dir ): void {
-		if ( ! is_dir( $dir ) ) return;
-		foreach ( scandir( $dir ) as $f ) {
-			if ( $f === '.' || $f === '..' ) continue;
-			$path = "$dir/$f";
-			is_dir( $path ) ? $this->rmdir_recursive( $path ) : @unlink( $path );
-		}
-		@rmdir( $dir );
-	}
-
 	public function test_full_pipeline_topic_consumer_tee_request_builder_flame_builder_job_router(): void {
 		// Producer: write firehose lines.
 		$topic = new Topic( "{$this->tmp}/firehose.log", 1 );

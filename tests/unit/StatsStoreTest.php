@@ -166,6 +166,49 @@ class StatsStoreTest extends TestCase {
 		$this->assertArrayHasKey( 'Other', $cats[ $bucket ] );
 	}
 
+	public function test_categories_total_pseudo_category_exempt_from_cap(): void {
+		// Spec: 'total' is the pseudo-category preserved before sorting — exempt from cap.
+		// Bump 'total' first, then overflow with many distinct cats. 'total' must survive,
+		// overflow rolls into 'Other'.
+		$store = $this->make_store();
+		$store->bump_category( 'total', 1.0, 5 );
+		for ( $i = 0; $i < 60; $i++ ) {
+			$store->bump_category( "cat-$i", 0.05, 1 );
+		}
+		$cats   = $store->get_categories();
+		$bucket = $store->current_url_bucket();
+		$this->assertArrayHasKey( 'total', $cats[ $bucket ], "'total' must be preserved across cap overflow" );
+		$this->assertArrayHasKey( 'Other', $cats[ $bucket ], "Overflow must roll into 'Other'" );
+		$this->assertEqualsWithDelta( 1.0, $cats[ $bucket ]['total']['t'], 1e-9 );
+		$this->assertEqualsWithDelta( 5.0, $cats[ $bucket ]['total']['c'], 1e-9 );
+	}
+
+	public function test_categories_total_admitted_after_cap_reached(): void {
+		// 'total' arriving AFTER the cap is full must still be admitted (not rolled into Other).
+		$store = $this->make_store();
+		for ( $i = 0; $i < 60; $i++ ) {
+			$store->bump_category( "cat-$i", 0.05, 1 );
+		}
+		$store->bump_category( 'total', 2.5, 7 );
+		$cats   = $store->get_categories();
+		$bucket = $store->current_url_bucket();
+		$this->assertArrayHasKey( 'total', $cats[ $bucket ], "'total' must be admitted even after cap is reached" );
+		$this->assertEqualsWithDelta( 2.5, $cats[ $bucket ]['total']['t'], 1e-9 );
+	}
+
+	public function test_dimensional_total_pseudo_category_exempt_from_cap(): void {
+		// 'total' must also survive the dim cap (MAX_DIM_VALUES=20).
+		$store = $this->make_store();
+		for ( $i = 0; $i < 25; $i++ ) {
+			$store->bump_dimensional( 'ua', "browser-$i", 0.1 );
+		}
+		$store->bump_dimensional( 'ua', 'total', 3.0 );
+		$dim    = $store->get_dimensional( 'ua' );
+		$bucket = $store->current_url_bucket();
+		$this->assertArrayHasKey( 'total', $dim[ $bucket ], "'total' must be admitted even after dim cap is reached" );
+		$this->assertEqualsWithDelta( 3.0, $dim[ $bucket ]['total']['s'], 1e-9 );
+	}
+
 	public function test_bump_hourly_accumulates_count_and_time(): void {
 		$store = $this->make_store();
 		$store->bump_hourly( 0.5, 25.0 );
