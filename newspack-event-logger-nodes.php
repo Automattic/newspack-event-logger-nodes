@@ -307,7 +307,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			'Settings',
 			'manage_options',
 			'newspack-nodes-settings',
-			static fn() => print( '<div id="newspack-nodes-settings" class="wrap"><h1>Logger Settings</h1></div>' )
+			[ \Newspack_Event_Logger_Nodes\Admin\Admin::class, 'render_settings_page_static' ]
 		);
 	}
 );

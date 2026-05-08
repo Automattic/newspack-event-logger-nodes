@@ -113,12 +113,19 @@ return static function ( \Newspack_Nodes\CommandInterpreter $ci, int $partition 
 	$firehose_fanout->connect_node( "request-builder.p{$partition}" );
 	$firehose_fanout->connect_node( "job-router.p{$partition}" );
 
-	// --- Inputs: Tail per source --------------------------------------------
-	$firehose_in = new \Newspack_Nodes\Tail( $firehose_path, 'line-buffered' );
+	// --- Inputs: Consumer per source (Partition-aware, offsetlog-checkpointed). -
+	// Spec line 246. Each Consumer tails its source Partition, commits {seg, off}
+	// to its offsetlog, and emits a TM_BYTESTREAM line per record. Consumer's
+	// constructor starts the poll timer; fire() re-arms with set_timer(0)/(100)
+	// based on EOF state.
+	$firehose_offsets  = "{$base_dir}/offsets/firehose-in.p{$partition}";
+	$jobintake_offsets = "{$base_dir}/offsets/jobintake-in.p{$partition}";
+
+	$firehose_in = new \Newspack_Nodes\Consumer( $firehose_path, $partition, $firehose_offsets );
 	$firehose_in->name( "firehose-in.p{$partition}" );
 	$firehose_in->sink( $firehose_fanout );
 
-	$jobintake_in = new \Newspack_Nodes\Tail( $jobintake_path, 'line-buffered' );
+	$jobintake_in = new \Newspack_Nodes\Consumer( $jobintake_path, $partition, $jobintake_offsets );
 	$jobintake_in->name( "jobintake-in.p{$partition}" );
 	$jobintake_in->sink( $job_router );
 

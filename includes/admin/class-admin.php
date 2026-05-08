@@ -170,6 +170,16 @@ class Admin {
 	 * dialog leaves the main form's pending edits intact. Confirm uses esc_js()
 	 * because `onclick=` runs in JS context.
 	 */
+	/**
+	 * Static shim so the main plugin file can wire `add_submenu_page()` without
+	 * holding an Admin instance reference. Render is stateless — no $this used —
+	 * so a fresh instance is fine. (`new Admin()` is also constructed elsewhere
+	 * for hook registration; the two coexist harmlessly.)
+	 */
+	public static function render_settings_page_static(): void {
+		( new self() )->render_settings_page();
+	}
+
 	public function render_settings_page(): void {
 		if ( ! self::current_user_allowed() ) {
 			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
