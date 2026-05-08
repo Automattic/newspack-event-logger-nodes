@@ -30,11 +30,42 @@ interface Cache_Interface {
 	public function add( string $key, mixed $value, int $ttl ): bool;
 	public function delete( string $key ): bool;
 	public function flush_all(): bool;
+
+	/**
+	 * SSE slot acquire (atomic add() loop). Fail-CLOSED — if the cache is
+	 * unreachable the caller should refuse the connection (HTTP 429).
+	 *
+	 * @return int|false Slot index 0..max_slots-1 on success; false on rate-limit / cache down.
+	 */
+	public function acquire_sse_slot( int $user_id, string $ip_hash, int $max_slots, int $ttl, int $partition = -1 ): int|false;
+
+	/**
+	 * Check whether the named slot is still alive. Fail-CLOSED.
+	 */
+	public function check_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool;
+
+	/**
+	 * Refresh slot TTL (heartbeat). Fail-OPEN (caller treats unreachable cache as
+	 * "not our problem to fail this heartbeat over").
+	 */
+	public function touch_sse_slot( int $user_id, string $ip_hash, int $slot, int $ttl, int $partition = -1 ): bool;
+
+	/**
+	 * Release slot. Fail-OPEN (slots TTL out anyway).
+	 */
+	public function release_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool;
 }
 
 class Memcached_Cache implements Cache_Interface {
 
 	public const DEFAULT_SERVERS = [ '127.0.0.1:11211' ];
+
+	/**
+	 * Default slot TTL when caller doesn't specify. Browsers heartbeat every 5s
+	 * (useFirehoseConnection.js), so 10s gives 2x headroom — a slot frees within
+	 * ~5s of a tab closing. Aggregator paths pass SLOT_TTL_AGGREGATOR (30) instead.
+	 */
+	public const SSE_SLOT_TTL = 10;
 
 	/** @var \Memcached|\Memcache|null */
 	private mixed $memd = null;
@@ -186,5 +217,87 @@ class Memcached_Cache implements Cache_Interface {
 			Core::print_less_often( 'Memcached_Cache: flush failed: ' . $e->getMessage() );
 			return false;
 		}
+	}
+
+	// -------------------------------------------------------------------------
+	// SSE Connection Slots
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Build a slot key. When `$partition >= 0` the slot pool is per-partition so
+	 * one stream-merger per partition can't crowd browser tabs out of the global
+	 * pool. Browser callers pass -1.
+	 */
+	public function sse_slot_key( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): string {
+		if ( $partition >= 0 ) {
+			return "evlog:sse:{$user_id}:{$ip_hash}:p{$partition}:{$slot}";
+		}
+		return "evlog:sse:{$user_id}:{$ip_hash}:{$slot}";
+	}
+
+	/**
+	 * Atomic add() loop across slot indices [0, $max_slots). The first index for
+	 * which add() succeeds is the slot we own. Fail-CLOSED: returns false when
+	 * memcache is down so the controller can issue HTTP 429.
+	 */
+	public function acquire_sse_slot( int $user_id, string $ip_hash, int $max_slots, int $ttl = self::SSE_SLOT_TTL, int $partition = -1 ): int|false {
+		if ( $this->memd === null ) {
+			return false;
+		}
+		$connection_id = \function_exists( 'wp_generate_uuid4' ) ? \wp_generate_uuid4() : \bin2hex( \random_bytes( 16 ) );
+		for ( $slot = 0; $slot < $max_slots; $slot++ ) {
+			$key = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
+			if ( $this->add( $key, $connection_id, $ttl ) ) {
+				return $slot;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Slot-still-alive probe (does not refresh TTL). Fail-CLOSED.
+	 */
+	public function check_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
+		if ( $this->memd === null ) {
+			return false;
+		}
+		return $this->get( $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition ) ) !== null;
+	}
+
+	/**
+	 * Heartbeat. Prefers Memcached's native atomic touch(); falls back to
+	 * non-atomic get-then-set on the older Memcache extension. Fail-OPEN: when
+	 * the cache is unreachable, return true so a transient cache outage doesn't
+	 * tear down a legitimate stream.
+	 */
+	public function touch_sse_slot( int $user_id, string $ip_hash, int $slot, int $ttl = self::SSE_SLOT_TTL, int $partition = -1 ): bool {
+		if ( $this->memd === null ) {
+			return true;
+		}
+		$key = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
+		try {
+			if ( 'memcached' === $this->extension && \method_exists( $this->memd, 'touch' ) ) {
+				return (bool) $this->memd->touch( $key, $ttl );
+			}
+		} catch ( \Throwable $e ) {
+			Core::print_less_often( 'Memcached_Cache: touch failed: ' . $e->getMessage() );
+		}
+		// Memcache fallback: non-atomic get-then-set.
+		$value = $this->get( $key );
+		if ( $value === null ) {
+			return false;
+		}
+		return $this->set( $key, $value, $ttl );
+	}
+
+	/**
+	 * Release a slot. Fail-OPEN — slots TTL out without explicit release; if the
+	 * cache is unreachable we just let the TTL handle it.
+	 */
+	public function release_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
+		if ( $this->memd === null ) {
+			return true;
+		}
+		return $this->delete( $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition ) );
 	}
 }

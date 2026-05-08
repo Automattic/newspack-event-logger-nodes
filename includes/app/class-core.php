@@ -1,0 +1,256 @@
+<?php
+/**
+ * Application Core - WordPress hook instrumentation.
+ *
+ * Tracks request lifecycle, hook timing, plugin performance.
+ *
+ * Binds configured hooks individually at priority 1 (start) and PHP_INT_MAX-1 (complete)
+ * to measure actual execution time of callbacks registered between those priorities.
+ *
+ * For significant events, wraps each individual callback with timing so the log shows
+ * exactly which callback is slow (e.g. "photon_subsizes_filter_the_content (complete): 5000ms"
+ * nested inside "the_content hook").
+ *
+ * Lives under the `App` sub-namespace to disambiguate from the runtime substrate's
+ * `Newspack_Event_Logger_Nodes\Core` (which doesn't exist yet but the runtime has its own
+ * `Newspack_Nodes\Core` — keeping our application Core under a sub-namespace prevents future
+ * collisions and makes the hook-instrumentation role explicit at the call site).
+ *
+ * Note on accepted_args=99: the wrap_callbacks() rewrite inflates accepted_args to 99 so
+ * WordPress passes ALL filter arguments to the wrapper (which then trims back to the
+ * original $accepted_args before invoking the wrapped callable). This conflicts with VIP-Go's
+ * "respect callback contract" guidance, but it's the legacy contract — preserve as-is.
+ *
+ * @package Newspack_Event_Logger_Nodes
+ */
+
+namespace Newspack_Event_Logger_Nodes\App;
+
+use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\LogManager;
+
+\defined( 'ABSPATH' ) || exit;
+
+/**
+ * Core class - WordPress hook instrumentation.
+ */
+class Core {
+	private LogManager $log_manager;
+
+	/**
+	 * Short name for a callback (no namespace, no priority).
+	 *
+	 * @param mixed $function Callback.
+	 * @return string e.g. "do_blocks" or "Image_CDN::filter_the_content".
+	 */
+	private static function short_name( $function ): string {
+		if ( \is_string( $function ) ) {
+			$pos = \strrpos( $function, '\\' );
+			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
+		}
+		if ( \is_array( $function ) && \count( $function ) === 2 ) {
+			$class = \is_object( $function[0] ) ? \get_class( $function[0] ) : $function[0];
+			$pos   = \strrpos( $class, '\\' );
+			if ( false !== $pos ) {
+				$class = \substr( $class, $pos + 1 );
+			}
+			return "{$class}::{$function[1]}";
+		}
+		if ( $function instanceof \Closure ) {
+			$ref  = new \ReflectionFunction( $function );
+			$file = $ref->getFileName();
+			$line = $ref->getStartLine();
+			if ( $file ) {
+				$file = \basename( $file );
+				return "{closure}:{$file}:{$line}";
+			}
+			return '{closure}';
+		}
+		if ( \is_object( $function ) ) {
+			$class = \get_class( $function );
+			$pos   = \strrpos( $class, '\\' );
+			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
+		}
+		return '{unknown}';
+	}
+
+	/** @var array<int, true> spl_object_id of wrappers we created (prevents double-wrap). */
+	private array $wrapper_ids = [];
+
+	/** @var array<string, true> Significant events that get per-callback profiling. */
+	private array $significant = [];
+
+	/** @var int Priority used for hook_start registration. */
+	private int $start_priority = 1;
+
+	public function __construct() {
+		$this->log_manager = LogManager::instance();
+		if ( ! $this->log_manager->enabled ) {
+			return;
+		}
+
+		// Load event filters from config.
+		$config            = Config::load_config();
+		$config_log_events = $config['log_events'] ?? [];
+
+		$this->start_priority = (int) ( $config['hook_start_priority'] ?? 1 );
+
+		// Significant events get per-callback profiling.
+		// Also ensure real hooks are in log_events so they get instrumented.
+		// Custom events (logged via LogManager::message, not do_action) are excluded
+		// — instrumenting them with add_filter is pointless and pollutes the hook selector.
+		$sig             = $config['significant_events'] ?? [];
+		$custom_events   = $config['custom_events'] ?? [];
+		$custom_set      = \is_array( $custom_events ) ? $custom_events : [];
+		$log_events_set  = \array_flip( $config_log_events );
+		if ( \is_array( $sig ) ) {
+			foreach ( $sig as $event ) {
+				$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
+				$this->significant[ $hook ] = true;
+				if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
+					$config_log_events[] = $hook;
+				}
+			}
+		}
+
+		// Plugin load timing is handled by the 00-newspack-profiler mu-plugin
+		// which loads early enough to capture all plugins. See: mu-plugins/00-newspack-profiler.php
+
+		// Bind each configured hook individually for proper timing.
+		foreach ( $config_log_events as $hook_name ) {
+			if ( ! \is_string( $hook_name ) || '' === $hook_name ) {
+				continue;
+			}
+			if ( 'plugin_loaded' === $hook_name ) {
+				continue;
+			}
+			// Skip Event Logger's own internal filters — instrumenting them
+			// creates a re-entry loop via Config::load_config during
+			// LogManager bootstrap. These show up in the "all known hooks"
+			// picker because they're WordPress filters, but they're not
+			// lifecycle events a human would ever want to time. The new
+			// namespace prefixes (newspack_nodes_*, newspack_event_logger_nodes_*)
+			// AND the legacy ones (newspack_event_logger_*, newspack_performance_logger_*)
+			// are both filtered to keep cross-plugin scenarios stable during
+			// migration.
+			if ( \str_starts_with( $hook_name, 'newspack_event_logger_nodes_' )
+				|| \str_starts_with( $hook_name, 'newspack_nodes_' )
+				|| \str_starts_with( $hook_name, 'newspack_event_logger_' )
+				|| \str_starts_with( $hook_name, 'newspack_performance_logger_' ) ) {
+				continue;
+			}
+			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+		}
+	}
+
+	/**
+	 * Start timing for a hook. Registered at start_priority.
+	 *
+	 * @param mixed $v Filter value (passed through).
+	 * @return mixed
+	 */
+	public function hook_start( $v = null ) {
+		$lm = $this->log_manager;
+		if ( ! $lm->enabled ) {
+			return $v;
+		}
+
+		$hook_name = \current_filter();
+		$category  = $hook_name . ' hook';
+
+		// Log filter value as 'm', truncated to keep firehose lines small.
+		// Full content is in the filter itself — this is just a preview.
+		$m = '';
+		if ( isset( $v ) && \is_string( $v ) ) {
+			$m = \strlen( $v ) > 1024 ? \substr( $v, 0, 1024 ) : $v;
+		} elseif ( isset( $v ) && \is_scalar( $v ) ) {
+			$m = $v;
+		} elseif ( isset( $v ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode() infinite-loops on circular refs (Core_Upgrader).
+			$encoded = \json_encode( $v, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, 16 );
+			if ( false !== $encoded && \strlen( $encoded ) <= 1024 ) {
+				$m = $encoded;
+			}
+		}
+		$lm->start( $category, [ 'm' => $m, 'l' => '' ] );
+
+		// Wrap callbacks for significant hooks. Runs every invocation to catch
+		// late-registered callbacks. wrapper_ids prevents double-wrapping.
+		if ( isset( $this->significant[ $hook_name ] ) ) {
+			$this->wrap_callbacks( $hook_name );
+		}
+
+		return $v;
+	}
+
+	/**
+	 * Wrap each callback on a hook with timing instrumentation.
+	 *
+	 * Replaces each callback's function with a closure that calls start/complete
+	 * around the original. Only wraps priorities > start_priority and < PHP_INT_MAX-1
+	 * (skips our own hook_start/hook_complete).
+	 *
+	 * Safe to call during hook execution at start_priority — callbacks at higher
+	 * priorities haven't been iterated yet, so WordPress picks up the replacements.
+	 *
+	 * @param string $hook_name Hook to wrap.
+	 */
+	private function wrap_callbacks( string $hook_name ): void {
+		global $wp_filter;
+		if ( ! isset( $wp_filter[ $hook_name ] ) ) {
+			return;
+		}
+
+		$lm  = $this->log_manager;
+		$min = $this->start_priority;
+
+		foreach ( $wp_filter[ $hook_name ]->callbacks as $priority => &$priority_callbacks ) {
+			if ( $priority <= $min || $priority >= PHP_INT_MAX - 1 ) {
+				continue;
+			}
+
+			foreach ( $priority_callbacks as $id => &$cb ) {
+				$original      = $cb['function'];
+				$accepted_args = (int) $cb['accepted_args'];
+				$name          = self::short_name( $original );
+
+				// Skip wrappers we already created (prevents double-wrap on recursion).
+				if ( $original instanceof \Closure && isset( $this->wrapper_ids[ \spl_object_id( $original ) ] ) ) {
+					continue;
+				}
+
+				// Wrap the original with timing instrumentation.
+				$label   = "{$name} @{$priority}";
+				$wrapper = function () use ( $original, $accepted_args, $label, $lm ) {
+					$args = \array_slice( \func_get_args(), 0, $accepted_args );
+					$lm->start( $label, [ 'l' => '' ] );
+					try {
+						$result = \call_user_func_array( $original, $args );
+					} finally {
+						$lm->complete( $label );
+					}
+					return $result;
+				};
+
+				$this->wrapper_ids[ \spl_object_id( $wrapper ) ] = true;
+				$cb['function']      = $wrapper;
+				$cb['accepted_args'] = 99;
+			}
+			unset( $cb );
+		}
+		unset( $priority_callbacks );
+	}
+
+	/**
+	 * Complete timing for a hook. Registered at PHP_INT_MAX - 1.
+	 *
+	 * @param mixed $v Filter value (passed through).
+	 * @return mixed
+	 */
+	public function hook_complete( $v = null ) {
+		$hook_name = \current_filter();
+		$this->log_manager->complete( $hook_name . ' hook' );
+		return $v;
+	}
+}

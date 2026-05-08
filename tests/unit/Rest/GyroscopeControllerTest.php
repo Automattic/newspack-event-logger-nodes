@@ -29,6 +29,7 @@ class GyroscopeControllerTest extends TestCase {
 	public function test_get_timeline_with_request_id_echoes_id(): void {
 		$ctrl = new GyroscopeController();
 		$resp = $ctrl->get_timeline( new \WP_REST_Request( [ 'request_id' => 'rid-abc' ] ) );
+		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
 		$body = $resp->get_data();
 		$this->assertSame( 'rid-abc', $body['data']['request_id'] );
 		$this->assertArrayHasKey( 'events', $body['data'] );
@@ -37,6 +38,7 @@ class GyroscopeControllerTest extends TestCase {
 	public function test_get_timeline_without_id_returns_empty_events(): void {
 		$ctrl = new GyroscopeController();
 		$resp = $ctrl->get_timeline( new \WP_REST_Request() );
+		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
 		$body = $resp->get_data();
 		$this->assertSame( [], $body['data']['events'] );
 	}

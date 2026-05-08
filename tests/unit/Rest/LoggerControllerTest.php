@@ -39,6 +39,7 @@ class LoggerControllerTest extends TestCase {
 	public function test_list_hooks_returns_categories_key(): void {
 		$ctrl = new LoggerController();
 		$resp = $ctrl->list_hooks( new \WP_REST_Request() );
+		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
 		$body = $resp->get_data();
 		$this->assertArrayHasKey( 'hooks', $body['data'] );
 		$this->assertArrayHasKey( 'categories', $body['data'] );

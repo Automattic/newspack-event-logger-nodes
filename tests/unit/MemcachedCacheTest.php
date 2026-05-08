@@ -83,4 +83,102 @@ class MemcachedCacheTest extends TestCase {
 		$this->assertFalse( $mc->set( 'any', 'v', 60 ) );
 		$this->assertSame( [], $mc->get_multi( [ 'a', 'b' ] ) );
 	}
+
+	// -------------------------------------------------------------------------
+	// SSE Slot tests (Cache_Interface contract)
+	// -------------------------------------------------------------------------
+
+	public function test_sse_slot_key_shape_browser(): void {
+		$mc  = new FakeMemcached();
+		$key = $mc->sse_slot_key( 7, 'abcd1234', 0, -1 );
+		$this->assertSame( 'evlog:sse:7:abcd1234:0', $key );
+	}
+
+	public function test_sse_slot_key_shape_per_partition(): void {
+		$mc  = new FakeMemcached();
+		$key = $mc->sse_slot_key( 7, 'abcd1234', 3, 2 );
+		$this->assertSame( 'evlog:sse:7:abcd1234:p2:3', $key );
+	}
+
+	public function test_acquire_first_slot_returns_zero(): void {
+		$mc = new FakeMemcached();
+		$this->assertSame( 0, $mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 ) );
+	}
+
+	public function test_acquire_returns_increasing_slot_indices(): void {
+		$mc = new FakeMemcached();
+		for ( $i = 0; $i < 5; $i++ ) {
+			$this->assertSame( $i, $mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 ) );
+		}
+	}
+
+	public function test_acquire_returns_false_when_pool_exhausted(): void {
+		$mc = new FakeMemcached();
+		for ( $i = 0; $i < 3; $i++ ) {
+			$this->assertSame( $i, $mc->acquire_sse_slot( 7, 'abcd1234', 3, 10, -1 ) );
+		}
+		$this->assertFalse( $mc->acquire_sse_slot( 7, 'abcd1234', 3, 10, -1 ) );
+	}
+
+	public function test_acquire_fails_closed_when_cache_unavailable(): void {
+		$mc = new FakeMemcached( fail_all: true );
+		$this->assertFalse( $mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 ) );
+	}
+
+	public function test_check_sse_slot_true_after_acquire(): void {
+		$mc = new FakeMemcached();
+		$mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 );
+		$this->assertTrue( $mc->check_sse_slot( 7, 'abcd1234', 0, -1 ) );
+	}
+
+	public function test_check_sse_slot_false_for_unowned_slot(): void {
+		$mc = new FakeMemcached();
+		$this->assertFalse( $mc->check_sse_slot( 7, 'abcd1234', 0, -1 ) );
+	}
+
+	public function test_check_sse_slot_fails_closed_when_cache_unavailable(): void {
+		$mc = new FakeMemcached( fail_all: true );
+		$this->assertFalse( $mc->check_sse_slot( 7, 'abcd1234', 0, -1 ) );
+	}
+
+	public function test_release_clears_slot(): void {
+		$mc = new FakeMemcached();
+		$mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 );
+		$this->assertTrue( $mc->release_sse_slot( 7, 'abcd1234', 0, -1 ) );
+		$this->assertFalse( $mc->check_sse_slot( 7, 'abcd1234', 0, -1 ) );
+	}
+
+	public function test_release_fails_open_when_cache_unavailable(): void {
+		$mc = new FakeMemcached( fail_all: true );
+		$this->assertTrue( $mc->release_sse_slot( 7, 'abcd1234', 0, -1 ) );
+	}
+
+	public function test_touch_extends_ttl(): void {
+		$mc = new FakeMemcached();
+		$mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 );
+		$this->assertTrue( $mc->touch_sse_slot( 7, 'abcd1234', 0, 30, -1 ) );
+	}
+
+	public function test_touch_fails_when_slot_already_expired(): void {
+		$mc = new FakeMemcached();
+		$this->assertFalse( $mc->touch_sse_slot( 7, 'abcd1234', 0, 30, -1 ) );
+	}
+
+	public function test_touch_fails_open_when_cache_unavailable(): void {
+		$mc = new FakeMemcached( fail_all: true );
+		$this->assertTrue( $mc->touch_sse_slot( 7, 'abcd1234', 0, 30, -1 ) );
+	}
+
+	public function test_partition_pool_isolated_from_browser_pool(): void {
+		$mc = new FakeMemcached();
+		// Both can acquire slot 0 because their cache keys differ.
+		$this->assertSame( 0, $mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, -1 ) );
+		$this->assertSame( 0, $mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, 0 ) );
+		$this->assertSame( 0, $mc->acquire_sse_slot( 7, 'abcd1234', 10, 10, 1 ) );
+	}
+
+	public function test_real_memcached_cache_slot_key_constants(): void {
+		// Verify constant exposure — callers look up TTLs by name not number.
+		$this->assertSame( 10, Memcached_Cache::SSE_SLOT_TTL );
+	}
 }

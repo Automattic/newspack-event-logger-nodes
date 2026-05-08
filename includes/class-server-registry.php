@@ -1,8 +1,27 @@
 <?php
 /**
- * ServerRegistry: encrypted remote-server config storage.
+ * ServerRegistry: encrypted remote-server config storage for hub/spoke aggregation.
  *
- * Tokens are encrypted at rest via sodium-secretbox. Key derived from wp_salt('auth').
+ * Singleton that manages remote server configurations stored in WordPress options.
+ * Servers are stored in the `newspack_nodes_aggregator_servers` option as an
+ * associative array keyed by server ID.
+ *
+ * Architecture decisions:
+ *  - Sodium-secretbox encryption at rest for `auth_password`. Key derived from
+ *    `wp_salt('auth')` via `sodium_crypto_generichash`. Random 24-byte nonce per
+ *    encrypt. Wire format: `'$enc$' . base64(nonce . ciphertext)`.
+ *  - Legacy plaintext fallback in decrypt() — pre-encryption rows are returned
+ *    as-is so spokes that upgrade in place don't hard-error on first read.
+ *  - Write verification: re-read after `update_option()` because WP returns
+ *    false on both genuine failure AND no-op (when new value equals old).
+ *  - Config-file merging: config-file `aggregator_servers` provide immutable
+ *    defaults; WP option overlays them. `is_config_server()` distinguishes the
+ *    two so admin UI can disallow editing URL/credentials on file entries.
+ *  - `MAX_SERVERS=100` cap prevents unbounded option bloat.
+ *  - `reset_cache()` for long-running workers — JobWorker resets between jobs
+ *    so post-update reads see the latest registry without restart.
+ *  - `error_log` audit trail (NOT LogManager) — avoids feedback loops if the
+ *    log pipeline itself is unhealthy.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -12,51 +31,593 @@ namespace Newspack_Event_Logger_Nodes;
 \defined( 'ABSPATH' ) || exit;
 
 class ServerRegistry {
-	public const OPTION_KEY = 'newspack_nodes_servers';
 
-	private function key(): string {
-		return \substr(
-			\hash( 'sha256', \wp_salt( 'auth' ), true ),
-			0,
-			\SODIUM_CRYPTO_SECRETBOX_KEYBYTES
+	/**
+	 * WP option name for storing server configurations.
+	 */
+	public const OPTION_KEY = 'newspack_nodes_aggregator_servers';
+
+	/**
+	 * Maximum number of servers in the registry.
+	 */
+	public const MAX_SERVERS = 100;
+
+	/**
+	 * Prefix marking encrypted values (distinguishes from legacy plaintext).
+	 */
+	public const ENCRYPTED_PREFIX = '$enc$';
+
+	/**
+	 * Whitelisted config keys for partial-update merge.
+	 */
+	private const ALLOWED_KEYS = [ 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ];
+
+	/**
+	 * Singleton instance.
+	 *
+	 * @var ServerRegistry|null
+	 */
+	private static ?ServerRegistry $instance = null;
+
+	/**
+	 * Cached merged servers (config-file defaults + WP option overlay).
+	 *
+	 * @var array<string,array>|null
+	 */
+	private ?array $servers = null;
+
+	/**
+	 * One-shot legacy-plaintext warning latch.
+	 *
+	 * @var bool
+	 */
+	private static bool $legacy_warned = false;
+
+	/**
+	 * Singleton accessor.
+	 */
+	public static function get_instance(): ServerRegistry {
+		if ( null === self::$instance ) {
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	/**
+	 * Public constructor — kept public for direct instantiation in tests / callers
+	 * that don't want the singleton (parity with the original prototype API).
+	 */
+	public function __construct() {
+		// Intentionally empty.
+	}
+
+	/**
+	 * Get all servers (config-file defaults overlaid by WP option).
+	 *
+	 * @return array<string,array> Associative array of server_id => config.
+	 */
+	public function get_servers(): array {
+		return $this->get_all();
+	}
+
+	/**
+	 * Numeric-keyed list view of get_all(). Legacy upstream API; some
+	 * RemoteManager paths expect a list rather than a hash.
+	 *
+	 * @return array<int,array> Sequential array of server configs (id keyed in field).
+	 */
+	public function list_servers(): array {
+		$out = [];
+		foreach ( $this->get_all() as $id => $cfg ) {
+			$cfg['id'] = $id;
+			$out[]     = $cfg;
+		}
+		return $out;
+	}
+
+	/**
+	 * Get all servers (config-file defaults overlaid by WP option). Synonym of
+	 * `get_servers()`; kept for parity with the upstream API.
+	 *
+	 * @return array<string,array> Associative array of server_id => config.
+	 */
+	public function get_all(): array {
+		if ( null !== $this->servers ) {
+			return $this->servers;
+		}
+
+		// Config-file defaults (immutable from admin UI).
+		$config_defaults = [];
+		if ( \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
+			$full = Config::load_config( 'full' );
+			if ( \is_array( $full ) && isset( $full['aggregator_servers'] ) && \is_array( $full['aggregator_servers'] ) ) {
+				$config_defaults = $full['aggregator_servers'];
+			}
+		}
+
+		// WP option overlay (managed via add()/update()/remove()).
+		$option = \get_option( self::OPTION_KEY, null );
+
+		if ( null === $option ) {
+			$merged = $config_defaults;
+		} elseif ( \is_array( $option ) ) {
+			// WP option takes precedence on key collision.
+			$merged = \array_merge( $config_defaults, $option );
+		} else {
+			$merged = $config_defaults;
+		}
+
+		// Normalize: ensure all entries have required keys + decrypt credentials.
+		// Config-file entries bypass validate_config and may be missing fields.
+		foreach ( $merged as $id => &$server ) {
+			if ( ! \is_array( $server ) ) {
+				unset( $merged[ $id ] );
+				continue;
+			}
+			$server += [
+				'url'           => '',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			];
+			if ( '' !== $server['auth_password'] && \is_string( $server['auth_password'] ) ) {
+				$server['auth_password'] = self::decrypt( $server['auth_password'] );
+			}
+		}
+		unset( $server );
+
+		$this->servers = $merged;
+		return $this->servers;
+	}
+
+	/**
+	 * Get only enabled servers.
+	 *
+	 * @return array<string,array>
+	 */
+	public function get_enabled(): array {
+		return \array_filter(
+			$this->get_all(),
+			static function ( $config ) {
+				return ! empty( $config['enabled'] );
+			}
 		);
 	}
 
-	public function register( string $name, array $config ): void {
-		$servers = (array) \get_option( self::OPTION_KEY, [] );
-		$nonce = \random_bytes( \SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
-		$plaintext = \json_encode( $config );
-		$ct = \sodium_crypto_secretbox( $plaintext, $nonce, $this->key() );
-		$servers[ $name ] = [
-			'nonce' => \base64_encode( $nonce ),
-			'ct'    => \base64_encode( $ct ),
+	/**
+	 * Get a specific server by ID.
+	 *
+	 * @param string $id Server ID.
+	 * @return array|null Server config or null if not found.
+	 */
+	public function get( string $id ): ?array {
+		$servers = $this->get_all();
+		return $servers[ $id ] ?? null;
+	}
+
+	/**
+	 * Check whether a server ID originates from the config file.
+	 *
+	 * Reads file-only defaults via `Config::load_config_defaults()` to avoid the
+	 * circular case where `load_config('full')` would merge the WP option into
+	 * `aggregator_servers` and make every WP-option server look like a config
+	 * server.
+	 *
+	 * @param string $id Server ID.
+	 * @return bool True if the server is defined in the config file.
+	 */
+	public function is_config_server( string $id ): bool {
+		if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
+			return false;
+		}
+		$defaults = Config::load_config_defaults();
+		$file     = $defaults['aggregator_servers'] ?? [];
+		return \is_array( $file ) && isset( $file[ $id ] );
+	}
+
+	/**
+	 * Add a new server (full overwrite if the caller supplies a complete config).
+	 *
+	 * Returns false if:
+	 *  - id format invalid
+	 *  - id already exists in the merged view
+	 *  - registry at capacity
+	 *  - validation fails (URL, credentials, logs)
+	 *
+	 * @param string $id     Server ID (alphanumeric, hyphen, underscore; 1-64 chars).
+	 * @param array  $config Server configuration.
+	 */
+	public function add( string $id, array $config ): bool {
+		if ( ! self::is_valid_id( $id ) ) {
+			return false;
+		}
+		$all = $this->get_all();
+		if ( isset( $all[ $id ] ) ) {
+			return false;
+		}
+		if ( \count( $all ) >= self::MAX_SERVERS ) {
+			return false;
+		}
+		$validated = $this->validate_config( $config );
+		if ( null === $validated ) {
+			return false;
+		}
+
+		$wp_servers        = $this->get_wp_servers();
+		$wp_servers[ $id ] = $validated;
+
+		// update_option() returns false on both failure and no-op — verify by re-read.
+		self::write_option( $wp_servers );
+		$this->servers = null;
+
+		$verify = $this->get_wp_servers();
+		if ( ! isset( $verify[ $id ] ) ) {
+			return false;
+		}
+
+		$this->audit( 'added', $id, \array_keys( $validated ) );
+		return true;
+	}
+
+	/**
+	 * Register a server (full overwrite — same key path as `add()` but allows
+	 * overwriting an existing entry). Mirrors the prototype's `register()`
+	 * verb. Used by callers that don't distinguish add-vs-update at their level.
+	 *
+	 * @param string $id     Server ID.
+	 * @param array  $config Full server configuration.
+	 */
+	public function register( string $id, array $config ): bool {
+		if ( ! self::is_valid_id( $id ) ) {
+			return false;
+		}
+		$all = $this->get_all();
+		if ( ! isset( $all[ $id ] ) && \count( $all ) >= self::MAX_SERVERS ) {
+			return false;
+		}
+		$validated = $this->validate_config( $config );
+		if ( null === $validated ) {
+			return false;
+		}
+
+		$wp_servers        = $this->get_wp_servers();
+		$wp_servers[ $id ] = $validated;
+
+		self::write_option( $wp_servers );
+		$this->servers = null;
+
+		$verify = $this->get_wp_servers();
+		if ( ! isset( $verify[ $id ] ) ) {
+			return false;
+		}
+
+		$this->audit( 'registered', $id, \array_keys( $validated ) );
+		return true;
+	}
+
+	/**
+	 * Partial-update an existing server. Whitelists keys, merges with current
+	 * config, then validates the result.
+	 *
+	 * Config-file servers (immutable) only allow toggling `enabled` — URL and
+	 * credentials are pinned. Other fields in the partial are silently dropped
+	 * for those entries.
+	 *
+	 * @param string $id      Server ID.
+	 * @param array  $partial Partial configuration to merge.
+	 */
+	public function update( string $id, array $partial ): bool {
+		if ( ! self::is_valid_id( $id ) ) {
+			return false;
+		}
+		$all = $this->get_all();
+		if ( ! isset( $all[ $id ] ) ) {
+			return false;
+		}
+
+		// Config-file servers — only `enabled` is editable.
+		if ( $this->is_config_server( $id ) ) {
+			if ( ! \array_key_exists( 'enabled', $partial ) ) {
+				return false;
+			}
+			$partial = [ 'enabled' => $partial['enabled'] ];
+		}
+
+		// Whitelist keys before merge.
+		$partial = \array_intersect_key( $partial, \array_flip( self::ALLOWED_KEYS ) );
+
+		$merged    = \array_merge( $all[ $id ], $partial );
+		$validated = $this->validate_config( $merged );
+		if ( null === $validated ) {
+			return false;
+		}
+
+		$wp_servers        = $this->get_wp_servers();
+		$wp_servers[ $id ] = $validated;
+
+		self::write_option( $wp_servers );
+		$this->servers = null;
+
+		$verify = $this->get_wp_servers();
+		if ( ! isset( $verify[ $id ] ) ) {
+			return false;
+		}
+
+		$this->audit( 'updated', $id, \array_keys( $partial ) );
+		return true;
+	}
+
+	/**
+	 * Remove a server.
+	 *
+	 * Config-file servers can't be removed via the API — they reappear on next
+	 * read. Returns false for those entries.
+	 *
+	 * @param string $id Server ID.
+	 */
+	public function remove( string $id ): bool {
+		if ( ! self::is_valid_id( $id ) ) {
+			return false;
+		}
+		$all = $this->get_all();
+		if ( ! isset( $all[ $id ] ) ) {
+			return false;
+		}
+		if ( $this->is_config_server( $id ) ) {
+			return false;
+		}
+
+		$wp_servers = $this->get_wp_servers();
+		unset( $wp_servers[ $id ] );
+
+		self::write_option( $wp_servers );
+		$this->servers = null;
+
+		$verify = $this->get_wp_servers();
+		if ( isset( $verify[ $id ] ) ) {
+			return false;
+		}
+
+		$this->audit( 'removed', $id, [] );
+		return true;
+	}
+
+	/**
+	 * Reset the in-process cache so the next read rebuilds from disk + option.
+	 *
+	 * Long-running workers (JobWorker) call this between jobs so post-admin
+	 * updates are visible without a process restart.
+	 */
+	public function reset_cache(): void {
+		$this->servers = null;
+	}
+
+	/**
+	 * Validate a server ID format.
+	 *
+	 * @param string $id Server ID to validate.
+	 * @return bool True if valid.
+	 */
+	public static function is_valid_id( string $id ): bool {
+		return 1 === \preg_match( '/^[a-zA-Z0-9_-]{1,64}$/', $id );
+	}
+
+	/**
+	 * Get only the WP-option-managed servers (excludes config-file defaults).
+	 *
+	 * Write paths use this so we never accidentally persist a config-file
+	 * default into the WP option (would shadow file changes forever).
+	 *
+	 * @return array<string,array>
+	 */
+	private function get_wp_servers(): array {
+		$option = \get_option( self::OPTION_KEY, [] );
+		return \is_array( $option ) ? $option : [];
+	}
+
+	/**
+	 * Persist the WP-managed server map.
+	 *
+	 * Uses 3-arg form when WP's full update_option is available (the third arg
+	 * marks the option as non-autoloaded so it doesn't bloat every request's
+	 * option cache); falls back to 2-arg for stripped-down test stubs.
+	 *
+	 * @param array $wp_servers Map of id => validated config.
+	 */
+	private static function write_option( array $wp_servers ): void {
+		$arity = self::update_option_arity();
+		if ( $arity >= 3 ) {
+			\update_option( self::OPTION_KEY, $wp_servers, false );
+		} else {
+			\update_option( self::OPTION_KEY, $wp_servers );
+		}
+	}
+
+	/**
+	 * Reflect on update_option once to determine its parameter count.
+	 *
+	 * Production WP defines a 3-arg update_option (option, value, autoload).
+	 * Test bootstraps may define a 2-arg fake. Cached for the process.
+	 */
+	private static function update_option_arity(): int {
+		static $arity = null;
+		if ( null === $arity ) {
+			try {
+				$arity = ( new \ReflectionFunction( 'update_option' ) )->getNumberOfParameters();
+			} catch ( \ReflectionException $e ) {
+				$arity = 2;
+			}
+		}
+		return $arity;
+	}
+
+	/**
+	 * Validate and sanitize a full server configuration.
+	 *
+	 * @param array $config Raw configuration.
+	 * @return array|null Validated configuration or null if invalid.
+	 */
+	private function validate_config( array $config ): ?array {
+		// URL is required, must be string, must be HTTPS.
+		if ( empty( $config['url'] ) || ! \is_string( $config['url'] ) ) {
+			return null;
+		}
+		$url = \function_exists( 'esc_url_raw' )
+			? \esc_url_raw( $config['url'] )
+			: $config['url'];
+		if ( empty( $url ) || ! \is_string( $url ) ) {
+			return null;
+		}
+		if ( 0 !== \strpos( $url, 'https://' ) ) {
+			return null;
+		}
+
+		$validated = [
+			'url'           => \rtrim( $url, '/' ),
+			'auth_username' => '',
+			'auth_password' => '',
+			'enabled'       => true,
+			'logs'          => [ 'firehose.log' ],
 		];
-		\update_option( self::OPTION_KEY, $servers );
-	}
 
-	public function get( string $name ): ?array {
-		$servers = (array) \get_option( self::OPTION_KEY, [] );
-		if ( ! isset( $servers[ $name ] ) ) {
-			return null;
+		// auth_username — sanitize + 256-byte cap.
+		if ( ! empty( $config['auth_username'] ) && \is_string( $config['auth_username'] ) ) {
+			$username = \function_exists( 'sanitize_text_field' )
+				? \sanitize_text_field( $config['auth_username'] )
+				: \trim( \preg_replace( '/[\x00-\x1f\x7f]/', '', $config['auth_username'] ) ?? '' );
+			if ( \strlen( $username ) > 256 ) {
+				$username = \substr( $username, 0, 256 );
+			}
+			$validated['auth_username'] = $username;
 		}
-		$entry = $servers[ $name ];
-		$nonce = \base64_decode( $entry['nonce'] );
-		$ct    = \base64_decode( $entry['ct'] );
-		$pt    = \sodium_crypto_secretbox_open( $ct, $nonce, $this->key() );
-		if ( $pt === false ) {
-			return null;
+
+		// auth_password — strip control chars, 256-byte cap, encrypt.
+		if ( ! empty( $config['auth_password'] ) && \is_string( $config['auth_password'] ) ) {
+			$password = $config['auth_password'];
+			if ( 0 !== \strpos( $password, self::ENCRYPTED_PREFIX ) ) {
+				// New plaintext password — sanitize, cap, encrypt.
+				$password = \preg_replace( '/[\x00-\x1f\x7f]/', '', $password ) ?? '';
+				if ( \strlen( $password ) > 256 ) {
+					$password = \substr( $password, 0, 256 );
+				}
+				$password = self::encrypt( $password );
+			} else {
+				// Already encrypted — verify it actually decrypts; reject if not.
+				$decrypted = self::decrypt( $password );
+				if ( '' === $decrypted ) {
+					$password = '';
+				}
+			}
+			$validated['auth_password'] = $password;
 		}
-		return \json_decode( $pt, true );
+
+		// enabled flag.
+		if ( \array_key_exists( 'enabled', $config ) ) {
+			$validated['enabled'] = (bool) $config['enabled'];
+		}
+
+		// logs[] — filename allowlist.
+		if ( ! empty( $config['logs'] ) && \is_array( $config['logs'] ) ) {
+			$logs = [];
+			foreach ( $config['logs'] as $log ) {
+				if ( \is_string( $log ) && 1 === \preg_match( '/^[a-zA-Z0-9_.-]+\.log$/', $log ) ) {
+					$logs[] = $log;
+				}
+			}
+			if ( ! empty( $logs ) ) {
+				$validated['logs'] = $logs;
+			}
+		}
+
+		return $validated;
 	}
 
-	public function list_servers(): array {
-		$servers = (array) \get_option( self::OPTION_KEY, [] );
-		return \array_keys( $servers );
+	/**
+	 * Derive a 32-byte encryption key from `wp_salt('auth')`.
+	 *
+	 * @return string 32-byte key for sodium_crypto_secretbox.
+	 */
+	private static function encryption_key(): string {
+		return \sodium_crypto_generichash( \wp_salt( 'auth' ), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
 	}
 
-	public function remove( string $name ): void {
-		$servers = (array) \get_option( self::OPTION_KEY, [] );
-		unset( $servers[ $name ] );
-		\update_option( self::OPTION_KEY, $servers );
+	/**
+	 * Encrypt a string for storage.
+	 *
+	 * Returns the wire-format string (`$enc$<base64>`) on success, or empty on
+	 * failure / empty input.
+	 *
+	 * @param string $plaintext Value to encrypt.
+	 */
+	private static function encrypt( string $plaintext ): string {
+		if ( '' === $plaintext || ! \function_exists( 'sodium_crypto_secretbox' ) ) {
+			return '';
+		}
+		$nonce      = \random_bytes( SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$ciphertext = \sodium_crypto_secretbox( $plaintext, $nonce, self::encryption_key() );
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- binary-safe storage.
+		return self::ENCRYPTED_PREFIX . \base64_encode( $nonce . $ciphertext );
+	}
+
+	/**
+	 * Decrypt a stored value.
+	 *
+	 * Handles both encrypted (prefixed) and legacy plaintext values. A pre-
+	 * encryption row passes through unchanged so spoke upgrades don't break.
+	 *
+	 * @param string $stored Stored value (may be encrypted or plaintext).
+	 * @return string Decrypted plaintext, original value if not encrypted, or empty on decrypt failure.
+	 */
+	private static function decrypt( string $stored ): string {
+		if ( 0 !== \strpos( $stored, self::ENCRYPTED_PREFIX ) ) {
+			// Legacy plaintext — return as-is. Log once per process so the
+			// migration shows up in error log without flooding.
+			if ( '' !== $stored && ! self::$legacy_warned ) {
+				self::$legacy_warned = true;
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				\error_log( '[EventLogger] ServerRegistry: legacy plaintext credential detected — will be re-encrypted on next update.' );
+			}
+			return $stored;
+		}
+		if ( ! \function_exists( 'sodium_crypto_secretbox_open' ) ) {
+			return '';
+		}
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- binary-safe storage.
+		$decoded = \base64_decode( \substr( $stored, \strlen( self::ENCRYPTED_PREFIX ) ), true );
+		if ( false === $decoded || \strlen( $decoded ) < SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ) {
+			return '';
+		}
+		$nonce      = \substr( $decoded, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$ciphertext = \substr( $decoded, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$plaintext  = \sodium_crypto_secretbox_open( $ciphertext, $nonce, self::encryption_key() );
+		return false === $plaintext ? '' : $plaintext;
+	}
+
+	/**
+	 * Append an audit-trail entry to PHP error_log.
+	 *
+	 * Goes to error_log (not LogManager) intentionally: avoids feedback loops if
+	 * the log pipeline itself is unhealthy.
+	 *
+	 * @param string $action Verb: added | updated | removed | registered.
+	 * @param string $id     Server ID acted upon.
+	 * @param array  $fields Field names (sanitized — never values).
+	 */
+	private function audit( string $action, string $id, array $fields ): void {
+		$user_id  = \function_exists( 'get_current_user_id' ) ? (int) \get_current_user_id() : 0;
+		$ts       = \gmdate( 'c' );
+		$fieldstr = empty( $fields ) ? '' : ' fields=' . \implode( ',', $fields );
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log(
+			\sprintf(
+				'[EventLogger] ServerRegistry %s id=%s user=%d ts=%s%s',
+				$action,
+				$id,
+				$user_id,
+				$ts,
+				$fieldstr
+			)
+		);
 	}
 }

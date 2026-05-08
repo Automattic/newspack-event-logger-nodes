@@ -1,20 +1,45 @@
 <?php
 /**
- * JobWorker: executes registered handlers; fires a between-jobs callback after
- * every job so the caller can drive periodic maintenance.
+ * JobWorker: executes registered handlers with full per-job discipline.
  *
- * The between-jobs callback is the hook for spec-mandated per-job operations:
- *   - LogManager::suspend()/resume() for re-entrancy
- *   - gc_collect_cycles() after every job
- *   - wp_cache_flush() every 50 jobs (memory headroom against the 80% watermark)
+ * Per-job discipline (every job gets all of these, even on exception):
+ *   1. LogManager::suspend() before, LogManager::resume() after — ensures the
+ *      parent request's LogManager state isn't trampled by handler-side logging.
+ *   2. $_SERVER save+restore around the handler call. UNIQUE_ID regenerated as
+ *      a fresh 32-char base36 token (matches LogManager's generate_request_id),
+ *      REQUEST_URI/PATH_INFO/SCRIPT_NAME/SCRIPT_URL/SCRIPT_URI rewritten to a
+ *      synthetic /jobs/{handler} path so any LogManager spawned during the
+ *      handler picks up meaningful context.
+ *   3. gc_collect_cycles() after every job. PHP's reference-counted GC can't
+ *      break cycles immediately; image handlers (wp_generate_attachment_metadata
+ *      → WP_Image_Editor_GD) leave circular refs behind that otherwise
+ *      accumulate until the worker hits the 80% memory watermark and respawns.
+ *   4. wp_cache_flush() every CACHE_FLUSH_INTERVAL jobs (default 50). Object
+ *      caches grow unbounded across jobs unless flushed periodically; the
+ *      80% watermark would hit eventually but the flush extends per-process
+ *      runtime substantially.
+ *   5. 80% memory watermark check: if memory_get_usage(true) crosses
+ *      0.80 * memory_limit, request a worker restart via the lock channel.
+ *      Bridge to WorkerBase: the Node sets a flag that the topology can read
+ *      via memory_pressure() and propagate to the worker's drain predicate.
  *
- * JobWorker does NOT hard-code those — it provides the cadence point and the
- * caller decides what to do. The callback receives the running jobs_executed
- * counter as a single argument so cadence is callback-side.
+ * Field-name compat:
+ *   Upstream's JobIntake writes `parameters`. The original JobRouter and the
+ *   newer event-logger-plugins code uses `payload`. We accept BOTH at dispatch
+ *   time, preferring `parameters` (upstream/JobIntake-port-aligned), falling
+ *   back to `payload` (legacy callers). This keeps the substrate compatible
+ *   with both producer codepaths.
  *
- * The callback fires after both success AND exception paths (matching real
- * Tachikoma's "every job" semantics — you want gc to run even after a handler
- * blew up, otherwise leaked objects pile up faster than under nominal load).
+ * JSON depth:
+ *   json_decode default depth is 512 — large enough that a malicious producer
+ *   could exhaust the parser stack with deeply-nested JSON. We pin to 64,
+ *   matching the upstream JobWorker hardening.
+ *
+ * Lock-channel hint:
+ *   stale_timeout exposed via constructor + getter. The spec calls for 600s
+ *   for long-running job processing (vs WorkerBase's 60s default for fast
+ *   pipelines). Topology code reads ->get_stale_timeout() to populate the
+ *   worker config.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -31,11 +56,52 @@ class JobWorker extends Node {
 	public const HANDLER_NAME_PATTERN = '/^[a-z][a-z0-9_]*$/';
 	public const MAX_JOB_SIZE         = 10485760;
 
+	/** Maximum JSON decode depth to prevent stack-exhaustion attacks. */
+	public const MAX_JSON_DEPTH = 64;
+
+	/** Default cache-flush interval in jobs. */
+	public const CACHE_FLUSH_INTERVAL = 50;
+
+	/** Default stale-timeout hint for long-running JobWorker pipelines. */
+	public const DEFAULT_STALE_TIMEOUT = 600;
+
+	/** Default max-runtime hint (matches DEFAULT_STALE_TIMEOUT for symmetry). */
+	public const DEFAULT_MAX_RUNTIME = 600;
+
+	/** Memory watermark — request restart when memory_get_usage crosses this fraction. */
+	public const MEMORY_WATERMARK_PCT = 0.80;
+
 	/** @var array<string,callable> */
 	private array $handlers = [];
 	private int $jobs_executed = 0;
+	private int $jobs_since_cache_flush = 0;
+
 	/** @var callable|null */
 	private $between_jobs_cb = null;
+
+	/** Latched true when a per-job memory check crossed the watermark. */
+	private bool $memory_pressure = false;
+
+	private int $cache_flush_interval;
+	private int $stale_timeout;
+	private int $max_runtime;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param int $cache_flush_interval Run wp_cache_flush() every N jobs.
+	 * @param int $stale_timeout        Stale-timeout hint (seconds) — exposed for topology config.
+	 * @param int $max_runtime          Max-runtime hint (seconds) — exposed for topology config.
+	 */
+	public function __construct(
+		int $cache_flush_interval = self::CACHE_FLUSH_INTERVAL,
+		int $stale_timeout = self::DEFAULT_STALE_TIMEOUT,
+		int $max_runtime = self::DEFAULT_MAX_RUNTIME
+	) {
+		$this->cache_flush_interval = \max( 1, $cache_flush_interval );
+		$this->stale_timeout        = \max( 1, $stale_timeout );
+		$this->max_runtime          = \max( 1, $max_runtime );
+	}
 
 	public function register_handler( string $name, callable $cb ): void {
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
@@ -47,8 +113,7 @@ class JobWorker extends Node {
 	/**
 	 * Register a between-jobs callback that fires after every job. Pass null to
 	 * clear. The callback receives the jobs_executed counter as its single arg
-	 * so it can decide its own cadence (e.g., gc every job, wp_cache_flush every
-	 * 50 jobs, restart-after-watermark every 1000 jobs).
+	 * so it can decide its own cadence.
 	 */
 	public function set_between_jobs_callback( ?callable $cb ): void {
 		$this->between_jobs_cb = $cb;
@@ -58,18 +123,46 @@ class JobWorker extends Node {
 		return $this->jobs_executed;
 	}
 
+	/** Stale-timeout hint exposed for topology config. */
+	public function get_stale_timeout(): int {
+		return $this->stale_timeout;
+	}
+
+	/** Max-runtime hint exposed for topology config. */
+	public function get_max_runtime(): int {
+		return $this->max_runtime;
+	}
+
+	/**
+	 * Whether a previous job's memory check tripped the watermark. Topology
+	 * code (or the worker's drain predicate) reads this to decide whether to
+	 * exit cleanly so the supervisor can respawn into a fresh process.
+	 */
+	public function memory_pressure(): bool {
+		return $this->memory_pressure;
+	}
+
 	public function fill( array &$message ): void {
 		++$this->counter;
 		if ( ! ( $message[ Message::TYPE ] & Message::TM_BYTESTREAM ) ) {
 			return;
 		}
 		$line = $message[ Message::VALUE ];
-		// Fail-early: oversized lines never get parsed.
+		// Fail-early: oversized lines never get parsed (avoid the JSON cost too).
 		if ( \strlen( $line ) > self::MAX_JOB_SIZE ) {
+			Core::print_less_often( 'JobWorker: oversized line, skipping' );
 			return;
 		}
-		$entry = \json_decode( $line, true );
-		if ( ! \is_array( $entry ) || ( $entry['k'] ?? '' ) !== 'job' ) {
+		// Pinned JSON depth so deeply-nested input can't exhaust the parser stack.
+		$entry = \json_decode( $line, true, self::MAX_JSON_DEPTH );
+		if ( ! \is_array( $entry ) || \json_last_error() !== \JSON_ERROR_NONE ) {
+			return;
+		}
+		// The producer schema uses 'k' (kind: "job") in the inline firehose path
+		// and 'type' in the JobIntake schema. Accept either; require it to mark
+		// this entry as a job before we dispatch.
+		$kind = $entry['k'] ?? $entry['type'] ?? '';
+		if ( $kind !== 'job' && $kind !== 'remote_job' ) {
 			return;
 		}
 		$handler = $entry['handler'] ?? '';
@@ -78,20 +171,144 @@ class JobWorker extends Node {
 			return;
 		}
 
-		// Job execution — exceptions are caught so the worker survives a bad
-		// handler. The between-jobs callback fires either way (we always count
-		// the slot, and the caller's gc/cache flush should run after a crashed
-		// handler too — that's when leaks accumulate fastest).
+		// Field-name compat: prefer 'parameters' (upstream/JobIntake), fall back
+		// to 'payload' (legacy producers). One field path; no double-execution.
+		$parameters = $entry['parameters'] ?? $entry['payload'] ?? null;
+
+		// Per-job discipline. The cleanup block runs even if the handler throws,
+		// because gc/cache cycles need to happen MOST when handlers misbehave —
+		// a crashed handler is exactly when leaks accumulate fastest.
+		// Capture $_SERVER outside begin_job_context so a suspend()/_SERVER edit
+		// failure mid-begin still has a snapshot we can restore.
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- preserving for restore.
+		$orig_server = $_SERVER;
 		try {
-			( $this->handlers[ $handler ] )( $entry['payload'] ?? null );
+			$this->begin_job_context( $handler );
+			( $this->handlers[ $handler ] )( $parameters );
 		} catch ( \Throwable $e ) {
 			Core::print_less_often( "JobWorker: handler $handler threw: " . $e->getMessage() );
+		} finally {
+			$this->end_job_context( $orig_server );
 		}
 		++$this->jobs_executed;
+		++$this->jobs_since_cache_flush;
+
+		// Force a GC cycle every job. Reference-counted GC can't break cycles
+		// immediately; explicit collection delays the watermark trip.
+		\gc_collect_cycles();
+
+		// Periodic object-cache flush extends per-process runtime by orders of
+		// magnitude on workloads that fan out wp_query under handler control.
+		if ( $this->jobs_since_cache_flush >= $this->cache_flush_interval ) {
+			if ( \function_exists( 'wp_cache_flush' ) ) {
+				\wp_cache_flush();
+			}
+			$this->jobs_since_cache_flush = 0;
+		}
+
+		// Memory watermark check. If we cross 80% of memory_limit, latch the
+		// pressure flag — topology code reads memory_pressure() in its drain
+		// predicate and exits cleanly so the supervisor respawns.
+		if ( $this->is_memory_high() ) {
+			$this->memory_pressure = true;
+		}
 
 		if ( $this->between_jobs_cb !== null ) {
 			// Pass the counter so the callback owns cadence decisions.
 			( $this->between_jobs_cb )( $this->jobs_executed );
 		}
+	}
+
+	/**
+	 * Suspend the parent LogManager (if loaded), generate a fresh per-job
+	 * UNIQUE_ID, and rewrite $_SERVER paths to a /jobs/{handler} synthetic URL
+	 * so any LogManager spawned by the handler picks up job-scoped context.
+	 *
+	 * Caller MUST capture $_SERVER snapshot before invoking, and pass it to
+	 * end_job_context() in a finally block — even if begin_job_context throws.
+	 */
+	private function begin_job_context( string $handler ): void {
+		// LogManager::suspend() pushes the parent context onto its stack. If the
+		// class isn't loaded (test bootstrap, parent plugin not active), no-op.
+		if ( \class_exists( '\Newspack_Event_Logger_Nodes\LogManager' ) ) {
+			\Newspack_Event_Logger_Nodes\LogManager::suspend();
+		}
+
+		$path_info = '/' . \ltrim( $handler, '/' );
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
+		$server_name = $_SERVER['SERVER_NAME'] ?? 'localhost';
+
+		$_SERVER['UNIQUE_ID']       = self::generate_request_id();
+		$_SERVER['REQUEST_URI']     = '/jobs/' . \ltrim( $handler, '/' );
+		$_SERVER['REQUEST_METHOD']  = 'POST';
+		$_SERVER['PATH_INFO']       = $path_info;
+		$_SERVER['SCRIPT_NAME']     = $path_info;
+		$_SERVER['SCRIPT_URL']      = $path_info;
+		$_SERVER['SCRIPT_URI']      = 'https://' . $server_name . $path_info;
+		$_SERVER['SCRIPT_FILENAME'] = ( \defined( 'NEWSPACK_FOUNDATION_BASE' ) ? \NEWSPACK_FOUNDATION_BASE : '' ) . '/template';
+		$_SERVER['QUERY_STRING']    = '';
+		unset(
+			$_SERVER['CONTENT_TYPE'],
+			$_SERVER['CONTENT_LENGTH'],
+			$_SERVER['HTTP_X_A8C_REQUEST_ID']
+		);
+	}
+
+	/**
+	 * Resume the parent LogManager (if loaded) and restore the original $_SERVER.
+	 *
+	 * @param array<string,mixed> $orig_server $_SERVER snapshot from begin_job_context().
+	 */
+	private function end_job_context( array $orig_server ): void {
+		if ( \class_exists( '\Newspack_Event_Logger_Nodes\LogManager' ) ) {
+			\Newspack_Event_Logger_Nodes\LogManager::resume();
+		}
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
+		$_SERVER = $orig_server;
+	}
+
+	/**
+	 * Generate a 32-char base36 request ID. Matches LogManager::generate_request_id
+	 * exactly so any per-job LogManager session has IDs indistinguishable from
+	 * the request-scope IDs LogManager produces directly.
+	 */
+	public static function generate_request_id(): string {
+		$rid = '';
+		for ( $i = 0; $i < 5; $i++ ) {
+			$rid .= \base_convert( \bin2hex( \random_bytes( 5 ) ), 16, 36 );
+		}
+		return \substr( $rid, 0, 32 );
+	}
+
+	/**
+	 * Whether memory_get_usage(true) has crossed MEMORY_WATERMARK_PCT of
+	 * memory_limit. Returns false if memory_limit is unlimited (-1).
+	 */
+	public function is_memory_high(): bool {
+		$limit = $this->memory_limit_bytes();
+		if ( $limit <= 0 ) {
+			return false;
+		}
+		return \memory_get_usage( true ) >= ( $limit * self::MEMORY_WATERMARK_PCT );
+	}
+
+	private function memory_limit_bytes(): int {
+		$ini = \ini_get( 'memory_limit' );
+		if ( $ini === '-1' || $ini === false ) {
+			return -1;
+		}
+		$num = (int) $ini;
+		switch ( \strtolower( \substr( $ini, -1 ) ) ) {
+			case 'g':
+				$num *= 1024 * 1024 * 1024;
+				break;
+			case 'm':
+				$num *= 1024 * 1024;
+				break;
+			case 'k':
+				$num *= 1024;
+				break;
+		}
+		return $num;
 	}
 }

@@ -38,6 +38,7 @@ class RequestLogControllerTest extends TestCase {
 	public function test_get_detail_with_id_echoes_id(): void {
 		$ctrl = new RequestLogController();
 		$resp = $ctrl->get_detail( new \WP_REST_Request( [ 'id' => 'rid-xyz' ] ) );
+		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
 		$body = $resp->get_data();
 		$this->assertSame( 'rid-xyz', $body['data']['request_id'] );
 		$this->assertArrayHasKey( 'entries', $body['data'] );

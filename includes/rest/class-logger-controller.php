@@ -1,11 +1,13 @@
 <?php
 /**
- * LoggerController: GET /logger/config, GET /logger/hooks.
+ * LoggerController:
+ *   GET /logger/config — runtime configuration snapshot.
+ *   GET /logger/hooks  — registered hooks (categorized via HookCategorizer).
  *
- * Plumbing for the `performance-logger` settings tree. Stub responses
- * mirror the legacy /perf-logger/v1/{settings,hooks} payloads so the
- * settings UI mounts without 404s. Settings persistence lands once
- * SettingsSync is ported into the application.
+ * Plumbing for the `performance-logger` settings tree. Returns
+ * the same shape as the legacy /perf-logger/v1/{settings,hooks}
+ * payloads. Settings persistence lives on `PerfSettingsController` /
+ * `PerfConfigController` (POST endpoints).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -13,6 +15,8 @@
 namespace Newspack_Event_Logger_Nodes\Rest;
 
 \defined( 'ABSPATH' ) || exit;
+
+use Newspack_Event_Logger_Nodes\HookCategorizer;
 
 class LoggerController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -43,12 +47,13 @@ class LoggerController extends PerformanceControllerBase {
 		if ( \is_wp_error( $check ) ) {
 			return $check;
 		}
-		// Echo runtime config + stub flag — the React tree just needs a
-		// well-shaped payload to mount.
+		// Echo the full filterable config so the React tree can populate the
+		// settings UI from one endpoint. Sensitive values (memcache_servers
+		// strings) are kept since they're already managed via WP options.
 		return new \WP_REST_Response(
 			[
 				'data' => self::load_config(),
-				'meta' => [ 'stub' => true ],
+				'meta' => [],
 			],
 			200
 		);
@@ -59,13 +64,36 @@ class LoggerController extends PerformanceControllerBase {
 		if ( \is_wp_error( $check ) ) {
 			return $check;
 		}
+
+		$hooks      = [];
+		$categories = [];
+
+		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\HookCategorizer' ) ) {
+			$by_category = HookCategorizer::get_registered_hooks_by_category();
+			$categories  = HookCategorizer::get_categories();
+			// Flatten by_category into a list of { name, category }.
+			foreach ( $by_category as $cat => $list ) {
+				if ( ! \is_array( $list ) ) {
+					continue;
+				}
+				foreach ( $list as $name ) {
+					if ( \is_string( $name ) ) {
+						$hooks[] = [
+							'name'     => $name,
+							'category' => $cat,
+						];
+					}
+				}
+			}
+		}
+
 		return new \WP_REST_Response(
 			[
 				'data' => [
-					'hooks'     => [],
-					'categories' => [],
+					'hooks'      => $hooks,
+					'categories' => $categories,
 				],
-				'meta' => [ 'stub' => true ],
+				'meta' => [],
 			],
 			200
 		);

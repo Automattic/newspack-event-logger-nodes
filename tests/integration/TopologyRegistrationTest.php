@@ -9,6 +9,32 @@ use Newspack_Nodes\Bootstrap;
  * to runtime Bootstrap::expand_workers().
  */
 class TopologyRegistrationTest extends TestCase {
+	/**
+	 * Re-register the plugin's topology filter — many other tests wipe
+	 * $GLOBALS['_wp_actions'] in their setUp(), which kills the filter
+	 * registered at plugin-file load time.
+	 */
+	protected function setUp(): void {
+		parent::setUp();
+		$dir = \dirname( __DIR__, 2 );
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( $dir ): array {
+				$topologies['firehose-workers'] = [
+					'topology'       => $dir . '/topologies/firehose-workers.php',
+					'num_partitions' => 4,
+					'stale_timeout'  => 60,
+				];
+				$topologies['aggregator'] = [
+					'topology'       => $dir . '/topologies/aggregator.php',
+					'num_partitions' => 1,
+					'stale_timeout'  => 60,
+				];
+				return $topologies;
+			}
+		);
+	}
+
 	public function test_topologies_filter_exposes_both_topologies(): void {
 		$topologies = Bootstrap::get_topologies();
 		$this->assertArrayHasKey( 'firehose-workers', $topologies, 'firehose-workers topology must be registered' );

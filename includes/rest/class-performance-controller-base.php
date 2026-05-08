@@ -48,8 +48,13 @@ abstract class PerformanceControllerBase {
 	/**
 	 * Lazy memcached factory: defer to filtered servers, fall back to defaults.
 	 * Once instantiated, reused for the rest of the request.
+	 *
+	 * Public so subclasses across the package (Workers, Overview, Aggregator,
+	 * etc.) can resolve the same shared instance without reflection. Tests
+	 * inject a FakeMemcached via `set_cache()`; once injected, every
+	 * `cache()` call returns it.
 	 */
-	protected static function cache(): Cache_Interface {
+	public static function cache(): Cache_Interface {
 		if ( self::$cache === null ) {
 			$config  = self::load_config();
 			$servers = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;

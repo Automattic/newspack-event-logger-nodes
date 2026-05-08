@@ -34,8 +34,26 @@ class AggregatorControllerTest extends TestCase {
 		$resp = $ctrl->get_status( $req );
 		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
 		$data = $resp->get_data();
-		$this->assertArrayHasKey( 'data', $data );
-		$this->assertArrayHasKey( 'meta', $data );
+		// Real-shape response: an associative array keyed by server id.
+		// Empty when no servers are configured (test default).
+		$this->assertIsArray( $data );
+	}
+
+	public function test_list_servers_returns_array(): void {
+		$ctrl = new AggregatorController();
+		$req  = new \WP_REST_Request();
+		$resp = $ctrl->list_servers( $req );
+		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
+		$this->assertIsArray( $resp->get_data() );
+	}
+
+	public function test_health_reports_cache_status(): void {
+		$ctrl = new AggregatorController();
+		$resp = $ctrl->health( new \WP_REST_Request() );
+		$body = $resp->get_data();
+		$this->assertArrayHasKey( 'healthy', $body );
+		$this->assertArrayHasKey( 'cache', $body );
+		$this->assertTrue( $body['healthy'] );
 	}
 
 	public function test_permission_callback_rejects_unauthorized(): void {

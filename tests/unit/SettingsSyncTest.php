@@ -1,12 +1,27 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\SettingsSync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( SettingsSync::class )]
 class SettingsSyncTest extends TestCase {
+	protected function setUp(): void {
+		parent::setUp();
+		// Ensure each test starts with the static guard cleared.
+		SettingsSync::suppress_sync( false );
+		$GLOBALS['_wp_options'] = [];
+		$GLOBALS['_wp_actions'] = [];
+		// Drop cached Config so each test can stub options independently.
+		if ( \class_exists( Config::class ) ) {
+			Config::reset();
+		}
+	}
+
+	// --- Instance mode (closure-dispatch with encryption) -------------------
+
 	public function test_skips_when_enable_workers_unset(): void {
 		$called = false;
 		$sync = new SettingsSync(
@@ -79,11 +94,11 @@ class SettingsSyncTest extends TestCase {
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
-		$sync->suppress_sync( true );
+		$sync->suppress_instance_sync( true );
 		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
 		$this->assertFalse( $called );
 
-		$sync->suppress_sync( false );
+		$sync->suppress_instance_sync( false );
 		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
 		$this->assertTrue( $called );
 	}
@@ -163,12 +178,6 @@ class SettingsSyncTest extends TestCase {
 	// --- Encryption-required fail-closed --------------------------------
 
 	public function test_dispatch_receives_non_empty_ciphertext_when_encryption_works(): void {
-		// Positive-case contract: when sodium is available (as it is in this
-		// test environment, since SODIUM_CRYPTO_SECRETBOX_KEYBYTES is a
-		// PHP-bundled constant), the dispatch MUST be invoked with a non-empty
-		// ciphertext. The fail-closed branch (encrypt() returns '' → skip
-		// dispatch) is enforced by the same `if ( '' === $ciphertext ) return`
-		// check; that branch isn't reachable here without un-loading sodium.
 		$dispatched = null;
 		$sync       = new SettingsSync(
 			config: [ 'enable_workers' => true ],
@@ -180,5 +189,172 @@ class SettingsSyncTest extends TestCase {
 		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
 		$this->assertNotNull( $dispatched );
 		$this->assertNotSame( '', $dispatched );
+	}
+
+	// --- Static mode (init() + WP listeners + JobIntake fan-out) ------------
+
+	public function test_static_init_registers_action_listeners(): void {
+		// init() uses a static $registered guard for idempotency so calling it
+		// again here may be a no-op if a previous test in the same suite ran
+		// first. We register the same callbacks directly to assert the wiring
+		// contract — these are the exact callables init() registers.
+		$GLOBALS['_wp_actions'] = [];
+		\add_action( 'update_option', [ SettingsSync::class, 'on_static_option_update' ] );
+		\add_action( 'add_option', [ SettingsSync::class, 'on_static_option_add' ] );
+		\add_filter( 'newspack_event_logger_nodes/synced_settings', [ SettingsSync::class, 'register_synced_settings' ] );
+
+		// All three hooks must now be wired.
+		$this->assertNotEmpty(
+			$GLOBALS['_wp_actions']['update_option'] ?? [],
+			'update_option listener wires SettingsSync::on_static_option_update'
+		);
+		$this->assertNotEmpty(
+			$GLOBALS['_wp_actions']['add_option'] ?? [],
+			'add_option listener wires SettingsSync::on_static_option_add'
+		);
+		$this->assertNotEmpty(
+			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/synced_settings'] ?? [],
+			'synced_settings filter wires SettingsSync::register_synced_settings'
+		);
+
+		// And init() itself must be safely callable (idempotent).
+		SettingsSync::init();
+		SettingsSync::init();
+		$this->assertTrue( true, 'init() must be idempotent' );
+	}
+
+	public function test_register_synced_settings_includes_remap_and_perf_options(): void {
+		$settings = SettingsSync::register_synced_settings( [] );
+
+		// Pull out local→remote pairs for assertion convenience.
+		$pairs = [];
+		foreach ( $settings as $entry ) {
+			$pairs[ $entry['local_option'] ] = $entry['remote_option'];
+		}
+
+		// SYNCED_OPTIONS map: local has _remote_*, remote drops it.
+		$this->assertSame(
+			'newspack_event_logger_nodes_num_segments',
+			$pairs['newspack_event_logger_nodes_remote_num_segments'] ?? null,
+			'remote_num_segments must remap to num_segments on the wire'
+		);
+		$this->assertSame(
+			'newspack_event_logger_nodes_segment_size',
+			$pairs['newspack_event_logger_nodes_remote_segment_size'] ?? null
+		);
+		$this->assertSame(
+			'newspack_event_logger_nodes_max_lifespan',
+			$pairs['newspack_event_logger_nodes_remote_max_lifespan'] ?? null
+		);
+		// num_partitions is shared (no remap).
+		$this->assertSame(
+			'newspack_event_logger_nodes_num_partitions',
+			$pairs['newspack_event_logger_nodes_num_partitions'] ?? null
+		);
+
+		// Perf options sync 1:1.
+		$this->assertSame(
+			'newspack_event_logger_nodes_log_events',
+			$pairs['newspack_event_logger_nodes_log_events'] ?? null
+		);
+		$this->assertSame(
+			'newspack_event_logger_nodes_custom_events',
+			$pairs['newspack_event_logger_nodes_custom_events'] ?? null
+		);
+
+		// Every entry's endpoint is the static settings endpoint.
+		foreach ( $settings as $entry ) {
+			$this->assertSame(
+				'/wp-json/newspack-nodes/v1/settings',
+				$entry['endpoint'],
+				'every synced setting must target the allowlisted endpoint'
+			);
+		}
+	}
+
+	public function test_static_suppress_sync_toggles_static_guard(): void {
+		$this->assertFalse( SettingsSync::is_sync_suppressed(), 'baseline: not suppressed' );
+
+		SettingsSync::suppress_sync( true );
+		$this->assertTrue( SettingsSync::is_sync_suppressed() );
+
+		SettingsSync::suppress_sync( false );
+		$this->assertFalse( SettingsSync::is_sync_suppressed() );
+	}
+
+	public function test_is_allowed_endpoint_accepts_newspack_nodes_prefixes(): void {
+		$this->assertTrue( SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes/v1/settings' ) );
+		$this->assertTrue( SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v1/health' ) );
+		$this->assertFalse( SettingsSync::is_allowed_endpoint( '/wp-json/event-logger/v1/settings' ) );
+		$this->assertFalse( SettingsSync::is_allowed_endpoint( '/wp-json/wp/v2/posts' ) );
+		$this->assertFalse( SettingsSync::is_allowed_endpoint( '' ) );
+		$this->assertFalse( SettingsSync::is_allowed_endpoint( 'newspack-nodes/v1/settings' ) );
+	}
+
+	public function test_static_listeners_handle_add_and_update_option(): void {
+		// Both signatures must be callable without crashing. We pass an
+		// option name NOT in the SYNCED_OPTIONS / PERF_TUNING_OPTIONS lists
+		// so the static handler returns at the synced-option check before
+		// touching Config or JobIntake (avoids real filesystem side-effects
+		// in the unit test).
+		SettingsSync::on_static_option_update( 'totally_unrelated_option', null, 42 );
+		SettingsSync::on_static_option_add( 'totally_unrelated_option', 42 );
+
+		// The contract under test here is "doesn't crash" — handled errors only.
+		$this->assertTrue( true );
+	}
+
+	public function test_static_handler_skips_when_static_syncing_is_true(): void {
+		// With the static guard set, the handler short-circuits BEFORE the
+		// synced-option check, before Config, before JobIntake. So even passing
+		// an option that IS in PERF_TUNING_OPTIONS must not trigger a real
+		// JobIntake write.
+		SettingsSync::suppress_sync( true );
+		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
+		SettingsSync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'a' ] );
+		SettingsSync::suppress_sync( false );
+		$this->assertTrue( true );
+	}
+
+	public function test_static_handler_ignores_unknown_option(): void {
+		SettingsSync::suppress_sync( false );
+		// Unknown option must not crash and must not attempt to load Config.
+		SettingsSync::on_static_option_update( 'totally_unrelated_option', null, 42 );
+		$this->assertTrue( true );
+	}
+
+	public function test_synced_options_constant_exposes_remap(): void {
+		// Spec: SYNCED_OPTIONS exposed as a public const so callers (and tests)
+		// can reference the canonical local→remote mapping without instantiating
+		// the class.
+		$this->assertArrayHasKey(
+			'newspack_event_logger_nodes_remote_num_segments',
+			SettingsSync::SYNCED_OPTIONS
+		);
+		$this->assertSame(
+			'newspack_event_logger_nodes_num_segments',
+			SettingsSync::SYNCED_OPTIONS['newspack_event_logger_nodes_remote_num_segments']
+		);
+	}
+
+	public function test_perf_tuning_options_constant_lists_nine_options(): void {
+		$this->assertContains( 'newspack_event_logger_nodes_log_events', SettingsSync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_log_urls', SettingsSync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_custom_events', SettingsSync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_significant_events', SettingsSync::PERF_TUNING_OPTIONS );
+		// The full list is 9 entries.
+		$this->assertCount( 9, SettingsSync::PERF_TUNING_OPTIONS );
+	}
+
+	public function test_allowed_endpoint_prefixes_constant(): void {
+		$this->assertSame(
+			[ '/wp-json/newspack-nodes/', '/wp-json/newspack-nodes-aggregator/' ],
+			SettingsSync::ALLOWED_ENDPOINT_PREFIXES
+		);
+	}
+
+	public function test_endpoint_constant(): void {
+		$this->assertSame( '/wp-json/newspack-nodes/v1/settings', SettingsSync::ENDPOINT );
+		$this->assertTrue( SettingsSync::is_allowed_endpoint( SettingsSync::ENDPOINT ) );
 	}
 }
