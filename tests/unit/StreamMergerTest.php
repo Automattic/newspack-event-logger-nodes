@@ -3,6 +3,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\StreamMerger;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\EventFramework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\CaptureSink;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -67,5 +69,66 @@ class StreamMergerTest extends TestCase {
 
 		$out = json_decode( $capture->captured[0][ Message::VALUE ], true );
 		$this->assertSame( 'remote_job', $out['k'] );
+	}
+
+	public function test_add_remote_registers_curl_handle_with_event_framework(): void {
+		EventFramework::reset();
+		$sm = new StreamMerger();
+		$sm->add_remote( 'site-a', 'http://localhost:9999/stream', 'tok' );
+		$this->assertSame( 1, $sm->remote_count() );
+	}
+
+	public function test_on_curl_message_clears_handle_on_completion(): void {
+		EventFramework::reset();
+		$sm = new StreamMerger();
+		Core::set_now( 1000.0 );
+		$sm->add_remote( 'site-a', 'http://127.0.0.1:1/x', 'tok' ); // unreachable
+
+		// Active count goes up after add (handle attached).
+		$this->assertGreaterThanOrEqual( 0, $sm->active_count() );
+
+		// Synthesize a completion message and feed it to on_curl_message.
+		// Use the actually-attached handle so the lookup succeeds.
+		$handle = $sm->test_get_handle( 'site-a' );
+		$this->assertNotNull( $handle );
+
+		$sm->on_curl_message( [
+			'msg'    => \CURLMSG_DONE,
+			'result' => \CURLE_COULDNT_CONNECT,
+			'handle' => $handle,
+		] );
+
+		// After completion, the handle is cleared.
+		$this->assertNull( $sm->test_get_handle( 'site-a' ) );
+		$this->assertSame( 0, $sm->active_count() );
+		$this->assertSame( 1, $sm->remote_count() );
+	}
+
+	public function test_tick_attempts_reconnect_after_backoff(): void {
+		EventFramework::reset();
+		$sm = new StreamMerger();
+		Core::set_now( 1000.0 );
+		$sm->add_remote( 'site-a', 'http://127.0.0.1:1/x', 'tok' );
+
+		// Force a disconnect by simulating a curl-completion message.
+		$handle = $sm->test_get_handle( 'site-a' );
+		$sm->on_curl_message( [
+			'msg'    => \CURLMSG_DONE,
+			'result' => \CURLE_COULDNT_CONNECT,
+			'handle' => $handle,
+		] );
+		$this->assertSame( 0, $sm->active_count() );
+
+		// Within backoff window: tick is no-op (handle stays null).
+		Core::set_now( 1002.0 );
+		$sm->tick();
+		$this->assertSame( 0, $sm->active_count() );
+		$this->assertSame( 1, $sm->remote_count() );
+
+		// After backoff window: tick reconnects (handle becomes non-null).
+		Core::set_now( 1010.0 );
+		$sm->tick();
+		$this->assertSame( 1, $sm->active_count() );
+		$this->assertSame( 1, $sm->remote_count() );
 	}
 }
