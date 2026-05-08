@@ -19,3 +19,4 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-request-builder.php';
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-flame-builder.php';
+require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-job-router.php';
