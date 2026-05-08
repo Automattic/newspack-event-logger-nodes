@@ -96,3 +96,4 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/BoundedTick
 require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
 require_once __DIR__ . '/Helpers/TestCase.php';
+require_once __DIR__ . '/Helpers/FakeMemcached.php';
