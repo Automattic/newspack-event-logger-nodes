@@ -1,4 +1,8 @@
 <?php
+// Redirect PHP's error_log() to /dev/null so negative-path tests don't spew
+// into test output. (Matches newspack-event-logger-plugins/tests/bootstrap.php:35.)
+\ini_set( 'error_log', '/dev/null' );
+
 \define( 'ABSPATH', '/' );
 
 if ( ! function_exists( 'plugin_dir_path' ) ) {
