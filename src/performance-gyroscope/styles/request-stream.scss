@@ -1,0 +1,252 @@
+/**
+ * Request Stream Styles
+ *
+ * Smooth scrolling real-time request log with animations.
+ */
+
+@use "base";
+
+.event-logger-request-stream {
+	background: base.$dark-bg;
+	color: base.$dark-text;
+	padding: 20px 16px 16px;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	font-family: base.$system-font;
+}
+
+.event-logger-request-stream-header {
+	flex-shrink: 0;
+}
+
+.event-logger-request-stream-controls {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+input.event-logger-request-stream-search {
+
+	@include base.dark-search-input;
+	width: 280px;
+}
+
+.event-logger-request-stream-stats {
+
+	@include base.dark-stats;
+	min-width: 100px;
+}
+
+.event-logger-request-stream-count {
+
+	@include base.dark-stats-count;
+}
+
+.event-logger-request-stream-rps {
+
+	@include base.dark-stats-rps;
+}
+
+.event-logger-request-stream-btn {
+
+	@include base.dark-button;
+
+	&.paused,
+	&.active {
+		background: base.$success-bg;
+		border-color: base.$success-border;
+		color: base.$white;
+	}
+}
+
+.event-logger-request-stream-column-picker {
+
+	@include base.dark-column-picker;
+}
+
+.event-logger-request-stream-error {
+
+	@include base.dark-error-banner;
+}
+
+.event-logger-request-stream-list {
+	flex: 1;
+	overflow-y: scroll;
+	overflow-x: hidden;
+	background: transparent;
+	border-radius: 0;
+	padding: 0;
+	-webkit-overflow-scrolling: touch;
+	display: flex;
+	flex-direction: column;
+
+	// Custom scrollbar.
+	&::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	&::-webkit-scrollbar-track {
+		background: base.$dark-bg;
+		border-radius: 4px;
+	}
+
+	&::-webkit-scrollbar-thumb {
+		background: base.$dark-border;
+		border-radius: 4px;
+
+		&:hover {
+			background: base.$dark-bg-active;
+		}
+	}
+}
+
+.event-logger-request-stream-header-row {
+	display: grid;
+	gap: 12px;
+	padding: 6px 8px;
+	background: base.$dark-bg-secondary;
+	flex-shrink: 0;
+}
+
+.event-logger-request-stream-th {
+	color: base.$dark-text-muted;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	cursor: default;
+}
+
+.event-logger-request-stream-content {
+	display: flex;
+	flex-direction: column;
+	will-change: transform; // GPU acceleration for smooth transforms.
+}
+
+.event-logger-request-stream-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	color: base.$dark-text-dim;
+	font-size: 14px;
+	font-style: italic;
+}
+
+.event-logger-request-stream-entry {
+	display: grid;
+	gap: 12px;
+	align-items: center;
+	padding: 8px 12px;
+	height: 33px; // Fixed height for virtualization.
+	box-sizing: border-box;
+	border-radius: 4px;
+	text-decoration: none;
+	color: inherit;
+	font-family: base.$mono-font;
+	font-size: 12px;
+
+	// Use class-based alternating instead of nth-child to prevent
+	// color flipping during smooth scroll animation.
+	&.row-odd {
+		background: base.$dark-bg-secondary;
+
+		&:hover {
+			background: base.$dark-bg-row-hover;
+		}
+	}
+
+	&.row-even {
+		background: base.$dark-bg-row-even;
+
+		&:hover {
+			background: base.$dark-bg-row-hover;
+		}
+	}
+}
+
+// Responsive adjustments.
+@media (max-width: 1200px) {
+
+	.event-logger-request-stream-entry {
+		gap: 8px;
+		padding: 6px 10px;
+	}
+
+	input.event-logger-request-stream-search {
+		width: 200px !important;
+	}
+}
+
+@media (max-width: 800px) {
+
+	input.event-logger-request-stream-search {
+		width: 150px !important;
+	}
+
+	.event-logger-request-stream-controls {
+		flex-wrap: wrap;
+	}
+}
+
+// =============================================================================
+// Duration color classes (matches formatUtils getDurationColor thresholds)
+// =============================================================================
+
+.entry-duration {
+
+	&--fast {
+		color: base.$dark-success; // < 1000ms
+	}
+
+	&--slow {
+		color: base.$warning-color; // 1000-5000ms
+	}
+
+	&--critical {
+		color: base.$error-text; // > 5000ms
+	}
+}
+
+// =============================================================================
+// Status code color classes (matches formatUtils STATUS_COLORS)
+// =============================================================================
+
+.entry-status {
+
+	&--2xx {
+		color: base.$status-2xx;
+	}
+
+	&--3xx {
+		color: base.$dark-info;
+	}
+
+	&--4xx {
+		color: base.$warning-color;
+	}
+
+	&--5xx {
+		color: base.$error-text;
+	}
+
+	&--unknown {
+		color: base.$dark-text-muted;
+	}
+}
+
+// =============================================================================
+// Timing warning classes (age, lag)
+// =============================================================================
+
+.entry-timing {
+
+	&--normal {
+		color: base.$dark-text-muted;
+	}
+
+	&--warning {
+		color: base.$warning-color;
+	}
+}

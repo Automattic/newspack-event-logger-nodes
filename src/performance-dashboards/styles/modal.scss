@@ -1,0 +1,82 @@
+/**
+ * Modal Styles
+ *
+ * Performance dashboard modal, header stats, back button.
+ * Uses doubled selectors for specificity to override WP component styles.
+ */
+
+@use "base";
+
+// Performance Dashboard Modal Styles
+// Double selector for specificity (overrides Gutenberg defaults)
+.event-logger-performance-modal.event-logger-performance-modal {
+
+	&.components-modal__frame {
+		width: 95vw;
+		max-width: 95vw;
+		height: 95vh;
+		max-height: 95vh;
+		margin: 24px auto;
+
+		// Back button positioned next to the X close button
+		.event-logger-modal-back-button {
+			position: absolute;
+			top: 24px;
+			right: 64px; // To the left of the X button
+			width: 36px;
+			height: 36px;
+			padding: 0;
+			margin: 0;
+			border: none;
+			background: transparent;
+			cursor: pointer;
+			font-size: 18px;
+			color: base.$light-text;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			border-radius: 2px;
+			z-index: 10;
+
+			&:hover {
+				background: rgba(0, 0, 0, 0.1);
+			}
+
+			&:focus {
+				outline: 2px solid base.$focus-color;
+				outline-offset: -2px;
+			}
+		}
+	}
+
+	.components-modal__content {
+		overflow-y: auto;
+		max-height: calc(90vh - 60px);
+	}
+
+	// Header stats next to title
+	.components-modal__header {
+		flex-wrap: nowrap;
+		gap: 16px;
+	}
+
+	.event-logger-header-stats {
+		display: flex;
+		gap: 16px;
+		margin-left: auto;
+		margin-right: 48px; // Space for close button
+		font-size: 14px;
+		white-space: nowrap;
+
+		span {
+			display: flex;
+			align-items: baseline;
+			gap: 4px;
+
+			small {
+				color: base.$light-text-secondary;
+				font-size: 11px;
+			}
+		}
+	}
+}

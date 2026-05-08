@@ -1,0 +1,27 @@
+/**
+ * Chart Styles
+ *
+ * Response chart, aggregate time chart.
+ */
+
+// Unified section heading style
+.event-logger-response-chart,
+.event-logger-aggregate-time-chart,
+.event-logger-flame-container,
+.event-logger-request-profile,
+.event-logger-table--requests,
+.event-logger-log-entries {
+
+	h3 {
+		margin: 0 0 12px;
+		font-size: 16px;
+		font-weight: 600;
+	}
+}
+
+// Card header h2 style
+.event-logger-performance-dashboard .components-card__header h2 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}

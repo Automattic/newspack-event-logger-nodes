@@ -1,0 +1,266 @@
+/**
+ * Custom Event Selector Modal Styles
+ *
+ * A polished modal for selecting custom events with color swatches.
+ * Refined administrative aesthetic with subtle micro-interactions.
+ */
+
+@use "base";
+
+// =============================================================================
+// Modal Container
+// =============================================================================
+
+.event-logger-custom-event-modal.event-logger-custom-event-modal {
+
+	&.components-modal__frame {
+		width: 680px;
+		max-width: 95vw;
+		border-radius: base.$border-radius-lg;
+		box-shadow:
+			0 4px 6px rgba(0, 0, 0, 0.07),
+			0 12px 28px rgba(0, 0, 0, 0.12);
+	}
+
+	.components-modal__header {
+		border-bottom: 1px solid base.$light-border-muted;
+		padding: 16px 20px;
+	}
+
+	.components-modal__header-heading {
+		font-size: 15px;
+		font-weight: 600;
+		color: base.$light-text;
+	}
+
+	.components-modal__content {
+		padding: 0;
+	}
+}
+
+// =============================================================================
+// Header Section
+// =============================================================================
+
+.custom-event-header {
+	padding: 16px 20px;
+	background: base.$light-surface-alt;
+	border-bottom: 1px solid base.$light-border-faint;
+}
+
+.custom-event-search {
+	margin-bottom: 12px;
+
+	.components-search-control__input {
+		border-radius: base.$border-radius !important;
+		border-color: base.$light-border !important;
+		transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+		&:focus {
+			border-color: base.$focus-color !important;
+			box-shadow: 0 0 0 1px base.$focus-color !important;
+		}
+	}
+}
+
+.custom-event-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.custom-event-btn {
+	font-size: 13px !important;
+	padding: 6px 12px !important;
+	border-radius: base.$border-radius !important;
+	transition: background 0.15s ease !important;
+
+	&:hover {
+		background: base.$light-surface !important;
+	}
+}
+
+.custom-event-apply {
+	margin-left: auto;
+	font-size: 13px !important;
+	padding: 6px 16px !important;
+	border-radius: base.$border-radius !important;
+	font-weight: 500 !important;
+}
+
+// =============================================================================
+// Event Grid
+// =============================================================================
+
+.custom-event-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 2px;
+	padding: 8px;
+	max-height: 420px;
+	overflow-y: auto;
+	background: base.$light-border-faint;
+
+	// Subtle scrollbar styling
+	&::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	&::-webkit-scrollbar-track {
+		background: base.$light-surface;
+	}
+
+	&::-webkit-scrollbar-thumb {
+		background: base.$light-border;
+		border-radius: 4px;
+
+		&:hover {
+			background: base.$light-text-muted;
+		}
+	}
+}
+
+// =============================================================================
+// Event Item
+// =============================================================================
+
+.custom-event-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	background: base.$white;
+	cursor: pointer;
+	transition: background 0.12s ease;
+	position: relative;
+
+	&:hover {
+		background: base.$light-surface;
+	}
+
+	&.is-selected {
+		background: base.$light-selected;
+
+		.custom-event-name {
+			color: base.$light-text;
+			font-weight: 500;
+		}
+
+		.custom-event-swatch {
+			transform: scale(1.1);
+			box-shadow:
+				0 0 0 2px base.$white,
+				0 0 0 3px var(--event-color);
+		}
+	}
+}
+
+// =============================================================================
+// Custom Checkbox
+// =============================================================================
+
+.custom-event-checkbox {
+	// Hide native checkbox
+	position: absolute;
+	opacity: 0;
+	width: 0;
+	height: 0;
+
+	// Custom checkbox via sibling
+	+ .custom-event-swatch::before {
+		content: "";
+		position: absolute;
+		left: -24px;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 16px;
+		height: 16px;
+		border: 1.5px solid base.$light-border;
+		border-radius: 3px;
+		background: base.$white;
+		transition: all 0.15s ease;
+	}
+
+	&:checked + .custom-event-swatch::before {
+		background: base.$focus-color;
+		border-color: base.$focus-color;
+	}
+
+	// Checkmark
+	&:checked + .custom-event-swatch::after {
+		content: "";
+		position: absolute;
+		left: -20px;
+		top: 50%;
+		transform: translateY(-60%) rotate(45deg);
+		width: 4px;
+		height: 8px;
+		border: solid base.$white;
+		border-width: 0 2px 2px 0;
+	}
+
+	// Focus state
+	&:focus-visible + .custom-event-swatch::before {
+		box-shadow: 0 0 0 2px rgba(base.$focus-color, 0.25);
+	}
+}
+
+// =============================================================================
+// Color Swatch
+// =============================================================================
+
+// stylelint-disable no-descending-specificity
+.custom-event-swatch {
+	position: relative;
+	width: 14px;
+	height: 14px;
+	margin-left: 24px; // Space for custom checkbox
+	background: var(--event-color, #ffa726);
+	border-radius: 3px;
+	flex-shrink: 0;
+	transition: transform 0.15s ease, box-shadow 0.15s ease;
+	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+// =============================================================================
+// Event Name
+// =============================================================================
+
+.custom-event-name {
+	font-size: 13px;
+	color: base.$light-text-secondary;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	transition: color 0.12s ease, font-weight 0.12s ease;
+	letter-spacing: -0.01em;
+}
+// stylelint-enable no-descending-specificity
+
+// =============================================================================
+// Footer
+// =============================================================================
+
+.custom-event-footer {
+	padding: 12px 20px;
+	border-top: 1px solid base.$light-border-faint;
+	background: base.$light-surface-alt;
+	display: flex;
+	justify-content: flex-end;
+}
+
+.custom-event-count {
+	font-size: 12px;
+	color: base.$light-text-muted;
+}
+
+// =============================================================================
+// Responsive
+// =============================================================================
+
+@media (max-width: 600px) {
+
+	.custom-event-grid {
+		grid-template-columns: 1fr;
+	}
+}

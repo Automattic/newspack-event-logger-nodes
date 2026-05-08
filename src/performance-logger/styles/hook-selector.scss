@@ -1,0 +1,172 @@
+/**
+ * Hook Selector Styles
+ *
+ * Hook selector modal for configuring tracked hooks.
+ * Uses doubled selectors for specificity to override WP component styles.
+ */
+
+@use "base";
+
+// Hook Selector Modal
+// Double selector for specificity (overrides Gutenberg defaults)
+.event-logger-hook-selector-modal.event-logger-hook-selector-modal {
+
+	&.components-modal__frame {
+		width: 1100px;
+		max-width: 95vw;
+		height: 85vh;
+		max-height: 85vh;
+	}
+
+	.components-modal__content {
+		padding: 0;
+		overflow-y: auto;
+	}
+
+	.hook-selector-header {
+		padding: 16px 20px;
+		border-bottom: 1px solid base.$light-border-muted;
+		background: base.$light-surface-alt;
+		position: sticky;
+		top: 0;
+		z-index: 1;
+
+		.components-search-control {
+			margin-bottom: 12px;
+		}
+	}
+
+	.hook-selector-actions {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.hook-selector-categories {
+		padding: 0;
+	}
+
+	.hook-selector-category-header {
+		display: flex;
+		align-items: center;
+		padding: 10px 16px;
+		cursor: pointer;
+		background: base.$white;
+		gap: 8px;
+
+		&:hover {
+			background: base.$light-surface;
+		}
+
+		.components-checkbox-control__input-container {
+			margin: 0;
+		}
+	}
+
+	.hook-selector-hooks {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		gap: 4px 16px;
+		padding: 8px 16px 16px 40px;
+		background: base.$light-surface-hover;
+		border-top: 1px solid base.$light-border-faint;
+	}
+
+	.hook-selector-category {
+		border-bottom: 1px solid base.$light-border-faint;
+
+		&:last-child {
+			border-bottom: none;
+		}
+
+		// Discovered category styling
+		&.hook-selector-category-discovered {
+			background: base.$discovered-bg;
+			border-left: 3px solid base.$recommended-color;
+
+			.hook-selector-category-header {
+				background: base.$discovered-bg;
+
+				&:hover {
+					background: base.$discovered-hover;
+				}
+			}
+
+			.hook-selector-hooks {
+				background: base.$discovered-hooks;
+			}
+		}
+	}
+
+	.hook-selector-expand {
+		width: 16px;
+		font-size: 10px;
+		color: base.$light-text-muted;
+		flex-shrink: 0;
+	}
+
+	.hook-selector-category-name {
+		font-weight: 500;
+		font-size: 14px;
+		flex-shrink: 0;
+	}
+
+	.hook-selector-recommended {
+		color: base.$recommended-color;
+		margin-left: 4px;
+		font-size: 12px;
+	}
+
+	.hook-selector-category-desc {
+		color: base.$dark-text-placeholder;
+		font-size: 12px;
+		flex: 1;
+		margin-left: 8px;
+	}
+
+	.hook-selector-category-count {
+		font-size: 12px;
+		color: base.$light-text-muted;
+		background: base.$light-border-light;
+		padding: 2px 8px;
+		border-radius: 10px;
+		flex-shrink: 0;
+	}
+
+	.hook-selector-hook {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 0;
+		cursor: pointer;
+		font-size: 12px;
+
+		&:hover {
+			background: base.$light-selected;
+		}
+
+		input[type="checkbox"] {
+			margin: 0;
+		}
+	}
+
+	.hook-selector-hook-name {
+		font-family: base.$mono-font;
+		font-size: 11px;
+		color: base.$dark-bg-tertiary;
+		word-break: break-all;
+	}
+
+	.hook-selector-hook-recommended {
+
+		.hook-selector-hook-name {
+			font-weight: 500;
+		}
+	}
+
+	.hook-selector-recommended-star {
+		color: base.$recommended-color;
+		margin-left: 4px;
+		font-size: 10px;
+	}
+}

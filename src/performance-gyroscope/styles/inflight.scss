@@ -1,0 +1,137 @@
+/**
+ * Inflight/Gyroscope Styles
+ *
+ * Live request view, gyroscope page.
+ */
+
+@use "base";
+
+// Inflight requests (Gyroscope-style live view)
+.event-logger-inflight {
+	background: base.$dark-bg;
+	border-radius: 4px;
+	padding: 16px;
+	color: base.$dark-text;
+	font-family: base.$system-font;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+.event-logger-inflight-header {
+	flex-wrap: wrap;
+	gap: 8px;
+
+	h3 {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-shrink: 0;
+	}
+}
+
+.event-logger-inflight-meta {
+	display: flex;
+	gap: 8px 16px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.event-logger-inflight-stats {
+
+	@include base.dark-stats;
+}
+
+.event-logger-inflight-count {
+
+	@include base.dark-stats-count;
+}
+
+.event-logger-inflight-rps {
+
+	@include base.dark-stats-rps;
+}
+
+.event-logger-inflight-error {
+
+	@include base.dark-error-banner;
+}
+
+// Controls (buttons, dropdowns)
+.event-logger-inflight-btn {
+
+	@include base.dark-button;
+}
+
+.event-logger-inflight-select {
+	background: base.$dark-bg-tertiary;
+	border: 1px solid base.$dark-border;
+	color: base.$dark-text-muted;
+	padding: 6px 12px;
+	border-radius: 4px;
+	font-size: 12px;
+	cursor: pointer;
+	min-width: 60px;
+	min-height: 30px;
+
+	&:hover {
+		background: base.$dark-bg-hover;
+		color: base.$white;
+	}
+
+	&:focus {
+		outline: none;
+		border-color: base.$dark-accent;
+	}
+}
+
+.event-logger-inflight-column-picker {
+
+	@include base.dark-column-picker;
+	gap: base.$space-md; // Slightly wider gap for this variant
+}
+
+.event-logger-state-badge {
+	display: inline-block;
+	padding: 2px 6px;
+	border-radius: 3px;
+	font-size: 10px;
+	font-weight: 600;
+	color: base.$white;
+	text-transform: lowercase;
+	max-width: 90px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: middle;
+}
+
+
+.event-logger-inflight-legend {
+	display: flex;
+	gap: 8px;
+	font-size: 11px;
+
+	@media (max-width: 1200px) {
+		display: none;
+	}
+
+	span {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+}
+
+// Gyroscope page - styles handled via inline JS for menu collapse detection
+// Just style the inner inflight component
+#event-logger-gyroscope {
+
+	.event-logger-inflight {
+		height: 100%;
+		border-radius: 0;
+		padding: 20px 16px 16px;
+		box-sizing: border-box;
+		overflow-y: auto;
+	}
+}

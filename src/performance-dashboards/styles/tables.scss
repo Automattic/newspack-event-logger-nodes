@@ -1,0 +1,211 @@
+/**
+ * Table Styles
+ *
+ * Unified table system for URL table and recent requests.
+ */
+
+@use "base";
+
+// =============================================================================
+// Shared Table Base
+// =============================================================================
+
+.event-logger-table {
+	display: flex;
+	flex-direction: column;
+}
+
+.event-logger-table__scroll {
+	overflow-x: auto;
+}
+
+.event-logger-table__header {
+
+	@include base.table-header;
+}
+
+.event-logger-table__header-btn {
+
+	@include base.sortable-header-button;
+
+	&--numeric {
+		text-align: right;
+	}
+
+	&--center {
+		text-align: center;
+	}
+}
+
+.event-logger-table__list {
+
+	@include base.table-list;
+}
+
+.event-logger-table__row {
+
+	@include base.table-row;
+}
+
+.event-logger-table__cell {
+
+	@include base.table-cell;
+
+	&--numeric {
+
+		@include base.table-cell-numeric;
+	}
+
+	&--center {
+		text-align: center;
+	}
+
+	&--status {
+		text-align: center;
+		font-family: base.$mono-font;
+		font-size: 11px;
+		font-weight: 600;
+	}
+
+	&--mono {
+		font-family: base.$mono-font;
+		font-size: 12px;
+	}
+}
+
+.event-logger-table__empty {
+
+	@include base.table-empty;
+	height: 100px;
+}
+
+// =============================================================================
+// URL Table Variant
+// =============================================================================
+
+.event-logger-table--urls {
+
+	.event-logger-table__header,
+	.event-logger-table__row {
+		grid-template-columns: 60px minmax(0, 1fr) repeat(4, 50px) repeat(4, 55px) 60px;
+		min-width: 800px;
+	}
+}
+
+// =============================================================================
+// Pagination
+// =============================================================================
+
+.event-logger-table__pagination {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 8px 0;
+	margin-top: 4px;
+	font-size: 13px;
+	color: #666;
+}
+
+.event-logger-table__pagination-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.event-logger-table__pagination-btn {
+	padding: 4px 10px;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+	background: #fff;
+	cursor: pointer;
+	font-size: 13px;
+	color: #333;
+
+	&:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	&:hover:not(:disabled) {
+		background: #f0f0f0;
+		border-color: #999;
+	}
+}
+
+.event-logger-table__pagination-page {
+	font-size: 13px;
+	white-space: nowrap;
+}
+
+// =============================================================================
+// Request Table Variant
+// =============================================================================
+
+.event-logger-table--requests {
+	margin-top: 20px;
+
+	.event-logger-table__header,
+	.event-logger-table__row {
+		grid-template-columns: 150px 50px minmax(0, 1fr) 50px 70px 50px;
+	}
+
+	.event-logger-table__row {
+		font-size: 13px;
+	}
+}
+
+// =============================================================================
+// Log Entries (non-virtualized table)
+// =============================================================================
+
+.event-logger-log-entries {
+
+	table {
+		font-size: 12px;
+
+		td {
+			vertical-align: top;
+		}
+	}
+
+	.log-entries-search {
+		display: flex;
+		align-items: flex-end;
+		gap: 8px;
+		margin-bottom: 8px;
+
+		&__controls {
+			display: flex;
+			align-items: center;
+			gap: 4px;
+			white-space: nowrap;
+		}
+
+		&__count {
+			font-size: 12px;
+			color: #666;
+			min-width: 50px;
+			text-align: center;
+		}
+
+		&__nav {
+			background: none;
+			border: 1px solid #8c8f94;
+			border-radius: 3px;
+			cursor: pointer;
+			font-size: 10px;
+			padding: 2px 5px;
+			color: #50575e;
+			line-height: 1;
+
+			&:disabled {
+				opacity: 0.4;
+				cursor: default;
+			}
+
+			&:hover:not(:disabled) {
+				background: #f0f0f1;
+			}
+		}
+	}
+}

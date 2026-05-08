@@ -1,0 +1,28 @@
+/**
+ * Flame Graph Styles
+ *
+ * Empty state, animations, tooltip.
+ */
+
+@use "base";
+
+// Flame graph empty state
+.event-logger-flame-empty {
+	padding: 24px;
+	text-align: center;
+	color: base.$light-text-secondary;
+	background: base.$light-surface;
+	border-radius: 4px;
+}
+
+// Flame graph tooltip - ensure it appears above WordPress admin elements
+.d3-flame-graph-tip {
+	z-index: 100001 !important;
+	white-space: pre-wrap !important;
+	word-wrap: break-word !important;
+	overflow-wrap: break-word !important;
+	max-width: 500px;
+	font-family: base.$mono-font;
+	font-size: 12px;
+	line-height: 1.4;
+}
