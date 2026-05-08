@@ -70,6 +70,24 @@ if ( ! function_exists( 'current_user_can' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_option' ) ) {
+	$GLOBALS['_wp_options'] = [];
+	function get_option( string $key, mixed $default = false ): mixed {
+		return $GLOBALS['_wp_options'][ $key ] ?? $default;
+	}
+	function update_option( string $key, mixed $value ): bool {
+		$GLOBALS['_wp_options'][ $key ] = $value;
+		return true;
+	}
+	function delete_option( string $key ): bool {
+		unset( $GLOBALS['_wp_options'][ $key ] );
+		return true;
+	}
+	function wp_salt( string $scheme = 'auth' ): string {
+		return 'TEST_SALT_FOR_' . $scheme;
+	}
+}
+
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/newspack-nodes.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CaptureSink.php';
