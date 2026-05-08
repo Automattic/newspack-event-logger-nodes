@@ -1,20 +1,23 @@
 <?php
 /**
- * Stats_Store: 10-namespace memcache schema for performance stats.
+ * Stats_Store: 9-namespace memcache schema for performance stats.
  *
  * Per-key prefix: `evlog[:salt]:p{N}:{namespace}:...`
  *
  * Namespaces:
  *   hourly      Y-m-d-H buckets, count + sum_ms + sum_peak_mb
  *   lb          5-min global leaderboard buckets, sums-not-means
- *   lb_s        per-server leaderboard, keyed by server
- *   urls        5-min URL index, keyed by URL → {count, sum_req_time, samples}
+ *   lb_s        per-server leaderboard, keyed by server hash
+ *   urls        5-min URL index, keyed by URL → {count, sum_ms, samples, durations}
  *   url         per-URL flame/profile blob (TTL = max(3600, max_lifespan/24))
  *   dim         dimensional time series (status/method/server/...)
  *   url_dim     per-URL dimensional time series
  *   categories  global category time series
  *   url_cat     per-URL category time series
- *   flame_cache rotated FlameBuilder buckets ({event_name => {count, sum_time}})
+ *
+ * The `lb_s` (per-server leaderboard), `categories` per-server, and dimensional
+ * per-server variants hash the server name with FNV-1a so the resulting key
+ * stays ASCII-safe (server names can contain dots, dashes, IDN chars).
  *
  * Sums-not-means storage: every aggregate stores raw sums (count + sum_*),
  * so cross-instance and cross-bucket merge is exact addition. Display layer
@@ -48,11 +51,11 @@ class Stats_Store {
 	public const NS_URL_DIM     = 'url_dim';
 	public const NS_CATEGORIES  = 'categories';
 	public const NS_URL_CAT     = 'url_cat';
-	public const NS_FLAME_CACHE = 'flame_cache';
 
-	public const MAX_CAT_VALUES     = 50;
-	public const MAX_DIM_VALUES     = 20;
-	public const MAX_URL_DIM_VALUES = 10;
+	public const MAX_CAT_VALUES           = 50;
+	public const MAX_DIM_VALUES           = 20;
+	public const MAX_URL_DIM_VALUES       = 10;
+	public const MAX_DURATIONS_PER_BUCKET = 100;
 
 	private const PREFIX_BASE  = 'evlog';
 	private const SALT_OPTION  = 'newspack_nodes_stats_salt';
@@ -92,6 +95,10 @@ class Stats_Store {
 		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
 	}
 
+	public function partition(): int {
+		return $this->partition;
+	}
+
 	// -------------------------------------------------------------------------
 	// Bucket key helpers — gmdate so cross-server/timezone consistency.
 	// -------------------------------------------------------------------------
@@ -107,6 +114,33 @@ class Stats_Store {
 		return \gmdate( 'Y-m-d-H', \time() );
 	}
 
+	/**
+	 * 5-min bucket key for a given timestamp. Used by FlameBuilder to align
+	 * its in-memory bucket rotation with the memcache key space.
+	 */
+	public function bucket_key_for( int $timestamp ): string {
+		$min        = (int) \gmdate( 'i', $timestamp );
+		$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
+		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
+	}
+
+	/**
+	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
+	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
+	 */
+	public static function server_key( string $server ): string {
+		if ( '' === $server ) {
+			return '';
+		}
+		$hash = 2166136261;
+		$len  = \strlen( $server );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$hash ^= \ord( $server[ $i ] );
+			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
+		}
+		return \sprintf( '%08x', $hash );
+	}
+
 	private function key( string ...$parts ): string {
 		\array_unshift( $parts, $this->prefix, 'p' . $this->partition );
 		return \implode( ':', $parts );
@@ -120,6 +154,10 @@ class Stats_Store {
 	public function get_hourly(): array {
 		$val = $this->mc->get( $this->key( self::NS_HOURLY ) );
 		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_hourly( array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_HOURLY ), $data, $this->ttl() );
 	}
 
 	public function bump_hourly( float $req_time_secs, float $peak_mb ): void {
@@ -145,7 +183,7 @@ class Stats_Store {
 
 	// -------------------------------------------------------------------------
 	// URL index: { bucket => { url => {count, sum_req_time, samples} } }
-	// One key per (partition, bucket).
+	// Plus an explicit bucket-keyed setter for FlameBuilder's full-bucket merge.
 	// -------------------------------------------------------------------------
 
 	public function get_url_bucket( string $bucket ): array {
@@ -160,9 +198,9 @@ class Stats_Store {
 		$keys = [];
 		$map  = [];
 		foreach ( $buckets as $b ) {
-			$k          = $this->key( self::NS_URLS, $b );
-			$keys[]     = $k;
-			$map[ $k ]  = $b;
+			$k         = $this->key( self::NS_URLS, $b );
+			$keys[]    = $k;
+			$map[ $k ] = $b;
 		}
 		$results = $this->mc->get_multi( $keys );
 		$out     = [];
@@ -182,6 +220,16 @@ class Stats_Store {
 		++$cur[ $url ]['samples'];
 		$cur[ $url ]['sum_req_time'] += $req_time;
 		$this->mc->set( $this->key( self::NS_URLS, $bucket ), $cur, $this->ttl() );
+	}
+
+	/** Explicit bucket setter (FlameBuilder's full-bucket overwrite path). */
+	public function set_url_index_hourly( string $bucket, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl() );
+	}
+
+	/** Alias of `get_url_bucket` matching upstream naming. */
+	public function get_url_index_hourly( string $bucket ): array {
+		return $this->get_url_bucket( $bucket );
 	}
 
 	// -------------------------------------------------------------------------
@@ -207,6 +255,10 @@ class Stats_Store {
 		return \is_array( $val ) ? $val : [];
 	}
 
+	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_LB, $bucket ), $data, $this->ttl() );
+	}
+
 	public function bump_leaderboard( float $req_time, array $categories = [] ): void {
 		$bucket = $this->current_url_bucket();
 		$cur    = $this->get_leaderboard_bucket( $bucket );
@@ -220,8 +272,12 @@ class Stats_Store {
 	}
 
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
-		$val = $this->mc->get( $this->key( self::NS_LB_S, $server, $bucket ) );
+		$val = $this->mc->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
 		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl() );
 	}
 
 	public function bump_server_leaderboard( string $server, float $req_time, array $categories = [] ): void {
@@ -233,7 +289,45 @@ class Stats_Store {
 		++$cur['count'];
 		$cur['sum_req_time'] += $req_time;
 		$this->merge_categories_into( $cur['categories'], $categories );
-		$this->mc->set( $this->key( self::NS_LB_S, $server, $bucket ), $cur, $this->ttl() );
+		$this->mc->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $cur, $this->ttl() );
+	}
+
+	/**
+	 * Additive merge of one leaderboard bucket's sums into another (modifying $dst).
+	 *
+	 * Used by FlameBuilder at persist time to combine the current flush's bucket
+	 * with the already-persisted bucket of the same key. Static so callers can
+	 * use it without an instance.
+	 */
+	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
+		$dst['count']        = (int)   ( $dst['count']        ?? 0 ) + (int)   ( $src['count']        ?? 0 );
+		$dst['sum_req_time'] = (float) ( $dst['sum_req_time'] ?? 0 ) + (float) ( $src['sum_req_time'] ?? 0 );
+		if ( ! isset( $dst['categories'] ) ) {
+			$dst['categories'] = [];
+		}
+		foreach ( ( $src['categories'] ?? [] ) as $cat => $data ) {
+			if ( ! isset( $dst['categories'][ $cat ] ) ) {
+				$dst['categories'][ $cat ] = [
+					'samples'   => 0,
+					'sum_time'  => 0.0,
+					'sum_count' => 0.0,
+					'entries'   => [],
+				];
+			}
+			$c               = &$dst['categories'][ $cat ];
+			$c['samples']   += (int)   ( $data['samples']   ?? 0 );
+			$c['sum_time']  += (float) ( $data['sum_time']  ?? 0 );
+			$c['sum_count'] += (float) ( $data['sum_count'] ?? 0 );
+			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
+				if ( ! isset( $c['entries'][ $name ] ) ) {
+					$c['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+				}
+				$c['entries'][ $name ][0] += (float) ( $entry[0] ?? 0 );
+				$c['entries'][ $name ][1] += (float) ( $entry[1] ?? 0 );
+				$c['entries'][ $name ][2] += (int)   ( $entry[2] ?? 0 );
+			}
+			unset( $c );
+		}
 	}
 
 	/**
@@ -264,12 +358,25 @@ class Stats_Store {
 
 	// -------------------------------------------------------------------------
 	// Dimensional: { bucket => { value => {c, s, m} } } per dimension.
-	// One key per (partition, dimension).
+	// One key per (partition, dimension) for the global, plus
+	// (partition, dimension, server) for the per-server variant.
 	// -------------------------------------------------------------------------
 
-	public function get_dimensional( string $dimension ): array {
-		$val = $this->mc->get( $this->key( self::NS_DIM, $dimension ) );
+	public function get_dimensional( string $dimension, string $server = '' ): array {
+		$parts = [ self::NS_DIM, $dimension ];
+		if ( '' !== $server ) {
+			$parts[] = self::server_key( $server );
+		}
+		$val = $this->mc->get( $this->key( ...$parts ) );
 		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_dimensional( string $dimension, array $data, string $server = '' ): bool {
+		$parts = [ self::NS_DIM, $dimension ];
+		if ( '' !== $server ) {
+			$parts[] = self::server_key( $server );
+		}
+		return $this->mc->set( $this->key( ...$parts ), $data, $this->ttl() );
 	}
 
 	public function bump_dimensional( string $dimension, string $value, float $req_time ): void {
@@ -294,6 +401,10 @@ class Stats_Store {
 		return \is_array( $val ) ? $val : [];
 	}
 
+	public function set_url_dimensional( string $url_hash, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl() );
+	}
+
 	public function bump_url_dimensional( string $url_hash, string $dimension, string $value, float $req_time ): void {
 		$cur                                  = $this->get_url_dimensional( $url_hash );
 		$bucket                               = $this->current_url_bucket();
@@ -312,14 +423,12 @@ class Stats_Store {
 	 * arrives and the bucket already has max-1 named entries (or is at max),
 	 * the value rolls into Other. Total slot count is bounded at $max.
 	 *
-	 * "total" is the pseudo-category running grand-total — exempt from the
-	 * cap so the running sum is never lost when many distinct values arrive.
+	 * "total" is the pseudo-category running grand-total — exempt from the cap.
 	 */
 	private function bump_with_cap( array &$bucket_data, string $value, float $req_time, int $max ): void {
 		if ( $value !== 'total' && ! isset( $bucket_data[ $value ] ) ) {
-			$count = \count( $bucket_data );
+			$count     = \count( $bucket_data );
 			$has_other = isset( $bucket_data['Other'] );
-			// At cap, or one slot below cap with Other not yet present: redirect.
 			if ( $count >= $max || ( $count >= $max - 1 && ! $has_other ) ) {
 				$value = 'Other';
 			}
@@ -340,12 +449,17 @@ class Stats_Store {
 	}
 
 	// -------------------------------------------------------------------------
-	// Categories: { bucket => { cat => {t, c, n} } }
+	// Categories (global): { bucket => { cat => {t, c, n} } }
+	// Plus per-server variants keyed by server hash.
 	// -------------------------------------------------------------------------
 
 	public function get_categories(): array {
 		$val = $this->mc->get( $this->key( self::NS_CATEGORIES ) );
 		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_categories( array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_CATEGORIES ), $data, $this->ttl() );
 	}
 
 	public function bump_category( string $category, float $time, int $invocations ): void {
@@ -359,6 +473,15 @@ class Stats_Store {
 		$this->mc->set( $this->key( self::NS_CATEGORIES ), $cur, $this->ttl() );
 	}
 
+	public function get_server_categories( string $server ): array {
+		$val = $this->mc->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
+		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_server_categories( string $server, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl() );
+	}
+
 	// -------------------------------------------------------------------------
 	// Per-URL categories: { bucket => { cat => {t, c, n} } } per url_hash.
 	// -------------------------------------------------------------------------
@@ -366,6 +489,10 @@ class Stats_Store {
 	public function get_url_categories( string $url_hash ): array {
 		$val = $this->mc->get( $this->key( self::NS_URL_CAT, $url_hash ) );
 		return \is_array( $val ) ? $val : [];
+	}
+
+	public function set_url_categories( string $url_hash, array $data ): bool {
+		return $this->mc->set( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl() );
 	}
 
 	public function bump_url_category( string $url_hash, string $category, float $time, int $invocations ): void {
@@ -382,8 +509,7 @@ class Stats_Store {
 	 * Bump a category {t, c, n} entry within a bucket, capping at $max with
 	 * "Other" rollover (same semantics as bump_with_cap).
 	 *
-	 * "total" is the pseudo-category running grand-total — exempt from the
-	 * cap so the running sum is never lost when many distinct categories arrive.
+	 * "total" is the pseudo-category running grand-total — exempt from the cap.
 	 */
 	private function bump_category_with_cap( array &$bucket_data, string $category, float $time, int $invocations, int $max ): void {
 		if ( $category !== 'total' && ! isset( $bucket_data[ $category ] ) ) {
@@ -400,40 +526,67 @@ class Stats_Store {
 	}
 
 	// -------------------------------------------------------------------------
-	// Flame cache: rotated FlameBuilder buckets keyed by bucket_id (e.g.,
-	// floor(time/200) string). Each bucket stores {event_name => {count, sum_time}}.
-	// One key per (partition, bucket_id). Sums-not-means: cross-bucket merge is
-	// exact addition.
+	// Multi-key access (cache pool) — used by FlameBuilder + dashboards for
+	// retention-window scans across all partitions in one round-trip.
 	// -------------------------------------------------------------------------
 
-	public function get_flame_bucket( string $bucket_id ): array {
-		$val = $this->mc->get( $this->key( self::NS_FLAME_CACHE, $bucket_id ) );
-		return \is_array( $val ) ? $val : [];
+	public function cache(): Cache_Interface {
+		return $this->mc;
 	}
 
-	public function set_flame_bucket( string $bucket_id, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_FLAME_CACHE, $bucket_id ), $data, $this->ttl() );
-	}
+	// -------------------------------------------------------------------------
+	// Sums-to-display helper (used by dashboards to render bucket-merged data).
+	// -------------------------------------------------------------------------
 
 	/**
-	 * Merge a rotated FlameBuilder bucket into memcache. Additive: if a bucket
-	 * already exists at this key (e.g., a previous worker checkpoint flushed
-	 * partial data), the new sums add to the existing sums.
+	 * Convert summed leaderboard data to the display shape expected by the frontend.
 	 *
-	 * @param string $bucket_id e.g., "floor(time/200)" as a string.
-	 * @param array  $data      {event_name => {count:int, sum_time:float}}
+	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
+	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
+	 *  - entries   are per-appearance averages (sum / samples).
+	 *
+	 * @param int   $total_count  Total profiled requests.
+	 * @param float $sum_req_time Sum of per-request $req_time values.
+	 * @param array $sums         Per-category sums keyed by category name.
+	 * @return array Display-shaped leaderboard data.
 	 */
-	public function merge_flame_bucket( string $bucket_id, array $data ): bool {
-		$existing = $this->get_flame_bucket( $bucket_id );
-		foreach ( $data as $name => $entry ) {
-			if ( ! \is_string( $name ) || ! \is_array( $entry ) ) {
-				continue;
+	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
+		$display_cats = [];
+		foreach ( $sums as $cat => $data ) {
+			$samples   = (int) ( $data['samples'] ?? 0 );
+			$sum_time  = (float) ( $data['sum_time'] ?? 0 );
+			$sum_count = (float) ( $data['sum_count'] ?? 0 );
+
+			$entries_out = [];
+			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
+				$e_samples = (int) ( $entry[2] ?? 0 );
+				if ( $e_samples > 0 ) {
+					$entries_out[ $name ] = [
+						( $entry[0] ?? 0 ) / $e_samples,
+						( $entry[1] ?? 0 ) / $e_samples,
+						$e_samples,
+					];
+				}
 			}
-			$existing[ $name ] ??= [ 'count' => 0, 'sum_time' => 0.0 ];
-			$existing[ $name ]['count']    += (int) ( $entry['count']    ?? 0 );
-			$existing[ $name ]['sum_time'] += (float) ( $entry['sum_time'] ?? 0 );
+
+			if ( \count( $entries_out ) > 100 ) {
+				\uasort( $entries_out, fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+				$entries_out = \array_slice( $entries_out, 0, 50, true );
+			}
+
+			$display_cats[ $cat ] = [
+				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
+				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
+				'samples' => $samples,
+				'entries' => $entries_out,
+			];
 		}
-		return $this->set_flame_bucket( $bucket_id, $existing );
+
+		return [
+			'count'      => $total_count,
+			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
+			'categories' => $display_cats,
+		];
 	}
 
 	// -------------------------------------------------------------------------

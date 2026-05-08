@@ -38,6 +38,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	}
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-memcached-cache.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-stats-store.php';
+	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-lru-cache.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-request-builder.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-flame-builder.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-stats-aggregator.php';

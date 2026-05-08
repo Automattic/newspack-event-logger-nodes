@@ -1,33 +1,33 @@
 <?php
 /**
- * FlameBuilder: aggregates completed-request events into per-event aggregates,
- * batched in a 5×1000 LRU bucket cache, flushed to memcache via Stats_Store on
- * bucket rotation.
+ * FlameBuilder: aggregates completed-request data into flame trees, per-URL
+ * aggregates, dimensional time-series, category time-series, and a global
+ * leaderboard — flushing every ~5s to memcache via Stats_Store.
  *
- * Receives JSON-encoded completed requests (output of RequestBuilder).
+ * Faithful port of `Newspack_Performance_Workers\Cron\FlameBuilder` adapted
+ * for the Node-with-fill substrate. The legacy class was a static handler
+ * driven by LogReader; here it's a Node subclass with `fill( array &$message )`
+ * as the entry point, and the legacy `$context` becomes private instance fields.
  *
- * Bucket structure (5×1000):
- *   - Up to NUM_BUCKETS (default 5) sequence-indexed buckets, each capped at
- *     MAX_PER_BUCKET (default 1000) distinct event-name entries:
- *       { event_name => { count: int, sum_time: float } }
- *   - Each bucket carries a wall-clock id (floor(creation_time / interval))
- *     used as the memcache key on flush — so cross-worker / cross-rotation
- *     merges land in the same key when the wall-clock window matches.
- *   - Rotation triggers:
- *     (a) time-based: a fill arriving in a wall-clock window past the current
- *         bucket's window forces rotation. Default interval matches
- *         RequestBuilder (200s).
- *     (b) size-based: a fill that would push the current bucket past
- *         MAX_PER_BUCKET entries forces rotation.
- *   - On rotation, if NUM_BUCKETS would be exceeded, the oldest bucket is
- *     merge-flushed into Stats_Store under NS_FLAME_CACHE keyed by its
- *     wall-clock id, then dropped.
- *   - Sums-not-means storage: rotated buckets store raw count + sum_time;
- *     cross-bucket merge in memcache is exact addition. Display layer
- *     computes means at read time.
+ * Input shape: TM_BYTESTREAM messages whose VALUE is a JSON-encoded request
+ * record (the output of RequestBuilder), including:
+ *   { rid, url, entries[], profiles{}, duration_ms, status_code, error_status,
+ *     peak_mb, request_method, server_name, country_code, http_from, user_agent,
+ *     ja4_hash, is_worker, timestamp }
  *
- * Stats_Store integration is opt-in: if no store is set, rotated buckets are
- * dropped (test mode / single-process mode). flush() still empties the cache.
+ * For each request:
+ *  1. Build a flame tree from `entries` via LIFO start/complete matching.
+ *  2. Write the per-request flame to flames.log (sink) + companion 68-byte index.
+ *  3. Accumulate sums into per-URL aggregate (LRU 1000×5).
+ *  4. Accumulate sums into the current 5-min pending bucket: hourly, leaderboard,
+ *     URL stats, dimensional, category time series. On bucket rotation OR every
+ *     flush tick (5s) the pending bucket is promoted into flush arrays.
+ *  5. On `flush()` (5s) write all 9 namespaces to memcache via Stats_Store,
+ *     apply auto-tune, refresh significant events.
+ *
+ * Constants match upstream exactly: 5-min buckets, MAX_DIM_VALUES=20,
+ * MAX_URL_DIM_VALUES=10, MAX_CAT_VALUES=50, ENTRY_LIMIT_URL_UPPER/LOWER=40/20,
+ * ENTRY_LIMIT_GLOBAL_UPPER/LOWER=100/50.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -41,190 +41,1559 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
 class FlameBuilder extends Node {
-	public const BUCKET_INTERVAL_S = 200;
-	public const NUM_BUCKETS       = 5;
-	public const MAX_PER_BUCKET    = 1000;
 
-	/**
-	 * Sequence-indexed buckets. The keys are monotonic integers (0, 1, 2, ...)
-	 * so we can pop the oldest in O(1). Each entry pairs the bucket payload
-	 * with the wall-clock id used as the flush key.
-	 *
-	 * @var array<int,array{id:int,data:array<string,array{count:int,sum_time:float}>}>
-	 */
-	private array $buckets = [];
+	/** Periodic flush cadence (seconds). */
+	public const FLUSH_INTERVAL_SEC = 5;
 
-	private int $next_seq = 0;
+	/** Security limits for recursion and unbounded growth. */
+	private const MAX_RECURSION_DEPTH = 50;
+	private const MAX_STACK_DEPTH     = 50;
 
-	private int $bucket_interval_s;
-	private int $max_per_bucket;
-	private int $num_buckets;
+	/** Pre-compiled regex patterns for flame data parsing. */
+	public const PATTERN_START    = '/^(.+?) \(start\)$/';
+	public const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
 
+	/** Entry limits with hysteresis: only trim when upper limit hit, trim to lower limit. */
+	public const ENTRY_LIMIT_URL_UPPER    = 40;
+	public const ENTRY_LIMIT_URL_LOWER    = 20;
+	public const ENTRY_LIMIT_GLOBAL_UPPER = 100;
+	public const ENTRY_LIMIT_GLOBAL_LOWER = 50;
+
+	/** Dimension field mapping: dim key => request field name. */
+	public const DIM_FIELDS = [
+		'status'  => 'status_category',
+		'method'  => 'request_method',
+		'server'  => 'server_name',
+		'country' => 'country_code',
+		'from'    => 'http_from',
+		'ua'      => 'user_agent',
+		'ja4'     => 'ja4_hash',
+	];
+
+	/** Minutes per time-series bucket. */
+	private const BUCKET_MINUTES = 5;
+
+	/** LRU cache for per-URL stats accumulators. */
+	private const STATS_CACHE_BUCKET_SIZE = 1000;
+	private const STATS_CACHE_NUM_BUCKETS = 5;
+
+	/** @var LruCache Per-URL aggregate accumulator. */
+	private LruCache $stats_cache;
+
+	/** @var array<string,array> All flush arrays keyed by purpose. */
+	private array $hourly_stats               = [];
+	private array $leaderboard_stats          = [];
+	private array $leaderboard_by_server_stats = [];
+	private array $url_stats                  = [];
+	private array $dim_stats                  = [];
+	private array $dim_stats_by_server        = [];
+	private array $url_dim_stats              = [];
+	private array $cat_stats                  = [];
+	private array $cat_stats_by_server        = [];
+	private array $url_cat_stats              = [];
+
+	/** Per-URL aggregate state. */
+	private float $last_flush_time           = 0.0;
+	private int   $auto_disable_threshold     = 0;
+	private float $auto_protect_time_threshold = 0.0;
+	/** @var array<string,bool> */
+	private array $hooks_to_disable          = [];
+	/** @var array<string,bool> */
+	private array $custom_events_to_disable  = [];
+	/** @var array<string,bool> */
+	private array $significant_events        = [];
+	/** @var array<string,bool> */
+	private array $new_significant_events    = [];
+	private float $last_significant_refresh  = 0.0;
+	/** @var array<string,bool> */
+	private array $custom_event_names        = [];
+	private bool  $is_hub                    = false;
+
+	/** Pending stats for the current (incomplete) 5-minute bucket. */
+	private string $pending_bucket = '';
+
+	/** @var array<string,mixed> Pending bucket accumulators. */
+	private array $pending = [];
+
+	/** Memcache-backed stats store. Optional; when null, flush is in-memory only. */
 	private ?Stats_Store $stats_store = null;
 
-	public function __construct(
-		int $bucket_interval_s = self::BUCKET_INTERVAL_S,
-		int $max_per_bucket    = self::MAX_PER_BUCKET,
-		int $num_buckets       = self::NUM_BUCKETS
-	) {
-		$this->bucket_interval_s = \max( 1, $bucket_interval_s );
-		$this->max_per_bucket    = \max( 1, $max_per_bucket );
-		$this->num_buckets       = \max( 1, $num_buckets );
+	/** Sink for flame JSONL writes (separate from main sink). */
+	private ?Node $flames_sink = null;
+
+	/**
+	 * Per-test seam: when set, this clock function is used in place of \time()
+	 * for bucket-key derivation. Lets unit tests freeze the bucket window.
+	 *
+	 * @var callable|null
+	 */
+	private $clock_fn = null;
+
+	public function __construct() {
+		$this->stats_cache    = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
+		$this->last_flush_time = \microtime( true );
+		$this->reset_pending();
 	}
 
 	/**
-	 * Inject a Stats_Store for memcache flushes. Pass null to drop rotated
-	 * buckets (test/single-process mode).
+	 * Inject the Stats_Store. Optional; when null, flush() still drains state
+	 * but writes nowhere (in-memory test mode).
 	 */
 	public function set_stats_store( ?Stats_Store $store ): void {
 		$this->stats_store = $store;
 	}
 
-	public function stats_count(): int {
-		$total = 0;
-		foreach ( $this->buckets as $bucket ) {
-			$total += \count( $bucket['data'] );
-		}
-		return $total;
-	}
-
 	/**
-	 * Return-and-clear the entire bucket map as a single flat aggregate. Used
-	 * by tests and the legacy single-process path. Does NOT flush to memcache —
-	 * that happens on bucket rotation.
-	 *
-	 * @return array<string,array{count:int,sum_time:float}>
+	 * Inject the flames-log sink (typically a Partition or Topic that writes
+	 * to flames.log). When unset, store_flame() is a no-op.
 	 */
-	public function flush(): array {
-		$out = [];
-		foreach ( $this->buckets as $bucket ) {
-			foreach ( $bucket['data'] as $name => $entry ) {
-				$out[ $name ] ??= [ 'count' => 0, 'sum_time' => 0.0 ];
-				$out[ $name ]['count']    += $entry['count'];
-				$out[ $name ]['sum_time'] += $entry['sum_time'];
-			}
-		}
-		$this->buckets = [];
-		return $out;
+	public function set_flames_sink( ?Node $sink ): void {
+		$this->flames_sink = $sink;
 	}
 
 	/**
-	 * Force-flush every aged-out bucket to memcache. Call from a Timer /
-	 * maintenance loop. Buckets whose wall-clock window is older than
-	 * (current_window - num_buckets + 1) get evicted.
+	 * Toggle hub mode (per-server tracking). In production this is set from
+	 * `aggregator_servers` config; tests set it directly.
+	 */
+	public function set_is_hub( bool $is_hub ): void {
+		$this->is_hub = $is_hub;
+	}
+
+	/**
+	 * Inject a custom-event-name set so noisy detection knows which categories
+	 * are custom events vs core hooks (controls which to_disable list they go in).
+	 *
+	 * @param array<string> $names
+	 */
+	public function set_custom_event_names( array $names ): void {
+		$this->custom_event_names = [];
+		foreach ( $names as $n ) {
+			$this->custom_event_names[ $n ] = true;
+		}
+	}
+
+	/**
+	 * Inject the persisted significant-events set. Auto-disable will skip
+	 * categories whose base name is significant.
+	 *
+	 * @param array<string> $events
+	 */
+	public function set_significant_events( array $events ): void {
+		$this->significant_events = [];
+		foreach ( $events as $e ) {
+			$this->significant_events[ $e ] = true;
+		}
+	}
+
+	/**
+	 * Configure auto-tune thresholds.
+	 *
+	 * @param int   $count_threshold    A category's `count` exceeding this gets the base hook
+	 *                                  proposed for disabling. 0 = disable check.
+	 * @param float $time_threshold     A category's average `sum_time/sum_count` exceeding this
+	 *                                  gets the base hook proposed as a significant event.
+	 *                                  0 = disable check.
+	 */
+	public function set_auto_tune( int $count_threshold, float $time_threshold ): void {
+		$this->auto_disable_threshold       = $count_threshold;
+		$this->auto_protect_time_threshold = $time_threshold;
+	}
+
+	/**
+	 * Replace the clock used for bucket-key derivation (testing seam).
+	 *
+	 * @param callable|null $fn fn(): int — current Unix timestamp. Default: \time().
+	 */
+	public function set_clock( ?callable $fn ): void {
+		$this->clock_fn = $fn;
+	}
+
+	private function now_ts(): int {
+		return $this->clock_fn !== null ? (int) ( $this->clock_fn )() : \time();
+	}
+
+	/**
+	 * Total in-flight per-URL accumulator count (test helper).
+	 */
+	public function stats_count(): int {
+		$count = 0;
+		foreach ( $this->stats_cache->iterate() as $_ ) {
+			++$count;
+		}
+		return $count;
+	}
+
+	/**
+	 * Accessor for the auto-tune state (used by tests + apply_auto_tune callers).
+	 *
+	 * @return array{hooks: list<string>, custom_events: list<string>, new_significant: list<string>}
+	 */
+	public function get_auto_tune_state(): array {
+		return [
+			'hooks'           => \array_keys( $this->hooks_to_disable ),
+			'custom_events'   => \array_keys( $this->custom_events_to_disable ),
+			'new_significant' => \array_keys( $this->new_significant_events ),
+		];
+	}
+
+	/**
+	 * Save state for persistence (the pending bucket only — completed buckets
+	 * are already in memcache).
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function save_state(): array {
+		return [
+			'pending_bucket' => $this->pending_bucket,
+			'pending'        => $this->pending,
+		];
+	}
+
+	/**
+	 * Restore state from save_state().
+	 */
+	public function restore_state( array $saved ): void {
+		if ( isset( $saved['pending_bucket'] ) && \is_string( $saved['pending_bucket'] ) ) {
+			$this->pending_bucket = $saved['pending_bucket'];
+		}
+		if ( isset( $saved['pending'] ) && \is_array( $saved['pending'] ) ) {
+			$this->pending = \array_merge( $this->pending, $saved['pending'] );
+		}
+	}
+
+	/**
+	 * Maintenance hook (called by topology runners on Timer ticks). Drives
+	 * the periodic flush even when no inbound traffic has triggered one.
 	 */
 	public function maintenance(): void {
-		$current_id = $this->current_bucket_id();
-		$cutoff     = $current_id - $this->num_buckets + 1;
-		foreach ( $this->buckets as $seq => $bucket ) {
-			if ( $bucket['id'] < $cutoff ) {
-				$this->evict_bucket( $seq );
-			}
+		$now = \microtime( true );
+		if ( $now - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
+			$this->flush();
+			$this->last_flush_time = $now;
 		}
 	}
 
+	/**
+	 * Process one completed request from RequestBuilder.
+	 *
+	 * @param array $message Reference; not mutated.
+	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
 		if ( ! ( $message[ Message::TYPE ] & Message::TM_BYTESTREAM ) ) {
 			return;
 		}
-		$req = \json_decode( $message[ Message::VALUE ], true );
-		if ( ! \is_array( $req ) || empty( $req['events'] ) ) {
-			Core::print_less_often( 'FlameBuilder: invalid completed-request line' );
+		$line    = (string) $message[ Message::VALUE ];
+		$request = \json_decode( $line, true, 64 );
+		if ( ! \is_array( $request ) ) {
 			return;
 		}
 
-		// Time-based rotation: any aged-out bucket flushes before we accept
-		// new entries. Cheap when no rotation is due (single comparison).
-		$this->maintenance();
+		$rid      = (string) ( $request['rid'] ?? '' );
+		$url      = (string) ( $request['url'] ?? '' );
+		$url_hash = RequestBuilder::url_hash( $url );
 
-		// Pick the active bucket — either the newest open one whose wall-clock
-		// id matches the current window, or a fresh slot otherwise.
-		$current_id = $this->current_bucket_id();
-		$active_seq = $this->active_seq( $current_id );
+		$entries = $request['entries'] ?? [];
+		if ( ! \is_array( $entries ) ) {
+			$entries = [];
+		}
 
-		foreach ( $req['events'] as $event ) {
-			$name = $event['name'] ?? '';
-			$time = (float) ( $event['time'] ?? 0 );
-			if ( $name === '' ) {
+		$flame_data          = $this->build_flame_data( $entries );
+		$flame_data['value'] = (float) ( $request['duration_ms'] ?? 0 );
+
+		$profiles = $request['profiles'] ?? [];
+		if ( ! \is_array( $profiles ) ) {
+			$profiles = [];
+		}
+
+		if ( $this->store_flame( $rid, $url_hash, $flame_data ) ) {
+			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
+		}
+
+		// Periodic flush.
+		$now_f = \microtime( true );
+		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
+			$this->flush();
+			$this->last_flush_time = $now_f;
+		}
+	}
+
+	/**
+	 * Flush every accumulator to memcache (or to in-memory if no store) and
+	 * reset pending. Called every FLUSH_INTERVAL_SEC plus at shutdown.
+	 */
+	public function flush(): void {
+		// Promote pending bucket into flush arrays on every flush cycle so
+		// dashboards see data within 30s, not after the 5-minute bucket rotation.
+		// The merge in persist_aggregate_stats is additive, so flushing partial
+		// 30s chunks produces the same result as one batch at rotation time.
+		if ( '' !== $this->pending_bucket ) {
+			$this->promote_pending_bucket();
+		}
+
+		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
+		if ( $this->stats_store !== null ) {
+			$now = $this->now_ts();
+			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
+				$total_count            = $aggregate['flame']['count'] ?? 0;
+				$aggregate['flame_raw'] = $aggregate['flame'];
+				self::finalize_flame_node( $aggregate['flame'], (int) $total_count );
+				$aggregate['last_modified'] = $now;
+				$this->stats_store->set_url_stats( (string) $url_hash, $aggregate );
+			}
+		}
+
+		// Flush combined hourly, leaderboard, and URL stats to memcache.
+		$this->persist_aggregate_stats();
+
+		// Apply auto-disable.
+		$this->apply_auto_tune();
+
+		$this->stats_cache->flush();
+		$this->hourly_stats                = [];
+		$this->leaderboard_stats           = [];
+		$this->leaderboard_by_server_stats = [];
+		$this->dim_stats                   = [];
+		$this->dim_stats_by_server         = [];
+		$this->url_dim_stats               = [];
+		$this->cat_stats                   = [];
+		$this->cat_stats_by_server         = [];
+		$this->url_cat_stats               = [];
+		$this->url_stats                   = [];
+	}
+
+	// -------------------------------------------------------------------------
+	// Flame storage + index format.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Write the per-request flame JSON to the flames-log sink + companion index.
+	 */
+	private function store_flame( string $rid, string $url_hash, array $flame_data ): bool {
+		// Strip duplicate sibling suffixes before storage (only needed for merging).
+		self::strip_name_suffixes( $flame_data );
+
+		// Add rid and url_hash to flame data so downstream readers can extract them.
+		$flame_data['rid']      = $rid;
+		$flame_data['url_hash'] = $url_hash;
+
+		if ( $this->flames_sink === null ) {
+			return true; // Aggregation still happens; just no on-disk flame.
+		}
+		$json = (string) \json_encode( $flame_data );
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
+		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::VALUE ]     = $json;
+		$this->flames_sink->fill( $msg );
+		return true;
+	}
+
+	/**
+	 * Strip hidden sequence suffixes (\x00N) from flame node names recursively.
+	 */
+	private static function strip_name_suffixes( array &$node, int $depth = 0 ): void {
+		if ( $depth > self::MAX_RECURSION_DEPTH ) {
+			return;
+		}
+		$name     = $node['name'] ?? '';
+		$null_pos = \strpos( $name, "\x00" );
+		if ( false !== $null_pos ) {
+			$node['name'] = \substr( $name, 0, $null_pos );
+		}
+		if ( ! empty( $node['children'] ) ) {
+			foreach ( $node['children'] as &$child ) {
+				self::strip_name_suffixes( $child, $depth + 1 );
+			}
+			unset( $child );
+		}
+	}
+
+	/**
+	 * 68-byte fixed-width index entry for flames.log:
+	 *   rid          32 (space-padded right)
+	 *   url_hash     12 (space-padded right)
+	 *   segment_id   6  (zero-padded left)
+	 *   offset       10 (zero-padded left)
+	 *   length       8  (zero-padded left)
+	 *
+	 * @param string                  $line     The JSON line written.
+	 * @param array{segment_id:int,offset:int,length:int} $position
+	 * @param array|null              $data     Pre-decoded data (skips a redundant decode).
+	 * @return string|null            Index entry or null if rid is missing.
+	 */
+	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
+		$data = $data ?? \json_decode( $line, true, 64 );
+		if ( ! \is_array( $data ) || empty( $data['rid'] ) ) {
+			return null;
+		}
+
+		return \str_pad( \substr( (string) $data['rid'], 0, 32 ), 32 )
+			. \str_pad( \substr( (string) ( $data['url_hash'] ?? '' ), 0, 12 ), 12 )
+			. \str_pad( (string) (int) $position['segment_id'], 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) (int) $position['offset'], 10, '0', STR_PAD_LEFT )
+			. \str_pad( (string) (int) $position['length'], 8, '0', STR_PAD_LEFT );
+	}
+
+	/**
+	 * Parse a flame index entry.
+	 *
+	 * @return array{rid:string,url_hash:string,segment_id:int,offset:int,length:int}|null
+	 */
+	public static function parse_flame_index( string $line ): ?array {
+		$line = \rtrim( $line, "\n" );
+		if ( \strlen( $line ) < 68 ) {
+			return null;
+		}
+		return [
+			'rid'        => \trim( \substr( $line, 0, 32 ) ),
+			'url_hash'   => \trim( \substr( $line, 32, 12 ) ),
+			'segment_id' => (int) \substr( $line, 44, 6 ),
+			'offset'     => (int) \substr( $line, 50, 10 ),
+			'length'     => (int) \substr( $line, 60, 8 ),
+		];
+	}
+
+	// -------------------------------------------------------------------------
+	// Flame tree construction (LIFO start/complete matching).
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Build a flame tree from request entries via stack-based LIFO matching.
+	 *
+	 * @param array $entries Entries from RequestBuilder.
+	 * @return array Flame node tree.
+	 */
+	private function build_flame_data( array $entries ): array {
+		// Root node.
+		$root = [
+			'name'     => 'request',
+			'value'    => 0,
+			'children' => [],
+		];
+
+		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base_name ].
+		$stack   = [];
+		$stack[] = [
+			'node' => &$root,
+			'name' => 'request',
+		];
+
+		foreach ( $entries as $entry ) {
+			$keyword = $entry['k'] ?? '';
+
+			if ( ! \is_string( $keyword ) ) {
 				continue;
 			}
 
-			// Size-based rotation: if adding a NEW name would push past the cap,
-			// roll over before inserting. Existing-name updates don't grow the
-			// bucket, so they don't trigger rotation.
-			if (
-				! isset( $this->buckets[ $active_seq ]['data'][ $name ] )
-				&& \count( $this->buckets[ $active_seq ]['data'] ) >= $this->max_per_bucket
-			) {
-				$active_seq = $this->roll_over( $current_id );
-			}
+			if ( \preg_match( self::PATTERN_START, $keyword, $m ) ) {
+				$base_name = $m[1];
+				$label     = \is_string( $entry['l'] ?? '' ) ? ( $entry['l'] ?? '' ) : '';
+				$detail    = \is_string( $entry['m'] ?? '' ) ? ( $entry['m'] ?? '' ) : '';
+				$new_node  = [
+					'name'     => $label ? "{$base_name}: {$label}" : $base_name,
+					'value'    => 0,
+					'children' => [],
+				];
+				if ( $detail && $detail !== $label ) {
+					$new_node['detail'] = "{$base_name}: {$detail}";
+				}
 
-			$this->buckets[ $active_seq ]['data'][ $name ] ??= [ 'count' => 0, 'sum_time' => 0.0 ];
-			++$this->buckets[ $active_seq ]['data'][ $name ]['count'];
-			$this->buckets[ $active_seq ]['data'][ $name ]['sum_time'] += $time;
-		}
-	}
+				// Add as child of current top of stack.
+				$top_idx                                 = \count( $stack ) - 1;
+				$stack[ $top_idx ]['node']['children'][] = &$new_node;
 
-	/**
-	 * Wall-clock-derived bucket id; lets independent workers / restarts merge
-	 * additively into the same memcache key when their windows align.
-	 */
-	private function current_bucket_id(): int {
-		return (int) \floor( Core::$right_now / $this->bucket_interval_s );
-	}
+				// Push onto stack (with depth limit to prevent DoS).
+				if ( \count( $stack ) < self::MAX_STACK_DEPTH ) {
+					$stack[] = [
+						'node' => &$new_node,
+						'name' => $base_name,
+					];
+				}
+				unset( $new_node );
+			} elseif ( \preg_match( self::PATTERN_COMPLETE, $keyword, $m ) ) {
+				$base_name   = $m[1];
+				$duration_ms = $entry['duration_ms'] ?? 0;
 
-	/**
-	 * Find or allocate the active bucket whose wall-clock id matches $id.
-	 * Returns the sequence index for direct array access.
-	 */
-	private function active_seq( int $id ): int {
-		// Linear scan: with NUM_BUCKETS=5 this is faster than maintaining a
-		// reverse map (and the buckets array is too small for the reverse map
-		// to amortize its own bookkeeping cost).
-		foreach ( $this->buckets as $seq => $bucket ) {
-			if ( $bucket['id'] === $id ) {
-				return $seq;
-			}
-		}
-		return $this->allocate_bucket( $id );
-	}
+				// Search stack from top (LIFO) for matching name.
+				$found_idx = -1;
+				for ( $i = \count( $stack ) - 1; $i >= 1; $i-- ) {
+					if ( $stack[ $i ]['name'] === $base_name ) {
+						$found_idx = $i;
+						break;
+					}
+				}
 
-	/**
-	 * Roll over: allocate a brand-new bucket at the same wall-clock id (used
-	 * when the size-cap is hit within a single time window). The old bucket
-	 * still gets the same id so it merges additively in memcache.
-	 */
-	private function roll_over( int $id ): int {
-		return $this->allocate_bucket( $id );
-	}
+				if ( $found_idx >= 1 ) {
+					// Set duration and timestamp on matched node.
+					$stack[ $found_idx ]['node']['value'] = $duration_ms;
+					$stack[ $found_idx ]['node']['ts']    = (int) ( $entry['ts'] ?? $this->now_ts() );
 
-	private function allocate_bucket( int $id ): int {
-		$seq                   = $this->next_seq++;
-		$this->buckets[ $seq ] = [ 'id' => $id, 'data' => [] ];
-		// At-cap eviction: oldest sequence (= lowest seq number) drops out.
-		if ( \count( $this->buckets ) > $this->num_buckets ) {
-			$oldest_seq = \array_key_first( $this->buckets );
-			if ( $oldest_seq !== null && $oldest_seq !== $seq ) {
-				$this->evict_bucket( $oldest_seq );
+					// Pop all nodes from found_idx to top.
+					\array_splice( $stack, $found_idx );
+				}
+				// If not found, this is an orphaned complete - ignore it.
 			}
 		}
-		return $seq;
+
+		// Number duplicate sibling names to prevent collapse during aggregation.
+		self::number_duplicate_siblings( $root );
+
+		return $root;
 	}
 
 	/**
-	 * Evict a single bucket: serialize its contents into Stats_Store under
-	 * NS_FLAME_CACHE (keyed by the wall-clock id so multi-promote merges are
-	 * additive), then drop from the local cache.
+	 * Recursively number duplicate sibling names with hidden suffix \x00N so
+	 * they stay separate during merge. Stripped before display.
 	 */
-	private function evict_bucket( int $seq ): void {
-		if ( ! isset( $this->buckets[ $seq ] ) ) {
+	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
+		if ( $depth > self::MAX_RECURSION_DEPTH ) {
 			return;
 		}
-		$bucket = $this->buckets[ $seq ];
-		unset( $this->buckets[ $seq ] );
-		if ( $this->stats_store !== null && ! empty( $bucket['data'] ) ) {
-			$this->stats_store->merge_flame_bucket( (string) $bucket['id'], $bucket['data'] );
+		if ( empty( $node['children'] ) ) {
+			return;
 		}
+
+		// Count occurrences of each name among siblings.
+		$name_counts = [];
+		foreach ( $node['children'] as $child ) {
+			$name                 = $child['name'] ?? 'unknown';
+			$name_counts[ $name ] = ( $name_counts[ $name ] ?? 0 ) + 1;
+		}
+
+		// Add sequence numbers to duplicates.
+		$name_seq = [];
+		foreach ( $node['children'] as &$child ) {
+			$name = $child['name'] ?? 'unknown';
+			if ( $name_counts[ $name ] > 1 ) {
+				$seq               = ( $name_seq[ $name ] ?? 0 ) + 1;
+				$name_seq[ $name ] = $seq;
+				$child['name']     = $name . "\x00" . $seq;
+			}
+			self::number_duplicate_siblings( $child, $depth + 1 );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// Stats accumulation: per-URL flame, dimensional, category, leaderboard,
+	// hourly, URL stats — all into the pending bucket + LRU.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Accumulate all per-request stats from a completed request.
+	 *
+	 * @param string $url_hash   URL hash.
+	 * @param array  $flame_data Per-request flame tree.
+	 * @param array  $profiles   profiles{} from request.
+	 * @param array  $request    Full request record.
+	 */
+	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
+		$duration_ms  = (float) ( $flame_data['value'] ?? 0 );
+		$error_status = $request['error_status'] ?? '-';
+		$is_timed_out = 'T' === $error_status;
+		$is_worker    = ! empty( $request['is_worker'] );
+		// Exclude from timing stats: timed-out (synthetic duration) and workers (skew averages).
+		$has_timing = $duration_ms > 0 && ! $is_timed_out && ! $is_worker;
+		$now        = $this->now_ts();
+
+		// --- 1. Per-URL aggregate (LRU, sums-not-means) ---
+		$aggregate = $this->stats_cache->get( $url_hash );
+		if ( null === $aggregate ) {
+			$aggregate = $this->stats_store?->get_url_stats( $url_hash ) ?? [
+				'flame'    => [
+					'name'      => 'aggregate',
+					'sum_value' => 0.0,
+					'count'     => 0,
+					'children'  => [],
+				],
+				'profiles' => [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				],
+			];
+			if ( isset( $aggregate['flame_raw'] ) ) {
+				$aggregate['flame'] = $aggregate['flame_raw'];
+				unset( $aggregate['flame_raw'] );
+			}
+			// Migrate legacy flame shape (EMA running mean → sums).
+			if ( isset( $aggregate['flame'] ) && ! isset( $aggregate['flame']['sum_value'] ) ) {
+				$aggregate['flame'] = [
+					'name'      => 'aggregate',
+					'sum_value' => 0.0,
+					'count'     => 0,
+					'children'  => [],
+				];
+			}
+			// Migrate legacy profile shape.
+			if ( isset( $aggregate['profiles'] ) && ! isset( $aggregate['profiles']['sum_req_time'] ) ) {
+				$aggregate['profiles'] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+			}
+		}
+
+		$flame          = &$aggregate['flame'];
+		$flame['count'] = ( $flame['count'] ?? 0 ) + 1;
+		if ( $has_timing ) {
+			$flame['sum_value'] = ( $flame['sum_value'] ?? 0 ) + $duration_ms;
+			$flame['children']  = self::merge_flame_children_incremental( $flame['children'] ?? [], $flame_data['children'] ?? [], $now );
+		}
+		unset( $flame );
+
+		// --- 2. Bucket key + rotation ---
+		$timestamp  = (int) ( $request['timestamp'] ?? $now );
+		$bucket_key = $this->bucket_key( $timestamp );
+		if ( $bucket_key !== $this->pending_bucket ) {
+			if ( '' !== $this->pending_bucket ) {
+				$this->promote_pending_bucket();
+			}
+			$this->pending_bucket = $bucket_key;
+		}
+
+		// --- 2b. URL stats (pending bucket) ---
+		$url = (string) ( $request['url'] ?? '' );
+		if ( '' !== $url ) {
+			if ( ! isset( $this->pending['url_stats'][ $url_hash ] ) ) {
+				$this->pending['url_stats'][ $url_hash ] = [
+					'url'         => $url,
+					'count'       => 0,
+					'timed_count' => 0,
+					'sum_ms'      => 0,
+					'min_ms'      => PHP_INT_MAX,
+					'max_ms'      => 0,
+					'last_seen'   => 0,
+					'durations'   => [],
+					'count_2xx'   => 0,
+					'count_3xx'   => 0,
+					'count_4xx'   => 0,
+					'count_5xx'   => 0,
+					'sum_peak_mb' => 0,
+					'max_peak_mb' => 0,
+				];
+			}
+			$us = &$this->pending['url_stats'][ $url_hash ];
+			++$us['count'];
+			if ( $has_timing ) {
+				++$us['timed_count'];
+				$us['sum_ms'] += $duration_ms;
+				$us['max_ms']  = \max( $us['max_ms'], $duration_ms );
+			}
+			$us['last_seen']      = \max( $us['last_seen'], $timestamp );
+			$status_category      = (int) \floor( ( $request['status_code'] ?? 0 ) / 100 );
+			if ( $status_category >= 2 && $status_category <= 5 ) {
+				++$us[ "count_{$status_category}xx" ];
+			}
+			if ( $has_timing ) {
+				$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
+				$us['min_ms'] = \min( $us['min_ms'], $duration_ms );
+				if ( \count( $us['durations'] ) < $max_dur ) {
+					$us['durations'][] = $duration_ms;
+				} else {
+					$idx = \random_int( 0, \max( 1, $us['timed_count'] ) - 1 );
+					if ( $idx < $max_dur ) {
+						$us['durations'][ $idx ] = $duration_ms;
+					}
+				}
+			}
+			$peak_mb = (float) ( $request['peak_mb'] ?? 0 );
+			if ( $peak_mb > 0 ) {
+				$us['sum_peak_mb'] += $peak_mb;
+				$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
+			}
+			unset( $us );
+		}
+
+		// --- 3. Hourly stats (pending bucket) ---
+		if ( empty( $this->pending['hourly'] ) ) {
+			$this->pending['hourly'] = [ 'count' => 0, 'sum_ms' => 0, 'sum_peak_mb' => 0 ];
+		}
+		if ( $has_timing ) {
+			++$this->pending['hourly']['count'];
+			$this->pending['hourly']['sum_ms'] += $duration_ms;
+		}
+		$this->pending['hourly']['sum_peak_mb'] += $request['peak_mb'] ?? 0;
+		$status_cat = (int) \floor( ( $request['status_code'] ?? 0 ) / 100 );
+		if ( $status_cat >= 2 && $status_cat <= 5 ) {
+			$request['status_category'] = "{$status_cat}xx";
+		}
+
+		// --- 3b. Dimensional stats (global + per-server + per-URL) ---
+		static $intern      = [];
+		static $intern_full = false;
+		$server_name   = (string) ( $request['server_name'] ?? '' );
+		$dim_peak_mb   = (float) ( $request['peak_mb'] ?? 0 );
+		$dim_duration  = $has_timing ? $duration_ms : 0;
+
+		foreach ( self::DIM_FIELDS as $dim => $field ) {
+			$val = (string) ( $request[ $field ] ?? '' );
+			if ( '' === $val ) {
+				$val = 'Unknown';
+			}
+			if ( ! $intern_full ) {
+				$val = $intern[ $val ] ??= $val;
+				if ( \count( $intern ) >= 50000 ) {
+					$intern_full = true;
+				}
+			}
+			// Global.
+			if ( ! isset( $this->pending['dim'][ $dim ][ $val ] ) ) {
+				$this->pending['dim'][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
+			}
+			++$this->pending['dim'][ $dim ][ $val ]['c'];
+			$this->pending['dim'][ $dim ][ $val ]['s'] += $dim_duration;
+			$this->pending['dim'][ $dim ][ $val ]['m'] += $dim_peak_mb;
+
+			// Per-server (hub mode only; skip 'server' dimension — redundant).
+			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim ) {
+				if ( ! isset( $this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] ) ) {
+					$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
+				}
+				++$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ]['c'];
+				$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ]['s'] += $dim_duration;
+				$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ]['m'] += $dim_peak_mb;
+			}
+
+			// Per-URL.
+			if ( ! isset( $this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] ) ) {
+				$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
+			}
+			++$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['c'];
+			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['s'] += $dim_duration;
+			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['m'] += $dim_peak_mb;
+		}
+
+		// --- 4. Profile data (per-URL + global leaderboard) - SINGLE LOOP ---
+		if ( ! empty( $profiles ) && $has_timing ) {
+			$prof = &$aggregate['profiles'];
+			$lb   = &$this->pending['leaderboard'];
+
+			$req_time        = 0.0;
+			$count_threshold = $this->auto_disable_threshold;
+
+			// Initialize "total" pseudo-category.
+			if ( ! isset( $this->pending['cat']['total'] ) ) {
+				$this->pending['cat']['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+			}
+			$this->pending['cat']['total']['t'] += $duration_ms;
+			++$this->pending['cat']['total']['n'];
+
+			if ( $this->is_hub && '' !== $server_name ) {
+				if ( ! isset( $this->pending['cat_by_server'][ $server_name ]['total'] ) ) {
+					$this->pending['cat_by_server'][ $server_name ]['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+				}
+				$this->pending['cat_by_server'][ $server_name ]['total']['t'] += $duration_ms;
+				++$this->pending['cat_by_server'][ $server_name ]['total']['n'];
+			}
+
+			if ( ! isset( $this->pending['cat_by_url'][ $url_hash ]['total'] ) ) {
+				$this->pending['cat_by_url'][ $url_hash ]['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+			}
+			$this->pending['cat_by_url'][ $url_hash ]['total']['t'] += $duration_ms;
+			++$this->pending['cat_by_url'][ $url_hash ]['total']['n'];
+
+			// Per-server leaderboard (hub mode only).
+			$slb = null;
+			if ( $this->is_hub && '' !== $server_name ) {
+				if ( ! isset( $this->pending['leaderboard_by_server'][ $server_name ] ) ) {
+					$this->pending['leaderboard_by_server'][ $server_name ] = [
+						'count'        => 0,
+						'sum_req_time' => 0.0,
+						'categories'   => [],
+					];
+				}
+				$slb = &$this->pending['leaderboard_by_server'][ $server_name ];
+			}
+
+			foreach ( $profiles as $category => $data ) {
+				if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
+					continue;
+				}
+				if ( ! $intern_full ) {
+					$category = $intern[ $category ] ??= $category;
+					if ( \count( $intern ) >= 50000 ) {
+						$intern_full = true;
+					}
+				}
+
+				$is_callback = (bool) \preg_match( '/ @-?\d+$/', $category );
+				$is_plugin   = (bool) \preg_match( '/ plugin$/', $category );
+
+				if ( ! $is_callback ) {
+					$req_time += (float) ( $data['time'] ?? 0 );
+				}
+
+				$cat_time  = (float) ( $data['time'] ?? 0 );
+				$cat_count = (int) ( $data['count'] ?? 0 );
+				$cat_ts    = (int) ( $data['ts'] ?? 0 );
+
+				// Per-URL category.
+				if ( ! isset( $prof['categories'][ $category ] ) ) {
+					$prof['categories'][ $category ] = [
+						'samples'   => 0,
+						'sum_time'  => 0.0,
+						'sum_count' => 0.0,
+						'ts'        => $cat_ts,
+						'entries'   => [],
+					];
+				}
+				$pcat              = &$prof['categories'][ $category ];
+				++$pcat['samples'];
+				$pcat['sum_time']  += $cat_time;
+				$pcat['sum_count'] += $cat_count;
+				$pcat['ts']        = \max( $pcat['ts'] ?? 0, $cat_ts );
+
+				// Global leaderboard category.
+				if ( ! isset( $lb['categories'][ $category ] ) ) {
+					$lb['categories'][ $category ] = [
+						'samples'   => 0,
+						'sum_time'  => 0.0,
+						'sum_count' => 0.0,
+						'entries'   => [],
+					];
+				}
+				$lcat              = &$lb['categories'][ $category ];
+				++$lcat['samples'];
+				$lcat['sum_time']  += $cat_time;
+				$lcat['sum_count'] += $cat_count;
+
+				// Per-server leaderboard.
+				if ( null !== $slb ) {
+					if ( ! isset( $slb['categories'][ $category ] ) ) {
+						$slb['categories'][ $category ] = [
+							'samples'   => 0,
+							'sum_time'  => 0.0,
+							'sum_count' => 0.0,
+							'entries'   => [],
+						];
+					}
+					$scat              = &$slb['categories'][ $category ];
+					++$scat['samples'];
+					$scat['sum_time']  += $cat_time;
+					$scat['sum_count'] += $cat_count;
+
+					if ( ! empty( $data['entries'] ) ) {
+						foreach ( $data['entries'] as $s_name => $s_entry_data ) {
+							$s_name  = $intern[ $s_name ] ??= $s_name;
+							$s_time  = (float) ( $s_entry_data[0] ?? 0 );
+							$s_count = (float) ( $s_entry_data[1] ?? 0 );
+							if ( ! isset( $scat['entries'][ $s_name ] ) ) {
+								$scat['entries'][ $s_name ] = [ 0.0, 0.0, 0 ];
+							}
+							$scat['entries'][ $s_name ][0] += $s_time;
+							$scat['entries'][ $s_name ][1] += $s_count;
+							++$scat['entries'][ $s_name ][2];
+						}
+						if ( \count( $scat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+							\uasort( $scat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+							$scat['entries'] = \array_slice( $scat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
+						}
+					}
+					unset( $scat );
+				}
+
+				// Category time series (pending bucket).
+				if ( ! isset( $this->pending['cat'][ $category ] ) ) {
+					$this->pending['cat'][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+				}
+				$this->pending['cat'][ $category ]['t'] += $cat_time;
+				$this->pending['cat'][ $category ]['c'] += $cat_count;
+				++$this->pending['cat'][ $category ]['n'];
+				$this->pending['cat']['total']['c'] += $cat_count;
+
+				if ( $this->is_hub && '' !== $server_name ) {
+					if ( ! isset( $this->pending['cat_by_server'][ $server_name ][ $category ] ) ) {
+						$this->pending['cat_by_server'][ $server_name ][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+					}
+					$this->pending['cat_by_server'][ $server_name ][ $category ]['t'] += $cat_time;
+					$this->pending['cat_by_server'][ $server_name ][ $category ]['c'] += $cat_count;
+					++$this->pending['cat_by_server'][ $server_name ][ $category ]['n'];
+					$this->pending['cat_by_server'][ $server_name ]['total']['c'] += $cat_count;
+				}
+
+				if ( ! isset( $this->pending['cat_by_url'][ $url_hash ][ $category ] ) ) {
+					$this->pending['cat_by_url'][ $url_hash ][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+				}
+				$this->pending['cat_by_url'][ $url_hash ][ $category ]['t'] += $cat_time;
+				$this->pending['cat_by_url'][ $url_hash ][ $category ]['c'] += $cat_count;
+				++$this->pending['cat_by_url'][ $url_hash ][ $category ]['n'];
+				$this->pending['cat_by_url'][ $url_hash ]['total']['c'] += $cat_count;
+
+				// Significant event detection (avg time per call exceeds threshold).
+				$time_threshold = $this->auto_protect_time_threshold;
+				if ( ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
+					$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
+					if ( $avg_per_call >= $time_threshold ) {
+						$base_name = \explode( ' ', $category, 2 )[0];
+						if ( ! isset( $this->significant_events[ $base_name ] ) ) {
+							$this->significant_events[ $base_name ]     = true;
+							$this->new_significant_events[ $base_name ] = true;
+						}
+					}
+				}
+
+				// Entry loop (per-URL + global).
+				if ( ! empty( $data['entries'] ) ) {
+					foreach ( $data['entries'] as $name => $entry_data ) {
+						$name        = $intern[ $name ] ??= $name;
+						$entry_time  = (float) ( $entry_data[0] ?? 0 );
+						$entry_count = (float) ( $entry_data[1] ?? 0 );
+
+						if ( ! isset( $pcat['entries'][ $name ] ) ) {
+							$pcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+						}
+						$pcat['entries'][ $name ][0] += $entry_time;
+						$pcat['entries'][ $name ][1] += $entry_count;
+						++$pcat['entries'][ $name ][2];
+
+						if ( ! isset( $lcat['entries'][ $name ] ) ) {
+							$lcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+						}
+						$lcat['entries'][ $name ][0] += $entry_time;
+						$lcat['entries'][ $name ][1] += $entry_count;
+						++$lcat['entries'][ $name ][2];
+					}
+
+					// Trim with hysteresis (cap by sum_time).
+					if ( \count( $pcat['entries'] ) > self::ENTRY_LIMIT_URL_UPPER ) {
+						\uasort( $pcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+						$pcat['entries'] = \array_slice( $pcat['entries'], 0, self::ENTRY_LIMIT_URL_LOWER, true );
+					}
+					if ( \count( $lcat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+						\uasort( $lcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+						$lcat['entries'] = \array_slice( $lcat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
+					}
+				}
+
+				// Noisy detection. Significant-event filtering is performed at
+				// apply_auto_tune time (matching upstream), not here.
+				if ( ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
+					$base_name = \explode( ' ', $category, 2 )[0];
+					if ( isset( $this->custom_event_names[ $base_name ] ) ) {
+						$this->custom_events_to_disable[ $base_name ] = true;
+					} else {
+						$this->hooks_to_disable[ $base_name ] = true;
+					}
+				}
+				unset( $pcat );
+				unset( $lcat );
+			}
+
+			// Top-level sums.
+			$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
+			$prof['sum_req_time'] = ( $prof['sum_req_time'] ?? 0 ) + $req_time;
+			$lb['count']          = ( $lb['count']          ?? 0 ) + 1;
+			$lb['sum_req_time']   = ( $lb['sum_req_time']   ?? 0 ) + $req_time;
+
+			if ( null !== $slb ) {
+				$slb['count']        = ( $slb['count']        ?? 0 ) + 1;
+				$slb['sum_req_time'] = ( $slb['sum_req_time'] ?? 0 ) + $req_time;
+				unset( $slb );
+			}
+
+			// Expire old per-URL categories.
+			$cutoff = $now - 3600;
+			foreach ( $prof['categories'] as $cat => $cd ) {
+				if ( ( $cd['ts'] ?? 0 ) < $cutoff ) {
+					unset( $prof['categories'][ $cat ] );
+				}
+			}
+			unset( $prof );
+			unset( $lb );
+		}
+
+		$this->stats_cache->set( $url_hash, $aggregate );
+	}
+
+	// -------------------------------------------------------------------------
+	// Persist (memcache write of the 9 namespaces).
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Persist combined aggregate stats (hourly, leaderboard, urls, dim, cat) to memcache.
+	 */
+	private function persist_aggregate_stats(): void {
+		if ( $this->stats_store === null ) {
+			return;
+		}
+		if (
+			empty( $this->hourly_stats )
+			&& empty( $this->leaderboard_stats )
+			&& empty( $this->leaderboard_by_server_stats )
+			&& empty( $this->url_stats )
+			&& empty( $this->dim_stats )
+			&& empty( $this->dim_stats_by_server )
+			&& empty( $this->url_dim_stats )
+			&& empty( $this->cat_stats )
+			&& empty( $this->cat_stats_by_server )
+			&& empty( $this->url_cat_stats )
+		) {
+			return;
+		}
+
+		// --- Hourly ---
+		if ( ! empty( $this->hourly_stats ) ) {
+			$existing_hourly = $this->stats_store->get_hourly();
+
+			foreach ( $this->hourly_stats as $bucket_key => $stats ) {
+				if ( ! isset( $existing_hourly[ $bucket_key ] ) ) {
+					$existing_hourly[ $bucket_key ] = [
+						'count'       => 0,
+						'sum_ms'      => 0,
+						'sum_peak_mb' => 0,
+					];
+				}
+				$existing_hourly[ $bucket_key ]['count']       += $stats['count'];
+				$existing_hourly[ $bucket_key ]['sum_ms']      += $stats['sum_ms'];
+				$existing_hourly[ $bucket_key ]['sum_peak_mb'] += $stats['sum_peak_mb'] ?? 0;
+			}
+
+			// Expire bucket data older than the retention window.
+			$cutoff = $this->bucket_key( $this->now_ts() - $this->stats_store->ttl() );
+			foreach ( \array_keys( $existing_hourly ) as $bucket_key ) {
+				if ( $bucket_key < $cutoff ) {
+					unset( $existing_hourly[ $bucket_key ] );
+				}
+			}
+			\ksort( $existing_hourly );
+
+			$this->stats_store->set_hourly( $existing_hourly );
+		}
+
+		// --- Leaderboard (bucketed, sums-based) ---
+		foreach ( $this->leaderboard_stats as $bucket_key => $bucket_sums ) {
+			$existing = $this->stats_store->get_leaderboard_bucket( $bucket_key );
+			if ( empty( $existing ) ) {
+				$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+			}
+			Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
+			foreach ( $existing['categories'] as &$cat_data ) {
+				if ( isset( $cat_data['entries'] ) && \count( $cat_data['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+					\uasort( $cat_data['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+					$cat_data['entries'] = \array_slice( $cat_data['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
+				}
+			}
+			unset( $cat_data );
+			$this->stats_store->set_leaderboard_bucket( $bucket_key, $existing );
+		}
+
+		// --- Per-server leaderboards ---
+		foreach ( $this->leaderboard_by_server_stats as $server => $buckets ) {
+			foreach ( $buckets as $bucket_key => $bucket_sums ) {
+				$existing = $this->stats_store->get_server_leaderboard_bucket( $server, $bucket_key );
+				if ( empty( $existing ) ) {
+					$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+				}
+				Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
+				foreach ( $existing['categories'] as &$cat_data ) {
+					if ( isset( $cat_data['entries'] ) && \count( $cat_data['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+						\uasort( $cat_data['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+						$cat_data['entries'] = \array_slice( $cat_data['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
+					}
+				}
+				unset( $cat_data );
+				$this->stats_store->set_server_leaderboard_bucket( $server, $bucket_key, $existing );
+			}
+		}
+
+		// --- URL index (hourly buckets) ---
+		if ( ! empty( $this->url_stats ) ) {
+			foreach ( $this->url_stats as $bucket_key => $hour_data ) {
+				$existing_urls = $this->stats_store->get_url_index_hourly( $bucket_key );
+
+				foreach ( $hour_data as $hash => $stats ) {
+					if ( ! isset( $existing_urls[ $hash ] ) ) {
+						$existing_urls[ $hash ] = [
+							'url'         => $stats['url'],
+							'count'       => 0,
+							'timed_count' => 0,
+							'sum_ms'      => 0,
+							'min_ms'      => 0,
+							'max_ms'      => 0,
+							'last_seen'   => 0,
+							'durations'   => [],
+							'count_2xx'   => 0,
+							'count_3xx'   => 0,
+							'count_4xx'   => 0,
+							'count_5xx'   => 0,
+							'sum_peak_mb' => 0,
+							'max_peak_mb' => 0,
+						];
+					}
+					$e               = &$existing_urls[ $hash ];
+					$e['count']      += $stats['count'];
+					$e['timed_count'] += $stats['timed_count'] ?? 0;
+					$e['sum_ms']     += $stats['sum_ms'];
+					$e['min_ms']     = ( 0 === $e['min_ms'] ) ? $stats['min_ms'] : \min( $e['min_ms'], $stats['min_ms'] );
+					$e['max_ms']     = \max( $e['max_ms'], $stats['max_ms'] );
+					$e['last_seen']  = \max( $e['last_seen'], $stats['last_seen'] );
+					$e['count_2xx'] += $stats['count_2xx'] ?? 0;
+					$e['count_3xx'] += $stats['count_3xx'] ?? 0;
+					$e['count_4xx'] += $stats['count_4xx'] ?? 0;
+					$e['count_5xx'] += $stats['count_5xx'] ?? 0;
+					$e['sum_peak_mb'] += $stats['sum_peak_mb'] ?? 0;
+					$e['max_peak_mb']  = \max( $e['max_peak_mb'], $stats['max_peak_mb'] ?? 0 );
+
+					$max_dur = Stats_Store::MAX_DURATIONS_PER_BUCKET;
+					$merged  = \array_merge( $e['durations'], $stats['durations'] );
+					if ( \count( $merged ) > $max_dur ) {
+						\shuffle( $merged );
+						$merged = \array_slice( $merged, 0, $max_dur );
+					}
+					$e['durations'] = $merged;
+					unset( $e );
+				}
+
+				// Compute percentiles for all URLs in this hour.
+				foreach ( $existing_urls as &$url_stat ) {
+					if ( ! empty( $url_stat['durations'] ) ) {
+						$sorted = $url_stat['durations'];
+						\sort( $sorted );
+						$n = \count( $sorted );
+						$url_stat['p50_ms'] = $sorted[ (int) ( $n * 0.50 ) ] ?? 0;
+						$url_stat['p95_ms'] = $sorted[ (int) ( $n * 0.95 ) ] ?? 0;
+						$url_stat['p99_ms'] = $sorted[ (int) ( $n * 0.99 ) ] ?? 0;
+						$tc = $url_stat['timed_count'] ?? $url_stat['count'];
+						$url_stat['avg_ms'] = $tc > 0 ? $url_stat['sum_ms'] / $tc : 0;
+					}
+				}
+				unset( $url_stat );
+
+				if ( \count( $existing_urls ) > 500 ) {
+					\uasort( $existing_urls, fn( $a, $b ) => $b['count'] <=> $a['count'] );
+					$existing_urls = \array_slice( $existing_urls, 0, 500, true );
+				}
+
+				$this->stats_store->set_url_index_hourly( $bucket_key, $existing_urls );
+			}
+		}
+
+		// --- Dimensional (global, per-server, per-URL) ---
+		$cutoff = $this->bucket_key( $this->now_ts() - $this->stats_store->ttl() );
+		foreach ( $this->dim_stats as $dim => $buckets ) {
+			$existing = $this->stats_store->get_dimensional( $dim );
+			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
+			$this->stats_store->set_dimensional( $dim, $existing );
+		}
+		foreach ( $this->dim_stats_by_server as $server => $dims ) {
+			foreach ( $dims as $dim => $buckets ) {
+				$existing = $this->stats_store->get_dimensional( $dim, $server );
+				$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
+				$this->stats_store->set_dimensional( $dim, $existing, $server );
+			}
+		}
+		foreach ( $this->url_dim_stats as $url_hash => $dims ) {
+			$existing = $this->stats_store->get_url_dimensional( $url_hash );
+			foreach ( $dims as $dim => $buckets ) {
+				if ( ! isset( $existing[ $dim ] ) ) {
+					$existing[ $dim ] = [];
+				}
+				$this->merge_and_cap_dimensional( $existing[ $dim ], $buckets, $cutoff, Stats_Store::MAX_URL_DIM_VALUES );
+			}
+			$this->stats_store->set_url_dimensional( $url_hash, $existing );
+		}
+
+		// --- Category time series (global, per-server, per-URL) ---
+		if ( ! empty( $this->cat_stats ) ) {
+			$existing_cats = $this->stats_store->get_categories();
+			$this->merge_and_cap_categories( $existing_cats, $this->cat_stats, $cutoff );
+			$this->stats_store->set_categories( $existing_cats );
+		}
+		foreach ( $this->cat_stats_by_server as $server => $buckets ) {
+			$existing = $this->stats_store->get_server_categories( $server );
+			$this->merge_and_cap_categories( $existing, $buckets, $cutoff );
+			$this->stats_store->set_server_categories( $server, $existing );
+		}
+		foreach ( $this->url_cat_stats as $url_hash => $buckets ) {
+			$existing_url_cats = $this->stats_store->get_url_categories( $url_hash );
+			$this->merge_and_cap_categories( $existing_url_cats, $buckets, $cutoff );
+			$this->stats_store->set_url_categories( $url_hash, $existing_url_cats );
+		}
+	}
+
+	/**
+	 * Merge incoming dimensional buckets into existing, expire old, and cap.
+	 */
+	private function merge_and_cap_dimensional( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
+		if ( 0 === $max_values ) {
+			$max_values = Stats_Store::MAX_DIM_VALUES;
+		}
+		foreach ( $buckets as $bk => $values ) {
+			foreach ( $values as $val => $stats ) {
+				$existing[ $bk ][ $val ]['c'] = ( $existing[ $bk ][ $val ]['c'] ?? 0 ) + $stats['c'];
+				$existing[ $bk ][ $val ]['s'] = ( $existing[ $bk ][ $val ]['s'] ?? 0 ) + $stats['s'];
+				$existing[ $bk ][ $val ]['m'] = ( $existing[ $bk ][ $val ]['m'] ?? 0 ) + ( $stats['m'] ?? 0 );
+			}
+		}
+		foreach ( \array_keys( $existing ) as $bk ) {
+			if ( $bk < $cutoff ) {
+				unset( $existing[ $bk ] );
+			}
+		}
+		foreach ( $existing as $bk => &$bk_values ) {
+			if ( \count( $bk_values ) > $max_values ) {
+				\uasort( $bk_values, fn( $a, $b ) => $b['c'] <=> $a['c'] );
+				$top    = \array_slice( $bk_values, 0, $max_values - 1, true );
+				$rest_c = $rest_s = $rest_m = 0;
+				foreach ( \array_slice( $bk_values, $max_values - 1 ) as $v ) {
+					$rest_c += $v['c'];
+					$rest_s += $v['s'];
+					$rest_m += $v['m'] ?? 0;
+				}
+				$top['Other'] = [ 'c' => $rest_c, 's' => $rest_s, 'm' => $rest_m ];
+				$bk_values    = $top;
+			}
+		}
+		unset( $bk_values );
+		\ksort( $existing );
+	}
+
+	/**
+	 * Merge incoming category buckets into existing, expire old, and cap.
+	 *
+	 * 'total' pseudo-category preserved before sort; overflow rolls into 'Other'.
+	 */
+	private function merge_and_cap_categories( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
+		if ( 0 === $max_values ) {
+			$max_values = Stats_Store::MAX_CAT_VALUES;
+		}
+		foreach ( $buckets as $bk => $categories ) {
+			foreach ( $categories as $cat => $stats ) {
+				$existing[ $bk ][ $cat ]['t'] = ( $existing[ $bk ][ $cat ]['t'] ?? 0 ) + $stats['t'];
+				$existing[ $bk ][ $cat ]['c'] = ( $existing[ $bk ][ $cat ]['c'] ?? 0 ) + $stats['c'];
+				$existing[ $bk ][ $cat ]['n'] = ( $existing[ $bk ][ $cat ]['n'] ?? 0 ) + $stats['n'];
+			}
+		}
+		foreach ( \array_keys( $existing ) as $bk ) {
+			if ( $bk < $cutoff ) {
+				unset( $existing[ $bk ] );
+			}
+		}
+		foreach ( $existing as $bk => &$bk_cats ) {
+			if ( \count( $bk_cats ) > $max_values ) {
+				$total = $bk_cats['total'] ?? null;
+				unset( $bk_cats['total'] );
+				\uasort( $bk_cats, fn( $a, $b ) => ( $b['t'] ?? 0 ) <=> ( $a['t'] ?? 0 ) );
+				$top    = \array_slice( $bk_cats, 0, $max_values - 2, true );
+				$rest_t = $rest_c = $rest_n = 0;
+				foreach ( \array_slice( $bk_cats, $max_values - 2 ) as $v ) {
+					$rest_t += $v['t'] ?? 0;
+					$rest_c += $v['c'] ?? 0;
+					$rest_n += $v['n'] ?? 0;
+				}
+				if ( $rest_t > 0 || $rest_c > 0 ) {
+					$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
+				}
+				if ( $total ) {
+					$top['total'] = $total;
+				}
+				$bk_cats = $top;
+			}
+		}
+		unset( $bk_cats );
+		\ksort( $existing );
+	}
+
+	// -------------------------------------------------------------------------
+	// Pending-bucket promotion + reset.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Move pending-bucket data into the flush arrays (caps applied at this stage
+	 * for category data, since the bucket is now complete).
+	 */
+	private function promote_pending_bucket(): void {
+		$bk       = $this->pending_bucket;
+		$max_cats = Stats_Store::MAX_CAT_VALUES;
+
+		// Hourly.
+		if ( ! empty( $this->pending['hourly'] ) ) {
+			$this->hourly_stats[ $bk ] = $this->pending['hourly'];
+		}
+
+		// URL stats.
+		if ( ! empty( $this->pending['url_stats'] ) ) {
+			$this->url_stats[ $bk ] = $this->pending['url_stats'];
+		}
+
+		// Dimensional (global).
+		foreach ( $this->pending['dim'] as $dim => $values ) {
+			$this->dim_stats[ $dim ][ $bk ] = $values;
+		}
+
+		// Dimensional (per-server).
+		foreach ( $this->pending['dim_by_server'] as $server => $dims ) {
+			foreach ( $dims as $dim => $values ) {
+				$this->dim_stats_by_server[ $server ][ $dim ][ $bk ] = $values;
+			}
+		}
+
+		// Dimensional (per-URL).
+		foreach ( $this->pending['url_dim'] as $url_hash => $dims ) {
+			foreach ( $dims as $dim => $values ) {
+				$this->url_dim_stats[ $url_hash ][ $dim ][ $bk ] = $values;
+			}
+		}
+
+		// Category (global, capped).
+		if ( ! empty( $this->pending['cat'] ) ) {
+			$this->cat_stats[ $bk ] = self::cap_single_bucket( $this->pending['cat'], $max_cats );
+		}
+
+		// Category (per-server, capped).
+		foreach ( $this->pending['cat_by_server'] as $server => $cats ) {
+			$this->cat_stats_by_server[ $server ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
+		}
+
+		// Category (per-URL, capped).
+		foreach ( $this->pending['cat_by_url'] as $url_hash => $cats ) {
+			$this->url_cat_stats[ $url_hash ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
+		}
+
+		// Leaderboard (global).
+		if ( ( $this->pending['leaderboard']['count'] ?? 0 ) > 0 ) {
+			if ( ! isset( $this->leaderboard_stats[ $bk ] ) ) {
+				$this->leaderboard_stats[ $bk ] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+			}
+			Stats_Store::merge_leaderboard_bucket( $this->leaderboard_stats[ $bk ], $this->pending['leaderboard'] );
+		}
+
+		// Leaderboard (per-server).
+		foreach ( $this->pending['leaderboard_by_server'] as $server => $slb_data ) {
+			if ( ( $slb_data['count'] ?? 0 ) <= 0 ) {
+				continue;
+			}
+			if ( ! isset( $this->leaderboard_by_server_stats[ $server ][ $bk ] ) ) {
+				$this->leaderboard_by_server_stats[ $server ][ $bk ] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+			}
+			Stats_Store::merge_leaderboard_bucket( $this->leaderboard_by_server_stats[ $server ][ $bk ], $slb_data );
+		}
+
+		$this->reset_pending();
+	}
+
+	/**
+	 * Cap a single bucket's categories to top N by time, preserving 'total'.
+	 */
+	private static function cap_single_bucket( array $cats, int $max_values ): array {
+		if ( \count( $cats ) <= $max_values ) {
+			return $cats;
+		}
+		$total = $cats['total'] ?? null;
+		unset( $cats['total'] );
+		\uasort( $cats, fn( $a, $b ) => ( $b['t'] ?? 0 ) <=> ( $a['t'] ?? 0 ) );
+		$top    = \array_slice( $cats, 0, $max_values - 2, true );
+		$rest_t = $rest_c = $rest_n = 0;
+		foreach ( \array_slice( $cats, $max_values - 2 ) as $v ) {
+			$rest_t += $v['t'] ?? 0;
+			$rest_c += $v['c'] ?? 0;
+			$rest_n += $v['n'] ?? 0;
+		}
+		if ( $rest_t > 0 || $rest_c > 0 ) {
+			$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
+		}
+		if ( $total ) {
+			$top['total'] = $total;
+		}
+		return $top;
+	}
+
+	private function reset_pending(): void {
+		$this->pending = [
+			'hourly'                => [],
+			'dim'                   => [],
+			'dim_by_server'         => [],
+			'url_dim'               => [],
+			'url_stats'             => [],
+			'cat'                   => [],
+			'cat_by_server'         => [],
+			'cat_by_url'            => [],
+			'leaderboard'           => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+			'leaderboard_by_server' => [],
+		];
+	}
+
+	// -------------------------------------------------------------------------
+	// Per-URL flame merge + finalize.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Merge child nodes from a per-request flame into the per-URL aggregate
+	 * children additively (sums-not-means). Each node carries `sum_value` (sum
+	 * of inclusive durations across every request the node was seen in) and
+	 * `seen_count` (true count of those requests). Display values come from
+	 * finalize at flush time (sum_value / total_count).
+	 */
+	private static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
+		if ( $depth > self::MAX_RECURSION_DEPTH ) {
+			return $existing;
+		}
+
+		$indexed = [];
+		foreach ( $existing as $child ) {
+			$indexed[ $child['name'] ] = $child;
+		}
+
+		foreach ( $incoming as $child ) {
+			$name           = $child['name'] ?? 'unknown';
+			$child_ts       = (int) ( $child['ts'] ?? $now_ts );
+			$incoming_value = (float) ( $child['value'] ?? 0 );
+			if ( ! isset( $indexed[ $name ] ) ) {
+				$indexed[ $name ] = [
+					'name'       => $name,
+					'sum_value'  => $incoming_value,
+					'seen_count' => 1,
+					'ts'         => $child_ts,
+					'children'   => [],
+				];
+			} else {
+				++$indexed[ $name ]['seen_count'];
+				$indexed[ $name ]['ts']         = $child_ts;
+				$indexed[ $name ]['sum_value'] += $incoming_value;
+			}
+
+			if ( ! empty( $child['children'] ) ) {
+				$indexed[ $name ]['children'] = self::merge_flame_children_incremental(
+					$indexed[ $name ]['children'] ?? [],
+					$child['children'],
+					$now_ts,
+					$depth + 1
+				);
+			}
+		}
+
+		// Expire entries not seen in over 1 hour.
+		$cutoff = $now_ts - 3600;
+		foreach ( $indexed as $name => $child ) {
+			if ( ( $child['ts'] ?? 0 ) < $cutoff ) {
+				unset( $indexed[ $name ] );
+			}
+		}
+
+		return \array_values( $indexed );
+	}
+
+	/**
+	 * Finalize a flame node for display: convert sums to averages, strip
+	 * suffixes, normalize parent ≥ children, and remove internal fields.
+	 */
+	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
+		if ( $depth > self::MAX_RECURSION_DEPTH ) {
+			return;
+		}
+
+		// Strip hidden sequence suffix (\x00N) used for duplicate sibling tracking.
+		$name     = $node['name'] ?? 'unknown';
+		$null_pos = \strpos( $name, "\x00" );
+		if ( false !== $null_pos ) {
+			$node['name'] = \substr( $name, 0, $null_pos );
+		}
+
+		// Convert sum to average across all requests for this URL.
+		if ( $total_count > 0 && isset( $node['sum_value'] ) ) {
+			$node['value'] = $node['sum_value'] / $total_count;
+		} elseif ( ! isset( $node['value'] ) ) {
+			$node['value'] = 0;
+		}
+
+		if ( ! empty( $node['children'] ) ) {
+			foreach ( $node['children'] as &$child ) {
+				self::finalize_flame_node( $child, $total_count, $depth + 1 );
+			}
+			unset( $child );
+
+			// Normalize: ensure parent value >= sum of children.
+			$children_sum = 0;
+			foreach ( $node['children'] as $child ) {
+				$children_sum += $child['value'] ?? 0;
+			}
+			if ( $children_sum > ( $node['value'] ?? 0 ) ) {
+				$node['value'] = $children_sum;
+			}
+		}
+
+		unset( $node['ts'] );
+		unset( $node['sum_value'] );
+		unset( $node['seen_count'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// Auto-tune: noisy hooks + significant events with distributed-lock.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Apply auto-disable decisions: persist hooks/events to disable and newly
+	 * discovered significant events. Uses memcache add() as a 5s distributed
+	 * lock to prevent races between FlameBuilder workers.
+	 */
+	private function apply_auto_tune(): void {
+		if (
+			empty( $this->hooks_to_disable )
+			&& empty( $this->custom_events_to_disable )
+			&& empty( $this->new_significant_events )
+		) {
+			return;
+		}
+
+		// In test mode (no store), fire the actions but skip the lock dance.
+		if ( $this->stats_store === null ) {
+			$this->fire_auto_tune_actions();
+			return;
+		}
+
+		$cache        = $this->stats_store->cache();
+		$lock_key     = 'evlog:auto_disable_lock';
+		$lock_timeout = 5;
+		$lock_value   = \bin2hex( \random_bytes( 8 ) );
+
+		if ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
+			return; // Lock held by another worker; retry on next flush.
+		}
+
+		try {
+			$this->fire_auto_tune_actions();
+		} finally {
+			// Only release if we still own the lock.
+			$current = $cache->get( $lock_key );
+			if ( $current === $lock_value ) {
+				$cache->delete( $lock_key );
+			}
+		}
+	}
+
+	private function fire_auto_tune_actions(): void {
+		if ( \function_exists( 'do_action' ) ) {
+			\do_action( 'newspack_event_logger_nodes/disable_hooks', \array_keys( $this->hooks_to_disable ) );
+			\do_action( 'newspack_event_logger_nodes/disable_custom_events', \array_keys( $this->custom_events_to_disable ) );
+			\do_action( 'newspack_event_logger_nodes/add_significant_events', \array_keys( $this->new_significant_events ) );
+		}
+
+		$this->hooks_to_disable         = [];
+		$this->custom_events_to_disable = [];
+		$this->new_significant_events   = [];
+	}
+
+	// -------------------------------------------------------------------------
+	// Bucket-key helper.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * 5-min bucket key from a Unix timestamp.
+	 */
+	private function bucket_key( int $timestamp ): string {
+		$min        = (int) \gmdate( 'i', $timestamp );
+		$bucket_min = \str_pad( (string) ( (int) \floor( $min / self::BUCKET_MINUTES ) * self::BUCKET_MINUTES ), 2, '0', STR_PAD_LEFT );
+		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
 	}
 }

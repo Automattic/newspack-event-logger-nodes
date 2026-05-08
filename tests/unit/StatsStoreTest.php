@@ -319,4 +319,153 @@ class StatsStoreTest extends TestCase {
 		// Missing bucket should not appear.
 		$this->assertArrayNotHasKey( 'nonexistent-bucket', $results );
 	}
+
+	// --- New explicit-bucket setter API (FlameBuilder uses these) ---------
+
+	public function test_set_and_get_hourly_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 5, 'sum_ms' => 100, 'sum_peak_mb' => 10 ] ] );
+		$h = $store->get_hourly();
+		$this->assertSame( 5, $h['2026-01-01-00']['count'] );
+	}
+
+	public function test_set_and_get_leaderboard_bucket_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$lb = $store->get_leaderboard_bucket( '2026-01-01-00-05' );
+		$this->assertSame( 3, $lb['count'] );
+		$this->assertEqualsWithDelta( 1.5, $lb['sum_req_time'], 1e-9 );
+	}
+
+	public function test_set_and_get_server_leaderboard_bucket_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_server_leaderboard_bucket( 'srv-x', '2026-01-01-00-05', [ 'count' => 7, 'sum_req_time' => 3.5, 'categories' => [] ] );
+		$lb = $store->get_server_leaderboard_bucket( 'srv-x', '2026-01-01-00-05' );
+		$this->assertSame( 7, $lb['count'] );
+	}
+
+	public function test_set_and_get_url_index_hourly_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_url_index_hourly( '2026-01-01-00-00', [ 'hash1' => [ 'url' => '/x', 'count' => 1 ] ] );
+		$urls = $store->get_url_index_hourly( '2026-01-01-00-00' );
+		$this->assertArrayHasKey( 'hash1', $urls );
+	}
+
+	public function test_set_and_get_dimensional_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_dimensional( 'status', [ '2026-01-01-00-00' => [ '200' => [ 'c' => 5, 's' => 1.5, 'm' => 10 ] ] ] );
+		$dim = $store->get_dimensional( 'status' );
+		$this->assertSame( 5, $dim['2026-01-01-00-00']['200']['c'] );
+	}
+
+	public function test_set_and_get_dimensional_per_server_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_dimensional( 'method', [ 'b' => [ 'POST' => [ 'c' => 1, 's' => 0, 'm' => 0 ] ] ], 'srv-a' );
+		$dim = $store->get_dimensional( 'method', 'srv-a' );
+		$this->assertArrayHasKey( 'b', $dim );
+		// Different server: empty.
+		$this->assertSame( [], $store->get_dimensional( 'method', 'srv-b' ) );
+	}
+
+	public function test_set_and_get_url_dimensional_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_url_dimensional( 'urlhash', [ 'status' => [ 'b' => [ '200' => [ 'c' => 3, 's' => 0, 'm' => 0 ] ] ] ] );
+		$dim = $store->get_url_dimensional( 'urlhash' );
+		$this->assertSame( 3, $dim['status']['b']['200']['c'] );
+	}
+
+	public function test_set_and_get_categories_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_categories( [ '2026-01-01-00-00' => [ 'wpdb' => [ 't' => 0.5, 'c' => 10, 'n' => 1 ] ] ] );
+		$cats = $store->get_categories();
+		$this->assertSame( 10, $cats['2026-01-01-00-00']['wpdb']['c'] );
+	}
+
+	public function test_set_and_get_server_categories_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_server_categories( 'srv-x', [ 'b' => [ 'wpdb' => [ 't' => 1, 'c' => 1, 'n' => 1 ] ] ] );
+		$cats = $store->get_server_categories( 'srv-x' );
+		$this->assertArrayHasKey( 'b', $cats );
+		// Different server: empty.
+		$this->assertSame( [], $store->get_server_categories( 'srv-y' ) );
+	}
+
+	public function test_set_and_get_url_categories_round_trip(): void {
+		$store = $this->make_store();
+		$store->set_url_categories( 'urlhash', [ 'b' => [ 'wpdb' => [ 't' => 1, 'c' => 1, 'n' => 1 ] ] ] );
+		$cats = $store->get_url_categories( 'urlhash' );
+		$this->assertArrayHasKey( 'b', $cats );
+	}
+
+	public function test_server_key_static_helper_is_deterministic(): void {
+		$h1 = Stats_Store::server_key( 'srv-a.example.com' );
+		$h2 = Stats_Store::server_key( 'srv-a.example.com' );
+		$this->assertSame( $h1, $h2 );
+		$this->assertSame( 8, \strlen( $h1 ) );
+		// Different inputs → different hashes.
+		$h3 = Stats_Store::server_key( 'srv-b.example.com' );
+		$this->assertNotSame( $h1, $h3 );
+	}
+
+	public function test_server_key_empty_string_returns_empty(): void {
+		$this->assertSame( '', Stats_Store::server_key( '' ) );
+	}
+
+	public function test_merge_leaderboard_bucket_static_is_additive(): void {
+		$dst = [ 'count' => 1, 'sum_req_time' => 0.5, 'categories' => [] ];
+		$src = [
+			'count'        => 2,
+			'sum_req_time' => 1.0,
+			'categories'   => [
+				'wpdb' => [
+					'samples'   => 2,
+					'sum_time'  => 0.4,
+					'sum_count' => 12,
+					'entries'   => [ 'SELECT' => [ 0.3, 8, 1 ] ],
+				],
+			],
+		];
+		Stats_Store::merge_leaderboard_bucket( $dst, $src );
+		$this->assertSame( 3, $dst['count'] );
+		$this->assertEqualsWithDelta( 1.5, $dst['sum_req_time'], 1e-9 );
+		$this->assertSame( 2, $dst['categories']['wpdb']['samples'] );
+		$this->assertEqualsWithDelta( 0.4, $dst['categories']['wpdb']['sum_time'], 1e-9 );
+		// Entry merge.
+		$this->assertEqualsWithDelta( 0.3, $dst['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
+	}
+
+	public function test_cache_accessor_returns_underlying_cache(): void {
+		$mc    = new FakeMemcached();
+		$store = $this->make_store( $mc );
+		$this->assertSame( $mc, $store->cache() );
+	}
+
+	public function test_sums_to_display_converts_running_sums_to_avg(): void {
+		$sums = [
+			'wpdb' => [
+				'samples'   => 4,
+				'sum_time'  => 1.6,
+				'sum_count' => 16,
+				'entries'   => [ 'SELECT' => [ 1.2, 12, 4 ] ],
+			],
+		];
+		$display = Stats_Store::sums_to_display( 4, 4.0, $sums );
+		$this->assertSame( 4, $display['count'] );
+		$this->assertEqualsWithDelta( 1.0, $display['total_time'], 1e-9 );
+		// time = sum_time / total_count = 1.6/4 = 0.4
+		$this->assertEqualsWithDelta( 0.4, $display['categories']['wpdb']['time'], 1e-9 );
+		$this->assertEqualsWithDelta( 4.0, $display['categories']['wpdb']['count'], 1e-9 );
+		// entries[name] = [sum/samples, sum/samples, samples]
+		$this->assertEqualsWithDelta( 0.3, $display['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
+		$this->assertEqualsWithDelta( 3.0, $display['categories']['wpdb']['entries']['SELECT'][1], 1e-9 );
+	}
+
+	public function test_bucket_key_for_returns_5min_floor(): void {
+		$store = $this->make_store();
+		// gmmktime so we control the UTC clock the bucket_key_for derives from.
+		$ts  = \gmmktime( 12, 34, 56, 5, 8, 2026 );
+		$key = $store->bucket_key_for( $ts );
+		// Format: Y-m-d-H-MM where MM is 5-min floor of 34 = 30.
+		$this->assertSame( '2026-05-08-12-30', $key );
+	}
 }
