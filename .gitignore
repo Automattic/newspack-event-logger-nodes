@@ -1,3 +1,13 @@
 .phpunit.cache/
-*.swp
+/tmp/phpunit-cache-newspack-event-logger-nodes/
 .DS_Store
+*.swp
+vendor/
+node_modules/
+/build/
+/release/
+/.release-staging/
+package-lock.json
+*.log
+npm-debug.log*
+Thumbs.db
