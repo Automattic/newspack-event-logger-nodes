@@ -17,5 +17,4 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
 }
 
-// Require runtime classes (will be added one per task).
-// require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-request-builder.php';
+require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-request-builder.php';
