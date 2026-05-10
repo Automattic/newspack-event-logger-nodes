@@ -115,7 +115,7 @@ const ErrorRow = memo( function ErrorRow( {
 							<span key={ col } role="cell">
 								<a
 									className="entry-rid"
-									href={ `admin.php?page=newspack-event-logger&search=${ encodeURIComponent(
+									href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
 										entry.rid
 									) }` }
 									title="View request trace"

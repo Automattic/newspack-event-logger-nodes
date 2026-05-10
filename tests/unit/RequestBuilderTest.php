@@ -36,14 +36,14 @@ class RequestBuilderTest extends TestCase {
 	 * @param array  $extra  Additional fields (m, l, duration_ms, ts, status_code, error_status).
 	 */
 	private function firehose_msg( int $n, string $rid, string $k, array $extra = [] ): array {
-		$line = (string) \json_encode( \array_merge(
+		$entry = \array_merge(
 			[ 'n' => $n, 'rid' => $rid, 'k' => $k, 'ts' => 1_700_000_000 ],
 			$extra
-		) );
+		);
 
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ]     = $line;
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = $entry;
 		return $msg;
 	}
 
@@ -53,7 +53,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	private function captured_request( CaptureSink $capture, int $i = 0 ): array {
-		return \json_decode( $capture->captured[ $i ][ Message::VALUE ], true );
+		return (array) $capture->captured[ $i ][ Message::VALUE ];
 	}
 
 	// --- Basic lifecycle --------------------------------------------------
@@ -111,11 +111,11 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
-	public function test_invalid_json_silently_dropped(): void {
+	public function test_non_array_value_silently_dropped(): void {
 		$rb                    = new RequestBuilder();
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = 'not-valid-json';
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = 'not-an-array';
 		$rb->fill( $msg );
 		$this->assertSame( 0, $rb->cache_size() );
 	}
@@ -123,8 +123,8 @@ class RequestBuilderTest extends TestCase {
 	public function test_missing_rid_silently_dropped(): void {
 		$rb                    = new RequestBuilder();
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = '{"k":"process (start)","ts":1}';
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [ 'k' => 'process (start)', 'ts' => 1 ];
 		$rb->fill( $msg );
 		$this->assertSame( 0, $rb->cache_size() );
 	}
@@ -349,12 +349,15 @@ class RequestBuilderTest extends TestCase {
 
 	// --- Errors sink ------------------------------------------------------
 
-	public function test_error_keyword_forwarded_to_errors_sink(): void {
-		$rb         = new RequestBuilder();
-		$main_sink  = new CaptureSink();
-		$err_sink   = new CaptureSink();
-		$rb->sink( $main_sink );
-		$rb->set_errors_sink( $err_sink );
+	public function test_error_keyword_forwarded_to_errors_target(): void {
+		// Errors and completed-request messages now go through the SAME sink
+		// (the routed path); they're distinguished by the message TO field —
+		// errors carry TO=errors_target, completed-requests carry TO=target.
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->connect_node( 'main:target' );
+		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
@@ -362,14 +365,19 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 4, 'r1', 'warning', [ 'm' => 'deprecation' ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
 
-		$this->assertCount( 2, $err_sink->captured, 'error + warning forwarded' );
-		$this->assertCount( 1, $main_sink->captured, 'main sink only got the completed request' );
+		$by_to = [];
+		foreach ( $capture->captured as $m ) {
+			$by_to[ $m[ Message::TO ] ][] = $m;
+		}
+		$this->assertCount( 2, $by_to['errors:target'] ?? [], 'error + warning forwarded' );
+		$this->assertCount( 1, $by_to['main:target'] ?? [], 'main target only got the completed request' );
 	}
 
 	public function test_suffix_error_warning_keywords_also_forwarded(): void {
-		$rb       = new RequestBuilder();
-		$err_sink = new CaptureSink();
-		$rb->set_errors_sink( $err_sink );
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
@@ -377,7 +385,11 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 4, 'r1', 'something (warning)', [ 'm' => 'deprecated api' ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
 
-		$this->assertCount( 2, $err_sink->captured );
+		$errors = \array_filter(
+			$capture->captured,
+			fn ( $m ) => 'errors:target' === $m[ Message::TO ]
+		);
+		$this->assertCount( 2, $errors );
 	}
 
 	// --- LRU eviction (timed-out) -----------------------------------------
@@ -440,7 +452,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_round_trip(): void {
-		$req = (object) [
+		$req = [
 			'rid'            => 'abcdef',
 			'url'            => '/post/123',
 			'timestamp'      => 1_700_000_000,
@@ -450,7 +462,11 @@ class RequestBuilderTest extends TestCase {
 			'request_method' => 'GET',
 			'error_status'   => '-',
 		];
-		$line     = (string) \json_encode( $req );
+		// $line is the packed Message wire format (positional JSON); VALUE at index 6.
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = $req;
+		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
 
 		$entry = RequestBuilder::format_index_entry( $line, $position );
@@ -470,7 +486,10 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_returns_null_for_missing_url(): void {
-		$line     = '{"rid":"x"}';
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = [ 'rid' => 'x' ];
+		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( RequestBuilder::format_index_entry( $line, $position ) );
 	}

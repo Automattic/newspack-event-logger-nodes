@@ -17,6 +17,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LogManager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( LogManager::class )]
@@ -232,14 +233,6 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
-	public function test_flush_buffer_null_guard(): void {
-		$this->require_config_or_skip();
-		$lm = LogManager::instance();
-		// flush_buffer on a fresh instance (no topic yet) should not throw.
-		$lm->flush_buffer();
-		$this->assertTrue( true );
-	}
-
 	public function test_finish_lifecycle(): void {
 		$this->require_config_or_skip();
 		$lm = LogManager::instance();
@@ -415,11 +408,8 @@ class LogManagerTest extends TestCase {
 
 		$complete_entry = null;
 		foreach ( $files as $file ) {
-			$content = \file_get_contents( $file );
-			$lines   = \array_filter( \explode( "\n", $content ) );
-			foreach ( $lines as $line ) {
-				$decoded = \json_decode( $line, true );
-				if ( $decoded && isset( $decoded['k'] ) && 'process (complete)' === $decoded['k'] ) {
+			foreach ( $this->extract_jsonl_entries( $file ) as $decoded ) {
+				if ( isset( $decoded['k'] ) && 'process (complete)' === $decoded['k'] ) {
 					$complete_entry = $decoded;
 				}
 			}
@@ -443,7 +433,7 @@ class LogManagerTest extends TestCase {
 		$lm = LogManager::instance();
 		$lm->start( 'redaction_test' );
 		$lm->message( 'test', [ 'm' => 'https://example.com?client_secret=SECRET&id=123' ] );
-		$lm->flush_buffer();
+		$lm->finish();
 
 		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
 		$this->assertDirectoryExists( $log_dir );
@@ -462,6 +452,13 @@ class LogManagerTest extends TestCase {
 	/**
 	 * Read ALL firehose log entries from the test directory.
 	 *
+	 * Each line on disk is a packed Tachikoma Message envelope (LogManager
+	 * routes through Topic::fill → Partition::fill, and Partition::fill writes
+	 * the canonical packed wire format). The original JSONL entries live on
+	 * Message::VALUE — and because LogManager batches multiple entries per
+	 * flush into a single buffered write, VALUE itself contains one-or-more
+	 * JSONL lines separated by `\n`. Unpack the envelope, then split + decode.
+	 *
 	 * @return array[] Decoded JSON entries.
 	 */
 	private function read_firehose_entries(): array {
@@ -472,16 +469,32 @@ class LogManagerTest extends TestCase {
 
 		$entries = [];
 		foreach ( $files as $file ) {
-			$content = \file_get_contents( $file );
-			$lines   = \array_filter( \explode( "\n", $content ) );
-			foreach ( $lines as $line ) {
-				$decoded = \json_decode( $line, true );
-				if ( $decoded ) {
-					$entries[] = $decoded;
-				}
+			foreach ( $this->extract_jsonl_entries( $file ) as $decoded ) {
+				$entries[] = $decoded;
 			}
 		}
 		return $entries;
+	}
+
+	/**
+	 * Extract entries from a single firehose segment file.
+	 *
+	 * Walks each packed Message line, unpacks, and returns each Message's
+	 * VALUE — which is now an entry array directly (one entry per Message).
+	 *
+	 * @return array[] Decoded entries in segment order.
+	 */
+	private function extract_jsonl_entries( string $file ): array {
+		$content = (string) \file_get_contents( $file );
+		$out     = [];
+		foreach ( \array_filter( \explode( "\n", $content ) ) as $packed_line ) {
+			$msg   = Message::unpacked( $packed_line );
+			$value = $msg[ Message::VALUE ] ?? null;
+			if ( \is_array( $value ) ) {
+				$out[] = $value;
+			}
+		}
+		return $out;
 	}
 
 	private function find_last_entry( string $category ): ?array {
@@ -511,7 +524,7 @@ class LogManagerTest extends TestCase {
 		$lm = LogManager::instance();
 		$lm->start( 'k_override_test' );
 		$lm->message( 'job', [ 'k' => 'discovery', 'm' => 'test' ] );
-		$lm->flush_buffer();
+		$lm->finish();
 
 		$entry = $this->find_last_entry( 'job' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=job' );
@@ -537,7 +550,7 @@ class LogManagerTest extends TestCase {
 		$lm = LogManager::instance();
 		$lm->start( 'ts_override_test' );
 		$lm->message( 'test', [ 'ts' => 12345.678, 'm' => 'hello' ] );
-		$lm->flush_buffer();
+		$lm->finish();
 
 		$entry = $this->find_last_entry( 'test' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=test' );
@@ -560,7 +573,7 @@ class LogManagerTest extends TestCase {
 		$lm = LogManager::instance();
 		$lm->start( 'rid_override_test' );
 		$lm->message( 'test', [ 'rid' => 'fake_id', 'm' => 'hello' ] );
-		$lm->flush_buffer();
+		$lm->finish();
 
 		$entry = $this->find_last_entry( 'test' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=test' );
@@ -584,7 +597,7 @@ class LogManagerTest extends TestCase {
 		$lm = LogManager::instance();
 		$lm->start( 'n_override_test' );
 		$lm->message( 'test', [ 'n' => 99999, 'm' => 'hello' ] );
-		$lm->flush_buffer();
+		$lm->finish();
 
 		$entry = $this->find_last_entry( 'test' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=test' );
@@ -611,11 +624,6 @@ class LogManagerTest extends TestCase {
 	}
 
 	// ── Constants preserved verbatim ───────────────────────────────────────
-
-	public function test_max_buffer_size_constant_preserved(): void {
-		$ref = new \ReflectionClassConstant( LogManager::class, 'MAX_BUFFER_SIZE' );
-		$this->assertSame( 4096, $ref->getValue() );
-	}
 
 	public function test_max_timer_depth_constant_preserved(): void {
 		$ref = new \ReflectionClassConstant( LogManager::class, 'MAX_TIMER_DEPTH' );

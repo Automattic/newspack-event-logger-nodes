@@ -66,7 +66,7 @@ namespace {
 	}
 	if ( ! \function_exists( 'wp_verify_nonce' ) ) {
 		function wp_verify_nonce( string $nonce, string $action ): bool {
-			return $nonce === 'nonce_' . $action;
+			return 'nonce_' . $action === $nonce;
 		}
 	}
 	if ( ! \function_exists( 'wp_unslash' ) ) {
@@ -266,18 +266,25 @@ class AdminTest extends TestCase {
 
 	// ---- register_settings ------------------------------------------------
 
-	public function test_register_settings_registers_the_seven_core_options(): void {
+	public function test_register_settings_registers_application_core_options(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
+		// Substrate options (base_directory / partitioning / memcache_servers /
+		// enable_workers / aggregator_servers) are NOT registered here — they
+		// live on `\Newspack_Nodes\Admin\Admin`.
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
-			'newspack_event_logger_nodes_base_directory',
-			'newspack_event_logger_nodes_num_partitions',
-			'newspack_event_logger_nodes_num_segments',
-			'newspack_event_logger_nodes_segment_size',
-			'newspack_event_logger_nodes_max_lifespan',
-			'newspack_event_logger_nodes_memcache_servers',
+			'newspack_event_logger_nodes_log_urls',
+			'newspack_event_logger_nodes_skip_urls',
+			'newspack_event_logger_nodes_log_events',
+			'newspack_event_logger_nodes_custom_events',
+			'newspack_event_logger_nodes_enable_jobs',
+			'newspack_event_logger_nodes_significant_events',
+			'newspack_event_logger_nodes_auto_disable_threshold',
+			'newspack_event_logger_nodes_auto_protect_time_threshold',
+			'newspack_event_logger_nodes_log_memory',
+			'newspack_event_logger_nodes_flush_every_line',
 		];
 		foreach ( $expected as $option ) {
 			$this->assertArrayHasKey( $option, $GLOBALS['_registered_settings'], "missing option: $option" );
@@ -294,15 +301,38 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_register_settings_uses_sanitize_int_or_empty_for_int_options(): void {
+	public function test_register_settings_does_not_register_substrate_options(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
-		$int_options = [
+		// Substrate-only — must NOT appear in the application's settings group.
+		$substrate_options = [
+			'newspack_event_logger_nodes_base_directory',
 			'newspack_event_logger_nodes_num_partitions',
 			'newspack_event_logger_nodes_num_segments',
 			'newspack_event_logger_nodes_segment_size',
 			'newspack_event_logger_nodes_max_lifespan',
+			'newspack_event_logger_nodes_memcache_servers',
+			'newspack_event_logger_nodes_enable_workers',
+			'newspack_event_logger_nodes_aggregator_servers',
+		];
+		foreach ( $substrate_options as $option ) {
+			$this->assertArrayNotHasKey(
+				$option,
+				$GLOBALS['_registered_settings'],
+				"substrate option $option must not be owned by the application Admin"
+			);
+		}
+	}
+
+	public function test_register_settings_uses_sanitize_int_or_empty_for_int_options(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+
+		// Application-side int options. Substrate ints (num_partitions etc.)
+		// are owned by the substrate Admin; not asserted here.
+		$int_options = [
+			'newspack_event_logger_nodes_auto_disable_threshold',
 		];
 		foreach ( $int_options as $option ) {
 			$cb = $GLOBALS['_registered_settings'][ $option ]['args']['sanitize_callback'];
@@ -315,54 +345,15 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_register_settings_validates_memcache_servers_with_regex(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-
-		$cb = $GLOBALS['_registered_settings']['newspack_event_logger_nodes_memcache_servers']['args']['sanitize_callback'];
-		$this->assertIsArray( $cb );
-		$this->assertSame( 'sanitize_memcache_servers', $cb[1] );
-
-		// Valid: host:port (incl. underscore for Docker container names).
-		$this->assertSame( "127.0.0.1:11211\nmem-cache_1:11211", \call_user_func( $cb, "127.0.0.1:11211\nmem-cache_1:11211" ) );
-
-		// Invalid lines silently dropped; valid ones survive.
-		$this->assertSame( '127.0.0.1:11211', \call_user_func( $cb, "127.0.0.1:11211\nbogus_no_port\nhost:notaport" ) );
-
-		// All-invalid input → empty string.
-		$this->assertSame( '', \call_user_func( $cb, "no-port-here\nalso-bad" ) );
-
-		// Empty / null preserved.
-		$this->assertSame( '', \call_user_func( $cb, '' ) );
-		$this->assertSame( '', \call_user_func( $cb, null ) );
-
-		// Memcache servers must NOT be autoloaded (extended option).
-		$this->assertFalse( $GLOBALS['_registered_settings']['newspack_event_logger_nodes_memcache_servers']['args']['autoload'] );
-	}
-
-	public function test_register_settings_base_directory_rejects_relative_and_traversal(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-
-		$cb = $GLOBALS['_registered_settings']['newspack_event_logger_nodes_base_directory']['args']['sanitize_callback'];
-		$this->assertIsCallable( $cb );
-
-		$this->assertSame( '/var/log/foo', \call_user_func( $cb, '/var/log/foo/' ) ); // trailing slash trimmed
-		$this->assertSame( '', \call_user_func( $cb, 'relative/path' ) ); // not absolute
-		$this->assertSame( '', \call_user_func( $cb, '/etc/../foo' ) );   // traversal
-		$this->assertSame( '', \call_user_func( $cb, "with\0null" ) );    // null byte
-		$this->assertSame( '', \call_user_func( $cb, '' ) );              // empty
-	}
-
-	public function test_register_settings_adds_general_and_storage_sections(): void {
+	public function test_register_settings_adds_general_section(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
 		$this->assertArrayHasKey( 'newspack_event_logger_nodes_general_section', $GLOBALS['_registered_sections'] );
-		$this->assertArrayHasKey( 'newspack_event_logger_nodes_storage_section', $GLOBALS['_registered_sections'] );
 
-		// Fields populated under the right page.
-		foreach ( [ 'enable_logging', 'num_partitions', 'num_segments', 'segment_size', 'max_lifespan', 'total_storage', 'base_directory', 'memcache_servers' ] as $field ) {
+		// Application-side fields populated under the right page. Storage
+		// fields (substrate) are NOT asserted here.
+		foreach ( [ 'enable_logging', 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'enable_jobs', 'significant_events' ] as $field ) {
 			$this->assertArrayHasKey( $field, $GLOBALS['_registered_fields'], "field $field not registered" );
 			$this->assertSame( Admin::SETTINGS_PAGE, $GLOBALS['_registered_fields'][ $field ]['page'] );
 		}
@@ -454,9 +445,11 @@ class AdminTest extends TestCase {
 	public function test_handle_reset_settings_clears_options_and_redirects(): void {
 		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
 
-		// Seed options.
+		// Seed application-level options. Substrate options (e.g.
+		// num_partitions) are now owned by `\Newspack_Nodes\Admin` and reset
+		// via its own handler.
 		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
-		\update_option( 'newspack_event_logger_nodes_num_partitions', 8 );
+		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 1234 );
 		\update_option( 'unrelated_option', 'survives' );
 
 		$admin = new Admin();
@@ -468,7 +461,7 @@ class AdminTest extends TestCase {
 		}
 
 		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_num_partitions' ) );
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_auto_disable_threshold' ) );
 		$this->assertSame( 'survives', \get_option( 'unrelated_option' ) ); // unrelated options untouched
 		$this->assertNotNull( $GLOBALS['_last_redirect'] );
 		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
@@ -521,29 +514,21 @@ class AdminTest extends TestCase {
 		$this->prepare_lock_dir( 'request-workers', 0 );
 		$this->prepare_lock_dir( 'job-workers', 0 );
 		$admin = new Admin();
+		// Application-only supervisor-only options. Substrate-side
+		// supervisor-only options (num_partitions, enable_workers) are tested
+		// in the substrate Admin's own test suite.
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_num_partitions' );
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_jobs' );
 		$this->assertFalse( \file_exists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' ) );
 		$this->assertFalse( \file_exists( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' ) );
 	}
 
-	public function test_maybe_request_worker_restart_all_workers_for_base_directory(): void {
+	public function test_maybe_request_worker_restart_request_workers_for_significant_events(): void {
 		$this->prepare_lock_dir( 'request-workers', 0 );
 		$this->prepare_lock_dir( 'job-workers', 0 );
 
 		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_base_directory' );
-
-		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
-		$this->assertFileExists( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
-	}
-
-	public function test_maybe_request_worker_restart_request_workers_for_memcache_servers(): void {
-		$this->prepare_lock_dir( 'request-workers', 0 );
-		$this->prepare_lock_dir( 'job-workers', 0 );
-
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_memcache_servers' );
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
 
 		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
 		$this->assertFileDoesNotExist( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
@@ -561,15 +546,18 @@ class AdminTest extends TestCase {
 	}
 
 	public function test_maybe_request_worker_restart_iterates_all_partitions(): void {
-		// Force num_partitions=4 via WP option override.
-		\update_option( 'newspack_event_logger_nodes_num_partitions', 4 );
+		// Force num_partitions=4 via the substrate WP option (substrate now
+		// owns num_partitions). The application Admin still has to walk every
+		// partition for the application-owned options.
+		\update_option( 'newspack_nodes_num_partitions', 4 );
 		Config::reset();
 		for ( $p = 0; $p < 4; $p++ ) {
 			$this->prepare_lock_dir( 'request-workers', $p );
 		}
 
 		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_memcache_servers' );
+		// Trigger via an application-owned request-workers option.
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
 
 		for ( $p = 0; $p < 4; $p++ ) {
 			$this->assertFileExists( "{$this->base_dir}/locks/request-workers.p{$p}.lock.d/restart" );
@@ -582,7 +570,7 @@ class AdminTest extends TestCase {
 		\add_filter(
 			'newspack_event_logger_nodes/worker_restart_groups',
 			function ( $groups, $option_short ) {
-				if ( 'memcache_servers' === $option_short ) {
+				if ( 'significant_events' === $option_short ) {
 					$groups[] = 'custom-workers';
 				}
 				return $groups;
@@ -590,7 +578,7 @@ class AdminTest extends TestCase {
 		);
 
 		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_memcache_servers' );
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
 
 		$this->assertFileExists( $this->base_dir . '/locks/custom-workers.p0.lock.d/restart' );
 	}

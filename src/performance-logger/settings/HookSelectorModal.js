@@ -19,7 +19,7 @@ import '../styles/hook-selector.scss';
 /**
  * Recommended hooks from config file (source of truth).
  */
-const RECOMMENDED_HOOKS = new Set( window.eventLoggerRecommendedHooks || [] );
+const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
 
 /**
  * Category metadata with descriptions.

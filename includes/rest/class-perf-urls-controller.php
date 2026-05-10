@@ -224,11 +224,49 @@ class PerfUrlsController extends PerfOverviewController {
 					'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
 					'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
 					'last_updated' => $entry['last_updated'] ?? 0,
-					'time_series'  => [],
+					'time_series'  => $this->build_url_time_series( $hash ),
 				];
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Per-URL time series across recent buckets. Stats_Store stores per-bucket
+	 * URL stats keyed by hash; we walk every bucket and emit one entry per
+	 * non-empty bucket: `[bucket => {count, sum_ms, sum_peak_mb}]`.
+	 */
+	private function build_url_time_series( string $hash ): array {
+		$buckets = $this->recent_url_buckets();
+		$series  = [];
+		foreach ( $this->stats_stores() as $store ) {
+			$rows = $store->get_url_buckets( $buckets );
+			foreach ( $rows as $bucket_key => $bucket_data ) {
+				if ( ! \is_array( $bucket_data ) || ! isset( $bucket_data[ $hash ] ) ) {
+					continue;
+				}
+				$stats = $bucket_data[ $hash ];
+				$count = (int) ( $stats['count'] ?? 0 );
+				if ( 0 === $count ) {
+					continue;
+				}
+				$sum_ms = isset( $stats['sum_ms'] )
+					? (float) $stats['sum_ms']
+					: (float) ( $stats['sum_req_time'] ?? 0 ) * 1000.0;
+				if ( ! isset( $series[ $bucket_key ] ) ) {
+					$series[ $bucket_key ] = [
+						'count'       => 0,
+						'sum_ms'      => 0.0,
+						'sum_peak_mb' => 0.0,
+					];
+				}
+				$series[ $bucket_key ]['count']       += $count;
+				$series[ $bucket_key ]['sum_ms']      += $sum_ms;
+				$series[ $bucket_key ]['sum_peak_mb'] += (float) ( $stats['sum_peak_mb'] ?? 0 );
+			}
+		}
+		\ksort( $series );
+		return $series;
 	}
 
 	private function find_url_aggregate( string $hash ): ?array {

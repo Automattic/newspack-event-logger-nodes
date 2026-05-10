@@ -1,42 +1,35 @@
 <?php
 /**
- * JobRouter: dispatches `k:"job"` and `k:"remote_job"` lines to registered handlers.
+ * Job Router
  *
- * Multi-input routing: lines from firehose vs jobintake are disambiguated by the
- * Message::KEY field, set by upstream Tail/Consumer nodes when forwarding. Format:
- * "{source}:{kind}" where {source} is "firehose" or "jobintake" and {kind} is the
- * line's `k` value (e.g., "firehose:job", "firehose:remote_job", "jobintake:job").
+ * Routes job entries from firehose.log and jobintake.log to registered handlers.
  *
- * Routing matrix:
- *   firehose:job        -> local handler  (registered via set_local_handler)
- *   firehose:remote_job -> remote handler (registered via set_remote_handler)
- *   jobintake:*         -> local handler  (jobintake never carries remote_job)
+ * Job sources (disambiguated via Message::KEY):
+ * - firehose: Extracts entries with k='job' or k='remote_job' from request lifecycle
+ * - jobintake: Direct job entries from JobIntake API
  *
- * Fallback: if KEY is empty or does not match the pattern, the line is treated as
- * local-source and the JSON `k` field decides routing (k:"job" -> local,
- * k:"remote_job" -> remote). This keeps single-source topologies and minimal
- * test setups working without forcing every test to set KEY.
- *
- * Validation per spec:
- *  - HANDLER_NAME_PATTERN = /^[a-z][a-z0-9_]*$/
- *  - MAX_JOB_SIZE = 10MB (10485760 bytes)
- *
- * Unknown handlers, oversized lines, and invalid handler names are reported via
- * Core::print_less_often (rate-limited; high-volume errors won't flood stderr).
+ * SECURITY NOTES:
+ * - Handler names validated against strict pattern
+ * - Parameters size limited to prevent DoS
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
-
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Job Router class.
+ */
 class JobRouter extends Node {
-	public const HANDLER_NAME_PATTERN = '/^[a-z][a-z0-9_]*$/';
+	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 	public const MAX_JOB_SIZE         = 10485760;
 
 	public const SOURCE_FIREHOSE  = 'firehose';
@@ -98,17 +91,21 @@ class JobRouter extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_BYTESTREAM ) ) {
+		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
 			return;
 		}
-		$line = $message[ Message::VALUE ];
-		// Fail-early: oversized lines never get parsed (avoid the JSON cost too).
-		if ( \strlen( $line ) > self::MAX_JOB_SIZE ) {
-			Core::print_less_often( 'JobRouter: oversized line, skipping' );
-			return;
-		}
-		$entry = \json_decode( $line, true );
+		$entry = $message[ Message::VALUE ];
 		if ( ! \is_array( $entry ) ) {
+			return;
+		}
+		// Defense-in-depth: drop entries whose on-wire size exceeds the per-job
+		// cap. Partition's MAX_LARGE_LINE_SIZE catches this when reaching disk,
+		// but tests construct Messages directly without going through Partition
+		// — keep the explicit gate so producers can't bypass it. Size matches
+		// the actual wire form (`Message::packed` is JSON).
+		$encoded = \wp_json_encode( $entry );
+		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
+			Core::print_less_often( 'JobRouter: oversized entry, skipping' );
 			return;
 		}
 		$kind = $entry['k'] ?? '';
@@ -123,7 +120,7 @@ class JobRouter extends Node {
 		// Sanity: when KEY carries a kind, prefer it over the JSON k. They should
 		// match in production; if they diverge the upstream-stamped value wins
 		// (it's the trusted source-of-truth tag).
-		if ( $key_kind !== '' ) {
+		if ( '' !== $key_kind ) {
 			$kind = $key_kind;
 		}
 
@@ -158,7 +155,7 @@ class JobRouter extends Node {
 	 * @return array{0:string,1:string}
 	 */
 	private function parse_key( string $key ): array {
-		if ( $key === '' ) {
+		if ( '' === $key ) {
 			return [ '', '' ];
 		}
 		$parts = \explode( ':', $key, 2 );

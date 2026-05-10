@@ -28,13 +28,17 @@ class SettingsController extends PerformanceControllerBase {
 	 * carries its sanitization type. Sensitive infra options like
 	 * `base_directory` are intentionally NOT writable here.
 	 *
+	 * Substrate-level options use the `newspack_nodes_*` prefix because
+	 * they're owned by `\Newspack_Nodes\Config` after the Config split.
+	 * Hub-side fan-out (RemoteManager / SettingsSync) targets these keys.
+	 *
 	 * @var array<string,string>
 	 */
 	private const ALLOWED_OPTIONS = [
-		'newspack_event_logger_nodes_num_partitions' => 'int',
-		'newspack_event_logger_nodes_num_segments'   => 'int',
-		'newspack_event_logger_nodes_segment_size'   => 'int',
-		'newspack_event_logger_nodes_max_lifespan'   => 'int',
+		'newspack_nodes_num_partitions' => 'int',
+		'newspack_nodes_num_segments'   => 'int',
+		'newspack_nodes_segment_size'   => 'int',
+		'newspack_nodes_max_lifespan'   => 'int',
 	];
 
 	public function register_routes(): void {
@@ -100,8 +104,12 @@ class SettingsController extends PerformanceControllerBase {
 		$updated = \update_option( $option, $sanitized );
 
 		// Reset Config cache so the new value is visible on the next read.
+		// Application Config::reset() also resets the substrate Config, so
+		// downstream readers of `newspack_nodes_*` see the new value too.
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
+		} elseif ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
+			\Newspack_Nodes\Config::reset();
 		}
 
 		return new \WP_REST_Response(
@@ -128,7 +136,7 @@ class SettingsController extends PerformanceControllerBase {
 					return null;
 				}
 				$int = (int) $value;
-				$min = ( 'newspack_event_logger_nodes_max_lifespan' === $option ) ? 0 : 1;
+				$min = ( 'newspack_nodes_max_lifespan' === $option ) ? 0 : 1;
 				if ( $int < $min || $int > 1073741824 ) {
 					return null;
 				}

@@ -2,15 +2,8 @@
 /**
  * Log Manager
  *
- * JSONL logging via Newspack_Nodes Topic + Partition. This is the public API
- * for Pyrobase and other plugins to log events.
- *
- * Ported from `Newspack_Performance_Logger\LogManager`. The on-disk format
- * (JSONL lines under `{base_dir}/firehose.log/p{N}/{seg}.log`) and atomic-write
- * contract (PIPE_BUF 4096 bytes) are unchanged. Storage is performed via
- * `Newspack_Nodes\Topic` constructed in request scope (lazy partition init —
- * no scandir during the constructor); writes go through `Topic::write()`,
- * which routes by URL CRC32 to the correct Partition.
+ * JSONL logging via Newspack_Nodes Topic + Partition.
+ * This is the public API for Pyrobase and other plugins to log events.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,7 +13,9 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Topic;
 use Newspack_Nodes\Partition;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 /**
  * Log manager class.
@@ -29,49 +24,39 @@ use Newspack_Nodes\Partition;
  * External plugins (Pyrobase, etc.) use this to log custom events.
  */
 class LogManager {
-	public bool $enabled         = false;
-	private ?bool $started       = null;
-	private bool $finished       = false;
-	private ?Topic $topic        = null;
-	/** @var int Partition index used for the current request's writes. */
-	private int $partition_idx   = 0;
-	private bool $line_limited   = false;
-	private int $line_number     = 1;
-	private array $times         = [];
-	private ?float $request_time = null;
-	private string $request_id   = '';
-	private string $request_url  = '';
-	private static ?self $instance = null;
+	public $enabled          = false;
+	private $started         = null;
+	private $finished        = false;
+	private $topic           = null;
+	private $partition_idx   = 0;
+	private $line_limited    = false;
+	private $line_number     = 1;
+	private $times           = [];
+	private $request_time    = null;
+	private $request_id      = '';
+	private $request_url     = '';
+	private static $instance = null;
 
 	/** @var array Stack of suspended parent LogManager instances. */
-	private static array $context_stack = [];
+	private static $context_stack = [];
 
 	/** @var array Cached config (loaded once at construction). */
-	private array $config = [];
+	private $config = [];
 
 	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
-	private bool $log_memory = false;
+	private $log_memory = false;
 
 	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
-	private bool $flush_every_line = false;
+	private $flush_every_line = false;
 
 	/** @var string|null Saved UNIQUE_ID for suspend/resume. */
-	private ?string $saved_unique_id = null;
+	private $saved_unique_id = null;
 
 	/** @var string|null Compiled regex for skip URL patterns. */
-	private ?string $skip_regex = null;
+	private $skip_regex = null;
 
 	/** @var string|null Compiled regex for log URL patterns. */
-	private ?string $log_regex = null;
-
-	/** @var string Write buffer for batching (flush before exceeding 4KB atomic limit). */
-	private string $write_buffer = '';
-
-	/** @var int Current buffer size in bytes. */
-	private int $buffer_size = 0;
-
-	/** @var int Max buffer size - stay under 4KB for atomic writes. */
-	private const MAX_BUFFER_SIZE = 4096;
+	private $log_regex = null;
 
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
 	private const MAX_TIMER_DEPTH = 100;
@@ -176,13 +161,10 @@ class LogManager {
 	}
 
 	/**
-	 * Finish initialization. Construct the Topic and pre-compute the partition
-	 * index so refresh_firehose() can map back to the active Partition.
-	 *
-	 * @param array $config Cached config (passed in to avoid reentry through Config::load_config).
+	 * Finish initialization
 	 */
 	private function init_firehose( array $config ): void {
-		// Set request ID FIRST — Topic constructor MAY trigger re-entrant
+		// Set request ID FIRST — Topic constructor may trigger re-entrant
 		// message() calls (via Config::load_config filters), and those need a valid rid.
 		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
@@ -197,15 +179,12 @@ class LogManager {
 		$num_partitions      = (int) ( $config['num_partitions'] ?? 1 );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
 		$this->partition_idx = Partition::hash_to_partition( $this->request_url, $num_partitions );
-
-		// Pass segment_size/num_segments/max_lifespan from core config to avoid
-		// Topic calling load_config('full'), which fires option schema filters
-		// and re-enters LogManager.
+		// Pass segment_size/num_segments/max_lifespan from core config to avoid Topic
+		// calling load_config('full'), which fires option schema filters and re-enters LogManager.
 		$segment_size = (int) ( $config['segment_size'] ?? Partition::DEFAULT_SEGMENT_SIZE );
 		$num_segments = (int) ( $config['num_segments'] ?? Partition::DEFAULT_NUM_SEGMENTS );
 		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition::DEFAULT_MAX_LIFESPAN );
-
-		$this->topic = new Topic( $base_dir, $num_partitions, $segment_size, $num_segments, $max_lifespan );
+		$this->topic  = new Topic( $base_dir, $num_partitions, $segment_size, $num_segments, $max_lifespan );
 	}
 
 	/**
@@ -235,7 +214,7 @@ class LogManager {
 	 *
 	 * @return self
 	 */
-	public static function instance(): self {
+	public static function instance() {
 		return self::$instance ??= new self();
 	}
 
@@ -261,7 +240,7 @@ class LogManager {
 	 */
 	public static function suspend(): void {
 		if ( null !== self::$instance ) {
-			self::$instance->flush_buffer();
+			self::$instance->topic?->flush();
 			// Save UNIQUE_ID so resume() can restore it (child may overwrite it).
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- saving our own generated ID for restore.
 			self::$instance->saved_unique_id = $_SERVER['UNIQUE_ID'] ?? null;
@@ -304,7 +283,7 @@ class LogManager {
 		// `newspack_event_logger_nodes_option_schema_core` filter. If an admin has
 		// added that (or any other internal Event Logger filter) to log_events
 		// — something the admin UI's "all known filters" selector can easily
-		// do by accident — then App\Core::hook_start is registered on it, and
+		// do by accident — then Core::hook_start is registered on it, and
 		// apply_filters re-enters ensure_started() → stack overflow. Marking
 		// started true here short-circuits the reentry at the top of this
 		// method; messages that arrive during init_firehose just accumulate in
@@ -319,7 +298,7 @@ class LogManager {
 	}
 
 	/**
-	 * Log process details.
+	 * Log process details
 	 *
 	 * @return void
 	 */
@@ -377,30 +356,25 @@ class LogManager {
 			\error_log( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d). Use JobIntake::queue() for payloads >4KB.', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
 			$data = [ 'truncated' => true ];
 		}
+		if ( null === $this->topic ) {
+			return false;
+		}
 		$entry = [ 'n' => $this->line_number, 'rid' => $this->request_id, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
-		$json  = \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
-		if ( $json ) {
-			$line_size = \strlen( $json ) + 1; // +1 for newline.
 
-			// Flush if adding this line would exceed atomic write limit.
-			if ( $this->buffer_size > 0 && $this->buffer_size + $line_size > self::MAX_BUFFER_SIZE ) {
-				$this->flush_buffer();
-			}
+		// One entry per Message; Topic hashes KEY to a partition and Partition packs + appends.
+		$msg                                       = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$right_now;
+		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_url;
+		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		$this->topic->fill( $msg );
 
-			$this->write_buffer .= $json . "\n";
-			$this->buffer_size  += $line_size;
-			++$this->line_number;
+		++$this->line_number;
 
-			if ( $this->flush_every_line ) {
-				$this->flush_buffer();
-			}
-
-			// Stop detailed logging after MAX_LOG_LINES to bound downstream state.
-			// Don't disable started — finish() needs it to close the stack cleanly.
-			if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
-				$this->flush_buffer();
-				$this->line_limited = true;
-			}
+		// Stop detailed logging after MAX_LOG_LINES to bound downstream state.
+		// Don't disable started — finish() needs it to close the stack cleanly.
+		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
+			$this->line_limited = true;
 		}
 		return true;
 	}
@@ -439,19 +413,12 @@ class LogManager {
 	 * Refresh firehose segment state from disk.
 	 *
 	 * Call after a subprocess that may have written to or rotated the firehose,
-	 * so subsequent writes go to the current segment. Routes through the active
-	 * Partition's init_current_segment via reflection — Topic exposes Partition
-	 * instances lazily, and we need to force a re-scan of the segment list
-	 * after an external writer has touched the partition directory.
+	 * so subsequent writes go to the current segment.
 	 */
 	public function refresh_firehose(): void {
 		if ( null === $this->topic ) {
 			return;
 		}
-		// Reach into Topic's protected partition() method to obtain the
-		// Partition that owns the current request's writes, then call
-		// init_current_segment() on it. This is the cleanest port of the
-		// legacy `Firehose::init_current_segment()` semantics.
 		$ref_partition_method = new \ReflectionMethod( Topic::class, 'partition' );
 		$ref_partition_method->setAccessible( true );
 		$partition = $ref_partition_method->invoke( $this->topic, $this->partition_idx );
@@ -459,21 +426,6 @@ class LogManager {
 		$ref_init = new \ReflectionMethod( Partition::class, 'init_current_segment' );
 		$ref_init->setAccessible( true );
 		$ref_init->invoke( $partition );
-	}
-
-	/**
-	 * Flush buffered writes to firehose (atomic <=4KB write).
-	 */
-	public function flush_buffer(): void {
-		if ( 0 === $this->buffer_size || null === $this->topic ) {
-			return;
-		}
-		// Topic::write( $key, $value ) hashes $key to a partition via
-		// Partition::hash_to_partition; passing $this->request_url ensures
-		// every line for this request lands in the same partition.
-		$this->topic->write( $this->request_url, $this->write_buffer );
-		$this->write_buffer = '';
-		$this->buffer_size  = 0;
 	}
 
 	/**
@@ -691,7 +643,7 @@ class LogManager {
 		}
 
 		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
-		$this->flush_buffer();
+		$this->topic?->flush();
 		$this->started = false;
 	}
 
@@ -716,4 +668,5 @@ class LogManager {
 		}
 		return $slug;
 	}
+
 }

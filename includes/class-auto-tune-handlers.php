@@ -1,44 +1,20 @@
 <?php
 /**
- * AutoTuneHandlers: registers listeners for FlameBuilder's auto-tune actions.
+ * Auto Tune Handlers
  *
- * FlameBuilder fires three actions when it detects noisy events or discovers
- * new significant ones:
- *
- *   newspack_event_logger_nodes/disable_hooks         (hooks, context)
- *   newspack_event_logger_nodes/disable_custom_events (events, context)
- *   newspack_event_logger_nodes/add_significant_events (events, context)
- *
- * Without listeners these signals land in the void (the legacy plugin's
- * gap-analysis flagged this as dead code). This class registers the missing
- * listeners in two flavours:
- *
- *  1. Standalone-mode (priority 10): direct `update_option` updates against
- *     this WordPress instance. Safe on every install — workers pre-set the
- *     EVENT_LOGGER_WORKER_TYPE env var so the capability check passes from
- *     the cron context, while admin requests fall back to manage_options.
- *
- *  2. Hub-mode (priority 5): when running on a hub
- *     (`enable_workers === true`), fan the change out to every spoke via
- *     `JobIntake::queue('remote_manager', sync_setting)` so each remote
- *     applies the same tuning. Priority 5 fires BEFORE priority 10 — the
- *     hub-mode handler fans out, the standalone-mode handler then writes
- *     the local hub option (so the hub itself is also tuned the same way
- *     it told its spokes to be).
- *
- * Loop avoidance: standalone-mode's `update_option` would normally be picked
- * up by SettingsSync's static listener and queue _another_ sync_setting job
- * for the same value. The hub-mode handler has already done that fan-out,
- * so we suppress SettingsSync briefly around the standalone update. (On a
- * spoke, enable_workers is false and SettingsSync's listener fails closed
- * before queueing anything anyway, so suppression is a hub-only safety.)
+ * Listeners for FlameBuilder's auto-tune actions
+ * (disable_hooks / disable_custom_events / add_significant_events).
+ * Standalone-mode writes update_option locally; hub-mode also fans out via
+ * JobIntake. Loop avoidance via SettingsSync::suppress_sync.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 class AutoTuneHandlers {
 	/**

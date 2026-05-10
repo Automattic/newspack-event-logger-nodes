@@ -338,3 +338,18 @@ require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/FakeMemcached.php';
+
+// Widen the substrate Config's allowed_config_dirs so tests using
+// `LOCAL_NEWSPACK_NODES_CONF=...path-inside-this-plugin/tests/configs/...php`
+// validate. Production paths in `/usr/src` are covered by the default
+// allowlist; this is a host-development-only nudge.
+( static function (): void {
+	if ( ! \class_exists( '\\Newspack_Nodes\\Config' ) ) {
+		return;
+	}
+	$ref     = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'allowed_config_dirs' );
+	$ref->setAccessible( true );
+	$dirs    = $ref->getValue();
+	$dirs[]  = \dirname( __DIR__ );
+	$ref->setValue( null, $dirs );
+} )();

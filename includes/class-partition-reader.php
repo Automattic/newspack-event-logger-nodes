@@ -1,23 +1,20 @@
 <?php
 /**
- * Partition_Reader: streaming reader for `Newspack_Nodes\Partition`.
+ * Partition Reader
  *
- * Lift-adapt of the legacy `Newspack_Event_Logger\FirehoseReader`. Provides
- * line-buffered reads with rotation handling and an `is_caught_up()` probe
- * so SSE loops can sleep instead of busy-poll when the tail is current.
- *
- * Position tracking is the caller's responsibility — this class does not
- * persist offsets. SSE controllers ship `{segment_id, offset}` to the client
- * on each batch and accept it back as a resume position.
+ * Streaming reader for Newspack_Nodes\Partition with line-buffered reads,
+ * rotation handling, and an is_caught_up() probe for SSE loops.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
-
 use Newspack_Nodes\Partition;
+
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 class Partition_Reader {
 

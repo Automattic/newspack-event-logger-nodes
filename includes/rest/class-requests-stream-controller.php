@@ -45,7 +45,9 @@ class RequestsStreamController extends SSEControllerBase {
 	 * URL clipped to 2000 chars, user-agent to 500.
 	 */
 	public static function transform_line( string $line, int $p ): ?array {
-		$req = \json_decode( $line, true, 64 );
+		// Lines are packed Messages (positional JSON); request lives at Message::VALUE.
+		$decoded = \json_decode( $line, true, 64 );
+		$req     = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
 		if ( ! \is_array( $req ) || empty( $req['url'] ) ) {
 			return null;
 		}

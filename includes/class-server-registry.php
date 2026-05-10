@@ -1,35 +1,22 @@
 <?php
 /**
- * ServerRegistry: encrypted remote-server config storage for hub/spoke aggregation.
+ * Server Registry
  *
  * Singleton that manages remote server configurations stored in WordPress options.
- * Servers are stored in the `newspack_nodes_aggregator_servers` option as an
- * associative array keyed by server ID.
- *
- * Architecture decisions:
- *  - Sodium-secretbox encryption at rest for `auth_password`. Key derived from
- *    `wp_salt('auth')` via `sodium_crypto_generichash`. Random 24-byte nonce per
- *    encrypt. Wire format: `'$enc$' . base64(nonce . ciphertext)`.
- *  - Legacy plaintext fallback in decrypt() — pre-encryption rows are returned
- *    as-is so spokes that upgrade in place don't hard-error on first read.
- *  - Write verification: re-read after `update_option()` because WP returns
- *    false on both genuine failure AND no-op (when new value equals old).
- *  - Config-file merging: config-file `aggregator_servers` provide immutable
- *    defaults; WP option overlays them. `is_config_server()` distinguishes the
- *    two so admin UI can disallow editing URL/credentials on file entries.
- *  - `MAX_SERVERS=100` cap prevents unbounded option bloat.
- *  - `reset_cache()` for long-running workers — JobWorker resets between jobs
- *    so post-update reads see the latest registry without restart.
- *  - `error_log` audit trail (NOT LogManager) — avoids feedback loops if the
- *    log pipeline itself is unhealthy.
+ * Servers are stored in the 'newspack_nodes_aggregator_servers' option as an associative array.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
+/**
+ * Server Registry class.
+ */
 class ServerRegistry {
 
 	/**
@@ -84,27 +71,25 @@ class ServerRegistry {
 	}
 
 	/**
-	 * Public constructor — kept public for direct instantiation in tests / callers
-	 * that don't want the singleton (parity with the original prototype API).
+	 * Public constructor — kept public for direct instantiation in tests.
 	 */
 	public function __construct() {
 		// Intentionally empty.
 	}
 
 	/**
-	 * Get all servers (config-file defaults overlaid by WP option).
+	 * Get all servers (synonym of get_all() for backwards-compat).
 	 *
-	 * @return array<string,array> Associative array of server_id => config.
+	 * @return array Associative array of server_id => config.
 	 */
 	public function get_servers(): array {
 		return $this->get_all();
 	}
 
 	/**
-	 * Numeric-keyed list view of get_all(). Legacy upstream API; some
-	 * RemoteManager paths expect a list rather than a hash.
+	 * Numeric-keyed list view of get_all().
 	 *
-	 * @return array<int,array> Sequential array of server configs (id keyed in field).
+	 * @return array Sequential array of server configs (id keyed in field).
 	 */
 	public function list_servers(): array {
 		$out = [];
@@ -116,58 +101,56 @@ class ServerRegistry {
 	}
 
 	/**
-	 * Get all servers (config-file defaults overlaid by WP option). Synonym of
-	 * `get_servers()`; kept for parity with the upstream API.
+	 * Get all servers.
 	 *
-	 * @return array<string,array> Associative array of server_id => config.
+	 * Merges config file defaults with WordPress option values.
+	 * WordPress option values override config file defaults.
+	 *
+	 * @return array Associative array of server_id => config.
 	 */
 	public function get_all(): array {
-		if ( null !== $this->servers ) {
-			return $this->servers;
-		}
-
-		// Config-file defaults (immutable from admin UI).
-		$config_defaults = [];
-		if ( \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
-			$full = Config::load_config( 'full' );
-			if ( \is_array( $full ) && isset( $full['aggregator_servers'] ) && \is_array( $full['aggregator_servers'] ) ) {
-				$config_defaults = $full['aggregator_servers'];
+		if ( null === $this->servers ) {
+			// Get config file defaults.
+			$config          = Config::load_config( 'full' );
+			$config_defaults = $config['aggregator_servers'] ?? [];
+			if ( ! \is_array( $config_defaults ) ) {
+				$config_defaults = [];
 			}
-		}
 
-		// WP option overlay (managed via add()/update()/remove()).
-		$option = \get_option( self::OPTION_KEY, null );
+			// Get WordPress option (may override config defaults).
+			$option = \get_option( self::OPTION_KEY, null );
 
-		if ( null === $option ) {
-			$merged = $config_defaults;
-		} elseif ( \is_array( $option ) ) {
-			// WP option takes precedence on key collision.
-			$merged = \array_merge( $config_defaults, $option );
-		} else {
-			$merged = $config_defaults;
-		}
-
-		// Normalize: ensure all entries have required keys + decrypt credentials.
-		// Config-file entries bypass validate_config and may be missing fields.
-		foreach ( $merged as $id => &$server ) {
-			if ( ! \is_array( $server ) ) {
-				unset( $merged[ $id ] );
-				continue;
+			if ( null === $option ) {
+				// No option set - use config defaults.
+				$this->servers = $config_defaults;
+			} elseif ( \is_array( $option ) ) {
+				// Merge: WordPress option takes precedence.
+				$this->servers = \array_merge( $config_defaults, $option );
+			} else {
+				$this->servers = $config_defaults;
 			}
-			$server += [
-				'url'           => '',
-				'auth_username' => '',
-				'auth_password' => '',
-				'enabled'       => true,
-				'logs'          => [ 'firehose.log' ],
-			];
-			if ( '' !== $server['auth_password'] && \is_string( $server['auth_password'] ) ) {
-				$server['auth_password'] = self::decrypt( $server['auth_password'] );
-			}
-		}
-		unset( $server );
 
-		$this->servers = $merged;
+			// Normalize: ensure all entries have required keys (config-file entries
+			// bypass validate_config and may be missing 'logs', 'enabled', etc.).
+			foreach ( $this->servers as $id => &$server ) {
+				if ( ! \is_array( $server ) ) {
+					unset( $this->servers[ $id ] );
+					continue;
+				}
+				$server += [
+					'url'           => '',
+					'auth_username' => '',
+					'auth_password' => '',
+					'enabled'       => true,
+					'logs'          => [ 'firehose.log' ],
+				];
+				// Decrypt credentials (handles both encrypted and legacy plaintext).
+				if ( '' !== $server['auth_password'] ) {
+					$server['auth_password'] = self::decrypt( $server['auth_password'] );
+				}
+			}
+			unset( $server );
+		}
 		return $this->servers;
 	}
 

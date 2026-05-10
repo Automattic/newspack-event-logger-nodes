@@ -45,10 +45,14 @@ const updateBrowserUrl = ( params ) => {
 /**
  * Custom hook for URL navigation state and browser history management.
  *
- * @param {Array} urls Array of URL objects with hash property.
+ * @param {Array}    urls               Array of URL objects with hash property.
+ * @param {Function} [resolveRequestId] Optional async (rid) -> void. Called on
+ *                                      mount when `?request=` is set but `?url=`
+ *                                      isn't — owner resolves the URL hash and
+ *                                      selects both.
  * @return {Object} Navigation state and callbacks.
  */
-export default function useUrlNavigation( urls ) {
+export default function useUrlNavigation( urls, resolveRequestId ) {
 	// Selection state.
 	const [ selectedUrl, setSelectedUrl ] = useState( null );
 	const [ selectedRequest, setSelectedRequest ] = useState( null );
@@ -81,7 +85,7 @@ export default function useUrlNavigation( urls ) {
 
 	// Restore state from URL parameters when URLs are loaded.
 	useEffect( () => {
-		if ( urls.length > 0 && initialUrlHash ) {
+		if ( initialUrlHash && urls.length > 0 ) {
 			const urlObj = urls.find( ( u ) => u.hash === initialUrlHash );
 			if ( urlObj ) {
 				selectUrl( urlObj );
@@ -93,8 +97,24 @@ export default function useUrlNavigation( urls ) {
 			// Clear initial values so this only runs once.
 			setInitialUrlHash( null );
 			setInitialRequestId( null );
+			return;
 		}
-	}, [ urls, initialUrlHash, initialRequestId, selectUrl, selectRequest ] );
+		// `?request=` without `?url=` — owner resolves the URL hash, then
+		// selects both. Doesn't depend on `urls` being loaded since the
+		// resolver fetches the entry fresh.
+		if ( ! initialUrlHash && initialRequestId && resolveRequestId ) {
+			const rid = initialRequestId;
+			setInitialRequestId( null );
+			resolveRequestId( rid );
+		}
+	}, [
+		urls,
+		initialUrlHash,
+		initialRequestId,
+		selectUrl,
+		selectRequest,
+		resolveRequestId,
+	] );
 
 	// Update browser URL when selection changes.
 	useEffect( () => {

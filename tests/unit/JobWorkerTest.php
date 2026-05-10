@@ -10,10 +10,10 @@ use PHPUnit\Framework\Attributes\CoversClass;
 class JobWorkerTest extends TestCase {
 	private function job_message( string $handler, mixed $payload = null, string $field = 'payload', string $kind = 'job' ): array {
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$entry                 = [ 'k' => $kind, 'handler' => $handler ];
 		$entry[ $field ]       = $payload;
-		$msg[ Message::VALUE ] = json_encode( $entry );
+		$msg[ Message::VALUE ] = $entry;
 		return $msg;
 	}
 
@@ -57,13 +57,13 @@ class JobWorkerTest extends TestCase {
 		} );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [
 			'k'          => 'job',
 			'handler'    => 'mix',
 			'parameters' => 'PARAMS',
 			'payload'    => 'PAYLOAD',
-		] );
+		];
 		$jw->fill( $msg );
 
 		$this->assertSame( 'PARAMS', $received );
@@ -152,30 +152,22 @@ class JobWorkerTest extends TestCase {
 		$this->assertNotSame( $id, $id2 );
 	}
 
-	// --- JSON depth pinning -------------------------------------------------
+	// --- Non-array VALUE handling ------------------------------------------
 
-	public function test_excessive_json_depth_is_rejected(): void {
-		// Depth pinned to 64; deeper JSON must not parse (defense against
-		// stack-exhaustion attacks via malicious producer).
+	public function test_non_array_value_is_dropped(): void {
+		// VALUE is no longer JSON-decoded by the consumer — it is the array (or
+		// other typed payload) directly. A non-array VALUE must be silently
+		// dropped rather than dispatched to a handler.
 		$jw = new JobWorker();
 		$called = false;
 		$jw->register_handler( 'deep', function () use ( &$called ) { $called = true; } );
 
-		// Build a 100-deep nested array — well over the 64 limit.
-		$nested = 'x';
-		for ( $i = 0; $i < 100; $i++ ) {
-			$nested = [ 'n' => $nested ];
-		}
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [
-			'k'       => 'job',
-			'handler' => 'deep',
-			'payload' => $nested,
-		] );
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = 'not-an-array';
 		$jw->fill( $msg );
 
-		$this->assertFalse( $called, 'oversized-depth JSON must not reach the handler' );
+		$this->assertFalse( $called, 'non-array VALUE must not reach the handler' );
 		$this->assertSame( 0, $jw->jobs_executed() );
 	}
 
@@ -338,8 +330,8 @@ class JobWorkerTest extends TestCase {
 		$jw->register_handler( 'noop', function () use ( &$called ) { $called = true; } );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'start', 'handler' => 'noop', 'payload' => null ] );
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [ 'k' => 'start', 'handler' => 'noop', 'payload' => null ];
 		$jw->fill( $msg );
 
 		$this->assertFalse( $called );

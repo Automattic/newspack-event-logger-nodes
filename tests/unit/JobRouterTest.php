@@ -17,19 +17,19 @@ class JobRouterTest extends TestCase {
 	public function test_register_handler_rejects_invalid_name(): void {
 		$jr = new JobRouter();
 		$this->expectException( \InvalidArgumentException::class );
-		$jr->register_handler( 'BadName-WithDash', fn ( $payload ) => null );
+		$jr->register_handler( '1bad-leading-digit', fn ( $payload ) => null );
 	}
 
 	public function test_set_local_handler_rejects_invalid_name(): void {
 		$jr = new JobRouter();
 		$this->expectException( \InvalidArgumentException::class );
-		$jr->set_local_handler( 'Bad-Name', fn ( $p ) => null );
+		$jr->set_local_handler( 'bad name with spaces', fn ( $p ) => null );
 	}
 
 	public function test_set_remote_handler_rejects_invalid_name(): void {
 		$jr = new JobRouter();
 		$this->expectException( \InvalidArgumentException::class );
-		$jr->set_remote_handler( 'Bad-Name', fn ( $p ) => null );
+		$jr->set_remote_handler( 'bad/path/name', fn ( $p ) => null );
 	}
 
 	public function test_processing_job_invokes_handler(): void {
@@ -40,8 +40,8 @@ class JobRouterTest extends TestCase {
 		} );
 
 		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'job', 'handler' => 'echo_job', 'payload' => [ 'x' => 1 ] ] );
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'echo_job', 'payload' => [ 'x' => 1 ] ];
 		$jr->fill( $msg );
 
 		$this->assertSame( [ 'x' => 1 ], $received );
@@ -53,8 +53,8 @@ class JobRouterTest extends TestCase {
 		$jr->register_handler( 'echo_job', function () use ( &$called ) { $called = true; } );
 
 		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'start', 'rid' => 'r1' ] );
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [ 'k' => 'start', 'rid' => 'r1' ];
 		$jr->fill( $msg );
 
 		$this->assertFalse( $called );
@@ -63,8 +63,8 @@ class JobRouterTest extends TestCase {
 	public function test_processing_skips_unknown_handler(): void {
 		$jr = new JobRouter();
 		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'job', 'handler' => 'unknown', 'payload' => [] ] );
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'unknown', 'payload' => [] ];
 		$jr->fill( $msg ); // Should not throw.
 		$this->assertTrue( true );
 	}
@@ -75,12 +75,12 @@ class JobRouterTest extends TestCase {
 		$jr->register_handler( 'big', function () use ( &$called ) { $called = true; } );
 
 		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = json_encode( [
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [
 			'k' => 'job',
 			'handler' => 'big',
 			'payload' => [ 'data' => str_repeat( 'x', 11 * 1024 * 1024 ) ],
-		] );
+		];
 		$jr->fill( $msg );
 		$this->assertFalse( $called );
 	}
@@ -95,9 +95,9 @@ class JobRouterTest extends TestCase {
 		$jr->set_remote_handler( 'work', function () use ( &$remote_hit ) { $remote_hit = true; } );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'firehose:job';
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'job', 'handler' => 'work', 'payload' => 1 ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'work', 'payload' => 1 ];
 		$jr->fill( $msg );
 
 		$this->assertTrue( $local_hit );
@@ -112,9 +112,9 @@ class JobRouterTest extends TestCase {
 		$jr->set_remote_handler( 'sync_setting', function ( $payload ) use ( &$remote_hit ) { $remote_hit = $payload; } );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'firehose:remote_job';
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'remote_job', 'handler' => 'sync_setting', 'payload' => [ 'opt' => 'log_urls' ] ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'remote_job', 'handler' => 'sync_setting', 'payload' => [ 'opt' => 'log_urls' ] ];
 		$jr->fill( $msg );
 
 		$this->assertFalse( $local_hit );
@@ -128,11 +128,11 @@ class JobRouterTest extends TestCase {
 		$jr->set_local_handler( 'flush_buffer', function ( $payload ) use ( &$local_hit ) { $local_hit = $payload; } );
 		$jr->set_remote_handler( 'flush_buffer', function () use ( &$remote_hit ) { $remote_hit = true; } );
 
-		// Even if the JSON line says k:"remote_job", jobintake-stamped KEY forces local.
+		// Even if the entry says k:"remote_job", jobintake-stamped KEY forces local.
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'jobintake:job';
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'job', 'handler' => 'flush_buffer', 'payload' => 'x' ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'flush_buffer', 'payload' => 'x' ];
 		$jr->fill( $msg );
 
 		$this->assertSame( 'x', $local_hit );
@@ -150,13 +150,13 @@ class JobRouterTest extends TestCase {
 		$jr->set_remote_handler( 'do_thing', function () use ( &$remote_hit ) { $remote_hit = true; } );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'jobintake:remote_job';
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'remote_job', 'handler' => 'do_thing', 'payload' => null ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'remote_job', 'handler' => 'do_thing', 'payload' => null ];
 		$jr->fill( $msg );
 
 		// Local local-handler doesn't carry remote_job either; we drop into local
-		// dispatch but the JSON `k` is "remote_job" and the local handler is
+		// dispatch but the entry's `k` is "remote_job" and the local handler is
 		// registered, so it fires.
 		$this->assertTrue( $local_hit );
 		$this->assertFalse( $remote_hit );
@@ -166,9 +166,9 @@ class JobRouterTest extends TestCase {
 		$jr = new JobRouter();
 		// No handlers registered; firehose:job with unknown handler.
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'firehose:job';
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'job', 'handler' => 'never_registered', 'payload' => null ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'never_registered', 'payload' => null ];
 		$jr->fill( $msg ); // No throw, no dispatch — silent (or rate-limited stderr).
 		$this->assertFalse( $jr->has_handler( 'never_registered' ) );
 	}
@@ -178,9 +178,9 @@ class JobRouterTest extends TestCase {
 		$jr->set_local_handler( 'work', fn () => null ); // Wrong bucket.
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'firehose:remote_job';
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'remote_job', 'handler' => 'work', 'payload' => null ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'remote_job', 'handler' => 'work', 'payload' => null ];
 		$jr->fill( $msg ); // local-bucket has 'work' but remote-bucket doesn't — silent reject.
 		$this->assertFalse( $jr->has_remote_handler( 'work' ) );
 		$this->assertTrue( $jr->has_local_handler( 'work' ) );
@@ -194,9 +194,9 @@ class JobRouterTest extends TestCase {
 		$jr->set_local_handler( 'noop', function () use ( &$local_hit ) { $local_hit = true; } );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = '0:1234'; // Looks like seg:offset, not source:kind.
-		$msg[ Message::VALUE ] = json_encode( [ 'k' => 'job', 'handler' => 'noop', 'payload' => null ] );
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'noop', 'payload' => null ];
 		$jr->fill( $msg );
 
 		$this->assertTrue( $local_hit );
@@ -212,9 +212,9 @@ class JobRouterTest extends TestCase {
 
 		$mk = function ( string $key, string $k ) {
 			$m                   = Message::new_message();
-			$m[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+			$m[ Message::TYPE ]  = Message::TM_STRUCT;
 			$m[ Message::KEY ]   = $key;
-			$m[ Message::VALUE ] = json_encode( [ 'k' => $k, 'handler' => 'sync', 'payload' => null ] );
+			$m[ Message::VALUE ] = [ 'k' => $k, 'handler' => 'sync', 'payload' => null ];
 			return $m;
 		};
 		$msg = $mk( 'firehose:job', 'job' );

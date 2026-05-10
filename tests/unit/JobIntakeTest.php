@@ -8,6 +8,7 @@ require_once \dirname( __DIR__, 2 ) . '/includes/class-job-intake.php';
 use Newspack_Event_Logger_Nodes\JobIntake;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Lock;
+use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -33,9 +34,10 @@ class JobIntakeTest extends TestCase {
 		if ( ! is_dir( $base_log ) ) {
 			return $lines;
 		}
-		// Walk every partition dir + every segment.
+		// Walk every partition dir + every segment. Each line on disk is a
+		// packed Tachikoma Message carrying the job-envelope array in VALUE.
 		foreach ( scandir( $base_log ) as $entry ) {
-			if ( $entry === '.' || $entry === '..' ) {
+			if ( '.' === $entry || '..' === $entry ) {
 				continue;
 			}
 			$pdir = "{$base_log}/{$entry}";
@@ -47,12 +49,17 @@ class JobIntakeTest extends TestCase {
 					continue;
 				}
 				$content = file_get_contents( "{$pdir}/{$f}" );
-				if ( $content === '' ) {
+				if ( '' === $content ) {
 					continue;
 				}
 				foreach ( preg_split( '/\n/', rtrim( $content, "\n" ) ) as $line ) {
-					if ( $line !== '' ) {
-						$lines[] = json_decode( $line, true );
+					if ( '' === $line ) {
+						continue;
+					}
+					$msg     = Message::unpacked( $line );
+					$decoded = $msg[ Message::VALUE ];
+					if ( \is_array( $decoded ) ) {
+						$lines[] = $decoded;
 					}
 				}
 			}
@@ -98,7 +105,7 @@ class JobIntakeTest extends TestCase {
 
 		$lines = $this->read_all_jobintake_lines();
 		$this->assertCount( 1, $lines );
-		$this->assertSame( 'job', $lines[0]['type'] );
+		$this->assertSame( 'job', $lines[0]['k'] );
 		$this->assertSame( 'sync', $lines[0]['handler'] );
 		$this->assertSame( [ 'opt' => 'log_urls' ], $lines[0]['parameters'] );
 		$this->assertArrayHasKey( 'ts', $lines[0] );

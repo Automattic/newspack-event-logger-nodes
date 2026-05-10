@@ -2,21 +2,16 @@
 /**
  * Hook Categorizer
  *
- * Auto-categorizes WordPress hooks using patterns. Verbatim port from upstream
- * `Newspack_Performance_Logger\HookCategorizer` with the following adaptations:
- *  - Namespace renamed to `Newspack_Event_Logger_Nodes`.
- *  - OPTION_NAME bumped to `newspack_event_logger_nodes_hook_customizations` so
- *    user customizations stored in the legacy plugin's option do NOT bleed
- *    across to the new plugin (clean cutover, no shared state).
- *  - Skip-list in `get_registered_hooks_by_category()` extended to include the
- *    new namespace prefixes (`newspack_event_logger_nodes_*`, `newspack_nodes_*`).
+ * Auto-categorizes WordPress hooks using patterns.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 // phpcs:disable WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local file read.
 
@@ -253,16 +248,10 @@ class HookCategorizer {
 			$grouped[ $category ] = [];
 		}
 
-		// Categorize each hook, skipping the runtime + application's own
-		// internal filters. Instrumenting them is a no-op at best (App\Core
-		// rejects the prefixes) and historically caused a bootstrap reentry
-		// loop, so we hide them from the picker entirely.
-		//
-		// Both new (newspack_event_logger_nodes_, newspack_nodes_) and legacy
-		// (newspack_event_logger_, newspack_performance_logger_,
-		// newspack_event_aggregator_, newspack_performance_workers_,
-		// newspack_performance_aggregator_) prefixes are filtered so cross-
-		// plugin scenarios remain stable during migration.
+		// Categorize each hook, skipping Event Logger's own internal filters.
+		// Instrumenting them is a no-op at best (Core::hook_start rejects the
+		// prefixes) and used to cause a bootstrap reentry loop, so there's no
+		// reason to surface them in the picker at all.
 		foreach ( $hooks as $hook ) {
 			if ( \str_starts_with( $hook, 'newspack_event_logger_nodes_' )
 				|| \str_starts_with( $hook, 'newspack_nodes_' )

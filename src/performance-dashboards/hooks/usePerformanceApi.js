@@ -48,11 +48,17 @@ const usePerformanceApi = ( onError ) => {
 	 * @return {Promise<Object|null>} Overview data or null on error.
 	 */
 	const fetchOverview = useCallback(
-		async ( server = '' ) => {
+		async ( server = '', breakdowns = [] ) => {
 			try {
-				let path = '/newspack-nodes/v1/performance/overview?categories=1';
+				let path =
+					'/newspack-nodes/v1/performance/overview?categories=1';
 				if ( server ) {
 					path += `&server=${ encodeURIComponent( server ) }`;
+				}
+				if ( Array.isArray( breakdowns ) && breakdowns.length > 0 ) {
+					path += `&breakdown=${ encodeURIComponent(
+						breakdowns.join( ',' )
+					) }`;
 				}
 				const data = await apiFetch( { path } );
 				return data;

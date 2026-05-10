@@ -78,6 +78,14 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ serverBreakdownData, setServerBreakdownData ] = useState( null );
 	const [ serverNames, setServerNames ] = useState( [] );
 
+	// Breakdown selector state (lifted from OverviewSection so the parent
+	// can include the active dimension in the combined /overview fetch and
+	// avoid a separate `?breakdown=...` round-trip).
+	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
+	const chartBreakdownRef = useRef( 'status' );
+	chartBreakdownRef.current = chartBreakdown;
+	const [ chartBreakdownData, setChartBreakdownData ] = useState( null );
+
 	// Incremented on each main refresh so child components can sync.
 	const [ refreshTick, setRefreshTick ] = useState( 0 );
 
@@ -102,6 +110,48 @@ export default function PerformanceDashboard( { onError } ) {
 	const api = usePerformanceApi( onError );
 	const apiRef = useRef( api );
 	apiRef.current = api;
+	const urlsRef = useRef( urls );
+	urlsRef.current = urls;
+	const setRequestPartitionRef = useRef( null );
+	setRequestPartitionRef.current = setRequestPartition;
+
+	// Resolver used by useUrlNavigation when the page loads with `?request=`
+	// but no `?url=`: hits the same /search endpoint the search box uses,
+	// then selects both URL + request so the modal opens.
+	const resolveRequestId = useCallback( async ( rid ) => {
+		try {
+			const data = await apiFetch( {
+				path: `/newspack-nodes/v1/performance/requests/search/${ encodeURIComponent(
+					rid
+				) }`,
+			} );
+			if ( ! data || ! data.url_hash || data.partition === undefined ) {
+				return;
+			}
+			let urlObj = urlsRef.current.find(
+				( u ) => u.hash === data.url_hash
+			);
+			if ( ! urlObj ) {
+				urlObj = {
+					hash: data.url_hash,
+					url: data.url || 'Unknown URL',
+				};
+			}
+			if ( setRequestPartitionRef.current ) {
+				setRequestPartitionRef.current( data.partition );
+			}
+			selectUrlRef.current( urlObj );
+			selectRequestRef.current( rid );
+		} catch ( err ) {
+			// Swallow — let the page render the empty dashboard.
+		}
+	}, [] );
+
+	// Refs let us call selectUrl/selectRequest from inside resolveRequestId
+	// without a circular dependency on the hook return.
+	const selectUrlRef = useRef( () => {} );
+	const selectRequestRef = useRef( () => {} );
+
 	const {
 		selectedUrl,
 		selectedRequest,
@@ -110,7 +160,10 @@ export default function PerformanceDashboard( { onError } ) {
 		initialSearchQuery,
 		setInitialSearchQuery,
 		updateBrowserUrl,
-	} = useUrlNavigation( urls );
+	} = useUrlNavigation( urls, resolveRequestId );
+
+	selectUrlRef.current = selectUrl;
+	selectRequestRef.current = baseSelectRequest;
 
 	const urlDetailScrollRef = useRef( 0 );
 
@@ -260,11 +313,53 @@ export default function PerformanceDashboard( { onError } ) {
 		};
 	}, [] );
 
-	// Fetch overview and URLs on mount.
+	// Apply server breakdown response: cache the time series + extract the
+	// list of server names that have shown up in the recent buckets.
+	const applyServerBreakdown = useCallback( ( serverData ) => {
+		if ( ! serverData ) {
+			return;
+		}
+		setServerBreakdownData( serverData );
+		const names = new Set();
+		Object.values( serverData ).forEach( ( bucket ) => {
+			Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
+		} );
+		setServerNames( Array.from( names ).sort() );
+	}, [] );
+
+	// Pull both `server` (always — feeds the filter dropdown) and the active
+	// chart breakdown out of the merged response and apply each.
+	const applyOverviewBreakdowns = useCallback(
+		( breakdowns, currentBreakdown ) => {
+			if ( ! breakdowns ) {
+				return;
+			}
+			applyServerBreakdown( breakdowns.server );
+			if ( currentBreakdown && breakdowns[ currentBreakdown ] ) {
+				setChartBreakdownData( breakdowns[ currentBreakdown ] );
+			}
+		},
+		[ applyServerBreakdown ]
+	);
+
+	// `breakdownsFor` deduplicates `server` (always needed for the filter
+	// dropdown) and the active chart dimension into one comma-separated arg.
+	const breakdownsFor = useCallback( ( currentBreakdown ) => {
+		const set = new Set( [ 'server' ] );
+		if ( currentBreakdown ) {
+			set.add( currentBreakdown );
+		}
+		return Array.from( set );
+	}, [] );
+
+	// Fetch overview and URLs on mount. Combined `categories + server +
+	// chartBreakdown` so the server filter dropdown AND the breakdown chart
+	// both populate from the same payload.
 	useEffect( () => {
 		const loadData = async () => {
+			const dims = breakdownsFor( chartBreakdownRef.current );
 			const [ overviewData, urlsResult ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilterRef.current ),
+				apiRef.current.fetchOverview( serverFilterRef.current, dims ),
 				apiRef.current.fetchUrls( {
 					...urlParamsRef.current,
 					server: serverFilterRef.current,
@@ -275,6 +370,10 @@ export default function PerformanceDashboard( { onError } ) {
 				if ( overviewData.category_time_series ) {
 					setCategoryData( overviewData.category_time_series );
 				}
+				applyOverviewBreakdowns(
+					overviewData.breakdowns,
+					chartBreakdownRef.current
+				);
 			}
 			if ( urlsResult ) {
 				setUrls( urlsResult.data );
@@ -284,16 +383,17 @@ export default function PerformanceDashboard( { onError } ) {
 		};
 
 		loadData();
-	}, [] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
+	}, [ applyOverviewBreakdowns, breakdownsFor ] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
 
-	// Re-fetch URLs and overview when server filter changes.
+	// Re-fetch URLs and overview when server filter or breakdown dim changes.
 	useEffect( () => {
 		if ( loading ) {
 			return;
 		}
 		( async () => {
+			const dims = breakdownsFor( chartBreakdown );
 			const [ overviewData, result ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilter ),
+				apiRef.current.fetchOverview( serverFilter, dims ),
 				apiRef.current.fetchUrls( {
 					...urlParamsRef.current,
 					server: serverFilter,
@@ -304,13 +404,23 @@ export default function PerformanceDashboard( { onError } ) {
 				if ( overviewData.category_time_series ) {
 					setCategoryData( overviewData.category_time_series );
 				}
+				applyOverviewBreakdowns(
+					overviewData.breakdowns,
+					chartBreakdown
+				);
 			}
 			if ( result ) {
 				setUrls( result.data );
 				setTotalUrls( result.total );
 			}
 		} )();
-	}, [ serverFilter ] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- `loading` intentionally excluded; refs are stable.
+	}, [
+		serverFilter,
+		chartBreakdown,
+		applyOverviewBreakdowns,
+		breakdownsFor,
+	] );
 
 	// Auto-refresh dashboard only when modal is closed and page is visible.
 	const lastRefreshRef = useRef( 0 );
@@ -322,33 +432,29 @@ export default function PerformanceDashboard( { onError } ) {
 
 		const doRefresh = async () => {
 			lastRefreshRef.current = Date.now();
-			const [ overviewData, urlsResult, serverData ] = await Promise.all(
-				[
-					apiRef.current.fetchOverview( serverFilterRef.current ),
-					apiRef.current.fetchUrls( {
-						...urlParamsRef.current,
-						server: serverFilterRef.current,
-					} ),
-					apiRef.current.fetchBreakdown( 'server' ),
-				]
-			);
+			// Single overview call (categories + server + active chart
+			// breakdown) plus one urls call. Was three /overview hits per tick.
+			const dims = breakdownsFor( chartBreakdownRef.current );
+			const [ overviewData, urlsResult ] = await Promise.all( [
+				apiRef.current.fetchOverview( serverFilterRef.current, dims ),
+				apiRef.current.fetchUrls( {
+					...urlParamsRef.current,
+					server: serverFilterRef.current,
+				} ),
+			] );
 			if ( overviewData ) {
 				setOverview( overviewData );
 				if ( overviewData.category_time_series ) {
 					setCategoryData( overviewData.category_time_series );
 				}
+				applyOverviewBreakdowns(
+					overviewData.breakdowns,
+					chartBreakdownRef.current
+				);
 			}
 			if ( urlsResult ) {
 				setUrls( urlsResult.data );
 				setTotalUrls( urlsResult.total );
-			}
-			if ( serverData ) {
-				setServerBreakdownData( serverData );
-				const names = new Set();
-				Object.values( serverData ).forEach( ( bucket ) => {
-					Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
-				} );
-				setServerNames( Array.from( names ).sort() );
 			}
 			setRefreshTick( ( t ) => t + 1 );
 		};
@@ -363,27 +469,13 @@ export default function PerformanceDashboard( { onError } ) {
 		const interval = setInterval( doRefresh, intervalMs );
 
 		return () => clearInterval( interval );
-	}, [ refreshInterval, selectedUrl, isPageVisible ] );
-
-	// Fetch server dimensional data to populate server filter and compute per-server stats.
-	useEffect( () => {
-		let cancelled = false;
-		( async () => {
-			const data = await apiRef.current.fetchBreakdown( 'server' );
-			if ( cancelled || ! data ) {
-				return;
-			}
-			setServerBreakdownData( data );
-			const names = new Set();
-			Object.values( data ).forEach( ( bucket ) => {
-				Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
-			} );
-			setServerNames( Array.from( names ).sort() );
-		} )();
-		return () => {
-			cancelled = true;
-		};
-	}, [] ); // eslint-disable-line react-hooks/exhaustive-deps -- apiRef is stable.
+	}, [
+		refreshInterval,
+		selectedUrl,
+		isPageVisible,
+		applyOverviewBreakdowns,
+		breakdownsFor,
+	] );
 
 	// Merge new requests incrementally to avoid full table re-renders.
 	const mergeUrlDetail = useCallback( ( data, isInitial = false ) => {
@@ -652,10 +744,12 @@ export default function PerformanceDashboard( { onError } ) {
 				onSearch={ searchRequest }
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }
-				fetchBreakdown={ api.fetchBreakdown }
 				refreshTick={ refreshTick }
 				chartMetric={ chartMetric }
 				setChartMetric={ setChartMetric }
+				chartBreakdown={ chartBreakdown }
+				setChartBreakdown={ setChartBreakdown }
+				breakdownData={ chartBreakdownData }
 				categoryData={ categoryData }
 			/>
 

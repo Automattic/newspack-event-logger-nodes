@@ -1,10 +1,13 @@
 <?php
 /**
- * Newspack Event Logger Nodes — sample configuration overlay.
+ * Newspack Event Logger Nodes — sample application configuration overlay.
  *
- * This file is loaded at the bottom of `Config::load_config_defaults()` after
- * the runtime's `newspack_nodes/base_dir` filter has seeded `base_directory`,
- * and BEFORE WordPress-option overrides (`newspack_event_logger_nodes_*`).
+ * This file is loaded at the bottom of `Config::load_config_defaults()`. It
+ * holds APPLICATION-level keys only (logging toggles, URL filters, hook
+ * lists, custom-event registries, etc.). Substrate keys (`base_directory`,
+ * `num_partitions`, `memcache_servers`, `enable_workers`, `aggregator_servers`)
+ * live in the substrate plugin's `newspack-nodes-config.php` overlay loaded
+ * by `\Newspack_Nodes\Config`.
  *
  * To override locally without editing this file, point the env var
  * `LOCAL_NEWSPACK_NODES_CONF` at a `.php` file inside `/usr/src/...` or this
@@ -28,45 +31,6 @@ return [
 	// ── Logging toggles ────────────────────────────────────────────────────
 	'enable_logging'         => true,
 	'enable_jobs'            => true,
-	'enable_workers'         => true,
-
-	// ── Directories ────────────────────────────────────────────────────────
-	// Default flows from the runtime's `newspack_nodes/base_dir` filter
-	// (`/tmp/newspack-nodes` unless overridden). Set explicitly here only if
-	// this plugin needs a different root from the runtime substrate.
-	// 'base_directory'      => '/tmp/newspack-nodes',
-
-	// ── Memcache (extended; loaded only in 'full' mode) ───────────────────
-	// Same default as `Memcached_Cache::DEFAULT_SERVERS`. Override via WP
-	// option `newspack_event_logger_nodes_memcache_servers` (newline-
-	// separated `host:port`).
-	'memcache_servers'       => [
-		'127.0.0.1:11211',
-	],
-
-	// ── Partitioning + retention ───────────────────────────────────────────
-	// `num_partitions`: parallelism factor (CRC32-keyed). Capped at 16.
-	// `num_segments`:   segments retained per partition (count cap).
-	// `segment_size`:   max bytes per segment before rotation (64MB default).
-	// `max_lifespan`:   minimum retention in seconds. Segments are deleted
-	//                   only when both over `num_segments` AND older than
-	//                   `max_lifespan`. Set to 0 for pure count-based
-	//                   retention.
-	'num_partitions'         => 1,
-	'num_segments'           => 2,
-	'segment_size'           => 64 * 1024 * 1024,
-	'max_lifespan'           => 86400,
-
-	// ── Remote aggregation (hub/spoke) ─────────────────────────────────────
-	// Empty `aggregator_servers` = hub mode disabled (this node is a spoke
-	// or standalone). Spokes don't need aggregator config; the hub pulls
-	// from them via SSE using credentials stored in ServerRegistry.
-	'aggregator_servers'     => [],
-	'remote_num_segments'    => 2,
-	'remote_segment_size'    => 10 * 1024 * 1024,
-	'remote_max_lifespan'    => 3600,
-	'aggregator_verify_ssl'  => true,
-	'aggregator_allow_http'  => false,
 
 	// ── URL filtering (substring match, not regex) ─────────────────────────
 	// `skip_urls` is checked first and always wins over `log_urls`.

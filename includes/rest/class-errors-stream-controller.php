@@ -44,7 +44,10 @@ class ErrorsStreamController extends SSEControllerBase {
 	 * Drop non-JSON or rid-less lines; clip the message body to 1000 chars.
 	 */
 	public static function transform_line( string $line, int $p ): ?array {
-		$entry = \json_decode( $line, true, 64 );
+		// Lines are packed Messages (positional JSON `[type,ts,from,to,id,key,value]`);
+		// the original entry array lives at index `Message::VALUE` (= 6).
+		$decoded = \json_decode( $line, true, 64 );
+		$entry   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
 		if ( ! \is_array( $entry ) || empty( $entry['rid'] ) ) {
 			return null;
 		}

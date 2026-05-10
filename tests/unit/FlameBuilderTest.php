@@ -61,8 +61,8 @@ class FlameBuilderTest extends TestCase {
 
 	private function fill_request( FlameBuilder $fb, array $request ): void {
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ]     = (string) \json_encode( $request );
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = $request;
 		$fb->fill( $msg );
 	}
 
@@ -71,11 +71,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 0, $fb->stats_count() );
 	}
 
-	public function test_invalid_json_skipped(): void {
+	public function test_non_array_value_skipped(): void {
 		$fb                    = new FlameBuilder();
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = 'not-json';
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = 'not-an-array';
 		$fb->fill( $msg );
 		$this->assertSame( 0, $fb->stats_count() );
 	}
@@ -84,7 +84,7 @@ class FlameBuilderTest extends TestCase {
 		$fb                    = new FlameBuilder();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_INFO;
-		$msg[ Message::VALUE ] = (string) \json_encode( $this->completed_request() );
+		$msg[ Message::VALUE ] = $this->completed_request();
 		$fb->fill( $msg );
 		$this->assertSame( 0, $fb->stats_count() );
 	}
@@ -109,7 +109,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 
 		$this->assertCount( 1, $capture->captured, 'flame_data is written to flames_sink' );
-		$flame = \json_decode( $capture->captured[0][ Message::VALUE ], true );
+		$flame = $capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 'request', $flame['name'] );
 		// Root has duration assigned to value at fill().
 		$this->assertEqualsWithDelta( 50.0, $flame['value'], 1e-9 );
@@ -138,7 +138,7 @@ class FlameBuilderTest extends TestCase {
 		] );
 		$this->fill_request( $fb, $req );
 
-		$flame = \json_decode( $capture->captured[0][ Message::VALUE ], true );
+		$flame = $capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 'request', $flame['name'] );
 		$this->assertEmpty( $flame['children'] );
 	}
@@ -161,7 +161,7 @@ class FlameBuilderTest extends TestCase {
 		] );
 		$this->fill_request( $fb, $req );
 
-		$flame = \json_decode( $capture->captured[0][ Message::VALUE ], true );
+		$flame = $capture->captured[0][ Message::VALUE ];
 		$this->assertCount( 2, $flame['children'], '2 siblings at root' );
 		// After strip_name_suffixes: both children have name "init" with no \x00.
 		foreach ( $flame['children'] as $c ) {
@@ -407,7 +407,11 @@ class FlameBuilderTest extends TestCase {
 	// --- Index format -----------------------------------------------------
 
 	public function test_format_and_parse_flame_index_round_trip(): void {
-		$line     = '{"rid":"abc","url_hash":"deadbeef0001"}';
+		// $line is the packed Message wire format (positional JSON); VALUE at index 6.
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
+		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
 		$entry    = FlameBuilder::format_index_entry( $line, $position );
 		$this->assertNotNull( $entry );
@@ -422,7 +426,10 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_returns_null_when_rid_missing(): void {
-		$line     = '{"url_hash":"abc"}';
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
+		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( FlameBuilder::format_index_entry( $line, $position ) );
 	}

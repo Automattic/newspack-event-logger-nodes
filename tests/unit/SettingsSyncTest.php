@@ -139,7 +139,7 @@ class SettingsSyncTest extends TestCase {
 		$raw = \base64_decode( $tampered, true );
 		// Flip a byte well past the 24-byte nonce (sodium_crypto_secretbox_open
 		// authenticates the entire ciphertext + tag).
-		$raw[30] = $raw[30] === 'A' ? 'B' : 'A';
+		$raw[30] = 'A' === $raw[30] ? 'B' : 'A';
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 		$tampered = \base64_encode( $raw );
 
@@ -162,7 +162,7 @@ class SettingsSyncTest extends TestCase {
 		// Tamper with the ciphertext.
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 		$raw     = \base64_decode( $cipher, true );
-		$raw[30] = $raw[30] === 'X' ? 'Y' : 'X';
+		$raw[30] = 'X' === $raw[30] ? 'Y' : 'X';
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 		$tampered = \base64_encode( $raw );
 
@@ -232,24 +232,26 @@ class SettingsSyncTest extends TestCase {
 			$pairs[ $entry['local_option'] ] = $entry['remote_option'];
 		}
 
-		// SYNCED_OPTIONS map: local has _remote_*, remote drops it.
+		// SYNCED_OPTIONS map: local has _remote_*, remote drops it. Substrate
+		// keys live under the `newspack_nodes_*` prefix on the wire after the
+		// Config split.
 		$this->assertSame(
-			'newspack_event_logger_nodes_num_segments',
+			'newspack_nodes_num_segments',
 			$pairs['newspack_event_logger_nodes_remote_num_segments'] ?? null,
 			'remote_num_segments must remap to num_segments on the wire'
 		);
 		$this->assertSame(
-			'newspack_event_logger_nodes_segment_size',
+			'newspack_nodes_segment_size',
 			$pairs['newspack_event_logger_nodes_remote_segment_size'] ?? null
 		);
 		$this->assertSame(
-			'newspack_event_logger_nodes_max_lifespan',
+			'newspack_nodes_max_lifespan',
 			$pairs['newspack_event_logger_nodes_remote_max_lifespan'] ?? null
 		);
-		// num_partitions is shared (no remap).
+		// num_partitions is substrate-owned (newspack_nodes_*) and shared (no remap).
 		$this->assertSame(
-			'newspack_event_logger_nodes_num_partitions',
-			$pairs['newspack_event_logger_nodes_num_partitions'] ?? null
+			'newspack_nodes_num_partitions',
+			$pairs['newspack_nodes_num_partitions'] ?? null
 		);
 
 		// Perf options sync 1:1.
@@ -332,7 +334,7 @@ class SettingsSyncTest extends TestCase {
 			SettingsSync::SYNCED_OPTIONS
 		);
 		$this->assertSame(
-			'newspack_event_logger_nodes_num_segments',
+			'newspack_nodes_num_segments',
 			SettingsSync::SYNCED_OPTIONS['newspack_event_logger_nodes_remote_num_segments']
 		);
 	}

@@ -1,51 +1,13 @@
 <?php
 /**
- * StreamMerger: pulls remote firehoses via SSE and fans into the local Topic.
+ * Stream Merger
  *
- * Faithful port of the upstream `Newspack_Event_Aggregator\Cron\StreamMerger` +
- * `SSEClient` pair, expressed as a single Node on top of the runtime's shared
- * cURL multi handle. Per-remote state lives in `$this->remotes[$server_id]`;
- * one `\CurlHandle` per remote is registered with EventFramework's shared
- * `\CurlMultiHandle`. The EventFramework drives the multi handle each event-loop
- * iteration; per-handle WRITEFUNCTION callbacks feed bytes into
- * process_sse_chunk() for parsing.
- *
- * Behaviors carried verbatim from the legacy `class-sse-client.php` /
- * `class-stream-merger.php` (retained for byte-for-byte parity):
- *
- *   - Exponential backoff (1s -> 2s -> 4s -> max 30s; reset on first event).
- *   - HEARTBEAT_TIMEOUT = 45s. Stale connection (no event in window) -> close +
- *     reconnect with backoff bump.
- *   - MAX_BUFFER_SIZE = 10MB / MAX_EVENT_SIZE = 10MB / MAX_QUEUE_SIZE = 10000.
- *     Overflow disconnects the remote (signals cURL via WRITEFUNCTION return 0).
- *   - Full SSE protocol: `event:` + `data:` field parsing, multi-line `data:`
- *     concatenation with "\n", blank-line dispatch.
- *   - `connected` event captures `slot` from payload; subsequent
- *     `/firehose/heartbeat` POSTs every 15s use the slot to extend the hub's TTL
- *     on the spoke.
- *   - HTTPS-only by default (CURLOPT_PROTOCOLS = CURLPROTO_HTTPS); HTTP allowed
- *     only via `aggregator_allow_http` config with a stern less-often warning.
- *   - Position resume: per-server `{seg, off}` restored from offsetlog at
- *     `{logs_dir}/remote_firehose.log/p{N}` Partition; commits every 5s; URL
- *     params on connect (`segment_id`, `offset`).
- *   - `?aggregator=1` flag set on connect URL so server applies AGGREGATOR slot
- *     TTL (30s, not 10s).
- *   - HTTP Basic auth via Application Passwords. Bearer supported for compat
- *     when no user is supplied.
- *   - `_source` injection: `$event['data']['_source'] = $server_id` before
- *     encoding to local firehose.
- *   - Ingest filter: 3-arg `apply_filters( 'newspack_nodes/aggregator_ingest_line', $line, $server_id, $partition )`.
- *   - `entry` event validation: drop if `data.k` not string or `data.ts` not numeric.
- *   - PIPE_BUF guard: lines > 3900 bytes rejected for atomic-write boundary safety.
- *   - 9 status keys per server in memcache: `aggregator_status:{id}:p{N}` —
- *     drives the Aggregator dashboard.
+ * Pulls remote firehoses via SSE and fans them into the local Topic.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
-
-\defined( 'ABSPATH' ) || exit;
 
 use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
@@ -53,6 +15,10 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Partition;
 use Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase;
+
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 // phpcs:disable WordPress.WP.AlternativeFunctions.curl_curl_init
 // phpcs:disable WordPress.WP.AlternativeFunctions.curl_curl_setopt_array
@@ -210,11 +176,7 @@ class StreamMerger extends Node {
 					return $line;
 				}
 				$decoded['k'] = 'remote_job';
-				$encoded      = \function_exists( 'wp_json_encode' )
-					? \wp_json_encode( $decoded )
-					// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode
-					: \json_encode( $decoded );
-				return \is_string( $encoded ) ? $encoded : $line;
+				return \wp_json_encode( $decoded );
 			}
 		);
 	}
@@ -449,7 +411,7 @@ class StreamMerger extends Node {
 			return \strlen( $bytes );
 		}
 		$len = \strlen( $bytes );
-		if ( $len === 0 ) {
+		if ( 0 === $len ) {
 			return 0;
 		}
 
@@ -724,12 +686,9 @@ class StreamMerger extends Node {
 		// Stamp source server BEFORE encoding so downstream filters see it.
 		$data['_source'] = $server_id;
 
-		// wp_json_encode is preferred (UTF-8 sanitization); fall back to plain
-		// json_encode in test bootstraps that don't load the WP shim.
-		$line = \function_exists( 'wp_json_encode' )
-			? \wp_json_encode( $data )
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode
-			: \json_encode( $data );
+		// wp_json_encode handles UTF-8 sanitization for malformed upstream data
+		// (SSE chunks from remote servers may contain arbitrary user content).
+		$line = \wp_json_encode( $data );
 		if ( false === $line || '' === $line ) {
 			return;
 		}
@@ -1129,14 +1088,20 @@ class StreamMerger extends Node {
 			return;
 		}
 		$entry['_ts'] = (int) Core::$right_now;
-		$line         = \function_exists( 'wp_json_encode' )
-			? \wp_json_encode( $entry )
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode
-			: \json_encode( $entry );
-		if ( false === $line ) {
-			return;
-		}
-		$offsetlog->write( $line . "\n" );
+		// Wrap the multi-spoke position struct as TM_STRUCT and route through
+		// Partition::fill — the offsetlog stores the canonical packed wire
+		// format, same as every other Partition. restore_offset() unpacks back.
+		// Message::packed JSON-encodes the envelope (VALUE included), so
+		// passing the array directly avoids double-encoding.
+		$msg                       = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		$offsetlog->fill( $msg );
+		// Force the position to disk — supervisor restarts and the next
+		// StreamMerger instance read it via restore_offset; we can't wait
+		// for the offsetlog Partition's PIPE_BUF threshold to fire.
+		$offsetlog->flush();
 	}
 
 	/**
@@ -1164,8 +1129,12 @@ class StreamMerger extends Node {
 		if ( '' === $content ) {
 			return;
 		}
-		$lines  = \explode( "\n", \rtrim( $content, "\n" ) );
-		$latest = \json_decode( \end( $lines ), true, 64 );
+		$lines = \explode( "\n", \rtrim( $content, "\n" ) );
+		// Each line is a packed Tachikoma Message; unpack the outer envelope.
+		// VALUE is the position struct itself (TM_STRUCT — Message::packed
+		// already JSON-encoded the envelope, so VALUE comes back as an array).
+		$msg    = \Newspack_Nodes\Message::unpacked( (string) \end( $lines ) );
+		$latest = $msg[ \Newspack_Nodes\Message::VALUE ];
 		if ( ! \is_array( $latest ) ) {
 			return;
 		}
@@ -1197,7 +1166,9 @@ class StreamMerger extends Node {
 			@\mkdir( $dir, 0755, true );
 		}
 		$this->offsetlog = new Partition( $dir, $this->partition );
-		$this->offsetlog->allow_large_writes();
+		// Offsetlog is single-writer per StreamMerger — small JSON payloads,
+		// no cross-process contention. Skips allow_large_writes() and its
+		// graph-registered Lock+heartbeat machinery.
 		return $this->offsetlog;
 	}
 

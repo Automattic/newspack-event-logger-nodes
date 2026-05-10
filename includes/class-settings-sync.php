@@ -1,69 +1,44 @@
 <?php
 /**
- * SettingsSync: hub-side sync of WP options to remote spokes.
+ * Settings Sync
  *
- * Two-mode design:
- *
- *  1. Instance mode (legacy): closure-dispatch with sodium-secretbox encryption
- *     on the wire. Used by direct callers and tests that want to inspect the
- *     ciphertext / dispatch contract. Critical fail-closed properties:
- *      - Strict `enable_workers === true` polarity (no truthy coercion).
- *      - Encryption-required: dispatch is skipped if encrypt() returns ''.
- *
- *  2. Static mode (new): registers `update_option` / `add_option` listeners on
- *     `init()` and fans the changes out via `JobIntake::queue('remote_manager', ...)`.
- *     Mirrors the upstream `newspack-event-aggregator/SettingsSync` and
- *     `newspack-performance-aggregator/SettingsSync`. Maintains:
- *      - SYNCED_OPTIONS local→remote name remap for the 4 core options.
- *      - Empty/false resolution to `Config::load_config_defaults()`.
- *      - `suppress_sync(bool)` static toggle used by HealthCheckExtensions to
- *        break the inbound→re-sync loop without holding an instance.
- *      - `register_synced_settings` filter for the 9 perf-tuning options + the
- *        4 remap'd core options, so RemoteManager::sync_all_settings() picks
- *        them up during the periodic health-check fan-out.
- *
- * Critical invariants (do not regress):
- *  1. Fail-closed hub-check polarity. Only sync if `enable_workers === true`
- *     (strict). Missing or non-true means "not a hub" — no fan-out. The bug
- *     fixed in event-logger 2.4.42 (silent fan-out from non-hubs) lives here.
- *  2. Encryption-required fail-closed (instance mode). If sodium is unavailable
- *     or encryption returns empty, NO dispatch happens — no plaintext on the
- *     wire. Settings often contain auth credentials.
- *  3. Endpoint allowlist. Outbound endpoints must start with
- *     `/wp-json/newspack-nodes/` or `/wp-json/newspack-nodes-aggregator/`.
- *
- * Encryption details (instance mode, per spec section 4):
- *  - Key:   sodium_crypto_generichash(wp_salt('auth'), '', 32) — 32-byte key
- *           (SODIUM_CRYPTO_SECRETBOX_KEYBYTES) derived from the WP auth salt.
- *  - Nonce: 24 random bytes per encrypt call (SODIUM_CRYPTO_SECRETBOX_NONCEBYTES).
- *  - Wire:  base64(nonce . ciphertext). Base64 keeps the payload JSON-safe;
- *           appending nonce in front means we don't need a separate field.
- *  - decrypt() returns null on malformed input OR sodium_crypto_secretbox_open()
- *           failure (bad-MAC = tamper); callers handle null by skipping the apply.
+ * Hub-side sync of WP options to remote spokes. Strict fail-closed polarity
+ * (only sync when `enable_workers === true`).
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
+/**
+ * Settings Sync class.
+ */
 class SettingsSync {
 	/**
-	 * Core options that sync to remote servers with name remap.
+	 * Substrate-tuning options that sync to remote servers with name remap.
 	 * Maps local option name → remote option name.
 	 *
 	 * Local hub stores tuning under `_remote_*` so changing the remote spoke's
 	 * tuning doesn't accidentally retune the hub itself; the remote receives
 	 * the value under its non-remote key.
 	 *
+	 * Substrate options live under the `newspack_nodes_*` prefix (after the
+	 * Config split). The hub-side `_remote_*` keys keep the
+	 * `newspack_event_logger_nodes_remote_*` prefix because they're
+	 * application-controlled overrides for the remote spoke; remote spokes
+	 * receive them under the substrate's canonical `newspack_nodes_*` key.
+	 *
 	 * @var array<string, string>
 	 */
 	public const SYNCED_OPTIONS = [
-		'newspack_event_logger_nodes_remote_num_segments' => 'newspack_event_logger_nodes_num_segments',
-		'newspack_event_logger_nodes_remote_segment_size' => 'newspack_event_logger_nodes_segment_size',
-		'newspack_event_logger_nodes_remote_max_lifespan' => 'newspack_event_logger_nodes_max_lifespan',
-		'newspack_event_logger_nodes_num_partitions'      => 'newspack_event_logger_nodes_num_partitions',
+		'newspack_event_logger_nodes_remote_num_segments' => 'newspack_nodes_num_segments',
+		'newspack_event_logger_nodes_remote_segment_size' => 'newspack_nodes_segment_size',
+		'newspack_event_logger_nodes_remote_max_lifespan' => 'newspack_nodes_max_lifespan',
+		'newspack_nodes_num_partitions'                   => 'newspack_nodes_num_partitions',
 	];
 
 	/**
@@ -272,9 +247,17 @@ class SettingsSync {
 		// the *default* rather than '' (which would fail remote sanitization
 		// for typed options like int).
 		if ( '' === $value || false === $value ) {
-			$config_key = \str_replace( 'newspack_event_logger_nodes_', '', $option );
-			// Strip the "remote_" prefix when looking up defaults — defaults
-			// live under the canonical key (num_segments, segment_size, ...).
+			// Strip both prefixes (substrate `newspack_nodes_` and application
+			// `newspack_event_logger_nodes_`), then drop the optional "remote_"
+			// segment so defaults are looked up under the canonical key
+			// (num_segments, segment_size, ...).
+			$config_key = $option;
+			foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
+				if ( 0 === \strpos( $config_key, $prefix ) ) {
+					$config_key = \substr( $config_key, \strlen( $prefix ) );
+					break;
+				}
+			}
 			$config_key = \preg_replace( '/^remote_/', '', $config_key );
 			$defaults   = Config::load_config_defaults();
 			if ( isset( $defaults[ $config_key ] ) ) {

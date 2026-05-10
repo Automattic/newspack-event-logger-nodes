@@ -1,45 +1,23 @@
 <?php
 /**
- * Stats_Store: 9-namespace memcache schema for performance stats.
+ * Stats Store
  *
- * Per-key prefix: `evlog[:salt]:p{N}:{namespace}:...`
- *
- * Namespaces:
- *   hourly      Y-m-d-H buckets, count + sum_ms + sum_peak_mb
- *   lb          5-min global leaderboard buckets, sums-not-means
- *   lb_s        per-server leaderboard, keyed by server hash
- *   urls        5-min URL index, keyed by URL → {count, sum_ms, samples, durations}
- *   url         per-URL flame/profile blob (TTL = max(3600, max_lifespan/24))
- *   dim         dimensional time series (status/method/server/...)
- *   url_dim     per-URL dimensional time series
- *   categories  global category time series
- *   url_cat     per-URL category time series
- *
- * The `lb_s` (per-server leaderboard), `categories` per-server, and dimensional
- * per-server variants hash the server name with FNV-1a so the resulting key
- * stays ASCII-safe (server names can contain dots, dashes, IDN chars).
- *
- * Sums-not-means storage: every aggregate stores raw sums (count + sum_*),
- * so cross-instance and cross-bucket merge is exact addition. Display layer
- * computes means at read time.
- *
- * Caps prevent value-explosion (memcache 1MB per-value limit):
- *   MAX_DIM_VALUES=20, MAX_URL_DIM_VALUES=10, MAX_CAT_VALUES=50.
- * Overflow rolls into the synthetic "Other" bucket.
- *
- * Schema migration: flush_all() rotates an 8-char salt so all existing keys
- * are orphaned (they expire via TTL). Instantaneous regardless of cache size.
- *
- * Failure mode: every op is fail-SOFT — memcache down → return null/empty/false,
- * never throw. SSE-slot fail-CLOSED policy lives at the caller (per-spec asymmetry).
+ * Memcache-based storage for performance stats. Uses a 9-namespace schema
+ * (hourly, lb, lb_s, urls, url, dim, url_dim, categories, url_cat) keyed by
+ * `evlog[:salt]:p{N}:{namespace}:...`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
+/**
+ * Stats storage using memcache.
+ */
 class Stats_Store {
 
 	public const NS_HOURLY      = 'hourly';
@@ -84,7 +62,7 @@ class Stats_Store {
 		if ( \function_exists( 'get_option' ) ) {
 			$salt = (string) \get_option( self::SALT_OPTION, '' );
 		}
-		return $salt === '' ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
+		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
 	}
 
 	public function ttl(): int {
@@ -426,7 +404,7 @@ class Stats_Store {
 	 * "total" is the pseudo-category running grand-total — exempt from the cap.
 	 */
 	private function bump_with_cap( array &$bucket_data, string $value, float $req_time, int $max ): void {
-		if ( $value !== 'total' && ! isset( $bucket_data[ $value ] ) ) {
+		if ( 'total' !== $value && ! isset( $bucket_data[ $value ] ) ) {
 			$count     = \count( $bucket_data );
 			$has_other = isset( $bucket_data['Other'] );
 			if ( $count >= $max || ( $count >= $max - 1 && ! $has_other ) ) {
@@ -512,7 +490,7 @@ class Stats_Store {
 	 * "total" is the pseudo-category running grand-total — exempt from the cap.
 	 */
 	private function bump_category_with_cap( array &$bucket_data, string $category, float $time, int $invocations, int $max ): void {
-		if ( $category !== 'total' && ! isset( $bucket_data[ $category ] ) ) {
+		if ( 'total' !== $category && ! isset( $bucket_data[ $category ] ) ) {
 			$count     = \count( $bucket_data );
 			$has_other = isset( $bucket_data['Other'] );
 			if ( $count >= $max || ( $count >= $max - 1 && ! $has_other ) ) {

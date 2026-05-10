@@ -23,7 +23,7 @@
 
 \defined( 'ABSPATH' ) || exit;
 
-return static function ( \Newspack_Nodes\CommandInterpreter $ci, int $partition ): array {
+return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $partition ): array {
 	$config         = \Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase::load_config();
 	$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 	$logs_dir       = "{$base_dir}/logs";
@@ -38,19 +38,19 @@ return static function ( \Newspack_Nodes\CommandInterpreter $ci, int $partition 
 	}
 
 	// Destination topic — multi-partition, KEY-routed.
-	$firehose_topic = new \Newspack_Nodes\Topic(
+	$firehose_topic = $interpreter->make_node(
+		'Topic',
+		'firehose:topic',
 		$firehose_dir,
 		\max( 1, $num_partitions ),
 		$segment_size,
 		$num_segments,
 		$max_lifespan
 	);
-	$firehose_topic->name( 'aggregator-firehose-topic' );
 
-	// StreamMerger pulls from configured spokes; sinks into the Topic.
-	$stream_merger = new \Newspack_Event_Logger_Nodes\StreamMerger();
-	$stream_merger->name( 'aggregator-stream-merger' );
-	$stream_merger->sink( $firehose_topic );
+	// StreamMerger named-routes to the firehose Topic.
+	$stream_merger = $interpreter->make_node( 'StreamMerger', 'stream-merger' );
+	$stream_merger->connect_node( 'firehose:topic' );
 
 	return [
 		'partition'      => $partition,

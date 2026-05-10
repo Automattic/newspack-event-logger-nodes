@@ -1,35 +1,34 @@
 <?php
 /**
- * Admin: Settings page (top-level + Settings submenu) and per-option granular
+ * Admin: application-side WP-Settings-API surface and per-option granular
  * worker-restart on save.
  *
- * Port of `\Newspack_Event_Logger\Admin\Admin` from the legacy plugin, adapted
- * for the nodes runtime:
- *  - Namespace `Newspack_Event_Logger_Nodes\Admin`.
- *  - WP option keys renamed from `event_logger_*` to `newspack_event_logger_nodes_*`.
- *  - Settings page slug renamed from `newspack-event-logger-settings` to
- *    `newspack-event-logger-nodes-settings`.
- *  - Settings group / page slug renamed from `event_logger_options_group` /
- *    `event_logger` to `newspack_event_logger_nodes_options_group` /
- *    `newspack_event_logger_nodes`.
- *  - Restart-channel calls `\Newspack_Nodes\Lock::request_restart_at(...)` (the
- *    static path-keyed form) — no instance needed.
- *  - Permission gate via `current_user_allowed()`: requires `manage_options`
- *    plus optional `allowed_users` whitelist from Config.
- *  - Per-option worker-restart classification (no_impact / supervisor_only /
- *    all_workers / request_workers / job_workers) preserved 1:1 with upstream.
- *    The `LogReader::get_registered_readers()` lookup is replaced with a static
- *    list of canonical worker groups (`request-workers`, `job-workers`)
- *    matching the topology naming in this plugin.
- *  - Total-storage display sums `segment_size × num_segments × num_partitions ×
- *    num_logs` where `num_logs` comes from the
- *    `newspack_event_logger_nodes_num_logs` filter (renamed from
- *    `newspack_event_logger_num_logs`).
+ * Owns ONLY the application-level options:
+ *   - enable_logging
+ *   - log_urls / skip_urls / log_events / custom_events
+ *   - enable_jobs
+ *   - significant_events
+ *   - auto_disable_threshold / auto_protect_time_threshold
+ *   - log_memory / flush_every_line
+ *
+ * Substrate-level options (base_directory, partitioning, memcache_servers,
+ * enable_workers, aggregator_servers) live on `\Newspack_Nodes\Admin\Admin`
+ * under the `newspack_nodes_*` prefix. This class may READ substrate values
+ * via `\Newspack_Nodes\Config` but must NOT WRITE them.
+ *
+ * Settings group / option-prefix:
+ *   - Settings group:     `newspack_event_logger_nodes_options_group`
+ *   - Settings page slug: `newspack_event_logger_nodes`
+ *   - Menu page slug:     `newspack-event-logger-nodes`
+ *   - Option prefix:      `newspack_event_logger_nodes_`
+ *
+ * Per-option worker-restart classification preserved for application options
+ * only; substrate options classify on substrate Admin.
  *
  * Does NOT mount React dashboards — that wiring stays in the main plugin file's
  * `admin_enqueue_scripts` hook. This class owns the WP-Settings-API surface
- * only: the legacy `/options-general.php?page=newspack-event-logger-nodes-settings`
- * settings page plus the top-level "Event Logger" landing menu.
+ * only: the `/options-general.php?page=newspack-event-logger-nodes`
+ * settings page.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -63,7 +62,7 @@ class Admin {
 	 * Menu page slug used by `add_options_page()` (the URL fragment after
 	 * `?page=`).
 	 */
-	public const MENU_SLUG = 'newspack-event-logger-nodes-settings';
+	public const MENU_SLUG = 'newspack-event-logger-nodes';
 
 	/**
 	 * WP-option name prefix. All admin-managed options live under this prefix.
@@ -79,7 +78,12 @@ class Admin {
 	public const RESET_NONCE  = 'newspack_event_logger_nodes_reset_nonce';
 
 	/**
-	 * Core option names that get cleared by `handle_reset_settings()`.
+	 * Application-level option names cleared by `handle_reset_settings()`.
+	 *
+	 * Substrate-level options (base_directory, num_partitions, num_segments,
+	 * segment_size, max_lifespan, memcache_servers, enable_workers,
+	 * aggregator_servers) live on `\Newspack_Nodes\Admin\Admin` and reset via
+	 * its own form. Application admin only owns the keys below.
 	 *
 	 * Kept on the class so child plugins can extend via the `…_reset_options`
 	 * filter without re-listing these.
@@ -87,13 +91,22 @@ class Admin {
 	 * @var string[]
 	 */
 	private static array $option_names = [
+		// General.
 		'newspack_event_logger_nodes_enable_logging',
-		'newspack_event_logger_nodes_base_directory',
-		'newspack_event_logger_nodes_num_partitions',
-		'newspack_event_logger_nodes_num_segments',
-		'newspack_event_logger_nodes_segment_size',
-		'newspack_event_logger_nodes_max_lifespan',
-		'newspack_event_logger_nodes_memcache_servers',
+		// Instrumentation.
+		'newspack_event_logger_nodes_log_urls',
+		'newspack_event_logger_nodes_skip_urls',
+		'newspack_event_logger_nodes_log_events',
+		'newspack_event_logger_nodes_custom_events',
+		// Jobs.
+		'newspack_event_logger_nodes_enable_jobs',
+		// Performance Workers (application-side).
+		'newspack_event_logger_nodes_significant_events',
+		'newspack_event_logger_nodes_auto_disable_threshold',
+		'newspack_event_logger_nodes_auto_protect_time_threshold',
+		// Debugging.
+		'newspack_event_logger_nodes_log_memory',
+		'newspack_event_logger_nodes_flush_every_line',
 	];
 
 	/**
@@ -188,7 +201,7 @@ class Admin {
 			? \admin_url( 'admin-post.php' )
 			: '/wp-admin/admin-post.php';
 		?>
-		<div class="wrap event-logger-nodes-settings-wrap">
+		<div class="wrap event-logger-settings-wrap">
 			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
 			<form method="post" action="options.php">
 				<?php
@@ -221,11 +234,11 @@ class Admin {
 	/**
 	 * Register settings with the WP Settings API.
 	 *
-	 * Wires four core options (enable_logging, base_directory, num_partitions,
-	 * num_segments, segment_size, max_lifespan, memcache_servers) plus the
-	 * General + Storage sections. Child plugins extend by hooking
-	 * `admin_init` AFTER this runs and calling
-	 * `add_settings_section/field()` on `self::SETTINGS_PAGE`.
+	 * Wires application-level options ONLY. Substrate options (base_directory,
+	 * partitioning, memcache_servers, enable_workers, aggregator_servers) are
+	 * registered by `\Newspack_Nodes\Admin\Admin` under the `newspack_nodes`
+	 * group. Child plugins extend by hooking `admin_init` AFTER this runs and
+	 * calling `add_settings_section/field()` on `self::SETTINGS_PAGE`.
 	 */
 	public function register_settings(): void {
 		// Boolean toggle.
@@ -233,56 +246,6 @@ class Admin {
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_enable_logging',
 			[ 'sanitize_callback' => 'absint' ]
-		);
-
-		// Path. Sanitize: no null bytes, no `..`, must be absolute, trailing slash stripped.
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_base_directory',
-			[
-				'sanitize_callback' => function ( $value ) {
-					$value = \sanitize_text_field( $value );
-					if ( \str_contains( $value, "\0" ) || \str_contains( $value, '..' ) ) {
-						return '';
-					}
-					if ( '' === $value || '/' !== $value[0] ) {
-						return '';
-					}
-					return \rtrim( $value, '/' );
-				},
-			]
-		);
-
-		// Integers — empty string preserved for "use default".
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_num_partitions',
-			[ 'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ] ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_num_segments',
-			[ 'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ] ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_segment_size',
-			[ 'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ] ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_max_lifespan',
-			[ 'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ] ]
-		);
-
-		// Newline-separated host:port list. Not autoloaded (read by workers, not request path).
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_memcache_servers',
-			[
-				'sanitize_callback' => [ $this, 'sanitize_memcache_servers' ],
-				'autoload'          => false,
-			]
 		);
 
 		// General section.
@@ -300,61 +263,172 @@ class Admin {
 			'newspack_event_logger_nodes_general_section'
 		);
 
-		// Storage section.
+		// -- Instrumentation (URL filters + hooks to time) ------------------
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_log_urls',
+			[ 'sanitize_callback' => [ $this, 'sanitize_array_strings' ] ]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_skip_urls',
+			[ 'sanitize_callback' => [ $this, 'sanitize_array_strings' ] ]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_log_events',
+			[ 'sanitize_callback' => [ $this, 'sanitize_array_strings' ] ]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_custom_events',
+			[ 'sanitize_callback' => [ $this, 'sanitize_custom_events' ] ]
+		);
+
 		\add_settings_section(
-			'newspack_event_logger_nodes_storage_section',
-			\__( 'Storage Settings', 'newspack-event-logger-nodes' ),
-			[ $this, 'storage_section_callback' ],
+			'newspack_event_logger_nodes_instrumentation_section',
+			\__( 'Instrumentation', 'newspack-event-logger-nodes' ),
+			[ $this, 'instrumentation_section_callback' ],
 			self::SETTINGS_PAGE
 		);
 		\add_settings_field(
-			'num_partitions',
-			\__( 'Num Partitions', 'newspack-event-logger-nodes' ),
-			[ $this, 'num_partitions_callback' ],
+			'log_urls',
+			\__( 'Log URLs', 'newspack-event-logger-nodes' ),
+			[ $this, 'log_urls_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_instrumentation_section'
 		);
 		\add_settings_field(
-			'num_segments',
-			\__( 'Num Segments', 'newspack-event-logger-nodes' ),
-			[ $this, 'num_segments_callback' ],
+			'skip_urls',
+			\__( 'Skip URLs', 'newspack-event-logger-nodes' ),
+			[ $this, 'skip_urls_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_instrumentation_section'
 		);
 		\add_settings_field(
-			'segment_size',
-			\__( 'Segment Size', 'newspack-event-logger-nodes' ),
-			[ $this, 'segment_size_callback' ],
+			'log_events',
+			\__( 'Log Events', 'newspack-event-logger-nodes' ),
+			[ $this, 'log_events_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_instrumentation_section'
 		);
 		\add_settings_field(
-			'max_lifespan',
-			\__( 'Minimum Retention', 'newspack-event-logger-nodes' ),
-			[ $this, 'max_lifespan_callback' ],
+			'custom_events',
+			\__( 'Custom Events', 'newspack-event-logger-nodes' ),
+			[ $this, 'custom_events_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_instrumentation_section'
+		);
+
+		// -- Jobs section ---------------------------------------------------
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_enable_jobs',
+			[ 'sanitize_callback' => 'absint' ]
+		);
+
+		\add_settings_section(
+			'newspack_event_logger_nodes_jobs_section',
+			\__( 'Jobs', 'newspack-event-logger-nodes' ),
+			[ $this, 'jobs_section_callback' ],
+			self::SETTINGS_PAGE
 		);
 		\add_settings_field(
-			'total_storage',
-			\__( 'Total Log Storage', 'newspack-event-logger-nodes' ),
-			[ $this, 'total_storage_callback' ],
+			'enable_jobs',
+			\__( 'Enable Jobs', 'newspack-event-logger-nodes' ),
+			[ $this, 'enable_jobs_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_jobs_section'
+		);
+
+		// -- Workers section ------------------------------------------------
+		// `enable_workers` lives on the substrate Admin (`newspack_nodes_*`).
+		// Application admin owns only the auto-tuning + significant-events
+		// knobs, which are application-level instrumentation policy.
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_significant_events',
+			[
+				'sanitize_callback' => [ $this, 'sanitize_array_strings' ],
+				'autoload'          => false,
+			]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_auto_disable_threshold',
+			[
+				'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ],
+				'autoload'          => false,
+			]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_auto_protect_time_threshold',
+			[
+				'sanitize_callback' => [ $this, 'sanitize_float_or_empty' ],
+				'autoload'          => false,
+			]
+		);
+
+		\add_settings_section(
+			'newspack_event_logger_nodes_workers_section',
+			\__( 'Performance Workers', 'newspack-event-logger-nodes' ),
+			[ $this, 'workers_section_callback' ],
+			self::SETTINGS_PAGE
 		);
 		\add_settings_field(
-			'base_directory',
-			\__( 'Base Directory', 'newspack-event-logger-nodes' ),
-			[ $this, 'base_directory_callback' ],
+			'significant_events',
+			\__( 'Significant Events', 'newspack-event-logger-nodes' ),
+			[ $this, 'significant_events_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_workers_section'
 		);
 		\add_settings_field(
-			'memcache_servers',
-			\__( 'Memcache Servers', 'newspack-event-logger-nodes' ),
-			[ $this, 'memcache_servers_callback' ],
+			'auto_disable_threshold',
+			\__( 'Auto-Disable Threshold', 'newspack-event-logger-nodes' ),
+			[ $this, 'auto_disable_threshold_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_storage_section'
+			'newspack_event_logger_nodes_workers_section'
+		);
+		\add_settings_field(
+			'auto_protect_time_threshold',
+			\__( 'Auto-Protect Time Threshold (ms)', 'newspack-event-logger-nodes' ),
+			[ $this, 'auto_protect_time_threshold_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_workers_section'
+		);
+
+		// -- Debugging section ----------------------------------------------
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_log_memory',
+			[ 'sanitize_callback' => 'absint' ]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_flush_every_line',
+			[ 'sanitize_callback' => 'absint' ]
+		);
+
+		\add_settings_section(
+			'newspack_event_logger_nodes_debugging_section',
+			\__( 'Debugging', 'newspack-event-logger-nodes' ),
+			[ $this, 'debugging_section_callback' ],
+			self::SETTINGS_PAGE
+		);
+		\add_settings_field(
+			'log_memory',
+			\__( 'Log Memory', 'newspack-event-logger-nodes' ),
+			[ $this, 'log_memory_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_debugging_section'
+		);
+		\add_settings_field(
+			'flush_every_line',
+			\__( 'Flush Every Line', 'newspack-event-logger-nodes' ),
+			[ $this, 'flush_every_line_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_debugging_section'
 		);
 	}
 
@@ -374,67 +448,117 @@ class Admin {
 	}
 
 	/**
-	 * Sanitize memcache servers option (newline-separated host:port list).
+	 * Sanitize an array of strings.
 	 *
-	 * Underscore is allowed in hostnames so Docker container names like
-	 * `mem_cache_1` validate.
-	 *
-	 * @param mixed $value Newline-separated server list.
-	 * @return string Sanitized servers (one per line) or empty string if all invalid.
-	 */
-	public function sanitize_memcache_servers( $value ): string {
-		if ( '' === $value || null === $value ) {
-			return '';
-		}
-		$lines           = \explode( "\n", (string) $value );
-		$sanitized_lines = [];
-		foreach ( $lines as $line ) {
-			$line = \trim( $line );
-			if ( '' === $line ) {
-				continue;
-			}
-			if ( \preg_match( '/^[a-zA-Z0-9._\-]+:\d{1,5}$/', $line ) ) {
-				$sanitized_lines[] = $line;
-			}
-		}
-		return \implode( "\n", $sanitized_lines );
-	}
-
-	/**
-	 * Sanitize an array of strings. Used by child plugins for `log_urls`,
-	 * `skip_urls`, `log_events`, `custom_events`, etc. Public so child plugins
-	 * can reuse it via `[ Admin::class, 'sanitize_array_strings' ]`.
+	 * Used for `log_urls`, `skip_urls`, `log_events`, `significant_events`.
+	 * The React TagInputField posts a JSON-encoded array via a hidden input,
+	 * so this accepts BOTH array input (programmatic / direct WP form posts)
+	 * AND JSON-encoded strings (the React tree's post format).
 	 *
 	 * Coerces non-string scalars to string, drops anything non-scalar,
-	 * trims whitespace, and strips empty values.
+	 * trims whitespace, and strips empty values. Values are reindexed so
+	 * downstream callers don't see gaps from filter().
 	 *
-	 * @param mixed $value Array (or non-array, treated as empty).
-	 * @return array Sanitized array of strings.
+	 * @param mixed $value Array, JSON string, or other (treated as empty).
+	 * @return array Sanitized list of strings (zero-indexed).
 	 */
 	public function sanitize_array_strings( $value ): array {
+		// React tree posts JSON via a hidden input — decode first.
+		if ( \is_string( $value ) ) {
+			$trimmed = \trim( $value );
+			if ( '' === $trimmed ) {
+				return [];
+			}
+			$decoded = \json_decode( $trimmed, true, 32 );
+			if ( \is_array( $decoded ) ) {
+				$value = $decoded;
+			} else {
+				// Try unslashing — WordPress slashes form input by default.
+				$decoded = \json_decode( \wp_unslash( $trimmed ), true, 32 );
+				if ( \is_array( $decoded ) ) {
+					$value = $decoded;
+				} else {
+					// Fallback: treat as a newline-separated list (legacy textarea
+					// shape). Not used by React, but keeps direct CLI/WP-CLI
+					// callers happy.
+					$value = \explode( "\n", $trimmed );
+				}
+			}
+		}
 		if ( ! \is_array( $value ) ) {
 			return [];
 		}
+
 		$result = [];
-		foreach ( $value as $k => $v ) {
-			if ( \is_bool( $v ) || \is_int( $v ) ) {
-				// Preserve assoc-array-with-true-values shape (custom_events).
-				$result[ \sanitize_text_field( (string) $k ) ] = $v;
-				continue;
-			}
+		foreach ( $value as $v ) {
 			if ( ! \is_scalar( $v ) ) {
 				continue;
 			}
 			$s = \trim( \sanitize_text_field( (string) $v ) );
 			if ( '' !== $s ) {
-				if ( \is_int( $k ) ) {
-					$result[] = $s;
-				} else {
-					$result[ \sanitize_text_field( (string) $k ) ] = $s;
-				}
+				$result[] = $s;
 			}
 		}
-		return $result;
+		return \array_values( \array_unique( $result ) );
+	}
+
+	/**
+	 * Sanitize the `custom_events` option.
+	 *
+	 * Stored as an associative array `[ hook_name => true, ... ]` for cheap
+	 * `isset()` lookups in `is_enabled()`. The React tree posts a flat list of
+	 * hook names (or a JSON-encoded list); convert to the assoc form.
+	 *
+	 * Already-assoc input is preserved (idempotent on re-saves).
+	 *
+	 * @param mixed $value List of hook names, JSON, or assoc array.
+	 * @return array<string,bool> Assoc map keyed by hook name, values `true`.
+	 */
+	public function sanitize_custom_events( $value ): array {
+		// Detect assoc-shaped input (idempotent path on re-save).
+		if ( \is_array( $value ) ) {
+			$first_key = \array_key_first( $value );
+			if ( null !== $first_key && \is_string( $first_key ) && ! \is_numeric( $first_key ) ) {
+				$out = [];
+				foreach ( $value as $k => $_v ) {
+					$key = \trim( \sanitize_text_field( (string) $k ) );
+					if ( '' !== $key ) {
+						$out[ $key ] = true;
+					}
+				}
+				return $out;
+			}
+		}
+
+		$names = $this->sanitize_array_strings( $value );
+		$out   = [];
+		foreach ( $names as $name ) {
+			$out[ $name ] = true;
+		}
+		return $out;
+	}
+
+	/**
+	 * Sanitize float option, preserving empty string for "use default".
+	 *
+	 * Mirrors `sanitize_int_or_empty` but with float coercion. Used for
+	 * `auto_protect_time_threshold` (milliseconds, can be fractional).
+	 *
+	 * @param mixed $input Input value.
+	 * @return string|float Empty string or sanitized float.
+	 */
+	public function sanitize_float_or_empty( $input ) {
+		if ( '' === $input || null === $input ) {
+			return '';
+		}
+		if ( ! \is_numeric( $input ) ) {
+			return '';
+		}
+		$f = (float) $input;
+		if ( $f < 0 ) {
+			return '';
+		}
+		return $f;
 	}
 
 	// -- Section callbacks --------------------------------------------------
@@ -443,8 +567,20 @@ class Admin {
 		echo '<p>' . \esc_html__( 'Enable or disable event logging.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	public function storage_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Configure log storage and infrastructure settings.', 'newspack-event-logger-nodes' ) . '</p>';
+	public function instrumentation_section_callback(): void {
+		echo '<p>' . \esc_html__( 'URL filters and hooks to time. Use Browse Hooks / Browse Events to populate from the recommended set.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	public function jobs_section_callback(): void {
+		echo '<p>' . \esc_html__( 'Enable background job dispatch via JobIntake / JobRouter.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	public function workers_section_callback(): void {
+		echo '<p>' . \esc_html__( 'Background worker controls. Significant events get per-callback profiling; auto-tune thresholds disable runaway hooks.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	public function debugging_section_callback(): void {
+		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
 	// -- Field callbacks ----------------------------------------------------
@@ -458,131 +594,171 @@ class Admin {
 		<?php
 	}
 
-	public function base_directory_callback(): void {
-		$defaults = Config::load_config_defaults();
-		$this->render_directory_field(
-			'base_directory',
-			(string) ( $defaults['base_directory'] ?? '/tmp/newspack-nodes' ),
-			\__( 'Base directory for logs, locks, and offsets.', 'newspack-event-logger-nodes' )
+	public function enable_jobs_callback(): void {
+		$config  = Config::load_config();
+		$enabled = \get_option( 'newspack_event_logger_nodes_enable_jobs', $config['enable_jobs'] ?? 1 );
+		?>
+		<input type="hidden" name="newspack_event_logger_nodes_enable_jobs" value="0" />
+		<input type="checkbox" id="enable_jobs" name="newspack_event_logger_nodes_enable_jobs" value="1" <?php \checked( 1, $enabled ); ?> />
+		<label for="enable_jobs"><?php \esc_html_e( 'Enable JobIntake and JobWorker', 'newspack-event-logger-nodes' ); ?></label>
+		<?php
+	}
+
+	// ---- Instrumentation field callbacks ---------------------------------
+
+	public function log_urls_callback(): void {
+		$stored = \get_option( 'newspack_event_logger_nodes_log_urls', [] );
+		$values = $this->normalize_string_list( $stored );
+		$this->render_array_field(
+			'log_urls',
+			$values,
+			[],
+			\__( 'Only log URLs containing these substrings. Leave empty to log all requests.', 'newspack-event-logger-nodes' ),
+			'/calendar, /events/, article.fcgi'
 		);
 	}
 
-	public function num_partitions_callback(): void {
-		$defaults = Config::load_config_defaults();
-		$this->render_number_field(
-			'num_partitions',
-			(int) ( $defaults['num_partitions'] ?? 1 ),
-			1,
-			16,
-			\__( 'Number of log partitions for parallel processing.', 'newspack-event-logger-nodes' )
+	public function skip_urls_callback(): void {
+		$config  = Config::load_config( 'full' );
+		$default = $this->normalize_string_list( $config['skip_urls'] ?? [] );
+		$stored  = \get_option( 'newspack_event_logger_nodes_skip_urls', null );
+		$values  = ( null === $stored || false === $stored )
+			? $default
+			: $this->normalize_string_list( $stored );
+		$this->render_array_field(
+			'skip_urls',
+			$values,
+			$default,
+			\__( 'Never log URLs containing these substrings. Checked first — always wins over Log URLs.', 'newspack-event-logger-nodes' ),
+			'/wp-cron.php, /wp-admin/admin-ajax.php'
 		);
 	}
 
-	public function num_segments_callback(): void {
-		$defaults = Config::load_config_defaults();
-		$this->render_number_field(
-			'num_segments',
-			(int) ( $defaults['num_segments'] ?? 4 ),
-			2,
-			32,
-			\__( 'Number of segments to retain per partition.', 'newspack-event-logger-nodes' )
+	public function log_events_callback(): void {
+		$config         = Config::load_config( 'full' );
+		$default        = $this->normalize_string_list( $config['recommended_log_events'] ?? [] );
+		$stored         = \get_option( 'newspack_event_logger_nodes_log_events', [] );
+		$values         = $this->normalize_string_list( $stored );
+		$this->render_array_field(
+			'log_events',
+			$values,
+			$default,
+			\__( 'Hooks to time. Use Select Hooks to browse the registered set, or Reset to restore the recommended set.', 'newspack-event-logger-nodes' ),
+			''
 		);
 	}
 
-	public function segment_size_callback(): void {
-		$defaults = Config::load_config_defaults();
-		$this->render_number_field(
-			'segment_size',
-			(int) ( $defaults['segment_size'] ?? ( 64 * 1024 * 1024 ) ),
-			1048576,
-			536870912,
-			\__( 'Maximum segment size in bytes.', 'newspack-event-logger-nodes' )
+	public function custom_events_callback(): void {
+		// custom_events is stored as assoc array; the React tree expects a flat
+		// list of strings (the keys).
+		$stored = \get_option( 'newspack_event_logger_nodes_custom_events', [] );
+		$values = \is_array( $stored ) ? \array_keys( $stored ) : [];
+		$values = $this->normalize_string_list( $values );
+		$this->render_array_field(
+			'custom_events',
+			$values,
+			[],
+			\__( 'Custom events to time. Use Select Events to choose from the registered custom-event registry.', 'newspack-event-logger-nodes' ),
+			''
 		);
 	}
 
-	public function max_lifespan_callback(): void {
-		$defaults = Config::load_config_defaults();
+	// ---- Workers field callbacks -----------------------------------------
+
+	public function significant_events_callback(): void {
+		$stored = \get_option( 'newspack_event_logger_nodes_significant_events', [] );
+		$values = $this->normalize_string_list( $stored );
+		\sort( $values, SORT_NATURAL | SORT_FLAG_CASE );
+		$this->render_array_field(
+			'significant_events',
+			$values,
+			[],
+			\__( 'Events/hooks that exceeded the time threshold at least once. Protected from auto-disable. Remove to allow auto-disabling.', 'newspack-event-logger-nodes' ),
+			''
+		);
+	}
+
+	public function auto_disable_threshold_callback(): void {
 		$this->render_number_field(
-			'max_lifespan',
-			(int) ( $defaults['max_lifespan'] ?? 86400 ),
+			'auto_disable_threshold',
 			0,
-			604800,
-			\__( 'Minimum retention in seconds. 0 = disabled (pure count-based).', 'newspack-event-logger-nodes' )
+			0,
+			10000,
+			\__( 'Disable hooks whose count exceeds this threshold. Set to 0 to disable auto-tuning.', 'newspack-event-logger-nodes' )
 		);
 	}
 
-	/**
-	 * Memcache servers field callback. Newline-separated `host:port` textarea
-	 * with placeholder showing the configured defaults.
-	 */
-	public function memcache_servers_callback(): void {
-		$defaults        = Config::load_config_defaults();
-		$default_servers = $defaults['memcache_servers'] ?? [ '127.0.0.1:11211' ];
-		if ( ! \is_array( $default_servers ) ) {
-			$default_servers = [ '127.0.0.1:11211' ];
-		}
-		$default_text = \implode( "\n", $default_servers );
-		$value        = \get_option( 'newspack_event_logger_nodes_memcache_servers', '' );
+	public function auto_protect_time_threshold_callback(): void {
+		$value         = \get_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '' );
+		$display_value = ( '' === $value || 0.0 === (float) $value ) ? '' : $value;
 		?>
 		<div style="display: flex; align-items: flex-start; gap: 10px;">
 			<div style="flex: 1;">
-				<textarea id="memcache_servers" name="newspack_event_logger_nodes_memcache_servers" rows="3" class="regular-text code" placeholder="<?php echo \esc_attr( $default_text ); ?>"><?php echo \esc_textarea( $value ); ?></textarea>
-				<p class="description">
-					<?php \esc_html_e( 'Memcache servers (one per line, format: host:port). Used for stats aggregation and SSE.', 'newspack-event-logger-nodes' ); ?>
-					<br><?php \esc_html_e( 'Default:', 'newspack-event-logger-nodes' ); ?> <?php echo \esc_html( \implode( ', ', $default_servers ) ); ?>
-				</p>
+				<input type="number" id="auto_protect_time_threshold"
+					name="newspack_event_logger_nodes_auto_protect_time_threshold"
+					value="<?php echo \esc_attr( (string) $display_value ); ?>"
+					min="0" max="86400" step="0.001"
+					class="small-text"
+					placeholder="0" />
+				<?php \esc_html_e( 'ms', 'newspack-event-logger-nodes' ); ?>
+				<p class="description"><?php \esc_html_e( 'Protect hooks whose average time-per-call meets or exceeds this threshold (milliseconds). Set to 0 to disable.', 'newspack-event-logger-nodes' ); ?></p>
 			</div>
-			<button type="button" class="button button-secondary newspack-event-logger-nodes-reset-text"
-				data-field="memcache_servers" data-default=""
-				title="<?php \esc_attr_e( 'Reset to default', 'newspack-event-logger-nodes' ); ?>">↺</button>
+			<button type="button" class="button button-secondary event-logger-reset-number"
+				data-field="auto_protect_time_threshold"
+				title="<?php \esc_attr_e( 'Clear (use default)', 'newspack-event-logger-nodes' ); ?>">↺</button>
 		</div>
 		<?php
 	}
 
+	// ---- Debugging field callbacks ---------------------------------------
+
+	public function log_memory_callback(): void {
+		$enabled = \get_option( 'newspack_event_logger_nodes_log_memory', 0 );
+		?>
+		<input type="hidden" name="newspack_event_logger_nodes_log_memory" value="0" />
+		<label>
+			<input type="checkbox" id="log_memory" name="newspack_event_logger_nodes_log_memory" value="1" <?php \checked( 1, $enabled ); ?> />
+			<?php \esc_html_e( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' ); ?>
+		</label>
+		<?php
+	}
+
+	public function flush_every_line_callback(): void {
+		$enabled = \get_option( 'newspack_event_logger_nodes_flush_every_line', 0 );
+		?>
+		<input type="hidden" name="newspack_event_logger_nodes_flush_every_line" value="0" />
+		<label>
+			<input type="checkbox" id="flush_every_line" name="newspack_event_logger_nodes_flush_every_line" value="1" <?php \checked( 1, $enabled ); ?> />
+			<?php \esc_html_e( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' ); ?>
+		</label>
+		<?php
+	}
+
 	/**
-	 * Total-storage field. Computed bytes display: `segment_size × num_segments
-	 * × num_partitions × num_logs`. `num_logs` is filterable so child plugins
-	 * (Jobs, Performance, etc.) can register their additional log streams.
+	 * Normalize an option that may be either a list of strings, an assoc array
+	 * (with hook names as keys), or null/false (option missing) into a flat,
+	 * deduplicated list of strings. Used by the array-field callbacks to feed
+	 * the React TagInputField, which expects a JSON-encoded list of strings.
+	 *
+	 * @param mixed $stored Raw option value.
+	 * @return array<int,string>
 	 */
-	public function total_storage_callback(): void {
-		$defaults       = Config::load_config_defaults();
-		$segment_size   = \get_option( 'newspack_event_logger_nodes_segment_size', '' );
-		$num_segments   = \get_option( 'newspack_event_logger_nodes_num_segments', '' );
-		$num_partitions = \get_option( 'newspack_event_logger_nodes_num_partitions', '' );
-
-		// Use config defaults for empty values.
-		$segment_size   = '' === $segment_size ? (int) ( $defaults['segment_size'] ?? ( 64 * 1024 * 1024 ) ) : (int) $segment_size;
-		$num_segments   = '' === $num_segments ? (int) ( $defaults['num_segments'] ?? 4 ) : (int) $num_segments;
-		$num_partitions = '' === $num_partitions ? (int) ( $defaults['num_partitions'] ?? 1 ) : (int) $num_partitions;
-
-		$num_logs    = (int) \apply_filters( 'newspack_event_logger_nodes_num_logs', 0 );
-		$total_bytes = $segment_size * $num_segments * $num_partitions * $num_logs;
-		$total_mb    = \round( $total_bytes / ( 1024 * 1024 ) );
-		$total_gb    = \round( $total_bytes / ( 1024 * 1024 * 1024 ), 2 );
-		$segment_mb  = \round( $segment_size / ( 1024 * 1024 ) );
-
-		if ( $total_gb >= 1 ) {
-			$display = \sprintf( '%s MB (%s GB)', \number_format( $total_mb ), \number_format( $total_gb, 2 ) );
-		} else {
-			$display = \sprintf( '%s MB', \number_format( $total_mb ) );
+	private function normalize_string_list( $stored ): array {
+		if ( ! \is_array( $stored ) ) {
+			return [];
 		}
-		?>
-		<div id="total_storage_display" style="font-weight: 500; font-size: 14px; padding: 8px 0;">
-			<?php echo \esc_html( $display ); ?>
-		</div>
-		<p class="description">
-		<?php
-		\printf(
-			/* translators: 1: segment size in MB, 2: number of segments, 3: number of partitions, 4: number of logs */
-			\esc_html__( 'Calculated as: %1$s MB segment × %2$s segments × %3$s partitions × %4$s logs', 'newspack-event-logger-nodes' ),
-			\esc_html( (string) $segment_mb ),
-			\esc_html( (string) $num_segments ),
-			\esc_html( (string) $num_partitions ),
-			\esc_html( (string) $num_logs )
-		);
-		?>
-		</p>
-		<?php
+		$out = [];
+		foreach ( $stored as $k => $v ) {
+			$candidate = \is_string( $v ) && '' !== $v ? $v : ( \is_string( $k ) ? $k : null );
+			if ( null === $candidate ) {
+				continue;
+			}
+			$candidate = \trim( $candidate );
+			if ( '' !== $candidate ) {
+				$out[] = $candidate;
+			}
+		}
+		return \array_values( \array_unique( $out ) );
 	}
 
 	/**
@@ -633,18 +809,19 @@ class Admin {
 	/**
 	 * Per-option granular worker-restart on save.
 	 *
+	 * Application-level options only. Substrate options (base_directory,
+	 * partitioning, memcache_servers, etc.) are handled by
+	 * `\Newspack_Nodes\Admin\Admin::maybe_request_worker_restart()`.
+	 *
 	 * Workers pick up restart requests on their next graceful exit point
-	 * (segment-close in WorkerBase). Categories — preserved 1:1 from upstream
-	 * with naming adapted to this plugin's worker groups:
+	 * (segment-close in WorkerBase). Categories:
 	 *
 	 *  no_impact_options:        runtime-only; checked per-request, no restart needed.
 	 *  supervisor_only_options:  the supervisor refreshes config each loop;
 	 *                            no worker restart.
-	 *  all_workers_options:      base directory / segment layout changes —
-	 *                            every worker must rebuild file handles.
-	 *  request_workers_options:  memcache / auto-disable / stats salt — only
-	 *                            the request-side workers (RequestBuilder,
-	 *                            FlameBuilder consumer chain) need to restart.
+	 *  request_workers_options:  auto-disable / significant-events / stats
+	 *                            salt — request-side workers (RequestBuilder,
+	 *                            FlameBuilder consumer chain) re-read these.
 	 *  job_workers_options:      log_events / custom_events / log_memory /
 	 *                            flush_every_line — JobRouter / JobWorker
 	 *                            handler registration depends on these.
@@ -679,41 +856,30 @@ class Admin {
 		// 2. Supervisor-only options (it refreshes config each loop).
 		$supervisor_only_options = [
 			'enable_logging',
-			'num_partitions',
+			'enable_jobs',
 		];
 		if ( \in_array( $short, $supervisor_only_options, true ) ) {
 			return;
 		}
 
-		// 3. All workers (request + job) need restart.
-		$all_workers_options = [
-			'base_directory',
-			'num_segments',
-			'segment_size',
-			'max_lifespan',
-		];
-
-		// 4. Request-side workers only.
+		// 3. Request-side workers only.
 		$request_workers_options = [
-			'memcache_servers',
 			'auto_disable_threshold',
 			'auto_protect_time_threshold',
+			'significant_events',
 			'stats_salt',
 		];
 
-		// 5. Job-side workers only.
+		// 4. Job-side workers only.
 		$job_workers_options = [
 			'log_events',
 			'custom_events',
-			'significant_events',
 			'log_memory',
 			'flush_every_line',
 		];
 
 		$worker_groups = [];
-		if ( \in_array( $short, $all_workers_options, true ) ) {
-			$worker_groups = [ 'request-workers', 'job-workers' ];
-		} elseif ( \in_array( $short, $request_workers_options, true ) ) {
+		if ( \in_array( $short, $request_workers_options, true ) ) {
 			$worker_groups = [ 'request-workers' ];
 		} elseif ( \in_array( $short, $job_workers_options, true ) ) {
 			$worker_groups = [ 'job-workers' ];
@@ -757,25 +923,41 @@ class Admin {
 
 	// -- Private renderers --------------------------------------------------
 
-	private function render_directory_field( string $field, string $default, string $description ): void {
-		$value = \get_option( self::OPTION_PREFIX . $field, '' );
+	/**
+	 * Render a tag-input field for array settings — the mount markup the
+	 * React `TagInputField` tree (built into `build/performance-logger/index.js`)
+	 * looks for at `#event-logger-{$field}`. The hidden input named
+	 * `newspack_event_logger_nodes_{$field}` carries the JSON-encoded value
+	 * back to PHP on save.
+	 *
+	 * @param string         $field       Field name (without prefix).
+	 * @param array<string>  $values      Current values (flat list of strings).
+	 * @param array<string>  $default     Default values for the Reset button.
+	 * @param string         $description Field description.
+	 * @param string         $examples    Optional example values.
+	 */
+	private function render_array_field( string $field, array $values, array $default, string $description, string $examples = '' ): void {
+		$values_json  = \wp_json_encode( $values );
+		$default_json = \wp_json_encode( $default );
 		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;">
-			<div style="flex: 1;">
-				<input type="text" id="<?php echo \esc_attr( $field ); ?>"
-					name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>"
-					value="<?php echo \esc_attr( $value ); ?>"
-					class="regular-text code"
-					placeholder="<?php echo \esc_attr( $default ); ?>" />
-				<p class="description">
-					<?php echo \esc_html( $description ); ?>
-					(<?php \esc_html_e( 'default', 'newspack-event-logger-nodes' ); ?>: <?php echo \esc_html( $default ); ?>)
-				</p>
+		<div style="display:flex; align-items:flex-start; gap:10px;">
+			<div style="flex:1;">
+				<input type="hidden" id="<?php echo \esc_attr( $field ); ?>_json" name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>" value="<?php echo \esc_attr( $values_json ); ?>" />
+				<div id="event-logger-<?php echo \esc_attr( $field ); ?>"
+					data-field="<?php echo \esc_attr( $field ); ?>"
+					data-values="<?php echo \esc_attr( $values_json ); ?>"
+					data-default="<?php echo \esc_attr( $default_json ); ?>"
+					class="event-logger-tag-input"></div>
 			</div>
-			<button type="button" class="button button-secondary newspack-event-logger-nodes-reset-text"
-				data-field="<?php echo \esc_attr( $field ); ?>" data-default=""
-				title="<?php \esc_attr_e( 'Reset to default', 'newspack-event-logger-nodes' ); ?>">↺</button>
+			<button type="button" class="button button-secondary event-logger-reset-field"
+				data-field="<?php echo \esc_attr( $field ); ?>"
+				data-default="<?php echo \esc_attr( $default_json ); ?>"
+				title="<?php \esc_attr_e( 'Reset to default', 'newspack-event-logger-nodes' ); ?>">&#x21BA;</button>
 		</div>
+		<p class="description"><?php echo \esc_html( $description ); ?></p>
+		<?php if ( '' !== $examples ) : ?>
+		<p class="description"><?php \esc_html_e( 'Examples:', 'newspack-event-logger-nodes' ); ?> <?php echo \esc_html( $examples ); ?></p>
+		<?php endif; ?>
 		<?php
 	}
 
@@ -796,7 +978,7 @@ class Admin {
 					placeholder="<?php echo \esc_attr( (string) $default ); ?>" />
 				<p class="description"><?php echo \esc_html( $description ); ?></p>
 			</div>
-			<button type="button" class="button button-secondary newspack-event-logger-nodes-reset-number"
+			<button type="button" class="button button-secondary event-logger-reset-number"
 				data-field="<?php echo \esc_attr( $field ); ?>"
 				title="<?php \esc_attr_e( 'Clear (use default)', 'newspack-event-logger-nodes' ); ?>">↺</button>
 		</div>

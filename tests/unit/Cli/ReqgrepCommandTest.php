@@ -62,8 +62,9 @@ class ReqgrepCommandTest extends TestCase {
 		// Point Config at our tmp so get_logs_directory() doesn't reach for
 		// /tmp/newspack-nodes (which may not exist or might fail realpath).
 		\add_filter( 'newspack_nodes/base_dir', fn () => $this->tmp );
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->tmp );
-		\update_option( 'newspack_event_logger_nodes_num_partitions', 1 );
+		// Substrate-owned keys; use substrate-prefixed option names.
+		\update_option( 'newspack_nodes_base_directory', $this->tmp );
+		\update_option( 'newspack_nodes_num_partitions', 1 );
 
 		Config::reset();
 	}

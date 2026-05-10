@@ -164,12 +164,14 @@ class PerfRequestsController extends PerformanceControllerBase {
 				if ( '' === $data ) {
 					return false;
 				}
+				// `$data` is a packed Message; request body lives at VALUE.
 				$decoded = \json_decode( \trim( $data ), true, 64 );
-				if ( ! \is_array( $decoded ) ) {
+				$req     = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+				if ( ! \is_array( $req ) ) {
 					return false;
 				}
-				$decoded['url_hash'] = \trim( (string) $entry['url_hash'] );
-				$result              = $decoded;
+				$req['url_hash'] = \trim( (string) $entry['url_hash'] );
+				$result          = $req;
 				return false;
 			},
 			true
@@ -214,9 +216,11 @@ class PerfRequestsController extends PerformanceControllerBase {
 					if ( '' === $data ) {
 						return false;
 					}
+					// `$data` is a packed Message; flame body lives at VALUE.
 					$decoded = \json_decode( \trim( $data ), true, 64 );
-					if ( \is_array( $decoded ) ) {
-						$result = $decoded;
+					$flame   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $flame ) ) {
+						$result = $flame;
 					}
 					return false;
 				},

@@ -1,39 +1,42 @@
 <?php
 /**
- * Inflight Tracker.
+ * Inflight Tracker
  *
- * Real-time request state tracking for the Gyroscope SSE stream. Walks raw
- * firehose entries, maintains a per-rid stack of `(label, what)` frames keyed
- * by `(start)` / `(complete)` keyword suffixes, and emits "active" + "completed"
- * snapshots on demand.
+ * Tracks in-flight requests for real-time UI display.
+ * Simplified state machine for SSE streams. Maintains request state/what for
+ * Gyroscope dashboard. Does NOT build profiles - that's RequestBuilder's job.
  *
- * Verbatim port of `Newspack_Performance_Gyroscope\InflightTracker`.
- *
- * Caps and timeouts (Pattern 40 — bounded memory under hostile input):
- *  - MAX_REQUESTS    10 000  active rids
- *  - MAX_COMPLETED    5 000  buffered completed entries (drained per get_completed())
- *  - MAX_STACK_DEPTH    100  frames per rid
- *  - STALE_TIMEOUT      300s wall-clock since last log line
+ * Named to distinguish from InstrumentalityGrail.pm which does full request
+ * reconstruction with profiling. RequestBuilder is the PHP equivalent of that.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
+/**
+ * Inflight tracker class.
+ */
 class InflightTracker {
 
-	/** Pattern 40: bounded memory under hostile input. */
+	/**
+	 * Security: Unbounded memory growth protection (Pattern 40).
+	 */
 	private const MAX_REQUESTS    = 10000;
 	private const MAX_COMPLETED   = 5000;
 	private const MAX_STACK_DEPTH = 100;
 	private const STALE_TIMEOUT   = 300;
 
+	private $requests  = [];
+	private $completed = [];
+	private $skip_urls = [ '/firehose/gyroscope' ];
+
 	/**
-	 * Pre-compiled regex (Efficiency Principle 7: pre-compute at setup).
-	 * The bind below is via `self::REGEX_*` in `process()`; PHP caches the
-	 * pattern on first preg_match call so subsequent calls are JIT-cached.
+	 * Pre-compiled regex patterns (Efficiency Principle 7: Pre-compute at Setup).
 	 */
 	private const REGEX_REQUEST     = '/^(GET|POST|PUT|DELETE|PATCH)\s+(.+)$/';
 	private const REGEX_REMOTE_ADDR = '/^REMOTE_ADDR => "(.+)"$/';
@@ -41,26 +44,6 @@ class InflightTracker {
 	private const REGEX_START       = '/^(.+?) \(start\)$/';
 	private const REGEX_COMPLETE    = '/^(.+?) \(complete\)$/';
 
-	/** @var array<string,array<string,mixed>> */
-	private array $requests = [];
-
-	/** @var array<int,array<string,mixed>> */
-	private array $completed = [];
-
-	/**
-	 * URLs to silently skip when seen as request keywords. Self-skip filter for
-	 * the Gyroscope endpoint itself — the SSE stream IS in-flight while serving
-	 * the firehose, but reporting it would create a self-referential row.
-	 *
-	 * @var array<string>
-	 */
-	private array $skip_urls = [ '/firehose/gyroscope' ];
-
-	/**
-	 * Process a single decoded firehose entry.
-	 *
-	 * @param array<string,mixed> $entry Decoded JSON line.
-	 */
 	public function process( array $entry ): void {
 		$rid = $entry['rid'] ?? null;
 		if ( ! $rid ) {
@@ -78,6 +61,7 @@ class InflightTracker {
 					return;
 				}
 			}
+			// Security: Limit request tracking to prevent unbounded memory growth (Pattern 40).
 			if ( \count( $this->requests ) >= self::MAX_REQUESTS ) {
 				\array_shift( $this->requests );
 			}
@@ -119,10 +103,11 @@ class InflightTracker {
 			$request['duration_ms'] = $entry['duration_ms'] ?? 0;
 			$request['status_code'] = $entry['status_code'] ?? 0;
 			$request['end_time']    = $ts;
+			// Security: Limit completed request buffer to prevent unbounded memory growth (Pattern 40).
 			if ( \count( $this->completed ) >= self::MAX_COMPLETED ) {
 				\array_shift( $this->completed );
 			}
-			$this->completed[] = $request;
+			$this->completed[]      = $request;
 			unset( $this->requests[ $rid ] );
 			return;
 		}
@@ -138,11 +123,12 @@ class InflightTracker {
 		}
 
 		if ( 'start' === $action ) {
+			// Security: Limit stack depth to prevent unbounded memory growth (Pattern 40).
 			if ( \count( $request['stack'] ) < self::MAX_STACK_DEPTH ) {
 				$request['stack'][] = [ $label, $message ];
 			}
-			$request['state'] = $label;
-			$request['what']  = $message;
+			$request['state']        = $label;
+			$request['what']         = $message;
 		}
 
 		if ( 'complete' === $action ) {
@@ -164,19 +150,15 @@ class InflightTracker {
 	 * @param string $line Raw JSON line.
 	 */
 	public function process_line( string $line ): void {
-		$entry = \json_decode( $line, true, 64 );
+		// Lines are packed Messages (positional JSON); the entry payload
+		// lives at Message::VALUE.
+		$decoded = \json_decode( $line, true, 64 );
+		$entry   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
 		if ( \is_array( $entry ) ) {
 			$this->process( $entry );
 		}
 	}
 
-	/**
-	 * Snapshot of currently-in-flight requests. Stale entries (no log line in
-	 * STALE_TIMEOUT seconds) get reaped before snapshotting.
-	 *
-	 * @param float $since_update Only emit rids whose tracker_ts >= this microtime.
-	 * @return array<int,array<string,mixed>> Sorted by est_ms descending.
-	 */
 	public function get_active( float $since_update = 0 ): array {
 		$now     = \microtime( true );
 		$timeout = self::STALE_TIMEOUT;
@@ -210,16 +192,10 @@ class InflightTracker {
 			];
 		}
 
-		\usort( $result, static fn ( $a, $b ) => $b['est_ms'] <=> $a['est_ms'] );
+		\usort( $result, fn( $a, $b ) => $b['est_ms'] <=> $a['est_ms'] );
 		return $result;
 	}
 
-	/**
-	 * Drain the completed-request buffer. Each call empties the buffer and
-	 * returns the entries — callers get an "everything since last call" batch.
-	 *
-	 * @return array<int,array<string,mixed>>
-	 */
 	public function get_completed(): array {
 		$result          = $this->completed;
 		$this->completed = [];

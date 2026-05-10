@@ -1,59 +1,35 @@
 <?php
 /**
- * JobWorker: executes registered handlers with full per-job discipline.
+ * Job Worker
  *
- * Per-job discipline (every job gets all of these, even on exception):
- *   1. LogManager::suspend() before, LogManager::resume() after — ensures the
- *      parent request's LogManager state isn't trampled by handler-side logging.
- *   2. $_SERVER save+restore around the handler call. UNIQUE_ID regenerated as
- *      a fresh 32-char base36 token (matches LogManager's generate_request_id),
- *      REQUEST_URI/PATH_INFO/SCRIPT_NAME/SCRIPT_URL/SCRIPT_URI rewritten to a
- *      synthetic /jobs/{handler} path so any LogManager spawned during the
- *      handler picks up meaningful context.
- *   3. gc_collect_cycles() after every job. PHP's reference-counted GC can't
- *      break cycles immediately; image handlers (wp_generate_attachment_metadata
- *      → WP_Image_Editor_GD) leave circular refs behind that otherwise
- *      accumulate until the worker hits the 80% memory watermark and respawns.
- *   4. wp_cache_flush() every CACHE_FLUSH_INTERVAL jobs (default 50). Object
- *      caches grow unbounded across jobs unless flushed periodically; the
- *      80% watermark would hit eventually but the flush extends per-process
- *      runtime substantially.
- *   5. 80% memory watermark check: if memory_get_usage(true) crosses
- *      0.80 * memory_limit, request a worker restart via the lock channel.
- *      Bridge to WorkerBase: the Node sets a flag that the topology can read
- *      via memory_pressure() and propagate to the worker's drain predicate.
+ * Consumes job entries and dispatches to registered handlers.
  *
- * Field-name compat:
- *   Upstream's JobIntake writes `parameters`. The original JobRouter and the
- *   newer event-logger-plugins code uses `payload`. We accept BOTH at dispatch
- *   time, preferring `parameters` (upstream/JobIntake-port-aligned), falling
- *   back to `payload` (legacy callers). This keeps the substrate compatible
- *   with both producer codepaths.
+ * Handlers are registered via the newspack_nodes/job_handlers filter.
+ * Each job specifies a handler name and parameters.
  *
- * JSON depth:
- *   json_decode default depth is 512 — large enough that a malicious producer
- *   could exhaust the parser stack with deeply-nested JSON. We pin to 64,
- *   matching the upstream JobWorker hardening.
- *
- * Lock-channel hint:
- *   stale_timeout exposed via constructor + getter. The spec calls for 600s
- *   for long-running job processing (vs WorkerBase's 60s default for fast
- *   pipelines). Topology code reads ->get_stale_timeout() to populate the
- *   worker config.
+ * SECURITY NOTES:
+ * - Handler names must match HANDLER_NAME_PATTERN (validated here)
+ * - Parameters are validated for type/size but handlers MUST validate content
+ * - Only handlers registered via newspack_nodes/job_handlers filter are callable
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
-
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Job Worker class.
+ */
 class JobWorker extends Node {
-	public const HANDLER_NAME_PATTERN = '/^[a-z][a-z0-9_]*$/';
+	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 	public const MAX_JOB_SIZE         = 10485760;
 
 	/** Maximum JSON decode depth to prevent stack-exhaustion attacks. */
@@ -144,25 +120,20 @@ class JobWorker extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_BYTESTREAM ) ) {
+		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
 			return;
 		}
-		$line = $message[ Message::VALUE ];
-		// Fail-early: oversized lines never get parsed (avoid the JSON cost too).
-		if ( \strlen( $line ) > self::MAX_JOB_SIZE ) {
-			Core::print_less_often( 'JobWorker: oversized line, skipping' );
+		$entry = $message[ Message::VALUE ];
+		if ( ! \is_array( $entry ) ) {
 			return;
 		}
-		// Pinned JSON depth so deeply-nested input can't exhaust the parser stack.
-		$entry = \json_decode( $line, true, self::MAX_JSON_DEPTH );
-		if ( ! \is_array( $entry ) || \json_last_error() !== \JSON_ERROR_NONE ) {
+		$encoded = \wp_json_encode( $entry );
+		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
+			Core::print_less_often( 'JobWorker: oversized entry, skipping' );
 			return;
 		}
-		// The producer schema uses 'k' (kind: "job") in the inline firehose path
-		// and 'type' in the JobIntake schema. Accept either; require it to mark
-		// this entry as a job before we dispatch.
-		$kind = $entry['k'] ?? $entry['type'] ?? '';
-		if ( $kind !== 'job' && $kind !== 'remote_job' ) {
+		$kind = $entry['k'] ?? '';
+		if ( 'job' !== $kind && 'remote_job' !== $kind ) {
 			return;
 		}
 		$handler = $entry['handler'] ?? '';
@@ -213,7 +184,7 @@ class JobWorker extends Node {
 			$this->memory_pressure = true;
 		}
 
-		if ( $this->between_jobs_cb !== null ) {
+		if ( null !== $this->between_jobs_cb ) {
 			// Pass the counter so the callback owns cadence decisions.
 			( $this->between_jobs_cb )( $this->jobs_executed );
 		}
@@ -294,7 +265,7 @@ class JobWorker extends Node {
 
 	private function memory_limit_bytes(): int {
 		$ini = \ini_get( 'memory_limit' );
-		if ( $ini === '-1' || $ini === false ) {
+		if ( '-1' === $ini || false === $ini ) {
 			return -1;
 		}
 		$num = (int) $ini;

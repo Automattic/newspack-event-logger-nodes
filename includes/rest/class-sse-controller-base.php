@@ -131,7 +131,7 @@ abstract class SSEControllerBase {
 	 * Memcached_Cache from filtered config.
 	 */
 	public static function cache(): Cache_Interface {
-		if ( self::$sse_cache !== null ) {
+		if ( null !== self::$sse_cache ) {
 			return self::$sse_cache;
 		}
 		$config  = PerformanceControllerBase::load_config();
@@ -248,7 +248,7 @@ abstract class SSEControllerBase {
 		if ( ! isset( self::SAFE_EVENTS[ $event ] ) ) {
 			$event = (string) \preg_replace( '/[^a-zA-Z0-9_-]/', '', $event );
 		}
-		$json    = \function_exists( 'wp_json_encode' ) ? \wp_json_encode( $data ) : \json_encode( $data );
+		$json    = \wp_json_encode( $data );
 		$payload = "event: {$event}\ndata: {$json}\n\n";
 		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo $payload;

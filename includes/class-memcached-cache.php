@@ -1,33 +1,26 @@
 <?php
 /**
- * Memcached_Cache: thin instance wrapper over PHP's Memcached/Memcache extensions.
+ * Memcached_Cache
  *
- * Renamed from `Memcached` (in newspack-event-logger) so the class name does not
- * collide with PHP's bundled `\Memcached`. Single-instance lifetime tied to the
- * caller (Stats_Store, SSE controllers); init() is idempotent.
- *
- * Stats path: fail-SOFT (every method returns the failure sentinel when memcache
- * is unreachable; never throws). SSE-slot path will fail-CLOSED at the caller —
- * that's the caller's policy decision, not this class's.
- *
- * Implements Cache_Interface so test doubles (FakeMemcached) and the real
- * extension wrapper share one type — no duck-typing.
+ * Direct Memcached/Memcache access for Event Logger Nodes.
+ * Supports both PHP extensions with consistent API.
+ * Renamed from `Memcached` to avoid colliding with PHP's bundled `\Memcached`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
-
-use Newspack_Nodes\Core;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 interface Cache_Interface {
 	public function is_available(): bool;
-	public function get( string $key ): mixed;
+	public function get( string $key );
 	public function get_multi( array $keys ): array;
-	public function set( string $key, mixed $value, int $ttl ): bool;
-	public function add( string $key, mixed $value, int $ttl ): bool;
+	public function set( string $key, $value, int $ttl ): bool;
+	public function add( string $key, $value, int $ttl ): bool;
 	public function delete( string $key ): bool;
 	public function flush_all(): bool;
 
@@ -58,36 +51,43 @@ interface Cache_Interface {
 
 class Memcached_Cache implements Cache_Interface {
 
-	public const DEFAULT_SERVERS = [ '127.0.0.1:11211' ];
+	const DEFAULT_SERVERS = [ '127.0.0.1:11211' ];
 
 	/**
-	 * Default slot TTL when caller doesn't specify. Browsers heartbeat every 5s
-	 * (useFirehoseConnection.js), so 10s gives 2x headroom — a slot frees within
-	 * ~5s of a tab closing. Aggregator paths pass SLOT_TTL_AGGREGATOR (30) instead.
+	 * Memcached or Memcache connection instance.
+	 *
+	 * @var \Memcached|\Memcache|null
 	 */
-	public const SSE_SLOT_TTL = 10;
+	private $memd = null;
 
-	/** @var \Memcached|\Memcache|null */
-	private mixed $memd = null;
-
-	/** @var ?string 'memcached' or 'memcache'; null if neither extension available. */
+	/**
+	 * Which extension is in use: 'memcached', 'memcache', or null.
+	 *
+	 * @var string|null
+	 */
 	private ?string $extension = null;
 
 	/**
-	 * @param array<string> $servers host:port strings.
+	 * Initialize the memcache connection.
+	 *
+	 * @param array $servers Array of memcache servers (host:port strings). Default: ['127.0.0.1:11211'].
 	 */
 	public function __construct( array $servers = self::DEFAULT_SERVERS ) {
-		if ( empty( $servers ) ) {
-			return;
-		}
+		// Parse servers into host/port pairs.
 		$parsed = [];
-		foreach ( $servers as $s ) {
-			$parts    = \explode( ':', $s );
+		foreach ( $servers as $server ) {
+			$parts    = \explode( ':', $server );
 			$parsed[] = [
 				'host' => $parts[0] ?? '127.0.0.1',
 				'port' => (int) ( $parts[1] ?? 11211 ),
 			];
 		}
+
+		if ( empty( $parsed ) ) {
+			return;
+		}
+
+		// Try Memcached extension first, then fall back to Memcache.
 		if ( \class_exists( '\Memcached' ) ) {
 			$this->connect_memcached( $parsed );
 		} elseif ( \class_exists( '\Memcache' ) ) {
@@ -95,128 +95,162 @@ class Memcached_Cache implements Cache_Interface {
 		}
 	}
 
+	/**
+	 * Connect using Memcached extension.
+	 *
+	 * @param array $servers Array of ['host' => string, 'port' => int].
+	 */
 	private function connect_memcached( array $servers ): void {
 		try {
 			$memd = new \Memcached();
-			foreach ( $servers as $s ) {
-				$memd->addServer( $s['host'], $s['port'] );
+			foreach ( $servers as $server ) {
+				$memd->addServer( $server['host'], $server['port'] );
 			}
+
 			if ( empty( $memd->getServerList() ) ) {
+				$this->memd = null;
 				return;
 			}
+
 			$this->memd      = $memd;
 			$this->extension = 'memcached';
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: connect_memcached failed: ' . $e->getMessage() );
+		} catch ( \Exception $e ) {
+			$this->memd = null;
 		}
 	}
 
+	/**
+	 * Connect using Memcache extension (fallback).
+	 *
+	 * @param array $servers Array of ['host' => string, 'port' => int].
+	 */
 	private function connect_memcache( array $servers ): void {
 		try {
 			$memd = new \Memcache();
-			foreach ( $servers as $s ) {
-				$memd->addServer( $s['host'], $s['port'] );
+			foreach ( $servers as $server ) {
+				$memd->addServer( $server['host'], $server['port'] );
 			}
+
 			$this->memd      = $memd;
 			$this->extension = 'memcache';
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: connect_memcache failed: ' . $e->getMessage() );
+		} catch ( \Exception $e ) {
+			$this->memd = null;
 		}
 	}
 
+	/**
+	 * Check if memcache is available.
+	 *
+	 * @return bool True if connected.
+	 */
 	public function is_available(): bool {
-		return $this->memd !== null;
+		return null !== $this->memd;
 	}
 
-	public function get( string $key ): mixed {
-		if ( $this->memd === null ) {
+	/**
+	 * Get value from memcache.
+	 *
+	 * @param string $key Cache key.
+	 * @return mixed|null Cached value or null if not found.
+	 */
+	public function get( string $key ) {
+		if ( null === $this->memd ) {
 			return null;
 		}
-		try {
-			$result = $this->memd->get( $key );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: get failed: ' . $e->getMessage() );
-			return null;
-		}
-		return $result === false ? null : $result;
+		$result = $this->memd->get( $key );
+		return false === $result ? null : $result;
 	}
 
-	public function get_multi( array $keys ): array {
-		if ( $this->memd === null || empty( $keys ) ) {
-			return [];
+	/**
+	 * Set value in memcache.
+	 *
+	 * @param string $key   Cache key.
+	 * @param mixed  $value Value to cache.
+	 * @param int    $ttl   Time to live in seconds.
+	 * @return bool Success.
+	 */
+	public function set( string $key, $value, int $ttl ): bool {
+		if ( null === $this->memd ) {
+			return false;
 		}
-		try {
-			if ( $this->extension === 'memcached' ) {
-				$result = $this->memd->getMulti( $keys );
-				return \is_array( $result ) ? $result : [];
-			}
-			// Memcache extension: no native multi-get.
-			$out = [];
-			foreach ( $keys as $k ) {
-				$v = $this->memd->get( $k );
-				if ( $v !== false ) {
-					$out[ $k ] = $v;
-				}
-			}
-			return $out;
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: get_multi failed: ' . $e->getMessage() );
-			return [];
+		// Memcached: set(key, value, ttl)
+		// Memcache: set(key, value, flags, ttl)
+		if ( 'memcached' === $this->extension ) {
+			return $this->memd->set( $key, $value, $ttl );
 		}
+		return $this->memd->set( $key, $value, 0, $ttl );
 	}
 
-	public function set( string $key, mixed $value, int $ttl ): bool {
-		if ( $this->memd === null ) {
+	/**
+	 * Add value to memcache (only if key doesn't exist).
+	 *
+	 * This is atomic - returns false if key already exists.
+	 *
+	 * @param string $key   Cache key.
+	 * @param mixed  $value Value to cache.
+	 * @param int    $ttl   Time to live in seconds.
+	 * @return bool True if added, false if key exists or error.
+	 */
+	public function add( string $key, $value, int $ttl ): bool {
+		if ( null === $this->memd ) {
 			return false;
 		}
-		try {
-			if ( $this->extension === 'memcached' ) {
-				return (bool) $this->memd->set( $key, $value, $ttl );
-			}
-			return (bool) $this->memd->set( $key, $value, 0, $ttl );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: set failed: ' . $e->getMessage() );
-			return false;
+		// Memcached: add(key, value, ttl)
+		// Memcache: add(key, value, flags, ttl)
+		if ( 'memcached' === $this->extension ) {
+			return $this->memd->add( $key, $value, $ttl );
 		}
+		return $this->memd->add( $key, $value, 0, $ttl );
 	}
 
-	public function add( string $key, mixed $value, int $ttl ): bool {
-		if ( $this->memd === null ) {
-			return false;
-		}
-		try {
-			if ( $this->extension === 'memcached' ) {
-				return (bool) $this->memd->add( $key, $value, $ttl );
-			}
-			return (bool) $this->memd->add( $key, $value, 0, $ttl );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: add failed: ' . $e->getMessage() );
-			return false;
-		}
-	}
-
+	/**
+	 * Delete a key from memcache.
+	 *
+	 * @param string $key Cache key.
+	 * @return bool True if deleted, false otherwise.
+	 */
 	public function delete( string $key ): bool {
-		if ( $this->memd === null ) {
+		if ( null === $this->memd ) {
 			return false;
 		}
-		try {
-			return (bool) $this->memd->delete( $key );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: delete failed: ' . $e->getMessage() );
-			return false;
-		}
+		return $this->memd->delete( $key );
 	}
 
+	/**
+	 * Get multiple values from memcache in a single round-trip.
+	 *
+	 * @param array $keys Array of cache keys.
+	 * @return array Associative array of key => value for found keys.
+	 */
+	public function get_multi( array $keys ): array {
+		if ( null === $this->memd || empty( $keys ) ) {
+			return [];
+		}
+		if ( 'memcached' === $this->extension ) {
+			$result = $this->memd->getMulti( $keys );
+			return \is_array( $result ) ? $result : [];
+		}
+		// Memcache extension: no native multi-get, fall back to serial.
+		$result = [];
+		foreach ( $keys as $key ) {
+			$val = $this->memd->get( $key );
+			if ( false !== $val ) {
+				$result[ $key ] = $val;
+			}
+		}
+		return $result;
+	}
+
+	/**
+	 * Flush all keys from memcache.
+	 *
+	 * @return bool Success.
+	 */
 	public function flush_all(): bool {
-		if ( $this->memd === null ) {
+		if ( null === $this->memd ) {
 			return false;
 		}
-		try {
-			return (bool) $this->memd->flush();
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: flush failed: ' . $e->getMessage() );
-			return false;
-		}
+		return $this->memd->flush();
 	}
 
 	// -------------------------------------------------------------------------
@@ -224,11 +258,25 @@ class Memcached_Cache implements Cache_Interface {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Build a slot key. When `$partition >= 0` the slot pool is per-partition so
-	 * one stream-merger per partition can't crowd browser tabs out of the global
-	 * pool. Browser callers pass -1.
+	 * SSE slot TTL in seconds.
 	 */
-	public function sse_slot_key( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): string {
+	private const SSE_SLOT_TTL = 10;
+
+	/**
+	 * Build SSE slot key.
+	 *
+	 * Aggregator connections pass a partition >= 0 so each partition gets
+	 * its own slot pool — one stream-merger per partition shouldn't be able
+	 * to crowd browser tabs (or other partitions) out of the global 10-slot
+	 * pool.
+	 *
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP address.
+	 * @param int    $slot      Slot number.
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
+	 * @return string Cache key.
+	 */
+	private function sse_slot_key( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): string {
 		if ( $partition >= 0 ) {
 			return "evlog:sse:{$user_id}:{$ip_hash}:p{$partition}:{$slot}";
 		}
@@ -236,68 +284,107 @@ class Memcached_Cache implements Cache_Interface {
 	}
 
 	/**
-	 * Atomic add() loop across slot indices [0, $max_slots). The first index for
-	 * which add() succeeds is the slot we own. Fail-CLOSED: returns false when
-	 * memcache is down so the controller can issue HTTP 429.
+	 * Acquire an SSE connection slot.
+	 *
+	 * Uses atomic add() to claim an available slot.
+	 *
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP (use substr(md5($ip), 0, 8)).
+	 * @param int    $max_slots Maximum number of slots.
+	 * @param int    $ttl       Slot TTL in seconds (10 for browsers, 30 for aggregators).
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
+	 * @return int|false Slot number on success, false if all slots taken or no memcache.
 	 */
 	public function acquire_sse_slot( int $user_id, string $ip_hash, int $max_slots, int $ttl = self::SSE_SLOT_TTL, int $partition = -1 ): int|false {
-		if ( $this->memd === null ) {
+		if ( null === $this->memd ) {
+			// No memcache - deny connection (fail closed).
 			return false;
 		}
-		$connection_id = \function_exists( 'wp_generate_uuid4' ) ? \wp_generate_uuid4() : \bin2hex( \random_bytes( 16 ) );
+
+		$connection_id = \wp_generate_uuid4();
+
 		for ( $slot = 0; $slot < $max_slots; $slot++ ) {
 			$key = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
+			// add() is atomic - only succeeds if key doesn't exist.
 			if ( $this->add( $key, $connection_id, $ttl ) ) {
 				return $slot;
 			}
 		}
+
 		return false;
 	}
 
 	/**
-	 * Slot-still-alive probe (does not refresh TTL). Fail-CLOSED.
+	 * Check if an SSE slot is still alive (without refreshing TTL).
+	 *
+	 * Called by SSE loop to check if browser is still sending heartbeats.
+	 *
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP.
+	 * @param int    $slot      Slot number.
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
+	 * @return bool True if slot exists.
 	 */
 	public function check_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
-		if ( $this->memd === null ) {
-			return false;
+		if ( null === $this->memd ) {
+			return false;  // No memcache - deny (fail closed).
 		}
-		return $this->get( $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition ) ) !== null;
+
+		$key = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
+		return null !== $this->get( $key );
 	}
 
 	/**
-	 * Heartbeat. Prefers Memcached's native atomic touch(); falls back to
-	 * non-atomic get-then-set on the older Memcache extension. Fail-OPEN: when
-	 * the cache is unreachable, return true so a transient cache outage doesn't
-	 * tear down a legitimate stream.
+	 * Touch an SSE slot to keep it alive.
+	 *
+	 * Called by heartbeat endpoint.
+	 *
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP.
+	 * @param int    $slot      Slot number.
+	 * @param int    $ttl       Slot TTL in seconds (10 for browsers, 30 for aggregators).
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
+	 * @return bool Success.
 	 */
 	public function touch_sse_slot( int $user_id, string $ip_hash, int $slot, int $ttl = self::SSE_SLOT_TTL, int $partition = -1 ): bool {
-		if ( $this->memd === null ) {
+		if ( null === $this->memd ) {
 			return true;
 		}
+
 		$key = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
-		try {
-			if ( 'memcached' === $this->extension && \method_exists( $this->memd, 'touch' ) ) {
-				return (bool) $this->memd->touch( $key, $ttl );
-			}
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'Memcached_Cache: touch failed: ' . $e->getMessage() );
+
+		// Memcached extension has native atomic touch().
+		if ( 'memcached' === $this->extension && \method_exists( $this->memd, 'touch' ) ) {
+			return $this->memd->touch( $key, $ttl );
 		}
-		// Memcache fallback: non-atomic get-then-set.
+
+		// Fallback for Memcache extension: non-atomic get-then-set.
 		$value = $this->get( $key );
-		if ( $value === null ) {
+		if ( null === $value ) {
+			// Slot expired - connection is stale, should exit.
 			return false;
 		}
 		return $this->set( $key, $value, $ttl );
 	}
 
 	/**
-	 * Release a slot. Fail-OPEN — slots TTL out without explicit release; if the
-	 * cache is unreachable we just let the TTL handle it.
+	 * Release an SSE slot.
+	 *
+	 * Optional - slots auto-expire via TTL.
+	 *
+	 * @param int    $user_id   User ID.
+	 * @param string $ip_hash   Hashed IP.
+	 * @param int    $slot      Slot number.
+	 * @param int    $partition Partition number (>= 0 to scope per-partition, -1 for shared pool).
+	 * @return bool Success.
 	 */
 	public function release_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
-		if ( $this->memd === null ) {
+		if ( null === $this->memd ) {
 			return true;
 		}
-		return $this->delete( $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition ) );
+
+		$key = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
+		return $this->delete( $key );
 	}
+
 }

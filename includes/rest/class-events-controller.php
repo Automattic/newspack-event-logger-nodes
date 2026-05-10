@@ -93,12 +93,14 @@ class EventsController extends PerformanceControllerBase {
 					if ( '' === $line ) {
 						return null;
 					}
+					// Line is a packed Message; the entry payload lives at VALUE.
 					$decoded = \json_decode( $line, true, 64 );
-					if ( ! \is_array( $decoded ) ) {
+					$entry   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+					if ( ! \is_array( $entry ) ) {
 						return null;
 					}
-					$decoded['_partition'] = $p;
-					$entries[]             = $decoded;
+					$entry['_partition'] = $p;
+					$entries[]           = $entry;
 					return null;
 				},
 				true

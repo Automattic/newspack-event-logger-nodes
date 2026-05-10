@@ -1,59 +1,18 @@
 <?php
 /**
- * RemoteManager: hub-side fan-out worker that reaches into remote spokes.
+ * Remote Manager
  *
- * Two responsibilities:
- *   1. As a JobIntake handler, dispatches `sync_setting` and `health_check`
- *      jobs against each enabled server (configured via ServerRegistry).
- *   2. As a periodic action handler, runs the health-check sweep on every
- *      `newspack_event_logger_nodes/health_check` action — pulling the remote
- *      `/discovery` endpoint, aggregating `registered_hooks`, `custom_events`,
- *      and `lag`, and firing
- *      `newspack_event_logger_nodes/health_check_discovery` so the
- *      HealthCheckExtensions class can merge the discovered hooks/events into
- *      local options.
- *
- * Periodic flow:
- *
- *   newspack_event_logger_nodes/health_check (cron / supervisor tick)
- *       └─→ RemoteManager::health_check()
- *               ├─→ for each enabled server:
- *               │     GET /wp-json/newspack-nodes/v1/discovery
- *               │     ($validated = registered_hooks + custom_events + lag)
- *               │
- *               ├─→ do_action( '...health_check_discovery', $all_discovery )
- *               │       (HealthCheckExtensions merges into local options)
- *               │
- *               └─→ sync_all_settings() — writes every synced option to every
- *                   enabled spoke. Handles staleness drops, new servers added
- *                   between sync ticks, and general consistency.
- *
- * Inbound-job flow:
- *
- *   sync_setting job (queued by SettingsSync on update_option):
- *       └─→ RemoteManager::handle_job()
- *               └─→ for each enabled server:
- *                     POST /wp-json/newspack-nodes/v1/settings
- *                     {option, value}  (Basic Auth header from ServerRegistry)
- *
- * Security boundaries:
- *   - Endpoint allowlist: SettingsSync::is_allowed_endpoint(); only
- *     `/wp-json/newspack-nodes/` and `/wp-json/newspack-nodes-aggregator/`
- *     prefixes are permitted. Filter-supplied endpoints are validated, never
- *     trusted.
- *   - Server-id sanitization: only string IDs are processed, capped at
- *     MAX_SERVERS to prevent unbounded loops from a tampered registry.
- *   - Sanitized handler parameters: filter-registered actions never receive
- *     the raw `endpoint` field unless it passes the allowlist check.
- *   - Caps on iteration (`MAX_SERVERS`, `MAX_SETTINGS`) bound the work each
- *     job does.
+ * Hub-side fan-out worker that reaches into remote spokes via JobIntake handlers
+ * and periodic health-check sweeps.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 /**
  * Remote Manager class.
@@ -499,7 +458,7 @@ class RemoteManager {
 		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . $endpoint;
 		$args = self::request_args( $server, [
 			'headers' => [ 'Content-Type' => 'application/json' ],
-			'body'    => \function_exists( 'wp_json_encode' ) ? \wp_json_encode( $body ) : \json_encode( $body ),
+			'body'    => \wp_json_encode( $body ),
 		] );
 
 		if ( \function_exists( 'wp_remote_post' ) ) {

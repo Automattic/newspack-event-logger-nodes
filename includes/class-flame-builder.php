@@ -1,66 +1,47 @@
 <?php
 /**
- * FlameBuilder: aggregates completed-request data into flame trees, per-URL
- * aggregates, dimensional time-series, category time-series, and a global
- * leaderboard — flushing every ~5s to memcache via Stats_Store.
+ * Flame Builder
  *
- * Faithful port of `Newspack_Performance_Workers\Cron\FlameBuilder` adapted
- * for the Node-with-fill substrate. The legacy class was a static handler
- * driven by LogReader; here it's a Node subclass with `fill( array &$message )`
- * as the entry point, and the legacy `$context` becomes private instance fields.
- *
- * Input shape: TM_BYTESTREAM messages whose VALUE is a JSON-encoded request
- * record (the output of RequestBuilder), including:
- *   { rid, url, entries[], profiles{}, duration_ms, status_code, error_status,
- *     peak_mb, request_method, server_name, country_code, http_from, user_agent,
- *     ja4_hash, is_worker, timestamp }
- *
- * For each request:
- *  1. Build a flame tree from `entries` via LIFO start/complete matching.
- *  2. Write the per-request flame to flames.log (sink) + companion 68-byte index.
- *  3. Accumulate sums into per-URL aggregate (LRU 1000×5).
- *  4. Accumulate sums into the current 5-min pending bucket: hourly, leaderboard,
- *     URL stats, dimensional, category time series. On bucket rotation OR every
- *     flush tick (5s) the pending bucket is promoted into flush arrays.
- *  5. On `flush()` (5s) write all 9 namespaces to memcache via Stats_Store,
- *     apply auto-tune, refresh significant events.
- *
- * Constants match upstream exactly: 5-min buckets, MAX_DIM_VALUES=20,
- * MAX_URL_DIM_VALUES=10, MAX_CAT_VALUES=50, ENTRY_LIMIT_URL_UPPER/LOWER=40/20,
- * ENTRY_LIMIT_GLOBAL_UPPER/LOWER=100/50.
+ * Node that builds flame_data from completed requests, writes to flames.log,
+ * and accumulates per-URL aggregate stats.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
-
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Flame builder node class.
+ */
 class FlameBuilder extends Node {
 
-	/** Periodic flush cadence (seconds). */
-	public const FLUSH_INTERVAL_SEC = 5;
+	const EMA_SAMPLE_LIMIT   = 1000;
+	const FLUSH_INTERVAL_SEC = 5;
 
 	/** Security limits for recursion and unbounded growth. */
 	private const MAX_RECURSION_DEPTH = 50;
 	private const MAX_STACK_DEPTH     = 50;
 
 	/** Pre-compiled regex patterns for flame data parsing. */
-	public const PATTERN_START    = '/^(.+?) \(start\)$/';
-	public const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
+	const PATTERN_START    = '/^(.+?) \(start\)$/';
+	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
 
 	/** Entry limits with hysteresis: only trim when upper limit hit, trim to lower limit. */
-	public const ENTRY_LIMIT_URL_UPPER    = 40;
-	public const ENTRY_LIMIT_URL_LOWER    = 20;
-	public const ENTRY_LIMIT_GLOBAL_UPPER = 100;
-	public const ENTRY_LIMIT_GLOBAL_LOWER = 50;
+	const ENTRY_LIMIT_URL_UPPER    = 40;
+	const ENTRY_LIMIT_URL_LOWER    = 20;
+	const ENTRY_LIMIT_GLOBAL_UPPER = 100;
+	const ENTRY_LIMIT_GLOBAL_LOWER = 50;
 
 	/** Dimension field mapping: dim key => request field name. */
-	public const DIM_FIELDS = [
+	const DIM_FIELDS = [
 		'status'  => 'status_category',
 		'method'  => 'request_method',
 		'server'  => 'server_name',
@@ -78,92 +59,78 @@ class FlameBuilder extends Node {
 	private const STATS_CACHE_NUM_BUCKETS = 5;
 
 	/** @var LruCache Per-URL aggregate accumulator. */
-	private LruCache $stats_cache;
+	private $stats_cache;
 
-	/** @var array<string,array> All flush arrays keyed by purpose. */
-	private array $hourly_stats               = [];
-	private array $leaderboard_stats          = [];
-	private array $leaderboard_by_server_stats = [];
-	private array $url_stats                  = [];
-	private array $dim_stats                  = [];
-	private array $dim_stats_by_server        = [];
-	private array $url_dim_stats              = [];
-	private array $cat_stats                  = [];
-	private array $cat_stats_by_server        = [];
-	private array $url_cat_stats              = [];
+	/** @var array All flush arrays. */
+	private $hourly_stats                = [];
+	private $leaderboard_stats           = [];
+	private $leaderboard_by_server_stats = [];
+	private $url_stats                   = [];
+	private $dim_stats                   = [];
+	private $dim_stats_by_server         = [];
+	private $url_dim_stats               = [];
+	private $cat_stats                   = [];
+	private $cat_stats_by_server         = [];
+	private $url_cat_stats               = [];
 
 	/** Per-URL aggregate state. */
-	private float $last_flush_time           = 0.0;
-	private int   $auto_disable_threshold     = 0;
-	private float $auto_protect_time_threshold = 0.0;
-	/** @var array<string,bool> */
-	private array $hooks_to_disable          = [];
-	/** @var array<string,bool> */
-	private array $custom_events_to_disable  = [];
-	/** @var array<string,bool> */
-	private array $significant_events        = [];
-	/** @var array<string,bool> */
-	private array $new_significant_events    = [];
-	private float $last_significant_refresh  = 0.0;
-	/** @var array<string,bool> */
-	private array $custom_event_names        = [];
-	private bool  $is_hub                    = false;
+	private $last_flush_time             = 0.0;
+	private $auto_disable_threshold      = 0;
+	private $auto_protect_time_threshold = 0.0;
+	private $hooks_to_disable            = [];
+	private $custom_events_to_disable    = [];
+	private $significant_events          = [];
+	private $new_significant_events      = [];
+	private $last_significant_refresh    = 0.0;
+	private $custom_event_names          = [];
+	private $is_hub                      = false;
 
 	/** Pending stats for the current (incomplete) 5-minute bucket. */
-	private string $pending_bucket = '';
+	private $pending_bucket = '';
 
-	/** @var array<string,mixed> Pending bucket accumulators. */
-	private array $pending = [];
+	/** @var array Pending bucket accumulators. */
+	private $pending = [];
 
-	/** Memcache-backed stats store. Optional; when null, flush is in-memory only. */
-	private ?Stats_Store $stats_store = null;
+	/** @var Stats_Store|null Memcache-backed stats store. */
+	private $stats_store = null;
 
-	/** Sink for flame JSONL writes (separate from main sink). */
-	private ?Node $flames_sink = null;
+	/** @var Node|null Sink for flame JSONL writes. */
+	private $flames_sink = null;
 
-	/**
-	 * Per-test seam: when set, this clock function is used in place of \time()
-	 * for bucket-key derivation. Lets unit tests freeze the bucket window.
-	 *
-	 * @var callable|null
-	 */
+	/** @var callable|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
 
 	public function __construct() {
-		$this->stats_cache    = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
+		$this->stats_cache     = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
 		$this->last_flush_time = \microtime( true );
 		$this->reset_pending();
 	}
 
 	/**
-	 * Inject the Stats_Store. Optional; when null, flush() still drains state
-	 * but writes nowhere (in-memory test mode).
+	 * Inject the Stats_Store.
 	 */
 	public function set_stats_store( ?Stats_Store $store ): void {
 		$this->stats_store = $store;
 	}
 
 	/**
-	 * Inject the flames-log sink (typically a Partition or Topic that writes
-	 * to flames.log). When unset, store_flame() is a no-op.
+	 * Inject the flames-log sink.
 	 */
 	public function set_flames_sink( ?Node $sink ): void {
 		$this->flames_sink = $sink;
 	}
 
 	/**
-	 * Toggle hub mode (per-server tracking). In production this is set from
-	 * `aggregator_servers` config; tests set it directly.
+	 * Toggle hub mode (per-server tracking).
 	 */
 	public function set_is_hub( bool $is_hub ): void {
 		$this->is_hub = $is_hub;
 	}
 
 	/**
-	 * Inject a custom-event-name set so noisy detection knows which categories
-	 * are custom events vs core hooks (controls which to_disable list they go in).
+	 * Inject the custom-event-names set.
 	 *
-	 * @param array<string> $names
+	 * @param array $names
 	 */
 	public function set_custom_event_names( array $names ): void {
 		$this->custom_event_names = [];
@@ -173,10 +140,9 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Inject the persisted significant-events set. Auto-disable will skip
-	 * categories whose base name is significant.
+	 * Inject the persisted significant-events set.
 	 *
-	 * @param array<string> $events
+	 * @param array $events
 	 */
 	public function set_significant_events( array $events ): void {
 		$this->significant_events = [];
@@ -188,28 +154,23 @@ class FlameBuilder extends Node {
 	/**
 	 * Configure auto-tune thresholds.
 	 *
-	 * @param int   $count_threshold    A category's `count` exceeding this gets the base hook
-	 *                                  proposed for disabling. 0 = disable check.
-	 * @param float $time_threshold     A category's average `sum_time/sum_count` exceeding this
-	 *                                  gets the base hook proposed as a significant event.
-	 *                                  0 = disable check.
+	 * @param int   $count_threshold Disable check threshold (0 = disabled).
+	 * @param float $time_threshold  Significant-event threshold (0 = disabled).
 	 */
 	public function set_auto_tune( int $count_threshold, float $time_threshold ): void {
-		$this->auto_disable_threshold       = $count_threshold;
+		$this->auto_disable_threshold      = $count_threshold;
 		$this->auto_protect_time_threshold = $time_threshold;
 	}
 
 	/**
 	 * Replace the clock used for bucket-key derivation (testing seam).
-	 *
-	 * @param callable|null $fn fn(): int — current Unix timestamp. Default: \time().
 	 */
 	public function set_clock( ?callable $fn ): void {
 		$this->clock_fn = $fn;
 	}
 
 	private function now_ts(): int {
-		return $this->clock_fn !== null ? (int) ( $this->clock_fn )() : \time();
+		return null !== $this->clock_fn ? (int) ( $this->clock_fn )() : \time();
 	}
 
 	/**
@@ -224,9 +185,7 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Accessor for the auto-tune state (used by tests + apply_auto_tune callers).
-	 *
-	 * @return array{hooks: list<string>, custom_events: list<string>, new_significant: list<string>}
+	 * Accessor for the auto-tune state.
 	 */
 	public function get_auto_tune_state(): array {
 		return [
@@ -237,10 +196,7 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Save state for persistence (the pending bucket only — completed buckets
-	 * are already in memcache).
-	 *
-	 * @return array<string,mixed>
+	 * Save state for persistence.
 	 */
 	public function save_state(): array {
 		return [
@@ -262,8 +218,7 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Maintenance hook (called by topology runners on Timer ticks). Drives
-	 * the periodic flush even when no inbound traffic has triggered one.
+	 * Maintenance hook — drives periodic flush even with no inbound traffic.
 	 */
 	public function maintenance(): void {
 		$now = \microtime( true );
@@ -274,26 +229,23 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Process one completed request from RequestBuilder.
+	 * Process a single completed request from requests.log.
 	 *
 	 * @param array $message Reference; not mutated.
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_BYTESTREAM ) ) {
+		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
 			return;
 		}
-		$line    = (string) $message[ Message::VALUE ];
-		$request = \json_decode( $line, true, 64 );
+		$request = $message[ Message::VALUE ];
 		if ( ! \is_array( $request ) ) {
 			return;
 		}
 
-		$rid      = (string) ( $request['rid'] ?? '' );
-		$url      = (string) ( $request['url'] ?? '' );
-		$url_hash = RequestBuilder::url_hash( $url );
-
-		$entries = $request['entries'] ?? [];
+		$rid      = $request['rid'] ?? '';
+		$url_hash = RequestBuilder::url_hash( $request['url'] ?? '' );
+		$entries  = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
 		}
@@ -332,12 +284,14 @@ class FlameBuilder extends Node {
 		}
 
 		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
-		if ( $this->stats_store !== null ) {
+		if ( null !== $this->stats_store ) {
 			$now = $this->now_ts();
 			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
+				// Create finalized flame for display (scale values, strip suffixes, normalize).
+				// Keep raw flame_raw for future merging (unscaled, with seen_count).
 				$total_count            = $aggregate['flame']['count'] ?? 0;
 				$aggregate['flame_raw'] = $aggregate['flame'];
-				self::finalize_flame_node( $aggregate['flame'], (int) $total_count );
+				self::finalize_flame_node( $aggregate['flame'], $total_count );
 				$aggregate['last_modified'] = $now;
 				$this->stats_store->set_url_stats( (string) $url_hash, $aggregate );
 			}
@@ -350,6 +304,7 @@ class FlameBuilder extends Node {
 		$this->apply_auto_tune();
 
 		$this->stats_cache->flush();
+		$this->url_stats                   = [];
 		$this->hourly_stats                = [];
 		$this->leaderboard_stats           = [];
 		$this->leaderboard_by_server_stats = [];
@@ -359,39 +314,43 @@ class FlameBuilder extends Node {
 		$this->cat_stats                   = [];
 		$this->cat_stats_by_server         = [];
 		$this->url_cat_stats               = [];
-		$this->url_stats                   = [];
 	}
 
-	// -------------------------------------------------------------------------
-	// Flame storage + index format.
-	// -------------------------------------------------------------------------
-
 	/**
-	 * Write the per-request flame JSON to the flames-log sink + companion index.
+	 * Store flame data to flames log.
+	 *
+	 * Index is written automatically via the with_index() callback.
+	 *
+	 * @param string $rid        Request ID.
+	 * @param string $url_hash   URL hash.
+	 * @param array  $flame_data Flame graph data.
+	 * @return bool True on success.
 	 */
 	private function store_flame( string $rid, string $url_hash, array $flame_data ): bool {
-		// Strip duplicate sibling suffixes before storage (only needed for merging).
+		// Strip duplicate sibling suffixes before storage (they're only needed for merging).
 		self::strip_name_suffixes( $flame_data );
 
-		// Add rid and url_hash to flame data so downstream readers can extract them.
+		// Add rid and url_hash to flame data so index callback can extract them.
 		$flame_data['rid']      = $rid;
 		$flame_data['url_hash'] = $url_hash;
 
-		if ( $this->flames_sink === null ) {
+		if ( null === $this->flames_sink ) {
 			return true; // Aggregation still happens; just no on-disk flame.
 		}
-		$json = (string) \json_encode( $flame_data );
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$right_now;
 		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::VALUE ]     = $json;
+		$msg[ Message::VALUE ]     = $flame_data;
 		$this->flames_sink->fill( $msg );
 		return true;
 	}
 
 	/**
 	 * Strip hidden sequence suffixes (\x00N) from flame node names recursively.
+	 *
+	 * @param array $node  Flame node (modified in place).
+	 * @param int   $depth Current recursion depth.
 	 */
 	private static function strip_name_suffixes( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -411,35 +370,33 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * 68-byte fixed-width index entry for flames.log:
-	 *   rid          32 (space-padded right)
-	 *   url_hash     12 (space-padded right)
-	 *   segment_id   6  (zero-padded left)
-	 *   offset       10 (zero-padded left)
-	 *   length       8  (zero-padded left)
+	 * Format index entry callback for Partition::with_index().
 	 *
-	 * @param string                  $line     The JSON line written.
-	 * @param array{segment_id:int,offset:int,length:int} $position
-	 * @param array|null              $data     Pre-decoded data (skips a redundant decode).
-	 * @return string|null            Index entry or null if rid is missing.
+	 * @param string     $line     The JSON line written to the log.
+	 * @param array      $position Position array with segment_id, offset, length.
+	 * @param array|null $data     Pre-decoded data (avoids re-parsing $line).
+	 * @return string|null Index entry or null to skip.
 	 */
 	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
-		$data = $data ?? \json_decode( $line, true, 64 );
-		if ( ! \is_array( $data ) || empty( $data['rid'] ) ) {
+		// $line is the packed Message (positional JSON); VALUE is index 6.
+		$decoded = \json_decode( $line, true, 64 );
+		$value   = $decoded[ Message::VALUE ] ?? null;
+		if ( ! \is_array( $value ) || empty( $value['rid'] ) ) {
 			return null;
 		}
 
-		return \str_pad( \substr( (string) $data['rid'], 0, 32 ), 32 )
-			. \str_pad( \substr( (string) ( $data['url_hash'] ?? '' ), 0, 12 ), 12 )
-			. \str_pad( (string) (int) $position['segment_id'], 6, '0', STR_PAD_LEFT )
-			. \str_pad( (string) (int) $position['offset'], 10, '0', STR_PAD_LEFT )
-			. \str_pad( (string) (int) $position['length'], 8, '0', STR_PAD_LEFT );
+		return \str_pad( \substr( $value['rid'], 0, 32 ), 32 )
+			. \str_pad( \substr( $value['url_hash'], 0, 12 ), 12 )
+			. \str_pad( (string) $position['segment_id'], 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT );
 	}
 
 	/**
-	 * Parse a flame index entry.
+	 * Parse flame index entry.
 	 *
-	 * @return array{rid:string,url_hash:string,segment_id:int,offset:int,length:int}|null
+	 * @param string $line Index line.
+	 * @return array{rid: string, url_hash: string, segment_id: int, offset: int, length: int}|null
 	 */
 	public static function parse_flame_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
@@ -455,15 +412,14 @@ class FlameBuilder extends Node {
 		];
 	}
 
-	// -------------------------------------------------------------------------
-	// Flame tree construction (LIFO start/complete matching).
-	// -------------------------------------------------------------------------
-
 	/**
-	 * Build a flame tree from request entries via stack-based LIFO matching.
+	 * Build flame graph data using stack-based LIFO matching.
 	 *
-	 * @param array $entries Entries from RequestBuilder.
-	 * @return array Flame node tree.
+	 * This handles improperly nested events (e.g., when a child span outlives
+	 * its parent) by using LIFO matching like the log-manager does.
+	 *
+	 * @param array $entries Log entries.
+	 * @return array Flame graph data.
 	 */
 	private function build_flame_data( array $entries ): array {
 		// Root node.
@@ -483,15 +439,13 @@ class FlameBuilder extends Node {
 		foreach ( $entries as $entry ) {
 			$keyword = $entry['k'] ?? '';
 
-			if ( ! \is_string( $keyword ) ) {
-				continue;
-			}
-
 			if ( \preg_match( self::PATTERN_START, $keyword, $m ) ) {
 				$base_name = $m[1];
-				$label     = \is_string( $entry['l'] ?? '' ) ? ( $entry['l'] ?? '' ) : '';
-				$detail    = \is_string( $entry['m'] ?? '' ) ? ( $entry['m'] ?? '' ) : '';
-				$new_node  = [
+				// 'l' is the stable label for aggregation/deduplication.
+				// 'm' is the message with volatile details (SQL, paths) for display.
+				$label  = \is_string( $entry['l'] ?? '' ) ? ( $entry['l'] ?? '' ) : '';
+				$detail = \is_string( $entry['m'] ?? '' ) ? ( $entry['m'] ?? '' ) : '';
+				$new_node = [
 					'name'     => $label ? "{$base_name}: {$label}" : $base_name,
 					'value'    => 0,
 					'children' => [],
@@ -511,14 +465,15 @@ class FlameBuilder extends Node {
 						'name' => $base_name,
 					];
 				}
-				unset( $new_node );
+				unset( $new_node ); // Break reference for next iteration.
+
 			} elseif ( \preg_match( self::PATTERN_COMPLETE, $keyword, $m ) ) {
 				$base_name   = $m[1];
 				$duration_ms = $entry['duration_ms'] ?? 0;
 
 				// Search stack from top (LIFO) for matching name.
 				$found_idx = -1;
-				for ( $i = \count( $stack ) - 1; $i >= 1; $i-- ) {
+				for ( $i = \count( $stack ) - 1; $i >= 1; $i-- ) { // Don't pop root.
 					if ( $stack[ $i ]['name'] === $base_name ) {
 						$found_idx = $i;
 						break;
@@ -531,6 +486,7 @@ class FlameBuilder extends Node {
 					$stack[ $found_idx ]['node']['ts']    = (int) ( $entry['ts'] ?? $this->now_ts() );
 
 					// Pop all nodes from found_idx to top.
+					// Children that outlive their parent become orphaned (value=0).
 					\array_splice( $stack, $found_idx );
 				}
 				// If not found, this is an orphaned complete - ignore it.
@@ -544,8 +500,13 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Recursively number duplicate sibling names with hidden suffix \x00N so
-	 * they stay separate during merge. Stripped before display.
+	 * Recursively number duplicate sibling names with hidden suffix.
+	 *
+	 * Appends \x00{N} to duplicate names so they stay separate during merge,
+	 * but the suffix is stripped before display.
+	 *
+	 * @param array $node  Flame node (modified by reference).
+	 * @param int   $depth Current recursion depth.
 	 */
 	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -1016,7 +977,7 @@ class FlameBuilder extends Node {
 	 * Persist combined aggregate stats (hourly, leaderboard, urls, dim, cat) to memcache.
 	 */
 	private function persist_aggregate_stats(): void {
-		if ( $this->stats_store === null ) {
+		if ( null === $this->stats_store ) {
 			return;
 		}
 		if (
@@ -1547,7 +1508,7 @@ class FlameBuilder extends Node {
 		}
 
 		// In test mode (no store), fire the actions but skip the lock dance.
-		if ( $this->stats_store === null ) {
+		if ( null === $this->stats_store ) {
 			$this->fire_auto_tune_actions();
 			return;
 		}

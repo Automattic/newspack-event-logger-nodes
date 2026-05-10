@@ -1,33 +1,21 @@
 <?php
 /**
- * StatsAggregator: pushes completed-request data into Stats_Store.
+ * Stats Aggregator
  *
- * fill() receives a TM_BYTESTREAM whose VALUE is a JSON-encoded request
- * record from RequestBuilder, and increments:
- *   - URL counter (NS_URLS)
- *   - leaderboard sum (NS_LB)
- *   - hourly bucket (NS_HOURLY)
- *   - dimensional sums (NS_DIM, one per known dim found in the record)
- *   - per-server leaderboard (NS_LB_S) when a server name is present
- *   - per-URL stats (NS_URL_DIM / NS_URL_CAT) when url_hash present
- *
- * Optional Stats_Store: when null, the node falls back to a tiny in-memory
- * map (matches the legacy skeleton API; tests that drove the node before
- * the schema rewrite still pass). When a Stats_Store is injected, every
- * fill() also pushes through the 9-namespace memcache schema.
- *
- * Memcache failure is fail-SOFT: Stats_Store swallows errors silently;
- * counter() always reflects the message count regardless.
+ * Node that pushes completed-request data into Stats_Store (the 9-namespace
+ * memcache schema). Falls back to an in-memory map when no store is injected.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
-
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
+
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 class StatsAggregator extends Node {
 
@@ -55,10 +43,10 @@ class StatsAggregator extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_BYTESTREAM ) ) {
+		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
 			return;
 		}
-		$entry = \json_decode( (string) $message[ Message::VALUE ], true );
+		$entry = $message[ Message::VALUE ];
 		if ( ! \is_array( $entry ) || empty( $entry['url'] ) ) {
 			return;
 		}
@@ -71,7 +59,7 @@ class StatsAggregator extends Node {
 		++$this->url_stats[ $url ]['count'];
 		$this->url_stats[ $url ]['sum_req_time'] += $req_time;
 
-		if ( $this->store === null ) {
+		if ( null === $this->store ) {
 			return;
 		}
 
@@ -85,7 +73,7 @@ class StatsAggregator extends Node {
 		$this->store->bump_leaderboard( $req_time, $categories );
 		$this->store->bump_hourly( $req_time, $peak_mb );
 
-		if ( $server !== '' ) {
+		if ( '' !== $server ) {
 			$this->store->bump_server_leaderboard( $server, $req_time, $categories );
 		}
 
@@ -95,11 +83,11 @@ class StatsAggregator extends Node {
 				continue;
 			}
 			$value = (string) $entry[ $dim ];
-			if ( $value === '' ) {
+			if ( '' === $value ) {
 				continue;
 			}
 			$this->store->bump_dimensional( $dim, $value, $req_time );
-			if ( $url_hash !== '' ) {
+			if ( '' !== $url_hash ) {
 				$this->store->bump_url_dimensional( $url_hash, $dim, $value, $req_time );
 			}
 		}
@@ -109,7 +97,7 @@ class StatsAggregator extends Node {
 			$cat_time   = (float) ( $data['time']  ?? 0 );
 			$cat_invocs = (int)   ( $data['count'] ?? 0 );
 			$this->store->bump_category( (string) $cat, $cat_time, $cat_invocs );
-			if ( $url_hash !== '' ) {
+			if ( '' !== $url_hash ) {
 				$this->store->bump_url_category( $url_hash, (string) $cat, $cat_time, $cat_invocs );
 			}
 		}

@@ -456,7 +456,23 @@ class ReqgrepCommand {
 			return;
 		}
 
-		$entry = \json_decode( $line, true, 64 );
+		// Lines on disk are 7-element positional Message envelopes (the firehose
+		// writes packed Messages); but stdin pipes and legacy callers may pass
+		// entry-shape JSON directly. Detect either: a list-shaped decode is the
+		// envelope (entry payload at Message::VALUE); a hash with `rid` is
+		// already entry-shaped. Re-encode the inner entry as $line so every
+		// downstream re-decode (history storage, output_request, raw mode)
+		// sees clean entry-shaped JSON either way.
+		$decoded = \json_decode( $line, true, 64 );
+		if ( ! \is_array( $decoded ) ) {
+			return;
+		}
+		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
+			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
+			$line  = \json_encode( $entry, JSON_UNESCAPED_SLASHES );
+		} else {
+			$entry = $decoded;
+		}
 		if ( ! \is_array( $entry ) || ! isset( $entry['rid'] ) ) {
 			return;
 		}
@@ -548,11 +564,8 @@ class ReqgrepCommand {
 		if ( \strlen( $entry['m'] ) <= self::MAX_ENTRY_MESSAGE_LENGTH ) {
 			return $line;
 		}
-		$entry['m']     = \substr( $entry['m'], 0, self::MAX_ENTRY_MESSAGE_LENGTH ) . '…';
-		$truncated_line = \function_exists( 'wp_json_encode' )
-			? \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES )
-			: \json_encode( $entry, JSON_UNESCAPED_SLASHES );
-		return false !== $truncated_line ? $truncated_line : $line;
+		$entry['m'] = \substr( $entry['m'], 0, self::MAX_ENTRY_MESSAGE_LENGTH ) . '…';
+		return \json_encode( $entry, JSON_UNESCAPED_SLASHES );
 	}
 
 	/**
@@ -699,9 +712,7 @@ class ReqgrepCommand {
 		$msg = '';
 		if ( isset( $entry['m'] ) ) {
 			if ( \is_array( $entry['m'] ) ) {
-				$msg = \function_exists( 'wp_json_encode' )
-					? \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES )
-					: \json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+				$msg = \json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 			} else {
 				$msg = (string) $entry['m'];
 			}

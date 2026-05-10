@@ -96,8 +96,25 @@ class PerfOverviewController extends PerformanceControllerBase {
 				: $this->build_global_leaderboard(),
 		];
 
-		if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
-			$response['breakdown_time_series'] = $this->merge_dim_across_partitions( $breakdown, $server );
+		// `breakdown` accepts comma-separated dims so the dashboard fan-out
+		// can collapse three round-trips into one (`?categories=1&breakdown=server,status`).
+		// Single-dim form keeps `breakdown_time_series` flat for backward
+		// compat; multi-dim form returns `breakdowns` as a `dim => series` map.
+		if ( '' !== $breakdown ) {
+			$dims = \array_values(
+				\array_filter(
+					\array_map( 'trim', \explode( ',', $breakdown ) ),
+					static fn ( $d ) => \in_array( $d, self::DIMENSIONS, true )
+				)
+			);
+			if ( 1 === \count( $dims ) ) {
+				$response['breakdown_time_series'] = $this->merge_dim_across_partitions( $dims[0], $server );
+			} elseif ( ! empty( $dims ) ) {
+				$response['breakdowns'] = [];
+				foreach ( $dims as $dim ) {
+					$response['breakdowns'][ $dim ] = $this->merge_dim_across_partitions( $dim, $server );
+				}
+			}
 		}
 
 		if ( $categories ) {
@@ -128,19 +145,59 @@ class PerfOverviewController extends PerformanceControllerBase {
 				if ( ! \is_array( $bucket_data ) ) {
 					continue;
 				}
-				foreach ( $bucket_data as $url => $stats ) {
-					$hash = \substr( \hash( 'sha256', (string) $url ), 0, 12 );
+				// FlameBuilder writes `[bucket => [hash => {url, count, sum_ms, ...}]]`
+				// — the inner key is the URL hash, the URL string lives in
+				// `$stats['url']`. Use both: hash for grouping, url string for display.
+				foreach ( $bucket_data as $hash_or_url => $stats ) {
+					if ( \is_array( $stats ) && isset( $stats['url'] ) ) {
+						$url  = (string) $stats['url'];
+						$hash = (string) $hash_or_url;
+					} else {
+						$url  = (string) $hash_or_url;
+						$hash = \substr( \hash( 'sha256', $url ), 0, 12 );
+					}
 					if ( ! isset( $result[ $hash ] ) ) {
 						$result[ $hash ] = [
-							'hash'         => $hash,
-							'url'          => $url,
-							'count'        => 0,
-							'sum_ms'       => 0.0,
-							'last_seen'    => 0,
+							'hash'        => $hash,
+							'url'         => $url,
+							'count'       => 0,
+							'sum_ms'      => 0.0,
+							'min_ms'      => 0.0,
+							'max_ms'      => 0.0,
+							'p50_ms'      => 0.0,
+							'p95_ms'      => 0.0,
+							'p99_ms'      => 0.0,
+							'sum_peak_mb' => 0.0,
+							'max_peak_mb' => 0.0,
+							'last_seen'   => 0,
 						];
 					}
 					$result[ $hash ]['count']  += (int) ( $stats['count'] ?? 0 );
-					$result[ $hash ]['sum_ms'] += (float) ( $stats['sum_req_time'] ?? 0 ) * 1000.0;
+					// FlameBuilder bucket has `sum_ms` directly; StatsAggregator
+					// bucket has `sum_req_time` in seconds. Accept either.
+					$sum_ms = isset( $stats['sum_ms'] )
+						? (float) $stats['sum_ms']
+						: (float) ( $stats['sum_req_time'] ?? 0 ) * 1000.0;
+					$result[ $hash ]['sum_ms']      += $sum_ms;
+					$result[ $hash ]['sum_peak_mb'] += (float) ( $stats['sum_peak_mb'] ?? 0 );
+					if ( isset( $stats['min_ms'] ) ) {
+						$result[ $hash ]['min_ms'] = 0.0 === $result[ $hash ]['min_ms']
+							? (float) $stats['min_ms']
+							: \min( $result[ $hash ]['min_ms'], (float) $stats['min_ms'] );
+					}
+					$result[ $hash ]['max_ms']      = \max( (float) $result[ $hash ]['max_ms'], (float) ( $stats['max_ms'] ?? 0 ) );
+					$result[ $hash ]['max_peak_mb'] = \max( (float) $result[ $hash ]['max_peak_mb'], (float) ( $stats['max_peak_mb'] ?? 0 ) );
+					// FlameBuilder pre-computes percentiles per-bucket; bucket
+					// merge picks the latest non-zero — coarse but better than 0.
+					foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
+						if ( ! empty( $stats[ $k ] ) ) {
+							$result[ $hash ][ $k ] = (float) $stats[ $k ];
+						}
+					}
+					$result[ $hash ]['last_seen']  = \max(
+						(int) $result[ $hash ]['last_seen'],
+						(int) ( $stats['last_seen'] ?? 0 )
+					);
 				}
 			}
 		}
@@ -154,13 +211,13 @@ class PerfOverviewController extends PerformanceControllerBase {
 				'url'          => $entry['url'],
 				'count'        => $count,
 				'avg_ms'       => $count > 0 ? $entry['sum_ms'] / $count : 0.0,
-				'min_ms'       => 0,
-				'max_ms'       => 0,
-				'p50_ms'       => 0,
-				'p95_ms'       => 0,
-				'p99_ms'       => 0,
-				'avg_peak_mb'  => 0,
-				'max_peak_mb'  => 0,
+				'min_ms'       => $entry['min_ms'],
+				'max_ms'       => $entry['max_ms'],
+				'p50_ms'       => $entry['p50_ms'],
+				'p95_ms'       => $entry['p95_ms'],
+				'p99_ms'       => $entry['p99_ms'],
+				'avg_peak_mb'  => $count > 0 ? $entry['sum_peak_mb'] / $count : 0.0,
+				'max_peak_mb'  => $entry['max_peak_mb'],
 				'last_updated' => (int) $entry['last_seen'],
 			];
 		}
@@ -321,7 +378,7 @@ class PerfOverviewController extends PerformanceControllerBase {
 	 *
 	 * @return array<int,string>
 	 */
-	private function recent_url_buckets(): array {
+	protected function recent_url_buckets(): array {
 		$now    = \time();
 		$max    = 288;
 		$out    = [];

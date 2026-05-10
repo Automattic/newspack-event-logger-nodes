@@ -94,13 +94,15 @@ class GyroscopeController extends PerformanceControllerBase {
 					if ( '' === $bytes ) {
 						return false;
 					}
+					// Bytes are a packed Message; request body lives at VALUE.
 					$decoded = \json_decode( \trim( $bytes ), true, 64 );
-					if ( \is_array( $decoded ) ) {
-						if ( isset( $decoded['events'] ) && \is_array( $decoded['events'] ) ) {
-							$events = $decoded['events'];
+					$body    = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $body ) ) {
+						if ( isset( $body['events'] ) && \is_array( $body['events'] ) ) {
+							$events = $body['events'];
 						} else {
 							// Treat the request as a single envelope — render the whole thing.
-							$events[] = $decoded;
+							$events[] = $body;
 						}
 					}
 					$found = true;

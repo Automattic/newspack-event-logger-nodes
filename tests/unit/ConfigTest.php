@@ -59,8 +59,10 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_load_config_has_base_directory_from_runtime_filter(): void {
-		// With no explicit overrides, base_directory comes from the runtime's
-		// `newspack_nodes/base_dir` filter (default `/tmp/newspack-nodes`).
+		// With no explicit overrides, base_directory comes from the substrate
+		// Config (which seeds via the `newspack_nodes/base_dir` filter,
+		// default `/tmp/newspack-nodes`). The application Config merges the
+		// substrate map so callers see substrate keys via either Config.
 		$config = Config::load_config();
 		$this->assertArrayHasKey( 'base_directory', $config );
 		$this->assertNotEmpty( $config['base_directory'] );
@@ -75,21 +77,20 @@ class ConfigTest extends TestCase {
 	public function test_load_config_full_includes_extended(): void {
 		$config = Config::load_config( 'full' );
 		$this->assertIsArray( $config );
-		// Extended schema includes memcache_servers, which the sample config
-		// file populates with a default.
+		// Extended schema includes memcache_servers (substrate-owned), which
+		// the substrate sample overlay populates with a default and which
+		// the application Config layers in via load_config('full').
 		$this->assertArrayHasKey( 'memcache_servers', $config );
 	}
 
 	public function test_full_config_cached_separately_from_core(): void {
-		$core = Config::load_config( 'core' );
-		$full = Config::load_config( 'full' );
+		$core  = Config::load_config( 'core' );
+		$full  = Config::load_config( 'full' );
 		$full2 = Config::load_config( 'full' );
 		$this->assertSame( $full, $full2 );
-		// memcache_servers only loads in 'full' mode WP-option override path.
-		// (File default for memcache_servers is in both branches because the
-		// sample config carries it; the assertion below is on the WP-option
-		// gating.)
-		\update_option( 'newspack_event_logger_nodes_memcache_servers', "test-host:11211" );
+		// memcache_servers is a substrate extended option; reads
+		// `newspack_nodes_memcache_servers`.
+		\update_option( 'newspack_nodes_memcache_servers', "test-host:11211" );
 		Config::reset();
 		$config_core = Config::load_config( 'core' );
 		$config_full = Config::load_config( 'full' );
@@ -120,7 +121,7 @@ class ConfigTest extends TestCase {
 		$override_path = $this->temp_dir . '/override.php';
 		\file_put_contents(
 			$override_path,
-			"<?php return [ 'num_partitions' => 7, 'segment_size' => 4242 ];\n"
+			"<?php return [ 'enable_logging' => false, 'hook_start_priority' => 4242 ];\n"
 		);
 		// Allow temp_dir by hacking the allowlist via reflection (matches
 		// legacy bootstrap pattern). Tests need a writable allowed dir.
@@ -129,8 +130,8 @@ class ConfigTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
 		Config::reset();
 		$config = Config::load_config();
-		$this->assertSame( 7, $config['num_partitions'] );
-		$this->assertSame( 4242, $config['segment_size'] );
+		$this->assertFalse( $config['enable_logging'] );
+		$this->assertSame( 4242, $config['hook_start_priority'] );
 	}
 
 	public function test_local_env_override_outside_allowed_dirs_rejected(): void {
@@ -156,30 +157,33 @@ class ConfigTest extends TestCase {
 
 	public function test_wp_option_override_takes_effect(): void {
 		Config::reset();
-		\update_option( 'newspack_event_logger_nodes_num_partitions', '8' );
+		\update_option( 'newspack_event_logger_nodes_hook_start_priority', '8' );
 		$config = Config::load_config();
-		$this->assertSame( 8, $config['num_partitions'] );
+		$this->assertSame( 8, $config['hook_start_priority'] );
 	}
 
 	public function test_wp_option_invalid_int_falls_back_to_default(): void {
 		Config::reset();
-		\update_option( 'newspack_event_logger_nodes_num_partitions', 'not-a-number' );
+		\update_option( 'newspack_event_logger_nodes_hook_start_priority', 'not-a-number' );
 		$config = Config::load_config();
 		// Should keep the default from the config file, not the invalid WP option.
-		$this->assertSame( 1, $config['num_partitions'] );
+		$this->assertSame( -10000, $config['hook_start_priority'] );
 	}
 
 	public function test_empty_wp_option_uses_file_default(): void {
 		Config::reset();
-		\update_option( 'newspack_event_logger_nodes_num_partitions', '' );
+		\update_option( 'newspack_event_logger_nodes_hook_start_priority', '' );
 		$config = Config::load_config();
-		$this->assertSame( 1, $config['num_partitions'] );
+		$this->assertSame( -10000, $config['hook_start_priority'] );
 	}
 
 	// ── Path/directory accessors ───────────────────────────────────────────
 
 	public function test_get_base_directory_creates_dir(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/base' );
+		// `base_directory` is a substrate key — the WP option name is the
+		// substrate-prefixed `newspack_nodes_base_directory`. The application
+		// Config's `get_base_directory()` delegates to the substrate.
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/base' );
 		Config::reset();
 		$base = Config::get_base_directory();
 		$this->assertSame( $this->temp_dir . '/base', $base );
@@ -187,7 +191,7 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_get_logs_locks_offsets_dirs(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/base2' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/base2' );
 		Config::reset();
 		$logs    = Config::get_logs_directory();
 		$locks   = Config::get_locks_directory();
@@ -201,7 +205,7 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_directories_are_cached(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/base3' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/base3' );
 		Config::reset();
 		$logs1 = Config::get_logs_directory();
 		$logs2 = Config::get_logs_directory();
@@ -482,14 +486,14 @@ class ConfigTest extends TestCase {
 
 	public function test_kill_readers_no_locks_dir_noop(): void {
 		// Even with no locks dir present, kill_readers must not throw.
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/no-locks-base' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/no-locks-base' );
 		Config::reset();
 		Config::kill_readers( [ 'firehose-workers' ] );
 		$this->assertTrue( true );
 	}
 
 	public function test_kill_readers_writes_restart_flag_for_partitioned_dir(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/with-locks' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/with-locks' );
 		Config::reset();
 		$locks = Config::get_locks_directory();
 
@@ -504,7 +508,7 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_kill_readers_writes_restart_flag_for_singleton_dir(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/with-singleton' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/with-singleton' );
 		Config::reset();
 		$locks = Config::get_locks_directory();
 
@@ -519,7 +523,7 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_kill_readers_skips_non_matching_groups(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/skip-test' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/skip-test' );
 		Config::reset();
 		$locks = Config::get_locks_directory();
 
@@ -534,7 +538,7 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_kill_readers_ignores_non_lock_entries(): void {
-		\update_option( 'newspack_event_logger_nodes_base_directory', $this->temp_dir . '/non-lock' );
+		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/non-lock' );
 		Config::reset();
 		$locks = Config::get_locks_directory();
 

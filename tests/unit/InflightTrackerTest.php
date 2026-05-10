@@ -5,6 +5,7 @@ require_once \dirname( __DIR__, 2 ) . '/includes/class-inflight-tracker.php';
 
 use Newspack_Event_Logger_Nodes\InflightTracker;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( InflightTracker::class )]
@@ -110,7 +111,12 @@ class InflightTrackerTest extends TestCase {
 		$t = new InflightTracker();
 		$t->process_line( 'not json' );
 		$t->process_line( '' );
-		$t->process_line( '{"rid":"r1","k":"request","m":"GET /x","ts":1}' );
+		// `process_line` consumes the wire-format Message; build one whose
+		// VALUE is the entry the tracker should observe.
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = [ 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ];
+		$t->process_line( Message::packed( $msg ) );
 		$this->assertSame( 1, $t->active_count() );
 	}
 

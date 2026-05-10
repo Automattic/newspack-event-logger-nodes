@@ -41,7 +41,8 @@ class HealthCheckExtensionsTest extends TestCase {
 	}
 
 	public function test_max_events_constant(): void {
-		$this->assertSame( 10000, HealthCheckExtensions::MAX_EVENTS );
+		$ref = new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' );
+		$this->assertSame( 10000, $ref->getValue() );
 	}
 
 	public function test_process_discovery_merges_remote_hooks_into_log_events(): void {
@@ -129,9 +130,10 @@ class HealthCheckExtensionsTest extends TestCase {
 	}
 
 	public function test_process_discovery_caps_events_at_max(): void {
+		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
 		// Build an oversized payload — must be capped at MAX_EVENTS=10000.
 		$huge = [];
-		for ( $i = 0; $i < HealthCheckExtensions::MAX_EVENTS + 100; $i++ ) {
+		for ( $i = 0; $i < $max_events + 100; $i++ ) {
 			$huge[] = "event_{$i}";
 		}
 		HealthCheckExtensions::process_discovery( [
@@ -141,14 +143,15 @@ class HealthCheckExtensionsTest extends TestCase {
 		] );
 
 		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] ?? [];
-		$this->assertLessThanOrEqual( HealthCheckExtensions::MAX_EVENTS, \count( $result ) );
+		$this->assertLessThanOrEqual( $max_events, \count( $result ) );
 	}
 
 	public function test_process_discovery_caps_existing_at_max_when_merging(): void {
+		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
 		// Existing already at max — adding more should be a no-op (the merge
 		// breaks once the cap is hit, so the existing list stays intact).
 		$existing = [];
-		for ( $i = 0; $i < HealthCheckExtensions::MAX_EVENTS; $i++ ) {
+		for ( $i = 0; $i < $max_events; $i++ ) {
 			$existing[] = "existing_{$i}";
 		}
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = $existing;
@@ -158,7 +161,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		] );
 
 		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
-		$this->assertSame( HealthCheckExtensions::MAX_EVENTS, \count( $result ) );
+		$this->assertSame( $max_events, \count( $result ) );
 	}
 
 	public function test_process_discovery_handles_missing_keys(): void {

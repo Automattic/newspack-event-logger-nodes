@@ -385,10 +385,10 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span key={ col } role="cell">
 						<a
 							className="entry-rid"
-							href={ `admin.php?page=newspack-event-logger&search=${ encodeURIComponent(
+							href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
 								req.rid
 							) }` }
-							title="View in Performance Dashboard"
+							title="View request trace"
 						>
 							{ req.rid }
 						</a>
@@ -498,7 +498,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					>
 						<span className="entry-method">{ req.method }</span>{ ' ' }
 						<a
-							href={ `admin.php?page=newspack-event-logger&url=${ urlHash(
+							href={ `admin.php?page=newspack-nodes-performance&url=${ urlHash(
 								req.url
 							) }` }
 							className="entry-url-link"

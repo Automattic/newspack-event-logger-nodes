@@ -3,8 +3,17 @@
  * Worker Status Component
  *
  * Displays status of all registered log readers with segment visualization.
- * Dynamically renders pipelines based on registered workers and their inputs/outputs.
- * Shows cursor positions, bytes behind, and animates segment rotations.
+ * Renders the topology as a linear pipeline: each log appears exactly once,
+ * positioned between the producer (worker that writes it via outputs_status)
+ * and the consumer (worker that tails it via inputs_status).
+ *
+ * Logs with no consumer render as terminal outputs after their producer.
+ * Logs with no producer render as source inputs before their consumer.
+ *
+ * Cursor data is sourced from the consumer's inputs_status entry; segment
+ * filesystem data prefers the consumer side too (cursor + segments come from
+ * the same snapshot), falling back to the producer's outputs_status when no
+ * consumer exists for that log.
  */
 
 import {
@@ -33,7 +42,7 @@ const REFRESH_OPTIONS = [
  * @return {string} Formatted string.
  */
 function formatBytes( bytes ) {
-	if ( bytes === 0 ) {
+	if ( ! bytes || bytes === 0 ) {
 		return '0 B';
 	}
 	const k = 1024;
@@ -45,87 +54,6 @@ function formatBytes( bytes ) {
 		sizes[ i ]
 	);
 }
-
-/**
- * Single segment bar visualization (horizontal bar layout).
- *
- * @param {Object}  props              Component props.
- * @param {Object}  props.segment      Segment data { id, size, mtime }.
- * @param {number}  props.maxSize      Max segment size for scaling.
- * @param {number}  props.cursorSeg    Current cursor segment ID.
- * @param {number}  props.cursorOffset Current cursor offset.
- * @param {number}  props.newestSegId  ID of the newest segment.
- * @param {boolean} props.isNew        Whether this segment is newly appeared.
- * @param {boolean} props.isRemoving   Whether this segment is being removed.
- * @return {JSX.Element} Rendered component.
- */
-const SegmentBar = memo( function SegmentBar( {
-	segment,
-	maxSize,
-	cursorSeg,
-	cursorOffset,
-	newestSegId,
-	isNew,
-	isRemoving,
-} ) {
-	const fillPercent = maxSize > 0 ? ( segment.size / maxSize ) * 100 : 0;
-	// If no cursor (output-only log), treat all segments as processed (green).
-	const hasReader = cursorSeg !== undefined;
-	const isCurrent = hasReader && segment.id === cursorSeg;
-	const isProcessed = ! hasReader || segment.id < cursorSeg;
-	const isNewest = segment.id === newestSegId;
-
-	// For current segment: green up to cursor, then yellow (if newest) or red (if old).
-	const processedPercent =
-		isCurrent && segment.size > 0
-			? ( cursorOffset / segment.size ) * fillPercent
-			: 0;
-	const pendingPercent = isCurrent ? fillPercent - processedPercent : 0;
-	const pendingClass = isNewest ? 'pending' : ''; // Yellow only for newest, red otherwise.
-
-	const classNames = [
-		'worker-segment-h',
-		isNew ? 'segment-slide-in' : '',
-		isRemoving ? 'segment-slide-out' : '',
-	]
-		.filter( Boolean )
-		.join( ' ' );
-
-	return (
-		<div
-			className={ classNames }
-			title={ `Segment ${ segment.id }: ${ formatBytes(
-				segment.size
-			) }` }
-		>
-			<div className="segment-label-h">{ segment.id }</div>
-			<div className="segment-bar-h">
-				{ isCurrent ? (
-					<>
-						<div
-							className="segment-fill-h processed"
-							style={ { width: `${ processedPercent }%` } }
-						/>
-						<div
-							className={ `segment-fill-h ${ pendingClass }` }
-							style={ { width: `${ pendingPercent }%` } }
-						/>
-					</>
-				) : (
-					<div
-						className={ `segment-fill-h ${
-							isProcessed ? 'processed' : ''
-						}` }
-						style={ { width: `${ fillPercent }%` } }
-					/>
-				) }
-			</div>
-			<div className="segment-size-h">
-				{ formatBytes( segment.size ) }
-			</div>
-		</div>
-	);
-} );
 
 /**
  * Format bytes per second to human readable string.
@@ -197,6 +125,87 @@ function formatEta( bytesBehind, readRate ) {
 	const mins = Math.ceil( ( seconds % 3600 ) / 60 );
 	return `${ hours }h${ mins }m`;
 }
+
+/**
+ * Single segment bar visualization (horizontal bar layout).
+ *
+ * @param {Object}  props              Component props.
+ * @param {Object}  props.segment      Segment data { id, size, mtime }.
+ * @param {number}  props.maxSize      Max segment size for scaling.
+ * @param {number}  props.cursorSeg    Current cursor segment ID.
+ * @param {number}  props.cursorOffset Current cursor offset.
+ * @param {number}  props.newestSegId  ID of the newest segment.
+ * @param {boolean} props.isNew        Whether this segment is newly appeared.
+ * @param {boolean} props.isRemoving   Whether this segment is being removed.
+ * @return {JSX.Element} Rendered component.
+ */
+const SegmentBar = memo( function SegmentBar( {
+	segment,
+	maxSize,
+	cursorSeg,
+	cursorOffset,
+	newestSegId,
+	isNew,
+	isRemoving,
+} ) {
+	const fillPercent = maxSize > 0 ? ( segment.size / maxSize ) * 100 : 0;
+	// If no cursor (output-only log), treat all segments as processed (green).
+	const hasReader = cursorSeg !== undefined && cursorSeg !== null;
+	const isCurrent = hasReader && segment.id === cursorSeg;
+	const isProcessed = ! hasReader || segment.id < cursorSeg;
+	const isNewest = segment.id === newestSegId;
+
+	// For current segment: green up to cursor, then yellow (if newest) or red (if old).
+	const processedPercent =
+		isCurrent && segment.size > 0
+			? ( cursorOffset / segment.size ) * fillPercent
+			: 0;
+	const pendingPercent = isCurrent ? fillPercent - processedPercent : 0;
+	const pendingClass = isNewest ? 'pending' : ''; // Yellow only for newest, red otherwise.
+
+	const classNames = [
+		'worker-segment-h',
+		isNew ? 'segment-slide-in' : '',
+		isRemoving ? 'segment-slide-out' : '',
+	]
+		.filter( Boolean )
+		.join( ' ' );
+
+	return (
+		<div
+			className={ classNames }
+			title={ `Segment ${ segment.id }: ${ formatBytes(
+				segment.size
+			) }` }
+		>
+			<div className="segment-label-h">{ segment.id }</div>
+			<div className="segment-bar-h">
+				{ isCurrent ? (
+					<>
+						<div
+							className="segment-fill-h processed"
+							style={ { width: `${ processedPercent }%` } }
+						/>
+						<div
+							className={ `segment-fill-h ${ pendingClass }` }
+							style={ { width: `${ pendingPercent }%` } }
+						/>
+					</>
+				) : (
+					<div
+						className={ `segment-fill-h ${
+							isProcessed ? 'processed' : ''
+						}` }
+						style={ { width: `${ fillPercent }%` } }
+					/>
+				) }
+			</div>
+			<div className="segment-size-h">
+				{ formatBytes( segment.size ) }
+			</div>
+		</div>
+	);
+} );
 
 /**
  * Log section showing segments for all partitions of a log.
@@ -302,6 +311,7 @@ const LogSection = memo( function LogSection( {
  * @param {Object}   props.readRates   Read rates by worker key.
  * @param {number}   props.currentTime Current timestamp for age calculation.
  * @param {Function} props.onRestart   Callback to restart worker(s).
+ * @param {boolean}  props.showArrows  Whether to show direction arrows.
  * @return {JSX.Element} Rendered component.
  */
 const WorkerConnector = memo( function WorkerConnector( {
@@ -422,14 +432,6 @@ const WorkerConnector = memo( function WorkerConnector( {
 	);
 } );
 
-/**
- * Worker Status component.
- *
- * @param {Object}  props           Component props.
- * @param {number}  props.refreshMs Refresh interval in milliseconds.
- * @param {boolean} props.fullPage  Whether rendering in full page mode.
- * @return {JSX.Element} Rendered component.
- */
 /**
  * Standalone workers section (supervisor, stream-merger, health-check).
  *
@@ -599,29 +601,252 @@ const StandaloneWorkers = memo( function StandaloneWorkers( {
 	);
 } );
 
+/**
+ * Build a linear render plan from the worker list.
+ *
+ * Each pipeline log appears exactly once. A log shared by a producer and a
+ * consumer renders BETWEEN them (so the producer's worker connector sits above
+ * the log, and the consumer's connector sits below). Terminal outputs (no
+ * consumer) render after their producer; source inputs (no producer) render
+ * before their consumer.
+ *
+ * The returned array is a flat sequence of items consumed by the renderer:
+ *  - `{ kind: 'log', ... }` — a LogSection to draw.
+ *  - `{ kind: 'worker', ... }` — a WorkerConnector to draw.
+ *
+ * @param {Array} workers Worker descriptors from the REST endpoint.
+ * @return {Array} Render plan items.
+ */
+function buildRenderPlan( workers ) {
+	if ( ! workers || workers.length === 0 ) {
+		return [];
+	}
+
+	// Group workers by type. One "step" per worker type (multiple partitions
+	// roll up into one connector row).
+	const stepsByType = new Map();
+	workers.forEach( ( w ) => {
+		const type = w.type;
+		if ( ! stepsByType.has( type ) ) {
+			stepsByType.set( type, {
+				type,
+				handlerName: w.handler || type,
+				inputs: Array.isArray( w.inputs ) ? w.inputs : [],
+				outputs: Array.isArray( w.outputs ) ? w.outputs : [],
+				workers: [],
+			} );
+		}
+		stepsByType.get( type ).workers.push( w );
+	} );
+	const steps = [ ...stepsByType.values() ];
+
+	// Build producer/consumer maps: log name → step type(s).
+	const producers = new Map(); // name → step.type that writes this log.
+	const consumers = new Map(); // name → step.type that reads this log.
+	steps.forEach( ( step ) => {
+		step.outputs.forEach( ( name ) => {
+			if ( ! producers.has( name ) ) {
+				producers.set( name, [] );
+			}
+			producers.get( name ).push( step.type );
+		} );
+		step.inputs.forEach( ( name ) => {
+			if ( ! consumers.has( name ) ) {
+				consumers.set( name, [] );
+			}
+			consumers.get( name ).push( step.type );
+		} );
+	} );
+
+	// Topological sort: a step that reads log X must come after any step that
+	// writes log X. Stable order on tie (preserves API order for visual
+	// consistency).
+	const stepIndex = new Map( steps.map( ( s, i ) => [ s.type, i ] ) );
+	const visited = new Set();
+	const sorted = [];
+	const visit = ( step ) => {
+		if ( visited.has( step.type ) ) {
+			return;
+		}
+		visited.add( step.type );
+		step.inputs.forEach( ( name ) => {
+			const producerTypes = producers.get( name ) || [];
+			producerTypes.forEach( ( ptype ) => {
+				if ( ptype === step.type ) {
+					return;
+				}
+				const pstep = steps[ stepIndex.get( ptype ) ];
+				if ( pstep ) {
+					visit( pstep );
+				}
+			} );
+		} );
+		sorted.push( step );
+	};
+	steps.forEach( visit );
+
+	// For each log, pick the canonical "info source" (the worker that has the
+	// richest data). Consumers carry cursor + segments + cursor partition data;
+	// producers only carry segments. Prefer consumer-side data when available.
+	//
+	// Store the location plan: where in the rendered sequence each log appears.
+	//  - If producer + consumer exist: render BEFORE the consumer step.
+	//  - If only consumer: render BEFORE the consumer step (source).
+	//  - If only producer: render AFTER the producer step (terminal).
+	const beforeStep = new Map(); // step.type → log[] to render above it.
+	const afterStep = new Map(); // step.type → log[] to render below it.
+	const allLogs = new Set( [ ...producers.keys(), ...consumers.keys() ] );
+	allLogs.forEach( ( name ) => {
+		const consumerTypes = consumers.get( name ) || [];
+		const producerTypes = producers.get( name ) || [];
+		if ( consumerTypes.length > 0 ) {
+			// Render once above the FIRST consumer (in topo order).
+			const firstConsumer = sorted.find( ( s ) =>
+				consumerTypes.includes( s.type )
+			);
+			if ( firstConsumer ) {
+				if ( ! beforeStep.has( firstConsumer.type ) ) {
+					beforeStep.set( firstConsumer.type, [] );
+				}
+				beforeStep.get( firstConsumer.type ).push( name );
+			}
+		} else if ( producerTypes.length > 0 ) {
+			// No consumer — terminal output. Render below the LAST producer.
+			const lastProducer = [ ...sorted ]
+				.reverse()
+				.find( ( s ) => producerTypes.includes( s.type ) );
+			if ( lastProducer ) {
+				if ( ! afterStep.has( lastProducer.type ) ) {
+					afterStep.set( lastProducer.type, [] );
+				}
+				afterStep.get( lastProducer.type ).push( name );
+			}
+		}
+	} );
+
+	// Walk steps and build the flat render plan. For each log that needs
+	// rendering, gather the partition data from the consumer's inputs_status
+	// (if any), falling back to a producer's outputs_status.
+	const collectLogPartitions = ( logName ) => {
+		const consumerTypes = consumers.get( logName ) || [];
+		const producerTypes = producers.get( logName ) || [];
+
+		// Prefer consumer side (has cursor data).
+		for ( const ctype of consumerTypes ) {
+			const step = steps[ stepIndex.get( ctype ) ];
+			if ( ! step ) {
+				continue;
+			}
+			const partitions = [];
+			step.workers.forEach( ( w ) => {
+				const entry = ( w.inputs_status || [] ).find(
+					( s ) => s && s.name === logName
+				);
+				if ( entry ) {
+					partitions.push( {
+						partition: w.partition,
+						segments: entry.segments || [],
+						total_size: entry.total_size || 0,
+						cursor_seg: entry.cursor_seg,
+						cursor_offset: entry.cursor_offset,
+					} );
+				}
+			} );
+			if ( partitions.length > 0 ) {
+				return { partitions, hasCursor: true };
+			}
+		}
+
+		// Fall back to producer side.
+		for ( const ptype of producerTypes ) {
+			const step = steps[ stepIndex.get( ptype ) ];
+			if ( ! step ) {
+				continue;
+			}
+			const partitions = [];
+			step.workers.forEach( ( w ) => {
+				const entry = ( w.outputs_status || [] ).find(
+					( s ) => s && s.name === logName
+				);
+				if ( entry ) {
+					partitions.push( {
+						partition: w.partition,
+						segments: entry.segments || [],
+						total_size: entry.total_size || 0,
+					} );
+				}
+			} );
+			if ( partitions.length > 0 ) {
+				return { partitions, hasCursor: false };
+			}
+		}
+
+		return { partitions: [], hasCursor: false };
+	};
+
+	const plan = [];
+	const rendered = new Set();
+	const renderLog = ( logName ) => {
+		if ( rendered.has( logName ) ) {
+			return;
+		}
+		rendered.add( logName );
+		const { partitions, hasCursor } = collectLogPartitions( logName );
+		plan.push( {
+			kind: 'log',
+			name: logName,
+			partitions,
+			hasCursor,
+		} );
+	};
+
+	sorted.forEach( ( step ) => {
+		( beforeStep.get( step.type ) || [] ).forEach( renderLog );
+		const hasInputs = step.inputs.length > 0;
+		const hasOutputs = step.outputs.length > 0;
+		plan.push( {
+			kind: 'worker',
+			step,
+			showArrows: hasInputs || hasOutputs,
+		} );
+		( afterStep.get( step.type ) || [] ).forEach( renderLog );
+	} );
+
+	return plan;
+}
+
+/**
+ * Worker Status component.
+ *
+ * @param {Object}  props           Component props.
+ * @param {number}  props.refreshMs Refresh interval in milliseconds.
+ * @param {boolean} props.fullPage  Whether rendering in full page mode.
+ * @return {JSX.Element} Rendered component.
+ */
 export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	const [ workers, setWorkers ] = useState( [] );
 	const [ standalone, setStandalone ] = useState( [] ); // Standalone workers.
-	const [ logs, setLogs ] = useState( [] ); // Output logs (flames) with no consumer.
 	const [ loading, setLoading ] = useState( true );
 	const [ error, setError ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
 		// Load from localStorage with validation against allowed dropdown values.
 		const validValues = REFRESH_OPTIONS.map( ( opt ) => opt.value );
-		const saved = localStorage.getItem( 'event-logger-worker-refresh' );
+		const saved = localStorage.getItem(
+			'newspack-event-logger-nodes-worker-refresh'
+		);
 		if ( saved && validValues.includes( saved ) ) {
 			return saved;
 		}
 		return String( refreshMs );
 	} );
 	const [ byteRates, setByteRates ] = useState( {} ); // Read rates by worker key.
-	const [ writeRates, setWriteRates ] = useState( {} ); // Write rates by log key.
+	const [ writeRates, setWriteRates ] = useState( {} ); // Write rates by log key (logName-partition).
 	const [ segmentSize, setSegmentSize ] = useState( 64 * 1024 * 1024 ); // Default 64MB.
 	const [ currentTime, setCurrentTime ] = useState( () =>
 		Math.floor( Date.now() / 1000 )
 	);
-	const prevSegmentsRef = useRef( {} ); // Previous segment IDs by worker key.
-	const prevSegmentDataRef = useRef( {} ); // Previous segment data by key for removal animation.
+	const prevSegmentsRef = useRef( {} ); // Previous segment IDs by log key.
+	const prevSegmentDataRef = useRef( {} ); // Previous segment data by log key.
 	const prevPositionsRef = useRef( {} ); // Read positions by worker key.
 	const prevTotalSizesRef = useRef( {} ); // Total sizes by log key for write rates.
 	const lastFetchTimeRef = useRef( null );
@@ -632,7 +857,7 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	/**
 	 * Request restart for workers of a given type.
 	 *
-	 * @param {string} workerType Worker group name (e.g., 'firehose-workers', 'request-workers').
+	 * @param {string} workerType Worker group name (e.g., 'firehose-workers').
 	 */
 	const handleRestart = useCallback( async ( workerType ) => {
 		try {
@@ -642,7 +867,7 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 				data: {
 					type: workerType,
 					all_partitions: true,
-					nonce: window.eventLoggerDashboards?.restartNonce || '',
+					nonce: window.NewspackNodesData?.restartNonce || '',
 				},
 			} );
 		} catch ( err ) {
@@ -652,7 +877,10 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 
 	// Save refresh interval to localStorage.
 	useEffect( () => {
-		localStorage.setItem( 'event-logger-worker-refresh', refreshInterval );
+		localStorage.setItem(
+			'newspack-event-logger-nodes-worker-refresh',
+			refreshInterval
+		);
 	}, [ refreshInterval ] );
 
 	const fetchWorkers = useCallback( async () => {
@@ -676,72 +904,97 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 				? ( now - lastFetchTimeRef.current ) / 1000
 				: 0;
 
-			data.workers.forEach( ( worker ) => {
-				const key = `${ worker.handler || worker.type }-${
+			// Per-worker read rates (cursor advancement against primary input).
+			( data.workers || [] ).forEach( ( worker ) => {
+				const workerKey = `${ worker.handler || worker.type }-${
 					worker.partition
 				}`;
-				// Use input_log from backend (strip .log suffix for logKey).
-				const logName =
-					worker.input_log?.replace( /\.log$/, '' ) || worker.type;
-				const logKey = `${ logName }-${ worker.partition }`;
-				const currentIds = new Set(
-					worker.segments.map( ( s ) => s.id )
-				);
 
-				// Calculate total bytes processed (sum of all segment sizes up to cursor).
+				// Sum processed bytes across every input — workers can tail
+				// multiple logs (firehose-workers reads firehose + jobintake).
 				let totalProcessed = 0;
-				worker.segments.forEach( ( seg ) => {
-					if ( seg.id < worker.cursor_seg ) {
-						totalProcessed += seg.size;
-					} else if ( seg.id === worker.cursor_seg ) {
-						totalProcessed += worker.cursor_offset;
+				( worker.inputs_status || [] ).forEach( ( input ) => {
+					if (
+						input.cursor_seg === undefined ||
+						input.cursor_offset === undefined
+					) {
+						return;
 					}
+					( input.segments || [] ).forEach( ( seg ) => {
+						if ( seg.id < input.cursor_seg ) {
+							totalProcessed += seg.size;
+						} else if ( seg.id === input.cursor_seg ) {
+							totalProcessed += input.cursor_offset;
+						}
+					} );
 				} );
-				newPositions[ key ] = totalProcessed;
+				newPositions[ workerKey ] = totalProcessed;
 
-				// Track total size for write rate calculation.
-				newTotalSizes[ logKey ] = worker.total_size;
-
-				// Calculate read rate if we have previous data.
 				if (
 					timeDelta > 0 &&
-					prevPositionsRef.current[ key ] !== undefined
+					prevPositionsRef.current[ workerKey ] !== undefined
 				) {
 					const bytesDelta =
-						totalProcessed - prevPositionsRef.current[ key ];
-					// Only show positive rates (handle segment rotation).
-					if ( bytesDelta >= 0 ) {
-						newByteRates[ key ] = bytesDelta / timeDelta;
-					} else {
-						// Segment rotated - keep previous rate or show 0.
-						newByteRates[ key ] = 0;
-					}
+						totalProcessed - prevPositionsRef.current[ workerKey ];
+					newByteRates[ workerKey ] =
+						bytesDelta >= 0 ? bytesDelta / timeDelta : 0;
 				}
+			} );
 
-				// Calculate write rate for the log this worker reads from.
+			// Per-log write rates and segment-change tracking. Each log appears
+			// in possibly multiple workers' inputs_status / outputs_status, so
+			// we collect by (logName, partition) — same physical filesystem
+			// state regardless of which worker reported it. Take the max
+			// total_size and the union of segments seen, so a stale snapshot
+			// from one worker can't shrink the visualization.
+			const logSnapshots = new Map(); // logKey → { total_size, segments[] }.
+			const recordLog = ( log, partition ) => {
+				if ( ! log || ! log.name ) {
+					return;
+				}
+				const logKey = `${ log.name.replace(
+					/\.log$/,
+					''
+				) }-${ partition }`;
+				const prior = logSnapshots.get( logKey ) || {
+					total_size: 0,
+					segments: new Map(),
+				};
+				prior.total_size = Math.max(
+					prior.total_size,
+					log.total_size || 0
+				);
+				( log.segments || [] ).forEach( ( seg ) => {
+					prior.segments.set( seg.id, seg );
+				} );
+				logSnapshots.set( logKey, prior );
+			};
+			( data.workers || [] ).forEach( ( w ) => {
+				( w.inputs_status || [] ).forEach( ( log ) =>
+					recordLog( log, w.partition )
+				);
+				( w.outputs_status || [] ).forEach( ( log ) =>
+					recordLog( log, w.partition )
+				);
+			} );
+
+			logSnapshots.forEach( ( snap, logKey ) => {
+				newTotalSizes[ logKey ] = snap.total_size;
 				if (
 					timeDelta > 0 &&
 					prevTotalSizesRef.current[ logKey ] !== undefined
 				) {
 					const sizeDelta =
-						worker.total_size - prevTotalSizesRef.current[ logKey ];
-					if ( sizeDelta >= 0 ) {
-						newWriteRates[ logKey ] = sizeDelta / timeDelta;
-					} else {
-						// Segment rotated - keep previous rate or show 0.
-						newWriteRates[ logKey ] = 0;
-					}
+						snap.total_size - prevTotalSizesRef.current[ logKey ];
+					newWriteRates[ logKey ] =
+						sizeDelta >= 0 ? sizeDelta / timeDelta : 0;
 				}
+				const currentIds = new Set( snap.segments.keys() );
+				newPrevSegments[ logKey ] = currentIds;
+				newPrevSegmentData[ logKey ] = snap.segments;
 
-				// Store current segment IDs and data for next comparison.
-				newPrevSegments[ key ] = currentIds;
-				newPrevSegmentData[ key ] = new Map(
-					worker.segments.map( ( s ) => [ s.id, s ] )
-				);
-
-				// Detect removed segments (in prev but not in current).
-				const prevIds = prevSegmentsRef.current[ key ];
-				const prevData = prevSegmentDataRef.current[ key ];
+				const prevIds = prevSegmentsRef.current[ logKey ];
+				const prevData = prevSegmentDataRef.current[ logKey ];
 				if ( prevIds && prevData ) {
 					const removed = [];
 					for ( const id of prevIds ) {
@@ -758,28 +1011,8 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 				}
 			} );
 
-			// Calculate write rates for output-only logs (flames).
-			( data.logs || [] ).forEach( ( log ) => {
-				const logKey = `${ log.name }-${ log.partition }`;
-				newTotalSizes[ logKey ] = log.total_size;
-
-				if (
-					timeDelta > 0 &&
-					prevTotalSizesRef.current[ logKey ] !== undefined
-				) {
-					const sizeDelta =
-						log.total_size - prevTotalSizesRef.current[ logKey ];
-					if ( sizeDelta >= 0 ) {
-						newWriteRates[ logKey ] = sizeDelta / timeDelta;
-					} else {
-						newWriteRates[ logKey ] = 0;
-					}
-				}
-			} );
-
-			setWorkers( data.workers );
+			setWorkers( data.workers || [] );
 			setStandalone( data.standalone || [] );
-			setLogs( data.logs || [] );
 			setByteRates( newByteRates );
 			setWriteRates( newWriteRates );
 			if ( data.segment_size ) {
@@ -802,7 +1035,6 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 			// Set removing segments for animation.
 			if ( Object.keys( newRemoving ).length > 0 ) {
 				setRemovingSegments( newRemoving );
-				// Clear removing segments after animation completes.
 				animationTimersRef.current.push(
 					setTimeout( () => {
 						setRemovingSegments( {} );
@@ -843,66 +1075,8 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 		};
 	}, [ fetchWorkers, refreshInterval, isPageVisible ] );
 
-	// Group workers by handler (must be before early returns for React hooks rules).
-	const workersByHandler = useMemo( () => {
-		const byHandler = {};
-		workers.forEach( ( worker ) => {
-			const key = worker.handler || worker.type;
-			if ( ! byHandler[ key ] ) {
-				byHandler[ key ] = [];
-			}
-			byHandler[ key ].push( worker );
-		} );
-		return byHandler;
-	}, [ workers ] );
-
-	// Build dynamic pipeline structure from workers, sorted by data flow.
-	// Each pipeline step: { inputLog, workerType, handlerName, outputLog, workers }
-	const pipelineSteps = useMemo( () => {
-		const steps = [];
-		const handlerKeys = Object.keys( workersByHandler );
-
-		handlerKeys.forEach( ( key ) => {
-			const handlerWorkers = workersByHandler[ key ];
-			if ( handlerWorkers.length === 0 ) {
-				return;
-			}
-			const first = handlerWorkers[ 0 ];
-			steps.push( {
-				inputLog: first.input_log,
-				workerType: first.type,
-				handlerName: key,
-				outputLog: first.output_log,
-				workers: handlerWorkers,
-			} );
-		} );
-
-		// Topological sort: step reading log X comes after step writing log X.
-		const outputMap = {};
-		steps.forEach( ( step, i ) => {
-			if ( step.outputLog ) {
-				outputMap[ step.outputLog ] = i;
-			}
-		} );
-
-		const sorted = [];
-		const visited = new Set();
-		const visit = ( idx ) => {
-			if ( visited.has( idx ) ) {
-				return;
-			}
-			visited.add( idx );
-			const step = steps[ idx ];
-			const dep = outputMap[ step.inputLog ];
-			if ( dep !== undefined ) {
-				visit( dep );
-			}
-			sorted.push( steps[ idx ] );
-		};
-		steps.forEach( ( _, i ) => visit( i ) );
-
-		return sorted;
-	}, [ workersByHandler ] );
+	// Build the linear render plan from the current worker list.
+	const renderPlan = useMemo( () => buildRenderPlan( workers ), [ workers ] );
 
 	// Helper to format worker type as display name.
 	const formatWorkerName = ( type ) => {
@@ -912,10 +1086,9 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 			.join( ' ' );
 	};
 
-	// Helper to get log key from log name (strip .log suffix).
-	const getLogKey = ( logName ) => {
-		return logName?.replace( /\.log$/, '' ) || '';
-	};
+	// Helper to derive the rate-lookup key from a log file name.
+	const getLogKey = ( logName ) =>
+		logName ? logName.replace( /\.log$/, '' ) : '';
 
 	if ( loading && workers.length === 0 ) {
 		return (
@@ -927,7 +1100,7 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 
 	const containerClass = fullPage ? 'worker-status-full' : 'worker-status';
 
-	// Calculate total read rate across all partitions.
+	// Calculate total read rate across all workers.
 	const totalReadRate = Object.values( byteRates ).reduce(
 		( sum, rate ) => sum + ( rate || 0 ),
 		0
@@ -992,86 +1165,56 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 			) }
 
 			<div className="pipeline-flow">
-				{ /* Dynamic pipeline rendering based on registered workers */ }
-				{ pipelineSteps.map( ( step ) => {
-					const logKey = getLogKey( step.inputLog );
-					const hasOutput = !! step.outputLog;
-
-					return (
-						<div key={ step.handlerName }>
-							{ /* Input log section */ }
+				{ renderPlan.map( ( item, idx ) => {
+					if ( item.kind === 'log' ) {
+						const logKey = getLogKey( item.name );
+						const cursorData = item.hasCursor
+							? Object.fromEntries(
+									item.partitions
+										.filter(
+											( p ) =>
+												p.cursor_seg !== undefined &&
+												p.cursor_seg !== null &&
+												p.cursor_offset !== undefined &&
+												p.cursor_offset !== null
+										)
+										.map( ( p ) => [
+											p.partition,
+											{
+												seg: p.cursor_seg,
+												offset: p.cursor_offset,
+											},
+										] )
+							  )
+							: undefined;
+						return (
 							<LogSection
-								name={ step.inputLog }
+								key={ `log-${ item.name }-${ idx }` }
+								name={ item.name }
 								logKey={ logKey }
-								partitions={ step.workers.map( ( w ) => ( {
-									partition: w.partition,
-									segments: w.segments,
-								} ) ) }
+								partitions={ item.partitions }
 								writeRates={ writeRates }
 								maxSize={ segmentSize }
-								prevSegments={ Object.fromEntries(
-									Object.entries( prevSegmentsRef.current )
-										.filter( ( [ k ] ) =>
-											k.startsWith(
-												`${ step.handlerName }-`
-											)
-										)
-										.map( ( [ k, v ] ) => {
-											const parts = k.split( '-' );
-											const partition =
-												parts[ parts.length - 1 ];
-											return [
-												`${ logKey }-${ partition }`,
-												v,
-											];
-										} )
-								) }
-								cursorData={ Object.fromEntries(
-									step.workers.map( ( w ) => [
-										w.partition,
-										{
-											seg: w.cursor_seg,
-											offset: w.cursor_offset,
-										},
-									] )
-								) }
+								prevSegments={ prevSegmentsRef.current }
+								cursorData={ cursorData }
 								removingSegments={ removingSegments }
 							/>
-
-							{ /* Worker connector */ }
-							<WorkerConnector
-								name={ formatWorkerName( step.handlerName ) }
-								workers={ step.workers }
-								readRates={ byteRates }
-								currentTime={ currentTime }
-								onRestart={ handleRestart }
-								showArrows={ hasOutput }
-							/>
-						</div>
+						);
+					}
+					// kind === 'worker'.
+					const { step, showArrows } = item;
+					return (
+						<WorkerConnector
+							key={ `worker-${ step.type }-${ idx }` }
+							name={ formatWorkerName( step.handlerName ) }
+							workers={ step.workers }
+							readRates={ byteRates }
+							currentTime={ currentTime }
+							onRestart={ handleRestart }
+							showArrows={ showArrows }
+						/>
 					);
 				} ) }
-
-				{ /* Show terminal output logs (from API, deduplicated, errors last) */ }
-				{ [ ...new Set( logs.map( ( l ) => l.name ) ) ]
-					.sort(
-						( a, b ) =>
-							( a === 'errors' ? 1 : 0 ) -
-							( b === 'errors' ? 1 : 0 )
-					)
-					.map( ( logName ) => (
-						<LogSection
-							key={ logName }
-							name={ `${ logName }.log` }
-							logKey={ logName }
-							partitions={ logs.filter(
-								( l ) => l.name === logName
-							) }
-							writeRates={ writeRates }
-							maxSize={ segmentSize }
-							prevSegments={ {} }
-							removingSegments={ removingSegments }
-						/>
-					) ) }
 			</div>
 		</div>
 	);

@@ -55,8 +55,8 @@ class TopologyRegistrationTest extends TestCase {
 		// 4 firehose-workers partitions + 1 aggregator partition = 5.
 		$workers = Bootstrap::expand_workers();
 
-		$firehose = \array_filter( $workers, static fn ( $w ) => $w['type'] === 'firehose-workers' );
-		$aggregator = \array_filter( $workers, static fn ( $w ) => $w['type'] === 'aggregator' );
+		$firehose = \array_filter( $workers, static fn ( $w ) => 'firehose-workers' === $w['type'] );
+		$aggregator = \array_filter( $workers, static fn ( $w ) => 'aggregator' === $w['type'] );
 
 		$this->assertCount( 4, $firehose, 'firehose-workers must expand to 4 partitions' );
 		$this->assertCount( 1, $aggregator, 'aggregator must expand to 1 partition' );
@@ -66,7 +66,7 @@ class TopologyRegistrationTest extends TestCase {
 	public function test_each_worker_descriptor_has_topology_path(): void {
 		$workers = Bootstrap::expand_workers();
 		foreach ( $workers as $w ) {
-			if ( $w['type'] !== 'firehose-workers' && $w['type'] !== 'aggregator' ) {
+			if ( 'firehose-workers' !== $w['type'] && 'aggregator' !== $w['type'] ) {
 				continue; // ignore other plugins' topologies
 			}
 			$this->assertArrayHasKey( 'topology', $w );

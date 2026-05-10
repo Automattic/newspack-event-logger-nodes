@@ -8,6 +8,7 @@ use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Consumer;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Router;
 use Newspack_Nodes\Tee;
@@ -32,19 +33,36 @@ class FullPipelineTest extends TestCase {
 		parent::tearDown();
 	}
 
+	/**
+	 * Write an entry through the canonical Topic::fill path. Constructs a
+	 * TM_STRUCT Message keyed by URL (Topic hashes KEY → partition) so the
+	 * line lands in the correct partition's segment in the canonical packed
+	 * Tachikoma wire format. Consumer auto-unpacks on the read side; VALUE is
+	 * the entry array directly (no JSON wrapper).
+	 */
+	private function topic_write( Topic $topic, string $url, array $entry ): void {
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::KEY ]       = $url;
+		$msg[ Message::VALUE ]     = $entry;
+		$topic->fill( $msg );
+		$topic->flush();
+	}
+
 	public function test_full_pipeline_topic_consumer_tee_request_builder_flame_builder_job_router(): void {
 		// Producer: write firehose lines mixing a request lifecycle and a job.
 		$topic = new Topic( "{$this->tmp}/firehose.log", 1 );
-		$topic->write( '/x', \json_encode( [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] ) . "\n" );
-		$topic->write( '/x', \json_encode( [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] ) . "\n" );
-		$topic->write( '/x', \json_encode( [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] ) . "\n" );
-		$topic->write( '/x', \json_encode( [ 'n' => 4, 'rid' => 'r1', 'k' => 'init (complete)', 'duration_ms' => 5.0, 'ts' => 1 ] ) . "\n" );
-		$topic->write( '/x', \json_encode( [
+		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 4, 'rid' => 'r1', 'k' => 'init (complete)', 'duration_ms' => 5.0, 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [
 			'k'       => 'job',
 			'handler' => 'echo_job',
 			'payload' => [ 'val' => 42 ],
-		] ) . "\n" );
-		$topic->write( '/x', \json_encode( [ 'n' => 5, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] ) . "\n" );
+		] );
+		$this->topic_write( $topic, '/x', [ 'n' => 5, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
 		// Worker side: scaffolding.
 		$router = new Router();
@@ -86,7 +104,7 @@ class FullPipelineTest extends TestCase {
 
 		// 2. RequestBuilder assembled r1 → FlameBuilder wrote a flame.
 		$this->assertCount( 1, $flame_capture->captured );
-		$flame = \json_decode( $flame_capture->captured[0][ Message::VALUE ], true );
+		$flame = $flame_capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 'r1', $flame['rid'] );
 		// Flame tree: root('request') → process → init.
 		$this->assertNotEmpty( $flame['children'] );

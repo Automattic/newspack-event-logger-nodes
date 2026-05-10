@@ -62,12 +62,18 @@ class RawlogsController extends SSEControllerBase {
 		if ( '' === $line ) {
 			return null;
 		}
-		if ( \strlen( $line ) > 1000 ) {
-			$line = \substr( $line, 0, 1000 ) . '...';
+		// Lines are packed Messages; render the entry payload as JSON so the
+		// dashboard sees the application-level shape (rid/k/m/...) rather than
+		// the wrapping wire envelope.
+		$decoded = \json_decode( $line, true, 64 );
+		$body    = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+		$out     = null !== $body ? (string) \wp_json_encode( $body ) : $line;
+		if ( \strlen( $out ) > 1000 ) {
+			$out = \substr( $out, 0, 1000 ) . '...';
 		}
 		return [
 			'p'    => $p,
-			'line' => $line,
+			'line' => $out,
 		];
 	}
 

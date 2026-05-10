@@ -31,7 +31,7 @@ class FakeMemcached implements Cache_Interface {
 			return null;
 		}
 		$entry = $this->store[ $key ] ?? null;
-		if ( $entry === null ) {
+		if ( null === $entry ) {
 			return null;
 		}
 		if ( $entry['expires'] > 0 && \time() >= $entry['expires'] ) {
@@ -48,7 +48,7 @@ class FakeMemcached implements Cache_Interface {
 		$out = [];
 		foreach ( $keys as $key ) {
 			$val = $this->get( $key );
-			if ( $val !== null ) {
+			if ( null !== $val ) {
 				$out[ $key ] = $val;
 			}
 		}
@@ -100,7 +100,7 @@ class FakeMemcached implements Cache_Interface {
 		$now  = \time();
 		$live = [];
 		foreach ( $this->store as $k => $entry ) {
-			if ( $entry['expires'] === 0 || $now < $entry['expires'] ) {
+			if ( 0 === $entry['expires'] || $now < $entry['expires'] ) {
 				$live[] = $k;
 			}
 		}
@@ -156,7 +156,7 @@ class FakeMemcached implements Cache_Interface {
 		}
 		$key   = $this->sse_slot_key( $user_id, $ip_hash, $slot, $partition );
 		$value = $this->get( $key );
-		if ( $value === null ) {
+		if ( null === $value ) {
 			return false;
 		}
 		return $this->set( $key, $value, $ttl );

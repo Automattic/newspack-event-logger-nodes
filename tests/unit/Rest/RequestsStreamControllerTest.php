@@ -10,10 +10,22 @@ use Newspack_Event_Logger_Nodes\Rest\RequestsStreamController;
 use Newspack_Event_Logger_Nodes\Rest\SSEControllerBase;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( RequestsStreamController::class )]
 class RequestsStreamControllerTest extends TestCase {
+
+	/**
+	 * Wrap an entry in a packed Message envelope (positional JSON) — that's
+	 * what `transform_line` actually reads off the requests.log tail.
+	 */
+	private static function packed_entry_line( array $entry ): string {
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = $entry;
+		return Message::packed( $msg );
+	}
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -39,12 +51,12 @@ class RequestsStreamControllerTest extends TestCase {
 	}
 
 	public function test_transform_line_drops_missing_url(): void {
-		$line = \json_encode( [ 'rid' => 'r1' ] );
+		$line = self::packed_entry_line( [ 'rid' => 'r1' ] );
 		$this->assertNull( RequestsStreamController::transform_line( $line, 0 ) );
 	}
 
 	public function test_transform_line_emits_canonical_shape(): void {
-		$line = \json_encode( [
+		$line = self::packed_entry_line( [
 			'rid'            => 'r1',
 			'request_method' => 'POST',
 			'url'            => '/api',
@@ -69,7 +81,7 @@ class RequestsStreamControllerTest extends TestCase {
 
 	public function test_transform_line_truncates_long_url(): void {
 		$big   = \str_repeat( 'x', 2500 );
-		$line  = \json_encode( [ 'url' => $big ] );
+		$line  = self::packed_entry_line( [ 'url' => $big ] );
 		$out   = RequestsStreamController::transform_line( $line, 0 );
 		$this->assertSame( 2003, \strlen( $out['url'] ) );
 		$this->assertStringEndsWith( '...', $out['url'] );
@@ -77,7 +89,7 @@ class RequestsStreamControllerTest extends TestCase {
 
 	public function test_transform_line_truncates_long_user_agent(): void {
 		$big   = \str_repeat( 'A', 1000 );
-		$line  = \json_encode( [ 'url' => '/x', 'user_agent' => $big ] );
+		$line  = self::packed_entry_line( [ 'url' => '/x', 'user_agent' => $big ] );
 		$out   = RequestsStreamController::transform_line( $line, 0 );
 		$this->assertSame( 503, \strlen( $out['user_agent'] ) );
 	}

@@ -13,8 +13,8 @@ class StatsAggregatorTest extends TestCase {
 
 	private function make_msg( array $payload ): array {
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ]     = \json_encode( $payload );
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = $payload;
 		return $msg;
 	}
 
@@ -115,7 +115,7 @@ class StatsAggregatorTest extends TestCase {
 
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_INFO;
-		$msg[ Message::VALUE ]     = \json_encode( [ 'url' => '/x', 'req_time' => 0.5 ] );
+		$msg[ Message::VALUE ]     = [ 'url' => '/x', 'req_time' => 0.5 ];
 		$sa->fill( $msg );
 
 		$this->assertSame( 0, $mc->count() );
@@ -124,14 +124,16 @@ class StatsAggregatorTest extends TestCase {
 	public function test_fill_skips_invalid_payload(): void {
 		[ , $sa, $mc ] = $this->make_store_aggregator();
 
+		// Non-array VALUE is silently dropped.
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ]     = 'not json';
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::VALUE ]     = 'not-an-array';
 		$sa->fill( $msg );
 
+		// Array VALUE missing required 'url' field is also dropped.
 		$msg2                       = Message::new_message();
-		$msg2[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-		$msg2[ Message::VALUE ]     = \json_encode( [ 'no_url' => true ] );
+		$msg2[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg2[ Message::VALUE ]     = [ 'no_url' => true ];
 		$sa->fill( $msg2 );
 
 		$this->assertSame( 0, $mc->count() );

@@ -16,6 +16,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\Memcached_Cache;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 abstract class PerformanceControllerBase {
 	/**
@@ -24,9 +25,12 @@ abstract class PerformanceControllerBase {
 	public const RATE_LIMIT_WINDOW = 60;
 
 	/**
-	 * Default per-window quota.
+	 * Default per-window quota. Sized for the dashboard's poll fan-out: a
+	 * single open Performance tab fires ~5 endpoints every 2s = 150/min;
+	 * multiple tabs (Performance + Workers + Errors + Gyroscope) push that
+	 * to several hundred. 600/min keeps room without disabling the gate.
 	 */
-	public const RATE_LIMIT_REQUESTS = 60;
+	public const RATE_LIMIT_REQUESTS = 600;
 
 	/**
 	 * Cache used for rate-limit counters. Lazy; production reaches for memcache,
@@ -55,7 +59,7 @@ abstract class PerformanceControllerBase {
 	 * `cache()` call returns it.
 	 */
 	public static function cache(): Cache_Interface {
-		if ( self::$cache === null ) {
+		if ( null === self::$cache ) {
 			$config  = self::load_config();
 			$servers = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
 			if ( ! \is_array( $servers ) ) {
@@ -79,6 +83,14 @@ abstract class PerformanceControllerBase {
 	 *  - `enable_workers`    (bool)           hub-only; default false
 	 *  - `aggregator_servers`(array<array>)   spoke list for hub-side ingest
 	 *
+	 * Substrate values (`base_directory`, partitioning, `memcache_servers`,
+	 * `enable_workers`, `aggregator_servers`) come from
+	 * `\Newspack_Nodes\Config::load_config('full')` so deployments that set
+	 * `newspack_nodes_*` WordPress options flow through. Documented defaults
+	 * here keep the controller-base shape stable when the substrate hasn't
+	 * loaded (e.g. early in test bootstrap, or when WordPress options are
+	 * unset).
+	 *
 	 * @return array<string,mixed>
 	 */
 	public static function load_config(): array {
@@ -92,6 +104,17 @@ abstract class PerformanceControllerBase {
 			'enable_workers'     => false,
 			'aggregator_servers' => [],
 		];
+		// Layer in the substrate's runtime config so deployments that set
+		// `newspack_nodes_memcache_servers`, `newspack_nodes_base_directory`,
+		// etc. via WP option flow through. The documented defaults above are
+		// the floor — substrate values override them; the
+		// `newspack_nodes/config` filter has the final say.
+		if ( \class_exists( RuntimeConfig::class ) ) {
+			$substrate = RuntimeConfig::load_config( 'full' );
+			if ( \is_array( $substrate ) ) {
+				$defaults = \array_merge( $defaults, $substrate );
+			}
+		}
 		if ( ! \function_exists( 'apply_filters' ) ) {
 			return $defaults;
 		}

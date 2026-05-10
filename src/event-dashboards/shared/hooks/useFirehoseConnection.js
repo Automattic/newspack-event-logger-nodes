@@ -101,7 +101,7 @@ export default function useFirehoseConnection( {
 			onBeforeConnect();
 		}
 
-		const dashboards = window.eventLoggerDashboards;
+		const dashboards = window.NewspackNodesData;
 		if ( ! dashboards || ! dashboards.restUrl ) {
 			setError( 'Dashboard configuration not available.' );
 			return;

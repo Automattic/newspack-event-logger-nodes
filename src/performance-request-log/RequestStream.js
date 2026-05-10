@@ -148,7 +148,7 @@ const StreamRow = memo( function StreamRow( {
 									{ entry.method }
 								</span>{ ' ' }
 								<a
-									href={ `admin.php?page=newspack-event-logger&url=${ entry.urlHash }` }
+									href={ `admin.php?page=newspack-nodes-performance&url=${ entry.urlHash }` }
 									className="entry-url-link"
 									title="View URL stats"
 								>
@@ -161,7 +161,7 @@ const StreamRow = memo( function StreamRow( {
 							<span key={ col } role="cell">
 								<a
 									className="entry-rid"
-									href={ `admin.php?page=newspack-event-logger&search=${ encodeURIComponent(
+									href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
 										entry.rid
 									) }` }
 									title="View request trace"

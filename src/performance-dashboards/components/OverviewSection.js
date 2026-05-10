@@ -4,7 +4,7 @@
  * Displays overview stats, search, refresh controls, aggregate chart, and global leaderboard.
  */
 
-import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
+import { useEffect, useMemo } from '@wordpress/element';
 
 import {
 	Card,
@@ -39,12 +39,13 @@ import RequestProfile from '../RequestProfile';
  * @param {Function} props.onSearch           Search handler callback.
  * @param {string}   props.refreshInterval    Refresh interval state.
  * @param {Function} props.setRefreshInterval Refresh interval setter.
- * @param {Function} props.fetchBreakdown     Fetch dimensional breakdown data.
- * @param {number}   props.refreshTick        Counter incremented on each main refresh cycle.
  * @param {string}   props.chartMetric        Selected chart metric (lifted from parent).
  * @param {Function} props.setChartMetric     Chart metric setter.
+ * @param {string}   props.chartBreakdown     Selected breakdown dim (lifted from parent).
+ * @param {Function} props.setChartBreakdown  Breakdown dim setter.
+ * @param {Object}   props.breakdownData      Breakdown time series for current dim.
  * @param {Object}   props.categoryData       Category time series data.
- * @return {JSX.Element|null} Rendered component or null if no overview data.
+ * @return {Object|null} Rendered component or null if no overview data.
  */
 export default function OverviewSection( {
 	overview,
@@ -59,15 +60,17 @@ export default function OverviewSection( {
 	onSearch,
 	refreshInterval,
 	setRefreshInterval,
-	fetchBreakdown,
-	refreshTick,
 	chartMetric,
 	setChartMetric,
+	chartBreakdown,
+	setChartBreakdown,
+	breakdownData,
 	categoryData,
 } ) {
-	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
-	const [ breakdownData, setBreakdownData ] = useState( null );
-	const [ breakdownLoading, setBreakdownLoading ] = useState( false );
+	// `breakdownData` and `chartBreakdown` are lifted into PerformanceDashboard
+	// so the active dimension rides along on the combined `/overview` call —
+	// no separate `?breakdown=...` round-trip.
+	const breakdownLoading = false;
 
 	// Show server dropdown when 2+ servers detected (hub mode).
 	const isMultiServer = serverNames.length >= 2;
@@ -101,27 +104,7 @@ export default function OverviewSection( {
 		if ( serverFilter && chartBreakdown === 'server' ) {
 			setChartBreakdown( 'status' );
 		}
-	}, [ serverFilter, chartBreakdown ] );
-
-	// Fetch breakdown data when breakdown or server filter changes.
-	const loadBreakdown = useCallback(
-		async ( breakdown, server ) => {
-			if ( ! fetchBreakdown ) {
-				setBreakdownData( null );
-				return;
-			}
-			setBreakdownLoading( true );
-			const data = await fetchBreakdown( breakdown, server );
-			setBreakdownData( data );
-			setBreakdownLoading( false );
-		},
-		[ fetchBreakdown ]
-	);
-
-	// Re-fetch breakdown on every main refresh tick, or when breakdown/server changes.
-	useEffect( () => {
-		loadBreakdown( chartBreakdown, serverFilter );
-	}, [ chartBreakdown, serverFilter, refreshTick, loadBreakdown ] );
+	}, [ serverFilter, chartBreakdown, setChartBreakdown ] );
 
 	if ( ! overview ) {
 		return null;

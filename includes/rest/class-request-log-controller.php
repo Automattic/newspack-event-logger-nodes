@@ -161,10 +161,12 @@ class RequestLogController extends PerformanceControllerBase {
 					if ( '' === $bytes ) {
 						return false;
 					}
+					// Bytes are a packed Message; request body lives at VALUE.
 					$decoded = \json_decode( \trim( $bytes ), true, 64 );
-					if ( \is_array( $decoded ) ) {
-						$decoded['_partition'] = $p;
-						$result = $decoded;
+					$req     = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $req ) ) {
+						$req['_partition'] = $p;
+						$result            = $req;
 					}
 					return false;
 				},

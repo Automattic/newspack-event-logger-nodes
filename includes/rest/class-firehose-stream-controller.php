@@ -147,7 +147,9 @@ class FirehoseStreamController extends SSEControllerBase {
 					if ( '' === $trimmed ) {
 						continue;
 					}
-					$entry = \json_decode( $trimmed, true, 64 );
+					// Lines are packed Messages; the entry payload lives at VALUE.
+					$decoded = \json_decode( $trimmed, true, 64 );
+					$entry   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
 					if ( ! \is_array( $entry ) ) {
 						continue;
 					}

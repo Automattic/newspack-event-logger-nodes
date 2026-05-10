@@ -1,39 +1,37 @@
 <?php
 /**
- * LRU Cache: bucket-based with optional time-rotation + on-evict callback.
+ * LRU Cache
  *
- * Hand-port of `Newspack_Event_Logger\LruCache` from the legacy event-logger
- * plugin. Verbatim semantics — same bucket-rotation model, same `get()`-on-old-bucket
- * promotion, same `iterate()` newest-first ordering. The only namespace change is
- * `Newspack_Event_Logger_Nodes` instead of `Newspack_Event_Logger` so this plugin
- * doesn't depend on the legacy plugin's class loader.
+ * Simple bucket-based LRU cache for in-memory data.
+ * Evicts oldest bucket when capacity exceeded.
  *
- * Used by:
- *  - RequestBuilder (in-flight request cache, 100 × 3 buckets, 200s rotation).
- *  - FlameBuilder   (per-URL aggregate cache, 1000 × 5 buckets).
- *
- * Stores objects (not arrays) for zero-copy mutation — objects are references
- * in PHP, so `get()` returns the same instance and the caller can mutate it.
+ * Store objects (not arrays) for zero-copy mutation — objects are
+ * references in PHP, so get() returns the same instance.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
+/**
+ * LRU cache using bucket rotation.
+ */
 class LruCache {
 
-	/** @var array<int,array<string,mixed>> Buckets: int index => { key => value }. */
+	/** @var array Buckets array. */
 	private array $buckets = [];
 
-	/** @var int Current bucket index (monotonically increasing). */
+	/** @var int Current bucket index. */
 	private int $current = 0;
 
 	/** @var int Max items per bucket. */
 	private int $bucket_size;
 
-	/** @var int Max number of buckets retained at once. */
+	/** @var int Max number of buckets. */
 	private int $num_buckets;
 
 	/** @var float Seconds between time-based rotations (0 = capacity-only). */
@@ -46,6 +44,8 @@ class LruCache {
 	private $on_evict = null;
 
 	/**
+	 * Constructor.
+	 *
 	 * @param int $bucket_size Max items per bucket.
 	 * @param int $num_buckets Max number of buckets.
 	 */
@@ -55,11 +55,9 @@ class LruCache {
 	}
 
 	/**
-	 * Configure time-based rotation. The cache will rotate (allocating a new
-	 * current bucket and evicting the oldest if `num_buckets` is exceeded)
-	 * whenever `rotate_if_due()` is called past the interval.
+	 * Set time-based rotation interval.
 	 *
-	 * @param float    $seconds  Seconds between forced rotations.
+	 * @param float    $seconds  Seconds between rotations.
 	 * @param callable $on_evict Called with (key, value) for each evicted item.
 	 * @return self
 	 */
@@ -71,13 +69,10 @@ class LruCache {
 	}
 
 	/**
-	 * Get a value by key. Returns null if missing.
+	 * Get item from cache.
 	 *
-	 * Promotes the entry to the current bucket if found in an older bucket,
-	 * keeping recently-accessed items from being evicted.
-	 *
-	 * @param string $key Lookup key.
-	 * @return mixed|null Stored value or null.
+	 * @param string $key Cache key.
+	 * @return mixed|null Value or null if not found.
 	 */
 	public function get( string $key ) {
 		for ( $i = $this->current; $i >= 0; $i-- ) {
@@ -99,9 +94,9 @@ class LruCache {
 	}
 
 	/**
-	 * Store a value under the given key.
+	 * Set item in cache.
 	 *
-	 * @param string $key   Storage key.
+	 * @param string $key   Cache key.
 	 * @param mixed  $value Value to store.
 	 */
 	public function set( string $key, $value ): void {
@@ -115,9 +110,9 @@ class LruCache {
 	}
 
 	/**
-	 * Delete a key (silent if missing).
+	 * Delete item from cache.
 	 *
-	 * @param string $key Storage key.
+	 * @param string $key Cache key.
 	 */
 	public function delete( string $key ): void {
 		for ( $i = $this->current; $i >= 0; $i-- ) {
@@ -129,9 +124,9 @@ class LruCache {
 	}
 
 	/**
-	 * Iterate every entry, newest-bucket first.
+	 * Iterate all items in cache (newest first).
 	 *
-	 * @return \Generator<string,mixed>
+	 * @return \Generator Yields [key, value] pairs.
 	 */
 	public function iterate(): \Generator {
 		for ( $i = $this->current; $i >= 0; $i-- ) {
@@ -144,21 +139,26 @@ class LruCache {
 	}
 
 	/**
-	 * Drop every bucket without firing on_evict.
+	 * Clear all items.
 	 */
 	public function flush(): void {
 		$this->buckets = [];
 		$this->current = 0;
 	}
 
+	/**
+	 * Check if cache is empty.
+	 *
+	 * @return bool True if empty.
+	 */
 	public function is_empty(): bool {
 		return empty( $this->buckets );
 	}
 
 	/**
-	 * Snapshot for serialization.
+	 * Get all buckets (for serialization).
 	 *
-	 * @return array{buckets: array, current: int}
+	 * @return array State array.
 	 */
 	public function get_state(): array {
 		return [
@@ -168,19 +168,20 @@ class LruCache {
 	}
 
 	/**
-	 * Restore from a previously-saved snapshot. Validates types; clamps `current`
-	 * to the bucket-key range.
+	 * Restore from state (for deserialization).
 	 *
-	 * @param array $state Snapshot from `get_state()`.
+	 * @param array $state State array.
 	 */
 	public function restore_state( array $state ): void {
 		$buckets = $state['buckets'] ?? [];
 		$current = $state['current'] ?? 0;
 
+		// Validate types.
 		if ( ! \is_array( $buckets ) || ! \is_int( $current ) ) {
 			return;
 		}
 
+		// Clamp current to valid range.
 		if ( empty( $buckets ) ) {
 			$this->buckets = [];
 			$this->current = 0;
@@ -193,10 +194,9 @@ class LruCache {
 	}
 
 	/**
-	 * Force a rotation if the configured time interval has elapsed.
+	 * Rotate if time interval has elapsed.
 	 *
-	 * Called from the cache user's processing loop (RequestBuilder calls this
-	 * once per inbound entry; FlameBuilder calls it on flush ticks).
+	 * Call this periodically from the processing loop.
 	 */
 	public function rotate_if_due(): void {
 		if ( $this->rotate_interval <= 0 ) {
@@ -209,8 +209,7 @@ class LruCache {
 	}
 
 	/**
-	 * Allocate a new bucket. Evicts the oldest if `num_buckets` is exceeded
-	 * (the eviction call fires on_evict per remaining item).
+	 * Force a bucket rotation, evicting the oldest bucket if at capacity.
 	 */
 	private function force_rotate(): void {
 		$this->last_rotation = \microtime( true );
@@ -224,7 +223,7 @@ class LruCache {
 	}
 
 	/**
-	 * Drop a single bucket, firing the on_evict callback per item.
+	 * Evict a bucket, calling the on_evict callback for each item.
 	 *
 	 * @param int $index Bucket index to evict.
 	 */
@@ -241,7 +240,7 @@ class LruCache {
 	}
 
 	/**
-	 * Rotate when the current bucket reaches capacity.
+	 * Rotate to new bucket if current is full.
 	 */
 	private function maybe_rotate(): void {
 		if ( \count( $this->buckets[ $this->current ] ) < $this->bucket_size ) {

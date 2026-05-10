@@ -92,6 +92,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\ReqgrepCommand' );
 	}
 
+	// Register application Node subclasses with the runtime's class_map so
+	// topology PHP can construct them via `$interpreter->make_node()`.
+	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',   \Newspack_Event_Logger_Nodes\FlameBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',      \Newspack_Event_Logger_Nodes\JobRouter::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',      \Newspack_Event_Logger_Nodes\JobWorker::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder', \Newspack_Event_Logger_Nodes\RequestBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',   \Newspack_Event_Logger_Nodes\StreamMerger::class );
+
 	// Wire one-shot static initializers for the static-mode classes.
 	\Newspack_Event_Logger_Nodes\Config::register_cache_invalidation();
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
@@ -123,9 +131,30 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 \add_filter(
 	'newspack_nodes/topologies',
 	static function ( array $topologies ): array {
+		// Pull num_partitions from the substrate config so a single setting
+		// drives both the LogManager producer side (writes via Topic with
+		// this count) and the worker fleet (one process per partition).
+		// Hardcoding diverges the two; e.g. config=1 + topology=4 spawns 3
+		// workers that never see any traffic.
+		$config         = \class_exists( '\Newspack_Nodes\Config' )
+			? \Newspack_Nodes\Config::load_config( 'full' )
+			: [];
+		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
+
 		$topologies['firehose-workers'] = [
 			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/firehose-workers.php',
-			'num_partitions' => 4,
+			'num_partitions' => $num_partitions,
+			'stale_timeout'  => 60,
+		];
+		$topologies['request-workers'] = [
+			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/request-workers.php',
+			'num_partitions' => $num_partitions,
+			'stale_timeout'  => 60,
+		];
+		$topologies['job-workers'] = [
+			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/job-workers.php',
+			'num_partitions' => $num_partitions,
 			'stale_timeout'  => 60,
 		];
 		$topologies['aggregator'] = [
@@ -218,16 +247,28 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 );
 
 /**
- * Admin menu mounting. Top-level "Event Logger" page + 8 submenu pages
- * (one per dashboard surface). Each submenu prints the mount-element div
- * the corresponding tree's index.js hooks onto.
+ * Top-level "Event Logger" admin menu and dashboard submenus.
  *
- * Mount IDs (sourced from src/<tree>/index.js):
- *   event-aggregator      → #event-aggregator-status
- *   event-dashboards      → #event-logger-workers, #event-logger-rawlogs
- *   performance-dashboards → #event-logger-admin, #event-logger-errors
- *   performance-gyroscope → #event-logger-gyroscope
- *   performance-logger    → settings page (mounts via TagInputField data-id)
+ * Top-level link goes DIRECTLY to the Performance dashboard — no landing
+ * page. The first add_submenu_page entry uses the same slug as the parent
+ * so it overrides WordPress's auto-generated duplicate "Event Logger"
+ * submenu (which would otherwise clutter the submenu list with a redundant
+ * link to the parent page).
+ *
+ * Each submenu prints the React mount-element div the corresponding tree's
+ * index.js hooks onto. Trees are enqueued conditionally per-page below so
+ * loading wp-admin doesn't drag in 7 dashboard bundles every request.
+ *
+ * Settings DOES NOT live here — `includes/admin/class-admin.php` registers it
+ * under the standard WordPress Settings menu via `add_options_page`. That
+ * keeps configuration where users expect it (Settings) while leaving the
+ * dashboard navigation focused on telemetry views.
+ *
+ * Dashboard mount IDs (from src/<tree>/index.js):
+ *   event-aggregator        → #event-aggregator-status
+ *   event-dashboards        → #event-logger-workers, #event-logger-rawlogs
+ *   performance-dashboards  → #event-logger-admin, #event-logger-errors
+ *   performance-gyroscope   → #event-logger-gyroscope
  *   performance-request-log → #event-logger-stream
  */
 \add_action(
@@ -236,87 +277,55 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		if ( ! \function_exists( 'add_menu_page' ) ) {
 			return;
 		}
+		$performance_callback = static fn () => print( '<div id="event-logger-admin" class="event-logger-admin-page"></div>' );
 		\add_menu_page(
 			'Event Logger',
 			'Event Logger',
 			'manage_options',
-			'newspack-nodes',
-			static fn() => print( '<div class="wrap"><h1>Event Logger</h1><p>Select a dashboard from the submenu.</p></div>' ),
+			'newspack-nodes-performance',
+			$performance_callback,
 			'dashicons-chart-line',
 			80
 		);
+		// First submenu MUST have slug == parent slug to override the auto-
+		// duplicate "Event Logger" entry WordPress generates by default.
 		\add_submenu_page(
-			'newspack-nodes',
+			'newspack-nodes-performance',
 			'Performance Dashboard',
 			'Performance',
 			'manage_options',
 			'newspack-nodes-performance',
-			static fn() => print( '<div id="event-logger-admin" class="wrap"></div>' )
+			$performance_callback
 		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Error Log',
-			'Errors',
-			'manage_options',
-			'newspack-nodes-errors',
-			static fn() => print( '<div id="event-logger-errors"></div>' )
-		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Workers',
-			'Workers',
-			'manage_options',
-			'newspack-nodes-workers',
-			static fn() => print( '<div id="event-logger-workers" class="wrap"></div>' )
-		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Raw Logs',
-			'Raw Logs',
-			'manage_options',
-			'newspack-nodes-rawlogs',
-			static fn() => print( '<div id="event-logger-rawlogs" class="wrap"></div>' )
-		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Gyroscope',
-			'Gyroscope',
-			'manage_options',
-			'newspack-nodes-gyroscope',
-			static fn() => print( '<div id="event-logger-gyroscope" class="wrap"></div>' )
-		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Request Log',
-			'Request Log',
-			'manage_options',
-			'newspack-nodes-stream',
-			static fn() => print( '<div id="event-logger-stream" class="wrap"></div>' )
-		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Aggregator',
-			'Aggregator',
-			'manage_options',
-			'newspack-nodes-aggregator',
-			static fn() => print( '<div id="event-aggregator-status" class="wrap"></div>' )
-		);
-		\add_submenu_page(
-			'newspack-nodes',
-			'Logger Settings',
-			'Settings',
-			'manage_options',
-			'newspack-nodes-settings',
-			[ \Newspack_Event_Logger_Nodes\Admin\Admin::class, 'render_settings_page_static' ]
-		);
+		$dashboards = [
+			'newspack-nodes-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
+			'newspack-nodes-workers'     => [ 'Workers', 'Workers', '<div id="event-logger-workers" class="event-logger-workers-page"></div>' ],
+			'newspack-nodes-rawlogs'     => [ 'Raw Logs', 'Raw Logs', '<div id="event-logger-rawlogs" class="event-logger-rawlogs-page"></div>' ],
+			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
+			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
+			'newspack-nodes-aggregator'  => [ 'Aggregator', 'Aggregator', '<div id="event-aggregator-status"></div>' ],
+		];
+		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {
+			\add_submenu_page(
+				'newspack-nodes-performance',
+				$title,
+				$menu_title,
+				'manage_options',
+				$slug,
+				static fn () => print( $mount_html )
+			);
+		}
 	}
 );
 
 /**
- * Map admin page slug → built React tree directory under build/.
- * Each tree's index.js is enqueued only when on its own admin page —
- * unconditionally enqueueing all 7 trees on every admin page would
- * make wp-admin pages noticeably slower for no benefit.
+ * Map admin page slug → built React tree directory under build/. Each tree's
+ * index.js is enqueued only when on its own admin page; loading all 7 on
+ * every wp-admin page would slow the admin globally for no benefit.
+ *
+ * Built artifacts live at `build/<tree>/index.js`. Missing build dirs are
+ * tolerated silently — a deploy without `npm run build` should not crash
+ * wp-admin.
  */
 \add_action(
 	'admin_enqueue_scripts',
@@ -324,56 +333,136 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		if ( ! \function_exists( 'wp_enqueue_script' ) ) {
 			return;
 		}
-
-		// Hook → React tree directory mapping. Hook suffix is the slug after
-		// the menu prefix; admin_page_loader.php gives us "toplevel_page_X" for
-		// the top-level slug and "event-logger_page_X" for submenus.
-		$hook_to_tree = [
-			'toplevel_page_newspack-nodes'                  => null, // landing page, no JS
-			'event-logger_page_newspack-nodes-performance'  => 'performance-dashboards',
-			'event-logger_page_newspack-nodes-errors'       => 'performance-dashboards',
-			'event-logger_page_newspack-nodes-workers'      => 'event-dashboards',
-			'event-logger_page_newspack-nodes-rawlogs'      => 'event-dashboards',
-			'event-logger_page_newspack-nodes-gyroscope'    => 'performance-gyroscope',
-			'event-logger_page_newspack-nodes-stream'       => 'performance-request-log',
-			'event-logger_page_newspack-nodes-aggregator'   => 'event-aggregator',
-			'event-logger_page_newspack-nodes-settings'     => 'performance-logger',
+		// Match on the `page` query arg rather than the WP-generated hookname:
+		// hookname format depends on the parent menu slug + admin-side context
+		// and gets brittle when the parent renames. The `page` arg is the
+		// stable contract.
+		$page    = isset( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
+		$page_to_tree = [
+			'newspack-nodes-performance'             => 'performance-dashboards',
+			'newspack-nodes-errors'                  => 'performance-dashboards',
+			'newspack-nodes-workers'                 => 'event-dashboards',
+			'newspack-nodes-rawlogs'                 => 'event-dashboards',
+			'newspack-nodes-gyroscope'               => 'performance-gyroscope',
+			'newspack-nodes-stream'                  => 'performance-request-log',
+			'newspack-nodes-aggregator'              => 'event-aggregator',
+			'newspack-event-logger-nodes'            => 'performance-logger',
 		];
-		// Some WP versions slugify "Event Logger" → "event-logger"; also tolerate
-		// the variant with full menu title.
-		if ( ! \array_key_exists( $hook, $hook_to_tree ) ) {
+		if ( ! \array_key_exists( $page, $page_to_tree ) ) {
 			return;
 		}
-		$tree = $hook_to_tree[ $hook ];
-		if ( $tree === null ) {
+		$tree = $page_to_tree[ $page ];
+		if ( null === $tree ) {
 			return;
 		}
 
 		$asset_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.js";
 		$asset_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}/index.js";
 		if ( ! \file_exists( $asset_path ) ) {
-			// Built artifact missing — nothing to enqueue. Don't error; deploys
-			// without `npm run build` should not crash the admin.
 			return;
 		}
 
 		$handle  = "newspack-nodes-{$tree}";
 		$version = \filemtime( $asset_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION;
 		$deps    = [ 'wp-element', 'wp-components', 'wp-api-fetch', 'wp-i18n' ];
-
 		\wp_enqueue_script( $handle, $asset_url, $deps, $version, true );
 
-		// Inject REST namespace + nonce so the tree can call apiFetch with auth.
+		// Enqueue the matching stylesheet (wp-scripts emits index.css alongside
+		// index.js when SCSS is imported). Without this, dashboards render
+		// unstyled.
+		$css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.css";
+		$css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}/index.css";
+		if ( \file_exists( $css_path ) ) {
+			$css_version = \filemtime( $css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION;
+			\wp_enqueue_style( $handle, $css_url, [ 'wp-components' ], $css_version );
+		}
+
+		// Settings page also gets the aggregator-settings.css — legacy plugin
+		// enqueued it separately to style `.event-logger-settings-wrap` form
+		// elements. The performance-logger CSS already covers most of this,
+		// but loading the dedicated settings CSS preserves byte-for-byte parity
+		// with the legacy markup.
+		if ( 'performance-logger' === $tree ) {
+			$settings_css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/event-aggregator-settings/settings.css';
+			$settings_css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/event-aggregator-settings/settings.css';
+			if ( \file_exists( $settings_css_path ) ) {
+				$settings_css_version = \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION;
+				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [], $settings_css_version );
+			}
+		}
+
+		// Inject REST namespace + nonce so the React tree can call apiFetch
+		// with proper auth headers.
+		// `restUrl` is the bare `/wp-json/` REST root; consumers append their
+		// own namespace (the SSE path-builder in event-dashboards' useFirehose-
+		// Connection composes `${restUrl}newspack-nodes/v1/firehose/...`).
+		$rest_url            = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
+		$aggregator_rest_url = \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes-aggregator/v1/' ) : '/wp-json/newspack-nodes-aggregator/v1/';
+		$nonce               = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
 		\wp_localize_script(
 			$handle,
 			'NewspackNodesData',
 			[
-				'restUrl'             => \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes/v1/' ) : '/wp-json/newspack-nodes/v1/',
-				'aggregatorRestUrl'   => \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes-aggregator/v1/' ) : '/wp-json/newspack-nodes-aggregator/v1/',
-				'nonce'               => \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '',
-				'tree'                => $tree,
-				'version'             => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+				'restUrl'           => $rest_url,
+				'aggregatorRestUrl' => $aggregator_rest_url,
+				'nonce'             => $nonce,
+				'tree'              => $tree,
+				'version'           => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
 			]
 		);
+
+		// Legacy globals the React trees still reference. The dashboards expect
+		// these specific names — `eventLoggerDashboards` for REST root + retention,
+		// `eventLoggerHookCategories` for color/pattern lookups in formatUtils,
+		// `eventLoggerCustomColors` for custom-event color overrides.
+		$retention_seconds = 86400;
+		if ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
+			$substrate         = \Newspack_Nodes\Config::load_config( 'full' );
+			$retention_seconds = (int) ( $substrate['max_lifespan'] ?? 86400 );
+		}
+		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
+		$hook_categories_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'hook_categories.json';
+		if ( \file_exists( $hook_categories_path ) ) {
+			$decoded = \json_decode( (string) \file_get_contents( $hook_categories_path ), true );
+			if ( \is_array( $decoded ) ) {
+				$hook_categories = $decoded;
+			}
+		}
+		$custom_colors = \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' )
+			? \Newspack_Event_Logger_Nodes\Config::get_custom_colors()
+			: [];
+		// Legacy `restUrl` is the bare `/wp-json/` root — JS appends
+		// `newspack-nodes/v1/firehose/...` itself, so don't pre-namespace it.
+		$rest_root = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
+		\wp_add_inline_script(
+			$handle,
+			'window.eventLoggerDashboards = ' . \wp_json_encode( [
+				'restUrl'           => $rest_root,
+				'nonce'             => $nonce,
+				'retentionSeconds'  => $retention_seconds,
+			] ) . ';'
+			. 'window.eventLoggerHookCategories = ' . \wp_json_encode( $hook_categories ) . ';'
+			. 'window.eventLoggerCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
+			'before'
+		);
+
+		// Settings tree extras: the HookSelectorModal reads
+		// `window.newspackNodesRecommendedHooks` to highlight the curated hook
+		// set, and CustomEventSelectorModal reads `window.newspackNodesCustomColors`
+		// for the registered custom-event registry. Both come from the merged
+		// config so any plugin-registered events (via filters) flow through
+		// without redeploying.
+		if ( 'performance-logger' === $tree && \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
+			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+			$recommended         = $cfg['recommended_log_events'] ?? [];
+			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
+			$custom_colors       = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
+			\wp_add_inline_script(
+				$handle,
+				'window.newspackNodesRecommendedHooks = ' . \wp_json_encode( $recommended ) . ';'
+				. 'window.newspackNodesCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
+				'before'
+			);
+		}
 	}
 );

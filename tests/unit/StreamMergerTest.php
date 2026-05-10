@@ -401,15 +401,33 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_position_resumes_from_offsetlog(): void {
-		// Pre-seed the offsetlog with a position for siteE.
+		// Pre-seed the offsetlog with a position for siteE. The offsetlog is a
+		// Partition; every byte on disk is a packed Tachikoma Message, and
+		// StreamMerger::restore_offset unpacks the outer envelope before
+		// reading the position struct out of VALUE.
 		$logs_dir = $this->tmp_dir;
 		$dir      = "{$logs_dir}/remote_firehose.log";
 		if ( ! is_dir( $dir ) ) {
 			mkdir( $dir, 0755, true );
 		}
 		$offsetlog = new Partition( $dir, 0 );
+		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
-		$offsetlog->write( json_encode( [ 'siteE' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ] ) . "\n" );
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = 1.0;
+		$msg[ Message::VALUE ]     = [ 'siteE' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ];
+		$offsetlog->fill( $msg );
+		// Force the batch to disk before the production-side StreamMerger
+		// constructs its own offsetlog Partition and tries to read.
+		$offsetlog->flush();
+		// Release the offsetlog's owned Lock + heartbeat Timer Nodes so the
+		// production-side StreamMerger can build its own offsetlog (without
+		// allow_large_writes) without colliding on `Core::$nodes_by_name`.
+		$base = $offsetlog->name();
+		\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
+		\Newspack_Nodes\Core::unregister_node( "{$base}:heartbeat" );
+		$offsetlog->remove_node();
 
 		// New merger reads from same logs_dir; position must be restored.
 		$sm = $this->make_merger();
@@ -431,10 +449,14 @@ class StreamMergerTest extends TestCase {
 
 		$sm->commit_all();
 
-		// Read the offsetlog Partition's segment 0 directly.
+		// Read the offsetlog Partition's segment 0. Each line on disk is a
+		// packed Tachikoma Message envelope; the position struct is stored as
+		// an array on Message::VALUE (TM_STRUCT), already JSON-encoded by
+		// Message::packed.
 		$content = (string) file_get_contents( "{$this->tmp_dir}/remote_firehose.log/p0/0.log" );
 		$line    = trim( $content );
-		$decoded = json_decode( $line, true );
+		$msg     = Message::unpacked( $line );
+		$decoded = $msg[ Message::VALUE ];
 		$this->assertIsArray( $decoded );
 		$this->assertArrayHasKey( 'siteF', $decoded );
 		$this->assertSame( 7, $decoded['siteF']['seg'] );

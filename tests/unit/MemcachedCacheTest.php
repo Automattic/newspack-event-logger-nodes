@@ -178,7 +178,7 @@ class MemcachedCacheTest extends TestCase {
 	}
 
 	public function test_real_memcached_cache_slot_key_constants(): void {
-		// Verify constant exposure — callers look up TTLs by name not number.
-		$this->assertSame( 10, Memcached_Cache::SSE_SLOT_TTL );
+		$ref = new \ReflectionClassConstant( Memcached_Cache::class, 'SSE_SLOT_TTL' );
+		$this->assertSame( 10, $ref->getValue() );
 	}
 }

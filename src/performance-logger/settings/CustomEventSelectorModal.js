@@ -12,7 +12,7 @@ import '../styles/custom-event-selector.scss';
  * Custom event colors - loaded from PHP config (includes plugin-registered events via filter).
  * Order is preserved from config so each plugin's events stay together.
  */
-const CUSTOM_COLORS = window.eventLoggerCustomColors || {};
+const CUSTOM_COLORS = window.newspackNodesCustomColors || {};
 
 /**
  * Custom Event Selector Modal component.

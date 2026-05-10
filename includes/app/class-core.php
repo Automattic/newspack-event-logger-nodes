@@ -1,8 +1,6 @@
 <?php
 /**
- * Application Core - WordPress hook instrumentation.
- *
- * Tracks request lifecycle, hook timing, plugin performance.
+ * Application Core - Tracks request lifecycle, hook timing, plugin performance.
  *
  * Binds configured hooks individually at priority 1 (start) and PHP_INT_MAX-1 (complete)
  * to measure actual execution time of callbacks registered between those priorities.
@@ -10,16 +8,6 @@
  * For significant events, wraps each individual callback with timing so the log shows
  * exactly which callback is slow (e.g. "photon_subsizes_filter_the_content (complete): 5000ms"
  * nested inside "the_content hook").
- *
- * Lives under the `App` sub-namespace to disambiguate from the runtime substrate's
- * `Newspack_Event_Logger_Nodes\Core` (which doesn't exist yet but the runtime has its own
- * `Newspack_Nodes\Core` — keeping our application Core under a sub-namespace prevents future
- * collisions and makes the hook-instrumentation role explicit at the call site).
- *
- * Note on accepted_args=99: the wrap_callbacks() rewrite inflates accepted_args to 99 so
- * WordPress passes ALL filter arguments to the wrapper (which then trims back to the
- * original $accepted_args before invoking the wrapped callable). This conflicts with VIP-Go's
- * "respect callback contract" guidance, but it's the legacy contract — preserve as-is.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -29,13 +17,15 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LogManager;
 
-\defined( 'ABSPATH' ) || exit;
+if ( ! \defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 /**
  * Core class - WordPress hook instrumentation.
  */
 class Core {
-	private LogManager $log_manager;
+	private $log_manager;
 
 	/**
 	 * Short name for a callback (no namespace, no priority).
