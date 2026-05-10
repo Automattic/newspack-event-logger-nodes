@@ -91,7 +91,7 @@ class JobIntakeTest extends TestCase {
 	public function test_static_queue_validates_before_lock(): void {
 		// Fail-fast: invalid handler name MUST return false without ever touching
 		// the filesystem (validate before entering the retry loop).
-		$this->assertFalse( JobIntake::queue( $this->tmp, '!bad', [] ) );
+		$this->assertFalse( JobIntake::queue( '!bad', [], null, $this->tmp ) );
 		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
 	}
 
@@ -282,7 +282,7 @@ class JobIntakeTest extends TestCase {
 	// --- Static queue() helper ----------------------------------------------
 
 	public function test_static_queue_writes_single_job(): void {
-		$this->assertTrue( JobIntake::queue( $this->tmp, 'a_handler', [ 'x' => 1 ] ) );
+		$this->assertTrue( JobIntake::queue( 'a_handler', [ 'x' => 1 ], null, $this->tmp ) );
 		$lines = $this->read_all_jobintake_lines();
 		$this->assertCount( 1, $lines );
 		$this->assertSame( 'a_handler', $lines[0]['handler'] );
@@ -290,18 +290,18 @@ class JobIntakeTest extends TestCase {
 
 	public function test_static_queue_with_key_routes_consistently(): void {
 		$expected = Partition::hash_to_partition( 'k', 4 );
-		$this->assertTrue( JobIntake::queue( $this->tmp, 'a', [], 'k', 4 ) );
+		$this->assertTrue( JobIntake::queue( 'a', [], 'k', $this->tmp, 4 ) );
 		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p{$expected}" ) );
 	}
 
 	public function test_static_queue_releases_lock_after_call(): void {
 		// Single-shot calls must release the lock so another caller can immediately
 		// queue another job. No "second queue() blocks until timeout" pathology.
-		JobIntake::queue( $this->tmp, 'a', [] );
+		JobIntake::queue( 'a', [], null, $this->tmp );
 		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
 
 		// Second call succeeds without contention.
-		$this->assertTrue( JobIntake::queue( $this->tmp, 'b', [] ) );
+		$this->assertTrue( JobIntake::queue( 'b', [], null, $this->tmp ) );
 	}
 
 	// --- Heartbeat throttling -----------------------------------------------

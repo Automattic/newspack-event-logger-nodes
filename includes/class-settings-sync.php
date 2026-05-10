@@ -292,24 +292,9 @@ class SettingsSync {
 	 */
 	public static function queue_job( string $handler, array $params, ?string $key = null ): bool {
 		// Resolve base_dir + num_partitions from Config (cheap; cached).
-		$base_dir       = '';
-		$num_partitions = 1;
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
-			$config         = Config::load_config();
-			$base_dir       = (string) ( $config['base_directory'] ?? '' );
-			$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		}
-		if ( '' === $base_dir ) {
-			return false;
-		}
-
+		// JobIntake auto-resolves base_dir + num_partitions from substrate Config.
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\JobIntake' ) ) {
-			return (bool) JobIntake::queue( $base_dir, $handler, $params, $key, $num_partitions );
-		}
-		if ( \class_exists( '\\Newspack_Nodes\\JobIntake' )
-			&& \method_exists( '\\Newspack_Nodes\\JobIntake', 'queue' ) ) {
-			// Older runtime variant: 2-arg interface (handler, params).
-			return (bool) \call_user_func( [ '\\Newspack_Nodes\\JobIntake', 'queue' ], $handler, $params );
+			return (bool) JobIntake::queue( $handler, $params, $key );
 		}
 		return false;
 	}
