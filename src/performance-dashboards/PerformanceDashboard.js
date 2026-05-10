@@ -315,11 +315,21 @@ export default function PerformanceDashboard( { onError } ) {
 
 	// Apply server breakdown response: cache the time series + extract the
 	// list of server names that have shown up in the recent buckets.
+	//
+	// Only refresh `serverNames` when the request was UNFILTERED (no
+	// serverFilter). A filtered request returns data scoped to that single
+	// server, so its `serverData` keys collapse to one entry — overwriting
+	// the names list with that single entry would make the SERVER dropdown
+	// disappear (it only renders when names.length >= 2), trapping the user
+	// on the chosen server.
 	const applyServerBreakdown = useCallback( ( serverData ) => {
 		if ( ! serverData ) {
 			return;
 		}
 		setServerBreakdownData( serverData );
+		if ( serverFilterRef.current ) {
+			return; // Keep the existing names list; this response is scoped.
+		}
 		const names = new Set();
 		Object.values( serverData ).forEach( ( bucket ) => {
 			Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
