@@ -61,6 +61,11 @@ export default function useFirehoseConnection( {
 	const heartbeatIntervalRef = useRef( null );
 	const slotRef = useRef( null );
 	const positionsRef = useRef( null );
+	// Track the params key from the last successful connect so we can detect
+	// when the caller has switched (e.g., a different `log`) and drop stale
+	// positions — they reference offsets in the previous log and would
+	// silently mis-resume into the new file.
+	const lastConnectedParamsKeyRef = useRef( null );
 	// Use refs so connect() stays stable when values change.
 	const intervalMsRef = useRef( intervalMs );
 	intervalMsRef.current = intervalMs;
@@ -95,12 +100,23 @@ export default function useFirehoseConnection( {
 		close();
 		setError( null ); // Clear error on new connection attempt.
 
+		// Drop saved positions when params change (e.g., log switch); they
+		// only make sense in the context of the previous connection's log.
+		const currentParamsKey = JSON.stringify( paramsRef.current );
+		if (
+			lastConnectedParamsKeyRef.current !== null &&
+			lastConnectedParamsKeyRef.current !== currentParamsKey
+		) {
+			positionsRef.current = null;
+		}
+		lastConnectedParamsKeyRef.current = currentParamsKey;
+
 		// Allow caller to reset state before connecting.
 		if ( onBeforeConnect ) {
 			onBeforeConnect();
 		}
 
-		const dashboards = window.eventLoggerDashboards;
+		const dashboards = window.NewspackNodesData;
 		if ( ! dashboards || ! dashboards.restUrl ) {
 			setError( 'Dashboard configuration not available.' );
 			return;

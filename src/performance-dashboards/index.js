@@ -90,7 +90,7 @@ function AdminApp() {
 
 // Lazy load error log (only needed on its page).
 const ErrorLog = lazy( () => import( './ErrorLog' ) );
-import useAdminMenuWidth from './shared/hooks/useAdminMenuWidth';
+import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 
 /**
  * Error Log page wrapper — full-page dark layout.

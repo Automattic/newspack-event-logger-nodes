@@ -17,8 +17,8 @@ import {
 
 import apiFetch from '@wordpress/api-fetch';
 
-import usePageVisibility from './shared/hooks/usePageVisibility';
-import useFirehoseConnection from './shared/hooks/useFirehoseConnection';
+import usePageVisibility from '../shared/hooks/usePageVisibility';
+import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
 import './styles/raw-logs.scss';
 
 const ROW_HEIGHT = 18;

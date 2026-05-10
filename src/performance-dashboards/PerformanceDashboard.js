@@ -25,7 +25,7 @@ import { computeIndentedEntries } from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
 import usePerformanceApi from './hooks/usePerformanceApi';
 import useUrlNavigation from './hooks/useUrlNavigation';
-import usePageVisibility from './shared/hooks/usePageVisibility';
+import usePageVisibility from '../shared/hooks/usePageVisibility';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';

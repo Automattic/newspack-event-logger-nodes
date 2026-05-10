@@ -25,8 +25,8 @@ import ResponseTimeChart from '../ResponseTimeChart';
 import RequestProfile from '../RequestProfile';
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { getStatusColor } from '../shared/utils/formatUtils';
-import useVirtualization from '../shared/hooks/useVirtualization';
+import { getStatusColor } from '../../shared/utils/formatUtils';
+import useVirtualization from '../../shared/hooks/useVirtualization';
 
 const ROW_HEIGHT = 40;
 

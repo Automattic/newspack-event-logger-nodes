@@ -6,7 +6,7 @@
  */
 
 import AggregatorStatus from './AggregatorStatus';
-import useAdminMenuWidth from './shared/hooks/useAdminMenuWidth';
+import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 
 /**
  * Aggregator Status page - dedicated view for monitoring remote servers.

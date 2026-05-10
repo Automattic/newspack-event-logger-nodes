@@ -13,8 +13,8 @@ import {
 	memo,
 } from '@wordpress/element';
 import { Button, TextControl } from '@wordpress/components';
-import { STATUS_COLORS } from './shared/utils/formatUtils';
-import useVirtualization from './shared/hooks/useVirtualization';
+import { STATUS_COLORS } from '../shared/utils/formatUtils';
+import useVirtualization from '../shared/hooks/useVirtualization';
 
 const ROW_HEIGHT = 40;
 const URLS_PER_PAGE = 100;

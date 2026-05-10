@@ -51,7 +51,7 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 1. Source under `src/{tree-name}/`. Build via wp-scripts (`npm run build`).
 2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the menu hookup.
 3. Use `@wordpress/element` (not direct React import) and `@wordpress/api-fetch` (not `fetch`).
-4. Shared hooks live in `src/shared/`. If you need to use one in a dashboard tree, copy it via the sync mechanism (or — TBD — once the build wires up shared/ properly, just import directly).
+4. Shared hooks live in `src/shared/`. Import directly from `../shared/hooks/...` (one level up from the tree). One canonical copy; no per-tree duplication.
 
 #### Adding an application Node subclass
 

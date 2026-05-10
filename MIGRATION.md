@@ -61,6 +61,6 @@ grep -rn 'event-logger/v1\|event-aggregator/v1\|perf-logger/v1' src/
 
 ## Notes
 
-- The canonical `src/shared/` tree should remain the single edit point for shared hooks/utils, paralleling the `sync-shared.sh` pattern from `newspack-event-logger-plugins`. Plugin-local copies (e.g. `src/event-dashboards/shared/`) were carried over from the source repo's pre-sync state and should be kept in sync from `src/shared/` going forward.
+- Shared hooks/utils live in `src/shared/`. There used to be per-tree copies (`src/event-dashboards/shared/`, etc.) carried over from the legacy multi-plugin monorepo's `sync-shared.sh` pattern, but those were collapsed once we became a single-plugin layout — every tree now imports directly from `../shared/`.
 - No PHP rewrites done in this pass: the runtime + application PHP namespaces in this repo are already authored against `newspack-nodes/v1` (see `includes/rest/class-status-controller.php`).
 - No `npm run build` was run; build outputs (`build/`) are not part of this commit.

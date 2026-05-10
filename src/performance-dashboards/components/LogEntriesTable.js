@@ -14,7 +14,7 @@ import {
 	useRef,
 } from '@wordpress/element';
 import { TextControl } from '@wordpress/components';
-import { getStateColor, hexToRgba } from '../shared/utils/formatUtils';
+import { getStateColor, hexToRgba } from '../../shared/utils/formatUtils';
 import {
 	computeVisibleEntries,
 	formatDots,

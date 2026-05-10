@@ -6,7 +6,7 @@
  */
 
 import Inflight from './Inflight';
-import useAdminMenuWidth from './shared/hooks/useAdminMenuWidth';
+import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 
 /**
  * Gyroscope page - dedicated view for real-time request monitoring.

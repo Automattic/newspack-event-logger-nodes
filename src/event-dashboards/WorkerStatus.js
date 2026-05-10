@@ -25,7 +25,7 @@ import {
 	memo,
 } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
-import usePageVisibility from './shared/hooks/usePageVisibility';
+import usePageVisibility from '../shared/hooks/usePageVisibility';
 import './styles/worker-status.scss';
 
 const REFRESH_OPTIONS = [

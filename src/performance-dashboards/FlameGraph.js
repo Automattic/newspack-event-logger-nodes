@@ -9,7 +9,7 @@ import * as d3 from 'd3';
 import { flamegraph } from 'd3-flame-graph';
 import 'd3-flame-graph/dist/d3-flamegraph.css';
 import './styles/flame-graph.scss';
-import { getStateColor } from './shared/utils/formatUtils';
+import { getStateColor } from '../shared/utils/formatUtils';
 
 /**
  * Get tooltip text for a flame graph node.
