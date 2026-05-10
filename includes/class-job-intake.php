@@ -101,11 +101,23 @@ class JobIntake {
 	/**
 	 * Constructor.
 	 *
-	 * @param string $base_dir       Base directory containing logs/ and locks/.
-	 * @param int    $num_partitions Number of partitions.
-	 * @param bool   $use_lock       Whether to acquire lock (default: true).
+	 * Both `$base_dir` and `$num_partitions` default to the substrate config
+	 * (`\Newspack_Nodes\Config::load_config('full')`) — callers don't need to
+	 * thread them through unless they're targeting a non-default location
+	 * (e.g. tests with a tmp dir). Pass strings/ints explicitly to override.
+	 *
+	 * @param string|null $base_dir       Base directory containing logs/ and locks/.
+	 * @param int|null    $num_partitions Number of partitions.
+	 * @param bool        $use_lock       Whether to acquire lock (default: true).
 	 */
-	public function __construct( string $base_dir, int $num_partitions = 1, bool $use_lock = true ) {
+	public function __construct( ?string $base_dir = null, ?int $num_partitions = null, bool $use_lock = true ) {
+		if ( null === $base_dir || null === $num_partitions ) {
+			$config         = \class_exists( '\Newspack_Nodes\Config' )
+				? \Newspack_Nodes\Config::load_config( 'full' )
+				: [];
+			$base_dir       = $base_dir       ?? (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+			$num_partitions = $num_partitions ?? (int) ( $config['num_partitions'] ?? 1 );
+		}
 		$this->base_dir       = \rtrim( $base_dir, '/' );
 		$this->num_partitions = \max( 1, $num_partitions );
 		$this->use_lock       = $use_lock;
@@ -373,19 +385,23 @@ class JobIntake {
 	 *
 	 * Blocks with retry if lock is held by another process (up to 5 min timeout).
 	 *
-	 * @param string      $base_dir       Base directory.
+	 * `$base_dir` and `$num_partitions` default to the substrate config — callers
+	 * should normally just pass `(handler, parameters[, key])`. The trailing
+	 * overrides are for tests targeting an isolated tmp dir.
+	 *
 	 * @param string      $handler        Handler name.
 	 * @param array       $parameters     Job parameters.
 	 * @param string|null $key            Optional partition key (e.g., event ID).
-	 * @param int         $num_partitions Number of partitions (default: 1).
+	 * @param string|null $base_dir       Override base directory.
+	 * @param int|null    $num_partitions Override partition count.
 	 * @return bool True on success, false on validation failure or timeout.
 	 */
 	public static function queue(
-		string $base_dir,
 		string $handler,
 		array $parameters,
 		?string $key = null,
-		int $num_partitions = 1
+		?string $base_dir = null,
+		?int $num_partitions = null
 	): bool {
 		// Validate handler name before entering retry loop (fail fast).
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
