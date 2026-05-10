@@ -354,10 +354,21 @@ export default function PerformanceDashboard( { onError } ) {
 
 	// `breakdownsFor` deduplicates `server` (always needed for the filter
 	// dropdown) and the active chart dimension into one comma-separated arg.
+	//
+	// We always need at least 2 dims because the controller returns a
+	// different shape for single-dim (`breakdown_time_series`, flat) vs
+	// multi-dim (`breakdowns: { dim => series }`, nested) requests, and
+	// applyOverviewBreakdowns is written for the nested shape. When the
+	// active breakdown IS `server`, the Set would otherwise collapse to one
+	// entry — fall back to `status` as a no-op second dim so the response
+	// shape stays consistent.
 	const breakdownsFor = useCallback( ( currentBreakdown ) => {
 		const set = new Set( [ 'server' ] );
 		if ( currentBreakdown ) {
 			set.add( currentBreakdown );
+		}
+		if ( set.size < 2 ) {
+			set.add( 'status' );
 		}
 		return Array.from( set );
 	}, [] );
