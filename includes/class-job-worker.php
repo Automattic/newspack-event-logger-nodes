@@ -2,15 +2,27 @@
 /**
  * Job Worker
  *
- * Consumes job entries and dispatches to registered handlers.
+ * Consumes normalized job entries (from jobs.log, written by JobRouter) and
+ * dispatches to registered handlers.
  *
- * Handlers are registered via the newspack_nodes/job_handlers filter.
- * Each job specifies a handler name and parameters.
+ * Two handler maps:
+ *   - local_handlers  — for entries with type='job'        (every node)
+ *   - remote_handlers — for entries with type='remote_job' (hub only — set
+ *                       by StreamMerger rewriting `k:"job"` → `k:"remote_job"`
+ *                       on lines ingested from spokes via SSE)
  *
- * SECURITY NOTES:
- * - Handler names must match HANDLER_NAME_PATTERN (validated here)
- * - Parameters are validated for type/size but handlers MUST validate content
- * - Only handlers registered via newspack_nodes/job_handlers filter are callable
+ * A single callable can be registered on both if a handler should run in
+ * both contexts (e.g. evTemplate handles spoke-side AND hub-side jobs).
+ *
+ * Plugins typically register via WP filters at plugin load:
+ *   add_filter( 'newspack_nodes/job_handlers',        ... );
+ *   add_filter( 'newspack_nodes/remote_job_handlers', ... );
+ * The job-workers topology runs apply_filters and feeds the result via
+ * set_local_handler / set_remote_handler.
+ *
+ * SECURITY:
+ * - Handler names must match HANDLER_NAME_PATTERN
+ * - Parameters validated for type/size; handlers MUST validate content
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -48,7 +60,9 @@ class JobWorker extends Node {
 	public const MEMORY_WATERMARK_PCT = 0.80;
 
 	/** @var array<string,callable> */
-	private array $handlers = [];
+	private array $local_handlers = [];
+	/** @var array<string,callable> */
+	private array $remote_handlers = [];
 	private int $jobs_executed = 0;
 	private int $jobs_since_cache_flush = 0;
 
@@ -79,11 +93,69 @@ class JobWorker extends Node {
 		$this->max_runtime          = \max( 1, $max_runtime );
 	}
 
-	public function register_handler( string $name, callable $cb ): void {
+	private function validate_handler_name( string $name ): void {
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
 			throw new \InvalidArgumentException( "invalid handler name: $name" );
 		}
-		$this->handlers[ $name ] = $cb;
+	}
+
+	/** Register a handler that runs for type='job' entries (every node). */
+	public function set_local_handler( string $name, callable $cb ): void {
+		$this->validate_handler_name( $name );
+		$this->local_handlers[ $name ] = $cb;
+	}
+
+	/** Register a handler that runs for type='remote_job' entries (hub only). */
+	public function set_remote_handler( string $name, callable $cb ): void {
+		$this->validate_handler_name( $name );
+		$this->remote_handlers[ $name ] = $cb;
+	}
+
+	/**
+	 * Backward-compatible alias for set_local_handler. Pre-split callers
+	 * registered everything as a single handler set.
+	 */
+	public function register_handler( string $name, callable $cb ): void {
+		$this->set_local_handler( $name, $cb );
+	}
+
+	public function has_local_handler( string $name ): bool {
+		return isset( $this->local_handlers[ $name ] );
+	}
+
+	public function has_remote_handler( string $name ): bool {
+		return isset( $this->remote_handlers[ $name ] );
+	}
+
+	public function has_handler( string $name ): bool {
+		return $this->has_local_handler( $name ) || $this->has_remote_handler( $name );
+	}
+
+	/**
+	 * Load handlers from the standard WordPress filters. Called by the
+	 * job-workers topology after make_node so plugins that register via
+	 * add_filter('newspack_nodes/{job,remote_job}_handlers', ...) get picked up.
+	 */
+	public function load_handlers_from_filters(): void {
+		if ( ! \function_exists( 'apply_filters' ) ) {
+			return;
+		}
+		$local = \apply_filters( 'newspack_nodes/job_handlers', [] );
+		if ( \is_array( $local ) ) {
+			foreach ( $local as $name => $cb ) {
+				if ( \is_string( $name ) && \is_callable( $cb ) && \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
+					$this->local_handlers[ $name ] = $cb;
+				}
+			}
+		}
+		$remote = \apply_filters( 'newspack_nodes/remote_job_handlers', [] );
+		if ( \is_array( $remote ) ) {
+			foreach ( $remote as $name => $cb ) {
+				if ( \is_string( $name ) && \is_callable( $cb ) && \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
+					$this->remote_handlers[ $name ] = $cb;
+				}
+			}
+		}
 	}
 
 	/**
@@ -132,19 +204,22 @@ class JobWorker extends Node {
 			Core::print_less_often( 'JobWorker: oversized entry, skipping' );
 			return;
 		}
-		$kind = $entry['k'] ?? '';
+		// JobRouter normalizes every entry to {type, handler, parameters, ts}.
+		$kind = $entry['type'] ?? '';
 		if ( 'job' !== $kind && 'remote_job' !== $kind ) {
 			return;
 		}
-		$handler = $entry['handler'] ?? '';
-		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) || ! isset( $this->handlers[ $handler ] ) ) {
-			Core::print_less_often( "JobWorker: missing or invalid handler: $handler" );
+		$handler = (string) ( $entry['handler'] ?? '' );
+		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
+			Core::print_less_often( "JobWorker: invalid handler name: $handler" );
 			return;
 		}
-
-		// Field-name compat: prefer 'parameters' (upstream/JobIntake), fall back
-		// to 'payload' (legacy producers). One field path; no double-execution.
-		$parameters = $entry['parameters'] ?? $entry['payload'] ?? null;
+		$handlers = ( 'remote_job' === $kind ) ? $this->remote_handlers : $this->local_handlers;
+		if ( ! isset( $handlers[ $handler ] ) ) {
+			Core::print_less_often( "JobWorker: no $kind handler registered for: $handler" );
+			return;
+		}
+		$parameters = $entry['parameters'] ?? [];
 
 		// Per-job discipline. The cleanup block runs even if the handler throws,
 		// because gc/cache cycles need to happen MOST when handlers misbehave —
@@ -155,7 +230,7 @@ class JobWorker extends Node {
 		$orig_server = $_SERVER;
 		try {
 			$this->begin_job_context( $handler );
-			( $this->handlers[ $handler ] )( $parameters );
+			( $handlers[ $handler ] )( $parameters );
 		} catch ( \Throwable $e ) {
 			Core::print_less_often( "JobWorker: handler $handler threw: " . $e->getMessage() );
 		} finally {

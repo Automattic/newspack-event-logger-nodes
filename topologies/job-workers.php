@@ -30,6 +30,10 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 
 	// --- JobWorker (terminal: dispatches to handlers, no connect_node) ------
 	$job_worker = $interpreter->make_node( 'JobWorker', 'job-worker' );
+	// Pull handler registrations from the canonical WP filters. Must run AFTER
+	// make_node and BEFORE the worker drain starts so the maps are populated
+	// when the first jobs.log line arrives.
+	$job_worker->load_handlers_from_filters();
 
 	// --- Input: Consumer of jobs.log ----------------------------------------
 	$jobs_offsets = "{$base_dir}/offsets/jobs.p{$partition}";

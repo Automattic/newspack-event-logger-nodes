@@ -8,12 +8,26 @@ use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( JobWorker::class )]
 class JobWorkerTest extends TestCase {
-	private function job_message( string $handler, mixed $payload = null, string $field = 'payload', string $kind = 'job' ): array {
+
+	protected function setUp(): void {
+		parent::setUp();
+		// Wipe filter state between tests so handler-loading doesn't leak.
+		$GLOBALS['_wp_actions'] = [];
+	}
+
+	/**
+	 * Build a TM_STRUCT message in the JobRouter-normalized shape:
+	 *   { type, handler, parameters, ts }
+	 */
+	private function job_message( string $handler, array $parameters = [], string $type = 'job' ): array {
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$entry                 = [ 'k' => $kind, 'handler' => $handler ];
-		$entry[ $field ]       = $payload;
-		$msg[ Message::VALUE ] = $entry;
+		$msg[ Message::VALUE ] = [
+			'type'       => $type,
+			'handler'    => $handler,
+			'parameters' => $parameters,
+			'ts'         => 1700000000.0,
+		];
 		return $msg;
 	}
 
@@ -29,44 +43,6 @@ class JobWorkerTest extends TestCase {
 
 		$this->assertSame( [ 'x' => 1 ], $received );
 		$this->assertSame( 1, $jw->jobs_executed() );
-	}
-
-	// --- Field-name compat: parameters preferred, payload fallback ----------
-
-	public function test_accepts_parameters_field_from_jobintake(): void {
-		// Upstream JobIntake schema uses 'parameters'. JobWorker MUST accept it.
-		$jw = new JobWorker();
-		$received = null;
-		$jw->register_handler( 'sync', function ( $params ) use ( &$received ) {
-			$received = $params;
-		} );
-
-		$msg = $this->job_message( 'sync', [ 'opt' => 'log_urls' ], 'parameters' );
-		$jw->fill( $msg );
-
-		$this->assertSame( [ 'opt' => 'log_urls' ], $received );
-	}
-
-	public function test_parameters_takes_precedence_over_payload(): void {
-		// If both fields are present (mixed producer environments), 'parameters'
-		// wins because it's the upstream-aligned canonical name.
-		$jw = new JobWorker();
-		$received = null;
-		$jw->register_handler( 'mix', function ( $p ) use ( &$received ) {
-			$received = $p;
-		} );
-
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [
-			'k'          => 'job',
-			'handler'    => 'mix',
-			'parameters' => 'PARAMS',
-			'payload'    => 'PAYLOAD',
-		];
-		$jw->fill( $msg );
-
-		$this->assertSame( 'PARAMS', $received );
 	}
 
 	// --- Per-job discipline -------------------------------------------------
@@ -331,21 +307,130 @@ class JobWorkerTest extends TestCase {
 
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'k' => 'start', 'handler' => 'noop', 'payload' => null ];
+		$msg[ Message::VALUE ] = [ 'type' => 'start', 'handler' => 'noop', 'parameters' => [] ];
 		$jw->fill( $msg );
 
 		$this->assertFalse( $called );
 		$this->assertSame( 0, $jw->jobs_executed() );
 	}
 
-	public function test_remote_job_kind_is_accepted(): void {
+	// --- Local vs. remote handler split -------------------------------------
+
+	public function test_set_local_handler_dispatches_for_type_job(): void {
 		$jw = new JobWorker();
 		$received = null;
-		$jw->register_handler( 'sync', function ( $p ) use ( &$received ) { $received = $p; } );
+		$jw->set_local_handler( 'sync', function ( $p ) use ( &$received ) { $received = $p; } );
 
-		$msg = $this->job_message( 'sync', 'remote-payload', 'payload', 'remote_job' );
+		$msg = $this->job_message( 'sync', [ 'k' => 'v' ], 'job' );
 		$jw->fill( $msg );
 
-		$this->assertSame( 'remote-payload', $received );
+		$this->assertSame( [ 'k' => 'v' ], $received );
+	}
+
+	public function test_set_remote_handler_dispatches_for_type_remote_job(): void {
+		$jw = new JobWorker();
+		$received = null;
+		$jw->set_remote_handler( 'hub_op', function ( $p ) use ( &$received ) { $received = $p; } );
+
+		$msg = $this->job_message( 'hub_op', [ 'a' => 1 ], 'remote_job' );
+		$jw->fill( $msg );
+
+		$this->assertSame( [ 'a' => 1 ], $received );
+	}
+
+	public function test_local_handler_does_not_handle_remote_job(): void {
+		// Same handler name registered ONLY on the local bucket; a remote_job
+		// entry must NOT fall through to it (that would let spokes execute
+		// hub-only operations).
+		$jw = new JobWorker();
+		$called = false;
+		$jw->set_local_handler( 'priv', function () use ( &$called ) { $called = true; } );
+
+		$msg = $this->job_message( 'priv', [], 'remote_job' );
+		$jw->fill( $msg );
+
+		$this->assertFalse( $called );
+		$this->assertSame( 0, $jw->jobs_executed() );
+	}
+
+	public function test_remote_handler_does_not_handle_local_job(): void {
+		$jw = new JobWorker();
+		$called = false;
+		$jw->set_remote_handler( 'priv', function () use ( &$called ) { $called = true; } );
+
+		$msg = $this->job_message( 'priv', [], 'job' );
+		$jw->fill( $msg );
+
+		$this->assertFalse( $called );
+	}
+
+	public function test_same_handler_name_in_both_buckets_dispatches_both(): void {
+		// Common case for evTemplate-style handlers that should run in both
+		// spoke and hub contexts.
+		$jw = new JobWorker();
+		$local_calls = 0;
+		$remote_calls = 0;
+		$jw->set_local_handler( 'evTemplate', function () use ( &$local_calls ) { ++$local_calls; } );
+		$jw->set_remote_handler( 'evTemplate', function () use ( &$remote_calls ) { ++$remote_calls; } );
+
+		$msg = $this->job_message( 'evTemplate', [], 'job' );
+		$jw->fill( $msg );
+		$msg = $this->job_message( 'evTemplate', [], 'remote_job' );
+		$jw->fill( $msg );
+		$msg = $this->job_message( 'evTemplate', [], 'job' );
+		$jw->fill( $msg );
+
+		$this->assertSame( 2, $local_calls );
+		$this->assertSame( 1, $remote_calls );
+	}
+
+	public function test_register_handler_is_alias_for_local(): void {
+		// Backward-compat: pre-split callers used register_handler.
+		$jw = new JobWorker();
+		$jw->register_handler( 'work', fn () => null );
+
+		$this->assertTrue( $jw->has_local_handler( 'work' ) );
+		$this->assertFalse( $jw->has_remote_handler( 'work' ) );
+		$this->assertTrue( $jw->has_handler( 'work' ) );
+	}
+
+	public function test_load_handlers_from_filters_pulls_both_buckets(): void {
+		add_filter( 'newspack_nodes/job_handlers', function ( $h ) {
+			$h['local_only']  = fn () => null;
+			$h['shared']      = fn () => null;
+			return $h;
+		} );
+		add_filter( 'newspack_nodes/remote_job_handlers', function ( $h ) {
+			$h['remote_only'] = fn () => null;
+			$h['shared']      = fn () => null;
+			return $h;
+		} );
+
+		$jw = new JobWorker();
+		$jw->load_handlers_from_filters();
+
+		$this->assertTrue( $jw->has_local_handler( 'local_only' ) );
+		$this->assertTrue( $jw->has_local_handler( 'shared' ) );
+		$this->assertFalse( $jw->has_local_handler( 'remote_only' ) );
+
+		$this->assertTrue( $jw->has_remote_handler( 'remote_only' ) );
+		$this->assertTrue( $jw->has_remote_handler( 'shared' ) );
+		$this->assertFalse( $jw->has_remote_handler( 'local_only' ) );
+	}
+
+	public function test_load_handlers_from_filters_skips_invalid_names(): void {
+		add_filter( 'newspack_nodes/job_handlers', function ( $h ) {
+			$h['valid']        = fn () => null;
+			$h['1bad-leading'] = fn () => null;
+			$h['ok']           = 'not-a-callable';
+			return $h;
+		} );
+
+		$jw = new JobWorker();
+		$jw->load_handlers_from_filters();
+
+		$this->assertTrue( $jw->has_local_handler( 'valid' ) );
+		$this->assertFalse( $jw->has_local_handler( '1bad-leading' ) );
+		$this->assertFalse( $jw->has_local_handler( 'ok' ) );
 	}
 }
