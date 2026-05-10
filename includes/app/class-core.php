@@ -74,10 +74,14 @@ class Core {
 	private int $start_priority = 1;
 
 	public function __construct() {
+		// Hooks are registered unconditionally. The enabled check happens
+		// inside each callback against LogManager::instance() — when JobWorker
+		// suspends the parent LM and creates a fresh one for a /jobs/{handler}
+		// scope, that fresh LM may be enabled even though the parent (worker
+		// spawn URL, skip-listed) wasn't. Caching the parent's `enabled = false`
+		// at construction would silently disable all hook instrumentation
+		// inside the job too.
 		$this->log_manager = LogManager::instance();
-		if ( ! $this->log_manager->enabled ) {
-			return;
-		}
 
 		// Load event filters from config.
 		$config            = Config::load_config();
@@ -141,7 +145,11 @@ class Core {
 	 * @return mixed
 	 */
 	public function hook_start( $v = null ) {
-		$lm = $this->log_manager;
+		// Resolve fresh per-call so JobWorker suspend/resume picks up the
+		// current LogManager scope. Caching at construction would pin us to
+		// whichever LM existed at App\Core load time (typically the worker's
+		// disabled spawn-URL scope).
+		$lm = LogManager::instance();
 		if ( ! $lm->enabled ) {
 			return $v;
 		}
@@ -192,7 +200,6 @@ class Core {
 			return;
 		}
 
-		$lm  = $this->log_manager;
 		$min = $this->start_priority;
 
 		foreach ( $wp_filter[ $hook_name ]->callbacks as $priority => &$priority_callbacks ) {
@@ -210,9 +217,14 @@ class Core {
 					continue;
 				}
 
-				// Wrap the original with timing instrumentation.
+				// Wrap the original with timing instrumentation. Resolve LM
+				// per-call inside the wrapper so the wrapper survives across
+				// suspend/resume boundaries (a wrapper installed during a
+				// worker request shouldn't pin to the worker's LM when later
+				// invoked inside a /jobs/* scope).
 				$label   = "{$name} @{$priority}";
-				$wrapper = function () use ( $original, $accepted_args, $label, $lm ) {
+				$wrapper = function () use ( $original, $accepted_args, $label ) {
+					$lm   = LogManager::instance();
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
 					$lm->start( $label, [ 'l' => '' ] );
 					try {
@@ -240,7 +252,7 @@ class Core {
 	 */
 	public function hook_complete( $v = null ) {
 		$hook_name = \current_filter();
-		$this->log_manager->complete( $hook_name . ' hook' );
+		LogManager::instance()->complete( $hook_name . ' hook' );
 		return $v;
 	}
 }
