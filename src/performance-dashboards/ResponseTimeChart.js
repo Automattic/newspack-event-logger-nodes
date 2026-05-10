@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
 import * as d3 from 'd3';
-import { getStatusColor, STATUS_COLORS } from './shared/utils/formatUtils';
+import { getStatusColor, STATUS_COLORS } from '../shared/utils/formatUtils';
 
 /**
  * Chart dimensions and margins.

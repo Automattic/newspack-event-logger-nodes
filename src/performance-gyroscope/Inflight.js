@@ -15,16 +15,16 @@ import {
 	useMemo,
 } from '@wordpress/element';
 
-import usePageVisibility from './shared/hooks/usePageVisibility';
-import useFirehoseConnection from './shared/hooks/useFirehoseConnection';
+import usePageVisibility from '../shared/hooks/usePageVisibility';
+import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
 	formatDuration,
 	getDurationClass,
 	getStateColor,
 	getStatusClass,
-} from './shared/utils/formatUtils';
-import fnv1a from './shared/utils/fnv1a';
+} from '../shared/utils/formatUtils';
+import fnv1a from '../shared/utils/fnv1a';
 import './styles/inflight.scss';
 import './styles/request-stream.scss';
 

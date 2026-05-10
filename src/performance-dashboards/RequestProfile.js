@@ -6,7 +6,7 @@
 
 import { useState, useMemo, Fragment } from '@wordpress/element';
 
-import { getStateColor, formatDuration } from './shared/utils/formatUtils';
+import { getStateColor, formatDuration } from '../shared/utils/formatUtils';
 
 /**
  * Default number of categories to show before collapsing.

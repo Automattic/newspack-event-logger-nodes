@@ -5,7 +5,7 @@
  */
 
 import WorkerStatus from './WorkerStatus';
-import useAdminMenuWidth from './shared/hooks/useAdminMenuWidth';
+import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 
 /**
  * Worker Status page - dedicated view for worker monitoring.

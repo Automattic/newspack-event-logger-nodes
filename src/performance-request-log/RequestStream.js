@@ -17,15 +17,15 @@ import {
 	memo,
 } from '@wordpress/element';
 
-import usePageVisibility from './shared/hooks/usePageVisibility';
-import useFirehoseConnection from './shared/hooks/useFirehoseConnection';
-import useVirtualization from './shared/hooks/useVirtualization';
+import usePageVisibility from '../shared/hooks/usePageVisibility';
+import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
+import useVirtualization from '../shared/hooks/useVirtualization';
 import {
 	formatDuration,
 	getDurationClass,
 	getStatusClass,
-} from './shared/utils/formatUtils';
-import fnv1a from './shared/utils/fnv1a';
+} from '../shared/utils/formatUtils';
+import fnv1a from '../shared/utils/fnv1a';
 import './styles/request-stream.scss';
 
 /**

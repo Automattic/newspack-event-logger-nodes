@@ -16,9 +16,9 @@ import {
 	memo,
 } from '@wordpress/element';
 
-import usePageVisibility from './shared/hooks/usePageVisibility';
-import useFirehoseConnection from './shared/hooks/useFirehoseConnection';
-import useVirtualization from './shared/hooks/useVirtualization';
+import usePageVisibility from '../shared/hooks/usePageVisibility';
+import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
+import useVirtualization from '../shared/hooks/useVirtualization';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
