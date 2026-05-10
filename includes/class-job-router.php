@@ -2,15 +2,32 @@
 /**
  * Job Router
  *
- * Routes job entries from firehose.log and jobintake.log to registered handlers.
+ * Pure router: extracts job-shaped entries from firehose.log and jobintake.log,
+ * normalizes them to a single shape, and forwards to its target (jobs.log).
+ * The actual handler dispatch happens later in JobWorker, which consumes
+ * jobs.log in a separate worker pool.
  *
- * Job sources (disambiguated via Message::KEY):
- * - firehose: Extracts entries with k='job' or k='remote_job' from request lifecycle
- * - jobintake: Direct job entries from JobIntake API
+ * Why split: keeping route + execute in different processes lets the
+ * execute side respawn and gc/cache-flush without dropping firehose
+ * throughput, and lets the executor live-load handler registrations from
+ * `newspack_nodes/{job,remote_job}_handlers` filters without coordinating
+ * with the firehose-workers fleet.
  *
- * SECURITY NOTES:
- * - Handler names validated against strict pattern
- * - Parameters size limited to prevent DoS
+ * Sources (disambiguated via Message::FROM, stamped by upstream Consumer):
+ * - firehose:  entries the request lifecycle wrote to firehose.log via
+ *              LogManager::message('job', ['m' => {type, handler, parameters}]).
+ *              The job body is nested under `m`; the entry-level `k` is 'job'.
+ * - jobintake: entries the JobIntake API wrote directly to jobintake.log.
+ *              The job body lives at the top level; `k` carries the type.
+ *
+ * Output shape (one wire form for jobs.log, regardless of source):
+ *   { type, handler, parameters, ts }
+ *
+ * SECURITY:
+ * - Handler name must match HANDLER_NAME_PATTERN before reaching disk.
+ * - Parameters must be array-shaped or absent.
+ * - Pre-pack size guard caps oversized entries before they reach the
+ *   Partition layer.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -25,69 +42,12 @@ if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-/**
- * Job Router class.
- */
 class JobRouter extends Node {
 	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 	public const MAX_JOB_SIZE         = 10485760;
 
-	public const SOURCE_FIREHOSE  = 'firehose';
-	public const SOURCE_JOBINTAKE = 'jobintake';
-
 	public const KIND_JOB        = 'job';
 	public const KIND_REMOTE_JOB = 'remote_job';
-
-	/** @var array<string,callable> */
-	private array $local_handlers = [];
-	/** @var array<string,callable> */
-	private array $remote_handlers = [];
-
-	/**
-	 * Register a local handler. Local handlers run on every node and receive
-	 * lines tagged firehose:job (i.e., produced by LogManager and ingested back
-	 * via the local firehose) plus all jobintake lines.
-	 */
-	public function set_local_handler( string $name, callable $cb ): void {
-		$this->validate_handler_name( $name );
-		$this->local_handlers[ $name ] = $cb;
-	}
-
-	/**
-	 * Register a remote handler. Remote handlers run only on the hub and receive
-	 * lines tagged firehose:remote_job (i.e., StreamMerger has rewritten k:"job"
-	 * to k:"remote_job" while ingesting from a remote spoke).
-	 */
-	public function set_remote_handler( string $name, callable $cb ): void {
-		$this->validate_handler_name( $name );
-		$this->remote_handlers[ $name ] = $cb;
-	}
-
-	/**
-	 * Backward-compatible alias for set_local_handler. Pre-multi-input callers
-	 * registered everything as a single handler set; preserve them.
-	 */
-	public function register_handler( string $name, callable $cb ): void {
-		$this->set_local_handler( $name, $cb );
-	}
-
-	public function has_handler( string $name ): bool {
-		return isset( $this->local_handlers[ $name ] ) || isset( $this->remote_handlers[ $name ] );
-	}
-
-	public function has_local_handler( string $name ): bool {
-		return isset( $this->local_handlers[ $name ] );
-	}
-
-	public function has_remote_handler( string $name ): bool {
-		return isset( $this->remote_handlers[ $name ] );
-	}
-
-	private function validate_handler_name( string $name ): void {
-		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
-			throw new \InvalidArgumentException( "invalid handler name: $name" );
-		}
-	}
 
 	public function fill( array &$message ): void {
 		++$this->counter;
@@ -98,74 +58,70 @@ class JobRouter extends Node {
 		if ( ! \is_array( $entry ) ) {
 			return;
 		}
-		// Defense-in-depth: drop entries whose on-wire size exceeds the per-job
-		// cap. Partition's MAX_LARGE_LINE_SIZE catches this when reaching disk,
-		// but tests construct Messages directly without going through Partition
-		// — keep the explicit gate so producers can't bypass it. Size matches
-		// the actual wire form (`Message::packed` is JSON).
-		$encoded = \wp_json_encode( $entry );
+
+		// Source disambiguation: Consumer stamps FROM with its own node name.
+		// Topology names them `firehose:consumer` and `jobintake:consumer`.
+		$from         = (string) ( $message[ Message::FROM ] ?? '' );
+		$is_firehose  = ( false !== \strpos( $from, 'firehose:consumer' ) );
+		$is_jobintake = ( false !== \strpos( $from, 'jobintake:consumer' ) );
+		if ( ! $is_firehose && ! $is_jobintake ) {
+			return; // Not from a known job source — drop silently.
+		}
+
+		// Pluck the job body. Firehose wraps it under `m`; jobintake is flat.
+		$body = $is_firehose
+			? ( \is_array( $entry['m'] ?? null ) ? $entry['m'] : null )
+			: $entry;
+		if ( ! \is_array( $body ) ) {
+			return;
+		}
+
+		// Resolve type. Firehose body has `type`; jobintake uses `k`.
+		// Default each to the entry-level `k` (which is always 'job' in
+		// well-formed lines) if the inner field is absent.
+		$type = $is_firehose
+			? (string) ( $body['type'] ?? $entry['k'] ?? '' )
+			: (string) ( $body['k'] ?? $entry['k'] ?? '' );
+		if ( self::KIND_JOB !== $type && self::KIND_REMOTE_JOB !== $type ) {
+			return;
+		}
+
+		// jobintake is always local — never escalate to remote dispatch.
+		if ( $is_jobintake && self::KIND_REMOTE_JOB === $type ) {
+			$type = self::KIND_JOB;
+		}
+
+		$handler = (string) ( $body['handler'] ?? '' );
+		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
+			Core::print_less_often( "JobRouter: invalid handler name: $handler" );
+			return;
+		}
+
+		$parameters = $body['parameters'] ?? [];
+		if ( ! \is_array( $parameters ) ) {
+			Core::print_less_often( "JobRouter: $handler has non-array parameters; dropping" );
+			return;
+		}
+
+		$normalized = [
+			'type'       => $type,
+			'handler'    => $handler,
+			'parameters' => $parameters,
+			'ts'         => $body['ts'] ?? $entry['ts'] ?? \microtime( true ),
+		];
+
+		// Pre-pack size guard. Partition's MAX_LARGE_LINE_SIZE catches this
+		// at write time too, but failing earlier produces a clearer error.
+		$encoded = \wp_json_encode( $normalized );
 		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
-			Core::print_less_often( 'JobRouter: oversized entry, skipping' );
-			return;
-		}
-		$kind = $entry['k'] ?? '';
-		if ( $kind !== self::KIND_JOB && $kind !== self::KIND_REMOTE_JOB ) {
+			Core::print_less_often( "JobRouter: $handler entry exceeds MAX_JOB_SIZE; dropping" );
 			return;
 		}
 
-		// Resolve source via KEY tag set by upstream Tail/Consumer. Format
-		// "{source}:{kind}". Missing/malformed KEY falls through to JSON-only routing.
-		[ $source, $key_kind ] = $this->parse_key( (string) ( $message[ Message::KEY ] ?? '' ) );
-
-		// Sanity: when KEY carries a kind, prefer it over the JSON k. They should
-		// match in production; if they diverge the upstream-stamped value wins
-		// (it's the trusted source-of-truth tag).
-		if ( '' !== $key_kind ) {
-			$kind = $key_kind;
-		}
-
-		// jobintake is always local (k:"remote_job" should never appear there;
-		// if it does, drop into local — never escalate to remote dispatch).
-		$is_remote = ( $source === self::SOURCE_FIREHOSE && $kind === self::KIND_REMOTE_JOB );
-
-		$handler_name = $entry['handler'] ?? '';
-		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler_name ) ) {
-			Core::print_less_often( "JobRouter: invalid handler name: $handler_name" );
-			return;
-		}
-
-		$handlers = $is_remote ? $this->remote_handlers : $this->local_handlers;
-		if ( ! isset( $handlers[ $handler_name ] ) ) {
-			$bucket = $is_remote ? 'remote' : 'local';
-			Core::print_less_often( "JobRouter: unknown $bucket handler: $handler_name" );
-			return;
-		}
-
-		try {
-			( $handlers[ $handler_name ] )( $entry['payload'] ?? null );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( "JobRouter: handler $handler_name threw: " . $e->getMessage() );
-		}
-	}
-
-	/**
-	 * Parse a "{source}:{kind}" KEY tag. Returns ['', ''] if KEY does not match
-	 * (so callers can fall back to JSON-derived routing).
-	 *
-	 * @return array{0:string,1:string}
-	 */
-	private function parse_key( string $key ): array {
-		if ( '' === $key ) {
-			return [ '', '' ];
-		}
-		$parts = \explode( ':', $key, 2 );
-		if ( \count( $parts ) !== 2 ) {
-			return [ '', '' ];
-		}
-		[ $source, $kind ] = $parts;
-		if ( $source !== self::SOURCE_FIREHOSE && $source !== self::SOURCE_JOBINTAKE ) {
-			return [ '', '' ];
-		}
-		return [ $source, $kind ];
+		// Replace VALUE with the normalized entry and forward to target.
+		// Node::fill stamps TO from $this->target (set by topology
+		// connect_node('jobs:partition')) when TO is empty.
+		$message[ Message::VALUE ] = $normalized;
+		parent::fill( $message );
 	}
 }

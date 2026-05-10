@@ -4,227 +4,213 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\JobRouter;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Tests\CaptureSink;
 use PHPUnit\Framework\Attributes\CoversClass;
 
+/**
+ * JobRouter is a pure router: it pulls job-shaped entries from the firehose
+ * and jobintake sources, normalizes them to {type, handler, parameters, ts},
+ * and forwards via parent::fill to its target (jobs:partition in topology).
+ * It never dispatches handlers itself; that's JobWorker's job.
+ *
+ * These tests sink JobRouter into a CaptureSink so we can assert what came
+ * out, then walk through the matrix of source × kind × validity.
+ */
 #[CoversClass( JobRouter::class )]
 class JobRouterTest extends TestCase {
-	public function test_register_handler_stores_callback(): void {
-		$jr = new JobRouter();
-		$jr->register_handler( 'my_handler', fn ( $payload ) => null );
-		$this->assertTrue( $jr->has_handler( 'my_handler' ) );
+
+	private JobRouter $jr;
+	private CaptureSink $sink;
+
+	protected function setUp(): void {
+		parent::setUp();
+		$this->jr = new JobRouter();
+		$this->jr->name( 'job-router' );
+		$this->sink = new CaptureSink();
+		$this->jr->sink( $this->sink );
 	}
 
-	public function test_register_handler_rejects_invalid_name(): void {
-		$jr = new JobRouter();
-		$this->expectException( \InvalidArgumentException::class );
-		$jr->register_handler( '1bad-leading-digit', fn ( $payload ) => null );
+	/** Build a Message stamped with the given FROM and VALUE. */
+	private function msg( string $from, array $value ): array {
+		$m                  = Message::new_message();
+		$m[ Message::TYPE ] = Message::TM_STRUCT;
+		$m[ Message::FROM ] = $from;
+		$m[ Message::VALUE ] = $value;
+		return $m;
 	}
 
-	public function test_set_local_handler_rejects_invalid_name(): void {
-		$jr = new JobRouter();
-		$this->expectException( \InvalidArgumentException::class );
-		$jr->set_local_handler( 'bad name with spaces', fn ( $p ) => null );
-	}
-
-	public function test_set_remote_handler_rejects_invalid_name(): void {
-		$jr = new JobRouter();
-		$this->expectException( \InvalidArgumentException::class );
-		$jr->set_remote_handler( 'bad/path/name', fn ( $p ) => null );
-	}
-
-	public function test_processing_job_invokes_handler(): void {
-		$jr = new JobRouter();
-		$received = null;
-		$jr->register_handler( 'echo_job', function ( $payload ) use ( &$received ) {
-			$received = $payload;
-		} );
-
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'echo_job', 'payload' => [ 'x' => 1 ] ];
-		$jr->fill( $msg );
-
-		$this->assertSame( [ 'x' => 1 ], $received );
-	}
-
-	public function test_processing_skips_non_job_lines(): void {
-		$jr = new JobRouter();
-		$called = false;
-		$jr->register_handler( 'echo_job', function () use ( &$called ) { $called = true; } );
-
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'k' => 'start', 'rid' => 'r1' ];
-		$jr->fill( $msg );
-
-		$this->assertFalse( $called );
-	}
-
-	public function test_processing_skips_unknown_handler(): void {
-		$jr = new JobRouter();
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'unknown', 'payload' => [] ];
-		$jr->fill( $msg ); // Should not throw.
-		$this->assertTrue( true );
-	}
-
-	public function test_oversized_payload_rejected(): void {
-		$jr = new JobRouter();
-		$called = false;
-		$jr->register_handler( 'big', function () use ( &$called ) { $called = true; } );
-
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [
-			'k' => 'job',
-			'handler' => 'big',
-			'payload' => [ 'data' => str_repeat( 'x', 11 * 1024 * 1024 ) ],
+	/** Firehose entry shape: job body wrapped under `m`. */
+	private function firehose_entry( string $kind, string $handler, array $parameters ): array {
+		return [
+			'n'   => 1,
+			'rid' => 'r1',
+			'k'   => $kind,
+			'm'   => [
+				'type'       => $kind,
+				'handler'    => $handler,
+				'parameters' => $parameters,
+			],
+			'ts'  => 1700000000.0,
 		];
-		$jr->fill( $msg );
-		$this->assertFalse( $called );
 	}
 
-	// --- Multi-input routing tests ---------------------------------------
-
-	public function test_firehose_job_dispatches_to_local_handler(): void {
-		$jr        = new JobRouter();
-		$local_hit = false;
-		$remote_hit = false;
-		$jr->set_local_handler( 'work', function () use ( &$local_hit ) { $local_hit = true; } );
-		$jr->set_remote_handler( 'work', function () use ( &$remote_hit ) { $remote_hit = true; } );
-
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'firehose:job';
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'work', 'payload' => 1 ];
-		$jr->fill( $msg );
-
-		$this->assertTrue( $local_hit );
-		$this->assertFalse( $remote_hit );
+	/** Jobintake entry shape: flat (no nested `m`). */
+	private function jobintake_entry( string $kind, string $handler, array $parameters ): array {
+		return [
+			'k'          => $kind,
+			'handler'    => $handler,
+			'parameters' => $parameters,
+			'ts'         => 1700000000.0,
+		];
 	}
 
-	public function test_firehose_remote_job_dispatches_to_remote_handler(): void {
-		$jr         = new JobRouter();
-		$local_hit  = false;
-		$remote_hit = null;
-		$jr->set_local_handler( 'sync_setting', function () use ( &$local_hit ) { $local_hit = true; } );
-		$jr->set_remote_handler( 'sync_setting', function ( $payload ) use ( &$remote_hit ) { $remote_hit = $payload; } );
+	public function test_firehose_job_forwards_normalized(): void {
+		$entry = $this->firehose_entry( 'job', 'sync_user', [ 'id' => 42 ] );
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'firehose:remote_job';
-		$msg[ Message::VALUE ] = [ 'k' => 'remote_job', 'handler' => 'sync_setting', 'payload' => [ 'opt' => 'log_urls' ] ];
-		$jr->fill( $msg );
-
-		$this->assertFalse( $local_hit );
-		$this->assertSame( [ 'opt' => 'log_urls' ], $remote_hit );
+		$this->assertCount( 1, $this->sink->captured );
+		$out = $this->sink->captured[0];
+		$this->assertSame(
+			[
+				'type'       => 'job',
+				'handler'    => 'sync_user',
+				'parameters' => [ 'id' => 42 ],
+				'ts'         => 1700000000.0,
+			],
+			$out[ Message::VALUE ]
+		);
 	}
 
-	public function test_jobintake_always_treated_as_local(): void {
-		$jr         = new JobRouter();
-		$local_hit  = null;
-		$remote_hit = false;
-		$jr->set_local_handler( 'flush_buffer', function ( $payload ) use ( &$local_hit ) { $local_hit = $payload; } );
-		$jr->set_remote_handler( 'flush_buffer', function () use ( &$remote_hit ) { $remote_hit = true; } );
+	public function test_firehose_remote_job_forwards_with_type_remote_job(): void {
+		$entry = $this->firehose_entry( 'remote_job', 'hub_op', [ 'k' => 'v' ] );
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
 
-		// Even if the entry says k:"remote_job", jobintake-stamped KEY forces local.
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'jobintake:job';
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'flush_buffer', 'payload' => 'x' ];
-		$jr->fill( $msg );
-
-		$this->assertSame( 'x', $local_hit );
-		$this->assertFalse( $remote_hit );
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( 'remote_job', $this->sink->captured[0][ Message::VALUE ]['type'] );
+		$this->assertSame( 'hub_op', $this->sink->captured[0][ Message::VALUE ]['handler'] );
 	}
 
-	public function test_jobintake_with_remote_kind_still_local(): void {
-		// Defense-in-depth: if a misbehaving producer writes k:"remote_job" into
-		// jobintake.log, we MUST NOT escalate it to remote dispatch (that would
-		// allow spokes to inject hub-only operations). KEY=jobintake forces local.
-		$jr         = new JobRouter();
-		$local_hit  = false;
-		$remote_hit = false;
-		$jr->set_local_handler( 'do_thing', function () use ( &$local_hit ) { $local_hit = true; } );
-		$jr->set_remote_handler( 'do_thing', function () use ( &$remote_hit ) { $remote_hit = true; } );
+	public function test_jobintake_job_forwards_normalized(): void {
+		$entry = $this->jobintake_entry( 'job', 'process_image', [ 'url' => '/x.jpg' ] );
+		$msg = $this->msg( 'jobintake:consumer', $entry );
+		$this->jr->fill( $msg );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'jobintake:remote_job';
-		$msg[ Message::VALUE ] = [ 'k' => 'remote_job', 'handler' => 'do_thing', 'payload' => null ];
-		$jr->fill( $msg );
-
-		// Local local-handler doesn't carry remote_job either; we drop into local
-		// dispatch but the entry's `k` is "remote_job" and the local handler is
-		// registered, so it fires.
-		$this->assertTrue( $local_hit );
-		$this->assertFalse( $remote_hit );
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame(
+			[
+				'type'       => 'job',
+				'handler'    => 'process_image',
+				'parameters' => [ 'url' => '/x.jpg' ],
+				'ts'         => 1700000000.0,
+			],
+			$this->sink->captured[0][ Message::VALUE ]
+		);
 	}
 
-	public function test_unknown_local_handler_logs_warning(): void {
-		$jr = new JobRouter();
-		// No handlers registered; firehose:job with unknown handler.
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'firehose:job';
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'never_registered', 'payload' => null ];
-		$jr->fill( $msg ); // No throw, no dispatch — silent (or rate-limited stderr).
-		$this->assertFalse( $jr->has_handler( 'never_registered' ) );
+	public function test_jobintake_remote_kind_is_downgraded_to_local(): void {
+		// Defense-in-depth: a misbehaving producer writing `k:"remote_job"`
+		// to jobintake.log MUST NOT be allowed to escalate to remote dispatch
+		// (that would let spokes inject hub-only operations).
+		$entry = $this->jobintake_entry( 'remote_job', 'priv_op', [] );
+		$msg = $this->msg( 'jobintake:consumer', $entry );
+		$this->jr->fill( $msg );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( 'job', $this->sink->captured[0][ Message::VALUE ]['type'] );
 	}
 
-	public function test_unknown_remote_handler_logs_warning(): void {
-		$jr = new JobRouter();
-		$jr->set_local_handler( 'work', fn () => null ); // Wrong bucket.
+	public function test_unknown_source_dropped_silently(): void {
+		// FROM not stamped by a known Consumer → drop.
+		$entry = $this->firehose_entry( 'job', 'work', [] );
+		$msg = $this->msg( '', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'firehose:remote_job';
-		$msg[ Message::VALUE ] = [ 'k' => 'remote_job', 'handler' => 'work', 'payload' => null ];
-		$jr->fill( $msg ); // local-bucket has 'work' but remote-bucket doesn't — silent reject.
-		$this->assertFalse( $jr->has_remote_handler( 'work' ) );
-		$this->assertTrue( $jr->has_local_handler( 'work' ) );
+		$msg = $this->msg( 'random-node-name', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
 	}
 
-	public function test_malformed_key_falls_back_to_local(): void {
-		// KEY without colon (e.g., raw segment offset like "0:1234" from a Consumer
-		// that doesn't tag) — the source isn't recognized; we treat it as local.
-		$jr        = new JobRouter();
-		$local_hit = false;
-		$jr->set_local_handler( 'noop', function () use ( &$local_hit ) { $local_hit = true; } );
-
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = '0:1234'; // Looks like seg:offset, not source:kind.
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'noop', 'payload' => null ];
-		$jr->fill( $msg );
-
-		$this->assertTrue( $local_hit );
+	public function test_non_job_entry_dropped(): void {
+		$entry = [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => 'just a message', 'ts' => 1 ];
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
 	}
 
-	public function test_local_and_remote_can_share_handler_name(): void {
-		// Same handler name registered in both buckets; routing decides which fires.
-		$jr           = new JobRouter();
-		$local_calls  = 0;
-		$remote_calls = 0;
-		$jr->set_local_handler( 'sync', function () use ( &$local_calls ) { ++$local_calls; } );
-		$jr->set_remote_handler( 'sync', function () use ( &$remote_calls ) { ++$remote_calls; } );
+	public function test_firehose_entry_without_m_dropped(): void {
+		$entry = [ 'n' => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1 ];
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
+	}
 
-		$mk = function ( string $key, string $k ) {
-			$m                   = Message::new_message();
-			$m[ Message::TYPE ]  = Message::TM_STRUCT;
-			$m[ Message::KEY ]   = $key;
-			$m[ Message::VALUE ] = [ 'k' => $k, 'handler' => 'sync', 'payload' => null ];
-			return $m;
-		};
-		$msg = $mk( 'firehose:job', 'job' );
-		$jr->fill( $msg );
-		$msg = $mk( 'firehose:job', 'job' );
-		$jr->fill( $msg );
-		$msg = $mk( 'firehose:remote_job', 'remote_job' );
-		$jr->fill( $msg );
+	public function test_invalid_handler_name_dropped(): void {
+		$entry = $this->firehose_entry( 'job', '1bad-leading-digit', [] );
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
+	}
 
-		$this->assertSame( 2, $local_calls );
-		$this->assertSame( 1, $remote_calls );
+	public function test_non_array_parameters_dropped(): void {
+		$entry = [
+			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1,
+			'm'   => [ 'type' => 'job', 'handler' => 'work', 'parameters' => 'not an array' ],
+		];
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
+	}
+
+	public function test_oversized_entry_dropped(): void {
+		$entry = $this->firehose_entry( 'job', 'big_job', [ 'data' => str_repeat( 'x', 11 * 1024 * 1024 ) ] );
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+		$this->assertCount( 0, $this->sink->captured );
+	}
+
+	public function test_non_struct_message_dropped(): void {
+		$m                  = Message::new_message();
+		$m[ Message::TYPE ] = Message::TM_BYTESTREAM;
+		$m[ Message::FROM ] = 'firehose:consumer';
+		$m[ Message::VALUE ] = $this->firehose_entry( 'job', 'work', [] );
+		$this->jr->fill( $m );
+		$this->assertCount( 0, $this->sink->captured );
+	}
+
+	public function test_non_array_value_dropped(): void {
+		$m                  = Message::new_message();
+		$m[ Message::TYPE ] = Message::TM_STRUCT;
+		$m[ Message::FROM ] = 'firehose:consumer';
+		$m[ Message::VALUE ] = 'not an array';
+		$this->jr->fill( $m );
+		$this->assertCount( 0, $this->sink->captured );
+	}
+
+	public function test_parameters_default_to_empty_array(): void {
+		$entry = [
+			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1,
+			'm'   => [ 'type' => 'job', 'handler' => 'work' ], // no parameters key
+		];
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( [], $this->sink->captured[0][ Message::VALUE ]['parameters'] );
+	}
+
+	public function test_ts_falls_back_to_entry_ts(): void {
+		$entry = [
+			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1700000123.0,
+			'm'   => [ 'type' => 'job', 'handler' => 'work', 'parameters' => [] ],
+			// inner body has no `ts` — JobRouter should fall back to entry.ts
+		];
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( 1700000123.0, $this->sink->captured[0][ Message::VALUE ]['ts'] );
 	}
 }

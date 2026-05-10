@@ -3,6 +3,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\FlameBuilder;
 use Newspack_Event_Logger_Nodes\JobRouter;
+use Newspack_Event_Logger_Nodes\JobWorker;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
@@ -57,10 +58,18 @@ class FullPipelineTest extends TestCase {
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 4, 'rid' => 'r1', 'k' => 'init (complete)', 'duration_ms' => 5.0, 'ts' => 1 ] );
+		// Job entry from the firehose path: LogManager wraps the job body under
+		// `m` (the standard message-shape).
 		$this->topic_write( $topic, '/x', [
-			'k'       => 'job',
-			'handler' => 'echo_job',
-			'payload' => [ 'val' => 42 ],
+			'n'   => 5,
+			'rid' => 'r1',
+			'k'   => 'job',
+			'm'   => [
+				'type'       => 'job',
+				'handler'    => 'echo_job',
+				'parameters' => [ 'val' => 42 ],
+			],
+			'ts'  => 1,
 		] );
 		$this->topic_write( $topic, '/x', [ 'n' => 5, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
@@ -84,21 +93,31 @@ class FullPipelineTest extends TestCase {
 		$flame_capture = new CaptureSink();
 		$fb->set_flames_sink( $flame_capture );
 
+		// Job pipeline: JobRouter (pure forwarder) → JobWorker (executor).
+		// Production has a jobs.log Partition between them; the test wires
+		// them in-process to assert routing without the disk roundtrip.
 		$job_executions = [];
-		$jr             = new JobRouter();
-		$jr->name( 'job-router' );
-		$jr->register_handler( 'echo_job', function ( $payload ) use ( &$job_executions ) {
-			$job_executions[] = $payload;
+		$jw             = new JobWorker();
+		$jw->name( 'job-worker' );
+		$jw->set_local_handler( 'echo_job', function ( $params ) use ( &$job_executions ) {
+			$job_executions[] = $params;
 		} );
+
+		$jr = new JobRouter();
+		$jr->name( 'job-router' );
+		$jr->sink( $router );
+		$jr->connect_node( 'job-worker' );
 
 		$tee->connect_node( 'request-builder' );
 		$tee->connect_node( 'job-router' );
 
+		// Consumer must be named so JobRouter recognizes the source via FROM.
 		$consumer = new Consumer( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/r/p0" );
+		$consumer->name( 'firehose:consumer' );
 		$consumer->sink( $tee );
 		$consumer->poll();
 
-		// 1. JobRouter dispatched the 'echo_job' handler with payload.
+		// 1. JobRouter forwarded → JobWorker dispatched 'echo_job' with parameters.
 		$this->assertCount( 1, $job_executions );
 		$this->assertSame( [ 'val' => 42 ], $job_executions[0] );
 
