@@ -224,17 +224,13 @@ class JobWorker extends Node {
 		// Per-job discipline. The cleanup block runs even if the handler throws,
 		// because gc/cache cycles need to happen MOST when handlers misbehave —
 		// a crashed handler is exactly when leaks accumulate fastest.
-		// Capture $_SERVER outside begin_job_context so a suspend()/_SERVER edit
-		// failure mid-begin still has a snapshot we can restore.
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- preserving for restore.
-		$orig_server = $_SERVER;
+		$orig_server = self::begin_job_context( $handler );
 		try {
-			$this->begin_job_context( $handler );
 			( $handlers[ $handler ] )( $parameters );
 		} catch ( \Throwable $e ) {
 			Core::print_less_often( "JobWorker: handler $handler threw: " . $e->getMessage() );
 		} finally {
-			$this->end_job_context( $orig_server );
+			self::end_job_context( $orig_server );
 		}
 		++$this->jobs_executed;
 		++$this->jobs_since_cache_flush;
@@ -270,10 +266,20 @@ class JobWorker extends Node {
 	 * UNIQUE_ID, and rewrite $_SERVER paths to a /jobs/{handler} synthetic URL
 	 * so any LogManager spawned by the handler picks up job-scoped context.
 	 *
-	 * Caller MUST capture $_SERVER snapshot before invoking, and pass it to
-	 * end_job_context() in a finally block — even if begin_job_context throws.
+	 * Returns the original $_SERVER for later restoration via end_job_context().
+	 * The snapshot is taken FIRST so a partial $_SERVER edit mid-method still
+	 * leaves the caller a complete snapshot to restore from.
+	 *
+	 * Public static so handlers that nest their own job-context (e.g.
+	 * pyrobase's evtemplate, whack-cdn) can wrap sub-scopes with the same
+	 * mechanism — pair with end_job_context($orig_server) in a finally block.
+	 *
+	 * @return array<string,mixed> The original $_SERVER, to pass to end_job_context().
 	 */
-	private function begin_job_context( string $handler ): void {
+	public static function begin_job_context( string $handler ): array {
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
+		$orig_server = $_SERVER;
+
 		// LogManager::suspend() pushes the parent context onto its stack. If the
 		// class isn't loaded (test bootstrap, parent plugin not active), no-op.
 		if ( \class_exists( '\Newspack_Event_Logger_Nodes\LogManager' ) ) {
@@ -298,14 +304,18 @@ class JobWorker extends Node {
 			$_SERVER['CONTENT_LENGTH'],
 			$_SERVER['HTTP_X_A8C_REQUEST_ID']
 		);
+
+		return $orig_server;
 	}
 
 	/**
 	 * Resume the parent LogManager (if loaded) and restore the original $_SERVER.
 	 *
+	 * Public static — the symmetric pair to begin_job_context().
+	 *
 	 * @param array<string,mixed> $orig_server $_SERVER snapshot from begin_job_context().
 	 */
-	private function end_job_context( array $orig_server ): void {
+	public static function end_job_context( array $orig_server ): void {
 		if ( \class_exists( '\Newspack_Event_Logger_Nodes\LogManager' ) ) {
 			\Newspack_Event_Logger_Nodes\LogManager::resume();
 		}
