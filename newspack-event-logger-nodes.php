@@ -134,45 +134,44 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 \add_filter(
 	'newspack_nodes/topologies',
 	static function ( array $topologies ): array {
-		// Pull num_partitions from the substrate config so a single setting
-		// drives both the LogManager producer side (writes via Topic with
-		// this count) and the worker fleet (one process per partition).
-		// Hardcoding diverges the two; e.g. config=1 + topology=4 spawns 3
-		// workers that never see any traffic.
-		$config         = \class_exists( '\Newspack_Nodes\Config' )
-			? \Newspack_Nodes\Config::load_config( 'full' )
-			: [];
+		// Topology fleet is declared as data in
+		// newspack-event-logger-nodes-config.php so per-site overrides can
+		// add/remove entries without patching the plugin. This filter
+		// resolves each entry's path (relative → plugin-rooted), applies
+		// `num_partitions` defaults from substrate config so a single
+		// setting drives both LogManager (producer) and the worker fleet
+		// (consumer) — hardcoding diverges them — and honors `gated_by`
+		// so an operator-facing WP option (e.g. enable_aggregator) can
+		// keep the supervisor from spawning a topology's workers at all.
+		if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
+			return $topologies;
+		}
+		$config         = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
 
-		$topologies['firehose-workers'] = [
-			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/firehose-workers.php',
-			'num_partitions' => $num_partitions,
-			'stale_timeout'  => 60,
-		];
-		$topologies['request-workers'] = [
-			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/request-workers.php',
-			'num_partitions' => $num_partitions,
-			'stale_timeout'  => 60,
-		];
-		$topologies['job-workers'] = [
-			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/job-workers.php',
-			'num_partitions' => $num_partitions,
-			'stale_timeout'  => 60,
-		];
-		// Aggregator topology is opt-in. Without an explicit Enable Aggregator
-		// toggle, the topology was always registered and the supervisor would
-		// spawn a worker per minute even on sites with no remote servers
-		// configured. The new `enable_aggregator` option (defaults ON) gates
-		// the registration entirely so disabling it stops all aggregator
-		// worker spawning, not just the SSE pulls inside an already-running
-		// worker.
-		$enable_aggregator = (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 );
-		if ( $enable_aggregator ) {
-			$topologies['aggregator'] = [
-				'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/aggregator.php',
-				'num_partitions' => 1,
-				'stale_timeout'  => 60,
+		$defs = $config['topologies'] ?? [];
+		if ( ! \is_array( $defs ) ) {
+			return $topologies;
+		}
+
+		foreach ( $defs as $name => $def ) {
+			if ( ! \is_string( $name ) || ! \is_array( $def ) || empty( $def['topology'] ) ) {
+				continue;
+			}
+			if ( isset( $def['gated_by'] ) && \is_string( $def['gated_by'] ) ) {
+				if ( ! (int) \get_option( $def['gated_by'], 1 ) ) {
+					continue;
+				}
+			}
+			$path = (string) $def['topology'];
+			if ( '/' !== \substr( $path, 0, 1 ) ) {
+				$path = NEWSPACK_EVENT_LOGGER_NODES_DIR . \ltrim( $path, '/' );
+			}
+			$topologies[ $name ] = [
+				'topology'       => $path,
+				'num_partitions' => isset( $def['num_partitions'] ) ? (int) $def['num_partitions'] : $num_partitions,
+				'stale_timeout'  => isset( $def['stale_timeout'] ) ? (int) $def['stale_timeout'] : 60,
 			];
 		}
 		return $topologies;
