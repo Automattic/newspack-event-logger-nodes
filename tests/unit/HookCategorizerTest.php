@@ -258,12 +258,16 @@ class HookCategorizerTest extends TestCase {
 	public function test_get_registered_hooks_by_category_skips_internal_prefixes(): void {
 		global $wp_filter;
 		$wp_filter = [
-			'newspack_event_logger_nodes_internal' => (object) [ 'callbacks' => [ 'cb' ] ],
-			'newspack_nodes_internal'              => (object) [ 'callbacks' => [ 'cb' ] ],
-			'newspack_event_logger_internal'       => (object) [ 'callbacks' => [ 'cb' ] ],
-			'newspack_performance_logger_internal' => (object) [ 'callbacks' => [ 'cb' ] ],
-			'wp_ajax_my_action'                    => (object) [ 'callbacks' => [ 'cb' ] ],
-			'admin_init'                           => (object) [ 'callbacks' => [ 'cb' ] ],
+			// Underscore-style (option schemas, etc).
+			'newspack_event_logger_nodes_option_schema_core' => (object) [ 'callbacks' => [ 'cb' ] ],
+			'newspack_nodes_option_schema_core'              => (object) [ 'callbacks' => [ 'cb' ] ],
+			// Slash-style (actions, fanout filters).
+			'newspack_event_logger_nodes/log_readers'        => (object) [ 'callbacks' => [ 'cb' ] ],
+			'newspack_nodes/spawn_worker'                    => (object) [ 'callbacks' => [ 'cb' ] ],
+			'newspack_nodes/supervisor_periodic'             => (object) [ 'callbacks' => [ 'cb' ] ],
+			// Real WP hooks — must survive the filter.
+			'wp_ajax_my_action'                              => (object) [ 'callbacks' => [ 'cb' ] ],
+			'admin_init'                                     => (object) [ 'callbacks' => [ 'cb' ] ],
 		];
 
 		$grouped = HookCategorizer::get_registered_hooks_by_category();
@@ -274,14 +278,42 @@ class HookCategorizerTest extends TestCase {
 			$all_hooks = \array_merge( $all_hooks, $hooks );
 		}
 
-		$this->assertNotContains( 'newspack_event_logger_nodes_internal', $all_hooks );
-		$this->assertNotContains( 'newspack_nodes_internal', $all_hooks );
-		$this->assertNotContains( 'newspack_event_logger_internal', $all_hooks );
-		$this->assertNotContains( 'newspack_performance_logger_internal', $all_hooks );
+		$this->assertNotContains( 'newspack_event_logger_nodes_option_schema_core', $all_hooks );
+		$this->assertNotContains( 'newspack_nodes_option_schema_core', $all_hooks );
+		$this->assertNotContains( 'newspack_event_logger_nodes/log_readers', $all_hooks );
+		$this->assertNotContains( 'newspack_nodes/spawn_worker', $all_hooks );
+		$this->assertNotContains( 'newspack_nodes/supervisor_periodic', $all_hooks );
 		$this->assertContains( 'wp_ajax_my_action', $all_hooks );
 		$this->assertContains( 'admin_init', $all_hooks );
 
 		$wp_filter = [];
+	}
+
+	// ── is_internal direct ──────────────────────────────────────────────────
+
+	public function test_is_internal_detects_own_prefixes(): void {
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_event_logger_nodes_option_schema_core' ) );
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_event_logger_nodes/log_readers' ) );
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes_option_schema_core' ) );
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes/spawn_worker' ) );
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes/supervisor' ) );
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes/topologies' ) );
+
+		// Real WP hooks — false.
+		$this->assertFalse( HookCategorizer::is_internal( 'admin_init' ) );
+		$this->assertFalse( HookCategorizer::is_internal( 'the_content' ) );
+		$this->assertFalse( HookCategorizer::is_internal( 'wp_ajax_my_action' ) );
+
+		// Activate/deactivate hooks for our plugins — these are WP standard
+		// lifecycle hooks, not our re-entry-prone filters, and they fire
+		// once at activation so operators can still pick them if they want
+		// to time the activation handler. Out of scope for is_internal.
+		$this->assertFalse( HookCategorizer::is_internal( 'activate_newspack-nodes/newspack-nodes.php' ) );
+		$this->assertFalse( HookCategorizer::is_internal( 'deactivate_newspack-event-logger-nodes/newspack-event-logger-nodes.php' ) );
+
+		// Names that look like they prefix-match but don't.
+		$this->assertFalse( HookCategorizer::is_internal( 'newspack_nodessomething' ) );
+		$this->assertFalse( HookCategorizer::is_internal( 'newspack_node_loaded' ) );
 	}
 
 	// ── Constants ───────────────────────────────────────────────────────────

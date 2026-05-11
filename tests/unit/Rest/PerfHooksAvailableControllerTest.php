@@ -173,6 +173,35 @@ class PerfHooksAvailableControllerTest extends TestCase {
 		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
 	}
 
+	public function test_get_available_hooks_excludes_internal_prefixes(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
+		global $wp_actions, $wp_filter;
+		$wp_actions = [
+			'newspack_nodes/spawn_worker'              => 3,
+			'newspack_nodes/supervisor_periodic'       => 12,
+			'newspack_event_logger_nodes/log_readers'  => 1,
+			'init'                                     => 1,
+		];
+		$wp_filter  = [
+			'newspack_nodes_option_schema_core'        => new class { public array $callbacks = [ [ 'cb' => 'x' ] ]; },
+			'newspack_event_logger_nodes_custom_colors' => new class { public array $callbacks = [ [ 'cb' => 'x' ] ]; },
+			'the_content'                               => new class { public array $callbacks = [ [ 'cb' => 'x' ] ]; },
+		];
+
+		$body  = ( new PerfHooksAvailableController() )->get_available_hooks( new \WP_REST_Request() )->get_data();
+		$names = \array_column( $body['hooks'], 'name' );
+
+		$this->assertNotContains( 'newspack_nodes/spawn_worker', $names );
+		$this->assertNotContains( 'newspack_nodes/supervisor_periodic', $names );
+		$this->assertNotContains( 'newspack_event_logger_nodes/log_readers', $names );
+		$this->assertNotContains( 'newspack_nodes_option_schema_core', $names );
+		$this->assertNotContains( 'newspack_event_logger_nodes_custom_colors', $names );
+
+		// Real WP hooks pass through.
+		$this->assertContains( 'init', $names );
+		$this->assertContains( 'the_content', $names );
+	}
+
 	public function test_get_available_hooks_returns_sorted_by_name(): void {
 		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
 		global $wp_actions, $wp_filter;

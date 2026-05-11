@@ -203,6 +203,40 @@ class HookCategorizer {
 	}
 
 	/**
+	 * Is this hook one of our own internal filters/actions?
+	 *
+	 * Used everywhere a list of hooks is presented to the operator or
+	 * instrumented by `Core::hook_start`. Nodes uses two naming styles —
+	 * slash for actions (`newspack_nodes/spawn_worker`,
+	 * `newspack_event_logger_nodes/log_readers`) and underscore for
+	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
+	 * prefix list covers both.
+	 *
+	 * The runtime concern is re-entry: binding `hook_start`/`hook_complete`
+	 * to `newspack_nodes/config` causes a loop via `Config::load_config`
+	 * during LogManager bootstrap. The UI concern is noise: even if it
+	 * worked, instrumenting our own filters is never an answer to a real
+	 * "where is time going" question.
+	 *
+	 * @param string $hook_name Hook to test.
+	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
+	 */
+	public static function is_internal( string $hook_name ): bool {
+		static $prefixes = [
+			'newspack_event_logger_nodes_',
+			'newspack_event_logger_nodes/',
+			'newspack_nodes_',
+			'newspack_nodes/',
+		];
+		foreach ( $prefixes as $prefix ) {
+			if ( \str_starts_with( $hook_name, $prefix ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Get all registered hooks from WordPress.
 	 *
 	 * @return array Array of hook names that have callbacks attached.
@@ -253,13 +287,7 @@ class HookCategorizer {
 		// prefixes) and used to cause a bootstrap reentry loop, so there's no
 		// reason to surface them in the picker at all.
 		foreach ( $hooks as $hook ) {
-			if ( \str_starts_with( $hook, 'newspack_event_logger_nodes_' )
-				|| \str_starts_with( $hook, 'newspack_nodes_' )
-				|| \str_starts_with( $hook, 'newspack_event_logger_' )
-				|| \str_starts_with( $hook, 'newspack_performance_logger_' )
-				|| \str_starts_with( $hook, 'newspack_event_aggregator_' )
-				|| \str_starts_with( $hook, 'newspack_performance_workers_' )
-				|| \str_starts_with( $hook, 'newspack_performance_aggregator_' ) ) {
+			if ( self::is_internal( $hook ) ) {
 				continue;
 			}
 			$category                = self::categorize( $hook );
