@@ -31,12 +31,40 @@ tests/run-coverage.sh
 
 # Lint.
 npm run lint:php
+npm run lint:js
 
 # Build dashboards.
 npm run build
 ```
 
 The plugin is shipped as a standard WordPress plugin; how it's deployed (containers, bind mounts, rsync, etc.) is environment-specific and lives outside this repo.
+
+## Versioning & Release
+
+The version appears in three places: the `Version:` header in `newspack-event-logger-nodes.php`, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` PHP constant in the same file, and the `"version"` field in `package.json`. Do NOT edit these by hand — `tools/bump-event-logger-nodes-version.sh` (in `dndocker/`) rewrites all three atomically and refuses to bump to a version that's already current.
+
+```bash
+# Bump version (from dndocker root).
+dndocker/tools/bump-event-logger-nodes-version.sh <version>
+
+# Release workflow:
+# 1. Update CHANGELOG.md with new version and changes (use Keep-a-Changelog format).
+# 2. Bump version across plugin header + constant + package.json:
+dndocker/tools/bump-event-logger-nodes-version.sh <version>
+# 3. Commit the changelog entry + version bump together (e.g. `chore: release v<version>`).
+# 4. Build the release zip:
+./build-release.sh           # outputs to release/newspack-event-logger-nodes.zip
+# 5. Tag, push, and create GitHub release with the zip:
+git tag v<version>
+git push origin main --tags
+gh release create v<version> release/newspack-event-logger-nodes.zip --title "v<version>" --notes "changelog here"
+```
+
+`build-release.sh` runs `composer install --no-dev --optimize-autoloader`, then `npm run build` (the React dashboards must ship pre-built), then rsyncs the plugin into `release/newspack-event-logger-nodes/` minus development artifacts (`src/`, `tests/`, `node_modules/`, `composer.{json,lock}`, `package*.json`, `phpcs.xml.dist`, `build-release.sh`, AppleDouble sidecars, etc.) and zips it. The zip contains the plugin directory at root so `wp plugin install --force --activate <url>.zip` works as-is.
+
+**Note on coupling**: this plugin's version is not tied to `newspack-nodes`'s — they release independently. If a release depends on a specific runtime version, call it out in the CHANGELOG entry; consider bumping the `newspack-nodes` requirement in the plugin header (`Requires Plugins:` once we use it).
+
+**Why three locations?** Plugin header is what WordPress shows in the admin; the PHP constant is what the runtime + dashboards' cache-busting read; `package.json` is what npm tooling reads. The bump script is the single source of truth — drift between any two of them is a real bug we've shipped before.
 
 ## Architecture Decisions
 
