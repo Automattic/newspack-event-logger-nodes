@@ -67,6 +67,16 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	$stream_merger->set_verify_ssl( $verify_ssl );
 	$stream_merger->set_require_https( $require_https );
 
+	// Register each enabled remote from the ServerRegistry. add_remote(id)
+	// reads url/auth/etc. from the registry entry. Topology re-runs on
+	// supervisor restart (ServersController::request_supervisor_restart fires
+	// on every add/update/delete), so the in-memory remote set stays in sync
+	// with the operator-visible server list.
+	$registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
+	foreach ( $registry->get_enabled() as $server_id => $entry ) {
+		$stream_merger->add_remote( (string) $server_id );
+	}
+
 	return [
 		'partition'      => $partition,
 		'firehose_topic' => $firehose_topic,
