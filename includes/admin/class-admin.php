@@ -12,9 +12,10 @@
  *   - log_memory / flush_every_line
  *
  * Substrate-level options (base_directory, partitioning, memcache_servers,
- * enable_workers, aggregator_servers) live on `\Newspack_Nodes\Admin\Admin`
- * under the `newspack_nodes_*` prefix. This class may READ substrate values
- * via `\Newspack_Nodes\Config` but must NOT WRITE them.
+ * enable_workers) live on `\Newspack_Nodes\Admin\Admin` under the
+ * `newspack_nodes_*` prefix. This class may READ substrate values via
+ * `\Newspack_Nodes\Config` but must NOT WRITE them. The aggregator spoke
+ * list (`aggregator_servers`) is application-owned and lives here.
  *
  * Settings group / option-prefix:
  *   - Settings group:     `newspack_event_logger_nodes_options_group`
@@ -81,9 +82,10 @@ class Admin {
 	 * Application-level option names cleared by `handle_reset_settings()`.
 	 *
 	 * Substrate-level options (base_directory, num_partitions, num_segments,
-	 * segment_size, max_lifespan, memcache_servers, enable_workers,
-	 * aggregator_servers) live on `\Newspack_Nodes\Admin\Admin` and reset via
-	 * its own form. Application admin only owns the keys below.
+	 * segment_size, max_lifespan, memcache_servers, enable_workers) live on
+	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. Application
+	 * admin only owns the keys below — including the aggregator spoke list
+	 * (`aggregator_servers`).
 	 *
 	 * Kept on the class so child plugins can extend via the `…_reset_options`
 	 * filter without re-listing these.
@@ -102,6 +104,7 @@ class Admin {
 		'newspack_event_logger_nodes_enable_jobs',
 		// Aggregator.
 		'newspack_event_logger_nodes_enable_aggregator',
+		'newspack_event_logger_nodes_aggregator_servers',
 		// Performance Workers (application-side).
 		'newspack_event_logger_nodes_significant_events',
 		'newspack_event_logger_nodes_auto_disable_threshold',
@@ -237,10 +240,10 @@ class Admin {
 	 * Register settings with the WP Settings API.
 	 *
 	 * Wires application-level options ONLY. Substrate options (base_directory,
-	 * partitioning, memcache_servers, enable_workers, aggregator_servers) are
-	 * registered by `\Newspack_Nodes\Admin\Admin` under the `newspack_nodes`
-	 * group. Child plugins extend by hooking `admin_init` AFTER this runs and
-	 * calling `add_settings_section/field()` on `self::SETTINGS_PAGE`.
+	 * partitioning, memcache_servers, enable_workers) are registered by
+	 * `\Newspack_Nodes\Admin\Admin` under the `newspack_nodes` group. Child
+	 * plugins extend by hooking `admin_init` AFTER this runs and calling
+	 * `add_settings_section/field()` on `self::SETTINGS_PAGE`.
 	 */
 	public function register_settings(): void {
 		// Boolean toggle.
@@ -426,6 +429,20 @@ class Admin {
 			[ 'sanitize_callback' => 'absint' ]
 		);
 
+		// Aggregator spoke list. Written by ServerRegistry through the
+		// Remote Servers REST CRUD, not the options form; register here
+		// so it's part of the app's option namespace (reset flow, allowed-
+		// options list, sanitization stays put when an external dispatch
+		// goes through options.php).
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_aggregator_servers',
+			[
+				'sanitize_callback' => [ $this, 'sanitize_aggregator_servers' ],
+				'autoload'          => false,
+			]
+		);
+
 		\add_settings_section(
 			'newspack_event_logger_nodes_aggregator_section',
 			\__( 'Remote Servers', 'newspack-event-logger-nodes' ),
@@ -608,6 +625,42 @@ class Admin {
 			return '';
 		}
 		return $f;
+	}
+
+	/**
+	 * Sanitize the `aggregator_servers` option.
+	 *
+	 * Stored as `[ server_id => [ url, auth_username, auth_password, enabled ] ]`.
+	 * URL must be HTTPS. Non-array input becomes an empty array.
+	 *
+	 * @param mixed $value Aggregator-servers map.
+	 * @return array<string,array<string,mixed>> Sanitized map.
+	 */
+	public function sanitize_aggregator_servers( $value ): array {
+		if ( ! \is_array( $value ) ) {
+			return [];
+		}
+		$result = [];
+		foreach ( $value as $server_id => $config ) {
+			if ( ! \is_array( $config ) ) {
+				continue;
+			}
+			$server_id = \sanitize_text_field( (string) $server_id );
+			if ( '' === $server_id ) {
+				continue;
+			}
+			$url = $config['url'] ?? '';
+			if ( ! \is_string( $url ) || 0 !== \strpos( $url, 'https://' ) ) {
+				continue;
+			}
+			$result[ $server_id ] = [
+				'url'           => \esc_url_raw( $url ),
+				'auth_username' => \sanitize_text_field( (string) ( $config['auth_username'] ?? '' ) ),
+				'auth_password' => \sanitize_text_field( (string) ( $config['auth_password'] ?? '' ) ),
+				'enabled'       => (bool) ( $config['enabled'] ?? true ),
+			];
+		}
+		return $result;
 	}
 
 	// -- Section callbacks --------------------------------------------------

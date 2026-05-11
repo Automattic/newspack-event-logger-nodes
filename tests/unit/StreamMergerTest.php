@@ -778,7 +778,7 @@ class StreamMergerTest extends TestCase {
 	public function test_add_remote_registry_path_skips_when_no_entry(): void {
 		// Without a URL argument, add_remote consults ServerRegistry. With no
 		// option set the registry returns null → add_remote logs + returns.
-		$GLOBALS['_wp_options']['newspack_nodes_aggregator_servers'] = [];
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [];
 
 		$sm = $this->make_merger();
 		$sm->add_remote( 'absent-server' );
@@ -786,7 +786,7 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_add_remote_registry_path_skips_when_disabled(): void {
-		$GLOBALS['_wp_options']['newspack_nodes_aggregator_servers'] = [
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
 			'site-disabled' => [
 				'url'     => 'https://disabled.example.com',
 				'enabled' => false,
