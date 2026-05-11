@@ -313,7 +313,6 @@ class AdminTest extends TestCase {
 			'newspack_event_logger_nodes_segment_size',
 			'newspack_event_logger_nodes_max_lifespan',
 			'newspack_event_logger_nodes_memcache_servers',
-			'newspack_event_logger_nodes_enable_workers',
 		];
 		foreach ( $substrate_options as $option ) {
 			$this->assertArrayNotHasKey(

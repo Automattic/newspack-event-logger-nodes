@@ -6,7 +6,8 @@
  * a hub?" Fail-closed: missing config, non-strict-true `enable_workers`,
  * or disabled aggregator all mean "no". Same polarity SettingsSync and
  * AutoTuner share — diverging is how legacy 2.4.42 silently turned spokes
- * into hubs.
+ * into hubs. `enable_workers` is application-owned (lives in the app's
+ * Config, not the substrate's).
  *
  * @package Newspack_Event_Logger_Nodes
  */

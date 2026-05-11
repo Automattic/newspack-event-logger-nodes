@@ -32,6 +32,13 @@ return [
 	'enable_logging'         => true,
 	'enable_jobs'            => true,
 
+	// ── Hub designation ────────────────────────────────────────────────────
+	// Strict `=== true` is the hub flag. Gates `Hub::is_active()` (SettingsSync
+	// fan-out + AutoTuner remote queue) AND the `request-workers` topology
+	// via `gated_by` (so spokes skip FlameBuilder over data the hub will
+	// rebuild anyway). Default-off so fresh installs are spokes.
+	'enable_workers'         => false,
+
 	// ── Aggregator spoke list ─────────────────────────────────────────────
 	// Per-spoke `{ url, auth_username, auth_password, enabled }`. Defaults
 	// empty (no spokes configured = standalone site). Operators usually
@@ -96,6 +103,10 @@ return [
 		'request-workers'  => [
 			'topology'      => 'topologies/request-workers.php',
 			'stale_timeout' => 60,
+			// Gate on the hub designation so spokes don't run their own
+			// FlameBuilder over data the hub will rebuild anyway. Matches
+			// the legacy plugin's `enable_workers => false` semantics.
+			'gated_by'      => 'newspack_event_logger_nodes_enable_workers',
 		],
 		'job-workers'      => [
 			'topology'      => 'topologies/job-workers.php',

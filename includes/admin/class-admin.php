@@ -102,6 +102,8 @@ class Admin {
 		'newspack_event_logger_nodes_custom_events',
 		// Jobs.
 		'newspack_event_logger_nodes_enable_jobs',
+		// Performance workers (hub designation).
+		'newspack_event_logger_nodes_enable_workers',
 		// Aggregator.
 		'newspack_event_logger_nodes_enable_aggregator',
 		'newspack_event_logger_nodes_aggregator_servers',
@@ -347,30 +349,25 @@ class Admin {
 		);
 
 		// -- Workers section ------------------------------------------------
-		// `enable_workers` lives on the substrate Admin (`newspack_nodes_*`).
-		// Application admin owns only the auto-tuning + significant-events
-		// knobs, which are application-level instrumentation policy.
+		// `enable_workers` lives here (application). It gates the
+		// `request-workers` topology (so spokes skip FlameBuilder) and the
+		// `Hub::is_active()` polarity check (so spokes don't fan settings /
+		// auto-tune changes out to remotes). Matches legacy semantics:
+		// spokes set `enable_workers => false`; hubs explicitly set `true`.
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_enable_workers',
+			[
+				'sanitize_callback' => 'absint',
+				'autoload'          => true,
+			]
+		);
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_significant_events',
 			[
 				'sanitize_callback' => [ $this, 'sanitize_array_strings' ],
 				'autoload'          => false,
-			]
-		);
-		// `newspack_nodes_enable_workers` is the substrate's option name, but
-		// only the application reads it (SettingsSync, AutoTune, StatusController)
-		// — the substrate doesn't gate worker spawning on it. Registering it on
-		// THIS settings group lets the Performance Workers section render the
-		// checkbox alongside Auto-Tune (matching the legacy plugin's UI). The
-		// substrate's Admin also registers it on its own group, so either page
-		// can save the same option.
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_nodes_enable_workers',
-			[
-				'sanitize_callback' => 'absint',
-				'autoload'          => true,
 			]
 		);
 		\register_setting(
@@ -756,14 +753,16 @@ class Admin {
 	}
 
 	public function enable_workers_callback(): void {
-		// Reads/writes `newspack_nodes_enable_workers` — same option the
-		// substrate's Admin page exposes. Either page can save it.
+		// Hub designation: gates `Hub::is_active()` (SettingsSync fan-out
+		// + AutoTuner remote queue) AND the `request-workers` topology
+		// (so spokes skip FlameBuilder). Matches the legacy plugin's
+		// `enable_workers` semantics.
 		$config  = Config::load_config( 'full' );
-		$enabled = \get_option( 'newspack_nodes_enable_workers', $config['enable_workers'] ?? 1 );
+		$enabled = \get_option( 'newspack_event_logger_nodes_enable_workers', $config['enable_workers'] ?? 0 );
 		?>
-		<input type="hidden" name="newspack_nodes_enable_workers" value="0" />
-		<input type="checkbox" id="enable_workers" name="newspack_nodes_enable_workers" value="1" <?php \checked( 1, $enabled ); ?> />
-		<label for="enable_workers"><?php \esc_html_e( 'Enable RequestBuilder and FlameBuilder', 'newspack-event-logger-nodes' ); ?></label>
+		<input type="hidden" name="newspack_event_logger_nodes_enable_workers" value="0" />
+		<input type="checkbox" id="enable_workers" name="newspack_event_logger_nodes_enable_workers" value="1" <?php \checked( 1, $enabled ); ?> />
+		<label for="enable_workers"><?php \esc_html_e( 'Enable Performance Workers (RequestBuilder + FlameBuilder) and hub-mode settings fan-out', 'newspack-event-logger-nodes' ); ?></label>
 		<?php
 	}
 
