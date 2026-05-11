@@ -77,6 +77,12 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 		$stream_merger->add_remote( (string) $server_id );
 	}
 
+	// Hitchhike on _router's TIMER event so StreamMerger::tick() fires every
+	// ~5s. tick() drives maybe_send_heartbeat() — without it, the spoke's
+	// aggregator-slot TTL (30s) expires and the spoke closes the SSE
+	// connection cleanly. It also drives check_stale() and maybe_commit().
+	$stream_merger->start_periodic_tick();
+
 	return [
 		'partition'      => $partition,
 		'firehose_topic' => $firehose_topic,
