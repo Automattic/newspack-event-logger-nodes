@@ -32,9 +32,10 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 #### Adding a job handler
 
 1. Define the callable. Per-job try/catch is handled by JobWorker; you don't need to wrap.
-2. Filter onto the right list:
-   - `newspack_nodes/job_handlers` — runs locally on every node (spoke and hub). Use for spoke-side work.
-   - `newspack_nodes/remote_job_handlers` — runs only on the hub, after StreamMerger rewrites `k:"job"` → `k:"remote_job"` for ingested-from-spoke lines.
+2. Filter onto the right list (a handler can register on either or both):
+   - `newspack_nodes/job_handlers` — dispatched for `k:"job"` entries on every node's own JobWorker. Use when the work should run locally on the node that produced the entry.
+   - `newspack_nodes/remote_job_handlers` — dispatched on the hub for `k:"remote_job"` entries (the rewritten product of spoke-aggregated `k:"job"` lines). Use when the work should run centrally on the hub after aggregation.
+   Registering under both is the right call when local + aggregated copies need handling under the same name but with potentially different logic (e.g. local handler runs unconditionally, hub handler filters by a per-entry attribute).
 3. Validate inputs at the handler boundary; the substrate rate-limits you on size (10MB cap per job) but doesn't validate content.
 4. **Size discipline**: if the payload could exceed 4KB, write via `JobIntake::queue($handler_name, $payload)` instead of LogManager. JobIntake is the auto-locked large-write path.
 

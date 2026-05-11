@@ -123,7 +123,7 @@ If clients reconnect every few seconds: the SSE stream might be timing out due t
 
 ## Hub / spoke routing
 
-A node is a hub if `enable_workers === true` (strict). Hubs pull remote firehoses via StreamMerger and rewrite ingested `k:"job"` lines to `k:"remote_job"` so spoke-side handlers don't double-execute on the hub.
+A node is a hub if `enable_workers === true` (strict). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally pulls remote firehoses via StreamMerger; the `newspack_nodes/aggregator_ingest_line` filter rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map.
 
 Diagnostic flow:
 
@@ -151,7 +151,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **Worker positions are stale on the workers dashboard.** Consumer publishes its position to memcache every ~10 seconds via `np:pos:{path}:p{N}`. If the dashboard shows old positions, either memcache is down (fail-soft, falls back to disk offsetlog) or the consumer process is wedged (heartbeat would also be stale).
 
-**Job handler appears not to fire.** Check the registration filter (`job_handlers` for spoke-side, `remote_job_handlers` for hub-only). Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at 4KB and the handler saw `{"truncated": true}`. Use `JobIntake::queue()` instead.
+**Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at 4KB and the handler saw `{"truncated": true}`. Use `JobIntake::queue()` instead.
 
 **SettingsSync silently doing nothing.** The `enable_workers === true` (strict) gate means missing or `"true"` (string) values count as spoke, no fanout. Verify the option value exactly.
 

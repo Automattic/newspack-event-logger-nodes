@@ -5,14 +5,17 @@
  * Consumes normalized job entries (from jobs.log, written by JobRouter) and
  * dispatches to registered handlers.
  *
- * Two handler maps:
- *   - local_handlers  — for entries with type='job'        (every node)
- *   - remote_handlers — for entries with type='remote_job' (hub only — set
- *                       by StreamMerger rewriting `k:"job"` → `k:"remote_job"`
- *                       on lines ingested from spokes via SSE)
+ * Two handler maps, registered independently:
+ *   - local_handlers  — for entries with type='job'        (every node's own
+ *                       JobWorker dispatches here)
+ *   - remote_handlers — for entries with type='remote_job' (hub's JobWorker
+ *                       dispatches here after StreamMerger rewrites incoming
+ *                       spoke `k:"job"` lines to `k:"remote_job"`)
  *
- * A single callable can be registered on both if a handler should run in
- * both contexts (e.g. evTemplate handles spoke-side AND hub-side jobs).
+ * A handler can register on either or both. Registering on both is the
+ * pattern for jobs that should run locally on every node AND have a
+ * (possibly different) handler invoked centrally on the hub for entries
+ * aggregated from spokes — same handler name, two independent callables.
  *
  * Plugins typically register via WP filters at plugin load:
  *   add_filter( 'newspack_nodes/job_handlers',        ... );
@@ -270,9 +273,9 @@ class JobWorker extends Node {
 	 * The snapshot is taken FIRST so a partial $_SERVER edit mid-method still
 	 * leaves the caller a complete snapshot to restore from.
 	 *
-	 * Public static so handlers that nest their own job-context (e.g.
-	 * pyrobase's evtemplate, whack-cdn) can wrap sub-scopes with the same
-	 * mechanism — pair with end_job_context($orig_server) in a finally block.
+	 * Public static so handlers that nest their own job-context can wrap
+	 * sub-scopes with the same mechanism — pair with end_job_context($orig_server)
+	 * in a finally block.
 	 *
 	 * @return array<string,mixed> The original $_SERVER, to pass to end_job_context().
 	 */

@@ -76,7 +76,7 @@ For migration context (what this plugin replaces), see [MIGRATION.md](MIGRATION.
 |  Topic(local firehose.log)  -- KEY-routed ->  Partition pN               |
 |                                                                          |
 |  filter newspack_nodes/aggregator_ingest_line:                           |
-|     k:"job"  ->  k:"remote_job"   (so spoke jobs do not double-execute)  |
+|     k:"job"  ->  k:"remote_job"   (separate handler map on the hub)      |
 +--------------------------------------------------------------------------+
 ```
 
@@ -434,11 +434,14 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
 
 **`k:"job"` vs `k:"remote_job"`**:
 
-- Spokes write `k:"job"`. Local JobWorker dispatches via `newspack_nodes/job_handlers` filter on the spoke itself.
-- Hub's StreamMerger applies `newspack_nodes/aggregator_ingest_line` filter to ingested lines; the filter rewrites `k:"job"` -> `k:"remote_job"` for entries from spokes.
-- Hub's JobWorker dispatches `k:"remote_job"` via `newspack_nodes/remote_job_handlers` (a SEPARATE filter from `job_handlers`).
-- Hub-only handlers (Cloudflare CDN purges, cross-publication coordination) register on `remote_job_handlers` only.
-- Spoke-side handlers register on `job_handlers`. They run on the spoke; the rewrite + separate filter prevents the hub from re-executing them.
+Nodes only ever write `k:"job"` to their own firehose — there's no "spoke vs hub" distinction at write time. The distinction emerges at dispatch:
+
+- Every node's JobWorker tails its own `jobs.log` and dispatches `k:"job"` entries against the `newspack_nodes/job_handlers` filter. This runs locally on every node, hub or spoke.
+- The hub additionally runs StreamMerger, which pulls each enabled spoke's firehose. StreamMerger applies the `newspack_nodes/aggregator_ingest_line` filter, which rewrites the ingested `k:"job"` lines to `k:"remote_job"` before they reach the hub's firehose. The hub's JobWorker then dispatches those entries against `newspack_nodes/remote_job_handlers`.
+- The two filters are independent registrations — a job type registers under whichever side(s) should run it:
+  - **`job_handlers` only** → runs locally on every node. The hub's view of spoke-aggregated copies (as `remote_job`) is ignored.
+  - **`remote_job_handlers` only** → only the hub acts. Spokes write the entries but don't act on them; the hub does the centralized work after aggregation.
+  - **Both** → handler runs locally on every node, AND runs on the hub for entries aggregated from spokes. Useful when a job needs local + centralized handling under the same name (the two handler implementations can differ — e.g., one filters by local attributes, the other dispatches differently).
 
 The rewrite filter is NOT auto-loaded. Plugins that don't register the filter (because they're spokes, not hubs) get raw `k:"job"` entries through and dispatch locally — exactly what spokes want.
 
