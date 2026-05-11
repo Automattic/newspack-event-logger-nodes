@@ -68,7 +68,9 @@ class PerfUrlsControllerTest extends TestCase {
 	 */
 	private function write_request_to_partition( int $partition, string $rid, string $url_hash, array $body ): void {
 		$dir = "{$this->tmp}/logs/requests.log/p{$partition}";
-		\mkdir( $dir, 0755, true );
+		if ( ! \is_dir( $dir ) ) {
+			\mkdir( $dir, 0755, true );
+		}
 
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
