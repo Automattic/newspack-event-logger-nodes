@@ -285,6 +285,74 @@ class ServersControllerTest extends TestCase {
 		$this->assertNull( ServerRegistry::get_instance()->get( 'spoke1' ) );
 	}
 
+	public function test_test_connection_passes_sslverify_true_by_default(): void {
+		\update_option(
+			ServerRegistry::OPTION_KEY,
+			[
+				'svc' => [
+					'url'     => 'https://svc.example/',
+					'enabled' => true,
+				],
+			]
+		);
+		ServerRegistry::get_instance()->reset_cache();
+
+		$GLOBALS['_wp_test_remote_gets'] = [];
+		$GLOBALS['_wp_test_remote_responses']['https://svc.example/wp-json/newspack-nodes/v1/discovery'] = [
+			'response' => [ 'code' => 200 ],
+			'body'     => \json_encode( [ 'registered_hooks' => [], 'custom_events' => [] ] ),
+		];
+
+		$ctrl = new ServersController();
+		$req  = new \WP_REST_Request();
+		$req->set_param( 'id', 'svc' );
+		$ctrl->test_connection( $req );
+
+		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_gets'] );
+		$call = \end( $GLOBALS['_wp_test_remote_gets'] );
+		$this->assertSame( 'https://svc.example/wp-json/newspack-nodes/v1/discovery', $call['url'] );
+		// File-overlay default is true; verify pass-through.
+		$this->assertTrue( $call['args']['sslverify'] );
+	}
+
+	public function test_test_connection_passes_sslverify_false_when_config_says_so(): void {
+		// LOCAL_NEWSPACK_NODES_CONF overlays the bundled sample. aggregator_verify_ssl
+		// is config-file-only (not in the schema), so this is the canonical way
+		// for an operator to disable peer/host verification.
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . \dirname( __DIR__, 2 ) . '/configs/aggregator-ssl-off.php' );
+		Config::reset();
+
+		try {
+			\update_option(
+				ServerRegistry::OPTION_KEY,
+				[
+					'svc' => [
+						'url'     => 'https://svc.example/',
+						'enabled' => true,
+					],
+				]
+			);
+			ServerRegistry::get_instance()->reset_cache();
+
+			$GLOBALS['_wp_test_remote_gets'] = [];
+			$GLOBALS['_wp_test_remote_responses']['https://svc.example/wp-json/newspack-nodes/v1/discovery'] = [
+				'response' => [ 'code' => 200 ],
+				'body'     => \json_encode( [ 'registered_hooks' => [], 'custom_events' => [] ] ),
+			];
+
+			$ctrl = new ServersController();
+			$req  = new \WP_REST_Request();
+			$req->set_param( 'id', 'svc' );
+			$ctrl->test_connection( $req );
+
+			$call = \end( $GLOBALS['_wp_test_remote_gets'] );
+			$this->assertFalse( $call['args']['sslverify'] );
+		} finally {
+			\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
+			Config::reset();
+		}
+	}
+
 	public function test_test_connection_returns_404_for_unknown_id(): void {
 		$ctrl = new ServersController();
 		$req  = new \WP_REST_Request();

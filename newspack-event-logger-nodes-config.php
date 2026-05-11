@@ -23,7 +23,7 @@ return [
 	'remote_num_segments'         => 2,
 	'remote_segment_size'         => 64 * 1024 * 1024,
 	'remote_max_lifespan'         => 3600,
-	'aggregator_verify_ssl'       => false,
+	'aggregator_verify_ssl'       => true,
 	'aggregator_allow_http'       => false,
 
 	// URL filtering — skip_urls always wins over log_urls.

@@ -21,6 +21,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 \defined( 'ABSPATH' ) || exit;
 
+use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
 
 class ServersController extends PerformanceControllerBase {
@@ -231,7 +232,12 @@ class ServersController extends PerformanceControllerBase {
 			return $this->not_found_error( "Server not found: {$id}" );
 		}
 
-		$config       = self::load_config();
+		// Application Config — `self::load_config()` (PerformanceControllerBase)
+		// only sees substrate keys, so aggregator_verify_ssl / aggregator_allow_http
+		// from the application config file would never reach this call. The
+		// settings UI's "Test" probe has to honour the same SSL policy as the
+		// running StreamMerger or operators get false negatives.
+		$config       = Config::load_config( 'full' );
 		$verify_ssl   = ! isset( $config['aggregator_verify_ssl'] ) || (bool) $config['aggregator_verify_ssl'];
 		$url          = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/discovery';
 		$request_args = [
