@@ -541,16 +541,19 @@ class WorkersController extends PerformanceControllerBase {
 	 * @return array{seg:int, off:int}|null
 	 */
 	private function get_live_position( string $type, int $partition, string $input_log ): ?array {
-		// Memcache key is `np:pos:{source_base_dir}:p{N}` — the same path
-		// Consumer writes to from its source_base_dir. Both sides derive it
-		// from {base_directory}/{input_log}. Goes through the controller's
-		// Cache_Interface so tests inject FakeMemcached transparently; the
-		// production `Memcached_Cache` and Consumer's direct `\Memcached`
-		// both hit the same physical server, so keys stay coherent.
+		// Memcache key is `np:pos:{hostname}:{source_base_dir}:p{N}` — the
+		// same path Consumer writes to. Hostname-prefixed so shared-memcache
+		// deployments don't collide across hosts (render1/render2/hub all
+		// have the same on-disk `{base_dir}` path). Goes through the
+		// controller's Cache_Interface so tests inject FakeMemcached
+		// transparently; the production `Memcached_Cache` and Consumer's
+		// direct `\Memcached` both hit the same physical server, so keys
+		// stay coherent.
 		$config      = self::load_config();
 		$base_dir    = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$source_path = "{$base_dir}/logs/{$input_log}";
-		$cache_key   = "np:pos:{$source_path}:p{$partition}";
+		$host        = \gethostname() ?: 'unknown';
+		$cache_key   = "np:pos:{$host}:{$source_path}:p{$partition}";
 
 		$cache = $this->resolve_cache();
 		if ( $cache->is_available() ) {

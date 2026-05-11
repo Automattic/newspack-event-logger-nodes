@@ -79,14 +79,15 @@ class WorkersControllerRealShapeTest extends TestCase {
 
 	public function test_workers_resolve_live_position_when_cache_has_one(): void {
 		// Cursor lives in memcache keyed by the source path Consumer writes to:
-		// `np:pos:{base_directory}/logs/{input_log}:p{N}`. Test writes through
-		// the injected Cache_Interface (FakeMemcached); controller reads via
-		// the same interface.
+		// `np:pos:{hostname}:{base_directory}/logs/{input_log}:p{N}`. Test
+		// writes through the injected Cache_Interface (FakeMemcached);
+		// controller reads via the same interface.
 		$config      = \Newspack_Nodes\Config::load_config( 'full' );
 		$base_dir    = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$source_path = "{$base_dir}/logs/firehose.log";
+		$host        = \gethostname() ?: 'unknown';
 		$this->cache->set(
-			"np:pos:{$source_path}:p0",
+			"np:pos:{$host}:{$source_path}:p0",
 			[ 'seg' => 9, 'off' => 4096, 'ts' => \microtime( true ) ],
 			60
 		);
