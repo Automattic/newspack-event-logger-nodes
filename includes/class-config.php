@@ -62,6 +62,7 @@ class Config {
 			'enable_logging'              => 'bool',
 			'enable_jobs'                 => 'bool',
 			'enable_workers'              => 'bool',
+			'enable_aggregator'           => 'bool',
 			'log_urls'                    => 'array_strings',
 			'skip_urls'                   => 'array_strings',
 			'log_events'                  => 'array_strings',

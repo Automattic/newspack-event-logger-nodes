@@ -2,8 +2,8 @@
 /**
  * Settings Sync
  *
- * Hub-side sync of WP options to remote spokes. Strict fail-closed polarity
- * (only sync when `enable_workers === true`).
+ * Hub-side sync of WP options to remote spokes. Gated by `enable_aggregator`
+ * — the single operator switch for cross-site activity.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -205,9 +205,9 @@ class SettingsSync {
 	 * Queue a static-mode sync via JobIntake when the option is in our list.
 	 *
 	 * Routes through JobIntake (jobintake.log) because settings payloads can
-	 * exceed the 4KB PIPE_BUF atomic write limit. Hub-only: the strict
-	 * `enable_workers === true` check fails closed on missing config or
-	 * truthy-but-not-true values.
+	 * exceed the 4KB PIPE_BUF atomic write limit. Short-circuits when the
+	 * operator-facing `enable_aggregator` toggle is off — same gate as the
+	 * StreamMerger pull-side, so one switch stops both directions.
 	 *
 	 * @param string $option Option name.
 	 * @param mixed  $value  Option value.
@@ -224,10 +224,10 @@ class SettingsSync {
 			return;
 		}
 
-		// Hub gate: strict enable_workers === true AND enable_aggregator on.
-		// Shared with AutoTuner so the two stay lock-step; diverging is how
-		// legacy 2.4.42 silently turned spokes into hubs.
-		if ( ! Hub::is_active() ) {
+		// Aggregator gate: strict — only an explicit bool-true enables
+		// cross-site activity. Default OFF; anything truthy-but-not-true
+		// (`1`, `"1"`, missing) fails closed. Same polarity AutoTuner uses.
+		if ( true !== ( Config::load_config()['enable_aggregator'] ?? false ) ) {
 			return;
 		}
 

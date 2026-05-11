@@ -96,8 +96,13 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// `num_partitions` defaults from substrate config so a single
 		// setting drives both LogManager (producer) and the worker fleet
 		// (consumer) — hardcoding diverges them — and honors `gated_by`
-		// so an operator-facing WP option (e.g. enable_aggregator) can
-		// keep the supervisor from spawning a topology's workers at all.
+		// so an operator-facing flag (e.g. `enable_aggregator`) can keep
+		// the supervisor from spawning a topology's workers at all.
+		// `gated_by` names a config-array key (NOT a WP option name);
+		// strict polarity — only `=== true` enables, anything else
+		// (missing, false, int 1, "1") fails closed. The Config layer
+		// composes file overlays + WP options + the schema's `bool`
+		// sanitizer so the merged value is always a real PHP bool.
 		if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
 			return $topologies;
 		}
@@ -115,7 +120,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 				continue;
 			}
 			if ( isset( $def['gated_by'] ) && \is_string( $def['gated_by'] ) ) {
-				if ( ! (int) \get_option( $def['gated_by'], 1 ) ) {
+				if ( true !== ( $config[ $def['gated_by'] ] ?? false ) ) {
 					continue;
 				}
 			}
