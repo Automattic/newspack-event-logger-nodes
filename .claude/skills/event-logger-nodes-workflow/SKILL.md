@@ -91,12 +91,13 @@ tests/run-coverage.sh
 
 ### Phase 4: Reload running workers
 
-Workers cache loaded classes for the duration of their process lifetime (~10 min). After deploying new code, restart the relevant worker groups so the new bytecode lands:
+Workers cache loaded classes for the duration of their process lifetime (~595s default). After deploying new code, restart the relevant worker groups so the new bytecode lands:
 
 ```bash
 wp nodes restart firehose-workers --all-partitions
-wp nodes restart job-workers      --all-partitions
 wp nodes restart request-workers  --all-partitions
+wp nodes restart job-workers      --all-partitions
+wp nodes restart aggregator       --all-partitions   # hub-only; no-op on spokes
 ```
 
 ### Phase 5: Live-verify

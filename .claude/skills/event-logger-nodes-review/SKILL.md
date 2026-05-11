@@ -118,7 +118,7 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 ## Tests
 
 - Unit tests under `tests/unit/`, integration under `tests/integration/`, REST controllers under `tests/unit/Rest/`.
-- 1368 tests at last count; coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. Plugin sits at ~91% line coverage; new code should add tests so the number doesn't regress.
+- Coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
 - New REST controllers should have a happy-path test, an unauthorized-request test, a rate-limit test, and a memcache-failure test.
 

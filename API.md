@@ -4,7 +4,7 @@ REST endpoints registered by the application plugin. The runtime substrate (`new
 
 Two namespaces:
 
-- `newspack-nodes/v1/*` — core dashboards, status, performance, events, gyroscope, logger, request-log.
+- `newspack-nodes/v1/*` — core dashboards, status, performance, events, gyroscope, logger, request-log, request CRUD, workers, firehose admin/SSE, servers, settings, discovery.
 - `newspack-nodes-aggregator/v1/*` — hub-side aggregator status, server registry, health.
 
 ## Authentication
@@ -15,7 +15,7 @@ All endpoints inherit `PerformanceControllerBase::read_permissions_check()` whic
 
 `PerformanceControllerBase::check_rate_limit()` provides fixed-window rate limiting backed by memcache:
 
-- Default: 60 requests per 60-second window.
+- Default: 600 requests per 60-second window.
 - Window edges floor `time()` to the window length, so all callers in the same wall-clock window share a counter.
 - Identity key: logged-in users key on user id; anonymous fall back to a hashed `REMOTE_ADDR`.
 - Returns `429 Too Many Requests` (`rate_limit_exceeded`) with `Retry-After`-style hint when exceeded.
@@ -27,14 +27,19 @@ All endpoints inherit `PerformanceControllerBase::read_permissions_check()` whic
 GET  /wp-json/newspack-nodes/v1/status
 ```
 
-Health probe. Returns `200` with the active plugin version.
+Health probe. Returns `200` with the active plugin version, runtime version, partition count, hub flag, and cache reachability.
 
 ### Response
 
 ```json
 {
   "status": "ok",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "runtime_version": "0.1.0",
+  "num_partitions": 4,
+  "enable_workers": false,
+  "cache_available": true,
+  "timestamp": 1715300000
 }
 ```
 
@@ -43,74 +48,118 @@ Health probe. Returns `200` with the active plugin version.
 ```
 GET  /wp-json/newspack-nodes/v1/performance/dashboard
 GET  /wp-json/newspack-nodes/v1/performance/timing
+GET  /wp-json/newspack-nodes/v1/performance/overview
+GET  /wp-json/newspack-nodes/v1/performance/urls
+GET  /wp-json/newspack-nodes/v1/performance/urls/{hash}
+GET  /wp-json/newspack-nodes/v1/performance/requests/{rid}?partition=...
+GET  /wp-json/newspack-nodes/v1/performance/requests/search/{rid}
+GET  /wp-json/newspack-nodes/v1/performance/workers
+POST /wp-json/newspack-nodes/v1/performance/workers/restart
+GET  /wp-json/newspack-nodes/v1/performance/registered-hooks
+GET  /wp-json/newspack-nodes/v1/performance/hook-categories
+GET  /wp-json/newspack-nodes/v1/performance/hooks/available
+POST /wp-json/newspack-nodes/v1/performance/hooks/configure
+GET  /wp-json/newspack-nodes/v1/performance/config
+POST /wp-json/newspack-nodes/v1/performance/config
+POST /wp-json/newspack-nodes/v1/performance/settings
 ```
 
-Performance-dashboards tree. Currently returns stub bodies (real reads land when `RequestBuilder` + `FlameBuilder` + `StatsAggregator` integrate end-to-end). Shapes preserved so the React tree can mount without 404s.
+Performance-dashboards tree, served by the dedicated overview/urls/requests/workers/hooks controllers. `/performance/dashboard` and `/performance/timing` are kept as the backward-compatible composite shape consumed by older dashboard code.
 
-### `/performance/dashboard` response (stub)
+### `/performance/dashboard` response
+
+Composed from `PerfOverviewController` (overview) + `PerfUrlsController` (top URLs).
 
 ```json
 {
   "data": {
-    "overview": [],
-    "urls": []
+    "overview": { /* PerfOverviewController body */ },
+    "urls":     [ /* PerfUrlsController data[] */ ]
   },
-  "meta": { "stub": true }
+  "meta": []
 }
 ```
 
-### `/performance/timing` response (stub)
+### `/performance/timing` response
 
-```json
-{
-  "data": { "time_series": [] },
-  "meta": { "stub": true }
-}
-```
-
-### Planned shape (from legacy `event-logger/v1/performance/overview`)
-
-The legacy `/event-logger/v1/performance/overview` returned hourly + leaderboard data; the new endpoint will follow the same shape:
+Hourly time series merged across partitions.
 
 ```json
 {
   "data": {
-    "overview": {
-      "hourly": [
-        { "bucket": "2026-05-08-12", "count": 12345, "sum_ms": 67890.5, "sum_peak_mb": 1234.5 }
-      ],
-      "leaderboard": [
-        { "url": "/example", "count": 100, "mean_req_time": 45.2, "categories": { ... } }
-      ],
-      "total_requests": 12345
-    },
-    "urls": [ /* flat URL list with breakdowns when ?breakdown=... query present */ ]
+    "time_series": [
+      { "hour": "2026-05-08-12", "count": 12345, "sum_ms": 67890.5, "sum_peak_mb": 1234.5 }
+    ]
   },
-  "meta": { "stub": false }
+  "meta": []
 }
 ```
 
-TODO: confirm shape after `StatsAggregator` integration lands.
+### `/performance/overview` request
 
-### Planned: per-URL detail (`/performance/urls/{hash}`)
+| Param | Type | Default |
+|-------|------|---------|
+| `breakdown` | string (comma-separated `status,method,server,country,from,ua,ja4`) | — |
+| `server` | string | — |
+| `categories` | bool | false |
 
-The React tree calls `/newspack-nodes/v1/performance/urls/{hash}?categories=1`. Not yet registered as a route; PerformanceController will add it alongside the StatsAggregator integration.
+Single-dim `breakdown` returns `breakdown_time_series` flat; multi-dim returns `breakdowns` keyed by dim.
 
-TODO: confirm shape — expected to mirror legacy `event-logger/v1/performance/urls/{hash}` (per-URL flame data + profiles + dimensional breakdowns).
+### `/performance/overview` response (shape)
 
-### Planned: per-request detail (`/performance/requests/{rid}`, `/performance/requests/search/{rid}`)
+```json
+{
+  "total_urls": 200,
+  "total_requests": 12345,
+  "global_avg_ms": 45.2,
+  "global_avg_peak_mb": 8.1,
+  "slowest_urls": [ /* top 10 by p95_ms */ ],
+  "most_requested": [ /* top 10 by count */ ],
+  "aggregate_time_series": [ /* hourly across partitions */ ],
+  "global_leaderboard": { /* category sums */ }
+}
+```
 
-The React tree calls `/newspack-nodes/v1/performance/requests/{rid}?partition=0`. Not yet registered. Will scan the per-partition `requests.log/.idx` companion index for the rid, return the full request body.
+### `/performance/urls/{hash}` response
 
-TODO: confirm shape after `RequestBuilder` index integration lands.
+Path param: `hash` matches `[a-f0-9]{8,64}`. Returns per-URL flame/profile data plus dimensional breakdowns when `?categories=1` or `?breakdown=...` is set.
 
-### Planned: workers (`/performance/workers`, `/performance/workers/restart`)
+### `/performance/requests/{rid}` response
 
-The React tree calls `/newspack-nodes/v1/performance/workers` (GET) and `/newspack-nodes/v1/performance/workers/restart` (POST). Not yet registered.
+Path param: `rid` matches `[a-zA-Z0-9_-]{1,128}`. Required query: `partition` (must be valid for the configured `num_partitions`). Scans the requests index for the rid, reads the full request body, merges flame data when found.
 
-GET response will list active workers with lock state and offsetlog cursors. POST will use `Lock::request_restart()` to signal a graceful exit on the next 250ms tick.
+`/performance/requests/search/{rid}` returns just `{rid, partition, url_hash}` so the dashboard can deep-link without scanning every partition.
 
-TODO: confirm shape.
+### `/performance/workers` response
+
+Per-worker status from `Bootstrap::expand_workers()` plus live cursor positions (memcache `np:pos:{path}:p{N}` → on-disk offsetlog fallback). Includes segments, total size, bytes-behind, started_at, heartbeat age, restart_pending flag, and per-input / per-output segment status. Standalone workers (supervisor + plugin-registered partitioned/non-partitioned) reported under a separate `standalone` array.
+
+### `/performance/workers/restart` request
+
+POST with `manage_options` capability + valid `nonce` (action `newspack_nodes_restart_worker`). Trips `Lock::request_restart_at()` on the target lock dir — workers see the flag on their next 250ms tick and exit cleanly.
+
+| Param | Type | Default |
+|-------|------|---------|
+| `type` | string | `all` |
+| `partition` | int | 0 |
+| `all_partitions` | bool | false |
+| `nonce` | string (required) | — |
+
+### `/performance/config` (GET / POST)
+
+GET returns the 9 performance-tuning options as a flat `config` block. POST writes any subset of them in one round-trip.
+
+### `/performance/settings` (POST)
+
+Single-option writer for the same 9-option set. Suppresses `SettingsSync` fan-out around the underlying `update_option()` so applying a remotely-synced setting on a spoke doesn't bounce back as a re-sync.
+
+### `/performance/hooks/available` (GET)
+
+Sweeps `$wp_actions` + `$wp_filter` and returns the categorized hook list (via `HookCategorizer`). Custom events are filtered out of the list since they live on a separate config key.
+
+### `/performance/hooks/configure` (POST)
+
+Persists `log_events` and `custom_events` in one call. Triggers `Config::reset()` so the next read sees the new values.
 
 ## Events
 
@@ -119,7 +168,7 @@ GET  /wp-json/newspack-nodes/v1/events/recent
 GET  /wp-json/newspack-nodes/v1/events/stats
 ```
 
-Event-dashboards tree (Raw Logs viewer). Currently stub.
+Event-dashboards tree (Raw Logs viewer).
 
 ### `/events/recent` request
 
@@ -127,34 +176,44 @@ Event-dashboards tree (Raw Logs viewer). Currently stub.
 |-------|------|---------|-------|
 | `limit` | int | 100 | 1..1000 |
 
-### `/events/recent` response (stub)
+Walks the firehose `.idx` newest-first across all partitions, capped at `MAX_INDEX_ENTRIES = 100000` so a missing-rid scan can't escalate into a partition-wide segment walk.
+
+### `/events/recent` response
 
 ```json
 {
-  "data": [],
-  "meta": { "stub": true, "limit": 100 }
+  "data": [
+    { /* entry hash from VALUE; "_partition" key added per entry */ }
+  ],
+  "meta": { "limit": 100, "scanned": 4321 }
 }
 ```
 
-### `/events/stats` response (stub)
+### `/events/stats` response
 
-```json
-{
-  "data": { "time_series": [] },
-  "meta": { "stub": true }
-}
+Hourly time series merged across partitions (same shape as `/performance/timing`).
+
+## Firehose
+
+```
+GET  /wp-json/newspack-nodes/v1/firehose/logs
+GET  /wp-json/newspack-nodes/v1/firehose/status?log=...
+POST /wp-json/newspack-nodes/v1/firehose/heartbeat
+GET  /wp-json/newspack-nodes/v1/firehose/stream            (SSE)
+GET  /wp-json/newspack-nodes/v1/firehose/rawlogs           (SSE)
+GET  /wp-json/newspack-nodes/v1/firehose/errors            (SSE)
+GET  /wp-json/newspack-nodes/v1/firehose/gyroscope         (SSE)
+GET  /wp-json/newspack-nodes/v1/firehose/requests          (SSE)
 ```
 
-### Planned: SSE streams (`/firehose/stream`, `/firehose/rawlogs`, `/firehose/heartbeat`, `/firehose/logs`)
+`/firehose/logs` lists the registered log catalog (firehose / jobs / jobintake / requests / errors / flames; extensible via the `newspack_nodes/firehose_logs` filter). `/firehose/status` returns per-partition segment metadata for one log. `/firehose/heartbeat` is the client-to-server keepalive POST that refreshes an SSE slot.
 
-The React trees consume `/newspack-nodes/v1/firehose/{stream,rawlogs,gyroscope,requests,errors,heartbeat,logs}` — all SSE except `/heartbeat` (POST keepalive) and `/logs` (GET list). Not yet registered; lands when `SSEControllerBase` is ported.
-
-Operational discipline (preserve from existing event-logger):
+### SSE operational discipline
 
 - 10 memcache slots per stream type. New connections fail with **HTTP 429** when full (not 503).
 - TWO heartbeats: server-to-client SSE `heartbeat` events every 5s in-stream; client-to-server keepalive POSTs to refresh the slot (`SLOT_TTL_BROWSER=10s`, `SLOT_TTL_AGGREGATOR=30s`).
 - `flush_if_needed()` before sleeps, NOT per-event. Per-event flushing tanks throughput on TLS/proxy paths.
-- 1-hour `MAX_RUNTIME` per connection (matches existing event-logger; client reconnects after timeout).
+- 1-hour `MAX_RUNTIME` per connection (client reconnects after timeout).
 
 ## Gyroscope
 
@@ -162,7 +221,7 @@ Operational discipline (preserve from existing event-logger):
 GET  /wp-json/newspack-nodes/v1/gyroscope/timeline?request_id=...
 ```
 
-Performance-gyroscope tree. Synchronous timeline-snapshot fetch (used when a client wants the current state of an explicit request id). The legacy plugin exposed an SSE stream at the same shape; SSE infrastructure is deferred to when `SSEControllerBase` ports.
+Performance-gyroscope tree. Synchronous timeline-snapshot fetch (used when a client wants the current state of an explicit request id). The SSE streaming counterpart lives at `/firehose/gyroscope`.
 
 ### Request
 
@@ -170,17 +229,17 @@ Performance-gyroscope tree. Synchronous timeline-snapshot fetch (used when a cli
 |-------|------|----------|
 | `request_id` | string | no |
 
-### Response (stub)
+### Response
 
-When `request_id` provided:
+When `request_id` provided, walks the requests index for the rid, reads the body, returns its `events` field:
 
 ```json
 {
   "data": {
     "request_id": "abc123",
-    "events": []
+    "events": [ /* lifecycle events for this rid */ ]
   },
-  "meta": { "stub": true }
+  "meta": { "scanned": 42 }
 }
 ```
 
@@ -189,7 +248,7 @@ When not provided (empty initial shape):
 ```json
 {
   "data": { "events": [] },
-  "meta": { "stub": true }
+  "meta": []
 }
 ```
 
@@ -200,7 +259,7 @@ GET  /wp-json/newspack-nodes/v1/logger/config
 GET  /wp-json/newspack-nodes/v1/logger/hooks
 ```
 
-Performance-logger settings tree. Stub responses mirror the legacy `/perf-logger/v1/{config,hooks}` payloads so the settings UI can mount.
+Performance-logger settings tree. `/logger/config` returns the full filterable config (via `newspack_nodes/config`); `/logger/hooks` returns a flat list of categorized hooks via `HookCategorizer`. Settings POST + hook configuration live on `/performance/config`, `/performance/settings`, and `/performance/hooks/configure`.
 
 ### `/logger/config` response
 
@@ -218,27 +277,23 @@ Echoes `PerformanceControllerBase::load_config()` (the result of the `newspack_n
     "enable_workers": false,
     "aggregator_servers": []
   },
-  "meta": { "stub": true }
+  "meta": []
 }
 ```
 
-### `/logger/hooks` response (stub)
+### `/logger/hooks` response
 
 ```json
 {
   "data": {
-    "hooks": [],
-    "categories": []
+    "hooks": [
+      { "name": "wp_loaded", "category": "core" }
+    ],
+    "categories": { /* category metadata */ }
   },
-  "meta": { "stub": true }
+  "meta": []
 }
 ```
-
-### Planned: settings POST + hook discovery
-
-The legacy plugin had `POST /perf-logger/v1/settings` for HookSelectorModal-driven hook configuration, and `GET /event-logger/v1/performance/registered-hooks` / `/hook-categories` for the live `$wp_filter` enumeration + categorization. Not yet registered; lands with `HookCategorizer` port.
-
-TODO: confirm shapes after `HookCategorizer` and `SettingsSync` REST integration.
 
 ## Request Log
 
@@ -247,7 +302,7 @@ GET  /wp-json/newspack-nodes/v1/request-log/list
 GET  /wp-json/newspack-nodes/v1/request-log/detail/{id}
 ```
 
-Performance-request-log tree. Stub bodies; real implementation queries the firehose `.idx` per partition.
+Performance-request-log tree.
 
 ### `/request-log/list` request
 
@@ -255,28 +310,28 @@ Performance-request-log tree. Stub bodies; real implementation queries the fireh
 |-------|------|---------|-------|
 | `limit` | int | 100 | 1..1000 |
 
-### `/request-log/list` response (stub)
+Walks the requests index across all partitions, returns each entry's summary fields (`rid`, `url_hash`, `timestamp`, `duration_ms`, `status_code`, `peak_mb`, `method`, `error_status`, `partition`). Capped at `MAX_INDEX_ENTRIES = 100000`.
+
+### `/request-log/list` response
 
 ```json
 {
-  "data": [],
-  "meta": { "stub": true, "limit": 100 }
+  "data": [ /* entries */ ],
+  "meta": { "limit": 100, "scanned": 4321 }
 }
 ```
 
 ### `/request-log/detail/{id}` response
 
-Path param: `id` matches `[A-Za-z0-9_-]+`.
-
-When provided:
+Path param: `id` matches `[A-Za-z0-9_-]+`. Walks the index for the rid; on hit, reads the request body and returns its events.
 
 ```json
 {
   "data": {
     "request_id": "abc123",
-    "entries": []
+    "entries": [ /* lifecycle events */ ]
   },
-  "meta": { "stub": true }
+  "meta": { "scanned": 42 }
 }
 ```
 
@@ -290,6 +345,39 @@ Empty `id` returns `404 Not Found` via `not_found_error()`:
 }
 ```
 
+A non-empty `id` that doesn't resolve returns an empty `entries` array (200) for backward compatibility with the legacy stub.
+
+## Servers
+
+```
+GET    /wp-json/newspack-nodes/v1/servers
+POST   /wp-json/newspack-nodes/v1/servers
+GET    /wp-json/newspack-nodes/v1/servers/{id}
+PUT    /wp-json/newspack-nodes/v1/servers/{id}
+DELETE /wp-json/newspack-nodes/v1/servers/{id}
+POST   /wp-json/newspack-nodes/v1/servers/{id}/test
+```
+
+CRUD for remote spokes registered via `ServerRegistry`. IDs match `[a-zA-Z0-9_-]{1,64}`, URLs must be HTTPS, credentials cap at 256 bytes, log filenames must match `[a-zA-Z0-9_.-]+\.log$`. Storage is sodium-secretbox encrypted at rest (keyed on `wp_salt('auth')`); config-file overlay servers can only toggle `enabled` via PUT.
+
+`POST /servers/{id}/test` probes `/wp-json/newspack-nodes/v1/discovery` on the remote with the stored Basic Auth credentials, returning the remote's registered hooks / custom events / lag fields (whitelisted; never proxies arbitrary JSON).
+
+## Discovery
+
+```
+GET  /wp-json/newspack-nodes/v1/discovery
+```
+
+Spoke-side endpoint that hub aggregators probe. Returns `registered_hooks`, `custom_events`, and (when readers are registered) `lag` in bytes — max reader-lag across registered `log_readers`.
+
+## Settings
+
+```
+POST  /wp-json/newspack-nodes/v1/settings
+```
+
+Whitelisted single-option writer for the four substrate-level integer options: `newspack_nodes_num_partitions`, `newspack_nodes_num_segments`, `newspack_nodes_segment_size`, `newspack_nodes_max_lifespan`. Used by hub-side aggregator fan-out (RemoteManager) when pushing core settings down to spokes. Triggers `Config::reset()` after a successful write so the next request sees the new value.
+
 ## Aggregator
 
 ```
@@ -298,24 +386,38 @@ GET  /wp-json/newspack-nodes-aggregator/v1/servers
 GET  /wp-json/newspack-nodes-aggregator/v1/health
 ```
 
-Hub-side aggregator endpoints. Returns stub shapes so the `event-aggregator` React tree can mount and load without 404s; real data wiring lands when `StreamMerger` and `ServerRegistry` integrate end-to-end.
+Hub-side aggregator endpoints. The `/status` route delegates to `AggregatorStatusController` for the per-server / per-partition memcache-backed status; `/servers` lists registered remote spokes from `ServerRegistry`; `/health` reports cache reachability.
 
-### `/status` response (stub)
+### `/status` response
+
+Keyed by server id; per server, per-partition status pulled from `aggregator_status:{id}:p{N}` in memcache:
 
 ```json
 {
-  "data": [],
-  "meta": { "stub": true, "namespace": "newspack-nodes-aggregator/v1" }
+  "spoke-id-1": {
+    "id": "spoke-id-1",
+    "url": "https://spoke.example/",
+    "enabled": true,
+    "partitions": {
+      "0": { /* StreamMerger state for this spoke / partition */ }
+    }
+  }
 }
 ```
 
-### `/servers` response (stub)
+### `/servers` response
 
 ```json
-{
-  "data": [],
-  "meta": { "stub": true, "namespace": "newspack-nodes-aggregator/v1" }
-}
+[
+  {
+    "id": "spoke-id-1",
+    "url": "https://spoke.example/",
+    "enabled": true,
+    "logs": [ "firehose.log" ],
+    "has_credentials": true,
+    "is_config": false
+  }
+]
 ```
 
 ### `/health` response
@@ -324,18 +426,11 @@ Always `200`:
 
 ```json
 {
-  "data": { "healthy": true },
-  "meta": { "stub": true }
+  "healthy": true,
+  "cache": true,
+  "timestamp": 1715300000
 }
 ```
-
-### Planned: server CRUD
-
-The legacy plugin had full CRUD under `/event-aggregator/v1/servers/{id}` (GET / PUT / DELETE) plus `/event-aggregator/v1/servers/{id}/test`. Not yet registered; lands with `ServerRegistry` REST integration.
-
-The current GET `/servers` returns the encrypted-storage list (decrypted at read via sodium-secretbox keyed on `wp_salt('auth')`); POST adds a new server with sodium-encrypted credentials; PUT updates including `enabled` field; DELETE removes; POST `/test` runs a health probe.
-
-TODO: confirm shape after `ServerRegistry` REST integration.
 
 ## Worker Spawn
 
@@ -360,4 +455,4 @@ public function read_permissions_check(): bool|\WP_Error {
 }
 ```
 
-The legacy plugin also supported an `allowed_users` whitelist (`Newspack_Event_Logger\Admin::current_user_allowed()`) for delegating dashboard access without granting `manage_options`. Not yet ported; will land alongside the admin pages.
+Write endpoints (`POST /performance/settings`, `POST /performance/config`, `POST /performance/hooks/configure`, `POST /settings`, `POST /servers`, `PUT /servers/{id}`, `DELETE /servers/{id}`, `POST /performance/workers/restart`) use `manage_options` plus, for the restart route, a CSRF nonce (`newspack_nodes_restart_worker`).
