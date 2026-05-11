@@ -765,7 +765,7 @@ class StreamMerger extends Node {
 		// position params are emitted only if either is non-zero (so a fresh
 		// remote with no offsetlog history sends the cleaner `?aggregator=1`
 		// URL upstream's REST endpoint expects).
-		$endpoint = $state['url'] . '/wp-json/event-logger/v1/firehose/stream';
+		$endpoint = $state['url'] . '/wp-json/newspack-nodes/v1/firehose/stream';
 		$params   = [
 			'partition'  => $this->partition,
 			'aggregator' => 1, // skip per-connection slot rate-limit on remote.
@@ -1010,7 +1010,7 @@ class StreamMerger extends Node {
 		}
 
 		// Honour HTTPS-only invariant on the heartbeat path too.
-		$endpoint = $state['url'] . '/wp-json/event-logger/v1/firehose/heartbeat';
+		$endpoint = $state['url'] . '/wp-json/newspack-nodes/v1/firehose/heartbeat';
 		if ( $this->require_https && \stripos( $endpoint, 'https://' ) !== 0 ) {
 			$state['last_error'] = 'heartbeat endpoint not HTTPS';
 			return;
