@@ -141,8 +141,9 @@ class WorkersControllerTest extends TestCase {
 		// test is: the resolver path (cache → fallback) at least doesn't crash
 		// and respects the FakeMemcached injection.
 		$source_path = "{$this->tmp}/logs/firehose.log";
+		$host        = \gethostname() ?: 'unknown';
 		$this->cache->set(
-			"np:pos:{$source_path}:p0",
+			"np:pos:{$host}:{$source_path}:p0",
 			[ 'seg' => 5, 'off' => 1234 ],
 			60
 		);
