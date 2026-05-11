@@ -36,60 +36,15 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		);
 		return;
 	}
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-config.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-hub.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-memcached-cache.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-stats-store.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-lru-cache.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-hook-categorizer.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-log-manager.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/app/class-core.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-request-builder.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-flame-builder.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-stats-aggregator.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-inflight-tracker.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-partition-reader.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-job-intake.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-job-router.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-job-worker.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-stream-merger.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-server-registry.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-settings-sync.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-remote-manager.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-health-check-extensions.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-auto-tuner.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-performance-controller-base.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-status-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-aggregator-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-aggregator-status-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-events-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-performance-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-gyroscope-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-logger-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-request-log-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-firehose-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-discovery-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-settings-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-settings-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-config-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-hooks-available-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-hooks-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-overview-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-urls-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-perf-requests-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-workers-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-servers-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-sse-controller-base.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-firehose-stream-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-rawlogs-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-errors-stream-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-gyroscope-stream-controller.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-requests-stream-controller.php';
-	if ( \function_exists( 'is_admin' ) && \is_admin() ) {
-		require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/admin/class-admin.php';
-	}
+
+	// Composer classmap autoloader. Class files inside includes/ are scanned
+	// at `composer install` / `composer dump-autoload` time and registered
+	// with a FQCN-to-path map; classes load on first reference so admin /
+	// REST / cli paths each only pay for the code they touch. vendor/
+	// ships with the release zip via build-release.sh.
+	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
+
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
-		require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/cli/class-reqgrep-command.php';
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\ReqgrepCommand' );
 	}
 
