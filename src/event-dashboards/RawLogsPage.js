@@ -10,7 +10,7 @@ import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 /**
  * Raw Logs page - dedicated view for raw log file content.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function RawLogsPage() {
 	const menuWidth = useAdminMenuWidth();

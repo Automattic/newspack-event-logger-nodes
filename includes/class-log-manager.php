@@ -310,7 +310,7 @@ class LogManager {
 		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
-		$worker_type = \sanitize_text_field( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] ?? '' );
+		$worker_type = \sanitize_text_field( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' );
 		if ( '' !== $worker_type ) {
 			$process_data['worker_type'] = $worker_type;
 		}
@@ -364,7 +364,7 @@ class LogManager {
 		// One entry per Message; Topic hashes KEY to a partition and Partition packs + appends.
 		$msg                                       = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$right_now;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
 		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_url;
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $msg );

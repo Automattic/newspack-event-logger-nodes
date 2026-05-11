@@ -192,10 +192,19 @@ class ReqgrepCommand {
 	 * @param array $args       Positional arguments.
 	 * @param array $assoc_args Associative arguments.
 	 */
+	/**
+	 * When true (production default), __invoke drains all plugin-installed
+	 * output buffers before streaming begins. Tests set this to false to
+	 * preserve PHPUnit's own ob layer.
+	 */
+	private bool $drain_buffers_on_invoke = true;
+
 	public function __invoke( array $args, array $assoc_args ): void {
 		// Drain any plugin-installed output buffers so streamed echoes don't get
 		// captured into a userspace buffer that grows until OOM.
-		$this->drain_output_buffers();
+		if ( $this->drain_buffers_on_invoke ) {
+			$this->drain_output_buffers();
+		}
 
 		$this->pattern       = $args[0] ?? '.';
 		$this->pattern_regex = '/' . \preg_quote( $this->pattern, '/' ) . '/i';
@@ -263,15 +272,27 @@ class ReqgrepCommand {
 	}
 
 	/**
-	 * Detect whether STDIN has piped data attached. fstat() reports the type
-	 * bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything else (tty,
-	 * /dev/null, sockets) is "no piped data, use cat mode."
+	 * Detect whether `$stream` has piped data attached. fstat() reports the
+	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
+	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
+	 *
+	 * Defaults to STDIN; tests pass a php://memory resource so the dispatch
+	 * decision is observable without a real STDIN pipe.
+	 *
+	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
 	 */
-	private function stdin_has_data(): bool {
-		if ( ! \defined( 'STDIN' ) ) {
+	private function stdin_has_data( $stream = null ): bool {
+		if ( null === $stream ) {
+			if ( ! \defined( 'STDIN' ) ) {
+				return false;
+			}
+			$stream = STDIN;
+		}
+		// Closed / non-resource → not piped data.
+		if ( ! \is_resource( $stream ) ) {
 			return false;
 		}
-		$stat = @\fstat( STDIN );
+		$stat = @\fstat( $stream );
 		if ( ! $stat ) {
 			return false;
 		}
@@ -280,11 +301,23 @@ class ReqgrepCommand {
 	}
 
 	/**
-	 * Stdin pipe mode: read line-by-line from STDIN, run each through process_line,
-	 * then flush incomplete requests so the operator can see partial state.
+	 * Stdin pipe mode: read line-by-line from `$stream`, run each through
+	 * process_line, then flush incomplete requests so the operator can see
+	 * partial state.
+	 *
+	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled
+	 * with fixture lines to drive the loop deterministically.
+	 *
+	 * @param resource|null $stream Source stream (defaults to STDIN).
 	 */
-	private function process_stdin(): void {
-		while ( ( $line = \fgets( STDIN ) ) !== false ) {
+	private function process_stdin( $stream = null ): void {
+		if ( null === $stream ) {
+			$stream = \defined( 'STDIN' ) ? STDIN : null;
+			if ( null === $stream ) {
+				return;
+			}
+		}
+		while ( ( $line = \fgets( $stream ) ) !== false ) {
 			$this->process_line( $line );
 		}
 		$this->output_remaining();
@@ -321,9 +354,79 @@ class ReqgrepCommand {
 	 * Follow mode: open a cursor per partition pointing at the tail of the
 	 * newest segment, then loop polling each partition for new bytes. Mirrors
 	 * the legacy FirehoseReader('end') behavior.
+	 *
+	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever
+	 * until SIGINT). Tests pass a small number to drive a bounded number of
+	 * polls and assert on output without an infinite loop.
 	 */
-	private function follow_mode(): void {
-		// Position cursor at end of newest segment per partition.
+	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
+		$cursors = $this->seed_follow_cursors();
+
+		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
+		\WP_CLI::log( 'Following ' . $this->num_partitions . ' partition(s)... (Ctrl+C to stop)' );
+
+		for ( $i = 0; $i < $max_iterations; $i++ ) {
+			$had_data = $this->follow_tick( $cursors );
+			if ( ! $had_data ) {
+				\usleep( self::FOLLOW_IDLE_USLEEP );
+			}
+		}
+	}
+
+	/**
+	 * One iteration of the follow-mode poll. Mutates `$cursors` in place,
+	 * returns true iff any partition yielded new bytes this tick. Extracted
+	 * so tests can drive a known number of ticks without a while(true).
+	 *
+	 * @param array<int,array{seg:int,off:int}> $cursors Per-partition cursor state.
+	 */
+	private function follow_tick( array &$cursors ): bool {
+		$had_data = false;
+		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
+			$partition = $this->get_partition( $p );
+			$segments  = $partition->get_segments( true );
+			if ( empty( $segments ) ) {
+				continue;
+			}
+
+			$cursor = $cursors[ $p ];
+
+			// Walk every segment ≥ cursor.seg; advance cursor as bytes consumed.
+			foreach ( $segments as $s ) {
+				if ( $s['id'] < $cursor['seg'] ) {
+					continue;
+				}
+				$start = ( $s['id'] === $cursor['seg'] ) ? $cursor['off'] : 0;
+				$len   = $s['size'] - $start;
+				if ( $len <= 0 ) {
+					// Move the cursor forward to the start of the next segment so
+					// we don't restart at this seg's tail next iteration.
+					if ( $s['id'] > $cursor['seg'] ) {
+						$cursor['seg'] = (int) $s['id'];
+						$cursor['off'] = 0;
+					}
+					continue;
+				}
+				$consumed      = $this->stream_segment_lines( $partition, (int) $s['id'], $start, $len );
+				$cursor['seg'] = (int) $s['id'];
+				$cursor['off'] = $start + $consumed;
+				if ( $consumed > 0 ) {
+					$had_data = true;
+				}
+			}
+
+			$cursors[ $p ] = $cursor;
+		}
+		return $had_data;
+	}
+
+	/**
+	 * Build the initial follow-mode cursor map: each partition starts at the
+	 * tail of its newest segment so we don't replay history on attach.
+	 *
+	 * @return array<int,array{seg:int,off:int}>
+	 */
+	private function seed_follow_cursors(): array {
 		$cursors = [];
 		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
 			$partition = $this->get_partition( $p );
@@ -338,53 +441,7 @@ class ReqgrepCommand {
 				'off' => (int) $newest['size'],
 			];
 		}
-
-		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
-		\WP_CLI::log( 'Following ' . $this->num_partitions . ' partition(s)... (Ctrl+C to stop)' );
-
-		while ( true ) {
-			$had_data = false;
-
-			for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-				$partition = $this->get_partition( $p );
-				$segments  = $partition->get_segments( true );
-				if ( empty( $segments ) ) {
-					continue;
-				}
-
-				$cursor = $cursors[ $p ];
-
-				// Walk every segment ≥ cursor.seg; advance cursor as bytes consumed.
-				foreach ( $segments as $s ) {
-					if ( $s['id'] < $cursor['seg'] ) {
-						continue;
-					}
-					$start = ( $s['id'] === $cursor['seg'] ) ? $cursor['off'] : 0;
-					$len   = $s['size'] - $start;
-					if ( $len <= 0 ) {
-						// Move the cursor forward to the start of the next segment so
-						// we don't restart at this seg's tail next iteration.
-						if ( $s['id'] > $cursor['seg'] ) {
-							$cursor['seg'] = (int) $s['id'];
-							$cursor['off'] = 0;
-						}
-						continue;
-					}
-					$consumed     = $this->stream_segment_lines( $partition, (int) $s['id'], $start, $len );
-					$cursor['seg'] = (int) $s['id'];
-					$cursor['off'] = $start + $consumed;
-					if ( $consumed > 0 ) {
-						$had_data = true;
-					}
-				}
-
-				$cursors[ $p ] = $cursor;
-			}
-
-			if ( ! $had_data ) {
-				\usleep( self::FOLLOW_IDLE_USLEEP );
-			}
-		}
+		return $cursors;
 	}
 
 	/**
@@ -469,7 +526,7 @@ class ReqgrepCommand {
 		}
 		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
 			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			$line  = \json_encode( $entry, JSON_UNESCAPED_SLASHES );
+			$line  = \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
 		} else {
 			$entry = $decoded;
 		}
@@ -565,7 +622,7 @@ class ReqgrepCommand {
 			return $line;
 		}
 		$entry['m'] = \substr( $entry['m'], 0, self::MAX_ENTRY_MESSAGE_LENGTH ) . '…';
-		return \json_encode( $entry, JSON_UNESCAPED_SLASHES );
+		return \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
 	}
 
 	/**
@@ -712,7 +769,7 @@ class ReqgrepCommand {
 		$msg = '';
 		if ( isset( $entry['m'] ) ) {
 			if ( \is_array( $entry['m'] ) ) {
-				$msg = \json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+				$msg = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
 			} else {
 				$msg = (string) $entry['m'];
 			}

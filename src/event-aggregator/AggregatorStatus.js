@@ -91,7 +91,7 @@ const getRttClass = ( rtt ) => {
  * @param {Object} props           Component props.
  * @param {number} props.partition Partition number.
  * @param {Object} props.status    Partition status data.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 function PartitionStatus( { partition, status } ) {
 	const connectionStatus = status.last_connection_status || 'disconnected';
@@ -189,7 +189,7 @@ function PartitionStatus( { partition, status } ) {
  *
  * @param {Object} props        Component props.
  * @param {Object} props.server Server status data.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 function ServerCard( { server } ) {
 	const partitions = server.partitions || {};
@@ -236,7 +236,7 @@ function ServerCard( { server } ) {
 /**
  * Aggregator Status Dashboard Component.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function AggregatorStatus() {
 	const [ servers, setServers ] = useState( null );

@@ -141,9 +141,7 @@ class PerfHooksAvailableController extends PerformanceControllerBase {
 			$configured += \count( $assoc );
 		}
 
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
-			Config::reset();
-		}
+		Config::reset();
 
 		return new \WP_REST_Response(
 			[
@@ -155,23 +153,6 @@ class PerfHooksAvailableController extends PerformanceControllerBase {
 	}
 
 	private function categorize_hook( string $hook_name ): string {
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\HookCategorizer' ) ) {
-			return HookCategorizer::categorize( $hook_name );
-		}
-		// Minimal fallback — prefix-based bucketing if HookCategorizer isn't available.
-		$prefixes = [
-			'admin_'    => 'admin',
-			'wp_ajax_'  => 'ajax',
-			'rest_'     => 'rest',
-			'the_'      => 'template',
-			'save_post' => 'post',
-			'wp_'       => 'core',
-		];
-		foreach ( $prefixes as $prefix => $cat ) {
-			if ( 0 === \strpos( $hook_name, $prefix ) ) {
-				return $cat;
-			}
-		}
-		return 'other';
+		return HookCategorizer::categorize( $hook_name );
 	}
 }

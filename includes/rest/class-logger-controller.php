@@ -65,24 +65,20 @@ class LoggerController extends PerformanceControllerBase {
 			return $check;
 		}
 
-		$hooks      = [];
-		$categories = [];
-
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\HookCategorizer' ) ) {
-			$by_category = HookCategorizer::get_registered_hooks_by_category();
-			$categories  = HookCategorizer::get_categories();
-			// Flatten by_category into a list of { name, category }.
-			foreach ( $by_category as $cat => $list ) {
-				if ( ! \is_array( $list ) ) {
-					continue;
-				}
-				foreach ( $list as $name ) {
-					if ( \is_string( $name ) ) {
-						$hooks[] = [
-							'name'     => $name,
-							'category' => $cat,
-						];
-					}
+		$hooks       = [];
+		$by_category = HookCategorizer::get_registered_hooks_by_category();
+		$categories  = HookCategorizer::get_categories();
+		// Flatten by_category into a list of { name, category }.
+		foreach ( $by_category as $cat => $list ) {
+			if ( ! \is_array( $list ) ) {
+				continue;
+			}
+			foreach ( $list as $name ) {
+				if ( \is_string( $name ) ) {
+					$hooks[] = [
+						'name'     => $name,
+						'category' => $cat,
+					];
 				}
 			}
 		}

@@ -30,7 +30,7 @@ const isCallbackCategory = ( state ) => / @\d+$/.test( state );
  * @param {number}      props.totalMs           Total request duration in ms.
  * @param {number}      props.totalProfiledTime Pre-calculated total profiled time (optional).
  * @param {string|null} props.title             Custom title (null to hide heading).
- * @return {JSX.Element|null} Rendered component or null if no data.
+ * @return {import('react').ReactElement|null} Rendered component or null if no data.
  */
 export default function RequestProfile( {
 	profiles,

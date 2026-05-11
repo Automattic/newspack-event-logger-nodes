@@ -22,7 +22,13 @@
 \defined( 'ABSPATH' ) || exit;
 
 return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $partition ): array {
-	$config        = \Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase::load_config();
+	// Application Config (not PerformanceControllerBase::load_config) because
+	// this topology reads application-only keys: auto_disable_threshold,
+	// auto_protect_time_threshold, significant_events. The controller-base
+	// loader only layers in substrate options + a substrate-shape default,
+	// so calling it returns 0 for the thresholds even when the operator has
+	// set them via the Settings UI — auto-tune silently never fires.
+	$config        = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
 	$base_dir      = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 	$logs_dir      = "{$base_dir}/logs";
 	$requests_path = "{$logs_dir}/requests.log";

@@ -253,21 +253,19 @@ class StreamMerger extends Node {
 		if ( '' === $url ) {
 			// Registry-driven path. ServerRegistry::get() returns null for missing
 			// entries; SettingsSync (unrelated) doesn't gate this — caller does.
-			if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' ) ) {
-				$registry = new ServerRegistry();
-				$entry    = $registry->get( $server_id );
-				if ( null === $entry ) {
-					Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
-					return;
-				}
-				if ( isset( $entry['enabled'] ) && false === $entry['enabled'] ) {
-					return;
-				}
-				$url           = (string) ( $entry['url'] ?? '' );
-				$auth_username = (string) ( $entry['auth_username'] ?? '' );
-				$auth_password = (string) ( $entry['auth_password'] ?? '' );
-				$auth_token    = (string) ( $entry['token'] ?? $auth_token );
+			$registry = new ServerRegistry();
+			$entry    = $registry->get( $server_id );
+			if ( null === $entry ) {
+				Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
+				return;
 			}
+			if ( isset( $entry['enabled'] ) && false === $entry['enabled'] ) {
+				return;
+			}
+			$url           = (string) ( $entry['url'] ?? '' );
+			$auth_username = (string) ( $entry['auth_username'] ?? '' );
+			$auth_password = (string) ( $entry['auth_password'] ?? '' );
+			$auth_token    = (string) ( $entry['token'] ?? $auth_token );
 			if ( '' === $url ) {
 				Core::print_less_often( "StreamMerger::add_remote: missing URL for {$server_id}" );
 				return;
@@ -446,7 +444,7 @@ class StreamMerger extends Node {
 				'event_queue'     => [],
 				'slot'            => null,
 				'position'        => [ 'segment_id' => 0, 'offset' => 0 ],
-				'last_event_time' => Core::$right_now,
+				'last_event_time' => Core::$now,
 				'current_backoff' => self::INITIAL_BACKOFF,
 				'last_attempt'    => 0.0,
 				'connected'       => true,
@@ -482,7 +480,7 @@ class StreamMerger extends Node {
 			}
 			$msg                       = Message::new_message();
 			$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-			$msg[ Message::TIMESTAMP ] = Core::$right_now;
+			$msg[ Message::TIMESTAMP ] = Core::$now;
 			$msg[ Message::FROM ]      = $this->name;
 			$msg[ Message::VALUE ]     = $filtered;
 			$this->sink?->fill( $msg );
@@ -613,7 +611,7 @@ class StreamMerger extends Node {
 
 		// Reset backoff: any successful event receipt counts.
 		$state['current_backoff'] = self::INITIAL_BACKOFF;
-		$state['last_event_time'] = Core::$right_now;
+		$state['last_event_time'] = Core::$now;
 
 		// Try to JSON-decode the data. `entry` events MUST decode; the others
 		// are accepted as-strings if decode fails (heartbeats may carry empty `{}`).
@@ -628,7 +626,7 @@ class StreamMerger extends Node {
 		if ( 'connected' === $type && \is_array( $decoded ) && isset( $decoded['slot'] ) ) {
 			$state['slot'] = (int) $decoded['slot'];
 			$this->record_successful_heartbeat( $server_id );
-			$state['last_heartbeat'] = (int) Core::$right_now;
+			$state['last_heartbeat'] = (int) Core::$now;
 			$this->update_connection_status( $server_id, 'connected', $state['last_http_code'], '' );
 		}
 
@@ -647,7 +645,7 @@ class StreamMerger extends Node {
 		// SSE heartbeat status (display-only; the round-trip POST is separate).
 		if ( 'heartbeat' === $type && \is_array( $decoded ) ) {
 			$ts = $decoded['ts'] ?? null;
-			$this->update_sse_heartbeat( $server_id, \is_numeric( $ts ) ? (int) $ts : (int) Core::$right_now );
+			$this->update_sse_heartbeat( $server_id, \is_numeric( $ts ) ? (int) $ts : (int) Core::$now );
 		}
 
 		// Forward `entry` events as actual firehose lines.
@@ -719,7 +717,7 @@ class StreamMerger extends Node {
 
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::KEY ]       = (string) ( $data['url'] ?? '' );
 		$msg[ Message::VALUE ]     = $line;
@@ -756,7 +754,7 @@ class StreamMerger extends Node {
 			return false;
 		}
 
-		$now = Core::$right_now;
+		$now = Core::$now;
 		// Skip if last attempt was within backoff (but allow first attempt at last_attempt=0).
 		if ( $state['last_attempt'] > 0.0 && ( $now - $state['last_attempt'] ) < $state['current_backoff'] ) {
 			$this->update_connection_status( $server_id, 'backoff', null, $state['last_error'] ?? "Waiting {$state['current_backoff']}s before retry", $state['current_backoff'] );
@@ -933,11 +931,10 @@ class StreamMerger extends Node {
 	 * are idempotent + cheap.
 	 */
 	public function tick(): void {
-		// NOTE: deliberately does NOT call Core::update_time(). The runtime's
-		// EventFramework drain loop owns the clock; calling update_time() here
-		// would clobber tests that pin Core::$right_now via Core::set_now().
-		// Production-side, drain() runs update_time() right before our timer
-		// fires, so $right_now is already fresh.
+		// NOTE: deliberately does NOT refresh Core::$now. EventFramework's
+		// drain loop owns the clock and pokes Core::$now right before our
+		// timer fires; tests pin Core::$now by direct assignment, so a tick()
+		// that wrote microtime(true) would clobber the pinned value.
 		foreach ( \array_keys( $this->remotes ) as $server_id ) {
 			if ( '__test__' === $server_id ) {
 				continue;
@@ -965,7 +962,7 @@ class StreamMerger extends Node {
 		if ( ! ( $state['handle'] instanceof \CurlHandle ) ) {
 			return;
 		}
-		$elapsed = Core::$right_now - $state['last_event_time'];
+		$elapsed = Core::$now - $state['last_event_time'];
 		if ( $elapsed <= self::HEARTBEAT_TIMEOUT ) {
 			return;
 		}
@@ -997,7 +994,7 @@ class StreamMerger extends Node {
 		if ( null === $slot || $slot < 0 ) {
 			return;
 		}
-		$now = (int) Core::$right_now;
+		$now = (int) Core::$now;
 		if ( $now - (int) $state['last_heartbeat'] < self::HEARTBEAT_INTERVAL ) {
 			return;
 		}
@@ -1051,7 +1048,7 @@ class StreamMerger extends Node {
 	 * cheap to restore at startup.
 	 */
 	private function maybe_commit(): void {
-		$now = Core::$right_now;
+		$now = Core::$now;
 		if ( $now - $this->last_commit_time < self::COMMIT_INTERVAL_S ) {
 			return;
 		}
@@ -1087,7 +1084,7 @@ class StreamMerger extends Node {
 		if ( empty( $entry ) ) {
 			return;
 		}
-		$entry['_ts'] = (int) Core::$right_now;
+		$entry['_ts'] = (int) Core::$now;
 		// Wrap the multi-spoke position struct as TM_STRUCT and route through
 		// Partition::fill — the offsetlog stores the canonical packed wire
 		// format, same as every other Partition. restore_offset() unpacks back.
@@ -1095,7 +1092,7 @@ class StreamMerger extends Node {
 		// passing the array directly avoids double-encoding.
 		$msg                       = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = Core::$now;
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$offsetlog->fill( $msg );
 		// Force the position to disk — supervisor restarts and the next
@@ -1163,6 +1160,8 @@ class StreamMerger extends Node {
 		}
 		$dir = "{$logs_dir}/remote_firehose.log";
 		if ( ! \is_dir( $dir ) ) {
+			// logs_dir is base_dir-relative — operator storage, not WP-managed.
+			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
 			@\mkdir( $dir, 0755, true );
 		}
 		$this->offsetlog = new Partition( $dir, $this->partition );
@@ -1175,9 +1174,6 @@ class StreamMerger extends Node {
 	private function resolve_logs_dir(): string {
 		if ( null !== $this->logs_dir ) {
 			return $this->logs_dir;
-		}
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerformanceControllerBase' ) ) {
-			return '';
 		}
 		$config = PerformanceControllerBase::load_config();
 		$base   = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
@@ -1195,12 +1191,6 @@ class StreamMerger extends Node {
 	private function cache(): ?Cache_Interface {
 		if ( null !== $this->cache ) {
 			return $this->cache->is_available() ? $this->cache : null;
-		}
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Memcached_Cache' ) ) {
-			return null;
-		}
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerformanceControllerBase' ) ) {
-			return null;
 		}
 		$config  = PerformanceControllerBase::load_config();
 		$servers = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
@@ -1231,7 +1221,7 @@ class StreamMerger extends Node {
 			$existing = [];
 		}
 		$data = [
-			'last_connection_attempt' => (int) Core::$right_now,
+			'last_connection_attempt' => (int) Core::$now,
 			'last_connection_status'  => $status,
 		];
 		if ( null !== $http_code ) {
@@ -1256,7 +1246,7 @@ class StreamMerger extends Node {
 		if ( ! \is_array( $existing ) ) {
 			$existing = [];
 		}
-		$now  = (int) Core::$right_now;
+		$now  = (int) Core::$now;
 		$data = [
 			'last_heartbeat_sent'            => $now,
 			'last_heartbeat_response'        => $now,
@@ -1349,7 +1339,7 @@ class StreamMerger extends Node {
 			$key,
 			\array_merge( $existing, [
 				'last_heartbeat_sent'            => $sent_at,
-				'last_heartbeat_response'        => (int) Core::$right_now,
+				'last_heartbeat_response'        => (int) Core::$now,
 				'last_heartbeat_rtt'             => \round( $rtt, 2 ),
 				'last_heartbeat_response_status' => $status,
 				'last_heartbeat_error'           => $error,

@@ -10,7 +10,7 @@ import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 /**
  * Request Stream page - dedicated view for real-time request log.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function RequestStreamPage() {
 	const menuWidth = useAdminMenuWidth();

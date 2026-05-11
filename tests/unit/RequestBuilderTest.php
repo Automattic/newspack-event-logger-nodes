@@ -205,7 +205,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'EVENT_LOGGER_WORKER_TYPE => "stream-merger"' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'NEWSPACK_NODES_WORKER_TYPE => "stream-merger"' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );

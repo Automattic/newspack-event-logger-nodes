@@ -208,6 +208,12 @@ abstract class PerformanceControllerBase {
 				return "user_{$uid}";
 			}
 		}
+		// REMOTE_ADDR drives an internal rate-limit bucket only — it's
+		// SHA-hashed before being used as a cache key, never echoed back
+		// to the user or used for auth. The "user-controlled" warning
+		// matters when REMOTE_ADDR feeds an authz decision; here it's
+		// just a per-client counter discriminator.
+		// phpcs:ignore WordPressVIPMinimum.Variables.ServerVariables.UserControlledHeaders,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPressVIPMinimum.Variables.RestrictedVariables.cache_constraints___SERVER__REMOTE_ADDR__
 		$remote = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
 		return 'ip_' . \substr( \hash( 'sha256', $remote ), 0, 12 );
 	}

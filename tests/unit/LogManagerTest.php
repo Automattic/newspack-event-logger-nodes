@@ -45,7 +45,7 @@ class LogManagerTest extends TestCase {
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 		$_SERVER['SERVER_NAME']    = 'localhost';
 		$_SERVER['HTTP_HOST']      = 'localhost';
-		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'], $_SERVER['EVENT_LOGGER_WORKER_TYPE'] );
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'], $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 
 		// Point config to pre-written test config.
 		@\mkdir( self::TEST_DIR . '/logs', 0755, true );
@@ -263,14 +263,14 @@ class LogManagerTest extends TestCase {
 		LogManager::reset();
 		Config::reset();
 
-		$_SERVER['EVENT_LOGGER_WORKER_TYPE'] = 'test_worker';
+		$_SERVER['NEWSPACK_NODES_WORKER_TYPE'] = 'test_worker';
 		$lm = LogManager::instance();
 		$lm->start( 'work' );
 		$lm->complete( 'work' );
 
 		// If no exception, worker type was handled.
 		$this->assertTrue( true );
-		unset( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] );
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 	}
 
 	// ── URL filter ─────────────────────────────────────────────────────────

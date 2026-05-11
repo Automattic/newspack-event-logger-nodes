@@ -22,7 +22,7 @@ const CUSTOM_COLORS = window.newspackNodesCustomColors || {};
  * @param {Function} props.onClose  Close callback.
  * @param {Array}    props.selected Currently selected events.
  * @param {Function} props.onSelect Callback when events are selected.
- * @return {JSX.Element|null} Rendered component.
+ * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function CustomEventSelectorModal( {
 	isOpen,

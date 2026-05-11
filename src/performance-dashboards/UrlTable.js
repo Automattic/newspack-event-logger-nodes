@@ -42,7 +42,7 @@ const pct = ( part, total ) => {
  * @param {boolean}  props.isSelected Whether this row is selected.
  * @param {Function} props.onSelect   Selection callback.
  * @param {Function} props.formatNum  Number formatting function.
- * @return {JSX.Element} Rendered row.
+ * @return {import('react').ReactElement} Rendered row.
  */
 const UrlRow = memo( function UrlRow( {
 	url,
@@ -144,7 +144,7 @@ const UrlRow = memo( function UrlRow( {
  * @param {Function} props.onParamsChange Callback when search/sort/page changes.
  * @param {number}   props.totalUrls      Total URL count from server (for pagination).
  * @param {string}   props.metric         Chart metric for bar backgrounds.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
 	urls,

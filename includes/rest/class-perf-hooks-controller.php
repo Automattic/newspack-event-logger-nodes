@@ -48,17 +48,6 @@ class PerfHooksController extends PerformanceControllerBase {
 			return $check;
 		}
 
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\HookCategorizer' ) ) {
-			return new \WP_REST_Response(
-				[
-					'total_hooks'       => 0,
-					'categories'        => [],
-					'hooks_by_category' => [],
-				],
-				200
-			);
-		}
-
 		$by_category = HookCategorizer::get_registered_hooks_by_category();
 		$categories  = HookCategorizer::get_categories();
 		$total       = 0;
@@ -80,16 +69,6 @@ class PerfHooksController extends PerformanceControllerBase {
 		$check = $this->check_rate_limit( $this->rate_limit_key() );
 		if ( \is_wp_error( $check ) ) {
 			return $check;
-		}
-
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\HookCategorizer' ) ) {
-			return new \WP_REST_Response(
-				[
-					'categories' => [],
-					'config'     => [],
-				],
-				200
-			);
 		}
 
 		return new \WP_REST_Response(

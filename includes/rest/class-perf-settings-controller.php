@@ -101,21 +101,14 @@ class PerfSettingsController extends PerformanceControllerBase {
 		// Suppress the static-mode SettingsSync fan-out so applying a remotely-
 		// synced setting doesn't re-queue a sync back to the sender. The
 		// finally clause guarantees we restore the flag even on update failure.
-		$has_sync = \class_exists( '\\Newspack_Event_Logger_Nodes\\SettingsSync' );
-		if ( $has_sync ) {
-			SettingsSync::suppress_sync( true );
-		}
+		SettingsSync::suppress_sync( true );
 		try {
 			$updated = \update_option( $option, $sanitized );
 		} finally {
-			if ( $has_sync ) {
-				SettingsSync::suppress_sync( false );
-			}
+			SettingsSync::suppress_sync( false );
 		}
 
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
-			Config::reset();
-		}
+		Config::reset();
 
 		return new \WP_REST_Response(
 			[

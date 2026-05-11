@@ -191,9 +191,6 @@ class ServerRegistry {
 	 * @return bool True if the server is defined in the config file.
 	 */
 	public function is_config_server( string $id ): bool {
-		if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
-			return false;
-		}
 		$defaults = Config::load_config_defaults();
 		$file     = $defaults['aggregator_servers'] ?? [];
 		return \is_array( $file ) && isset( $file[ $id ] );

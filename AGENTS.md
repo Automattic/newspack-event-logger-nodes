@@ -23,17 +23,11 @@ WordPress VIP Go (enforced by `phpcs.xml.dist`):
 ## Build / Test
 
 ```bash
-# Deploy.
-docker exec eve-pyrobase1-1 /services/pyrobase/setup/newspack-event-logger-nodes.sh
+# Tests (require newspack-nodes to also be installed/activated).
+cd tests && phpunit
 
-# Tests (require both plugins deployed).
-docker exec -u bend eve-pyrobase1-1 \
-    bash -c 'cd /usr/src/newspack-event-logger-nodes/tests && phpunit'
-
-# Coverage.
-docker exec -u bend eve-pyrobase1-1 \
-    /usr/src/newspack-event-logger-nodes/tests/run-coverage.sh
-# → /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/
+# Coverage HTML/Clover.
+tests/run-coverage.sh
 
 # Lint.
 npm run lint:php
@@ -41,6 +35,8 @@ npm run lint:php
 # Build dashboards.
 npm run build
 ```
+
+The plugin is shipped as a standard WordPress plugin; how it's deployed (containers, bind mounts, rsync, etc.) is environment-specific and lives outside this repo.
 
 ## Architecture Decisions
 
@@ -84,7 +80,7 @@ These are intentional. Don't "fix" them.
 | `includes/rest/` | REST controllers (performance, gyroscope, request-log, errors, etc.) |
 | `topologies/` | Per-partition node graphs (firehose-workers, request-workers, job-workers, aggregator) |
 | `src/` | React dashboard trees (event-aggregator, event-dashboards, performance-*, performance-gyroscope, performance-request-log, shared) |
-| `tests/` | PHPUnit suite (unit + integration + Rest) — 707 tests at last count |
+| `tests/` | PHPUnit suite (unit + integration + Rest) — 1368 tests at last count |
 
 ## Common Pitfalls
 
@@ -100,6 +96,10 @@ These are mistakes that have actually happened. Pay attention.
 - **Stats fail-soft, SSE slots fail-closed.** Don't unify them. Dashboards must show "no data" on memcache failure. SSE connections must reject (HTTP 429) — the slot pool IS the rate limit.
 - **Application classes register with CommandInterpreter.** `newspack-event-logger-nodes.php` calls `\Newspack_Nodes\CommandInterpreter::register_class('FlameBuilder', ...)` etc. for FlameBuilder, JobRouter, JobWorker, RequestBuilder, StreamMerger. New application Node subclasses must register too.
 - **Type flags**: array VALUE → `TM_STRUCT`. String VALUE → `TM_BYTESTREAM`. Consumers reading array VALUE gate on TM_STRUCT.
+- **Don't restore `class_exists()` guards for in-plugin classes.** The deferred-loader pattern (require_once chain run on `plugins_loaded` priority 11) loads every class in this plugin before anything constructs them, so defensive `class_exists()` checks for classes that ship in the same plugin are dead branches. Removing them was a deliberate cleanup; re-adding them is dead weight.
+- **`wp nodes cli {reader}` requires the worker to exist.** As of substrate update, `attach_to_worker` checks for `{base}/locks/{reader}.lock.d/`. Typo'd reader ids fail fast with "no worker '<id>' (run `wp nodes ls` to list active workers)" — no silent ghost-IPC creation. If you script `wp nodes cli`, surface that error.
+- **Substrate now passes all message types through Partition/Topic.** Previously TM_REQUEST/TM_ERROR/TM_EOF were silently dropped — that broke pivoted-mode error responses (TM_COMMAND|TM_ERROR from a throwing verb on the worker), `request_node` cli verbs, and the stdin-close drain. Application data partitions (firehose.log, jobintake.log, requests.log, flames.log, jobs.log) only emit TM_BYTESTREAM / TM_STRUCT in practice, so the broader contract is a no-op for the application's write path — but you can now use Partitions as ad-hoc message transports if needed.
+- **Piped `wp nodes cli` sessions drain cleanly.** Substrate now does a TM_EOF round-trip on stdin close (cli emits TM_EOF, worker bounces, cli exits after the echo). Scripted reqgrep/cli pipelines no longer need a trailing `sleep N`.
 
 ## Local Skills
 

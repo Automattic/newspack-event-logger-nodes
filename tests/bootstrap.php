@@ -18,13 +18,14 @@ if ( ! function_exists( 'plugin_dir_url' ) ) {
 }
 
 if ( ! function_exists( 'do_action' ) ) {
-	$GLOBALS['_wp_actions'] = [];
+	$GLOBALS['_wp_actions']      = [];
+	$GLOBALS['_wp_test_filters'] = [];
 	function do_action( string $hook, ...$args ): void {
 		foreach ( $GLOBALS['_wp_actions'][ $hook ] ?? [] as $cb ) {
 			$cb( ...$args );
 		}
 	}
-	function add_action( string $hook, callable $cb ): void {
+	function add_action( string $hook, callable $cb, int $priority = 10, int $accepted_args = 1 ): void {
 		$GLOBALS['_wp_actions'][ $hook ][] = $cb;
 	}
 	function apply_filters( string $hook, mixed $value, ...$args ): mixed {
@@ -33,8 +34,38 @@ if ( ! function_exists( 'do_action' ) ) {
 		}
 		return $value;
 	}
-	function add_filter( string $hook, callable $cb ): void {
-		$GLOBALS['_wp_actions'][ $hook ][] = $cb;
+	function add_filter( string $hook, callable $cb, int $priority = 10, int $accepted_args = 1 ): void {
+		$GLOBALS['_wp_actions'][ $hook ][]                      = $cb;
+		$GLOBALS['_wp_test_filters'][ $hook ][ $priority ][]    = $cb;
+	}
+}
+
+if ( ! class_exists( '\WP_Hook' ) ) {
+	// Minimal WP_Hook stub: stores callbacks keyed by priority, provides
+	// remove_filter() so Core::wrap_callbacks's introspection round-trips.
+	// Real WP_Hook is much richer but our tests only care about the callbacks
+	// array shape (`priority => callback_id => [function, accepted_args]`).
+	class WP_Hook {
+		public array $callbacks = [];
+		public function remove_filter( string $hook, $function_to_remove, int $priority = 10 ): bool {
+			unset( $this->callbacks[ $priority ][ _wp_filter_build_unique_id( $hook, $function_to_remove, $priority ) ] );
+			return true;
+		}
+	}
+	if ( ! function_exists( '_wp_filter_build_unique_id' ) ) {
+		function _wp_filter_build_unique_id( $hook, $cb, $priority ) {
+			if ( is_string( $cb ) ) {
+				return $cb;
+			}
+			if ( is_object( $cb ) ) {
+				return spl_object_hash( $cb );
+			}
+			if ( is_array( $cb ) ) {
+				$obj = is_object( $cb[0] ) ? spl_object_hash( $cb[0] ) : $cb[0];
+				return $obj . '::' . $cb[1];
+			}
+			return 'unknown';
+		}
 	}
 }
 
@@ -242,6 +273,23 @@ if ( ! function_exists( 'wp_remote_get' ) ) {
 			return $GLOBALS['_wp_test_remote_responses'][ $url ];
 		}
 		return new \WP_Error( 'no_stub', 'wp_remote_get default stub' );
+	}
+}
+
+if ( ! function_exists( 'wp_remote_post' ) ) {
+	function wp_remote_post( string $url, array $args = [] ): mixed {
+		// Capture all calls so RemoteManager tests can assert outbound traffic.
+		$GLOBALS['_wp_test_remote_posts'][] = [ 'url' => $url, 'args' => $args ];
+		// Tests can override via $GLOBALS['_wp_test_remote_post_response'] (single
+		// global response) or $GLOBALS['_wp_test_remote_responses'] keyed by URL.
+		if ( isset( $GLOBALS['_wp_test_remote_post_response'] ) ) {
+			$resp = $GLOBALS['_wp_test_remote_post_response'];
+			return is_callable( $resp ) ? $resp( $url, $args ) : $resp;
+		}
+		if ( isset( $GLOBALS['_wp_test_remote_responses'][ $url ] ) ) {
+			return $GLOBALS['_wp_test_remote_responses'][ $url ];
+		}
+		return [ 'response' => [ 'code' => 200 ], 'body' => '' ];
 	}
 }
 

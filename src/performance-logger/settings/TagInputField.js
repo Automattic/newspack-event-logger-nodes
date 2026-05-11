@@ -26,7 +26,7 @@ import CustomEventSelectorModal from './CustomEventSelectorModal';
  * @param {boolean} props.showHookSelector   If true, show hook selector button (for events fields).
  * @param {string}  props.hookSelectorMode   'include' or 'exclude' for hook selector.
  * @param {boolean} props.showCustomSelector If true, show custom event selector button.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function TagInputField( {
 	fieldName,
@@ -108,7 +108,7 @@ export default function TagInputField( {
 	/**
 	 * Handle key down in input.
 	 *
-	 * @param {KeyboardEvent} e Keyboard event.
+	 * @param {import('react').KeyboardEvent} e Keyboard event.
 	 */
 	const handleKeyDown = useCallback(
 		( e ) => {

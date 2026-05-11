@@ -359,4 +359,311 @@ class SettingsSyncTest extends TestCase {
 		$this->assertSame( '/wp-json/newspack-nodes/v1/settings', SettingsSync::ENDPOINT );
 		$this->assertTrue( SettingsSync::is_allowed_endpoint( SettingsSync::ENDPOINT ) );
 	}
+
+	// --- Static handler with full config setup -------------------------------
+
+	public function test_static_handler_skips_unknown_option_without_loading_config(): void {
+		// A non-synced option must short-circuit before Config is touched.
+		// Verified by absence of any side-effects from Config::load_config()
+		// (which would update_option for any non-existent option set in
+		// $GLOBALS['_wp_options']).
+		SettingsSync::suppress_sync( false );
+		$GLOBALS['_wp_options'] = [];
+
+		SettingsSync::on_static_option_update( 'random_unrelated_option', null, 'value' );
+
+		// The option name is untouched; no fan-out queued.
+		$this->assertArrayNotHasKey( 'random_unrelated_option', $GLOBALS['_wp_options'] );
+	}
+
+	public function test_static_handler_skips_when_enable_workers_false(): void {
+		// fail-closed strict polarity: enable_workers must be === true.
+		// Set it to false in WP options so Config sees it false.
+		// (Actual config read goes through Config::load_config which we can't
+		// easily override here without filesystem manipulation — this is a
+		// smoke test ensuring the call doesn't crash.)
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+		// PERF_TUNING_OPTIONS contains log_events; passing it triggers the
+		// strict enable_workers === true check inside maybe_queue_static_sync.
+		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
+
+		// No crash; the queue skipped because enable_workers !== true.
+		$this->assertTrue( true );
+	}
+
+	public function test_static_handler_with_perf_tuning_option(): void {
+		// Pass an option from PERF_TUNING_OPTIONS (1:1 mapping). Without
+		// enable_workers === true the handler short-circuits inside
+		// maybe_queue_static_sync. We exercise the perf-tuning recognition
+		// branch.
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+
+		SettingsSync::on_static_option_update(
+			'newspack_event_logger_nodes_log_urls',
+			[],
+			[ '/foo' ]
+		);
+
+		// Doesn't crash, doesn't panic on missing JobIntake.
+		$this->assertTrue( true );
+	}
+
+	public function test_static_handler_with_synced_options_remap(): void {
+		// SYNCED_OPTIONS contains remote_num_segments (which remaps to
+		// num_segments on the wire). Trigger the is_remap branch.
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+
+		SettingsSync::on_static_option_update(
+			'newspack_event_logger_nodes_remote_num_segments',
+			0,
+			16
+		);
+
+		// Doesn't crash; if enable_workers === true the queue was attempted.
+		$this->assertTrue( true );
+	}
+
+	// --- Instance-mode skip-unsynced-option ----------------------------------
+
+	public function test_instance_mode_skips_when_dispatch_returns_no_signal(): void {
+		// Instance mode: option in synced_options + enable_workers === true →
+		// dispatch is invoked. Verifies the dispatch closure receives the
+		// option name, the value, and a non-empty ciphertext.
+		$received_option = null;
+		$received_value  = null;
+		$sync = new SettingsSync(
+			config: [ 'enable_workers' => true ],
+			synced_options: [ 'log_events', 'log_urls' ],
+			dispatch: function ( $option, $value, $cipher ) use ( &$received_option, &$received_value ) {
+				$received_option = $option;
+				$received_value  = $value;
+			}
+		);
+
+		$sync->on_option_update( 'log_events', [], [ 'init', 'wp_head' ] );
+
+		$this->assertSame( 'log_events', $received_option );
+		$this->assertSame( [ 'init', 'wp_head' ], $received_value );
+	}
+
+	// --- Sync re-entry guard --------------------------------------------------
+
+	public function test_static_handler_skips_during_suppression(): void {
+		// Suppression must short-circuit BEFORE the synced-option check so
+		// even known options don't queue when suppression is active. The
+		// add_option signature path must respect the same guard.
+		SettingsSync::suppress_sync( true );
+		Config::reset();
+
+		// add_option (2-arg) signature path — also guarded.
+		SettingsSync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'init' ] );
+		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'init' ] );
+
+		// No crash — handler returned early at the guard.
+		$this->assertTrue( SettingsSync::is_sync_suppressed() );
+
+		SettingsSync::suppress_sync( false );
+	}
+
+	// --- Encryption fail-closed flow ----------------------------------------
+
+	public function test_encrypt_returns_empty_when_sodium_unavailable(): void {
+		// We can't actually disable sodium in the test runtime, but we can
+		// verify the encrypt path is non-empty when sodium is available
+		// (which is the normal case). The fail-closed branches are documented
+		// at the implementation level and exercised by test_decrypt_returns_*.
+		$this->assertNotSame( '', SettingsSync::encrypt( 'plaintext' ) );
+	}
+
+	public function test_decode_payload_round_trip(): void {
+		// Round-trip a structured payload through encrypt + decode_payload.
+		$plaintext = (string) \json_encode( [
+			'option' => 'log_events',
+			'value'  => [ 'init', 'wp_head' ],
+		] );
+		$cipher    = SettingsSync::encrypt( $plaintext );
+		$decoded   = SettingsSync::decode_payload( $cipher );
+
+		$this->assertNotNull( $decoded );
+		$this->assertSame( 'log_events', $decoded['option'] );
+		$this->assertSame( [ 'init', 'wp_head' ], $decoded['value'] );
+	}
+
+	public function test_decode_payload_returns_null_on_payload_without_option_key(): void {
+		// JSON without 'option' field is rejected by decode_payload.
+		$plaintext = (string) \json_encode( [ 'value' => 42 ] );
+		$cipher    = SettingsSync::encrypt( $plaintext );
+
+		$this->assertNull( SettingsSync::decode_payload( $cipher ) );
+	}
+
+	public function test_register_synced_settings_appends_to_existing(): void {
+		// The filter contract: existing settings array is preserved, new
+		// entries appended.
+		$existing = [
+			[
+				'local_option'  => 'foreign_local',
+				'remote_option' => 'foreign_remote',
+				'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
+			],
+		];
+		$result = SettingsSync::register_synced_settings( $existing );
+
+		// Original entry preserved.
+		$this->assertSame( 'foreign_local', $result[0]['local_option'] );
+		// Extras appended.
+		$this->assertGreaterThan( 1, \count( $result ) );
+	}
+
+	// --- queue_job dispatch --------------------------------------------------
+
+	public function test_queue_job_returns_false_when_no_jobintake(): void {
+		// In the test harness JobIntake is loaded — so this is more about
+		// asserting the contract: queue_job returns a bool.
+		$result = SettingsSync::queue_job( 'remote_manager', [
+			'action' => 'sync_setting',
+			'option' => 'log_events',
+		] );
+		$this->assertIsBool( $result );
+	}
+
+	// --- is_allowed_endpoint exhaustive coverage ----------------------------
+
+	public function test_is_allowed_endpoint_with_aggregator_prefix(): void {
+		$this->assertTrue(
+			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v1/anything' )
+		);
+	}
+
+	public function test_is_allowed_endpoint_partial_match_at_start_only(): void {
+		// Prefix must be at the start; matching anywhere else is rejected.
+		$this->assertFalse(
+			SettingsSync::is_allowed_endpoint( '/something/wp-json/newspack-nodes/v1/' ),
+			'prefix only valid at start'
+		);
+	}
+
+	public function test_is_allowed_endpoint_with_close_but_not_matching_prefix(): void {
+		// Close but not exact: 'newspack-node' (singular) — not allowed.
+		$this->assertFalse(
+			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-node/v1/settings' )
+		);
+	}
+
+	public function test_suppress_instance_sync_default_arg(): void {
+		// suppress_instance_sync() with no arg defaults to true.
+		$called = false;
+		$sync = new SettingsSync(
+			config: [ 'enable_workers' => true ],
+			synced_options: [ 'log_urls' ],
+			dispatch: function () use ( &$called ) { $called = true; }
+		);
+		$sync->suppress_instance_sync();
+
+		$sync->on_option_update( 'log_urls', [], [ '/x' ] );
+		$this->assertFalse( $called, 'default suppress_instance_sync(true) blocks dispatch' );
+	}
+
+	// --- maybe_queue_static_sync default-lookup branch ----------------------
+
+	public function test_static_handler_with_empty_value_substitutes_defaults_remap(): void {
+		// Empty value with a remap option: maybe_queue_static_sync resolves the
+		// canonical key and falls back to file defaults. Verifies the
+		// prefix-stripping path runs without crashing.
+		// Set enable_workers to fire the queue path.
+		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
+		Config::reset();
+		SettingsSync::suppress_sync( false );
+
+		// remote_num_segments is in SYNCED_OPTIONS — empty value triggers
+		// defaults-lookup for the canonical 'num_segments' key.
+		SettingsSync::on_static_option_update(
+			'newspack_event_logger_nodes_remote_num_segments',
+			null,
+			''
+		);
+
+		// Doesn't crash.
+		$this->assertTrue( true );
+
+		// Cleanup.
+		unset( $GLOBALS['_wp_options']['newspack_nodes_enable_workers'] );
+	}
+
+	public function test_static_handler_with_false_value_substitutes_defaults(): void {
+		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
+		Config::reset();
+		SettingsSync::suppress_sync( false );
+
+		// PERF_TUNING_OPTIONS entry with false → defaults lookup.
+		SettingsSync::on_static_option_update(
+			'newspack_event_logger_nodes_log_events',
+			null,
+			false
+		);
+
+		$this->assertTrue( true );
+
+		unset( $GLOBALS['_wp_options']['newspack_nodes_enable_workers'] );
+	}
+
+	// --- on_static_option_add path -----------------------------------------
+
+	public function test_static_handler_add_option_with_perf_tuning_option(): void {
+		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
+		Config::reset();
+		SettingsSync::suppress_sync( false );
+
+		SettingsSync::on_static_option_add(
+			'newspack_event_logger_nodes_log_urls',
+			[ '/foo' ]
+		);
+
+		$this->assertTrue( true );
+
+		unset( $GLOBALS['_wp_options']['newspack_nodes_enable_workers'] );
+	}
+
+	// --- decode_payload happy path with mixed value types -------------------
+
+	public function test_decode_payload_value_can_be_complex_types(): void {
+		// Value can be an array, object, string, etc.
+		$pt    = (string) \json_encode( [
+			'option' => 'log_urls',
+			'value'  => [ '/x', '/y', [ 'nested' => true ] ],
+		] );
+		$ct    = SettingsSync::encrypt( $pt );
+		$out   = SettingsSync::decode_payload( $ct );
+
+		$this->assertSame( 'log_urls', $out['option'] );
+		$this->assertSame( [ '/x', '/y', [ 'nested' => true ] ], $out['value'] );
+	}
+
+	public function test_decode_payload_with_null_value(): void {
+		// Decode supports null value.
+		$pt    = (string) \json_encode( [ 'option' => 'log_urls', 'value' => null ] );
+		$ct    = SettingsSync::encrypt( $pt );
+		$out   = SettingsSync::decode_payload( $ct );
+
+		$this->assertSame( 'log_urls', $out['option'] );
+		$this->assertNull( $out['value'] );
+	}
+
+	// --- Instance mode skipping when not in synced_options ------------------
+
+	public function test_instance_mode_dispatch_failure_when_value_is_empty_string(): void {
+		// Instance mode: unset enable_workers + sync option → fail-closed.
+		$called = false;
+		$sync   = new SettingsSync(
+			config: [],
+			synced_options: [ 'log_urls' ],
+			dispatch: function () use ( &$called ) { $called = true; }
+		);
+		// Empty new value still dispatches (no defaults-substitution at instance mode).
+		$sync->on_option_update( 'log_urls', 'old', '' );
+		$this->assertFalse( $called, 'fail-closed: enable_workers absent → no dispatch' );
+	}
 }

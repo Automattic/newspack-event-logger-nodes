@@ -5,15 +5,17 @@
  * Provides an interface for import processes to queue large jobs.
  * Jobs written here are routed to jobs.log by JobRouter.
  *
- * Uses internal locking by default to ensure single-writer semantics
- * (required for allow_large_writes mode).
+ * Locking happens per-Partition inside `Partition::allow_large_writes()` —
+ * one writer per partition, multiple partitions can write in parallel. The
+ * legacy intake-level lock at `{base_dir}/locks/jobintake.lock.d` (a single
+ * host-wide gate) was removed when Partition learned to drive its own
+ * heartbeat from `fill()` without an EventFramework Timer.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Lock;
 use Newspack_Nodes\Partition;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -57,13 +59,6 @@ class JobIntake {
 	private int $num_partitions;
 
 	/**
-	 * Whether to use locking.
-	 *
-	 * @var bool
-	 */
-	private bool $use_lock;
-
-	/**
 	 * Partition instances for each partition index.
 	 *
 	 * @var array<int, Partition>
@@ -71,32 +66,11 @@ class JobIntake {
 	private array $partitions = [];
 
 	/**
-	 * Lock instance for single-writer guarantee.
-	 *
-	 * @var Lock|null
-	 */
-	private ?Lock $lock = null;
-
-	/**
 	 * Pinned partition (null = round-robin).
 	 *
 	 * @var int|null
 	 */
 	private ?int $pinned_partition = null;
-
-	/**
-	 * Last touch timestamp (to throttle heartbeat updates).
-	 *
-	 * @var int
-	 */
-	private int $last_touch = 0;
-
-	/**
-	 * Whether initialized.
-	 *
-	 * @var bool
-	 */
-	private bool $initialized = false;
 
 	/**
 	 * Constructor.
@@ -108,9 +82,8 @@ class JobIntake {
 	 *
 	 * @param string|null $base_dir       Base directory containing logs/ and locks/.
 	 * @param int|null    $num_partitions Number of partitions.
-	 * @param bool        $use_lock       Whether to acquire lock (default: true).
 	 */
-	public function __construct( ?string $base_dir = null, ?int $num_partitions = null, bool $use_lock = true ) {
+	public function __construct( ?string $base_dir = null, ?int $num_partitions = null ) {
 		if ( null === $base_dir || null === $num_partitions ) {
 			$config         = \class_exists( '\Newspack_Nodes\Config' )
 				? \Newspack_Nodes\Config::load_config( 'full' )
@@ -120,11 +93,10 @@ class JobIntake {
 		}
 		$this->base_dir       = \rtrim( $base_dir, '/' );
 		$this->num_partitions = \max( 1, $num_partitions );
-		$this->use_lock       = $use_lock;
 	}
 
 	/**
-	 * Destructor - release lock if held.
+	 * Destructor — release any per-Partition write locks still held.
 	 */
 	public function __destruct() {
 		$this->close();
@@ -142,36 +114,9 @@ class JobIntake {
 	}
 
 	/**
-	 * Initialize partitions and acquire lock (lazy).
-	 *
-	 * @return bool True if initialized successfully, false if lock unavailable.
-	 */
-	private function init(): bool {
-		if ( $this->initialized ) {
-			return true;
-		}
-
-		// Acquire lock first if enabled.
-		if ( $this->use_lock ) {
-			$lock_dir = $this->base_dir . '/locks/jobintake.lock.d';
-			if ( ! \is_dir( $this->base_dir . '/locks' ) ) {
-				// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
-				@\mkdir( $this->base_dir . '/locks', 0755, true );
-			}
-			$this->lock = new Lock( $lock_dir );
-			if ( ! $this->lock->acquire() ) {
-				$this->lock = null;
-				return false;
-			}
-		}
-
-		// Partitions are materialized lazily on first write_job().
-		$this->initialized = true;
-		return true;
-	}
-
-	/**
-	 * Lazily materialize the Partition for a given index.
+	 * Lazily materialize the Partition for a given index. The per-Partition
+	 * `allow_large_writes()` call acquires the partition's write lock — blocks
+	 * up to ~65s on a respawn race, throws on a genuine concurrent writer.
 	 */
 	private function partition_handle( int $partition ): Partition {
 		if ( isset( $this->partitions[ $partition ] ) ) {
@@ -208,10 +153,6 @@ class JobIntake {
 			return false;
 		}
 
-		if ( ! $this->init() ) {
-			return false;
-		}
-
 		// Select partition.
 		if ( null !== $this->pinned_partition ) {
 			$partition = $this->pinned_partition;
@@ -243,15 +184,15 @@ class JobIntake {
 		// Partition::fill packs and appends.
 		$msg                                       = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$right_now;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $job;
 		$this->partition_handle( $partition )->fill( $msg );
-		$this->touch();
 		return true;
 	}
 
 	/**
-	 * Close the intake and release the lock.
+	 * Close all open Partitions. `Partition::remove_node()` flushes the batch
+	 * and releases the per-Partition write lock.
 	 */
 	public function close(): void {
 		foreach ( $this->partitions as $partition ) {
@@ -263,12 +204,7 @@ class JobIntake {
 			}
 			$partition->remove_node();
 		}
-		$this->partitions  = [];
-		$this->initialized = false;
-		if ( $this->lock ) {
-			$this->lock->release();
-			$this->lock = null;
-		}
+		$this->partitions = [];
 	}
 
 	/**
@@ -276,13 +212,9 @@ class JobIntake {
 	 *
 	 * @param array       $jobs Array of ['handler' => string, 'parameters' => array].
 	 * @param string|null $key  Optional partition key for all jobs.
-	 * @return int Number of jobs successfully written (0 if lock unavailable).
+	 * @return int Number of jobs successfully written.
 	 */
 	public function queue_many( array $jobs, ?string $key = null ): int {
-		if ( ! $this->init() ) {
-			return 0;
-		}
-
 		$written = 0;
 
 		foreach ( $jobs as $job ) {
@@ -311,79 +243,15 @@ class JobIntake {
 	}
 
 	/**
-	 * Check if the intake is open (lock acquired, partitions ready).
-	 *
-	 * @return bool True if open and ready to write.
-	 */
-	public function is_open(): bool {
-		return $this->initialized;
-	}
-
-	/**
-	 * Check if lock is available without acquiring it.
-	 *
-	 * Useful to check before starting a long import process.
-	 * Note: Lock may become unavailable between check and actual write.
-	 *
-	 * @return bool True if lock appears available (or locking disabled).
-	 */
-	public function is_lock_available(): bool {
-		if ( ! $this->use_lock ) {
-			return true;
-		}
-		if ( $this->is_open() ) {
-			return true; // Already have lock.
-		}
-
-		$lock_dir = $this->base_dir . '/locks/jobintake.lock.d';
-
-		if ( ! \is_dir( $lock_dir ) ) {
-			return true; // No lock held.
-		}
-
-		// Check heartbeat staleness.
-		$heartbeat_file = $lock_dir . '/' . Lock::HEARTBEAT_FILE;
-		$mtime = @\filemtime( $heartbeat_file );
-		if ( false === $mtime ) {
-			return true; // No heartbeat = stale lock.
-		}
-
-		return ( \time() - $mtime ) >= Lock::STALE_TIMEOUT;
-	}
-
-	/**
-	 * Touch heartbeat for long-running imports.
-	 *
-	 * Call this periodically during long imports to prevent
-	 * the lock from being considered stale.
-	 */
-	public function touch(): void {
-		if ( $this->lock ) {
-			$now = \time();
-			if ( $now > $this->last_touch ) {
-				$this->lock->heartbeat();
-				$this->last_touch = $now;
-			}
-		}
-	}
-
-	/**
-	 * Maximum time to wait for lock in seconds (5 minutes).
-	 */
-	private const QUEUE_TIMEOUT_S = 300;
-
-	/**
-	 * Sleep interval between lock retries in microseconds.
-	 */
-	private const QUEUE_RETRY_INTERVAL_US = 100000; // 100ms
-
-	/**
 	 * Static helper to write a single job.
 	 *
 	 * If a key is provided, jobs with the same key always go to the same partition.
 	 * If no key is provided, jobs are distributed via round-robin.
 	 *
-	 * Blocks with retry if lock is held by another process (up to 5 min timeout).
+	 * Lock acquisition (per-Partition, not host-wide) happens inside
+	 * `Partition::allow_large_writes()`, which blocks up to ~65s on a respawn
+	 * race and throws on a genuine concurrent live writer. We catch the
+	 * throw and return false so callers retain the boolean contract.
 	 *
 	 * `$base_dir` and `$num_partitions` default to the substrate config — callers
 	 * should normally just pass `(handler, parameters[, key])`. The trailing
@@ -394,7 +262,8 @@ class JobIntake {
 	 * @param string|null $key            Optional partition key (e.g., event ID).
 	 * @param string|null $base_dir       Override base directory.
 	 * @param int|null    $num_partitions Override partition count.
-	 * @return bool True on success, false on validation failure or timeout.
+	 * @return bool True on success, false on validation failure or unrecoverable
+	 *              lock contention (live concurrent writer on same partition).
 	 */
 	public static function queue(
 		string $handler,
@@ -403,37 +272,18 @@ class JobIntake {
 		?string $base_dir = null,
 		?int $num_partitions = null
 	): bool {
-		// Validate handler name before entering retry loop (fail fast).
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
 			return false;
 		}
 
-		// Retry with backoff until lock acquired or timeout.
-		$deadline = \microtime( true ) + self::QUEUE_TIMEOUT_S;
-
-		while ( true ) {
-			$intake = new self( $base_dir, $num_partitions );
+		$intake = new self( $base_dir, $num_partitions );
+		try {
 			$result = $intake->write_job( $handler, $parameters, $key );
-			$was_open = $intake->is_open();
+		} catch ( \RuntimeException $e ) {
+			$result = false;
+		} finally {
 			$intake->close();
-
-			if ( $result ) {
-				return true;
-			}
-
-			// If we acquired the lock (was_open) but write still failed,
-			// it's a permanent error (disk full, size exceeded) — don't retry.
-			if ( $was_open ) {
-				return false;
-			}
-
-			// Check if we timed out.
-			if ( \microtime( true ) >= $deadline ) {
-				return false;
-			}
-
-			// Lock contention — wait before retry.
-			\usleep( self::QUEUE_RETRY_INTERVAL_US );
 		}
+		return $result;
 	}
 }

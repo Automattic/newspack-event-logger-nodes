@@ -32,7 +32,7 @@ import './styles/request-stream.scss';
  * Generate URL hash for linking to URL detail.
  *
  * @param {string} url URL to hash.
- * @return {string} 12-character FNV-1a hash.
+ * @return {import('react').ReactElement} {string} 12-character FNV-1a hash.
  */
 const urlHash = ( url ) => {
 	const urlPath = url?.split( '?' )[ 0 ] || '';
@@ -75,7 +75,7 @@ const DEFAULT_COLUMNS = [
  * Format timestamp to HH:MM:SS.mmm
  *
  * @param {number} ts Unix timestamp (seconds with decimals).
- * @return {string} Formatted time string.
+ * @return {import('react').ReactElement} {string} Formatted time string.
  */
 const formatTime = ( ts ) => {
 	if ( ! ts ) {
@@ -200,7 +200,7 @@ const StreamRow = memo( function StreamRow( {
  *
  * @param {Object} props            Component props.
  * @param {number} props.maxEntries Maximum entries to keep in buffer.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function RequestStream( { maxEntries = 500 } ) {
 	const [ entries, setEntries ] = useState( [] );

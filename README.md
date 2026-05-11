@@ -10,17 +10,14 @@ Application classes (`RequestBuilder`, `FlameBuilder`, `JobRouter`, `JobWorker`,
 
 ## Quick Start
 
+Install both plugins into a WordPress site (this plugin depends on `newspack-nodes`).
+
 ```bash
-# Deploy both plugins to dndocker.
-docker exec eve-pyrobase1-1 /services/pyrobase/setup/newspack-nodes.sh
-docker exec eve-pyrobase1-1 /services/pyrobase/setup/event-logger-nodes.sh
+# Activate. Order matters: runtime first.
+wp plugin activate newspack-nodes newspack-event-logger-nodes
 
-# Activate (order matters: runtime first).
-docker exec -u bend eve-pyrobase1-1 wp plugin activate newspack-nodes \
-    newspack-event-logger-nodes --allow-root --path=/var/www/html
-
-# Verify.
-docker exec eve-pyrobase1-1 wp nodes ls --allow-root --path=/var/www/html
+# Verify the runtime sees this plugin's worker topology.
+wp nodes ls
 ```
 
 Configuration is read via the `newspack_nodes/config` filter. Defaults live in `PerformanceControllerBase::load_config()`:

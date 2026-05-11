@@ -95,7 +95,7 @@ class JobWorker extends Node {
 
 	private function validate_handler_name( string $name ): void {
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
-			throw new \InvalidArgumentException( "invalid handler name: $name" );
+			throw new \InvalidArgumentException( \esc_html( "invalid handler name: $name" ) );
 		}
 	}
 
@@ -280,11 +280,8 @@ class JobWorker extends Node {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
 		$orig_server = $_SERVER;
 
-		// LogManager::suspend() pushes the parent context onto its stack. If the
-		// class isn't loaded (test bootstrap, parent plugin not active), no-op.
-		if ( \class_exists( '\Newspack_Event_Logger_Nodes\LogManager' ) ) {
-			\Newspack_Event_Logger_Nodes\LogManager::suspend();
-		}
+		// LogManager::suspend() pushes the parent context onto its stack.
+		\Newspack_Event_Logger_Nodes\LogManager::suspend();
 
 		$path_info = '/' . \ltrim( $handler, '/' );
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
@@ -316,9 +313,7 @@ class JobWorker extends Node {
 	 * @param array<string,mixed> $orig_server $_SERVER snapshot from begin_job_context().
 	 */
 	public static function end_job_context( array $orig_server ): void {
-		if ( \class_exists( '\Newspack_Event_Logger_Nodes\LogManager' ) ) {
-			\Newspack_Event_Logger_Nodes\LogManager::resume();
-		}
+		\Newspack_Event_Logger_Nodes\LogManager::resume();
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
 		$_SERVER = $orig_server;
 	}
