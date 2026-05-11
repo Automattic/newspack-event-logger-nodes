@@ -156,6 +156,27 @@ class Admin {
 		// options trigger the right restart class too.
 		\add_action( 'updated_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
 		\add_action( 'added_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
+
+		// Skip writing a WP option when the value matches the config-file
+		// default — keeps the options table clean and lets file-side changes
+		// actually take effect instead of being shadowed by a stale stored
+		// copy of the old default.
+		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );
+	}
+
+	public function skip_default_writes( $value, string $option, $old_value ) {
+		$key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
+		if ( $key === $option || '' === $key ) {
+			return $value;
+		}
+		$defaults = Config::load_config_defaults();
+		if ( ! \array_key_exists( $key, $defaults ) || $value != $defaults[ $key ] ) {
+			return $value;
+		}
+		if ( false !== $old_value ) {
+			\delete_option( $option );
+		}
+		return $old_value;
 	}
 
 	/**
@@ -430,19 +451,13 @@ class Admin {
 			[ 'sanitize_callback' => fn ( $v ) => (bool) (int) $v ]
 		);
 
-		// Aggregator spoke list. Written by ServerRegistry through the
-		// Remote Servers REST CRUD, not the options form; register here
-		// so it's part of the app's option namespace (reset flow, allowed-
-		// options list, sanitization stays put when an external dispatch
-		// goes through options.php).
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_aggregator_servers',
-			[
-				'sanitize_callback' => [ $this, 'sanitize_aggregator_servers' ],
-				'autoload'          => false,
-			]
-		);
+		// Aggregator spoke list is managed by the Remote Servers REST CRUD
+		// (ServerRegistry → encrypted WP option) — NOT a settings-form field.
+		// Registering it here would make options.php's whitelist-iteration
+		// pass `null` to the sanitizer on every save and clobber the list,
+		// including any config-file-defined defaults that flow through
+		// ServerRegistry::get_all's merge. Legacy newspack-event-aggregator
+		// also only does add_settings_field for display, not register_setting.
 
 		\add_settings_section(
 			'newspack_event_logger_nodes_aggregator_section',
