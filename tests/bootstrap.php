@@ -268,6 +268,9 @@ if ( ! function_exists( 'sanitize_file_name' ) ) {
 
 if ( ! function_exists( 'wp_remote_get' ) ) {
 	function wp_remote_get( string $url, array $args = [] ): mixed {
+		// Capture all calls so test_connection / discovery probes can assert
+		// outbound args (sslverify, headers, timeout). Mirrors wp_remote_post.
+		$GLOBALS['_wp_test_remote_gets'][] = [ 'url' => $url, 'args' => $args ];
 		// Tests can override via $GLOBALS['_wp_test_remote_responses'] keyed by URL.
 		if ( isset( $GLOBALS['_wp_test_remote_responses'][ $url ] ) ) {
 			return $GLOBALS['_wp_test_remote_responses'][ $url ];

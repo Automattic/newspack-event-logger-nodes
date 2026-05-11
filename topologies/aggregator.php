@@ -24,7 +24,13 @@
 \defined( 'ABSPATH' ) || exit;
 
 return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $partition ): array {
-	$config         = \Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase::load_config();
+	// Application Config (not PerformanceControllerBase::load_config) because
+	// this topology reads application-only keys (aggregator_verify_ssl,
+	// aggregator_allow_http) alongside substrate keys. Config::load_config('full')
+	// merges file overlays + WP options + the schema, so the StreamMerger
+	// gets the same SSL policy as ServersController's "Test" probe and
+	// RemoteManager's settings-sync POSTs.
+	$config         = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
 	$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 	$logs_dir       = "{$base_dir}/logs";
 	$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
@@ -32,6 +38,12 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	$num_segments   = (int) ( $config['num_segments'] ?? 8 );
 	$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
 	$firehose_dir   = "{$logs_dir}/firehose.log";
+
+	// File-overlay default of aggregator_verify_ssl is true; only `=== false`
+	// disables peer/host verification. aggregator_allow_http is opt-in (false
+	// default) because Basic-Auth credentials over plain HTTP leak.
+	$verify_ssl = ! isset( $config['aggregator_verify_ssl'] ) || true === $config['aggregator_verify_ssl'];
+	$allow_http = true === ( $config['aggregator_allow_http'] ?? false );
 
 	if ( ! \is_dir( $firehose_dir ) ) {
 		@\mkdir( $firehose_dir, 0755, true );
@@ -51,6 +63,8 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	// StreamMerger named-routes to the firehose Topic.
 	$stream_merger = $interpreter->make_node( 'StreamMerger', 'stream-merger' );
 	$stream_merger->connect_node( 'firehose:topic' );
+	$stream_merger->set_verify_ssl( $verify_ssl );
+	$stream_merger->set_allow_http( $allow_http );
 
 	return [
 		'partition'      => $partition,
