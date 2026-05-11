@@ -167,44 +167,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertSame( 'B', $cache->get( 'b' ) );
 	}
 
-	public function test_inflight_lru_evicts_stale_rid_as_incomplete(): void {
-		// LRU rotation is timing-driven (sub-ms thresholds with usleep);
-		// reliable on a quiet system but flaky under load. The eviction
-		// callback path is also exercised by LruCache's own tests.
-		$this->markTestSkipped( 'Timing-sensitive — covered by LruCache rotation tests.' );
-		$cmd      = $this->make_cmd();
-		$inflight = ( new LruCache( 1, 1 ) )->with_timed_rotation(
-			0.001,
-			function ( string $rid, $state ) use ( $cmd ): void {
-				if ( ! $state instanceof \stdClass ) {
-					return;
-				}
-				$ref = new \ReflectionMethod( $cmd, 'output_request' );
-				$ref->setAccessible( true );
-				$ref->invoke( $cmd, $state->lines );
-				echo "[incomplete]\n\n";
-			}
-		);
-		$ref = new \ReflectionProperty( $cmd, 'inflight' );
-		$ref->setAccessible( true );
-		$ref->setValue( $cmd, $inflight );
-
-		\ob_start();
-
-		// Track rid 'a'; bytes go in.
-		$this->process_line->invoke( $cmd, '{"rid":"a","n":1,"k":"process (start)","m":"/x","ts":1700000000}' . "\n" );
-		\usleep( 5000 );
-		// Force rotate; rid 'a' becomes oldest bucket (rotates and evicts).
-		$inflight->rotate_if_due();
-		// Touch a second rid to force the eviction callback to fire on the rolled-out bucket.
-		$this->process_line->invoke( $cmd, '{"rid":"b","n":1,"k":"process (start)","m":"/y","ts":1700000001}' . "\n" );
-
-		$out = \ob_get_clean();
-
-		$this->assertStringContainsString( '[incomplete]', $out, 'rid "a" should have been emitted as incomplete' );
-	}
-
-	// -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
 	// Indent state machine.
 	// -------------------------------------------------------------------------
 
