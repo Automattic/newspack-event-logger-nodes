@@ -108,7 +108,7 @@ These are intentional. Don't "fix" them.
 | `includes/rest/` | REST controllers (performance, gyroscope, request-log, errors, etc.) |
 | `topologies/` | Per-partition node graphs (firehose-workers, request-workers, job-workers, aggregator) |
 | `src/` | React dashboard trees (event-aggregator, event-dashboards, performance-*, performance-gyroscope, performance-request-log, shared) |
-| `tests/` | PHPUnit suite (unit + integration + Rest) — 1368 tests at last count |
+| `tests/` | PHPUnit suite (unit + integration + Rest) |
 
 ## Common Pitfalls
 

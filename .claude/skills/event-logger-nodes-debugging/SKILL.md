@@ -92,14 +92,15 @@ Page slugs (URL path: `/wp-admin/admin.php?page=<slug>`):
 | Slug | What |
 |------|------|
 | `newspack-nodes` | Substrate settings (base directory, partitions, retention, memcache servers) |
-| `newspack-event-logger-nodes` | Application settings (log filters, hooks to instrument, hub/spoke config) |
+| `newspack_event_logger_nodes` (Settings menu) | Application settings (log filters, hooks to instrument, hub/spoke config, Remote Servers table) |
 | `newspack-nodes-performance` | Performance overview (URL leaderboard, breakdown by server / status / category) |
 | `newspack-nodes-performance&request=<rid>` | URL drilldown with the request rendered inline |
-| `newspack-nodes-stream` | Live firehose tail |
+| `newspack-nodes-stream` | Request Log — recent completed requests + drilldown |
 | `newspack-nodes-gyroscope` | In-flight request timeline visualization |
-| `newspack-nodes-rawlogs` | Browse raw log lines |
+| `newspack-nodes-rawlogs` | Browse raw log lines (firehose tail) |
 | `newspack-nodes-errors` | Error log dashboard |
 | `newspack-nodes-workers` | Worker health + live position dashboard |
+| `newspack-nodes-aggregator` | Hub-side per-spoke status (only registered when `newspack_event_logger_nodes_enable_aggregator` is on) |
 
 If a dashboard says "Connection lost", check (in this order):
 1. The page enqueues its build via the page-arg map in `newspack-event-logger-nodes.php` — does the slug match?
@@ -127,8 +128,11 @@ A node is a hub if `enable_workers === true` (strict). Hubs pull remote firehose
 Diagnostic flow:
 
 ```bash
-# Is this node a hub?
-wp option get newspack_event_logger_nodes_enable_workers
+# Is this node a hub? (substrate option, not application-prefixed)
+wp option get newspack_nodes_enable_workers
+
+# Is the aggregator topology even loaded? (application option, defaults ON)
+wp option get newspack_event_logger_nodes_enable_aggregator
 
 # Aggregator status (hub-side).
 curl -sk "<site>/wp-json/newspack-nodes-aggregator/v1/status"

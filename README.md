@@ -43,18 +43,18 @@ Application graph backed by `newspack-nodes` partitions, surfaced as dashboards 
 
 | Dashboard | Endpoint family | Source |
 |-----------|----------------|--------|
-| **Performance** | `/perf/overview`, `/perf/requests`, `/perf/urls`, `/perf/settings` | `RequestBuilder` + `FlameBuilder` + `StatsAggregator` |
-| **URL detail / Flame graph** | `/perf/urls/{hash}` | Per-URL flame stats from `Stats_Store` |
-| **Request profile** | `/perf/requests/{rid}` | Partition scan via `.idx` |
-| **Gyroscope** | `/gyroscope`, `/gyroscope/stream` (SSE) | `RequestBuilder` in-flight cache |
-| **Request Log** | `/request-log`, `/requests/stream` (SSE) | Tail of `requests.log` |
-| **Raw Logs** | `/rawlogs`, `/firehose/stream` (SSE) | Direct firehose tail |
-| **Errors** | `/errors/stream` (SSE) | Tail of `errors.log` |
-| **Worker Status** | `/workers` | Lock-dir scan + offsetlog cursors |
-| **Settings** | `/logger`, `/perf/hooks`, `/perf/hooks-available`, `/settings` | WP options |
-| **Aggregator** | `/aggregator`, `/aggregator/status`, `/servers` | `StreamMerger` per-remote state |
+| **Performance** | `/performance/overview`, `/performance/urls`, `/performance/dashboard`, `/performance/timing` | `RequestBuilder` + `FlameBuilder` + `Stats_Store` |
+| **URL detail / Flame graph** | `/performance/urls/{hash}` | Per-URL flame stats from `Stats_Store` |
+| **Request profile** | `/performance/requests/{rid}`, `/performance/requests/search/{rid}` | Partition scan via `.idx` |
+| **Gyroscope** | `/gyroscope/timeline`, `/firehose/gyroscope` (SSE) | `RequestBuilder` in-flight cache |
+| **Request Log** | `/request-log/list`, `/request-log/detail/{id}`, `/firehose/requests` (SSE) | Requests index + `requests.log` |
+| **Raw Logs** | `/events/recent`, `/events/stats`, `/firehose/rawlogs` (SSE), `/firehose/stream` (SSE) | Direct firehose tail |
+| **Errors** | `/firehose/errors` (SSE) | Tail of `errors.log` |
+| **Workers** | `/performance/workers`, `/performance/workers/restart` | `Bootstrap::expand_workers()` + lock-dir scan + offsetlog cursors |
+| **Settings** | `/logger/config`, `/logger/hooks`, `/performance/config`, `/performance/settings`, `/performance/hooks/available`, `/performance/hooks/configure`, `/performance/registered-hooks`, `/performance/hook-categories`, `/settings` | WP options |
+| **Aggregator (hub-only)** | `/newspack-nodes-aggregator/v1/status`, `/servers`, `/health`, `/servers/{id}`, `/servers/{id}/test` | `ServerRegistry` + `StreamMerger` per-remote state |
 
-All endpoints sit under `/wp-json/newspack-nodes/v1/`. For request/response shapes, see [API.md](API.md).
+All non-aggregator endpoints sit under `/wp-json/newspack-nodes/v1/`. For request/response shapes, see [API.md](API.md).
 
 ## Migration from Newspack Event Logger Plugins
 
@@ -66,4 +66,4 @@ GPL-2.0-or-later
 
 ## Status
 
-v0.1.0 — initial public release. Working prototype, not yet in production. Feature-complete for the dashboards listed above; cutover from the legacy plugins is in progress.
+v0.1.0 — initial public release. Working prototype. Feature-complete for the dashboards listed above; the legacy `newspack-event-logger-plugins` monorepo can coexist on the same site during cutover (different firehose paths, different worker pools).
