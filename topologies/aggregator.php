@@ -26,7 +26,7 @@
 return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $partition ): array {
 	// Application Config (not PerformanceControllerBase::load_config) because
 	// this topology reads application-only keys (aggregator_verify_ssl,
-	// aggregator_allow_http) alongside substrate keys. Config::load_config('full')
+	// aggregator_require_https) alongside substrate keys. Config::load_config('full')
 	// merges file overlays + WP options + the schema, so the StreamMerger
 	// gets the same SSL policy as ServersController's "Test" probe and
 	// RemoteManager's settings-sync POSTs.
@@ -39,11 +39,12 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
 	$firehose_dir   = "{$logs_dir}/firehose.log";
 
-	// File-overlay default of aggregator_verify_ssl is true; only `=== false`
-	// disables peer/host verification. aggregator_allow_http is opt-in (false
-	// default) because Basic-Auth credentials over plain HTTP leak.
-	$verify_ssl = ! isset( $config['aggregator_verify_ssl'] ) || true === $config['aggregator_verify_ssl'];
-	$allow_http = true === ( $config['aggregator_allow_http'] ?? false );
+	// Both flags fail-closed to safe: default true means "verify SSL" /
+	// "require HTTPS." Operators have to set them to literal `false` in the
+	// config file to lift the guard — anything else (missing, 1, "true",
+	// truthy junk) keeps the safe behavior.
+	$verify_ssl    = true === ( $config['aggregator_verify_ssl']    ?? true );
+	$require_https = true === ( $config['aggregator_require_https'] ?? true );
 
 	if ( ! \is_dir( $firehose_dir ) ) {
 		@\mkdir( $firehose_dir, 0755, true );
@@ -64,7 +65,7 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	$stream_merger = $interpreter->make_node( 'StreamMerger', 'stream-merger' );
 	$stream_merger->connect_node( 'firehose:topic' );
 	$stream_merger->set_verify_ssl( $verify_ssl );
-	$stream_merger->set_allow_http( $allow_http );
+	$stream_merger->set_require_https( $require_https );
 
 	return [
 		'partition'      => $partition,

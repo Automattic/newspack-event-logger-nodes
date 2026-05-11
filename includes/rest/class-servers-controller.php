@@ -233,7 +233,7 @@ class ServersController extends PerformanceControllerBase {
 		}
 
 		// Application Config — `self::load_config()` (PerformanceControllerBase)
-		// only sees substrate keys, so aggregator_verify_ssl / aggregator_allow_http
+		// only sees substrate keys, so aggregator_verify_ssl / aggregator_require_https
 		// from the application config file would never reach this call. The
 		// settings UI's "Test" probe has to honour the same SSL policy as the
 		// running StreamMerger or operators get false negatives.
