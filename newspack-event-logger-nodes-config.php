@@ -88,11 +88,10 @@ return [
 		],
 		'job-workers'      => [
 			'topology'      => 'topologies/job-workers.php',
-			// Long stale_timeout: job handlers (image migration, large
-			// evtemplate runs, CDN purges) can block for minutes. With the
-			// default 60s, the supervisor would force-respawn the worker
-			// mid-handler. 600s matches the legacy newspack-event-jobs
-			// reader config.
+			// Long stale_timeout: job handlers (evtemplate runs, importers)
+			// can block for minutes. With the default 60s, the supervisor
+			// would force-respawn the worker mid-handler. 600s matches the
+			// legacy newspack-event-jobs reader config.
 			'stale_timeout' => 600,
 		],
 		'aggregator'       => [
