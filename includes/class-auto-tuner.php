@@ -135,12 +135,12 @@ class AutoTuner extends Node {
 	// --- Persist + fan-out -----------------------------------------------------
 
 	/**
-	 * Hub fan-out (if hub) + local update_option (with SettingsSync's static
-	 * listener suppressed so the local write doesn't re-queue what the hub
-	 * just queued).
+	 * Remote fan-out (when the aggregator is on) + local update_option (with
+	 * SettingsSync's static listener suppressed so the local write doesn't
+	 * re-queue what we just queued).
 	 */
 	private function persist( string $option, $value ): void {
-		if ( Hub::is_active() ) {
+		if ( true === ( Config::load_config()['enable_aggregator'] ?? false ) ) {
 			SettingsSync::queue_job(
 				'remote_manager',
 				[

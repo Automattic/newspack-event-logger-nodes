@@ -349,16 +349,19 @@ class Admin {
 		);
 
 		// -- Workers section ------------------------------------------------
-		// `enable_workers` lives here (application). It gates the
-		// `request-workers` topology (so spokes skip FlameBuilder) and the
-		// `Hub::is_active()` polarity check (so spokes don't fan settings /
-		// auto-tune changes out to remotes). Matches legacy semantics:
-		// spokes set `enable_workers => false`; hubs explicitly set `true`.
+		// `enable_workers` gates the `request-workers` topology — spokes
+		// skip FlameBuilder over data the hub will rebuild anyway. Remote
+		// fan-out (settings + auto-tune → spokes) is gated separately by
+		// `enable_aggregator`.
+		// Real-bool storage (not `absint` int) so Config's strict `=== true`
+		// checks downstream actually match. Checkbox posts '1' on check,
+		// the hidden zero posts '0' on uncheck; `(bool) (int) $v` gives
+		// real PHP true/false.
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_enable_workers',
 			[
-				'sanitize_callback' => 'absint',
+				'sanitize_callback' => fn ( $v ) => (bool) (int) $v,
 				'autoload'          => true,
 			]
 		);
@@ -420,10 +423,11 @@ class Admin {
 		// monorepo absorbs it. `enable_aggregator` gates whether the
 		// aggregator topology spawns workers (gates the topology filter in
 		// newspack-event-logger-nodes.php).
+		// Real-bool storage (see enable_workers above for rationale).
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_enable_aggregator',
-			[ 'sanitize_callback' => 'absint' ]
+			[ 'sanitize_callback' => fn ( $v ) => (bool) (int) $v ]
 		);
 
 		// Aggregator spoke list. Written by ServerRegistry through the
@@ -729,16 +733,12 @@ class Admin {
 		$config     = Config::load_config( 'full' );
 
 		// Aggregator settings sync routes hub→spoke config changes through
-		// JobIntake. Active when any remote spokes are registered.
-		$servers = $config['aggregator_servers'] ?? [];
-		if ( ! empty( $servers ) ) {
+		// JobIntake. Active when any remote spokes are registered AND the
+		// aggregator toggle is on (the single operator switch).
+		$servers           = $config['aggregator_servers'] ?? [];
+		$enable_aggregator = true === ( $config['enable_aggregator'] ?? false );
+		if ( ! empty( $servers ) && $enable_aggregator ) {
 			$dependents[] = \__( 'Aggregator settings sync', 'newspack-event-logger-nodes' );
-
-			// Hub-mode fan-out (spoke→hub TODO propagation) — needs jobs AND
-			// hub designation (`enable_workers === true`).
-			if ( true === ( $config['enable_workers'] ?? false ) ) {
-				$dependents[] = \__( 'Performance Aggregator fan-out', 'newspack-event-logger-nodes' );
-			}
 		}
 
 		// FlameBuilder auto-tune writes settings via JobIntake when it detects
@@ -753,16 +753,14 @@ class Admin {
 	}
 
 	public function enable_workers_callback(): void {
-		// Hub designation: gates `Hub::is_active()` (SettingsSync fan-out
-		// + AutoTuner remote queue) AND the `request-workers` topology
-		// (so spokes skip FlameBuilder). Matches the legacy plugin's
-		// `enable_workers` semantics.
-		$config  = Config::load_config( 'full' );
-		$enabled = \get_option( 'newspack_event_logger_nodes_enable_workers', $config['enable_workers'] ?? 0 );
+		// Gates the `request-workers` topology — when off, spokes skip
+		// their own FlameBuilder over data the hub will rebuild anyway.
+		// Strict `=== true` polarity; default OFF.
+		$enabled = true === ( Config::load_config( 'full' )['enable_workers'] ?? false );
 		?>
 		<input type="hidden" name="newspack_event_logger_nodes_enable_workers" value="0" />
-		<input type="checkbox" id="enable_workers" name="newspack_event_logger_nodes_enable_workers" value="1" <?php \checked( 1, $enabled ); ?> />
-		<label for="enable_workers"><?php \esc_html_e( 'Enable Performance Workers (RequestBuilder + FlameBuilder) and hub-mode settings fan-out', 'newspack-event-logger-nodes' ); ?></label>
+		<input type="checkbox" id="enable_workers" name="newspack_event_logger_nodes_enable_workers" value="1" <?php \checked( true, $enabled ); ?> />
+		<label for="enable_workers"><?php \esc_html_e( 'Enable Performance Workers (RequestBuilder + FlameBuilder)', 'newspack-event-logger-nodes' ); ?></label>
 		<?php
 	}
 
@@ -773,10 +771,12 @@ class Admin {
 	}
 
 	public function enable_aggregator_callback(): void {
-		$enabled = \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 );
+		// Strict `=== true` polarity; default OFF. Operator opt-in for
+		// cross-site activity (pull + push).
+		$enabled = true === ( Config::load_config( 'full' )['enable_aggregator'] ?? false );
 		?>
 		<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
-		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
+		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( true, $enabled ); ?> />
 		<label for="enable_aggregator"><?php \esc_html_e( 'Enable aggregator worker (pulls firehose from configured Remote Servers via SSE)', 'newspack-event-logger-nodes' ); ?></label>
 		<?php
 	}

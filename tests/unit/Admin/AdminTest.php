@@ -943,26 +943,26 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'Configure remote', $out );
 	}
 
-	public function test_enable_aggregator_callback_renders_checkbox_checked_by_default(): void {
-		// Default option missing → defaults to enabled (the topology filter
-		// also defaults ON, so the UI matches that polarity).
+	public function test_enable_aggregator_callback_renders_checkbox_unchecked_by_default(): void {
+		// Strict polarity, default OFF — fresh install (no option, no file
+		// override) renders unchecked. Hubs opt in explicitly.
 		$admin = new Admin();
 		\ob_start();
 		$admin->enable_aggregator_callback();
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_enable_aggregator"', $out );
-		$this->assertStringContainsString( 'checked', $out );
+		$this->assertStringNotContainsString( "checked='checked'", $out );
+		$this->assertStringNotContainsString( 'checked="checked"', $out );
 	}
 
-	public function test_enable_aggregator_callback_unchecked_when_disabled(): void {
-		\update_option( 'newspack_event_logger_nodes_enable_aggregator', 0 );
+	public function test_enable_aggregator_callback_checked_when_enabled(): void {
+		\update_option( 'newspack_event_logger_nodes_enable_aggregator', true );
+		\Newspack_Event_Logger_Nodes\Config::reset();
 		$admin = new Admin();
 		\ob_start();
 		$admin->enable_aggregator_callback();
 		$out = \ob_get_clean();
-		// No `checked` keyword on the checkbox input.
-		$this->assertStringNotContainsString( "checked='checked'", $out );
-		$this->assertStringNotContainsString( 'checked="checked"', $out );
+		$this->assertStringContainsString( 'checked', $out );
 	}
 
 	public function test_configured_servers_callback_renders_empty_state_with_no_servers(): void {

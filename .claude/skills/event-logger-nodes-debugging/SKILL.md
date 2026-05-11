@@ -123,7 +123,7 @@ If clients reconnect every few seconds: the SSE stream might be timing out due t
 
 ## Hub / spoke routing
 
-A node is a hub if `enable_workers === true` (strict). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally pulls remote firehoses via StreamMerger; the `newspack_nodes/aggregator_ingest_line` filter rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map.
+A node is a hub when `enable_aggregator` is strictly `=== true` in the merged Config (the single operator switch for remote-server activity — strict polarity, default OFF; hubs opt in explicitly). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally pulls remote firehoses via StreamMerger; the `newspack_nodes/aggregator_ingest_line` filter rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map.
 
 Diagnostic flow:
 
@@ -131,7 +131,7 @@ Diagnostic flow:
 # Is this node a hub? (substrate option, not application-prefixed)
 wp option get newspack_nodes_enable_workers
 
-# Is the aggregator topology even loaded? (application option, defaults ON)
+# Is the aggregator topology even loaded? (strict === true; default OFF)
 wp option get newspack_event_logger_nodes_enable_aggregator
 
 # Aggregator status (hub-side).
@@ -153,7 +153,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at 4KB and the handler saw `{"truncated": true}`. Use `JobIntake::queue()` instead.
 
-**SettingsSync silently doing nothing.** The `enable_workers === true` (strict) gate means missing or `"true"` (string) values count as spoke, no fanout. Verify the option value exactly.
+**SettingsSync silently doing nothing.** Verify `enable_aggregator` is strictly `=== true` in the merged Config (strict polarity, default OFF — every fresh install defaults to spoke). `enable_workers` is unrelated to fan-out gating — it only controls the `request-workers` topology (FlameBuilder).
 
 **`outputs` log-reader filter array.** Plural, not singular. Singular is silent failure.
 

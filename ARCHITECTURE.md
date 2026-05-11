@@ -241,7 +241,7 @@ return static function ( CommandInterpreter $interpreter, int $partition ): arra
 };
 ```
 
-Always single-partition for the topology itself (the StreamMerger is a fan-in; partition count comes from the destination Topic, not the merger). Aggregator is **gated** by the `newspack_event_logger_nodes_enable_aggregator` option (defaults ON): if disabled, the topology filter does not register the entry, so the supervisor never spawns the worker and the admin "Aggregator" submenu is hidden.
+Always single-partition for the topology itself (the StreamMerger is a fan-in; partition count comes from the destination Topic, not the merger). Aggregator is **gated** by the `enable_aggregator` config key (strict `=== true`, default OFF): if not explicitly enabled, the topology filter does not register the entry, so the supervisor never spawns the worker and the admin "Aggregator" submenu is hidden. Hubs opt in by setting `'enable_aggregator' => true` in their `newspack-event-logger-nodes-config.php` overlay or via the admin checkbox.
 
 ### Topology resolution
 
@@ -349,12 +349,12 @@ Flush every 5s via Router-hitchhike Timer; flush on shutdown via `cleanup` (TM_E
 
 ### AutoTuner
 
-Receives FlameBuilder's tuning decisions as `TM_STRUCT` messages and applies them locally; on hubs, also queues a `remote_manager` sync_setting job via JobIntake so every enabled spoke picks up the change.
+Receives FlameBuilder's tuning decisions as `TM_STRUCT` messages and applies them locally; when the aggregator is enabled, also queues a `remote_manager` sync_setting job via JobIntake so every enabled spoke picks up the change.
 
 ```
 FlameBuilder.apply_auto_tune()  ──TM_STRUCT msg──→  AutoTuner.fill()
        TO=auto-tuner                                  │
-       KEY=disable_hooks /                            ├─→ Hub::is_active()?
+       KEY=disable_hooks /                            ├─→ enable_aggregator on?
            disable_custom_events /                    │       └─→ SettingsSync::queue_job('remote_manager', ...)
            add_significant_events                     │           (writes to jobintake.log for spoke fanout)
        VALUE={ items: string[], context: {…} }        │
@@ -536,8 +536,6 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
 |  newspack-     |   |  newspack-     |   |  newspack-     |
 |  event-logger- |   |  event-logger- |   |  event-logger- |
 |  nodes (spoke) |   |  nodes (spoke) |   |  nodes (spoke) |
-|  enable_workers|   |  enable_workers|   |  enable_workers|
-|     != true    |   |     != true    |   |     != true    |
 +--------+-------+   +--------+-------+   +--------+-------+
          | SSE              | SSE                | SSE
          +------------------+--------------------+
@@ -546,8 +544,7 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               |  Hub                        |
               |  newspack-event-logger-     |
               |  nodes (hub)                |
-              |  enable_workers === true    |
-              |    (strict)                 |
+              |  enable_aggregator on       |
               |                             |
               |  StreamMerger pulls from    |
               |  configured spokes          |
@@ -560,7 +557,7 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               +-----------------------------+
 ```
 
-**Hub identification**: `enable_workers === true` (strict). Anything else (missing, false, 1, "1") means "not a hub, do not fan out."
+**Hub identification**: a site is acting as a hub when `enable_aggregator` is strictly `=== true` AND it has at least one spoke registered. The toggle is a single operator switch — strict polarity, default OFF (fresh installs are not hubs). On the pull side it gates the `aggregator` topology via the config's `gated_by` mechanism; on the push side `SettingsSync` and `AutoTuner` short-circuit when it's off.
 
 **`k:"job"` vs `k:"remote_job"`**:
 
@@ -579,24 +576,14 @@ The rewrite filter is NOT auto-loaded. Plugins that don't register the filter (b
 
 Three static-mode classes own the hub's outbound side. They don't run in the worker fleet — they run in admin requests (Remote Servers UI), inside JobWorker contexts when handling `remote_manager` jobs, and on the hub's periodic health-check tick.
 
-### `Hub::is_active()`
+### Remote activity gate: `enable_aggregator`
 
-Single source of truth for "is this site acting as a hub right now?":
+A single config flag, `enable_aggregator` (strict `=== true`, default OFF), gates all remote-server activity:
 
-```php
-public static function is_active(): bool {
-    $config = Config::load_config();
-    if ( ! isset( $config['enable_workers'] ) || true !== $config['enable_workers'] ) {
-        return false;   // strict === true; missing / "1" / truthy-non-bool all fail closed
-    }
-    if ( ! (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
-        return false;   // operator toggled aggregator off — stop all remote activity
-    }
-    return true;
-}
-```
+- **Pull side** — the `aggregator` topology entry carries `gated_by => 'newspack_event_logger_nodes_enable_aggregator'`, so the supervisor only spawns the StreamMerger worker when the toggle is on.
+- **Push side** — `SettingsSync::maybe_queue_static_sync` and `AutoTuner::persist` short-circuit when the option is off, so option changes and auto-tune decisions don't queue `remote_manager` fan-out jobs.
 
-Both polarity decisions in one place: strict `enable_workers === true` (the legacy 2.4.42 silent-fan-out bug) AND `enable_aggregator` (the operator-facing kill switch that gates both the pull-side StreamMerger and the push-side settings/auto-tune fan-out). `SettingsSync::maybe_queue_static_sync` and `AutoTuner::persist` both call this — diverging is how the polarity bugs creep back in.
+One operator switch. No `Hub::is_active()` helper, no strict-polarity dance — `enable_workers` is purely the request-workers topology gate (FlameBuilder spawn).
 
 ### `ServerRegistry`
 
@@ -644,18 +631,18 @@ Merges discovered hooks and custom events from spokes into the hub's local setti
 
 Both merges suppress `SettingsSync` first (`SettingsSync::suppress_sync()` / `finally`) so the local `update_option` write doesn't get fanned BACK out to the spokes that just contributed it. Without the suppression, every discovery sweep would echo every spoke's hooks to every other spoke. Cap on accumulated entries: `MAX_EVENTS = 10000`.
 
-## SettingsSync: Fail-Closed Polarity
+## SettingsSync: Aggregator Gate
 
-**Critical invariant**: `enable_workers` MUST be strict `=== true`. Anything else (missing, false, 1, "1") means "not a hub, do not fan out." Implemented via `Hub::is_active()` (see [Hub-Side Helpers](#hub-side-helpers-serverregistry--remotemanager--discovery)):
+`SettingsSync::maybe_queue_static_sync` short-circuits when the operator-facing aggregator toggle is off — same gate the StreamMerger pull-side uses, so one switch stops both directions of remote-server activity:
 
 ```php
 // In SettingsSync::maybe_queue_static_sync(...)
-if ( ! Hub::is_active() ) {
-    return;   // Fail closed.
+if ( ! (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
+    return;
 }
 ```
 
-Diverging from this was a real silent-fan-out bug fixed in legacy 2.4.42. Do not regress. The opposite polarity (`?? false` or `!! `) silently turns spoke instances into hubs and you don't notice until two sites start fighting over option ownership. Inlining the check (instead of going through `Hub::is_active()`) lets the two polarity decisions — strict `=== true` AND `enable_aggregator` — drift apart over time. Use the helper.
+`AutoTuner::persist` carries the same check around its `remote_manager` queue. No separate hub flag — the legacy `enable_workers`-as-hub-designation never actually drove behavior on its own (it composed with `enable_aggregator` to mean "really fan out"), so dropping the strict-`=== true` polarity dance and going with the single operator toggle eliminates a whole category of polarity-drift bugs.
 
 **Re-entrancy guard via `$syncing`**: HealthCheckExtensions calls `update_option` in response to a sync; without the guard, that triggers another sync, ad infinitum. The `suppress_sync(true)` API is called before the update, restored after.
 

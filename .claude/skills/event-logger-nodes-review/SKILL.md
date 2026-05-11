@@ -14,11 +14,11 @@ After any diff touching files under `newspack-event-logger-nodes/`. Run BEFORE p
 
 ## Gates (high-impact first)
 
-### 1. Hub vs spoke polarity
+### 1. Remote-activity gate
 
-`enable_workers` MUST be checked with strict `=== true` (or its inverse: `! isset(...) || true !== ...`). Anything else (`?? false`, `!! `, loose-equality) silently turns spokes into hubs — this was a real production bug fixed in legacy 2.4.42 and there's an architecture decision in AGENTS.md keeping us honest.
+Cross-site activity (`remote_manager` job queueing on the push side, StreamMerger spawn on the pull side) is gated by a single config flag: `enable_aggregator`. Strict polarity — read with `true === ( Config::load_config()['enable_aggregator'] ?? false )`. Default OFF; hubs opt in explicitly. Fresh installs are spokes / standalone.
 
-If a diff makes the polarity looser, push back. Tests should explicitly assert that `enable_workers => 1` (truthy non-true) is treated as spoke.
+If a diff introduces a separate hub flag (`enable_workers === true` checks, a `Hub::is_active()` helper) or duplicates the gate in a new call site, push back — the whole point of the consolidation is one switch, no polarity drift. `enable_workers` is purely the `request-workers` topology gate now (FlameBuilder spawn); it does NOT participate in remote-activity decisions.
 
 ### 2. Stats fail-soft, SSE fail-closed
 

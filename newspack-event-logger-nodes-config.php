@@ -32,12 +32,23 @@ return [
 	'enable_logging'         => true,
 	'enable_jobs'            => true,
 
-	// ── Hub designation ────────────────────────────────────────────────────
-	// Strict `=== true` is the hub flag. Gates `Hub::is_active()` (SettingsSync
-	// fan-out + AutoTuner remote queue) AND the `request-workers` topology
-	// via `gated_by` (so spokes skip FlameBuilder over data the hub will
-	// rebuild anyway). Default-off so fresh installs are spokes.
+	// ── Performance workers ───────────────────────────────────────────────
+	// Gates the `request-workers` topology via `gated_by` so spokes can
+	// skip FlameBuilder over data the hub will rebuild anyway. Strict
+	// `=== true` to enable. Default OFF; remote fan-out is gated
+	// separately by `enable_aggregator`.
 	'enable_workers'         => false,
+
+	// ── Aggregator (cross-site activity) ──────────────────────────────────
+	// Single operator switch for remote-server activity. When `true`:
+	//  - The `aggregator` topology spawns (StreamMerger pulls spoke
+	//    firehoses via SSE).
+	//  - `SettingsSync` fans option changes out to spokes as
+	//    `remote_manager` jobs.
+	//  - `AutoTuner` fans noisy/significant-event decisions out the same way.
+	// Strict `=== true`; default OFF (most installs are spokes /
+	// standalone). Hubs explicitly opt in.
+	'enable_aggregator'      => false,
 
 	// ── Aggregator spoke list ─────────────────────────────────────────────
 	// Per-spoke `{ url, auth_username, auth_password, enabled }`. Defaults
@@ -87,10 +98,13 @@ return [
 	//                                 always a single fan-in regardless.
 	//   `stale_timeout`  (int)     — seconds without heartbeat before the
 	//                                 supervisor force-respawns this worker.
-	//   `gated_by`       (?string) — WP option name that must be truthy for
-	//                                 this entry to register. Defaults to ON
-	//                                 (option=1) if the option is absent.
-	//                                 Used by the aggregator's operator gate.
+	//   `gated_by`       (?string) — config-array key that must be strictly
+	//                                 `=== true` for this entry to register.
+	//                                 Fails closed: missing key, false, int 1,
+	//                                 string "1" all suppress the entry. The
+	//                                 Config layer composes file overlays + WP
+	//                                 options + a `bool` sanitizer so the
+	//                                 merged value is always a real PHP bool.
 	//
 	// To turn off a shipped topology on a site, override this key in the
 	// config file with the entry removed (or with `gated_by` pointing at an
@@ -103,10 +117,10 @@ return [
 		'request-workers'  => [
 			'topology'      => 'topologies/request-workers.php',
 			'stale_timeout' => 60,
-			// Gate on the hub designation so spokes don't run their own
-			// FlameBuilder over data the hub will rebuild anyway. Matches
-			// the legacy plugin's `enable_workers => false` semantics.
-			'gated_by'      => 'newspack_event_logger_nodes_enable_workers',
+			// Gate so spokes don't run their own FlameBuilder over data the
+			// hub will rebuild anyway. Matches the legacy plugin's
+			// `enable_workers => false` semantics.
+			'gated_by'      => 'enable_workers',
 		],
 		'job-workers'      => [
 			'topology'      => 'topologies/job-workers.php',
@@ -120,7 +134,7 @@ return [
 			'topology'       => 'topologies/aggregator.php',
 			'num_partitions' => 1,
 			'stale_timeout'  => 60,
-			'gated_by'       => 'newspack_event_logger_nodes_enable_aggregator',
+			'gated_by'       => 'enable_aggregator',
 		],
 	],
 

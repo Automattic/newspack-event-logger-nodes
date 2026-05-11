@@ -122,7 +122,7 @@ For job handler changes: queue a job (via the legitimate caller), wait, check `w
 
 ## Patterns That Trip People Up
 
-- **Hub vs spoke**: `enable_workers === true` (strict) means hub. Anything else means spoke. Don't write `?? false` shortcuts — that turned spokes into hubs in legacy 2.4.42.
+- **Hub vs spoke**: `newspack_event_logger_nodes_enable_aggregator` is the single operator gate for remote-server activity (both StreamMerger pull and `remote_manager` push fan-out). Default ON; OFF only when explicitly 0. `enable_workers` is unrelated — it just gates the `request-workers` topology (FlameBuilder).
 - **`outputs` (plural) for log reader registration**, not `output` (singular). Easy typo, silent failure.
 - **Memcache is required** for the application — Stats_Store, slot rate limiting, stats aggregator, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards).
 - **Salt rotation orphans keys but doesn't flush them** — workers keep writing to the OLD salt until they respawn. After `Stats_Store::flush_all()`, restart workers to take effect immediately.
