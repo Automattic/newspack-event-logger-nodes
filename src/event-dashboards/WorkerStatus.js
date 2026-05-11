@@ -137,7 +137,7 @@ function formatEta( bytesBehind, readRate ) {
  * @param {number}  props.newestSegId  ID of the newest segment.
  * @param {boolean} props.isNew        Whether this segment is newly appeared.
  * @param {boolean} props.isRemoving   Whether this segment is being removed.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 const SegmentBar = memo( function SegmentBar( {
 	segment,
@@ -219,7 +219,7 @@ const SegmentBar = memo( function SegmentBar( {
  * @param {Object} props.prevSegments     Previous segment IDs by key.
  * @param {Object} props.cursorData       Cursor data by partition (optional, for logs with readers).
  * @param {Object} props.removingSegments Segments being removed (animating out) by key.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 const LogSection = memo( function LogSection( {
 	name,
@@ -312,7 +312,7 @@ const LogSection = memo( function LogSection( {
  * @param {number}   props.currentTime Current timestamp for age calculation.
  * @param {Function} props.onRestart   Callback to restart worker(s).
  * @param {boolean}  props.showArrows  Whether to show direction arrows.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 const WorkerConnector = memo( function WorkerConnector( {
 	name,
@@ -439,7 +439,7 @@ const WorkerConnector = memo( function WorkerConnector( {
  * @param {Array}    props.workers     Array of standalone worker status objects.
  * @param {number}   props.currentTime Current timestamp for age calculation.
  * @param {Function} props.onRestart   Callback to restart worker(s).
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 const StandaloneWorkers = memo( function StandaloneWorkers( {
 	workers,
@@ -821,7 +821,7 @@ function buildRenderPlan( workers ) {
  * @param {Object}  props           Component props.
  * @param {number}  props.refreshMs Refresh interval in milliseconds.
  * @param {boolean} props.fullPage  Whether rendering in full page mode.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	const [ workers, setWorkers ] = useState( [] );

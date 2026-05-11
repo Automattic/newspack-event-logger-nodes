@@ -106,11 +106,7 @@ class SettingsController extends PerformanceControllerBase {
 		// Reset Config cache so the new value is visible on the next read.
 		// Application Config::reset() also resets the substrate Config, so
 		// downstream readers of `newspack_nodes_*` see the new value too.
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
-			Config::reset();
-		} elseif ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
-			\Newspack_Nodes\Config::reset();
-		}
+		Config::reset();
 
 		return new \WP_REST_Response(
 			[

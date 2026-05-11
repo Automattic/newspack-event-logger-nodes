@@ -41,7 +41,7 @@ import './styles/charts.scss';
  *
  * @param {Object}   props         Component props.
  * @param {Function} props.onError Error handler callback.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function PerformanceDashboard( { onError } ) {
 	// Core data state.

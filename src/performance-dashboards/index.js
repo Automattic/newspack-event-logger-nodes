@@ -23,7 +23,7 @@ import './styles/base.scss';
  *
  * @param {Object} props         Component props.
  * @param {string} props.message Loading message to display.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 function LoadingFallback( { message = 'Loading...' } ) {
 	return (
@@ -37,7 +37,7 @@ function LoadingFallback( { message = 'Loading...' } ) {
 /**
  * Admin App component for Performance Dashboard.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 function AdminApp() {
 	const [ error, setError ] = useState( null );
@@ -95,7 +95,7 @@ import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 /**
  * Error Log page wrapper — full-page dark layout.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 function ErrorLogPage() {
 	const menuWidth = useAdminMenuWidth();

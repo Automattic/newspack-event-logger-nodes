@@ -36,7 +36,7 @@ const COLOR_BORDER = '#444';
 /**
  * Raw Logs Component.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function RawLogs() {
 	const [ availableLogs, setAvailableLogs ] = useState( [] );
@@ -165,8 +165,20 @@ export default function RawLogs() {
 		linesBufferRef.current = [];
 		lineCounterRef.current = 0;
 		lastProcessedCountRef.current = 0;
+		// Canvas reads from filteredLinesRef directly — clearing the buffer
+		// + state isn't enough; the 100ms ticker only refreshes the snapshot
+		// when newCount > 0, so without this we keep drawing the old log's
+		// lines until new ones arrive on the new log.
+		filteredLinesRef.current = [];
 		setLines( [] );
 		offsetRef.current = 0;
+		scrollTopRef.current = 0;
+		if ( spacerRef.current ) {
+			spacerRef.current.style.height = '0px';
+		}
+		if ( scrollRef.current ) {
+			scrollRef.current.scrollTop = 0;
+		}
 		lineHistoryRef.current = [];
 		setLinesPerSecond( 0 );
 	}, [] );
@@ -371,8 +383,20 @@ export default function RawLogs() {
 		linesBufferRef.current = [];
 		lineCounterRef.current = 0;
 		lastProcessedCountRef.current = 0;
+		// Canvas reads from filteredLinesRef directly. The 100ms ticker
+		// only refreshes the snapshot when newCount > 0; after Clear,
+		// newCount stays 0 until new lines arrive, so without this the
+		// canvas keeps drawing the pre-clear lines.
+		filteredLinesRef.current = [];
 		setLines( [] );
 		offsetRef.current = 0;
+		scrollTopRef.current = 0;
+		if ( spacerRef.current ) {
+			spacerRef.current.style.height = '0px';
+		}
+		if ( scrollRef.current ) {
+			scrollRef.current.scrollTop = 0;
+		}
 	};
 
 	return (

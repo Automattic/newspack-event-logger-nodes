@@ -83,7 +83,19 @@ The plugin's main file calls `\Newspack_Nodes\CommandInterpreter::register_class
 
 A new application node subclass MUST register itself the same way; otherwise topology PHP can't construct it via `$interpreter->make_node('Foo', 'foo')`.
 
-### 11. Type flags
+### 11. No `class_exists()` guards for in-plugin classes
+
+The deferred-loader pattern (require_once chain on `plugins_loaded` priority 11) loads every class in this plugin before anything constructs them. `class_exists()` guards around an in-plugin class are dead branches; they were deliberately removed in a cleanup pass. A diff that adds one back as "defensive" is dead weight — push back.
+
+Optional-dependency guards stay: `class_exists( 'Memcached' )` (PHP extension), `class_exists( 'WP_REST_Controller' )` (test bootstrap context), `class_exists( 'WP_CLI' )` (CLI-only paths). The rule is "is this class guaranteed loaded by our own bootstrap?" If yes, drop the guard.
+
+### 12. Stream-injection + iteration-cap pattern for testability
+
+CLI commands and other blocking-work classes (`ReqgrepCommand::process_stdin`, `follow_mode`, `Cli_Stdin_Reader::drain_fh`) accept the I/O resource and an iteration cap as parameters rather than calling `STDIN` / `microtime` / `sleep` inline. Production uses defaults; tests pass `php://memory` streams and small caps to exercise loops deterministically.
+
+A diff that introduces a new blocking command and bakes the streams in (no injection seam, no iteration cap) is hard to test — flag it. The cost is low: one extra ctor / method parameter.
+
+### 13. Type flags
 
 Inherited from substrate: array VALUE → `TM_STRUCT`. String VALUE → `TM_BYTESTREAM`. Consumers reading array VALUE must gate on `TM_STRUCT`. Mixing is a known-buggy pattern; don't regress.
 
@@ -91,7 +103,7 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 
 ## REST controller specifics
 
-- Capability gate: `manage_options` by default (worker requests excluded via `EVENT_LOGGER_WORKER_TYPE` env tag).
+- Capability gate: `manage_options` by default (worker requests excluded via `NEWSPACK_NODES_WORKER_TYPE` env tag).
 - Rate limit: 600 req/60s per controller; fail-open if memcache is down (so dashboard fanout doesn't break when memcache hiccups).
 - Error responses: `WP_Error`, not raw arrays.
 - Output escaping: `esc_html()` / `esc_attr()` / `esc_url()` for any string going into HTML; `wp_json_encode()` (not raw `json_encode`) for arrays sent over the wire.
@@ -106,7 +118,7 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 ## Tests
 
 - Unit tests under `tests/unit/`, integration under `tests/integration/`, REST controllers under `tests/unit/Rest/`.
-- 707 tests at last count; coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`.
+- 1368 tests at last count; coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. Plugin sits at ~91% line coverage; new code should add tests so the number doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
 - New REST controllers should have a happy-path test, an unauthorized-request test, a rate-limit test, and a memcache-failure test.
 

@@ -11,7 +11,7 @@ import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 /**
  * Aggregator Status page - dedicated view for monitoring remote servers.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function AggregatorStatusPage() {
 	const menuWidth = useAdminMenuWidth();

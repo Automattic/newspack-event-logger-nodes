@@ -21,7 +21,7 @@ const HEIGHT = 250 - MARGIN.top - MARGIN.bottom;
  * @param {Object}   props                Component props.
  * @param {Array}    props.requests       Individual request data [{ rid, timestamp, duration_ms }].
  * @param {Function} props.onRequestClick Callback when a request dot is clicked.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	const containerRef = useRef( null );

@@ -11,7 +11,7 @@ import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 /**
  * Gyroscope page - dedicated view for real-time request monitoring.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function GyroscopePage() {
 	const menuWidth = useAdminMenuWidth();

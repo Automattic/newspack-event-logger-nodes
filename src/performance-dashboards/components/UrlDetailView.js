@@ -52,7 +52,7 @@ const getErrorStatusColor = ( errorStatus ) => {
  * @param {Object}   props          Component props.
  * @param {Object}   props.req      Request data object.
  * @param {Function} props.onSelect Selection callback.
- * @return {JSX.Element} Rendered row.
+ * @return {import('react').ReactElement} Rendered row.
  */
 const RequestRow = memo( function RequestRow( {
 	req,
@@ -127,7 +127,7 @@ const RequestRow = memo( function RequestRow( {
  * @param {Function} props.onSelectRequest   Request selection callback.
  * @param {Function} props.fetchUrlBreakdown Fetch per-URL breakdown data.
  * @param {string}   props.urlHash           URL hash identifier.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
 	urlDetail,
@@ -207,7 +207,7 @@ export default function UrlDetailView( {
 	 * @param {string} field   Field name.
 	 * @param {string} label   Display label.
 	 * @param {string} variant Optional modifier class variant.
-	 * @return {JSX.Element} Header element.
+	 * @return {import('react').ReactElement} Header element.
 	 */
 	const renderSortHeader = ( field, label, variant = '' ) => (
 		<button

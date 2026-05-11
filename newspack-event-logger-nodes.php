@@ -157,11 +157,21 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			'num_partitions' => $num_partitions,
 			'stale_timeout'  => 60,
 		];
-		$topologies['aggregator'] = [
-			'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/aggregator.php',
-			'num_partitions' => 1,
-			'stale_timeout'  => 60,
-		];
+		// Aggregator topology is opt-in. Without an explicit Enable Aggregator
+		// toggle, the topology was always registered and the supervisor would
+		// spawn a worker per minute even on sites with no remote servers
+		// configured. The new `enable_aggregator` option (defaults ON) gates
+		// the registration entirely so disabling it stops all aggregator
+		// worker spawning, not just the SSE pulls inside an already-running
+		// worker.
+		$enable_aggregator = (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 );
+		if ( $enable_aggregator ) {
+			$topologies['aggregator'] = [
+				'topology'       => NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/aggregator.php',
+				'num_partitions' => 1,
+				'stale_timeout'  => 60,
+			];
+		}
 		return $topologies;
 	}
 );
@@ -303,8 +313,14 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			'newspack-nodes-rawlogs'     => [ 'Raw Logs', 'Raw Logs', '<div id="event-logger-rawlogs" class="event-logger-rawlogs-page"></div>' ],
 			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
 			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
-			'newspack-nodes-aggregator'  => [ 'Aggregator', 'Aggregator', '<div id="event-aggregator-status"></div>' ],
 		];
+		// Aggregator submenu is gated on the same option that gates the
+		// topology — when the aggregator is disabled there's nothing
+		// meaningful to show under it, and a menu entry pointing at a
+		// dashboard for a topology that isn't running is misleading.
+		if ( (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
+			$dashboards['newspack-nodes-aggregator'] = [ 'Aggregator', 'Aggregator', '<div id="event-aggregator-status"></div>' ];
+		}
 		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {
 			\add_submenu_page(
 				'newspack-nodes-performance',
@@ -463,6 +479,41 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 				. 'window.newspackNodesCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
 				'before'
 			);
+
+			// Aggregator admin JS: powers the Test/Toggle/Remove/Add buttons
+			// on the Remote Servers section. Ported verbatim from the legacy
+			// newspack-event-aggregator/assets/admin.js — jQuery-based, no
+			// build step. REST namespace base injected as `restUrl`; the JS
+			// appends `servers/...` per call.
+			$aggregator_js_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'assets/aggregator-admin.js';
+			$aggregator_js_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'assets/aggregator-admin.js';
+			if ( \file_exists( $aggregator_js_path ) ) {
+				$agg_handle = 'newspack-event-logger-nodes-aggregator-admin';
+				\wp_enqueue_script(
+					$agg_handle,
+					$aggregator_js_url,
+					[ 'jquery' ],
+					\filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+					true
+				);
+				\wp_localize_script(
+					$agg_handle,
+					'eventAggregatorAdmin',
+					[
+						'restUrl' => \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes/v1/' ) : '/wp-json/newspack-nodes/v1/',
+						'nonce'   => $nonce,
+						'i18n'    => [
+							'testing'       => \__( 'Testing...', 'newspack-event-logger-nodes' ),
+							'success'       => \__( 'Connected!', 'newspack-event-logger-nodes' ),
+							'failed'        => \__( 'Failed', 'newspack-event-logger-nodes' ),
+							'adding'        => \__( 'Adding...', 'newspack-event-logger-nodes' ),
+							'added'         => \__( 'Server added! Reloading...', 'newspack-event-logger-nodes' ),
+							'error'         => \__( 'Error', 'newspack-event-logger-nodes' ),
+							'confirmRemove' => \__( 'Are you sure you want to remove this server?', 'newspack-event-logger-nodes' ),
+						],
+					]
+				);
+			}
 		}
 	}
 );

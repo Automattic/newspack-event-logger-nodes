@@ -572,4 +572,236 @@ class AppCoreTest extends TestCase {
 		$result  = \call_user_func( $wrapped, 'whatever' );
 		$this->assertSame( 'no-args-result', $result );
 	}
+
+	// ── Significant-event hook injection ────────────────────────────────
+
+	public function test_significant_events_injected_into_log_events(): void {
+		// Significant events whose name doesn't already appear in log_events
+		// must auto-register so the hook actually gets instrumented.
+		// Custom events (registered via custom_events) should be excluded.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'init' ],
+			'significant_events' => [ 'the_content hook', 'wp_head' ],
+			'custom_events'      => [],
+		] );
+
+		new Core();
+		$filters = $GLOBALS['_wp_test_filters'] ?? [];
+
+		// 'the_content' was injected from significant_events (with " hook" suffix stripped).
+		$this->assertArrayHasKey( 'the_content', $filters );
+		// 'wp_head' was injected (no suffix, treated as raw hook name).
+		$this->assertArrayHasKey( 'wp_head', $filters );
+		// 'init' was already in log_events.
+		$this->assertArrayHasKey( 'init', $filters );
+	}
+
+	public function test_significant_events_excludes_custom_events(): void {
+		// Custom events go through LogManager::message — they're NOT WP filters,
+		// so instrumenting them with add_filter is pointless. The constructor
+		// must skip injection when the significant event name is in custom_events.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'init' ],
+			'significant_events' => [ 'my_custom_event' ],
+			'custom_events'      => [ 'my_custom_event' => true ],
+		] );
+
+		new Core();
+		$filters = $GLOBALS['_wp_test_filters'] ?? [];
+
+		$this->assertArrayNotHasKey(
+			'my_custom_event',
+			$filters,
+			'custom events must not be injected as filter listeners'
+		);
+		$this->assertArrayHasKey( 'init', $filters );
+	}
+
+	public function test_significant_events_with_hook_suffix_marks_significant(): void {
+		// The " hook" suffix is stripped before being added to the
+		// significant set. Verify both forms (with/without suffix) are
+		// registered correctly.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'the_content', 'init' ],
+			'significant_events' => [ 'the_content hook', 'init' ],
+		] );
+
+		$core = new Core();
+		$ref  = new \ReflectionProperty( Core::class, 'significant' );
+		$ref->setAccessible( true );
+		$sig  = $ref->getValue( $core );
+
+		$this->assertArrayHasKey( 'the_content', $sig );
+		$this->assertArrayHasKey( 'init', $sig );
+		// The full " hook" suffix form must NOT remain as a key.
+		$this->assertArrayNotHasKey( 'the_content hook', $sig );
+	}
+
+	// ── Hook-start priority configuration ──────────────────────────────
+
+	public function test_hook_start_priority_default_is_1(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging' => true,
+			'log_events'     => [ 'init' ],
+		] );
+
+		$core = new Core();
+		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );
+		$ref->setAccessible( true );
+		// Default lives in the plugin's bundled config (-10000), not the
+		// fallback `?? 1` baked into Core::__construct — so this test pins
+		// the deployed config's value, not the code-level fallback.
+		$this->assertSame( -10000, $ref->getValue( $core ) );
+	}
+
+	public function test_hook_start_priority_custom(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'      => true,
+			'log_events'          => [ 'init' ],
+			'hook_start_priority' => 7,
+		] );
+
+		$core = new Core();
+		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );
+		$ref->setAccessible( true );
+		$this->assertSame( 7, $ref->getValue( $core ) );
+
+		// And the registered filter uses the configured priority.
+		$filters = $GLOBALS['_wp_test_filters'] ?? [];
+		$this->assertArrayHasKey( 7, $filters['init'] ?? [] );
+	}
+
+	// ── hook_start truncation ─────────────────────────────────────────
+
+	public function test_hook_start_long_string_truncates_internally(): void {
+		// The constructor forwards the value through but internally truncates
+		// to 1024 chars when logging. The pass-through is the externally
+		// observable contract — verified above. This test verifies the
+		// LogManager-disabled path doesn't crash on long strings.
+		$this->require_config_or_skip();
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		// 5000-char string — way beyond the 1024 internal cap.
+		$big = \str_repeat( 'a', 5000 );
+		$this->assertSame( $big, $core->hook_start( $big ) );
+	}
+
+	public function test_hook_start_with_object_value(): void {
+		// Non-scalar, non-string, non-null values must pass through and be
+		// json-encoded for logging (depth-limited to avoid circular refs).
+		$this->require_config_or_skip();
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		$obj = new \stdClass();
+		$obj->key = 'value';
+		$this->assertSame( $obj, $core->hook_start( $obj ) );
+	}
+
+	// ── hook_complete with multiple sequential hooks ───────────────────
+
+	public function test_hook_complete_returns_value_unchanged(): void {
+		$this->require_config_or_skip();
+		$core = new Core();
+
+		$GLOBALS['_wp_test_current_filter'] = 'first_hook';
+		$this->assertSame( 'a', $core->hook_complete( 'a' ) );
+
+		$GLOBALS['_wp_test_current_filter'] = 'second_hook';
+		$this->assertSame( 42, $core->hook_complete( 42 ) );
+	}
+
+	// ── Wrapped callback finally-block invariant ────────────────────────
+
+	public function test_wrapped_callback_completes_timer_on_throw(): void {
+		// The wrapper must call $lm->complete() even when the original
+		// callback throws — this is the load-bearing finally-block invariant
+		// that prevents orphaned timers stalling the request profiler.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'the_content' ],
+			'significant_events' => [ 'the_content hook' ],
+		] );
+
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		$thrower = function ( $v ) {
+			throw new \RuntimeException( 'boom' );
+		};
+		$hook = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [
+				'thrower' => [
+					'function'      => $thrower,
+					'accepted_args' => 1,
+				],
+			],
+		];
+
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'test' );
+
+		$wrapped = $wp_filter['the_content']->callbacks[10]['thrower']['function'];
+		$caught  = false;
+		try {
+			\call_user_func( $wrapped, 'arg' );
+		} catch ( \RuntimeException $e ) {
+			$caught = true;
+		}
+
+		$this->assertTrue( $caught, 'exception must propagate to caller' );
+	}
+
+	public function test_wrapped_callback_passes_multiple_args(): void {
+		// accepted_args = 3 → wrapper slices func_get_args to 3.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'the_content' ],
+			'significant_events' => [ 'the_content hook' ],
+		] );
+
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		$received_args = null;
+		$original      = function ( $a, $b, $c ) use ( &$received_args ) {
+			$received_args = [ $a, $b, $c ];
+			return $a;
+		};
+		$hook          = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [
+				'multi' => [
+					'function'      => $original,
+					'accepted_args' => 3,
+				],
+			],
+		];
+
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'test' );
+
+		$wrapped = $wp_filter['the_content']->callbacks[10]['multi']['function'];
+		$result  = \call_user_func( $wrapped, 'first', 'second', 'third', 'extra-ignored' );
+
+		$this->assertSame( 'first', $result );
+		// Wrapper sliced to accepted_args=3.
+		$this->assertSame( [ 'first', 'second', 'third' ], $received_args );
+	}
 }

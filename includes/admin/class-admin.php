@@ -100,6 +100,8 @@ class Admin {
 		'newspack_event_logger_nodes_custom_events',
 		// Jobs.
 		'newspack_event_logger_nodes_enable_jobs',
+		// Aggregator.
+		'newspack_event_logger_nodes_enable_aggregator',
 		// Performance Workers (application-side).
 		'newspack_event_logger_nodes_significant_events',
 		'newspack_event_logger_nodes_auto_disable_threshold',
@@ -353,6 +355,21 @@ class Admin {
 				'autoload'          => false,
 			]
 		);
+		// `newspack_nodes_enable_workers` is the substrate's option name, but
+		// only the application reads it (SettingsSync, AutoTune, StatusController)
+		// — the substrate doesn't gate worker spawning on it. Registering it on
+		// THIS settings group lets the Performance Workers section render the
+		// checkbox alongside Auto-Tune (matching the legacy plugin's UI). The
+		// substrate's Admin also registers it on its own group, so either page
+		// can save the same option.
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_nodes_enable_workers',
+			[
+				'sanitize_callback' => 'absint',
+				'autoload'          => true,
+			]
+		);
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_auto_disable_threshold',
@@ -377,25 +394,57 @@ class Admin {
 			self::SETTINGS_PAGE
 		);
 		\add_settings_field(
+			'enable_workers',
+			\__( 'Enable Workers', 'newspack-event-logger-nodes' ),
+			[ $this, 'enable_workers_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_workers_section'
+		);
+		\add_settings_field(
+			'auto_tune',
+			\__( 'Auto-Tune', 'newspack-event-logger-nodes' ),
+			[ $this, 'auto_tune_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_workers_section'
+		);
+		\add_settings_field(
 			'significant_events',
 			\__( 'Significant Events', 'newspack-event-logger-nodes' ),
 			[ $this, 'significant_events_callback' ],
 			self::SETTINGS_PAGE,
 			'newspack_event_logger_nodes_workers_section'
 		);
-		\add_settings_field(
-			'auto_disable_threshold',
-			\__( 'Auto-Disable Threshold', 'newspack-event-logger-nodes' ),
-			[ $this, 'auto_disable_threshold_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_workers_section'
+
+		// -- Remote Servers section -----------------------------------------
+		// The legacy newspack-event-aggregator plugin owned this UI; the new
+		// monorepo absorbs it. `enable_aggregator` gates whether the
+		// aggregator topology spawns workers (gates the topology filter in
+		// newspack-event-logger-nodes.php).
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_enable_aggregator',
+			[ 'sanitize_callback' => 'absint' ]
+		);
+
+		\add_settings_section(
+			'newspack_event_logger_nodes_aggregator_section',
+			\__( 'Remote Servers', 'newspack-event-logger-nodes' ),
+			[ $this, 'aggregator_section_callback' ],
+			self::SETTINGS_PAGE
 		);
 		\add_settings_field(
-			'auto_protect_time_threshold',
-			\__( 'Auto-Protect Time Threshold (ms)', 'newspack-event-logger-nodes' ),
-			[ $this, 'auto_protect_time_threshold_callback' ],
+			'enable_aggregator',
+			\__( 'Enable Aggregator', 'newspack-event-logger-nodes' ),
+			[ $this, 'enable_aggregator_callback' ],
 			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_workers_section'
+			'newspack_event_logger_nodes_aggregator_section'
+		);
+		\add_settings_field(
+			'configured_servers',
+			\__( 'Configured Servers', 'newspack-event-logger-nodes' ),
+			[ $this, 'configured_servers_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_aggregator_section'
 		);
 
 		// -- Debugging section ----------------------------------------------
@@ -576,7 +625,7 @@ class Admin {
 	}
 
 	public function workers_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Background worker controls. Significant events get per-callback profiling; auto-tune thresholds disable runaway hooks.', 'newspack-event-logger-nodes' ) . '</p>';
+		echo '<p>' . \esc_html__( 'Automatically disable noisy events and protect slow ones.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
 	public function debugging_section_callback(): void {
@@ -601,6 +650,185 @@ class Admin {
 		<input type="hidden" name="newspack_event_logger_nodes_enable_jobs" value="0" />
 		<input type="checkbox" id="enable_jobs" name="newspack_event_logger_nodes_enable_jobs" value="1" <?php \checked( 1, $enabled ); ?> />
 		<label for="enable_jobs"><?php \esc_html_e( 'Enable JobIntake and JobWorker', 'newspack-event-logger-nodes' ); ?></label>
+		<?php
+		$dependents = self::collect_job_dependents();
+		if ( ! empty( $dependents ) ) {
+			?>
+			<p class="description" style="color: #b32d2e;">
+				<strong><?php \esc_html_e( 'Required by features active on this site:', 'newspack-event-logger-nodes' ); ?></strong>
+				<?php echo \esc_html( \implode( ', ', $dependents ) ); ?>.
+				<?php \esc_html_e( 'Disabling jobs will silently break these flows — settings will not propagate, FlameBuilder auto-tuning will not apply, and queued jobs will accumulate in firehose unprocessed.', 'newspack-event-logger-nodes' ); ?>
+			</p>
+			<?php
+		}
+	}
+
+	/**
+	 * Collect human-readable names of features that depend on the job pipeline.
+	 * Used by `enable_jobs_callback()` to surface a red warning when active
+	 * dependents would silently break if jobs are disabled.
+	 *
+	 * Detection is by option state, not class_exists() — all the relevant code
+	 * ships in this plugin, so what matters is whether the feature is configured
+	 * for THIS site (not whether the code is loadable).
+	 *
+	 * @return string[] Active dependents; empty if none configured.
+	 */
+	private static function collect_job_dependents(): array {
+		$dependents = [];
+		$config     = Config::load_config( 'full' );
+
+		// Aggregator settings sync routes hub→spoke config changes through
+		// JobIntake. Active when any remote spokes are registered.
+		$servers = $config['aggregator_servers'] ?? [];
+		if ( ! empty( $servers ) ) {
+			$dependents[] = \__( 'Aggregator settings sync', 'newspack-event-logger-nodes' );
+
+			// Hub-mode fan-out (spoke→hub TODO propagation) — needs jobs AND
+			// hub designation (`enable_workers === true`).
+			if ( true === ( $config['enable_workers'] ?? false ) ) {
+				$dependents[] = \__( 'Performance Aggregator fan-out', 'newspack-event-logger-nodes' );
+			}
+		}
+
+		// FlameBuilder auto-tune writes settings via JobIntake when it detects
+		// noisy/significant events. Active when either threshold is non-zero.
+		$count_threshold = (int) \get_option( 'newspack_event_logger_nodes_auto_disable_threshold', 0 );
+		$time_threshold  = (float) \get_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', 0 );
+		if ( $count_threshold > 0 || $time_threshold > 0.0 ) {
+			$dependents[] = \__( 'FlameBuilder auto-tune', 'newspack-event-logger-nodes' );
+		}
+
+		return $dependents;
+	}
+
+	public function enable_workers_callback(): void {
+		// Reads/writes `newspack_nodes_enable_workers` — same option the
+		// substrate's Admin page exposes. Either page can save it.
+		$config  = Config::load_config( 'full' );
+		$enabled = \get_option( 'newspack_nodes_enable_workers', $config['enable_workers'] ?? 1 );
+		?>
+		<input type="hidden" name="newspack_nodes_enable_workers" value="0" />
+		<input type="checkbox" id="enable_workers" name="newspack_nodes_enable_workers" value="1" <?php \checked( 1, $enabled ); ?> />
+		<label for="enable_workers"><?php \esc_html_e( 'Enable RequestBuilder and FlameBuilder', 'newspack-event-logger-nodes' ); ?></label>
+		<?php
+	}
+
+	// ---- Aggregator field callbacks --------------------------------------
+
+	public function aggregator_section_callback(): void {
+		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	public function enable_aggregator_callback(): void {
+		$enabled = \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 );
+		?>
+		<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
+		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
+		<label for="enable_aggregator"><?php \esc_html_e( 'Enable aggregator worker (pulls firehose from configured Remote Servers via SSE)', 'newspack-event-logger-nodes' ); ?></label>
+		<?php
+	}
+
+	/**
+	 * Configured Servers field — table of registered remote spokes plus an
+	 * inline "Add New Server" form. Test/Toggle/Remove/Add buttons are wired
+	 * by `assets/aggregator-admin.js` against the REST endpoints exposed by
+	 * `\Newspack_Event_Logger_Nodes\Rest\ServersController` under the
+	 * `newspack-nodes/v1` namespace. Ported from the legacy
+	 * newspack-event-aggregator plugin (assets/admin.js +
+	 * servers_field_callback).
+	 */
+	public function configured_servers_callback(): void {
+		$servers = \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' )
+			? \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance()->get_all()
+			: [];
+		?>
+		<div id="event-aggregator-servers">
+			<table class="wp-list-table widefat fixed striped" style="max-width: 800px;">
+				<thead>
+					<tr>
+						<th><?php \esc_html_e( 'ID', 'newspack-event-logger-nodes' ); ?></th>
+						<th><?php \esc_html_e( 'URL', 'newspack-event-logger-nodes' ); ?></th>
+						<th><?php \esc_html_e( 'Status', 'newspack-event-logger-nodes' ); ?></th>
+						<th><?php \esc_html_e( 'Actions', 'newspack-event-logger-nodes' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $servers ) ) : ?>
+						<tr>
+							<td colspan="4"><?php \esc_html_e( 'No servers configured.', 'newspack-event-logger-nodes' ); ?></td>
+						</tr>
+					<?php else : ?>
+						<?php foreach ( $servers as $id => $row ) : ?>
+							<tr data-server-id="<?php echo \esc_attr( $id ); ?>">
+								<td><code><?php echo \esc_html( $id ); ?></code></td>
+								<td><?php echo \esc_html( $row['url'] ?? '' ); ?></td>
+								<td>
+									<?php if ( ! empty( $row['enabled'] ) ) : ?>
+										<span class="dashicons dashicons-yes-alt" style="color: green;" title="<?php \esc_attr_e( 'Enabled', 'newspack-event-logger-nodes' ); ?>"></span>
+									<?php else : ?>
+										<span class="dashicons dashicons-no" style="color: gray;" title="<?php \esc_attr_e( 'Disabled', 'newspack-event-logger-nodes' ); ?>"></span>
+									<?php endif; ?>
+									<span class="test-status"></span>
+								</td>
+								<td>
+									<button type="button" class="button button-small event-aggregator-test" data-server-id="<?php echo \esc_attr( $id ); ?>">
+										<?php \esc_html_e( 'Test', 'newspack-event-logger-nodes' ); ?>
+									</button>
+									<button type="button" class="button button-small event-aggregator-toggle" data-server-id="<?php echo \esc_attr( $id ); ?>" data-enabled="<?php echo ! empty( $row['enabled'] ) ? '1' : '0'; ?>">
+										<?php echo ! empty( $row['enabled'] ) ? \esc_html__( 'Disable', 'newspack-event-logger-nodes' ) : \esc_html__( 'Enable', 'newspack-event-logger-nodes' ); ?>
+									</button>
+									<button type="button" class="button button-small button-link-delete event-aggregator-remove" data-server-id="<?php echo \esc_attr( $id ); ?>">
+										<?php \esc_html_e( 'Remove', 'newspack-event-logger-nodes' ); ?>
+									</button>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+
+			<h4><?php \esc_html_e( 'Add New Server', 'newspack-event-logger-nodes' ); ?></h4>
+			<table class="form-table" style="max-width: 600px;">
+				<tr>
+					<th><label for="new-server-id"><?php \esc_html_e( 'Server ID', 'newspack-event-logger-nodes' ); ?></label></th>
+					<td>
+						<input type="text" id="new-server-id" class="regular-text" placeholder="prod-web-01" pattern="[a-zA-Z0-9_-]+" />
+						<p class="description"><?php \esc_html_e( 'Unique identifier (alphanumeric, hyphen, underscore).', 'newspack-event-logger-nodes' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="new-server-url"><?php \esc_html_e( 'Server URL', 'newspack-event-logger-nodes' ); ?></label></th>
+					<td>
+						<input type="url" id="new-server-url" class="regular-text" placeholder="https://example.com" />
+						<p class="description"><?php \esc_html_e( 'HTTPS URL of the WordPress site.', 'newspack-event-logger-nodes' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="new-server-username"><?php \esc_html_e( 'Username', 'newspack-event-logger-nodes' ); ?></label></th>
+					<td>
+						<input type="text" id="new-server-username" class="regular-text" />
+						<p class="description"><?php \esc_html_e( 'WordPress username on the remote site.', 'newspack-event-logger-nodes' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="new-server-password"><?php \esc_html_e( 'Application Password', 'newspack-event-logger-nodes' ); ?></label></th>
+					<td>
+						<input type="password" id="new-server-password" class="regular-text" />
+						<p class="description"><?php \esc_html_e( 'WordPress Application Password (Users → Profile → Application Passwords).', 'newspack-event-logger-nodes' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th></th>
+					<td>
+						<button type="button" class="button button-primary" id="event-aggregator-add-server">
+							<?php \esc_html_e( 'Add Server', 'newspack-event-logger-nodes' ); ?>
+						</button>
+						<span id="add-server-status"></span>
+					</td>
+				</tr>
+			</table>
+		</div>
 		<?php
 	}
 
@@ -678,34 +906,49 @@ class Admin {
 		);
 	}
 
-	public function auto_disable_threshold_callback(): void {
-		$this->render_number_field(
-			'auto_disable_threshold',
-			0,
-			0,
-			10000,
-			\__( 'Disable hooks whose count exceeds this threshold. Set to 0 to disable auto-tuning.', 'newspack-event-logger-nodes' )
-		);
-	}
-
-	public function auto_protect_time_threshold_callback(): void {
-		$value         = \get_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '' );
-		$display_value = ( '' === $value || 0.0 === (float) $value ) ? '' : $value;
+	/**
+	 * Combined "Auto-Tune" field — both thresholds inline on one row, mirroring
+	 * the legacy newspack-performance-workers UI. Storage stays as two separate
+	 * options; this is purely a layout consolidation.
+	 *
+	 * Layout: .event-logger-auto-disable-row flexbox + .event-logger-auto-disable-label
+	 * spans (defined in src/performance-logger/styles/settings.scss).
+	 */
+	public function auto_tune_callback(): void {
+		$count_value   = \get_option( 'newspack_event_logger_nodes_auto_disable_threshold', '' );
+		$time_value    = \get_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '' );
+		// Hide a stored 0 so the placeholder ("0") shows through — operators
+		// reading "Disable if count > 0" without seeing "0" as a value
+		// understand it's disabled rather than "any count > 0".
+		$count_display = ( '' === $count_value || 0 === (int) $count_value ) ? '' : $count_value;
+		$time_display  = ( '' === $time_value || 0.0 === (float) $time_value ) ? '' : $time_value;
 		?>
 		<div style="display: flex; align-items: flex-start; gap: 10px;">
 			<div style="flex: 1;">
-				<input type="number" id="auto_protect_time_threshold"
-					name="newspack_event_logger_nodes_auto_protect_time_threshold"
-					value="<?php echo \esc_attr( (string) $display_value ); ?>"
-					min="0" max="86400" step="0.001"
-					class="small-text"
-					placeholder="0" />
-				<?php \esc_html_e( 'ms', 'newspack-event-logger-nodes' ); ?>
-				<p class="description"><?php \esc_html_e( 'Protect hooks whose average time-per-call meets or exceeds this threshold (milliseconds). Set to 0 to disable.', 'newspack-event-logger-nodes' ); ?></p>
+				<div class="event-logger-auto-disable-row">
+					<label class="event-logger-auto-disable-label">
+						<?php \esc_html_e( 'Disable if count >', 'newspack-event-logger-nodes' ); ?>
+						<input type="number" id="auto_disable_threshold"
+							name="newspack_event_logger_nodes_auto_disable_threshold"
+							value="<?php echo \esc_attr( (string) $count_display ); ?>"
+							min="0" max="10000"
+							class="small-text" placeholder="0" />
+					</label>
+					<label class="event-logger-auto-disable-label">
+						<?php \esc_html_e( 'Protect if avg >=', 'newspack-event-logger-nodes' ); ?>
+						<input type="number" id="auto_protect_time_threshold"
+							name="newspack_event_logger_nodes_auto_protect_time_threshold"
+							value="<?php echo \esc_attr( (string) $time_display ); ?>"
+							min="0" max="1000" step="0.1"
+							class="small-text" placeholder="0" />
+						<?php \esc_html_e( 'ms', 'newspack-event-logger-nodes' ); ?>
+					</label>
+				</div>
+				<p class="description"><?php \esc_html_e( 'Noisy events (count > N) get disabled. Significant events (avg >= M ms) are protected. Set to 0 to disable.', 'newspack-event-logger-nodes' ); ?></p>
 			</div>
-			<button type="button" class="button button-secondary event-logger-reset-number"
-				data-field="auto_protect_time_threshold"
-				title="<?php \esc_attr_e( 'Clear (use default)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+			<button type="button" class="button button-secondary event-logger-reset-btn"
+				onclick="document.getElementById('auto_disable_threshold').value=''; document.getElementById('auto_protect_time_threshold').value='';"
+				title="<?php \esc_attr_e( 'Clear (use defaults)', 'newspack-event-logger-nodes' ); ?>">↺</button>
 		</div>
 		<?php
 	}
@@ -802,6 +1045,7 @@ class Admin {
 			: '';
 		if ( '' !== $redirect ) {
 			\wp_safe_redirect( $redirect );
+			exit;
 		}
 		exit;
 	}
@@ -859,6 +1103,24 @@ class Admin {
 			'enable_jobs',
 		];
 		if ( \in_array( $short, $supervisor_only_options, true ) ) {
+			return;
+		}
+
+		// 2b. Aggregator: single-partition topology with a fixed lock dir
+		// (`aggregator.p0.lock.d`). Toggling enable_aggregator should kick
+		// any currently-running aggregator worker so it exits within the
+		// next drain tick instead of waiting out its ~595s lifetime.
+		// Disabling: the topology filter no longer registers `aggregator`,
+		// so SpawnController rejects the worker's self-respawn POST and
+		// no replacement starts. Enabling: the supervisor's check_config
+		// pass spawns one within ~15s.
+		if ( 'enable_aggregator' === $short ) {
+			try {
+				$locks_dir = Config::get_locks_directory();
+				Lock::request_restart_at( "{$locks_dir}/aggregator.p0.lock.d" );
+			} catch ( \Throwable $e ) {
+				// Best-effort. Next supervisor pass will catch up.
+			}
 			return;
 		}
 

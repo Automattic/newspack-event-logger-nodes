@@ -50,7 +50,7 @@ const formatSeconds = ( seconds ) => {
  * @param {string}      props.metric        'volume' | 'avg' | 'cumulative'.
  * @param {string}      props.breakdown     'status' | 'method' | 'server' | etc.
  * @param {string}      props.serverFilter  Server name to filter by, or '' for all.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function AggregateTimeChart( {
 	data,

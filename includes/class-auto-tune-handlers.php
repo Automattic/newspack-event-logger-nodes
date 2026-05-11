@@ -47,12 +47,13 @@ class AutoTuneHandlers {
 
 	/**
 	 * Auto-tune handlers must run from a worker (cron) OR an admin request.
-	 * Workers set EVENT_LOGGER_WORKER_TYPE in their environment; admin requests
-	 * have manage_options.
+	 * Workers set NEWSPACK_NODES_WORKER_TYPE in their environment (substrate
+	 * SpawnController + Supervisor::run both populate it post-auth); admin
+	 * requests have manage_options.
 	 */
 	private static function authorized(): bool {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- read-only env check.
-		if ( isset( $_SERVER['EVENT_LOGGER_WORKER_TYPE'] ) ) {
+		if ( isset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ) ) {
 			return true;
 		}
 		if ( \function_exists( 'current_user_can' ) ) {
@@ -67,11 +68,17 @@ class AutoTuneHandlers {
 	 * not-a-hub, no fan-out.
 	 */
 	private static function is_hub(): bool {
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
+		$config = Config::load_config();
+		if ( ! isset( $config['enable_workers'] ) || true !== $config['enable_workers'] ) {
 			return false;
 		}
-		$config = Config::load_config();
-		return isset( $config['enable_workers'] ) && true === $config['enable_workers'];
+		// Hub-mode fanout shares the same operator gate as the aggregator
+		// pull: turning Enable Aggregator off must stop both directions of
+		// remote-server activity, not just the SSE pulls.
+		if ( ! (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
+			return false;
+		}
+		return true;
 	}
 
 	// --- Hub-mode (priority 5) ----------------------------------------------

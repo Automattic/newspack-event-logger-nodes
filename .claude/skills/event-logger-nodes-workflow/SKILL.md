@@ -41,7 +41,7 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 #### Adding a REST controller
 
 1. Extend `PerformanceControllerBase` if you need rate-limiting, capability checks, partition-validation, and the standard `not_found_error()` helper.
-2. Capability gate is `manage_options` by default. Cron-spawned worker requests are tagged via `EVENT_LOGGER_WORKER_TYPE` env and excluded from the rate limit.
+2. Capability gate is `manage_options` by default. Cron-spawned worker requests are tagged via `NEWSPACK_NODES_WORKER_TYPE` env and excluded from the rate limit.
 3. Register routes in `register_routes()` per WordPress REST conventions.
 4. Return `WP_Error` for failures so the framework formats responses consistently.
 5. If the endpoint reads memcache stats: it's fail-soft (return `null` / `[]` / `false` rather than throwing). If the endpoint manages SSE slots: it's fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
@@ -59,6 +59,17 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 2. Register in `newspack-event-logger-nodes.php` via `\Newspack_Nodes\CommandInterpreter::register_class('Foo', \Newspack_Event_Logger_Nodes\Foo::class)` so topology PHP can construct via `$interpreter->make_node('Foo', 'foo')`.
 3. Topology PHP wires it: `$interpreter->make_node('Foo', 'foo'); $foo->connect_node('next-step');`.
 
+#### Adding a CLI command (`wp nodes <verb>`)
+
+1. Live under `includes/cli/class-<verb>-command.php`. Register in `newspack-event-logger-nodes.php` inside the `WP_CLI` block.
+2. Validate inputs at the boundary; long-running commands should accept an `--allow-root` flag (WP-CLI convention).
+3. **Make blocking work injectable.** If the command reads stdin in a loop, calls `sleep` between iterations, or polls a file, accept the relevant resource/iteration-count as a parameter so tests can drive it deterministically. Pattern: `process_stdin( $stream = STDIN, int $max_iterations = PHP_INT_MAX )` — production passes defaults, tests pass a `php://memory` stream and a small iteration cap. See `ReqgrepCommand::process_stdin` and `follow_mode` for the canonical examples.
+4. Same for the readline/non-readline split — accept the TTY flag rather than calling `posix_isatty` inline; tests pass `false` to exercise the non-blocking path.
+
+#### Removing dead code
+
+The deferred-loader pattern in `newspack-event-logger-nodes.php` (require_once chain run on `plugins_loaded` priority 11) loads every class in this plugin before anything constructs them. That means `class_exists()` guards around in-plugin class instantiation are dead branches. If you find one while editing, delete it (don't leave it as "defensive"). The same applies to in-substrate `class_exists()` guards inside newspack-nodes. Out-of-plugin and optional-dependency guards (e.g. `class_exists( 'Memcached' )` for the PHP extension) stay.
+
 #### Type flags
 
 - VALUE is an array (entry hash, request object, flame data) → set `TYPE = TM_STRUCT`.
@@ -68,37 +79,24 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 ### Phase 3: Test
 
 ```bash
-# Unit + integration tests (require both plugins deployed).
-docker exec -u bend eve-pyrobase1-1 \
-    bash -c 'cd /usr/src/newspack-event-logger-nodes/tests && phpunit'
+# Unit + integration tests (require newspack-nodes activated too).
+cd tests && phpunit
 
 # Filter to a specific test file or method.
-docker exec -u bend eve-pyrobase1-1 bash -c \
-    'cd /usr/src/newspack-event-logger-nodes/tests && phpunit --filter RequestBuilderTest'
+cd tests && phpunit --filter RequestBuilderTest
 
-# Coverage HTML/Clover under /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/.
-docker exec -u bend eve-pyrobase1-1 \
-    /usr/src/newspack-event-logger-nodes/tests/run-coverage.sh
-
-# After running coverage, find what's still under-tested.
-python3 tools/event-logger-nodes-coverage/uncovered.py --top 20 --skip
-python3 tools/event-logger-nodes-coverage/summary.py
+# Coverage HTML/Clover.
+tests/run-coverage.sh
 ```
 
-### Phase 4: Deploy + verify
+### Phase 4: Reload running workers
+
+Workers cache loaded classes for the duration of their process lifetime (~10 min). After deploying new code, restart the relevant worker groups so the new bytecode lands:
 
 ```bash
-# Deploy the application plugin (deploy substrate first if both changed).
-docker exec eve-pyrobase1-1 /services/pyrobase/setup/newspack-nodes.sh
-docker exec eve-pyrobase1-1 /services/pyrobase/setup/newspack-event-logger-nodes.sh
-
-# Restart workers so the new code lands in the running PHP process.
-docker exec eve-pyrobase1-1 wp nodes restart firehose-workers --all-partitions \
-    --allow-root --path=/var/www/html
-docker exec eve-pyrobase1-1 wp nodes restart job-workers --all-partitions \
-    --allow-root --path=/var/www/html
-docker exec eve-pyrobase1-1 wp nodes restart request-workers --all-partitions \
-    --allow-root --path=/var/www/html
+wp nodes restart firehose-workers --all-partitions
+wp nodes restart job-workers      --all-partitions
+wp nodes restart request-workers  --all-partitions
 ```
 
 ### Phase 5: Live-verify
@@ -107,16 +105,13 @@ For changes touching the request-logging pipeline:
 
 ```bash
 # Hit any URL on the site to generate firehose entries.
-curl -sk "https://www.bendsource.com/" -o /dev/null -w "HTTP %{http_code}\n"
-sleep 3
+curl -sk "<site>/" -o /dev/null -w "HTTP %{http_code}\n"
 
 # reqgrep with --recent shows the most-recent segment forward.
-docker exec eve-pyrobase1-1 wp nodes reqgrep --recent \
-    --allow-root --path=/var/www/html | head -10
+wp nodes reqgrep --recent | head -10
 
 # reqgrep can also follow live (Ctrl-C to stop).
-docker exec -t eve-pyrobase1-1 wp nodes reqgrep --follow \
-    --allow-root --path=/var/www/html
+wp nodes reqgrep --follow
 ```
 
 For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic; the page slugs land at `/wp-admin/admin.php?page=newspack-nodes-*`.

@@ -646,6 +646,600 @@ class AdminTest extends TestCase {
 		$this->assertArrayNotHasKey( Admin::MENU_SLUG, $GLOBALS['_options_pages'] );
 	}
 
+	// ---- Sanitizers -------------------------------------------------------
+
+	public function test_sanitize_int_or_empty_handles_empty_and_null(): void {
+		$admin = new Admin();
+		$this->assertSame( '', $admin->sanitize_int_or_empty( '' ) );
+		$this->assertSame( '', $admin->sanitize_int_or_empty( null ) );
+	}
+
+	public function test_sanitize_int_or_empty_coerces_numeric(): void {
+		$admin = new Admin();
+		$this->assertSame( 42, $admin->sanitize_int_or_empty( '42' ) );
+		$this->assertSame( 42, $admin->sanitize_int_or_empty( 42 ) );
+		// absint coerces negatives to abs.
+		$this->assertSame( 42, $admin->sanitize_int_or_empty( '-42' ) );
+	}
+
+	public function test_sanitize_float_or_empty_handles_empty_and_null(): void {
+		$admin = new Admin();
+		$this->assertSame( '', $admin->sanitize_float_or_empty( '' ) );
+		$this->assertSame( '', $admin->sanitize_float_or_empty( null ) );
+	}
+
+	public function test_sanitize_float_or_empty_returns_empty_for_non_numeric(): void {
+		$admin = new Admin();
+		$this->assertSame( '', $admin->sanitize_float_or_empty( 'abc' ) );
+		$this->assertSame( '', $admin->sanitize_float_or_empty( 'not-a-number' ) );
+	}
+
+	public function test_sanitize_float_or_empty_returns_empty_for_negative(): void {
+		$admin = new Admin();
+		// Negative floats are normalized to empty (use-default).
+		$this->assertSame( '', $admin->sanitize_float_or_empty( '-2.5' ) );
+		$this->assertSame( '', $admin->sanitize_float_or_empty( -10 ) );
+	}
+
+	public function test_sanitize_float_or_empty_accepts_positive(): void {
+		$admin = new Admin();
+		$this->assertSame( 1.5, $admin->sanitize_float_or_empty( '1.5' ) );
+		$this->assertSame( 100.0, $admin->sanitize_float_or_empty( 100 ) );
+		$this->assertSame( 0.0, $admin->sanitize_float_or_empty( '0' ) );
+	}
+
+	public function test_sanitize_array_strings_decodes_json_input(): void {
+		$admin = new Admin();
+		$result = $admin->sanitize_array_strings( '["init","shutdown"]' );
+		$this->assertSame( [ 'init', 'shutdown' ], $result );
+	}
+
+	public function test_sanitize_array_strings_handles_array_input(): void {
+		$admin = new Admin();
+		$result = $admin->sanitize_array_strings( [ 'a', 'b', 'c' ] );
+		$this->assertSame( [ 'a', 'b', 'c' ], $result );
+	}
+
+	public function test_sanitize_array_strings_returns_empty_for_empty_string(): void {
+		$admin = new Admin();
+		$this->assertSame( [], $admin->sanitize_array_strings( '' ) );
+		$this->assertSame( [], $admin->sanitize_array_strings( '   ' ) );
+	}
+
+	public function test_sanitize_array_strings_returns_empty_for_non_array(): void {
+		$admin = new Admin();
+		$this->assertSame( [], $admin->sanitize_array_strings( 42 ) );
+		$this->assertSame( [], $admin->sanitize_array_strings( null ) );
+		$this->assertSame( [], $admin->sanitize_array_strings( true ) );
+	}
+
+	public function test_sanitize_array_strings_falls_back_to_newline_split(): void {
+		$admin = new Admin();
+		// Not JSON — falls back to newline-separated parsing.
+		$result = $admin->sanitize_array_strings( "first\nsecond\nthird" );
+		$this->assertSame( [ 'first', 'second', 'third' ], $result );
+	}
+
+	public function test_sanitize_array_strings_drops_non_scalar_values(): void {
+		$admin = new Admin();
+		$result = $admin->sanitize_array_strings( [ 'good', [ 'nested' ], 'fine', null, 42 ] );
+		// Non-scalar dropped; numbers coerce to strings.
+		$this->assertSame( [ 'good', 'fine', '42' ], $result );
+	}
+
+	public function test_sanitize_array_strings_dedupes_and_drops_empty(): void {
+		$admin = new Admin();
+		$result = $admin->sanitize_array_strings( [ 'a', '', 'a', '   ', 'b' ] );
+		$this->assertSame( [ 'a', 'b' ], $result );
+	}
+
+	public function test_sanitize_custom_events_converts_list_to_assoc(): void {
+		$admin = new Admin();
+		$result = $admin->sanitize_custom_events( [ 'evt_a', 'evt_b' ] );
+		$this->assertSame( [ 'evt_a' => true, 'evt_b' => true ], $result );
+	}
+
+	public function test_sanitize_custom_events_decodes_json(): void {
+		$admin = new Admin();
+		$result = $admin->sanitize_custom_events( '["evt_x","evt_y"]' );
+		$this->assertSame( [ 'evt_x' => true, 'evt_y' => true ], $result );
+	}
+
+	public function test_sanitize_custom_events_preserves_assoc_idempotently(): void {
+		$admin = new Admin();
+		// Already-assoc input → preserved (idempotent re-save).
+		$input  = [ 'foo' => true, 'bar' => true ];
+		$result = $admin->sanitize_custom_events( $input );
+		$this->assertSame( [ 'foo' => true, 'bar' => true ], $result );
+	}
+
+	public function test_sanitize_custom_events_empty_returns_empty(): void {
+		$admin = new Admin();
+		$this->assertSame( [], $admin->sanitize_custom_events( '' ) );
+		$this->assertSame( [], $admin->sanitize_custom_events( [] ) );
+	}
+
+	// ---- Section callbacks (output structured help text) ------------------
+
+	public function test_general_section_callback_renders_explainer(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->general_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '<p>', $out );
+		$this->assertStringContainsString( 'logging', $out );
+	}
+
+	public function test_instrumentation_section_callback_mentions_filters_and_events(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->instrumentation_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '<p>', $out );
+		$this->assertStringContainsString( 'URL', $out );
+	}
+
+	public function test_jobs_section_callback_describes_dispatch(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->jobs_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'job', \strtolower( $out ) );
+	}
+
+	public function test_workers_section_callback_describes_workers(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->workers_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '<p>', $out );
+	}
+
+	public function test_debugging_section_callback_warns_about_overhead(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->debugging_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '<p>', $out );
+	}
+
+	// ---- Field callbacks: enable_logging / enable_jobs ----------------------
+
+	public function test_enable_logging_callback_renders_checkbox_with_default(): void {
+		$admin = new Admin();
+		// No option set → default is 1 (checked).
+		\ob_start();
+		$admin->enable_logging_callback();
+		$out = \ob_get_clean();
+		// Hidden zero-value sentinel + main checkbox.
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_enable_logging"', $out );
+		$this->assertStringContainsString( 'type="hidden"', $out );
+		$this->assertStringContainsString( 'type="checkbox"', $out );
+		$this->assertStringContainsString( 'checked="checked"', $out );
+	}
+
+	public function test_enable_logging_callback_unchecked_when_disabled(): void {
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->enable_logging_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'type="checkbox"', $out );
+		$this->assertStringNotContainsString( 'checked="checked"', $out );
+	}
+
+	public function test_enable_jobs_callback_renders_checkbox(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->enable_jobs_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_enable_jobs"', $out );
+		$this->assertStringContainsString( 'type="checkbox"', $out );
+	}
+
+	// ---- Field callbacks: array fields (log_urls, skip_urls, etc.) -------
+
+	public function test_log_urls_callback_renders_tag_input_field_markup(): void {
+		\update_option( 'newspack_event_logger_nodes_log_urls', [ '/calendar', '/events' ] );
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_urls_callback();
+		$out = \ob_get_clean();
+		// React mount marker.
+		$this->assertStringContainsString( 'event-logger-log_urls', $out );
+		$this->assertStringContainsString( 'event-logger-tag-input', $out );
+		// Hidden JSON value carrying the current values.
+		$this->assertStringContainsString( '/calendar', $out );
+		$this->assertStringContainsString( '/events', $out );
+	}
+
+	public function test_log_urls_callback_with_empty_default(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_urls_callback();
+		$out = \ob_get_clean();
+		// Even with no values, the mount and reset button should render.
+		$this->assertStringContainsString( 'event-logger-log_urls', $out );
+		$this->assertStringContainsString( 'event-logger-reset-field', $out );
+	}
+
+	public function test_skip_urls_callback_uses_config_default_when_unset(): void {
+		// Inject default skip_urls via filter.
+		\add_filter(
+			'newspack_nodes/config',
+			static function ( array $cfg ): array {
+				$cfg['skip_urls'] = [ '/wp-cron.php' ];
+				return $cfg;
+			}
+		);
+
+		$admin = new Admin();
+		\ob_start();
+		$admin->skip_urls_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'skip_urls', $out );
+	}
+
+	public function test_log_events_callback_renders_field(): void {
+		\update_option( 'newspack_event_logger_nodes_log_events', [ 'init', 'wp_loaded' ] );
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_events_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'event-logger-log_events', $out );
+		$this->assertStringContainsString( 'init', $out );
+	}
+
+	public function test_custom_events_callback_renders_keys_as_list(): void {
+		\update_option(
+			'newspack_event_logger_nodes_custom_events',
+			[ 'event_a' => true, 'event_b' => true ]
+		);
+		$admin = new Admin();
+		\ob_start();
+		$admin->custom_events_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'event-logger-custom_events', $out );
+		$this->assertStringContainsString( 'event_a', $out );
+		$this->assertStringContainsString( 'event_b', $out );
+	}
+
+	public function test_custom_events_callback_handles_non_array(): void {
+		\update_option( 'newspack_event_logger_nodes_custom_events', 'not-an-array' );
+		$admin = new Admin();
+		\ob_start();
+		$admin->custom_events_callback();
+		$out = \ob_get_clean();
+		// Non-array option: treated as empty list.
+		$this->assertStringContainsString( 'event-logger-custom_events', $out );
+	}
+
+	public function test_significant_events_callback_sorts_alphabetically(): void {
+		\update_option(
+			'newspack_event_logger_nodes_significant_events',
+			[ 'zhook', 'a_hook', 'middle' ]
+		);
+		$admin = new Admin();
+		\ob_start();
+		$admin->significant_events_callback();
+		$out = \ob_get_clean();
+		// All names appear, and they should be in sorted order in the JSON.
+		$this->assertStringContainsString( 'a_hook', $out );
+		$this->assertStringContainsString( 'middle', $out );
+		$this->assertStringContainsString( 'zhook', $out );
+		// Position check: a_hook precedes zhook in the rendered JSON.
+		$pos_a = \strpos( $out, 'a_hook' );
+		$pos_z = \strpos( $out, 'zhook' );
+		$this->assertNotFalse( $pos_a );
+		$this->assertNotFalse( $pos_z );
+		$this->assertLessThan( $pos_z, $pos_a, 'sort failed' );
+	}
+
+	// ---- Field callbacks: Aggregator section -----------------------------
+
+	public function test_aggregator_section_callback_describes_section(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->aggregator_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'Configure remote', $out );
+	}
+
+	public function test_enable_aggregator_callback_renders_checkbox_checked_by_default(): void {
+		// Default option missing → defaults to enabled (the topology filter
+		// also defaults ON, so the UI matches that polarity).
+		$admin = new Admin();
+		\ob_start();
+		$admin->enable_aggregator_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_enable_aggregator"', $out );
+		$this->assertStringContainsString( 'checked', $out );
+	}
+
+	public function test_enable_aggregator_callback_unchecked_when_disabled(): void {
+		\update_option( 'newspack_event_logger_nodes_enable_aggregator', 0 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->enable_aggregator_callback();
+		$out = \ob_get_clean();
+		// No `checked` keyword on the checkbox input.
+		$this->assertStringNotContainsString( "checked='checked'", $out );
+		$this->assertStringNotContainsString( 'checked="checked"', $out );
+	}
+
+	public function test_configured_servers_callback_renders_empty_state_with_no_servers(): void {
+		// With no ServerRegistry rows, the table renders the "No servers
+		// configured." placeholder + the Add New Server form fields.
+		$admin = new Admin();
+		\ob_start();
+		$admin->configured_servers_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'No servers configured', $out );
+		$this->assertStringContainsString( 'event-aggregator-add-server', $out );
+		$this->assertStringContainsString( 'new-server-id', $out );
+		$this->assertStringContainsString( 'new-server-url', $out );
+		$this->assertStringContainsString( 'new-server-username', $out );
+		$this->assertStringContainsString( 'new-server-password', $out );
+		// Header column labels.
+		$this->assertStringContainsString( 'wp-list-table', $out );
+	}
+
+	// ---- Field callback: Auto-Tune (combined number inputs) --------------
+
+	public function test_auto_tune_callback_renders_both_threshold_inputs(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->auto_tune_callback();
+		$out = \ob_get_clean();
+		// Both inputs on one row, mirroring the legacy plugin's combined UI.
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_auto_disable_threshold"', $out );
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_auto_protect_time_threshold"', $out );
+		$this->assertStringContainsString( 'max="10000"', $out );  // count cap
+		$this->assertStringContainsString( 'max="1000"', $out );   // ms cap (matches legacy)
+		$this->assertStringContainsString( 'step="0.1"', $out );   // ms granularity
+		$this->assertStringContainsString( 'event-logger-auto-disable-row', $out );
+		$this->assertStringContainsString( 'event-logger-auto-disable-label', $out );
+		// Combined description + reset button covering both fields.
+		$this->assertStringContainsString( 'Noisy events', $out );
+		$this->assertStringContainsString( 'Significant events', $out );
+		$this->assertStringContainsString( 'event-logger-reset-btn', $out );
+	}
+
+	public function test_auto_tune_callback_renders_stored_values(): void {
+		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 7777 );
+		\update_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '12.5' );
+		$admin = new Admin();
+		\ob_start();
+		$admin->auto_tune_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'value="7777"', $out );
+		$this->assertStringContainsString( '12.5', $out );
+	}
+
+	public function test_auto_tune_callback_blanks_zero_values(): void {
+		// Both options stored as 0 → both inputs render empty (placeholder
+		// shows through) so operators don't see "0" as an active threshold.
+		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 0 );
+		\update_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '0' );
+		$admin = new Admin();
+		\ob_start();
+		$admin->auto_tune_callback();
+		$out = \ob_get_clean();
+		// Both inputs end up empty; we can't easily assert per-input emptiness
+		// since both share placeholder="0", so check that neither has a
+		// non-empty value attribute.
+		$this->assertStringNotContainsString( 'value="0"', $out );
+	}
+
+	public function test_log_memory_callback_renders_checkbox(): void {
+		\update_option( 'newspack_event_logger_nodes_log_memory', 1 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_memory_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_log_memory"', $out );
+		$this->assertStringContainsString( 'type="checkbox"', $out );
+		$this->assertStringContainsString( 'checked="checked"', $out );
+	}
+
+	public function test_log_memory_callback_unchecked_when_disabled(): void {
+		\update_option( 'newspack_event_logger_nodes_log_memory', 0 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_memory_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'type="checkbox"', $out );
+		$this->assertStringNotContainsString( 'checked="checked"', $out );
+	}
+
+	public function test_flush_every_line_callback_renders_checkbox(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->flush_every_line_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_flush_every_line"', $out );
+		$this->assertStringContainsString( 'type="checkbox"', $out );
+	}
+
+	public function test_flush_every_line_callback_checked_when_enabled(): void {
+		\update_option( 'newspack_event_logger_nodes_flush_every_line', 1 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->flush_every_line_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'checked="checked"', $out );
+	}
+
+	// ---- maybe_request_worker_restart additional branches ---------------
+
+	public function test_maybe_request_worker_restart_request_workers_for_auto_disable_threshold(): void {
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$this->prepare_lock_dir( 'job-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_auto_disable_threshold' );
+		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+		$this->assertFileDoesNotExist( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_request_workers_for_auto_protect_time_threshold(): void {
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_auto_protect_time_threshold' );
+		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_job_workers_for_custom_events(): void {
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$this->prepare_lock_dir( 'job-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_custom_events' );
+		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+		$this->assertFileExists( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_job_workers_for_log_memory(): void {
+		$this->prepare_lock_dir( 'job-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
+		$this->assertFileExists( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_job_workers_for_flush_every_line(): void {
+		$this->prepare_lock_dir( 'job-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_flush_every_line' );
+		$this->assertFileExists( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_skips_unknown_application_option(): void {
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$this->prepare_lock_dir( 'job-workers', 0 );
+		$admin = new Admin();
+		// An option in the prefix but not in any list — must be a no-op.
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_unknown_option' );
+		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+		$this->assertFileDoesNotExist( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_filter_returns_empty_clears_groups(): void {
+		// Filter returns empty array → no restart.
+		\add_filter(
+			'newspack_event_logger_nodes/worker_restart_groups',
+			static function () {
+				return [];
+			}
+		);
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		// Filter cleared the group → no restart written.
+		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_filter_dedupes_groups(): void {
+		\add_filter(
+			'newspack_event_logger_nodes/worker_restart_groups',
+			static function ( $groups ) {
+				// Add the same group twice — uniqueness must apply.
+				return [ 'request-workers', 'request-workers', 'request-workers' ];
+			}
+		);
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_filter_drops_non_string_entries(): void {
+		\add_filter(
+			'newspack_event_logger_nodes/worker_restart_groups',
+			static function ( $groups ) {
+				return [ 'request-workers', 42, [ 'nested' ], null ];
+			}
+		);
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+	}
+
+	// ---- handle_reset_settings additional branches ------------------------
+
+	public function test_handle_reset_settings_filter_extends_options_list(): void {
+		// Add a custom prefixed option via the filter.
+		\add_filter(
+			'newspack_event_logger_nodes_reset_options',
+			static function ( $opts ) {
+				$opts[] = 'newspack_event_logger_nodes_my_extra';
+				return $opts;
+			}
+		);
+		\update_option( 'newspack_event_logger_nodes_my_extra', 'should-be-deleted' );
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
+
+		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
+		$admin = new Admin();
+		try {
+			$admin->handle_reset_settings();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// Expected.
+		}
+		// Custom option deleted because it carries the prefix.
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_my_extra' ) );
+	}
+
+	public function test_handle_reset_settings_filter_returning_non_array_is_ignored(): void {
+		\add_filter(
+			'newspack_event_logger_nodes_reset_options',
+			static function () {
+				return 'not-an-array';
+			}
+		);
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
+
+		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
+		$admin = new Admin();
+		try {
+			$admin->handle_reset_settings();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// Expected.
+		}
+		// Default options list still applies.
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
+	}
+
+	// ---- render_settings_page_static -------------------------------------
+
+	public function test_render_settings_page_static_outputs_markup(): void {
+		\ob_start();
+		Admin::render_settings_page_static();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'Event Logger Settings', $out );
+		$this->assertStringContainsString( Admin::OPTIONS_GROUP, $out );
+	}
+
+	public function test_render_settings_page_static_blocks_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'You do not have permission' );
+		Admin::render_settings_page_static();
+	}
+
+	// ---- Constructor wires the hooks --------------------------------------
+
+	public function test_constructor_hooks_admin_menu_and_admin_init(): void {
+		$GLOBALS['_wp_actions'] = [];
+		$admin                  = new Admin();
+		// Constructor should have registered hooks via add_action.
+		$this->assertNotEmpty( $GLOBALS['_wp_actions']['admin_menu'] ?? [] );
+		$this->assertNotEmpty( $GLOBALS['_wp_actions']['admin_init'] ?? [] );
+		$this->assertNotEmpty( $GLOBALS['_wp_actions']['admin_post_' . Admin::RESET_ACTION] ?? [] );
+		$this->assertNotEmpty( $GLOBALS['_wp_actions']['updated_option'] ?? [] );
+		$this->assertNotEmpty( $GLOBALS['_wp_actions']['added_option'] ?? [] );
+	}
+
 	// ---- helpers ----------------------------------------------------------
 
 	private function prepare_lock_dir( string $group, int $partition ): string {

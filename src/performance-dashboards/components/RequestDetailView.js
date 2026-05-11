@@ -23,7 +23,7 @@ const SECTION_STYLE = { marginBottom: '20px' };
  * @param {Object} props.flameData       Flame graph data.
  * @param {Array}  props.indentedEntries Processed log entries array.
  * @param {number} props.realEntryCount  Count of real (non-placeholder) log entries.
- * @return {JSX.Element} Request detail view.
+ * @return {import('react').ReactElement} Request detail view.
  */
 export default function RequestDetailView( {
 	requestDetail,

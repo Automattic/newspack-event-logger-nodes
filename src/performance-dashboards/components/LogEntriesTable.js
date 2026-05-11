@@ -167,7 +167,7 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
  * @param {Array}  props.entries   Array of indented log entries (from computeIndentedEntries).
  * @param {number} props.realCount Count of real (non-placeholder) entries.
  * @param {Object} props.revealRef Ref to expose revealPath function for flame graph integration.
- * @return {JSX.Element|null} Rendered component or null if no entries.
+ * @return {import('react').ReactElement|null} Rendered component or null if no entries.
  */
 export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const tableRef = useRef( null );
@@ -735,7 +735,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Render the keyword cell content.
 	 *
 	 * @param {Object} entry Entry object.
-	 * @return {JSX.Element} Keyword content.
+	 * @return {import('react').ReactElement} Keyword content.
 	 */
 	const renderKeyword = ( entry ) => {
 		if ( entry.isPlaceholder ) {
@@ -788,7 +788,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Render duration + peak_mb stats line.
 	 *
 	 * @param {Object} entry Entry with duration_ms and peak_mb.
-	 * @return {JSX.Element|null} Stats span or null.
+	 * @return {import('react').ReactElement|null} Stats span or null.
 	 */
 	const renderStats = ( entry ) => {
 		const hasDuration =
@@ -814,7 +814,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Shows start message + complete message, then stats on new line.
 	 *
 	 * @param {Object} entry Merged entry.
-	 * @return {JSX.Element} Message content.
+	 * @return {import('react').ReactElement} Message content.
 	 */
 	const renderMergedMessage = ( entry ) => {
 		const startMsg = formatMessage( entry );
@@ -859,7 +859,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Complete entries show duration/peak on a new line after content.
 	 *
 	 * @param {Object} entry Entry object.
-	 * @return {JSX.Element} Message content.
+	 * @return {import('react').ReactElement} Message content.
 	 */
 	const renderEntryMessage = ( entry ) => {
 		if ( entry.isPlaceholder ) {

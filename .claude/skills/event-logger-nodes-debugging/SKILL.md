@@ -22,24 +22,19 @@ The application-aware view of the substrate's firehose. Decodes the Message enve
 
 ```bash
 # Most-recent segment forward (fast).
-docker exec eve-pyrobase1-1 wp nodes reqgrep --recent \
-    --allow-root --path=/var/www/html
+wp nodes reqgrep --recent
 
 # All segments (slow but thorough).
-docker exec eve-pyrobase1-1 wp nodes reqgrep \
-    --allow-root --path=/var/www/html
+wp nodes reqgrep
 
 # Filter to a pattern (regex against the formatted line).
-docker exec eve-pyrobase1-1 wp nodes reqgrep /admin-ajax \
-    --allow-root --path=/var/www/html
+wp nodes reqgrep /admin-ajax
 
 # Specific request id.
-docker exec eve-pyrobase1-1 wp nodes reqgrep abc123def \
-    --allow-root --path=/var/www/html
+wp nodes reqgrep abc123def
 
 # Live tail.
-docker exec -t eve-pyrobase1-1 wp nodes reqgrep --follow \
-    --allow-root --path=/var/www/html
+wp nodes reqgrep --follow
 ```
 
 The output handles multiple wire formats — both the new positional Message envelope (live) and legacy entry-shape JSON (archives, stdin pipes), so feeding it old captures still works.
@@ -49,38 +44,41 @@ The output handles multiple wire formats — both the new positional Message env
 Pivot into a worker to see node state:
 
 ```bash
-docker exec -it eve-pyrobase1-1 wp nodes cli firehose-workers.p0 \
-    --allow-root --path=/var/www/html
+wp nodes cli firehose-workers.p0
 ```
 
 From the prompt:
 
 ```
+status                                  # local mode summary (no command sent to worker)
 ls -alos                                # all nodes with sinks/owners/counters
 dump request-builder                    # state of RequestBuilder, including LRU cache stats
 dump firehose:tee                       # see the Tee's targets
 ls -a request-builder                   # all nodes that sink into request-builder
+cd request-builder                      # change cwd so subsequent verbs route there
+command_node "" ping                    # dispatch a verb at the cwd without typing the path
 ```
 
 For job-workers / request-workers / aggregator pivots, use the matching reader id (`job-workers.p0`, etc.).
+
+Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes ls' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes ls` to see what's actually live.
+
+Scripted pivot sessions (`echo cmd | wp nodes cli foo.p0`) drain cleanly without a trailing `sleep` — substrate sends a TM_EOF on stdin close and waits for the worker's echo before exiting, so any in-flight response lands first.
 
 ## Memcache stats schema
 
 Stats live in memcache only — never on disk. Per-partition prefix is `evlog[:salt]:p{N}:`, then 9 namespaces: `hourly`, `lb`, `lb_s`, `urls`, `url`, `dim`, `url_dim`, `categories`, `url_cat`.
 
 ```bash
-# Connect to memcache (default 127.0.0.1:11211).
-docker exec -it eve-memcache1-1 sh -c 'echo "stats slabs" | nc localhost 11211'
+# Connect to memcache directly to inspect slabs.
+echo "stats slabs" | nc <memcache-host> 11211
 
 # Find the active salt.
-docker exec eve-pyrobase1-1 wp option get newspack_nodes_stats_salt \
-    --allow-root --path=/var/www/html
+wp option get newspack_nodes_stats_salt
 
 # Force a flush (rotates salt, all old keys orphan via TTL).
-docker exec eve-pyrobase1-1 wp option update newspack_nodes_stats_salt $(openssl rand -hex 4) \
-    --allow-root --path=/var/www/html
-docker exec eve-pyrobase1-1 wp nodes restart firehose-workers --all-partitions \
-    --allow-root --path=/var/www/html  # pick up new salt
+wp option update newspack_nodes_stats_salt $(openssl rand -hex 4)
+wp nodes restart firehose-workers --all-partitions   # pick up new salt
 ```
 
 **Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
@@ -130,14 +128,13 @@ Diagnostic flow:
 
 ```bash
 # Is this node a hub?
-docker exec eve-pyrobase1-1 wp option get newspack_event_logger_nodes_enable_workers \
-    --allow-root --path=/var/www/html
+wp option get newspack_event_logger_nodes_enable_workers
 
 # Aggregator status (hub-side).
-curl -sk "https://www.bendsource.com/wp-json/newspack-nodes-aggregator/v1/status"
+curl -sk "<site>/wp-json/newspack-nodes-aggregator/v1/status"
 
 # Per-server health (hub-side).
-curl -sk "https://www.bendsource.com/wp-json/newspack-nodes-aggregator/v1/health"
+curl -sk "<site>/wp-json/newspack-nodes-aggregator/v1/health"
 ```
 
 If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cURL drops 5s of data on reconnect (single-segment seek); if your spoke is bouncing frequently the hub will see gaps.
@@ -159,19 +156,21 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 ## Inspecting on disk
 
 ```bash
-# Application uses {base}/logs/firehose.log/ for the LogManager firehose.
+# Application uses {base_dir}/logs/firehose.log/ for the LogManager firehose.
 # Lines are 7-element positional Message envelopes; VALUE (index 6) is the entry hash.
-docker exec eve-pyrobase1-1 head -c 800 /tmp/newspack-nodes/logs/firehose.log/p0/0.log
+head -c 800 {base_dir}/logs/firehose.log/p0/0.log
 
 # Job-intake (large jobs).
-docker exec eve-pyrobase1-1 ls -la /tmp/newspack-nodes/logs/jobintake.log/p0/
+ls -la {base_dir}/logs/jobintake.log/p0/
 
 # RequestBuilder writes assembled requests to requests.log (with .idx companion for drilldown).
-docker exec eve-pyrobase1-1 ls -la /tmp/newspack-nodes/logs/requests.log/p0/
+ls -la {base_dir}/logs/requests.log/p0/
 
 # FlameBuilder writes flame data + index to flames.log.
-docker exec eve-pyrobase1-1 ls -la /tmp/newspack-nodes/logs/flames.log/p0/
+ls -la {base_dir}/logs/flames.log/p0/
 ```
+
+`{base_dir}` resolves from the `newspack_nodes/config` filter (`base_directory` key). Default is `/tmp/newspack-nodes`.
 
 ## Related Skills
 

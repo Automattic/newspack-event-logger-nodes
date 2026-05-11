@@ -334,7 +334,7 @@ class RequestBuilder extends Node {
 				$request->http_from = $m[1];
 			} elseif ( \preg_match( '/^HTTP_X_JA4_HASH => "(.+)"$/', $message, $m ) ) {
 				$request->ja4_hash = $m[1];
-			} elseif ( \preg_match( '/^EVENT_LOGGER_WORKER_TYPE => ".+"$/', $message ) ) {
+			} elseif ( \preg_match( '/^NEWSPACK_NODES_WORKER_TYPE => ".+"$/', $message ) ) {
 				$request->is_worker = true;
 			}
 		};
@@ -514,7 +514,7 @@ class RequestBuilder extends Node {
 	private function emit_request( \stdClass $request ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::VALUE ]     = (array) $request;
 		parent::fill( $msg );
@@ -531,7 +531,7 @@ class RequestBuilder extends Node {
 		}
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = $this->errors_target;
 		$msg[ Message::VALUE ]     = $entry;

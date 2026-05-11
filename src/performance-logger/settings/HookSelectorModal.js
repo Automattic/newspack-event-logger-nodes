@@ -60,7 +60,7 @@ const CATEGORY_META = {
  * @param {Array}    props.selected Currently selected hooks.
  * @param {Function} props.onSelect Callback when hooks are selected.
  * @param {string}   props.mode     'include' or 'exclude' mode.
- * @return {JSX.Element|null} Rendered component.
+ * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function HookSelectorModal( {
 	isOpen,

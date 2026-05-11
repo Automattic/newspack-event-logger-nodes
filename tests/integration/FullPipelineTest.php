@@ -44,7 +44,7 @@ class FullPipelineTest extends TestCase {
 	private function topic_write( Topic $topic, string $url, array $entry ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::KEY ]       = $url;
 		$msg[ Message::VALUE ]     = $entry;
 		$topic->fill( $msg );

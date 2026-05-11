@@ -164,8 +164,8 @@ class JobIntakeTest extends TestCase {
 
 	// --- queue_many batching ------------------------------------------------
 
-	public function test_queue_many_writes_under_one_lock_acquisition(): void {
-		// Batch API: lock acquired once, multiple writes under it, released at close.
+	public function test_queue_many_writes_a_batch(): void {
+		// Batch API: multiple writes under the open intake, all land on disk.
 		$jobs = [
 			[ 'handler' => 'a', 'parameters' => [ 1 ] ],
 			[ 'handler' => 'b', 'parameters' => [ 2 ] ],
@@ -174,9 +174,7 @@ class JobIntakeTest extends TestCase {
 
 		$intake = new JobIntake( $this->tmp );
 		$this->assertSame( 3, $intake->queue_many( $jobs ) );
-		$this->assertTrue( $intake->is_open() );
 		$intake->close();
-		$this->assertFalse( $intake->is_open() );
 
 		$lines = $this->read_all_jobintake_lines();
 		$this->assertCount( 3, $lines );
@@ -199,84 +197,45 @@ class JobIntakeTest extends TestCase {
 	}
 
 	// --- Lock semantics -----------------------------------------------------
+	//
+	// Locking is per-Partition (in `Partition::allow_large_writes()` at
+	// `{partition_dir}/write.lock.d/`). No intake-level host-wide lock.
 
-	public function test_init_acquires_shared_lock(): void {
-		$intake = new JobIntake( $this->tmp );
-		$this->assertFalse( $intake->is_open() );
-		$intake->write_job( 'a', [] );
-		$this->assertTrue( $intake->is_open() );
-		$this->assertTrue( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
-		$intake->close();
+	public function test_write_job_acquires_partition_lock(): void {
+		// Writing materializes the Partition + its per-partition write lock.
+		$intake = new JobIntake( $this->tmp, num_partitions: 1 );
+		$this->assertTrue( $intake->write_job( 'a', [] ) );
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
+		// No host-wide intake lock created.
 		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
-	}
-
-	public function test_close_releases_lock(): void {
-		$intake = new JobIntake( $this->tmp );
-		$intake->write_job( 'a', [] );
 		$intake->close();
-		$this->assertFalse( $intake->is_open() );
-		// Lock dir gone — another producer can acquire.
-		$intake2 = new JobIntake( $this->tmp );
-		$this->assertTrue( $intake2->write_job( 'b', [] ) );
-		$intake2->close();
+		// close() removes the Partition node which releases the lock dir.
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 	}
 
-	public function test_destruct_releases_lock(): void {
-		// __destruct calls close(); lock should be released even if the caller
-		// forgets to call close() explicitly.
-		$intake = new JobIntake( $this->tmp );
+	public function test_destruct_releases_partition_lock(): void {
+		// __destruct calls close(); per-partition lock should be released even
+		// if the caller forgets to call close() explicitly.
+		$intake = new JobIntake( $this->tmp, num_partitions: 1 );
 		$intake->write_job( 'a', [] );
-		// Drop the only reference; PHP collects and __destruct runs.
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 		unset( $intake );
-		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 	}
 
-	public function test_concurrent_intake_blocks_second_writer(): void {
-		// First intake holds the lock; second's write_job() returns false because
-		// init() can't acquire the lock.
-		$first = new JobIntake( $this->tmp );
+	public function test_writes_to_different_partitions_do_not_contend(): void {
+		// Per-Partition locking means a writer on p0 doesn't block a writer
+		// on p1 — the legacy host-wide intake lock used to gate both.
+		$first = new JobIntake( $this->tmp, num_partitions: 4 );
+		$first->partition( 0 );
 		$this->assertTrue( $first->write_job( 'a', [] ) );
-		$this->assertTrue( $first->is_open() );
 
-		$second = new JobIntake( $this->tmp );
-		$this->assertFalse( $second->write_job( 'b', [] ) );
-		$this->assertFalse( $second->is_open() );
-
-		$first->close();
-		// After release, second can acquire.
+		$second = new JobIntake( $this->tmp, num_partitions: 4 );
+		$second->partition( 1 );
 		$this->assertTrue( $second->write_job( 'b', [] ) );
-		$second->close();
-	}
-
-	public function test_use_lock_false_skips_lock_acquisition(): void {
-		// Producers that already hold the lock or know they're sole writer can
-		// opt out via use_lock=false.
-		$intake = new JobIntake( $this->tmp, num_partitions: 1, use_lock: false );
-		$this->assertTrue( $intake->write_job( 'noop', [] ) );
-		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
-		$intake->close();
-	}
-
-	public function test_is_lock_available_when_no_holder(): void {
-		$intake = new JobIntake( $this->tmp );
-		$this->assertTrue( $intake->is_lock_available() );
-	}
-
-	public function test_is_lock_available_returns_true_when_holding_it(): void {
-		$intake = new JobIntake( $this->tmp );
-		$intake->write_job( 'a', [] );
-		$this->assertTrue( $intake->is_lock_available() );
-		$intake->close();
-	}
-
-	public function test_is_lock_available_false_when_held_by_other(): void {
-		$first = new JobIntake( $this->tmp );
-		$first->write_job( 'a', [] );
-
-		$probe = new JobIntake( $this->tmp );
-		$this->assertFalse( $probe->is_lock_available() );
 
 		$first->close();
+		$second->close();
 	}
 
 	// --- Static queue() helper ----------------------------------------------
@@ -295,36 +254,12 @@ class JobIntakeTest extends TestCase {
 	}
 
 	public function test_static_queue_releases_lock_after_call(): void {
-		// Single-shot calls must release the lock so another caller can immediately
-		// queue another job. No "second queue() blocks until timeout" pathology.
-		JobIntake::queue( 'a', [], null, $this->tmp );
-		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
+		// Single-shot calls must release the per-Partition lock so another
+		// caller can immediately queue another job.
+		JobIntake::queue( 'a', [], null, $this->tmp, 1 );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 
 		// Second call succeeds without contention.
-		$this->assertTrue( JobIntake::queue( 'b', [], null, $this->tmp ) );
-	}
-
-	// --- Heartbeat throttling -----------------------------------------------
-
-	public function test_touch_throttles_to_once_per_second(): void {
-		// touch() called many times in the same second should issue only one
-		// heartbeat update — keeps tight write-loops from burning syscalls.
-		$intake = new JobIntake( $this->tmp );
-		$intake->write_job( 'a', [] ); // initial heartbeat written.
-
-		$hb = "{$this->tmp}/locks/jobintake.lock.d/heartbeat";
-		clearstatcache( true, $hb );
-		$mtime1 = filemtime( $hb );
-
-		$intake->touch();
-		$intake->touch();
-		clearstatcache( true, $hb );
-		$mtime2 = filemtime( $hb );
-
-		// Within the same second; mtime unchanged (or at most updated once at
-		// the second boundary).
-		$this->assertGreaterThanOrEqual( $mtime1, $mtime2 );
-
-		$intake->close();
+		$this->assertTrue( JobIntake::queue( 'b', [], null, $this->tmp, 1 ) );
 	}
 }

@@ -339,7 +339,7 @@ class FlameBuilder extends Node {
 		}
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$right_now;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::VALUE ]     = $flame_data;
 		$this->flames_sink->fill( $msg );
@@ -1280,41 +1280,41 @@ class FlameBuilder extends Node {
 			$this->url_stats[ $bk ] = $this->pending['url_stats'];
 		}
 
-		// Dimensional (global).
+		// Dimensional — global.
 		foreach ( $this->pending['dim'] as $dim => $values ) {
 			$this->dim_stats[ $dim ][ $bk ] = $values;
 		}
 
-		// Dimensional (per-server).
+		// Dimensional — per-server.
 		foreach ( $this->pending['dim_by_server'] as $server => $dims ) {
 			foreach ( $dims as $dim => $values ) {
 				$this->dim_stats_by_server[ $server ][ $dim ][ $bk ] = $values;
 			}
 		}
 
-		// Dimensional (per-URL).
+		// Dimensional — per-URL.
 		foreach ( $this->pending['url_dim'] as $url_hash => $dims ) {
 			foreach ( $dims as $dim => $values ) {
 				$this->url_dim_stats[ $url_hash ][ $dim ][ $bk ] = $values;
 			}
 		}
 
-		// Category (global, capped).
+		// Category — global, capped.
 		if ( ! empty( $this->pending['cat'] ) ) {
 			$this->cat_stats[ $bk ] = self::cap_single_bucket( $this->pending['cat'], $max_cats );
 		}
 
-		// Category (per-server, capped).
+		// Category — per-server, capped.
 		foreach ( $this->pending['cat_by_server'] as $server => $cats ) {
 			$this->cat_stats_by_server[ $server ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
 		}
 
-		// Category (per-URL, capped).
+		// Category — per-URL, capped.
 		foreach ( $this->pending['cat_by_url'] as $url_hash => $cats ) {
 			$this->url_cat_stats[ $url_hash ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
 		}
 
-		// Leaderboard (global).
+		// Leaderboard — global.
 		if ( ( $this->pending['leaderboard']['count'] ?? 0 ) > 0 ) {
 			if ( ! isset( $this->leaderboard_stats[ $bk ] ) ) {
 				$this->leaderboard_stats[ $bk ] = [

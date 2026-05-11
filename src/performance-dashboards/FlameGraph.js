@@ -240,7 +240,7 @@ const findNodeByPath = ( node, path ) => {
  * @param {Object}   props.data          Flame graph data structure.
  * @param {number}   props.lastModified  Server-side timestamp for change detection (optional).
  * @param {Function} props.onRevealEntry Callback with node path on Cmd/Ctrl+Click.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	const containerRef = useRef( null );

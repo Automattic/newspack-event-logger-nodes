@@ -224,19 +224,17 @@ class SettingsSync {
 			return;
 		}
 
-		// Fail-closed strict polarity.
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
-			return;
-		}
+		// Fail-closed strict polarity for hub designation.
 		$config = Config::load_config();
 		if ( ! isset( $config['enable_workers'] ) || true !== $config['enable_workers'] ) {
 			return;
 		}
-
-		// JobIntake is provided by the runtime; bail if absent so we don't fail
-		// hard during tests or partial-deploy scenarios.
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\JobIntake' )
-			&& ! \class_exists( '\\Newspack_Nodes\\JobIntake' ) ) {
+		// Aggregator-off short-circuit: the toggle gates all remote-server
+		// activity, both pull (StreamMerger) and push (this fanout). Without
+		// this, disabling the aggregator stops it pulling but settings sync
+		// still queues `remote_manager` jobs that get appended to jobs.log
+		// every time anyone touches a tracked option.
+		if ( ! (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
 			return;
 		}
 
@@ -293,10 +291,7 @@ class SettingsSync {
 	public static function queue_job( string $handler, array $params, ?string $key = null ): bool {
 		// Resolve base_dir + num_partitions from Config (cheap; cached).
 		// JobIntake auto-resolves base_dir + num_partitions from substrate Config.
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\JobIntake' ) ) {
-			return (bool) JobIntake::queue( $handler, $params, $key );
-		}
-		return false;
+		return (bool) JobIntake::queue( $handler, $params, $key );
 	}
 
 	/**
@@ -335,7 +330,7 @@ class SettingsSync {
 
 		// Encrypt the payload before dispatching. JSON-encode first so structured
 		// values survive the wire (encrypt operates on strings).
-		$plaintext  = (string) \json_encode( [ 'option' => $option, 'value' => $new ] );
+		$plaintext  = (string) \wp_json_encode( [ 'option' => $option, 'value' => $new ] );
 		$ciphertext = self::encrypt( $plaintext );
 		if ( '' === $ciphertext ) {
 			// Encryption-required fail-closed: never dispatch plaintext on the wire.

@@ -235,6 +235,9 @@ class ServersController extends PerformanceControllerBase {
 		$verify_ssl   = ! isset( $config['aggregator_verify_ssl'] ) || (bool) $config['aggregator_verify_ssl'];
 		$url          = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/discovery';
 		$request_args = [
+			// 5s is the bound on a synchronous Test-button probe — the admin
+			// UI blocks on it. Default 1s misses real spokes on slow links.
+			// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout
 			'timeout'             => 5,
 			'sslverify'           => $verify_ssl,
 			'redirection'         => 0,

@@ -158,7 +158,7 @@ const ErrorRow = memo( function ErrorRow( {
 /**
  * Error Log Component.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function ErrorLog() {
 	const [ entries, setEntries ] = useState( [] );

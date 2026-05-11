@@ -10,7 +10,7 @@ import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
 /**
  * Worker Status page - dedicated view for worker monitoring.
  *
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function WorkerStatusPage() {
 	const menuWidth = useAdminMenuWidth();

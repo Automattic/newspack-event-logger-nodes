@@ -144,7 +144,7 @@ class PerfConfigController extends PerformanceControllerBase {
 			$updated[] = $param;
 		}
 
-		if ( ! empty( $updated ) && \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
+		if ( ! empty( $updated ) ) {
 			Config::reset();
 		}
 

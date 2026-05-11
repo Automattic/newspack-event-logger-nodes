@@ -114,7 +114,7 @@ const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
  *
  * @param {Object} props         Component props.
  * @param {number} props.maxRows Maximum rows to display.
- * @return {JSX.Element} Rendered component.
+ * @return {import('react').ReactElement} Rendered component.
  */
 export default function Inflight( { maxRows = 20 } ) {
 	const [ requests, setRequests ] = useState( [] );
@@ -376,7 +376,7 @@ export default function Inflight( { maxRows = 20 } ) {
 	 * @param {string} col   Column key.
 	 * @param {Object} req   Request object.
 	 * @param {number} ageMs Calculated age in ms.
-	 * @return {JSX.Element} Cell content.
+	 * @return {import('react').ReactElement} Cell content.
 	 */
 	const renderCell = ( col, req, ageMs ) => {
 		switch ( col ) {

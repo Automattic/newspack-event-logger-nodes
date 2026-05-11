@@ -183,7 +183,7 @@ class RemoteManager {
 	 */
 	public static function sync_setting( string $option, $value, string $endpoint = '/wp-json/newspack-nodes/v1/settings', ?array $servers = null ): void {
 		$registry    = self::registry();
-		$server_ids  = $servers ?? $registry->list_servers();
+		$server_ids  = $servers ?? \array_keys( $registry->get_all() );
 
 		$count = 0;
 		foreach ( $server_ids as $server_id ) {
@@ -240,7 +240,7 @@ class RemoteManager {
 	 */
 	public static function health_check(): void {
 		$registry   = self::registry();
-		$server_ids = $registry->list_servers();
+		$server_ids = \array_keys( $registry->get_all() );
 
 		$all_discovery = [];
 		$count         = 0;
@@ -292,9 +292,7 @@ class RemoteManager {
 		}
 
 		// Single load of the full config; every entry just looks up its key.
-		$config = \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' )
-			? Config::load_config( 'full' )
-			: [];
+		$config = Config::load_config( 'full' );
 
 		foreach ( $settings as $setting ) {
 			if ( ! \is_array( $setting ) ) {
@@ -345,9 +343,7 @@ class RemoteManager {
 			$settings = \array_slice( $settings, 0, self::MAX_SETTINGS );
 		}
 
-		$config = \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' )
-			? Config::load_config( 'full' )
-			: [];
+		$config = Config::load_config( 'full' );
 		$queued = 0;
 		$now    = \time();
 
@@ -502,9 +498,7 @@ class RemoteManager {
 	 * @return array
 	 */
 	private static function request_args( array $server, array $extra ): array {
-		$config = \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' )
-			? Config::load_config( 'full' )
-			: [];
+		$config = Config::load_config( 'full' );
 
 		$args = [
 			// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Remote server sync needs reasonable timeout.
@@ -573,9 +567,6 @@ class RemoteManager {
 	 * @param int         $lag       Optional lag in seconds (only for 'ok').
 	 */
 	private static function log_status( string $server_id, string $status, ?string $message, int $lag = 0 ): void {
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\LogManager' ) ) {
-			return;
-		}
 		try {
 			$lm = LogManager::instance();
 			if ( ! $lm->enabled ) {
@@ -631,16 +622,14 @@ class RemoteManager {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- read-only context lookup.
 		$server_name = $_SERVER['SERVER_NAME'] ?? '';
 
-		// Generate a fresh request id if LogManager is present.
+		// Generate a fresh request id.
 		$rid = '';
-		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\LogManager' ) ) {
-			try {
-				$rid = \method_exists( LogManager::class, 'generate_request_id' )
-					? (string) LogManager::generate_request_id()
-					: '';
-			} catch ( \Throwable $e ) {
-				$rid = '';
-			}
+		try {
+			$rid = \method_exists( LogManager::class, 'generate_request_id' )
+				? (string) LogManager::generate_request_id()
+				: '';
+		} catch ( \Throwable $e ) {
+			$rid = '';
 		}
 
 		$_SERVER['UNIQUE_ID']       = $rid;
