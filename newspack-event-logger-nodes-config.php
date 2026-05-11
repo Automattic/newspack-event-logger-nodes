@@ -4,10 +4,10 @@
  *
  * This file is loaded at the bottom of `Config::load_config_defaults()`. It
  * holds APPLICATION-level keys only (logging toggles, URL filters, hook
- * lists, custom-event registries, etc.). Substrate keys (`base_directory`,
- * `num_partitions`, `memcache_servers`, `enable_workers`, `aggregator_servers`)
- * live in the substrate plugin's `newspack-nodes-config.php` overlay loaded
- * by `\Newspack_Nodes\Config`.
+ * lists, custom-event registries, the aggregator spoke list, etc.). Substrate
+ * keys (`base_directory`, `num_partitions`, `memcache_servers`,
+ * `enable_workers`) live in the substrate plugin's `newspack-nodes-config.php`
+ * overlay loaded by `\Newspack_Nodes\Config`.
  *
  * To override locally without editing this file, point the env var
  * `LOCAL_NEWSPACK_NODES_CONF` at a `.php` file inside `/usr/src/...` or this
@@ -31,6 +31,17 @@ return [
 	// ── Logging toggles ────────────────────────────────────────────────────
 	'enable_logging'         => true,
 	'enable_jobs'            => true,
+
+	// ── Aggregator spoke list ─────────────────────────────────────────────
+	// Per-spoke `{ url, auth_username, auth_password, enabled }`. Defaults
+	// empty (no spokes configured = standalone site). Operators usually
+	// manage this via the Remote Servers admin UI, which writes to the
+	// `newspack_event_logger_nodes_aggregator_servers` option through
+	// `ServerRegistry`; the option overrides whatever's set here. Setting
+	// entries in this file is for environment-injected fleet topologies
+	// (config-as-code) — `ServerRegistry::remove()` no-ops on those so an
+	// operator click can't disable a server the config file declares.
+	'aggregator_servers'     => [],
 
 	// ── URL filtering (substring match, not regex) ─────────────────────────
 	// `skip_urls` is checked first and always wins over `log_urls`.

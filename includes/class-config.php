@@ -92,11 +92,12 @@ class Config {
 	 * @return array Associative array of option_name => type.
 	 */
 	private static function get_option_schema_extended(): array {
-		// Reserved for future application-level extended options. Empty by
-		// default; substrate-level extended options (memcache_servers,
-		// aggregator_servers) live on RuntimeConfig and are merged into the
-		// returned config via load_config().
-		$schema = [];
+		// Application-level extended options. Substrate-level extended
+		// options (memcache_servers) live on RuntimeConfig and are merged
+		// into the returned config via load_config().
+		$schema = [
+			'aggregator_servers' => 'aggregator_servers',
+		];
 
 		// Allow plugins to add their extended options.
 		if ( \function_exists( 'apply_filters' ) ) {

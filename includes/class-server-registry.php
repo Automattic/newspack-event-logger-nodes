@@ -3,7 +3,7 @@
  * Server Registry
  *
  * Singleton that manages remote server configurations stored in WordPress options.
- * Servers are stored in the 'newspack_nodes_aggregator_servers' option as an associative array.
+ * Servers are stored in the 'newspack_event_logger_nodes_aggregator_servers' option as an associative array.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -22,7 +22,7 @@ class ServerRegistry {
 	/**
 	 * WP option name for storing server configurations.
 	 */
-	public const OPTION_KEY = 'newspack_nodes_aggregator_servers';
+	public const OPTION_KEY = 'newspack_event_logger_nodes_aggregator_servers';
 
 	/**
 	 * Maximum number of servers in the registry.
