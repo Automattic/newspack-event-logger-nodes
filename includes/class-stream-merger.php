@@ -225,7 +225,36 @@ class StreamMerger extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
+		// Router-hitchhike TIMER notification (TM_INFO, KEY='TIMER') drives
+		// tick() — the spoke's aggregator-slot TTL (30s) is short enough that
+		// without a periodic heartbeat POST from this side the spoke closes
+		// the SSE connection cleanly after one TTL window. See start_periodic_tick().
+		if (
+			( $message[ Message::TYPE ] & Message::TM_INFO )
+			&& 'TIMER' === $message[ Message::KEY ]
+		) {
+			$this->tick();
+			return;
+		}
 		$this->sink?->fill( $message );
+	}
+
+	/**
+	 * Register with `_router`'s TIMER event so tick() fires on every Router
+	 * heartbeat (~5s). Called by the aggregator topology after `add_remote()`.
+	 *
+	 * The Router-hitchhike pattern is borrowed from the Timer class: register
+	 * by Node name with no callback so the dispatcher routes a TM_INFO message
+	 * back through fill() — closure dispatch would self-unregister after the
+	 * first tick because tick() returns void → null → falsy.
+	 */
+	public function start_periodic_tick(): void {
+		$router = Core::node( '_router' );
+		if ( null === $router ) {
+			Core::print_less_often( 'StreamMerger::start_periodic_tick: no _router; periodic tick disabled' );
+			return;
+		}
+		$router->register( 'TIMER', $this->name );
 	}
 
 	// =========================================================================
