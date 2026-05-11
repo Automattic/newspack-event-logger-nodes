@@ -245,24 +245,38 @@ Always single-partition for the topology itself (the StreamMerger is a fan-in; p
 
 ### Topology resolution
 
-Application plugin registers via filter at bootstrap:
+Topology fleet is declared as data in `newspack-event-logger-nodes-config.php` so per-site overrides can add or remove entries without patching plugin code:
 
 ```php
-add_filter( 'newspack_nodes/topologies', function ( $topologies ) {
-    $num_partitions = max( 1, min( 16, (int) ( Config::load_config( 'full' )['num_partitions'] ?? 1 ) ) );
-    $topologies['firehose-workers'] = [ 'topology' => '...', 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
-    $topologies['request-workers']  = [ 'topology' => '...', 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
-    $topologies['job-workers']      = [ 'topology' => '...', 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
-    if ( (int) get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
-        $topologies['aggregator']  = [ 'topology' => '...', 'num_partitions' => 1,                'stale_timeout' => 60 ];
-    }
-    return $topologies;
-} );
+// newspack-event-logger-nodes-config.php (excerpt)
+return [
+    // …
+    'topologies' => [
+        'firehose-workers' => [
+            'topology'      => 'topologies/firehose-workers.php',
+            'stale_timeout' => 60,
+        ],
+        'request-workers'  => [
+            'topology'      => 'topologies/request-workers.php',
+            'stale_timeout' => 60,
+        ],
+        'job-workers'      => [
+            'topology'      => 'topologies/job-workers.php',
+            'stale_timeout' => 60,
+        ],
+        'aggregator'       => [
+            'topology'       => 'topologies/aggregator.php',
+            'num_partitions' => 1,
+            'stale_timeout'  => 60,
+            'gated_by'       => 'newspack_event_logger_nodes_enable_aggregator',
+        ],
+    ],
+];
 ```
 
-`num_partitions` reads from the substrate config so one setting drives both LogManager (write side) and the worker fleet (read side). Hardcoding diverges the two — e.g. config=1 + topology=4 spawns 3 workers that never see any traffic.
+The plugin's `newspack_nodes/topologies` filter reads these entries, resolves the path (relative → plugin-rooted, absolute → as-is so a site override can ship its own file), applies `num_partitions` defaults from the substrate config (so one setting drives both LogManager — write side — and the worker fleet — read side; hardcoding diverges them), and honors `gated_by` so an operator-facing WP option keeps the supervisor from spawning a topology's workers at all when the toggle is off. Aggregator uses this to mean "Enable Aggregator unchecked → don't spawn the worker, don't render the admin submenu."
 
-Cost on regular WP requests is one hash insert per `add_filter` — the closure body and the topology PHP file aren't loaded yet. Actual filter resolution happens in three places, none on the page-render hot path: supervisor's `check_config()` tick (every 15s), worker bootstrap (once per spawn), REST workers/dashboard reads.
+Cost on regular WP requests is one hash insert per `add_filter` — the closure body, the config file's array, and the topology PHP files aren't loaded yet. Actual filter resolution happens in three places, none on the page-render hot path: supervisor's `check_config()` tick (every 15s), worker bootstrap (once per spawn), REST workers/dashboard reads.
 
 ## Application Nodes
 

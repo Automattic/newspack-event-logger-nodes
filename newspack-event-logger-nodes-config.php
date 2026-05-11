@@ -53,6 +53,51 @@ return [
 	// (which copies from `recommended_log_events` below) or via WP option.
 	'log_events'             => [],
 
+	// ── Topology fleet ─────────────────────────────────────────────────────
+	// Worker graphs this plugin contributes to the runtime. Each entry is
+	// passed through the `newspack_nodes/topologies` filter; the supervisor
+	// spawns one worker per partition per topology.
+	//
+	// Per-entry keys:
+	//   `topology`       (string)  — path to the topology PHP file. Relative
+	//                                 paths resolve against the plugin dir;
+	//                                 absolute paths are taken as-is so site
+	//                                 overrides can ship their own files.
+	//   `num_partitions` (?int)    — fleet size for this topology. Omit to
+	//                                 inherit the substrate's `num_partitions`
+	//                                 (clamped to [1,16]). Aggregator is
+	//                                 always a single fan-in regardless.
+	//   `stale_timeout`  (int)     — seconds without heartbeat before the
+	//                                 supervisor force-respawns this worker.
+	//   `gated_by`       (?string) — WP option name that must be truthy for
+	//                                 this entry to register. Defaults to ON
+	//                                 (option=1) if the option is absent.
+	//                                 Used by the aggregator's operator gate.
+	//
+	// To turn off a shipped topology on a site, override this key in the
+	// config file with the entry removed (or with `gated_by` pointing at an
+	// off option).
+	'topologies'             => [
+		'firehose-workers' => [
+			'topology'      => 'topologies/firehose-workers.php',
+			'stale_timeout' => 60,
+		],
+		'request-workers'  => [
+			'topology'      => 'topologies/request-workers.php',
+			'stale_timeout' => 60,
+		],
+		'job-workers'      => [
+			'topology'      => 'topologies/job-workers.php',
+			'stale_timeout' => 60,
+		],
+		'aggregator'       => [
+			'topology'       => 'topologies/aggregator.php',
+			'num_partitions' => 1,
+			'stale_timeout'  => 60,
+			'gated_by'       => 'newspack_event_logger_nodes_enable_aggregator',
+		],
+	],
+
 	// ── Debug toggles ──────────────────────────────────────────────────────
 	// `log_memory`:       append peak_mb to every complete() entry.
 	// `flush_every_line`: flush write buffers per line (survives OOM/crash).
