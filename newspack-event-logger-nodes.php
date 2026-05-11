@@ -98,7 +98,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// (consumer) — hardcoding diverges them — and honors `gated_by`
 		// so an operator-facing flag (e.g. `enable_aggregator`) can keep
 		// the supervisor from spawning a topology's workers at all.
-		// `gated_by` names a config-array key (NOT a WP option name);
+		// `gated_by` names a config-array key, or an array of keys (any-of);
 		// strict polarity — only `=== true` enables, anything else
 		// (missing, false, int 1, "1") fails closed. The Config layer
 		// composes file overlays + WP options + the schema's `bool`
@@ -119,8 +119,16 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			if ( ! \is_string( $name ) || ! \is_array( $def ) || empty( $def['topology'] ) ) {
 				continue;
 			}
-			if ( isset( $def['gated_by'] ) && \is_string( $def['gated_by'] ) ) {
-				if ( true !== ( $config[ $def['gated_by'] ] ?? false ) ) {
+			if ( isset( $def['gated_by'] ) ) {
+				$gated_keys = (array) $def['gated_by'];
+				$enabled    = false;
+				foreach ( $gated_keys as $gated_key ) {
+					if ( \is_string( $gated_key ) && true === ( $config[ $gated_key ] ?? false ) ) {
+						$enabled = true;
+						break;
+					}
+				}
+				if ( ! $enabled ) {
 					continue;
 				}
 			}

@@ -117,11 +117,13 @@ return [
 		'rest_pre_dispatch',
 	],
 
-	// Topology fleet. `gated_by` is a config-array key; strict `=== true`.
+	// Topology fleet. `gated_by` is a config-array key, or an array of
+	// keys (any-of). Strict `=== true`.
 	'topologies'                  => [
 		'firehose-workers' => [
 			'topology'      => 'topologies/firehose-workers.php',
 			'stale_timeout' => 60,
+			'gated_by'      => [ 'enable_workers', 'enable_jobs' ],
 		],
 		'request-workers'  => [
 			'topology'      => 'topologies/request-workers.php',
