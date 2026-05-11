@@ -1534,15 +1534,38 @@ class FlameBuilder extends Node {
 	}
 
 	private function fire_auto_tune_actions(): void {
-		if ( \function_exists( 'do_action' ) ) {
-			\do_action( 'newspack_event_logger_nodes/disable_hooks', \array_keys( $this->hooks_to_disable ) );
-			\do_action( 'newspack_event_logger_nodes/disable_custom_events', \array_keys( $this->custom_events_to_disable ) );
-			\do_action( 'newspack_event_logger_nodes/add_significant_events', \array_keys( $this->new_significant_events ) );
-		}
+		$this->emit_auto_tune( 'disable_hooks',          \array_keys( $this->hooks_to_disable ) );
+		$this->emit_auto_tune( 'disable_custom_events',  \array_keys( $this->custom_events_to_disable ) );
+		$this->emit_auto_tune( 'add_significant_events', \array_keys( $this->new_significant_events ) );
 
 		$this->hooks_to_disable         = [];
 		$this->custom_events_to_disable = [];
 		$this->new_significant_events   = [];
+	}
+
+	/**
+	 * Send an auto-tune decision downstream as a Message. The Router (primary
+	 * sink) delivers it to the AutoTuner Node named 'auto-tuner', which
+	 * applies it locally and (on hubs) fans out via JobIntake.
+	 *
+	 * @param string $key   'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
+	 * @param array  $items Hook/event names — already deduped at the caller.
+	 */
+	private function emit_auto_tune( string $key, array $items ): void {
+		if ( empty( $items ) || null === $this->sink ) {
+			return;
+		}
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::TO ]        = 'auto-tuner';
+		$msg[ Message::KEY ]       = $key;
+		$msg[ Message::VALUE ]     = [
+			'items'   => $items,
+			'context' => [ 'significant_events' => $this->significant_events ],
+		];
+		$this->sink->fill( $msg );
 	}
 
 	// -------------------------------------------------------------------------

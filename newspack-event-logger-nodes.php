@@ -37,6 +37,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		return;
 	}
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-config.php';
+	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-hub.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-memcached-cache.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-stats-store.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-lru-cache.php';
@@ -56,7 +57,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-settings-sync.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-remote-manager.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-health-check-extensions.php';
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-auto-tune-handlers.php';
+	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/class-auto-tuner.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-performance-controller-base.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-status-controller.php';
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'includes/rest/class-aggregator-controller.php';
@@ -94,6 +95,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 
 	// Register application Node subclasses with the runtime's class_map so
 	// topology PHP can construct them via `$interpreter->make_node()`.
+	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',      \Newspack_Event_Logger_Nodes\AutoTuner::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',   \Newspack_Event_Logger_Nodes\FlameBuilder::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',      \Newspack_Event_Logger_Nodes\JobRouter::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',      \Newspack_Event_Logger_Nodes\JobWorker::class );
@@ -104,8 +106,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	\Newspack_Event_Logger_Nodes\Config::register_cache_invalidation();
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
 	\Newspack_Event_Logger_Nodes\RemoteManager::init();
-	\Newspack_Event_Logger_Nodes\HealthCheckExtensions::init();
-	\Newspack_Event_Logger_Nodes\AutoTuneHandlers::init();
+	// HealthCheckExtensions has no init() — RemoteManager::health_check
+	// calls process_discovery() directly. AutoTuner is a Node, wired into
+	// the request-workers topology.
 	new \Newspack_Event_Logger_Nodes\App\Core();
 	if ( \function_exists( 'is_admin' ) && \is_admin() ) {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();

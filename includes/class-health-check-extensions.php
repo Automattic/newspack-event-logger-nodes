@@ -25,14 +25,9 @@ class HealthCheckExtensions {
 	private const MAX_EVENTS = 10000;
 
 	/**
-	 * Initialize extensions.
-	 */
-	public static function init(): void {
-		\add_action( 'newspack_event_logger_nodes/health_check_discovery', [ self::class, 'process_discovery' ] );
-	}
-
-	/**
-	 * Process discovered data from health check.
+	 * Process discovered data from health check. Called directly by
+	 * RemoteManager::health_check (no WP action indirection); the action
+	 * is still fired alongside for external plugin listeners.
 	 *
 	 * @param array $all_discovery Map of server_id => discovery data.
 	 */
