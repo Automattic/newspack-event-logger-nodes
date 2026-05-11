@@ -49,7 +49,9 @@ class RequestLogControllerTest extends TestCase {
 		$rid          = $body['rid'];
 		$logs_base    = $this->tmp . '/logs/requests.log';
 		$segment_dir  = "{$logs_base}/p{$partition}";
-		\mkdir( $segment_dir, 0755, true );
+		if ( ! \is_dir( $segment_dir ) ) {
+			\mkdir( $segment_dir, 0755, true );
+		}
 
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
