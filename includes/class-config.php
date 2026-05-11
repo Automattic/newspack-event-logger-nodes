@@ -61,6 +61,7 @@ class Config {
 		$schema = [
 			'enable_logging'              => 'bool',
 			'enable_jobs'                 => 'bool',
+			'enable_workers'              => 'bool',
 			'log_urls'                    => 'array_strings',
 			'skip_urls'                   => 'array_strings',
 			'log_events'                  => 'array_strings',
