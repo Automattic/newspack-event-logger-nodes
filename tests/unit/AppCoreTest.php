@@ -257,10 +257,13 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging' => true,
 			'log_events'     => [
-				'newspack_event_logger_nodes_anything',
-				'newspack_nodes_anything',
-				'newspack_event_logger_anything',
-				'newspack_performance_logger_anything',
+				// Underscore-style.
+				'newspack_event_logger_nodes_option_schema_core',
+				'newspack_nodes_option_schema_core',
+				// Slash-style.
+				'newspack_event_logger_nodes/log_readers',
+				'newspack_nodes/spawn_worker',
+				// Real WP hook — must be instrumented.
 				'init',
 			],
 		] );
@@ -268,10 +271,10 @@ class AppCoreTest extends TestCase {
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
 
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_anything', $filters );
-		$this->assertArrayNotHasKey( 'newspack_nodes_anything', $filters );
-		$this->assertArrayNotHasKey( 'newspack_event_logger_anything', $filters );
-		$this->assertArrayNotHasKey( 'newspack_performance_logger_anything', $filters );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_option_schema_core', $filters );
+		$this->assertArrayNotHasKey( 'newspack_nodes_option_schema_core', $filters );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes/log_readers', $filters );
+		$this->assertArrayNotHasKey( 'newspack_nodes/spawn_worker', $filters );
 		$this->assertArrayHasKey( 'init', $filters );
 	}
 

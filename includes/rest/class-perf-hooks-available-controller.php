@@ -67,6 +67,9 @@ class PerfHooksAvailableController extends PerformanceControllerBase {
 
 		if ( isset( $wp_actions ) && \is_array( $wp_actions ) ) {
 			foreach ( $wp_actions as $hook_name => $count ) {
+				if ( HookCategorizer::is_internal( (string) $hook_name ) ) {
+					continue;
+				}
 				$hooks[ $hook_name ] = [
 					'name'     => $hook_name,
 					'category' => $this->categorize_hook( (string) $hook_name ),
@@ -77,6 +80,9 @@ class PerfHooksAvailableController extends PerformanceControllerBase {
 
 		if ( isset( $wp_filter ) && ( \is_array( $wp_filter ) || $wp_filter instanceof \Traversable ) ) {
 			foreach ( $wp_filter as $hook_name => $callbacks ) {
+				if ( HookCategorizer::is_internal( (string) $hook_name ) ) {
+					continue;
+				}
 				if ( ! isset( $hooks[ $hook_name ] ) ) {
 					$hooks[ $hook_name ] = [
 						'name'     => $hook_name,
