@@ -4,6 +4,6 @@ return [
 	'num_partitions'        => 1,
 	'enable_logging'        => false,
 	'enable_workers'        => false,
-	'aggregator_verify_ssl' => false,
-	'aggregator_allow_http' => true,
+	'aggregator_verify_ssl'    => false,
+	'aggregator_require_https' => false,
 ];

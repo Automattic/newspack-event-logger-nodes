@@ -115,8 +115,8 @@ class StreamMerger extends Node {
 	/** @var Cache_Interface|null Status writer (memcache); null when injection hasn't happened yet. */
 	private ?Cache_Interface $cache = null;
 
-	/** @var bool Whether to allow plain HTTP (default: false, HTTPS only). */
-	private bool $allow_http = false;
+	/** @var bool Whether to require HTTPS (default: true, blocks plain HTTP). */
+	private bool $require_https = true;
 
 	/** @var bool Whether to verify SSL certs (default: true). */
 	private bool $verify_ssl = true;
@@ -204,15 +204,15 @@ class StreamMerger extends Node {
 	}
 
 	/**
-	 * Override the HTTP/HTTPS policy. Used by tests and by upstream's
-	 * `aggregator_allow_http` config bypass. Always issues a stern warning
-	 * when allow_http=true so it shows up in the operational logs.
+	 * Override the HTTP/HTTPS policy. Used by tests and by the
+	 * `aggregator_require_https` config bypass. Always issues a stern warning
+	 * when require_https=false so it shows up in the operational logs.
 	 */
-	public function set_allow_http( bool $allow ): void {
-		if ( $allow && ! $this->allow_http ) {
-			Core::print_less_often( 'StreamMerger: aggregator_allow_http=true — SSE traffic permitted on plain HTTP. Credentials WILL travel in cleartext on insecure links.' );
+	public function set_require_https( bool $require ): void {
+		if ( ! $require && $this->require_https ) {
+			Core::print_less_often( 'StreamMerger: aggregator_require_https=false — SSE traffic permitted on plain HTTP. Credentials WILL travel in cleartext on insecure links.' );
 		}
-		$this->allow_http = $allow;
+		$this->require_https = $require;
 	}
 
 	public function set_verify_ssl( bool $verify ): void {
@@ -275,7 +275,7 @@ class StreamMerger extends Node {
 		// HTTPS-only enforcement at registration time. Caller's `$url` is the
 		// only thing we control; downgrade rejection is the safest possible
 		// place to enforce the protocol invariant.
-		if ( ! $this->allow_http && \stripos( $url, 'https://' ) !== 0 ) {
+		if ( $this->require_https && \stripos( $url, 'https://' ) !== 0 ) {
 			Core::print_less_often( "StreamMerger::add_remote: refusing non-HTTPS URL for {$server_id}: {$url}" );
 			return;
 		}
@@ -806,7 +806,7 @@ class StreamMerger extends Node {
 				\CURLOPT_HTTPHEADER     => $headers,
 				\CURLOPT_SSL_VERIFYPEER => $this->verify_ssl,
 				\CURLOPT_SSL_VERIFYHOST => $this->verify_ssl ? 2 : 0,
-				\CURLOPT_PROTOCOLS      => $this->allow_http ? ( \CURLPROTO_HTTPS | \CURLPROTO_HTTP ) : \CURLPROTO_HTTPS,
+				\CURLOPT_PROTOCOLS      => $this->require_https ? \CURLPROTO_HTTPS : ( \CURLPROTO_HTTPS | \CURLPROTO_HTTP ),
 				\CURLOPT_WRITEFUNCTION  => function ( $h, $bytes ) {
 					return $this->on_curl_data( $h, $bytes );
 				},
@@ -1011,7 +1011,7 @@ class StreamMerger extends Node {
 
 		// Honour HTTPS-only invariant on the heartbeat path too.
 		$endpoint = $state['url'] . '/wp-json/event-logger/v1/firehose/heartbeat';
-		if ( ! $this->allow_http && \stripos( $endpoint, 'https://' ) !== 0 ) {
+		if ( $this->require_https && \stripos( $endpoint, 'https://' ) !== 0 ) {
 			$state['last_error'] = 'heartbeat endpoint not HTTPS';
 			return;
 		}

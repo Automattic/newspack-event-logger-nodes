@@ -19,7 +19,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
  *   - Exponential backoff: 1s -> 2s -> 4s -> ... -> 30s.
  *   - Heartbeat-stale detection at HEARTBEAT_TIMEOUT (45s).
  *   - Slot capture from `connected` event payload.
- *   - HTTPS-only enforcement (no http:// without allow_http=true).
+ *   - HTTPS-only enforcement (no http:// unless require_https=false).
  *   - Position resume from offsetlog Partition.
  *   - MAX_BUFFER_SIZE / MAX_EVENT_SIZE / MAX_QUEUE_SIZE overflow disconnects.
  *   - PIPE_BUF guard (lines > MAX_LINE_BYTES rejected).
@@ -54,7 +54,7 @@ class StreamMergerTest extends TestCase {
 		$sm = new StreamMerger( 0 );
 		$sm->name( 'test-stream-merger' );
 		$sm->set_logs_dir( $this->tmp_dir );
-		$sm->set_allow_http( true );  // back-compat: most legacy tests use http://
+		$sm->set_require_https( false );  // back-compat: most legacy tests use http://
 		return $sm;
 	}
 
@@ -187,7 +187,7 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 		// HTTPS is required for real registration; add_remote with explicit URL
-		// tolerates http via allow_http=true (set by make_merger).
+		// tolerates http via require_https=false (set by make_merger).
 		$sm->add_remote( 'siteX', 'http://siteX.test/', 'tok' );
 
 		// Synthesize an `entry` event by feeding the WRITEFUNCTION-equivalent
@@ -371,7 +371,7 @@ class StreamMergerTest extends TestCase {
 	public function test_https_only_default_refuses_http(): void {
 		$sm = new StreamMerger( 0 );
 		$sm->set_logs_dir( $this->tmp_dir );
-		// allow_http defaults to false.
+		// require_https defaults to true.
 		$sm->add_remote( 'insecure', 'http://insecure.test/', 'tok' );
 		// add_remote refuses non-HTTPS — no entry stored, no handle opened.
 		$this->assertSame( 0, $sm->remote_count() );
@@ -381,17 +381,17 @@ class StreamMergerTest extends TestCase {
 	public function test_https_only_default_accepts_https(): void {
 		$sm = new StreamMerger( 0 );
 		$sm->set_logs_dir( $this->tmp_dir );
-		// HTTPS URL: registration succeeds even with allow_http=false. The
+		// HTTPS URL: registration succeeds even with require_https=true. The
 		// connect attempt itself will fail (no real server) but the entry is
 		// stored and a connect attempt is made.
 		$sm->add_remote( 'secure', 'https://secure.test/', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
 	}
 
-	public function test_allow_http_opt_in_permits_http(): void {
+	public function test_require_https_opt_out_permits_http(): void {
 		$sm = new StreamMerger( 0 );
 		$sm->set_logs_dir( $this->tmp_dir );
-		$sm->set_allow_http( true );
+		$sm->set_require_https( false );
 		$sm->add_remote( 'plain', 'http://plain.test/', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
 	}
@@ -590,7 +590,7 @@ class StreamMergerTest extends TestCase {
 	public function test_add_remote_registers_curl_handle_with_event_framework(): void {
 		$sm = new StreamMerger();
 		$sm->set_logs_dir( $this->tmp_dir );
-		$sm->set_allow_http( true );
+		$sm->set_require_https( false );
 		$sm->add_remote( 'site-a', 'http://localhost:9999/stream', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
 	}
@@ -721,7 +721,7 @@ class StreamMergerTest extends TestCase {
 		$sm = new StreamMerger( 0 );
 		$sm->name( 'reset-test-merger' );
 		$sm->set_logs_dir( $dir1 );
-		$sm->set_allow_http( true );
+		$sm->set_require_https( false );
 		$sm->add_remote( 'siteX', 'http://siteX.test/', 'tok' );
 
 		// Force a position update so commit_all writes something.
@@ -740,8 +740,8 @@ class StreamMergerTest extends TestCase {
 		$this->rmdir_recursive( $dir2 );
 	}
 
-	public function test_set_allow_http_warns_first_time_enabled(): void {
-		// allow_http=true should emit a one-time stern warning on the print
+	public function test_set_require_https_warns_first_time_disabled(): void {
+		// require_https=false should emit a one-time stern warning on the print
 		// table. Record stderr to confirm the warning surfaces.
 		$captured = [];
 		\Newspack_Nodes\Core::set_stderr_handler( function ( string $msg ) use ( &$captured ): void {
@@ -749,16 +749,16 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm = new StreamMerger( 0 );
-		$sm->set_allow_http( true );
+		$sm->set_require_https( false );
 
 		$concat = \implode( ' ', $captured );
-		$this->assertStringContainsString( 'aggregator_allow_http=true', $concat );
+		$this->assertStringContainsString( 'aggregator_require_https=false', $concat );
 
-		// Setting again to true with allow_http already true: no NEW warning;
+		// Setting again to false with require_https already false: no NEW warning;
 		// (print_less_often suppresses identical text within 60s window).
 		$captured = [];
-		$sm->set_allow_http( true );
-		// second setter call short-circuits (allow_http already true), so no print.
+		$sm->set_require_https( false );
+		// second setter call short-circuits (require_https already false), so no print.
 		$this->assertSame( '', \implode( '', $captured ) );
 	}
 
@@ -1061,7 +1061,7 @@ class StreamMergerTest extends TestCase {
 		// connection state for the heartbeat path.
 		$sm = new StreamMerger( 0 );
 		$sm->set_logs_dir( $this->tmp_dir );
-		// allow_http defaults to false. add_remote refuses http URLs entirely;
+		// require_https defaults to true. add_remote refuses http URLs entirely;
 		// we have to manually inject a remote in connected state with an http URL.
 		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
 		$ref->setAccessible( true );
