@@ -66,4 +66,4 @@ GPL-2.0-or-later
 
 ## Status
 
-v0.1.0 — initial public release. Working prototype, not yet in production. Feature-complete for the dashboards listed above; cutover from the legacy plugins is happening on `bendsource.com` and other newspack sites.
+v0.1.0 — initial public release. Working prototype, not yet in production. Feature-complete for the dashboards listed above; cutover from the legacy plugins is in progress.
