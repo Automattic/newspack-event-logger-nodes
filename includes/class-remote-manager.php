@@ -267,6 +267,11 @@ class RemoteManager {
 			++$count;
 		}
 
+		// Discovery is one-firer / one-listener intra-process work — call the
+		// merger directly instead of routing through a WP action. We still
+		// fire the `health_check_discovery` action so external plugins
+		// (pyrobase, etc.) can subscribe to discovered data.
+		HealthCheckExtensions::process_discovery( $all_discovery );
 		if ( \function_exists( 'do_action' ) ) {
 			\do_action( 'newspack_event_logger_nodes/health_check_discovery', $all_discovery );
 		}

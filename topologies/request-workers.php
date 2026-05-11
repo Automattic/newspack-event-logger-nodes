@@ -61,6 +61,13 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 		static fn ( $line, $position, &$data = null ) => \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
 	);
 
+	// --- AutoTuner ----------------------------------------------------------
+	// Receives FlameBuilder's auto-tune decisions as Messages (TO=auto-tuner),
+	// applies them locally, and (on hubs) queues remote_manager sync_setting
+	// jobs via JobIntake. Replaces the legacy AutoTuneHandlers action-listener
+	// pair (priority 5 hub + priority 10 standalone × 3 events = 6 listeners).
+	$auto_tuner = $interpreter->make_node( 'AutoTuner', 'auto-tuner' );
+
 	// --- FlameBuilder -------------------------------------------------------
 	$flame_builder = $interpreter->make_node( 'FlameBuilder', 'flame-builder' );
 	$flame_builder->set_stats_store( $stats_store );
@@ -85,5 +92,6 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 		'flame_builder' => $flame_builder,
 		'flames_log'    => $flames_log,
 		'stats_store'   => $stats_store,
+		'auto_tuner'    => $auto_tuner,
 	];
 };

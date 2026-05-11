@@ -224,17 +224,10 @@ class SettingsSync {
 			return;
 		}
 
-		// Fail-closed strict polarity for hub designation.
-		$config = Config::load_config();
-		if ( ! isset( $config['enable_workers'] ) || true !== $config['enable_workers'] ) {
-			return;
-		}
-		// Aggregator-off short-circuit: the toggle gates all remote-server
-		// activity, both pull (StreamMerger) and push (this fanout). Without
-		// this, disabling the aggregator stops it pulling but settings sync
-		// still queues `remote_manager` jobs that get appended to jobs.log
-		// every time anyone touches a tracked option.
-		if ( ! (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
+		// Hub gate: strict enable_workers === true AND enable_aggregator on.
+		// Shared with AutoTuner so the two stay lock-step; diverging is how
+		// legacy 2.4.42 silently turned spokes into hubs.
+		if ( ! Hub::is_active() ) {
 			return;
 		}
 

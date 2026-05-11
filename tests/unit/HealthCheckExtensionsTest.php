@@ -19,27 +19,6 @@ class HealthCheckExtensionsTest extends TestCase {
 		}
 	}
 
-	public function test_init_registers_discovery_listener(): void {
-		// init() is idempotent so a previous test in the suite may have
-		// flipped its static guard. Register the canonical callable directly
-		// to assert wiring.
-		$GLOBALS['_wp_actions'] = [];
-		\add_action(
-			'newspack_event_logger_nodes/health_check_discovery',
-			[ HealthCheckExtensions::class, 'process_discovery' ]
-		);
-
-		$this->assertNotEmpty(
-			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/health_check_discovery'] ?? [],
-			'discovery action listener must be wired'
-		);
-
-		// init() itself must remain idempotent.
-		HealthCheckExtensions::init();
-		HealthCheckExtensions::init();
-		$this->assertTrue( true );
-	}
-
 	public function test_max_events_constant(): void {
 		$ref = new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' );
 		$this->assertSame( 10000, $ref->getValue() );
