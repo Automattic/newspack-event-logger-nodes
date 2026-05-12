@@ -161,6 +161,10 @@ class PerfOverviewController extends PerformanceControllerBase {
 							'hash'        => $hash,
 							'url'         => $url,
 							'count'       => 0,
+							'count_2xx'   => 0,
+							'count_3xx'   => 0,
+							'count_4xx'   => 0,
+							'count_5xx'   => 0,
 							'sum_ms'      => 0.0,
 							'min_ms'      => 0.0,
 							'max_ms'      => 0.0,
@@ -172,7 +176,11 @@ class PerfOverviewController extends PerformanceControllerBase {
 							'last_seen'   => 0,
 						];
 					}
-					$result[ $hash ]['count']  += (int) ( $stats['count'] ?? 0 );
+					$result[ $hash ]['count']     += (int) ( $stats['count'] ?? 0 );
+					$result[ $hash ]['count_2xx'] += (int) ( $stats['count_2xx'] ?? 0 );
+					$result[ $hash ]['count_3xx'] += (int) ( $stats['count_3xx'] ?? 0 );
+					$result[ $hash ]['count_4xx'] += (int) ( $stats['count_4xx'] ?? 0 );
+					$result[ $hash ]['count_5xx'] += (int) ( $stats['count_5xx'] ?? 0 );
 					// FlameBuilder bucket has `sum_ms` directly; StatsAggregator
 					// bucket has `sum_req_time` in seconds. Accept either.
 					$sum_ms = isset( $stats['sum_ms'] )
@@ -210,6 +218,10 @@ class PerfOverviewController extends PerformanceControllerBase {
 				'hash'         => $entry['hash'],
 				'url'          => $entry['url'],
 				'count'        => $count,
+				'count_2xx'    => (int) $entry['count_2xx'],
+				'count_3xx'    => (int) $entry['count_3xx'],
+				'count_4xx'    => (int) $entry['count_4xx'],
+				'count_5xx'    => (int) $entry['count_5xx'],
 				'avg_ms'       => $count > 0 ? $entry['sum_ms'] / $count : 0.0,
 				'min_ms'       => $entry['min_ms'],
 				'max_ms'       => $entry['max_ms'],
