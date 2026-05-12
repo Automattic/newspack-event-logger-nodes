@@ -64,10 +64,17 @@ class RawlogsController extends SSEControllerBase {
 		}
 		// Lines are packed Messages; render the entry payload as JSON so the
 		// dashboard sees the application-level shape (rid/k/m/...) rather than
-		// the wrapping wire envelope.
+		// the wrapping wire envelope. Prefix with `<KEY>: ` when the wire-format
+		// KEY is non-empty — surfaces the partition-routing key (rid for
+		// firehose entries, handler for jobintake, etc.) without forcing the
+		// JS side to decode the envelope itself.
 		$decoded = \json_decode( $line, true, 64 );
 		$body    = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+		$key     = \is_array( $decoded ) ? (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' ) : '';
 		$out     = null !== $body ? (string) \wp_json_encode( $body ) : $line;
+		if ( '' !== $key ) {
+			$out = $key . ': ' . $out;
+		}
 		if ( \strlen( $out ) > 1000 ) {
 			$out = \substr( $out, 0, 1000 ) . '...';
 		}

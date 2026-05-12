@@ -491,7 +491,11 @@ class LogManagerTest extends TestCase {
 			$msg   = Message::unpacked( $packed_line );
 			$value = $msg[ Message::VALUE ] ?? null;
 			if ( \is_array( $value ) ) {
-				$out[] = $value;
+				// BC-rid-in-key: mirror production consumers — back-fill
+				// entry['rid'] from Message::KEY so test assertions on
+				// `$entry['rid']` keep working post-cutover.
+				$value['rid'] ??= (string) ( $msg[ Message::KEY ] ?? '' );
+				$out[]          = $value;
 			}
 		}
 		return $out;

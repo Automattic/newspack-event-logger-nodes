@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-05-12
+
+### Changed
+
+- **Wire-format KEY now carries the request id, not the URL.** `LogManager::message()` writes `Message::KEY = request_id`, drops the redundant `rid` field from the inner entry, and routes partitions by `CRC32(request_id) mod N` instead of `CRC32(request_url) mod N`. Resolves a long-standing producer asymmetry: `LogManager` had been using the bare REQUEST_URI as KEY while `Gyrobase::Log` (Perl, gyrate's writer) used the full `scheme://host/path`, so WP-side and gyrate-side entries for the same request hashed to *different* partitions and `RequestBuilder` (per-partition) never reconciled them. After this change every entry for a single request — WP lifecycle, nested gyrate render, jobs spawned from it, errors and flames emitted downstream — co-locates in one partition by construction. As a side effect, on-disk entries drop ~40 bytes per line (the duplicated `"rid":"…"`) and the partition-routing input becomes opaque (32-char base36) rather than user-influenced URL bytes.
+
+  Co-locators (`RequestBuilder::emit_request`, `RequestBuilder::emit_error`, `FlameBuilder`'s flame-emit) now stamp `Message::KEY = rid` too, so the requests/errors/flames partitions stay co-located with their firehose partition and StreamMerger's hub-side partition write inherits the rid as well (was incorrectly `$data['url']` which never existed in our entry shape).
+
+- **Raw logs dashboard prefixes each line with `<KEY>: ` when wire KEY is non-empty.** The dashboard already dropped the wire-format envelope and rendered just the entry JSON; surfacing the KEY makes the partition-routing key (rid for firehose / requests / errors / flames, handler for jobintake, etc.) visible without forcing the JS to decode the envelope itself.
+
+### Compatibility
+
+- **Pre-cutover segments keep working uniformly.** Every wire-format consumer (`RequestBuilder`, `InflightTracker`, firehose / errors SSE, raw-events listing, reqgrep, StreamMerger's hub-side ingest) back-fills `entry['rid']` from `Message::KEY` when the inner entry lacks rid — and leaves legacy entries' embedded rid alone via `$entry['rid'] ??= …`. All seven back-fill sites carry a `BC-rid-in-key` marker comment so they're easy to grep and remove once pre-cutover segments have rolled off retention. `LogManager::message()` also defensively `unset()`s any caller-supplied `rid` in `$data` so misuse (or hostile `message($k, $_POST)`) can't smuggle a fake request id — previously the explicit `rid =>` slot on the left of the `+` union overwrote user values; now the slot is empty so we strip explicitly.
+
+  Companion change in `newspack-gyrobase` (Perl): `Gyrobase::Log::_pack_message()` writes `KEY = $requestid`, `queue_job` / `queue_whack_a_cache` / `_write_entry` stop emitting the embedded `"rid":` field. Required for the producer-side change to land coherently on hosts that run both LogManager and gyrate against the same firehose directory.
+
 ## [0.2.16] - 2026-05-12
 
 ### Fixed

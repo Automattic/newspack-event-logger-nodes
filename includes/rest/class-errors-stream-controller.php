@@ -48,6 +48,12 @@ class ErrorsStreamController extends SSEControllerBase {
 		// the original entry array lives at index `Message::VALUE` (= 6).
 		$decoded = \json_decode( $line, true, 64 );
 		$entry   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
+		if ( \is_array( $entry ) ) {
+			// BC-rid-in-key: v0.2.17+ producers carry rid in Message::KEY only.
+			// RequestBuilder's emit_error propagates KEY too. ?? leaves pre-cutover
+			// entries' embedded rid alone. Drop once those segments have rolled off.
+			$entry['rid'] ??= (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+		}
 		if ( ! \is_array( $entry ) || empty( $entry['rid'] ) ) {
 			return null;
 		}
