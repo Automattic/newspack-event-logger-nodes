@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-12
+
+### Added
+
+- **`LogManager::flush()`** — public method that drains every materialized `Partition`'s in-memory batch to disk. The 4KB write buffer didn't disappear during the TM_STRUCT cutover; it moved down to `Partition::$batch`, and `Topic::flush()` became the drain API. But that API was only being called internally by `LogManager::suspend()` and `LogManager::finish()` — external callers (nuclear-gyrobase's request/pipe paths, pyrobase's template execution) that hand off to a subprocess writing to the same firehose had no way to drain the parent's batch before `proc_open`, so messages could land out-of-order on disk between the parent's accumulated entries and the child's appends. `flush()` is the rename-equivalent of legacy `LogManager::flush_buffer()` and restores that contract.
+
 ## [0.2.1] - 2026-05-12
 
 ### Fixed
