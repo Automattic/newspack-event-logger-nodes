@@ -343,7 +343,15 @@ class LogManager {
 		// happens to fire at — wp-admin requests in particular show it at line 28+
 		// because admin hooks log via error()/warning() before start() is reached.
 		// ensure_started is re-entry safe ($this->started is set first thing).
-		$this->ensure_started();
+		//
+		// Returns false when LogManager is in a state that can't accept writes
+		// (skip_urls match → enabled=false; or process is shutting down).
+		// Callers that maintain paired state — start()/complete()'s timer stack
+		// in particular — should short-circuit on a false return rather than
+		// accumulating bookkeeping for a message that never landed.
+		if ( ! $this->ensure_started() ) {
+			return false;
+		}
 
 		// Redact sensitive query parameters in message URLs.
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
@@ -458,16 +466,18 @@ class LogManager {
 	 * @param array  $data  Additional data to include in the start event.
 	 */
 	public function start( string $label, array $data = [] ): void {
-		if ( ! $this->ensure_started() ) {
-			return;
-		}
 		// Prevent unbounded timer stack growth.
 		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
 			return;
 		}
 		$muted = $this->line_limited;
 		if ( ! $muted ) {
-			$this->message( "{$label} (start)", $data );
+			// Short-circuit on a false return — the emit failed (LogManager
+			// disabled or shutting down), so adding a timer-stack entry would
+			// leak bookkeeping for a complete() that has nothing to pair with.
+			if ( false === $this->message( "{$label} (start)", $data ) ) {
+				return;
+			}
 		}
 		$entry = [ 'label' => $label, 'ts' => \hrtime( true ), 'muted' => $muted ];
 		if ( ! empty( $data['m'] ) ) {
