@@ -22,6 +22,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\RemoteManager;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
 
 class ServersController extends PerformanceControllerBase {
@@ -158,6 +159,14 @@ class ServersController extends PerformanceControllerBase {
 			);
 		}
 
+		// Targeted full-settings sweep so the new spoke gets the hub's current
+		// configuration without waiting for the next HealthCheckTick (~5 min).
+		// Only fires when the server is initially enabled; otherwise wait for
+		// the operator to flip the toggle (handled by update_item).
+		if ( true === ( $config['enabled'] ?? false ) ) {
+			RemoteManager::queue_sync_all_settings( [ $id ] );
+		}
+
 		// Request supervisor restart to pick up new server.
 		$this->request_supervisor_restart();
 
@@ -174,7 +183,8 @@ class ServersController extends PerformanceControllerBase {
 		$id       = (string) $request->get_param( 'id' );
 		$registry = ServerRegistry::get_instance();
 		$registry->reset_cache();
-		if ( null === $registry->get( $id ) ) {
+		$existing = $registry->get( $id );
+		if ( null === $existing ) {
 			return $this->not_found_error( "Server not found: {$id}" );
 		}
 
@@ -188,6 +198,15 @@ class ServersController extends PerformanceControllerBase {
 
 		if ( ! $registry->update( $id, $partial ) ) {
 			return new \WP_Error( 'update_failed', 'Failed to update server.', [ 'status' => 400 ] );
+		}
+
+		// Targeted full-settings sweep when `enabled` flips false → true so the
+		// re-enabled spoke catches up immediately instead of waiting for the
+		// next HealthCheckTick (~5 min). Same logic as create_item's enable path.
+		$was_enabled = true === ( $existing['enabled'] ?? false );
+		$now_enabled = isset( $partial['enabled'] ) && true === $partial['enabled'];
+		if ( ! $was_enabled && $now_enabled ) {
+			RemoteManager::queue_sync_all_settings( [ $id ] );
 		}
 
 		$this->request_supervisor_restart();

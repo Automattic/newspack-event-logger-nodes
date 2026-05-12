@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-12
+
+### Added
+
+- **`HealthCheckTick` Node** in the aggregator topology — drives `RemoteManager::health_check()` (discovery sweep + `sync_all_settings` fan-out) on a 5-min debounce. Hitchhikes on `_router`'s TIMER like StreamMerger, enqueues a `remote_manager` health_check job through LogManager so the JobWorker handles request_id correlation and STALE_THRESHOLD drops uniformly. The cutover from `newspack-event-logger-plugins` ported StreamMerger's tick but dropped the legacy `newspack_event_logger_supervisor_periodic` listener that drove the periodic sweep — without this node, freshly-enabled aggregators never push settings to spokes.
+- **Targeted full-settings sweep when a spoke is created or re-enabled.** `ServersController::create_item` (with `enabled=true`) and `update_item` (when `enabled` flips false→true) now call `RemoteManager::queue_sync_all_settings([$id])` so the new/re-enabled spoke catches up immediately instead of waiting for the next HealthCheckTick.
+
 ## [0.2.2] - 2026-05-12
 
 ### Added
