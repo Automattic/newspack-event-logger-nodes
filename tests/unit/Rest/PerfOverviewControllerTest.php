@@ -11,30 +11,26 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( PerfOverviewController::class )]
 class PerfOverviewControllerTest extends TestCase {
 	private FakeMemcached $cache;
+	private string $tmp;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_rest_routes']      = [];
 		$GLOBALS['_current_user_can'] = true;
 		$GLOBALS['_wp_options']       = [];
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
-		\Newspack_Nodes\Config::reset();
 		$this->cache                  = new FakeMemcached();
 		PerformanceControllerBase::set_cache( $this->cache );
+		$this->tmp = $this->make_temp_dir();
 		// Pin to one partition so seeded fixtures match what the controller reads.
-		\add_filter(
-			'newspack_nodes/config',
-			static fn( array $cfg ): array => \array_merge( $cfg, [
-				'num_partitions' => 1,
-				'max_lifespan'   => 86400,
-			] )
-		);
+		$this->use_base_dir( $this->tmp, [
+			'num_partitions' => 1,
+			'max_lifespan'   => 86400,
+		] );
 	}
 
 	protected function tearDown(): void {
 		PerformanceControllerBase::set_cache( null );
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
-		\Newspack_Nodes\Config::reset();
+		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
 

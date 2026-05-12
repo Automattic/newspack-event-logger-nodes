@@ -59,9 +59,7 @@ class ReqgrepCommandTest extends TestCase {
 		$GLOBALS['_wp_actions']          = [];
 		$GLOBALS['_wp_options']          = [];
 
-		// Point Config at our tmp so get_logs_directory() doesn't reach for
-		// /tmp/newspack-nodes (which may not exist or might fail realpath).
-		\add_filter( 'newspack_nodes/base_dir', fn () => $this->tmp );
+		$this->use_base_dir( $this->tmp );
 		// Substrate-owned keys; use substrate-prefixed option names.
 		\update_option( 'newspack_nodes_base_directory', $this->tmp );
 		\update_option( 'newspack_nodes_num_partitions', 1 );
@@ -1218,8 +1216,8 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_invoke_dispatches_to_cat_mode_with_explicit_path(): void {
 		// Set up a real on-disk firehose layout under a controlled base_dir,
-		// point Config at it via the `newspack_nodes/base_dir` filter, and
-		// exercise __invoke end-to-end. Default `assoc_args` (no --follow,
+		// point Config at it via use_base_dir(), and exercise __invoke
+		// end-to-end. Default `assoc_args` (no --follow,
 		// stdin not piped) routes to cat_mode, which we have separate
 		// coverage for — this test is specifically about __invoke's setup
 		// + dispatch + path validation.
@@ -1237,8 +1235,7 @@ class ReqgrepCommandTest extends TestCase {
 			// Repoint substrate Config at our temp base_dir.
 			$saved_opt = $GLOBALS['_wp_options']['newspack_nodes_base_directory'] ?? null;
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
-			\add_filter( 'newspack_nodes/base_dir', fn() => $base_dir );
-			\Newspack_Nodes\Config::reset();
+			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
@@ -1276,8 +1273,7 @@ class ReqgrepCommandTest extends TestCase {
 		try {
 			$saved_opt = $GLOBALS['_wp_options']['newspack_nodes_base_directory'] ?? null;
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
-			\add_filter( 'newspack_nodes/base_dir', fn() => $base_dir );
-			\Newspack_Nodes\Config::reset();
+			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
@@ -1309,8 +1305,7 @@ class ReqgrepCommandTest extends TestCase {
 		try {
 			$saved_opt = $GLOBALS['_wp_options']['newspack_nodes_base_directory'] ?? null;
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
-			\add_filter( 'newspack_nodes/base_dir', fn() => $base_dir );
-			\Newspack_Nodes\Config::reset();
+			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();

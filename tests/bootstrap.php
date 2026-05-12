@@ -3,6 +3,11 @@
 // into test output. (Matches newspack-event-logger-plugins/tests/bootstrap.php:35.)
 \ini_set( 'error_log', '/dev/null' );
 
+// Point Config at the baseline test config so app + substrate `base_directory`
+// lands in `/tmp/newspack-event-logger-nodes-test` for any test that doesn't
+// override it. Tests that need a per-test base_dir use `TestCase::use_base_dir()`.
+\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . __DIR__ . '/newspack-event-logger-nodes-test-config.php' );
+
 \define( 'ABSPATH', '/' );
 
 if ( ! function_exists( 'plugin_dir_path' ) ) {

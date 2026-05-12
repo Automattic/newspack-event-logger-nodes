@@ -58,11 +58,10 @@ class ConfigTest extends TestCase {
 		$this->assertIsArray( $config );
 	}
 
-	public function test_load_config_has_base_directory_from_runtime_filter(): void {
-		// With no explicit overrides, base_directory comes from the substrate
-		// Config (which seeds via the `newspack_nodes/base_dir` filter,
-		// default `/tmp/newspack-nodes`). The application Config merges the
-		// substrate map so callers see substrate keys via either Config.
+	public function test_load_config_has_base_directory(): void {
+		// `base_directory` comes from the substrate Config (file → WP option),
+		// merged into the application Config so callers see substrate keys
+		// via either Config.
 		$config = Config::load_config();
 		$this->assertArrayHasKey( 'base_directory', $config );
 		$this->assertNotEmpty( $config['base_directory'] );

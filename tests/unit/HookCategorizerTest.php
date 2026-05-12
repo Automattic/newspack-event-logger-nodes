@@ -262,7 +262,7 @@ class HookCategorizerTest extends TestCase {
 			'newspack_event_logger_nodes_option_schema_core' => (object) [ 'callbacks' => [ 'cb' ] ],
 			'newspack_nodes_option_schema_core'              => (object) [ 'callbacks' => [ 'cb' ] ],
 			// Slash-style (actions, fanout filters).
-			'newspack_event_logger_nodes/log_readers'        => (object) [ 'callbacks' => [ 'cb' ] ],
+			'newspack_event_logger_nodes/sse_connected'        => (object) [ 'callbacks' => [ 'cb' ] ],
 			'newspack_nodes/spawn_worker'                    => (object) [ 'callbacks' => [ 'cb' ] ],
 			'newspack_nodes/supervisor_periodic'             => (object) [ 'callbacks' => [ 'cb' ] ],
 			// Real WP hooks — must survive the filter.
@@ -280,7 +280,7 @@ class HookCategorizerTest extends TestCase {
 
 		$this->assertNotContains( 'newspack_event_logger_nodes_option_schema_core', $all_hooks );
 		$this->assertNotContains( 'newspack_nodes_option_schema_core', $all_hooks );
-		$this->assertNotContains( 'newspack_event_logger_nodes/log_readers', $all_hooks );
+		$this->assertNotContains( 'newspack_event_logger_nodes/sse_connected', $all_hooks );
 		$this->assertNotContains( 'newspack_nodes/spawn_worker', $all_hooks );
 		$this->assertNotContains( 'newspack_nodes/supervisor_periodic', $all_hooks );
 		$this->assertContains( 'wp_ajax_my_action', $all_hooks );
@@ -293,7 +293,7 @@ class HookCategorizerTest extends TestCase {
 
 	public function test_is_internal_detects_own_prefixes(): void {
 		$this->assertTrue( HookCategorizer::is_internal( 'newspack_event_logger_nodes_option_schema_core' ) );
-		$this->assertTrue( HookCategorizer::is_internal( 'newspack_event_logger_nodes/log_readers' ) );
+		$this->assertTrue( HookCategorizer::is_internal( 'newspack_event_logger_nodes/sse_connected' ) );
 		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes_option_schema_core' ) );
 		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes/spawn_worker' ) );
 		$this->assertTrue( HookCategorizer::is_internal( 'newspack_nodes/supervisor' ) );

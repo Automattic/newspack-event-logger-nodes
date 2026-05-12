@@ -165,7 +165,10 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			if ( $w['type'] !== $type || $w['partition'] !== $partition ) {
 				continue;
 			}
-			$base_dir   = (string) \apply_filters( 'newspack_nodes/base_dir', '/tmp/newspack-nodes' );
+			// Via substrate Bootstrap (not raw filter) so the config-file
+			// overlay wins. Otherwise the worker process spawns under the
+			// filter default while dashboards/CLI read from the file value.
+			$base_dir   = \Newspack_Nodes\Bootstrap::base_dir();
 			$nonce_salt = \defined( 'NONCE_SALT' ) ? \NONCE_SALT : '';
 			$supervisor = new \Newspack_Nodes\Supervisor( $base_dir, $nonce_salt );
 			$wb         = new \Newspack_Nodes\WorkerBase(

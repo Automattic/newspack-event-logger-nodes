@@ -1214,16 +1214,6 @@ class Admin {
 			$worker_groups = [ 'job-workers' ];
 		}
 
-		// Allow child plugins to extend the restart map for options they own.
-		// Filter receives [ option_short_name => [ group1, group2, ... ] ] and
-		// returns a (possibly extended) array of groups to restart.
-		if ( \function_exists( 'apply_filters' ) ) {
-			$filtered = \apply_filters( 'newspack_event_logger_nodes/worker_restart_groups', $worker_groups, $short );
-			if ( \is_array( $filtered ) ) {
-				$worker_groups = \array_values( \array_unique( \array_filter( $filtered, 'is_string' ) ) );
-			}
-		}
-
 		if ( empty( $worker_groups ) ) {
 			return;
 		}

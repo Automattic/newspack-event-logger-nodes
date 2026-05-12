@@ -208,15 +208,12 @@ class HookCategorizer {
 	 * Used everywhere a list of hooks is presented to the operator or
 	 * instrumented by `Core::hook_start`. Nodes uses two naming styles —
 	 * slash for actions (`newspack_nodes/spawn_worker`,
-	 * `newspack_event_logger_nodes/log_readers`) and underscore for
+	 * `newspack_event_logger_nodes/sse_connected`) and underscore for
 	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
-	 * prefix list covers both.
-	 *
-	 * The runtime concern is re-entry: binding `hook_start`/`hook_complete`
-	 * to `newspack_nodes/config` causes a loop via `Config::load_config`
-	 * during LogManager bootstrap. The UI concern is noise: even if it
-	 * worked, instrumenting our own filters is never an answer to a real
-	 * "where is time going" question.
+	 * prefix list covers both. Instrumenting our own filters is never an
+	 * answer to a real "where is time going" question, and binding
+	 * `hook_start`/`hook_complete` to substrate filters can loop via
+	 * `Config::load_config` during LogManager bootstrap.
 	 *
 	 * @param string $hook_name Hook to test.
 	 * @return bool True if the hook belongs to Event Logger / Nodes itself.

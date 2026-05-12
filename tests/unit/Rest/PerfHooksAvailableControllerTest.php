@@ -17,8 +17,6 @@ class PerfHooksAvailableControllerTest extends TestCase {
 		$GLOBALS['_rest_routes']      = [];
 		$GLOBALS['_current_user_can'] = true;
 		$GLOBALS['_wp_options']       = [];
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
-		\Newspack_Nodes\Config::reset();
 		HookCategorizer::clear_cache();
 		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
 		global $wp_actions, $wp_filter;
@@ -31,8 +29,6 @@ class PerfHooksAvailableControllerTest extends TestCase {
 
 	protected function tearDown(): void {
 		PerformanceControllerBase::set_cache( null );
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
-		\Newspack_Nodes\Config::reset();
 		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
 		global $wp_actions, $wp_filter;
 		$wp_actions = [];
@@ -131,22 +127,16 @@ class PerfHooksAvailableControllerTest extends TestCase {
 		$wp_actions = [ 'my_custom_event' => 1, 'init' => 2 ];
 		$wp_filter  = [];
 
-		// PerformanceControllerBase::load_config() reads via the
-		// `newspack_nodes/config` filter — that's how callers inject the
-		// custom_events list at runtime.
-		\add_filter(
-			'newspack_nodes/config',
-			static fn( array $cfg ): array => \array_merge( $cfg, [
-				'custom_events' => [ 'my_custom_event' => true ],
-			] )
-		);
+		// custom_events is read from the merged config — set it via a
+		// per-test config file.
+		$this->use_base_dir( $this->make_temp_dir(), [
+			'custom_events' => [ 'my_custom_event' => true ],
+		] );
 
 		$body  = ( new PerfHooksAvailableController() )->get_available_hooks( new \WP_REST_Request() )->get_data();
 		$names = \array_column( $body['hooks'], 'name' );
 		$this->assertNotContains( 'my_custom_event', $names );
 		$this->assertContains( 'init', $names );
-
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
 	}
 
 	public function test_get_available_hooks_custom_events_handles_indexed_array_form(): void {
@@ -156,12 +146,9 @@ class PerfHooksAvailableControllerTest extends TestCase {
 		$wp_filter  = [];
 
 		// Indexed array form: name lives in the value, not the key.
-		\add_filter(
-			'newspack_nodes/config',
-			static fn( array $cfg ): array => \array_merge( $cfg, [
-				'custom_events' => [ 'event_a' ],
-			] )
-		);
+		$this->use_base_dir( $this->make_temp_dir(), [
+			'custom_events' => [ 'event_a' ],
+		] );
 
 		$names = \array_column(
 			( new PerfHooksAvailableController() )->get_available_hooks( new \WP_REST_Request() )->get_data()['hooks'],
@@ -169,8 +156,6 @@ class PerfHooksAvailableControllerTest extends TestCase {
 		);
 		$this->assertNotContains( 'event_a', $names );
 		$this->assertContains( 'event_b', $names );
-
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
 	}
 
 	public function test_get_available_hooks_excludes_internal_prefixes(): void {

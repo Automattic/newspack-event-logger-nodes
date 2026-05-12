@@ -143,7 +143,7 @@ class Config {
 
 		// Layer substrate config first; application values win on key
 		// collisions. Substrate `load_config()` already handles the
-		// `newspack_nodes/base_dir` filter and the substrate sample overlay.
+		// substrate sample overlay.
 		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config( $mode ) : [];
 
 		// Load application defaults from disk.

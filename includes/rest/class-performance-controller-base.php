@@ -5,7 +5,7 @@
  * Provides the standard surface every newspack-event-logger-nodes REST
  * controller relies on: capability/auth check, partition validation,
  * fixed-window rate limiting, consistent 404 shape, and a config loader
- * that exposes runtime tuning via the `newspack_nodes/config` filter.
+ * that exposes the substrate's resolved runtime config.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -71,9 +71,11 @@ abstract class PerformanceControllerBase {
 	}
 
 	/**
-	 * Load runtime configuration via the `newspack_nodes/config` filter.
+	 * Load runtime configuration: substrate-level keys from
+	 * `\Newspack_Nodes\Config::load_config('full')` layered over the
+	 * documented defaults below.
 	 *
-	 * Documented defaults — every key is filterable.
+	 * Documented defaults:
 	 *  - `num_partitions`    (int)            firehose partition count, default 1
 	 *  - `num_segments`      (int)            segments per partition, default 8
 	 *  - `segment_size`      (int)            bytes per segment, default 16 MiB
@@ -106,20 +108,15 @@ abstract class PerformanceControllerBase {
 		];
 		// Layer in the substrate's runtime config so deployments that set
 		// `newspack_nodes_memcache_servers`, `newspack_nodes_base_directory`,
-		// etc. via WP option flow through. The documented defaults above are
-		// the floor — substrate values override them; the
-		// `newspack_nodes/config` filter has the final say.
+		// etc. via WP option / config file flow through. The documented
+		// defaults above are the floor — substrate values override them.
 		if ( \class_exists( RuntimeConfig::class ) ) {
 			$substrate = RuntimeConfig::load_config( 'full' );
 			if ( \is_array( $substrate ) ) {
 				$defaults = \array_merge( $defaults, $substrate );
 			}
 		}
-		if ( ! \function_exists( 'apply_filters' ) ) {
-			return $defaults;
-		}
-		$filtered = \apply_filters( 'newspack_nodes/config', $defaults );
-		return \is_array( $filtered ) ? \array_merge( $defaults, $filtered ) : $defaults;
+		return $defaults;
 	}
 
 	public function read_permissions_check(): bool|\WP_Error {

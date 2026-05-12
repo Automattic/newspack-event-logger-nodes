@@ -77,17 +77,11 @@ class GyroscopeStreamControllerTest extends TestCase {
 		SSEControllerBase::set_cache( null );
 		unset( $_SERVER['REMOTE_ADDR'] );
 		$this->rmdir_recursive( $this->tmp_dir );
-		unset( $GLOBALS['_wp_actions']['newspack_nodes/config'] );
 		parent::tearDown();
 	}
 
 	private function pin_log_base( int $num_partitions = 1 ): void {
-		$base = $this->tmp_dir;
-		add_filter( 'newspack_nodes/config', function ( array $cfg ) use ( $base, $num_partitions ): array {
-			$cfg['base_directory'] = $base;
-			$cfg['num_partitions'] = $num_partitions;
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp_dir, [ 'num_partitions' => $num_partitions ] );
 	}
 
 	private function packed_entry( array $entry ): string {
