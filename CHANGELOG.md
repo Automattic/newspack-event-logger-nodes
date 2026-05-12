@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-05-12
+
+### Fixed
+
+- **Cron-backstop supervisor run was logging itself as a 595s `/wp-cron.php` request with no `worker_type`, counting toward global averages.** Order of operations: WP-Cron fires `newspack_nodes/supervisor` inside a `/wp-cron.php` request → LogManager initializes for that request and captures `process (start)` (no `worker_type` env var set yet) → substrate's `run_supervisor_tick` invokes `Supervisor::run()` which only sets `$_SERVER['NEWSPACK_NODES_WORKER_TYPE']='supervisor'` after LogManager has already buffered process_data → 595s tick runs to completion → LogManager finalizes a `/wp-cron.php` request that's missing `worker_type` → RequestBuilder doesn't recognize it as a worker and includes it in global stats. The self-respawn path doesn't have this bug (its REQUEST_URI matches `skip_urls` so LogManager is disabled for the parent process). Wrapped the substrate's new `newspack_nodes/before_supervisor_run` / `after_supervisor_run` actions (substrate 0.1.6) with `JobWorker::begin_job_context('newspack-nodes/supervisor')` / `end_job_context()`, mirroring the HealthCheckTick fix: a fresh LogManager builds under `/jobs/newspack-nodes/supervisor` with `worker_type='supervisor'` captured at init (the substrate sets the env var BEFORE firing the wrapping action). Requires `newspack-nodes` 0.1.6.
+
 ## [0.2.13] - 2026-05-12
 
 ### Fixed
