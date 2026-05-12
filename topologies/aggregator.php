@@ -67,6 +67,15 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	$stream_merger->set_verify_ssl( $verify_ssl );
 	$stream_merger->set_require_https( $require_https );
 
+	// Hub-side: rewrite spoke-originated `k:"job"` lines to `k:"remote_job"`
+	// as they're ingested, so the hub's JobWorker dispatches them against
+	// `newspack_nodes/remote_job_handlers` instead of running the local
+	// handler (which would, e.g., run pyrobase-cron on the hub for every
+	// spoke's cron tick, or batcache-purge the wrong site). The filter
+	// itself is registered idempotently inside StreamMerger; calling it
+	// here keeps the wiring next to the only place that needs it.
+	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
+
 	// Register each enabled remote from the ServerRegistry. add_remote(id)
 	// reads url/auth/etc. from the registry entry. Topology re-runs on
 	// supervisor restart (ServersController::request_supervisor_restart fires

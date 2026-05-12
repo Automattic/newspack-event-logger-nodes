@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-05-12
+
+### Fixed
+
+- **Aggregator hub was dispatching spoke-originated jobs against local handlers.** `StreamMerger::register_remote_job_rewrite_filter()` was defined but never called from anywhere. Without the filter active, spoke-sourced `k:"job"` lines passed through to JobRouter / JobWorker untouched and got dispatched against `newspack_nodes/job_handlers` — meaning every spoke's pyrobase-cron tick ran locally on the hub, the hub's batcache-purge for `whack-a-cache` fired against the wrong site, and the AGENTS.md "hub vs spoke routing" contract was effectively broken. Wired the registration from the aggregator topology so it runs once per spawn.
+
+### Changed
+
+- **`LogManager::message()` now returns `false` when `ensure_started()` fails**, with the early-return placed at the top of the function so every write path (`error`, `warning`, `info`, `start`, `complete`) inherits it from the single chokepoint. `start()`'s redundant pre-check was removed, and `start()` now examines `message()`'s return value before pushing to `$this->times` — so when the LM is disabled (skip_urls match) or shutting down, the timer stack doesn't accumulate orphan bookkeeping for a `(start)` emit that never landed.
+
 ## [0.2.9] - 2026-05-12
 
 ### Fixed
