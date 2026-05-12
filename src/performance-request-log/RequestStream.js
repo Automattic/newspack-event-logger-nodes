@@ -272,6 +272,14 @@ export default function RequestStream( { maxEntries = 500 } ) {
 					for ( const req of requests ) {
 						entryCounterRef.current += 1;
 						const entry = {
+							// Monotonic per-mount counter — used as the React
+							// list key so two entries with the same rid (e.g.
+							// a worker's reset-then-rebuild within the same
+							// second, or a colliding rid from an aggregated
+							// spoke) get distinct DOM nodes. Without this
+							// the virtualized list reuses one node for both
+							// and scrolling jumps.
+							seq: entryCounterRef.current,
 							rid: req.rid,
 							url: req.url,
 							urlHash: urlHash( req.url ), // Pre-compute hash.
@@ -644,7 +652,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 							/>
 							{ visibleEntries.map( ( entry ) => (
 								<StreamRow
-									key={ `${ entry.rid }-${ entry.timestamp }` }
+									key={ entry.seq }
 									entry={ entry }
 									visibleColumns={ visibleColumns }
 									gridTemplate={ gridTemplate }
