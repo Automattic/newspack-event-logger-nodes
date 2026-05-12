@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.2.2
+ * Version: 0.2.3
  * Requires Plugins: newspack-nodes
  *
  * @package Newspack_Event_Logger_Nodes
@@ -11,7 +11,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.2' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.3' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -50,12 +50,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 
 	// Register application Node subclasses with the runtime's class_map so
 	// topology PHP can construct them via `$interpreter->make_node()`.
-	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',      \Newspack_Event_Logger_Nodes\AutoTuner::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',   \Newspack_Event_Logger_Nodes\FlameBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',      \Newspack_Event_Logger_Nodes\JobRouter::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',      \Newspack_Event_Logger_Nodes\JobWorker::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder', \Newspack_Event_Logger_Nodes\RequestBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',   \Newspack_Event_Logger_Nodes\StreamMerger::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\AutoTuner::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\FlameBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\HealthCheckTick::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\JobRouter::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\JobWorker::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
 
 	// Wire one-shot static initializers for the static-mode classes.
 	\Newspack_Event_Logger_Nodes\Config::register_cache_invalidation();

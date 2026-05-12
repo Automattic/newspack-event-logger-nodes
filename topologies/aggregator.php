@@ -83,9 +83,18 @@ return static function ( \Newspack_Nodes\CommandInterpreter $interpreter, int $p
 	// connection cleanly. It also drives check_stale() and maybe_commit().
 	$stream_merger->start_periodic_tick();
 
+	// HealthCheckTick: drives RemoteManager's periodic discovery sweep +
+	// sync_all_settings fan-out. Same Router-hitchhike pattern as StreamMerger
+	// but with an internal 5-min debounce — so the spoke's `/discovery`
+	// endpoint isn't hammered every Router heartbeat, and settings sync
+	// doesn't flood the firehose with `remote_manager` jobs.
+	$health_check_tick = $interpreter->make_node( 'HealthCheckTick', 'health-check-tick' );
+	$health_check_tick->start_periodic_tick();
+
 	return [
-		'partition'      => $partition,
-		'firehose_topic' => $firehose_topic,
-		'stream_merger'  => $stream_merger,
+		'partition'         => $partition,
+		'firehose_topic'    => $firehose_topic,
+		'stream_merger'     => $stream_merger,
+		'health_check_tick' => $health_check_tick,
 	];
 };
