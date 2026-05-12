@@ -381,8 +381,12 @@ class Admin {
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_enable_workers',
+			// Store as int 0/1 (not bool) — get_option returns false BOTH for
+			// missing-option AND for stored-false, so Config::load_config()
+			// can't tell them apart and stored-false silently loses to the
+			// file default. Storing 0/1 keeps stored-false distinguishable.
 			[
-				'sanitize_callback' => fn ( $v ) => (bool) (int) $v,
+				'sanitize_callback' => 'absint',
 				'autoload'          => true,
 			]
 		);
@@ -444,11 +448,12 @@ class Admin {
 		// monorepo absorbs it. `enable_aggregator` gates whether the
 		// aggregator topology spawns workers (gates the topology filter in
 		// newspack-event-logger-nodes.php).
-		// Real-bool storage (see enable_workers above for rationale).
+		// Int 0/1 storage so stored-false survives the get_option false-vs-missing
+		// ambiguity (see enable_workers above).
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_enable_aggregator',
-			[ 'sanitize_callback' => fn ( $v ) => (bool) (int) $v ]
+			[ 'sanitize_callback' => 'absint' ]
 		);
 
 		// Aggregator spoke list is managed by the Remote Servers REST CRUD

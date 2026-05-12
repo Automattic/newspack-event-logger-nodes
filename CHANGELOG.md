@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-05-12
+
+### Fixed
+
+- **Unchecking "Enable Performance Workers" (and "Enable Aggregator") didn't stick.** Two settings registered their `sanitize_callback` as `fn ($v) => (bool) (int) $v`, storing bool `false` in the options table. `get_option()` returns `false` for BOTH missing-option AND stored-false, so `Config::load_config()`'s `false !== $value` guard treated stored-false as "absent" and the file default (`true`) shadowed the unchecked state on the next page load. Switched both registrations to `'sanitize_callback' => 'absint'`, matching every other bool option in the plugin and the legacy `newspack-event-logger-plugins` flow.
+
 ## [0.2.6] - 2026-05-12
 
 ### Fixed
