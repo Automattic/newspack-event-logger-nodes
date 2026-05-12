@@ -99,8 +99,12 @@ class EventsController extends PerformanceControllerBase {
 					if ( ! \is_array( $entry ) ) {
 						return null;
 					}
-					$entry['_partition'] = $p;
-					$entries[]           = $entry;
+					// BC-rid-in-key: v0.2.17+ producers carry rid in Message::KEY
+					// only. ?? leaves pre-cutover entries' embedded rid alone.
+					// Drop the fallback once those segments have rolled off.
+					$entry['rid']        ??= (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+					$entry['_partition']  = $p;
+					$entries[]            = $entry;
 					return null;
 				},
 				true

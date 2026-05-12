@@ -341,6 +341,7 @@ class FlameBuilder extends Node {
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::KEY ]       = (string) ( $flame_data['rid'] ?? '' );
 		$msg[ Message::VALUE ]     = $flame_data;
 		$this->flames_sink->fill( $msg );
 		return true;

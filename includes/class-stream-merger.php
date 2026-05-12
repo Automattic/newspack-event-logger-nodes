@@ -758,7 +758,11 @@ class StreamMerger extends Node {
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
-		$msg[ Message::KEY ]       = (string) ( $data['url'] ?? '' );
+		// KEY = rid so hub-side partition routing co-locates entries by request,
+		// matching the producer-side convention. The upstream SSE controller
+		// back-fills entry['rid'] from the source Message::KEY, so `$data['rid']`
+		// is populated for both v0.2.17+ and pre-cutover spokes.
+		$msg[ Message::KEY ]       = (string) ( $data['rid'] ?? '' );
 		$msg[ Message::VALUE ]     = $decoded;
 		$this->sink?->fill( $msg );
 	}

@@ -526,11 +526,17 @@ class ReqgrepCommand {
 		}
 		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
 			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			$line  = \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
+			if ( \is_array( $entry ) ) {
+				// BC-rid-in-key: v0.2.17+ producers carry rid in Message::KEY
+				// only. ?? leaves pre-cutover entries' embedded rid alone.
+				// Drop the fallback once those segments have rolled off.
+				$entry['rid'] ??= (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+			}
+			$line = \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
 		} else {
 			$entry = $decoded;
 		}
-		if ( ! \is_array( $entry ) || ! isset( $entry['rid'] ) ) {
+		if ( ! \is_array( $entry ) || empty( $entry['rid'] ) ) {
 			return;
 		}
 

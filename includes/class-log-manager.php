@@ -178,7 +178,12 @@ class LogManager {
 		$base_dir            = Config::get_logs_directory() . '/firehose.log';
 		$num_partitions      = (int) ( $config['num_partitions'] ?? 1 );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
-		$this->partition_idx = Partition::hash_to_partition( $this->request_url, $num_partitions );
+		// Partition route by request_id, not by URL. Keeps every entry for a
+		// single request (WP + gyrate sub-renders + jobs spawned from it) in
+		// the same partition so RequestBuilder reconciles cleanly. URL-based
+		// routing split entries when producers disagreed on the URL shape
+		// (LogManager wrote path-only, Gyrobase::Log wrote scheme://host/path).
+		$this->partition_idx = Partition::hash_to_partition( $this->request_id, $num_partitions );
 		// Pass segment_size/num_segments/max_lifespan from core config to avoid Topic
 		// calling load_config('full'), which fires option schema filters and re-enters LogManager.
 		$segment_size = (int) ( $config['segment_size'] ?? Partition::DEFAULT_SEGMENT_SIZE );
@@ -367,13 +372,22 @@ class LogManager {
 		if ( null === $this->topic ) {
 			return false;
 		}
-		$entry = [ 'n' => $this->line_number, 'rid' => $this->request_id, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
+		// rid lives in Message::KEY (set below) — drop from the inner entry to
+		// stop duplicating ~40 bytes per line. Readers back-fill `entry['rid']`
+		// from KEY at extraction time so the broad set of `$entry['rid']`
+		// consumers keeps working uniformly across old and new segments.
+		// Strip a caller-supplied `rid` defensively so misuse (or hostile
+		// input via `message($k, $_POST)`) can't smuggle a fake request id —
+		// previously rid was set on the left of the `+` so user values lost,
+		// but now the slot is empty and the union would let it through.
+		unset( $data['rid'] );
+		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
 
 		// One entry per Message; Topic hashes KEY to a partition and Partition packs + appends.
 		$msg                                       = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
-		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_url;
+		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $msg );
 

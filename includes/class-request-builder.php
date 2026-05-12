@@ -169,7 +169,15 @@ class RequestBuilder extends Node {
 			return;
 		}
 
-		$rid = $entry['rid'] ?? null;
+		// BC-rid-in-key: legacy entries (pre-v0.2.17 producers) embed rid
+		// inside the entry; v0.2.17+ producers stop duplicating it and rely
+		// on Message::KEY instead. Prefer entry['rid'] (so pre-cutover
+		// segments keep working as-is) and fall back to KEY for new entries.
+		// Drop the entry['rid'] branch once pre-cutover segments have rolled off.
+		$rid = $entry['rid'] ?? '';
+		if ( '' === $rid ) {
+			$rid = (string) ( $message[ Message::KEY ] ?? '' );
+		}
 		if ( ! \is_string( $rid ) || '' === $rid ) {
 			return;
 		}
@@ -199,12 +207,15 @@ class RequestBuilder extends Node {
 			$this->cache->set( $rid, $request );
 		}
 
-		// Forward errors and warnings to errors.log.
+		// Forward errors and warnings to errors.log. Pass the rid so the
+		// emitted Message carries it in KEY — errors.log readers (and any
+		// future StreamMerger forwarders) need it for the same reasons the
+		// firehose does.
 		if ( 'error' === $keyword || 'warning' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 		) {
-			$this->emit_error( $entry );
+			$this->emit_error( $entry, $rid );
 		}
 
 		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
@@ -510,12 +521,17 @@ class RequestBuilder extends Node {
 
 	/**
 	 * Emit a completed request as a TM_STRUCT message to the main sink.
+	 *
+	 * KEY = rid so downstream readers / aggregator forwarders can identify
+	 * the request without decoding VALUE. RequestBuilder still stamps
+	 * `rid` into the request struct itself; KEY is the wire-level breadcrumb.
 	 */
 	private function emit_request( \stdClass $request ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::KEY ]       = (string) ( $request->rid ?? '' );
 		$msg[ Message::VALUE ]     = (array) $request;
 		parent::fill( $msg );
 	}
@@ -523,9 +539,12 @@ class RequestBuilder extends Node {
 	/**
 	 * Emit an error/warning entry via the named errors_target.
 	 *
-	 * @param array $entry Decoded entry.
+	 * @param array  $entry Decoded entry.
+	 * @param string $rid   Request id — propagated to Message::KEY so
+	 *                      downstream readers can identify the request
+	 *                      without re-parsing the entry payload.
 	 */
-	private function emit_error( array $entry ): void {
+	private function emit_error( array $entry, string $rid ): void {
 		if ( '' === $this->errors_target || null === $this->sink ) {
 			return;
 		}
@@ -534,6 +553,7 @@ class RequestBuilder extends Node {
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = $this->errors_target;
+		$msg[ Message::KEY ]       = $rid;
 		$msg[ Message::VALUE ]     = $entry;
 		$this->sink->fill( $msg );
 	}

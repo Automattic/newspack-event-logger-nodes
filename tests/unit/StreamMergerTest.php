@@ -1318,29 +1318,37 @@ class StreamMergerTest extends TestCase {
 	// Url stamping on entry forward.
 	// =========================================================================
 
-	public function test_forward_entry_uses_url_as_key(): void {
-		// forward_entry stamps the entry's `url` field as Message::KEY (used
-		// downstream for partition routing).
+	public function test_forward_entry_uses_rid_as_key(): void {
+		// forward_entry stamps the entry's `rid` field as Message::KEY so
+		// hub-side partition routing matches the producer convention (every
+		// entry for a single request co-located in one partition). The
+		// firehose SSE controller back-fills entry['rid'] from the source
+		// Message::KEY, so this works whether the upstream spoke is
+		// v0.2.17+ (rid in wire KEY) or pre-cutover (rid in inner entry).
 		$sm      = $this->make_merger();
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteKey', 'http://siteKey.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteKey' );
 
-		$entry   = json_encode( [ 'k' => 'render', 'ts' => 1700000010, 'url' => '/specific/path' ] );
+		$entry   = json_encode( [ 'k' => 'render', 'ts' => 1700000010, 'rid' => 'abc123def456' ] );
 		$sm->on_curl_data( $h, "event: entry\ndata: {$entry}\n\n" );
 
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( '/specific/path', $capture->captured[0][ Message::KEY ] );
+		$this->assertSame( 'abc123def456', $capture->captured[0][ Message::KEY ] );
 	}
 
-	public function test_forward_entry_handles_missing_url_field(): void {
-		// Entry without `url` — KEY ends up empty.
+	public function test_forward_entry_handles_missing_rid_field(): void {
+		// Entry without `rid` — KEY ends up empty. (Defense in depth — the
+		// firehose SSE controller back-fills entry['rid'] from the source
+		// Message::KEY, so an entry that genuinely lacks rid on both sides
+		// is a malformed remote payload. Forward anyway with empty KEY so
+		// it lands on partition 0 instead of getting dropped silently.)
 		$sm      = $this->make_merger();
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
-		$sm->add_remote( 'siteNoURL', 'http://siteNoURL.test/', 'tok' );
-		$h = $sm->test_get_handle( 'siteNoURL' );
+		$sm->add_remote( 'siteNoRid', 'http://siteNoRid.test/', 'tok' );
+		$h = $sm->test_get_handle( 'siteNoRid' );
 
 		$entry = json_encode( [ 'k' => 'request', 'ts' => 1700000020 ] );
 		$sm->on_curl_data( $h, "event: entry\ndata: {$entry}\n\n" );
