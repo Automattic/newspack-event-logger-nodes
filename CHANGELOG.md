@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-12
+
+### Fixed
+
+- **Hub-to-spoke settings sync returned `HTTP 400` for every performance-tuning option** (`log_events`, `custom_events`, `significant_events`, `log_urls`, `skip_urls`, `auto_disable_threshold`, `auto_protect_time_threshold`, `log_memory`, `flush_every_line`). `SettingsSync` was POSTing all options to `/wp-json/newspack-nodes/v1/settings`, but that endpoint's `SettingsController` only whitelists the 4 substrate keys (`num_partitions`, `num_segments`, `segment_size`, `max_lifespan`). The 9 perf-tuning options are owned by `PerfSettingsController` at `/wp-json/newspack-nodes/v1/performance/settings`. Added `SettingsSync::PERF_ENDPOINT` and updated three call sites (`register_synced_settings`, `maybe_queue_static_sync`, `AutoTuner::persist`) to pick the right endpoint per option type.
+
 ## [0.2.3] - 2026-05-12
 
 ### Added
