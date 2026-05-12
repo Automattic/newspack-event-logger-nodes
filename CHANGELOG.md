@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-05-12
+
+### Fixed
+
+- **Request Log dashboard scroll jumped / lost place when two arriving entries shared the same `rid`.** The virtualized list keyed each `StreamRow` on `${rid}-${timestamp}` — if a worker reset and rebuilt within the same second, or an aggregator pulled a colliding rid from a spoke, two entries collapsed into one React key and the virtualizer reused a single DOM node for both rows. Subsequent unshift-then-truncate cycles then shifted entries between keyed positions, breaking smooth scroll. There's already a monotonic `entryCounterRef.current` advanced once per SSE-received entry (it was driving the even/odd row stripe); stash that value on the entry as `seq` at receive time and key the row on `entry.seq`. Guaranteed unique per mount regardless of rid/timestamp collisions. Mirrors the URL Detail view fix (which avoids the problem upstream by deduping requests by rid in the URLs controller before they reach React).
+
 ## [0.2.14] - 2026-05-12
 
 ### Fixed
