@@ -231,7 +231,12 @@ export default function UrlTable( {
 			);
 		}
 
-		// Filter to URLs with errors (timeouts/fatals — requests without a status code category).
+		// "Errors" = timeouts (T) and fatals (F) — requests that never
+		// emitted a status_code, so they fall outside count_2xx/3xx/4xx/5xx.
+		// Matches the per-request definition in UrlDetailView.js
+		// (`error_status === 'F' || 'T'`). 5xx is treated as a classified
+		// response, not an error, for consistency between aggregate and
+		// per-request views.
 		if ( errorsOnly ) {
 			filtered = filtered.filter( ( u ) => {
 				const classified =

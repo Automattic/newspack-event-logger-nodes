@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-05-12
+
+### Fixed
+
+- **URL table's status-code columns showed `-` and "Errors Only" button didn't filter anything.** Both were the same bug: `PerfOverviewController::load_index()` aggregated `count_2xx/3xx/4xx/5xx` correctly from each bucket but dropped them when constructing the display shape that gets sent to React. Every URL row arrived at the table with those four fields undefined → `pct()` returned "-" for every status column, and `classified = 0 + 0 + 0 + 0` so `classified < count` was true for every URL → clicking "Errors Only" appeared to do nothing because every URL "matched". Carried the four counters through the result initializer, the per-bucket accumulator, and the final `$out[]` shape that the REST response ships.
+
 ## [0.2.10] - 2026-05-12
 
 ### Fixed
