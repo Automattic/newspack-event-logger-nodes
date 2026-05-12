@@ -748,6 +748,7 @@ class StreamMerger extends Node {
 		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
 		$msg[ Message::KEY ]       = (string) ( $data['url'] ?? '' );
 		$msg[ Message::VALUE ]     = $line;
 		$this->sink?->fill( $msg );
