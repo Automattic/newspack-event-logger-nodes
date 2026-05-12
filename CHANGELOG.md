@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-05-12
+
+### Fixed
+
+- **StreamMerger rewrite of `k:"job"` → `k:"remote_job"` was silently undone for entries that carry a redundant `m.type`.** Producers that wrote `m.type='job'` alongside the entry-level `k:"job"` (PHP LogManager whack-cdn, pyrobase cron-manager, evtemplate; nuclear-gyrobase whack-a-cache + nuclear-cron) doubled up the dispatch field. StreamMerger's rewrite filter mutated only `k`, leaving the inner `m.type` stale. JobRouter then resolved the normalized `type` from `m['type'] ?? entry['k']` (line 82-84), so the stale `m.type='job'` won and the entry dispatched against the LOCAL `newspack_nodes/job_handlers` instead of `newspack_nodes/remote_job_handlers` — exactly the bug the rewrite filter exists to prevent. Aggregator hubs saw "first job rewrites, all subsequent ones revert." JobRouter now treats `entry['k']` as the canonical dispatch field uniformly across firehose and jobintake branches; the redundant producer-set `m.type` is no longer consulted (and was independently stripped from producer sites in companion releases of newspack-pyrobase, newspack-nuclear-gyrobase, and newspack-gyrobase).
+- **`ServerRegistry::get_all()` resurrected just-deleted servers until `plugins_loaded`.** It read `aggregator_servers` via `Config::load_config('full')`, which caches the merged file+WP-option view at first read. Since `OPTION_KEY === 'newspack_event_logger_nodes_aggregator_servers'` ALSO lives in the option schema, the cached `aggregator_servers` already held the merged value at create-time. After a subsequent delete, the WP option went empty but the cache held the pre-delete merged view; `array_merge(stale-cache, empty-option)` returned the deleted entry. Admin UI showed the server back until the next page-level `plugins_loaded` cache reset. Switched to `Config::load_config_defaults()` (file-only, no WP-option layering) — mirrors what `is_config_server()` already does for the same reason.
+
+### Tests
+
+- **SettingsSyncTest aligned with `enable_aggregator` gate.** The sync gate moved from `enable_workers === true` to `enable_aggregator === true` in commit `9368e73` (intentional refactor — single operator switch for cross-site activity), but the tests still configured `enable_workers`. Tests that expected dispatch silently broke (they passed for the wrong reason on the skip-cases since both keys were missing); fail-cases that expected NO dispatch coincidentally passed. Renamed methods + config keys to match production. Also relaxed the `register_synced_settings` endpoint assertion to accept both `/v1/settings` (core options) and `/v1/performance/settings` (perf-tuning options) — the dual-endpoint shape that already shipped alongside the perf settings split.
+
 ## [0.2.15] - 2026-05-12
 
 ### Fixed
