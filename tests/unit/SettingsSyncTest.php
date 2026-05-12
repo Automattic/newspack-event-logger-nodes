@@ -22,21 +22,21 @@ class SettingsSyncTest extends TestCase {
 
 	// --- Instance mode (closure-dispatch with encryption) -------------------
 
-	public function test_skips_when_enable_workers_unset(): void {
+	public function test_skips_when_enable_aggregator_unset(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ /* enable_workers absent */ ],
+			config: [ /* enable_aggregator absent */ ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
 		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertFalse( $called, 'fail-closed: missing enable_workers must skip sync' );
+		$this->assertFalse( $called, 'fail-closed: missing enable_aggregator must skip sync' );
 	}
 
-	public function test_skips_when_enable_workers_false(): void {
+	public function test_skips_when_enable_aggregator_false(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => false ],
+			config: [ 'enable_aggregator' => false ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -44,10 +44,10 @@ class SettingsSyncTest extends TestCase {
 		$this->assertFalse( $called );
 	}
 
-	public function test_skips_when_enable_workers_truthy_but_not_true(): void {
+	public function test_skips_when_enable_aggregator_truthy_but_not_true(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => 1 ], // truthy but !== true
+			config: [ 'enable_aggregator' => 1 ], // truthy but !== true
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -55,10 +55,10 @@ class SettingsSyncTest extends TestCase {
 		$this->assertFalse( $called, 'strict === true required, not just truthy' );
 	}
 
-	public function test_syncs_when_enable_workers_strictly_true(): void {
+	public function test_syncs_when_enable_aggregator_strictly_true(): void {
 		$received = null;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => true ],
+			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $ciphertext ) use ( &$received ) {
 				$received = [ 'option' => $option, 'value' => $value, 'ciphertext' => $ciphertext ];
@@ -79,7 +79,7 @@ class SettingsSyncTest extends TestCase {
 	public function test_skips_unsynced_option(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => true ],
+			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -90,7 +90,7 @@ class SettingsSyncTest extends TestCase {
 	public function test_suppress_sync_blocks_sync(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => true ],
+			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -180,7 +180,7 @@ class SettingsSyncTest extends TestCase {
 	public function test_dispatch_receives_non_empty_ciphertext_when_encryption_works(): void {
 		$dispatched = null;
 		$sync       = new SettingsSync(
-			config: [ 'enable_workers' => true ],
+			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$dispatched ) {
 				$dispatched = $cipher;
@@ -264,12 +264,19 @@ class SettingsSyncTest extends TestCase {
 			$pairs['newspack_event_logger_nodes_custom_events'] ?? null
 		);
 
-		// Every entry's endpoint is the static settings endpoint.
+		// Every entry's endpoint targets one of the two allowlisted endpoints —
+		// `/v1/settings` for core options or `/v1/performance/settings` for the
+		// perf-tuning options. RemoteManager + ALLOWED_ENDPOINT_PREFIXES gate
+		// the actual dispatch.
+		$allowed_endpoints = [
+			'/wp-json/newspack-nodes/v1/settings',
+			'/wp-json/newspack-nodes/v1/performance/settings',
+		];
 		foreach ( $settings as $entry ) {
-			$this->assertSame(
-				'/wp-json/newspack-nodes/v1/settings',
+			$this->assertContains(
 				$entry['endpoint'],
-				'every synced setting must target the allowlisted endpoint'
+				$allowed_endpoints,
+				'every synced setting must target an allowlisted endpoint'
 			);
 		}
 	}
@@ -429,13 +436,13 @@ class SettingsSyncTest extends TestCase {
 	// --- Instance-mode skip-unsynced-option ----------------------------------
 
 	public function test_instance_mode_skips_when_dispatch_returns_no_signal(): void {
-		// Instance mode: option in synced_options + enable_workers === true →
+		// Instance mode: option in synced_options + enable_aggregator === true →
 		// dispatch is invoked. Verifies the dispatch closure receives the
 		// option name, the value, and a non-empty ciphertext.
 		$received_option = null;
 		$received_value  = null;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => true ],
+			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_events', 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$received_option, &$received_value ) {
 				$received_option = $option;
@@ -557,7 +564,7 @@ class SettingsSyncTest extends TestCase {
 		// suppress_instance_sync() with no arg defaults to true.
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_workers' => true ],
+			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);

@@ -76,12 +76,16 @@ class JobRouter extends Node {
 			return;
 		}
 
-		// Resolve type. Firehose body has `type`; jobintake uses `k`.
-		// Default each to the entry-level `k` (which is always 'job' in
-		// well-formed lines) if the inner field is absent.
-		$type = $is_firehose
-			? (string) ( $body['type'] ?? $entry['k'] ?? '' )
-			: (string) ( $body['k'] ?? $entry['k'] ?? '' );
+		// Resolve type from the entry-level `k`. This is the canonical
+		// dispatch field — it's what LogManager::message() writes from the
+		// category argument, and what StreamMerger's rewrite filter mutates
+		// from 'job' to 'remote_job' on the hub. A redundant producer-set
+		// `m.type` (PHP LogManager whack-cdn etc.) is NOT consulted: it
+		// would otherwise revert the rewrite at dispatch time, since
+		// StreamMerger only touches the entry-level `k`. For jobintake the
+		// entry is flat (no `m` wrap) so $body IS $entry; reading
+		// $entry['k'] handles both branches uniformly.
+		$type = (string) ( $entry['k'] ?? '' );
 		if ( self::KIND_JOB !== $type && self::KIND_REMOTE_JOB !== $type ) {
 			return;
 		}

@@ -110,9 +110,17 @@ class ServerRegistry {
 	 */
 	public function get_all(): array {
 		if ( null === $this->servers ) {
-			// Get config file defaults.
-			$config          = Config::load_config( 'full' );
-			$config_defaults = $config['aggregator_servers'] ?? [];
+			// Read config-file defaults DIRECTLY, not via load_config('full').
+			// load_config caches the merged config (file + WP options), and
+			// since WP_OPTION_KEY === 'newspack_event_logger_nodes_aggregator_servers'
+			// it ALSO lives in the option schema, so the cache's
+			// `aggregator_servers` is the merged WP-option view at first read.
+			// Subsequent WP-option mutations (admin add/remove) don't invalidate
+			// that cache until `plugins_loaded`'s one-shot reset, so reading the
+			// merged value here would resurrect-zombie servers we just deleted.
+			// is_config_server() already uses this pattern for the same reason
+			// (see its docblock).
+			$config_defaults = Config::load_config_defaults()['aggregator_servers'] ?? [];
 			if ( ! \is_array( $config_defaults ) ) {
 				$config_defaults = [];
 			}
