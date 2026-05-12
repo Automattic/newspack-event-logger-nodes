@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-05-12
+
+### Fixed
+
+- **Bool settings (`enable_logging`, `enable_workers`, `enable_jobs`, `enable_aggregator`) could get stuck "off" — checking the box and saving didn't take effect.** `skip_default_writes`'s `$value != $defaults[$key]` used loose comparison, so a user-saved `int 1` matched a config-file `bool true` default (`1 == true` is true loosely) → the filter called `delete_option()` and returned `$old_value` to WP, which then early-exited with "no change" → option remained at its previously-stored `0`. Switched to strict `!==` so int-vs-bool no longer collides, and changed the cleanup-side check to `$value !== $old_value` so the filter only touches the row when the value is actually changing. The filter still does its job for array-defaulted options (`log_events`, etc.); for bool-defaulted options it becomes a no-op (the options table stores `1`/`0` redundantly, which is the legacy behavior anyway).
+
 ## [0.2.11] - 2026-05-12
 
 ### Fixed

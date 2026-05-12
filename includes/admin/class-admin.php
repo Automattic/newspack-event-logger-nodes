@@ -160,7 +160,10 @@ class Admin {
 		// Skip writing a WP option when the value matches the config-file
 		// default — keeps the options table clean and lets file-side changes
 		// actually take effect instead of being shadowed by a stale stored
-		// copy of the old default.
+		// copy of the old default. Strict comparison so a bool-defaulted
+		// option (`enable_logging: true`) doesn't trip on the absint-int form
+		// of a user-saved "on" (`1 != true` is false under loose comparison
+		// but the user definitely wants the value written).
 		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );
 	}
 
@@ -170,10 +173,12 @@ class Admin {
 			return $value;
 		}
 		$defaults = Config::load_config_defaults();
-		if ( ! \array_key_exists( $key, $defaults ) || $value != $defaults[ $key ] ) {
+		if ( ! \array_key_exists( $key, $defaults ) || $value !== $defaults[ $key ] ) {
 			return $value;
 		}
-		if ( false !== $old_value ) {
+		// User is actually changing the stored value back to the default —
+		// drop the row so the file default kicks in next read.
+		if ( $value !== $old_value ) {
 			\delete_option( $option );
 		}
 		return $old_value;
