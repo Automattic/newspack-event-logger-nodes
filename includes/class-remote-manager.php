@@ -276,7 +276,18 @@ class RemoteManager {
 			\do_action( 'newspack_event_logger_nodes/health_check_discovery', $all_discovery );
 		}
 
-		self::sync_all_settings();
+		// Enqueue per-option sync_setting jobs (via JobIntake) instead of
+		// POSTing inline. Each setting becomes its own visible jobs.log
+		// entry that JobWorker dispatches independently — so a slow or
+		// failing spoke for one option doesn't block the rest of the
+		// sweep, every POST gets its own request_id / STALE_THRESHOLD,
+		// and operators can grep jobs.log to see exactly what got queued.
+		// Filter to the enabled server set we just probed; servers that
+		// failed health_check aren't worth fanning settings to right now.
+		$enabled_ids = \array_keys( $all_discovery );
+		if ( ! empty( $enabled_ids ) ) {
+			self::queue_sync_all_settings( $enabled_ids );
+		}
 	}
 
 	/**
@@ -286,6 +297,14 @@ class RemoteManager {
 	 * @param array|null $server_ids Optional list of server IDs to sync to (null = all enabled).
 	 */
 	public static function sync_all_settings( ?array $server_ids = null ): void {
+		// Long-running JobWorker caches the registry + Config singletons across
+		// many dispatches; reset so newly-added or re-enabled spokes (and
+		// newly-saved option values) are visible without waiting for the
+		// worker's ~595s respawn. Matches legacy newspack-event-aggregator
+		// RemoteManager::sync_all_settings.
+		Config::reset();
+		ServerRegistry::get_instance()->reset_cache();
+
 		$settings = \function_exists( 'apply_filters' )
 			? \apply_filters( 'newspack_event_logger_nodes/synced_settings', [] )
 			: [];
@@ -337,6 +356,12 @@ class RemoteManager {
 		if ( empty( $server_ids ) ) {
 			return 0;
 		}
+
+		// Long-running JobWorker caches Config + the registry; reset both
+		// so admin-saved option values land in the fanned-out jobs without
+		// waiting for the worker's ~595s respawn.
+		Config::reset();
+		ServerRegistry::get_instance()->reset_cache();
 
 		$settings = \function_exists( 'apply_filters' )
 			? \apply_filters( 'newspack_event_logger_nodes/synced_settings', [] )

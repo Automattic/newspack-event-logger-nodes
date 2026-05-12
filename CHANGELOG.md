@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-12
+
+### Fixed
+
+- **Periodic settings sweep silently never reached spokes for most options.** HealthCheckTick fired, `health_check` job dispatched, `RemoteManager::health_check()` ran, but `sync_all_settings()` did per-option HTTP POSTs inline from the JobWorker — and the long-running worker's cached `Config` + `ServerRegistry` singletons hid post-spawn option saves and registry mutations from the sweep. Two changes:
+  - `RemoteManager::health_check()` now calls `queue_sync_all_settings($enabled_server_ids)` instead of `sync_all_settings()` inline. Each setting becomes its own `sync_setting` job (via JobIntake → jobintake.log), visible in jobs.log and dispatched independently by JobWorker. Matches the legacy `newspack-event-aggregator`'s flow.
+  - `HealthCheckTick::maybe_enqueue()`, `RemoteManager::sync_all_settings()`, and `RemoteManager::queue_sync_all_settings()` now call `Config::reset()` + `ServerRegistry::get_instance()->reset_cache()` before reading their gates. Matches the explicit `reset_cache()` legacy plugin had at the top of `sync_all_settings` for exactly this scenario.
+
 ## [0.2.4] - 2026-05-12
 
 ### Fixed
