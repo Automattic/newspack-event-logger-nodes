@@ -26,11 +26,7 @@ class DiscoveryControllerTest extends TestCase {
 		$this->tmp = '/tmp/discovery-controller-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
 
-		\add_filter(
-			'newspack_nodes/base_dir',
-			fn () => $this->tmp
-		);
-		Config::reset();
+		$this->use_base_dir( $this->tmp );
 	}
 
 	protected function tearDown(): void {
@@ -55,11 +51,10 @@ class DiscoveryControllerTest extends TestCase {
 	}
 
 	public function test_get_discovery_returns_registered_hooks_and_custom_events(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = [ 'init', 'wp_loaded', 'shutdown' ];
-			$cfg['custom_events'] = [ 'my_event' => true ];
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => [ 'init', 'wp_loaded', 'shutdown' ],
+			'custom_events' => [ 'my_event' => true ],
+		] );
 
 		$ctrl = new DiscoveryController();
 		$resp = $ctrl->get_discovery( new \WP_REST_Request() );
@@ -74,11 +69,10 @@ class DiscoveryControllerTest extends TestCase {
 	}
 
 	public function test_custom_events_filtered_out_of_registered_hooks(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = [ 'my_event', 'init' ];
-			$cfg['custom_events'] = [ 'my_event' ];
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => [ 'my_event', 'init' ],
+			'custom_events' => [ 'my_event' ],
+		] );
 
 		$ctrl = new DiscoveryController();
 		$resp = $ctrl->get_discovery( new \WP_REST_Request() );
@@ -88,191 +82,63 @@ class DiscoveryControllerTest extends TestCase {
 	}
 
 	public function test_extract_string_list_handles_assoc_arrays(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			// Mixed: some assoc, some indexed.
-			$cfg['log_events']    = [ 'init' => true, 'shutdown' => true ];
-			$cfg['custom_events'] = [];
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => [ 'init' => true, 'shutdown' => true ],
+			'custom_events' => [],
+		] );
 		$ctrl = new DiscoveryController();
 		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		// Assoc-shape contributes the keys, not the bool values.
 		$this->assertContains( 'init', $body['registered_hooks'] );
 		$this->assertContains( 'shutdown', $body['registered_hooks'] );
 	}
 
 	public function test_extract_string_list_handles_indexed_arrays(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = [ 'a', 'b', 'c' ];
-			$cfg['custom_events'] = [];
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => [ 'a', 'b', 'c' ],
+			'custom_events' => [],
+		] );
 		$ctrl = new DiscoveryController();
 		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
 		$this->assertSame( [ 'a', 'b', 'c' ], $body['registered_hooks'] );
 	}
 
 	public function test_extract_string_list_dedupes(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = [ 'init', 'shutdown', 'init' ];
-			$cfg['custom_events'] = [];
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => [ 'init', 'shutdown', 'init' ],
+			'custom_events' => [],
+		] );
 		$ctrl = new DiscoveryController();
 		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		// Duplicates dropped.
 		$this->assertSame( [ 'init', 'shutdown' ], $body['registered_hooks'] );
 	}
 
 	public function test_extract_string_list_drops_empty_values(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = [ '', 'init', '' ];
-			$cfg['custom_events'] = [];
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => [ '', 'init', '' ],
+			'custom_events' => [],
+		] );
 		$ctrl = new DiscoveryController();
 		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
 		$this->assertSame( [ 'init' ], $body['registered_hooks'] );
 	}
 
 	public function test_extract_string_list_returns_empty_for_non_array(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = 'not-an-array';
-			$cfg['custom_events'] = 42;
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp, [
+			'log_events'    => 'not-an-array',
+			'custom_events' => 42,
+		] );
 		$ctrl = new DiscoveryController();
 		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
 		$this->assertSame( [], $body['registered_hooks'] );
 		$this->assertSame( [], $body['custom_events'] );
 	}
 
-	public function test_lag_omitted_when_no_readers_registered(): void {
-		\add_filter( 'newspack_nodes/config', static function ( array $cfg ): array {
-			$cfg['log_events']    = [ 'init' ];
-			$cfg['custom_events'] = [];
-			return $cfg;
-		} );
+	public function test_response_does_not_include_lag(): void {
+		// The lag field was driven by the deleted log_readers /
+		// log_reader_positions filters. Discovery no longer reports it.
 		$ctrl = new DiscoveryController();
 		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
 		$this->assertArrayNotHasKey( 'lag', $body );
-	}
-
-	public function test_lag_calculated_when_readers_present(): void {
-		// Create the requests.log directory tree so Partition::get_segments() returns
-		// something tangible. The lag math then sees a nonzero write position.
-		$logs_dir = $this->tmp . '/logs/requests.log/p0';
-		\mkdir( $logs_dir, 0755, true );
-		// Drop a fake segment file so get_segments() returns a non-empty list.
-		\file_put_contents( $logs_dir . '/0.log', \str_repeat( 'X', 100 ) );
-
-		\add_filter(
-			'newspack_event_logger_nodes/log_readers',
-			static function ( $r ) {
-				return [
-					'request-workers' => [
-						'inputs'  => [ 'requests.log' ],
-						'outputs' => [],
-					],
-				];
-			}
-		);
-		\add_filter(
-			'newspack_event_logger_nodes/log_reader_positions',
-			static function ( $p ) {
-				// Reader at segment 0 offset 0 — full segment is unread.
-				return [
-					'request-workers' => [
-						0 => [ 'requests.log' => [ 'seg' => 0, 'off' => 0 ] ],
-					],
-				];
-			}
-		);
-
-		$ctrl = new DiscoveryController();
-		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		$this->assertArrayHasKey( 'lag', $body );
-		$this->assertIsInt( $body['lag'] );
-		// Reader at segment 0 offset 0, writer at end of segment 0 (size 100).
-		// Lag is exactly the unread bytes: max(0, 100 - 0) = 100.
-		$this->assertSame( 100, $body['lag'] );
-	}
-
-	public function test_lag_calculated_zero_when_reader_caught_up(): void {
-		// No segment file means an empty Partition; calculate_lag() short-circuits
-		// for empty segments, so lag stays at 0 unless we synthesize a segment.
-		$logs_dir = $this->tmp . '/logs/requests.log/p0';
-		\mkdir( $logs_dir, 0755, true );
-
-		\add_filter(
-			'newspack_event_logger_nodes/log_readers',
-			static function ( $r ) {
-				return [
-					'request-workers' => [
-						'inputs'  => [ 'requests.log' ],
-						'outputs' => [],
-					],
-				];
-			}
-		);
-
-		$ctrl = new DiscoveryController();
-		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		// No segments → empty inputs → lag should be 0 (initialized) or omitted.
-		// Function returns 0 here because readers are present.
-		$this->assertSame( 0, $body['lag'] ?? null );
-	}
-
-	public function test_lag_skips_readers_with_no_inputs(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/log_readers',
-			static function ( $r ) {
-				return [
-					'no-inputs' => [
-						'inputs'  => [],
-						'outputs' => [ 'somewhere.log' ],
-					],
-				];
-			}
-		);
-		$ctrl = new DiscoveryController();
-		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		// Reader has no inputs — lag stays at 0.
-		$this->assertSame( 0, $body['lag'] ?? null );
-	}
-
-	public function test_lag_skips_readers_with_empty_first_input(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/log_readers',
-			static function ( $r ) {
-				return [
-					'empty-input' => [
-						'inputs'  => [ '' ], // Empty string first input.
-						'outputs' => [],
-					],
-				];
-			}
-		);
-		$ctrl = new DiscoveryController();
-		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		$this->assertSame( 0, $body['lag'] ?? null );
-	}
-
-	public function test_lag_skips_readers_with_non_array_inputs(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/log_readers',
-			static function ( $r ) {
-				return [
-					'bad-input' => [
-						'inputs'  => 'not-an-array',
-						'outputs' => [],
-					],
-				];
-			}
-		);
-		$ctrl = new DiscoveryController();
-		$body = $ctrl->get_discovery( new \WP_REST_Request() )->get_data();
-		$this->assertSame( 0, $body['lag'] ?? null );
 	}
 
 	public function test_get_discovery_returns_wp_error_when_rate_limited(): void {

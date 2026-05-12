@@ -25,15 +25,14 @@ class FirehoseController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
 
 	/**
-	 * Default log catalog. Plugins can extend via the
-	 * `newspack_nodes/firehose_logs` filter — the legacy plugin's
-	 * `event_logger_log_readers` stack registers both inputs and outputs through
-	 * a similar shape; here we accept a flat key→filename map.
+	 * Default log catalog — flat key→filename map. The topology fleet is the
+	 * source of truth for which logs actually exist; this list mirrors what
+	 * the bundled topologies write.
 	 *
 	 * @return array<string,string> log key (no `.log`) → filename (with `.log`)
 	 */
 	public static function get_available_logs(): array {
-		$defaults = [
+		return [
 			'firehose'   => 'firehose.log',
 			'jobs'       => 'jobs.log',
 			'jobintake'  => 'jobintake.log',
@@ -41,13 +40,6 @@ class FirehoseController extends PerformanceControllerBase {
 			'errors'     => 'errors.log',
 			'flames'     => 'flames.log',
 		];
-		if ( \function_exists( 'apply_filters' ) ) {
-			$filtered = \apply_filters( 'newspack_nodes/firehose_logs', $defaults );
-			if ( \is_array( $filtered ) && ! empty( $filtered ) ) {
-				return $filtered;
-			}
-		}
-		return $defaults;
 	}
 
 	public static function get_default_log(): string {

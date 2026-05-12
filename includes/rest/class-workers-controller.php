@@ -6,9 +6,8 @@
  *
  * Sources worker descriptors from the runtime's Bootstrap::expand_workers()
  * (one row per topology × partition). Live cursor positions come from
- * memcache (`evlog:pos:{host}:{name}:p{N}`) when available, falling back to
- * the per-reader offsetlog provided by the
- * `newspack_event_logger_nodes/log_reader_positions` filter.
+ * memcache (`np:pos:{host}:{path}:p{N}`) when available, falling back to
+ * the on-disk offsetlog Partition.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -32,9 +31,6 @@ class WorkersController extends PerformanceControllerBase {
 	 * so this mirrors them. The `inputs[0]` entry is the primary tail used to
 	 * resolve segments + bytes-behind; additional inputs are reported in the API
 	 * but not factored into the headline stats.
-	 *
-	 * Application plugins can extend this via the `newspack_event_logger_nodes/log_readers`
-	 * filter (legacy shape: `[ type => [ 'inputs' => [...], 'outputs' => [...] ] ]`).
 	 *
 	 * `aggregator` has no local input — StreamMerger pulls remote firehoses via
 	 * SSE — so it gets `inputs => []` and the controller reports zero segments
@@ -142,19 +138,6 @@ class WorkersController extends PerformanceControllerBase {
 			}
 		}
 
-		// Pull saved positions once — filter return shape:
-		// [ name => [ partition => [ input_log => [ seg, off ] ] ] ]
-		$saved_positions = [];
-		if ( \function_exists( 'apply_filters' ) ) {
-			$saved_positions = (array) \apply_filters( 'newspack_event_logger_nodes/log_reader_positions', [] );
-		}
-
-		// Pull additional reader configs (input_log/output_log per reader name).
-		$readers = [];
-		if ( \function_exists( 'apply_filters' ) ) {
-			$readers = (array) \apply_filters( 'newspack_event_logger_nodes/log_readers', [] );
-		}
-
 		foreach ( $descriptors as $w ) {
 			$type      = (string) ( $w['type'] ?? '' );
 			$partition = (int) ( $w['partition'] ?? 0 );
@@ -164,14 +147,12 @@ class WorkersController extends PerformanceControllerBase {
 			}
 			$lock_dir = "{$locks_base}/{$type}.p{$partition}.lock.d";
 
-			// Resolve inputs/outputs: prefer the static topology map; fall back
-			// to anything a plugin registered via the log_readers filter; then
-			// last-ditch default to firehose.log so we don't silently report a
-			// blank source (matches legacy single-worker behavior).
-			$reader_cfg = $readers[ $type ] ?? [];
+			// Resolve inputs/outputs from the static topology map; default to
+			// firehose.log when a topology isn't listed so we don't report a
+			// blank source.
 			$static_cfg = self::WORKER_INPUTS[ $type ] ?? [];
-			$inputs     = $reader_cfg['inputs'] ?? $static_cfg['inputs'] ?? null;
-			$outputs    = $reader_cfg['outputs'] ?? $static_cfg['outputs'] ?? null;
+			$inputs     = $static_cfg['inputs'] ?? null;
+			$outputs    = $static_cfg['outputs'] ?? null;
 			if ( ! \is_array( $inputs ) ) {
 				$inputs = [ 'firehose.log' ];
 			}
@@ -190,8 +171,7 @@ class WorkersController extends PerformanceControllerBase {
 				$lock_dir,
 				$now,
 				$stale_to,
-				$saved_positions,
-				$reader_cfg['handler'] ?? null
+				null
 			);
 			// Surface the full lists so the dashboard can display secondary inputs
 			// (e.g. firehose-workers also tails jobintake.log) and downstream
@@ -212,10 +192,7 @@ class WorkersController extends PerformanceControllerBase {
 					$cursor_seg    = (int) ( $worker['cursor_seg'] ?? 0 );
 					$cursor_offset = (int) ( $worker['cursor_offset'] ?? 0 );
 				} else {
-					$cursor = $this->get_live_position( $type, $partition, $log_name );
-					if ( null === $cursor ) {
-						$cursor = $saved_positions[ $type ][ $partition ][ $log_name ] ?? null;
-					}
+					$cursor        = $this->get_live_position( $type, $partition, $log_name );
 					$cursor_seg    = null !== $cursor ? (int) ( $cursor['seg'] ?? 0 ) : null;
 					$cursor_offset = null !== $cursor ? (int) ( $cursor['off'] ?? 0 ) : null;
 				}
@@ -375,7 +352,6 @@ class WorkersController extends PerformanceControllerBase {
 		string $lock_dir,
 		int $now,
 		int $stale_timeout,
-		array $saved_positions,
 		?string $handler_name
 	): array {
 		// Workers without a local tail (e.g. aggregator pulls remote feeds via
@@ -392,11 +368,9 @@ class WorkersController extends PerformanceControllerBase {
 			$segments      = $partition_obj->get_segments();
 			$total_size    = (int) \array_sum( \array_column( $segments, 'size' ) );
 
-			// Cursor: prefer live (memcache); fall back to saved offsetlog.
-			$cursor = $this->get_live_position( $type, $partition, $input_log );
-			if ( null === $cursor ) {
-				$cursor = $saved_positions[ $type ][ $partition ][ $input_log ] ?? null;
-			}
+			// Cursor: live position from memcache (falls back to disk offsetlog
+			// internally via read_offsetlog_position).
+			$cursor        = $this->get_live_position( $type, $partition, $input_log );
 			$cursor_seg    = (int) ( $cursor['seg'] ?? 0 );
 			$cursor_offset = (int) ( $cursor['off'] ?? 0 );
 

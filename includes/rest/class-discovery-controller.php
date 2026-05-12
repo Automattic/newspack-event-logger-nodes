@@ -19,7 +19,6 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 \defined( 'ABSPATH' ) || exit;
 
-use Newspack_Nodes\Partition;
 
 class DiscoveryController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -58,11 +57,6 @@ class DiscoveryController extends PerformanceControllerBase {
 			'custom_events'    => $custom_events,
 		];
 
-		$lag = $this->calculate_lag( $config );
-		if ( null !== $lag ) {
-			$response['lag'] = $lag;
-		}
-
 		return new \WP_REST_Response( $response, 200 );
 	}
 
@@ -88,98 +82,4 @@ class DiscoveryController extends PerformanceControllerBase {
 		return \array_values( \array_unique( $out ) );
 	}
 
-	/**
-	 * Compute max lag (bytes) across registered log readers. Readers expose
-	 * `inputs` and a saved-position lookup via the
-	 * `newspack_event_logger_nodes/log_reader_positions` filter (return shape:
-	 * `[ name => [ input_log => [ 'seg' => int, 'off' => int ] ] ]`).
-	 *
-	 * Returns null if we have no information (no readers registered or position
-	 * filter unavailable) — caller omits the `lag` key from the response in
-	 * that case rather than reporting a misleading zero.
-	 *
-	 * @param array<string,mixed> $config Loaded config (avoids the second load).
-	 */
-	private function calculate_lag( array $config ): ?int {
-		try {
-			$readers = [];
-			if ( \function_exists( 'apply_filters' ) ) {
-				$readers = (array) \apply_filters( 'newspack_event_logger_nodes/log_readers', [] );
-			}
-			if ( empty( $readers ) ) {
-				return null;
-			}
-
-			$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-			$segment_size   = (int) ( $config['segment_size'] ?? ( 64 * 1024 * 1024 ) );
-			$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
-			$log_base       = $base_dir . '/logs';
-
-			$positions = [];
-			if ( \function_exists( 'apply_filters' ) ) {
-				$positions = (array) \apply_filters( 'newspack_event_logger_nodes/log_reader_positions', [] );
-			}
-
-			$max_lag = 0;
-			foreach ( $readers as $name => $reader_config ) {
-				$inputs = $reader_config['inputs'] ?? [];
-				if ( ! \is_array( $inputs ) || empty( $inputs ) ) {
-					continue;
-				}
-				$input_log = (string) $inputs[0];
-				if ( '' === $input_log ) {
-					continue;
-				}
-
-				for ( $p = 0; $p < $num_partitions; $p++ ) {
-					$partition = new Partition( "{$log_base}/{$input_log}", $p );
-					$segments  = $partition->get_segments();
-					if ( empty( $segments ) ) {
-						continue;
-					}
-					$write_pos = $partition->get_current_position();
-
-					$pos        = $positions[ $name ][ $p ][ $input_log ] ?? null;
-					$reader_seg = (int) ( $pos['seg'] ?? 0 );
-					$reader_off = (int) ( $pos['off'] ?? 0 );
-
-					$lag = $this->calculate_position_difference(
-						$write_pos['segment_id'] ?? 0,
-						$write_pos['offset'] ?? 0,
-						$reader_seg,
-						$reader_off,
-						$segment_size
-					);
-					if ( $lag > $max_lag ) {
-						$max_lag = $lag;
-					}
-				}
-			}
-			return $max_lag;
-		} catch ( \Throwable $e ) {
-			return null;
-		}
-	}
-
-	/**
-	 * Bytes-behind helper: 0 if reader is at/beyond writer; otherwise the sum
-	 * of (remaining-in-reader-segment + full-segments-between + bytes-in-write-segment).
-	 */
-	private function calculate_position_difference(
-		int $write_seg,
-		int $write_off,
-		int $reader_seg,
-		int $reader_off,
-		int $segment_size
-	): int {
-		if ( $write_seg === $reader_seg ) {
-			return \max( 0, $write_off - $reader_off );
-		}
-		if ( $write_seg < $reader_seg ) {
-			return 0;
-		}
-		$remaining_in_reader = $segment_size - $reader_off;
-		$full_between        = \max( 0, $write_seg - $reader_seg - 1 );
-		return $remaining_in_reader + ( $full_between * $segment_size ) + $write_off;
-	}
 }

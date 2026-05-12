@@ -58,20 +58,15 @@ class FirehoseStreamControllerTest extends TestCase {
 		SSEControllerBase::set_cache( null );
 		unset( $_SERVER['REMOTE_ADDR'] );
 		$this->rmdir_recursive( $this->tmp_dir );
-		unset( $GLOBALS['_wp_actions']['newspack_nodes/config'] );
 		parent::tearDown();
 	}
 
 	/**
-	 * Wire each test's logs base into PerformanceControllerBase via the config filter.
+	 * Wire each test's logs base into PerformanceControllerBase via the
+	 * per-test config file (LOCAL_NEWSPACK_NODES_CONF).
 	 */
 	private function pin_log_base(): void {
-		$base = $this->tmp_dir;
-		add_filter( 'newspack_nodes/config', function ( array $cfg ) use ( $base ): array {
-			$cfg['base_directory'] = $base;
-			$cfg['num_partitions'] = 1;
-			return $cfg;
-		} );
+		$this->use_base_dir( $this->tmp_dir, [ 'num_partitions' => 1 ] );
 	}
 
 	/**

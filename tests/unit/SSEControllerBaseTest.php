@@ -870,11 +870,7 @@ class SSEControllerBaseTest extends TestCase {
 		\file_put_contents( "{$dir}/0.log", $entry_line . "\n" );
 
 		// Override config so num_partitions=1.
-		add_filter( 'newspack_nodes/config', function ( array $cfg ) use ( $base ): array {
-			$cfg['base_directory'] = \dirname( $base );
-			$cfg['num_partitions'] = 1;
-			return $cfg;
-		} );
+		$this->use_base_dir( \dirname( $base ) );
 
 		$ctrl            = new BoundedSSEController();
 		$ctrl->max_loops = 4;
@@ -905,7 +901,6 @@ class SSEControllerBaseTest extends TestCase {
 		$this->assertStringContainsString( '"num_partitions":1', $out );
 		$this->assertStringContainsString( '"interval":100', $out );
 
-		unset( $GLOBALS['_wp_actions']['newspack_nodes/config'] );
 	}
 
 	public function test_stream_log_run_returns_wp_error_when_rate_limited(): void {
@@ -936,11 +931,7 @@ class SSEControllerBaseTest extends TestCase {
 		\mkdir( "{$base}/errors.log/p0", 0755, true );
 		\file_put_contents( "{$base}/errors.log/p0/0.log", '' );
 
-		add_filter( 'newspack_nodes/config', function ( array $cfg ) use ( $base ): array {
-			$cfg['base_directory'] = \dirname( $base );
-			$cfg['num_partitions'] = 1;
-			return $cfg;
-		} );
+		$this->use_base_dir( \dirname( $base ) );
 
 		$ctrl            = new BoundedSSEController();
 		$ctrl->max_loops = 0; // Don't enter the loop body; just emit config.
@@ -965,7 +956,6 @@ class SSEControllerBaseTest extends TestCase {
 		$this->assertStringContainsString( '"flavor":"cherry"', $out );
 		$this->assertStringContainsString( '"depth":3', $out );
 
-		unset( $GLOBALS['_wp_actions']['newspack_nodes/config'] );
 	}
 
 	public function test_stream_log_run_releases_slot_on_completion(): void {
@@ -974,11 +964,7 @@ class SSEControllerBaseTest extends TestCase {
 		\mkdir( "{$base}/errors.log/p0", 0755, true );
 		\file_put_contents( "{$base}/errors.log/p0/0.log", '' );
 
-		add_filter( 'newspack_nodes/config', function ( array $cfg ) use ( $base ): array {
-			$cfg['base_directory'] = \dirname( $base );
-			$cfg['num_partitions'] = 1;
-			return $cfg;
-		} );
+		$this->use_base_dir( \dirname( $base ) );
 
 		$ctrl            = new BoundedSSEController();
 		$ctrl->max_loops = 1;
@@ -997,7 +983,6 @@ class SSEControllerBaseTest extends TestCase {
 		// Slot must be released by end_sse_stream() in `finally`.
 		$this->assertFalse( $ctrl->get_slot() );
 
-		unset( $GLOBALS['_wp_actions']['newspack_nodes/config'] );
 	}
 
 	public function test_stream_log_run_emits_positions_after_batch(): void {
@@ -1009,11 +994,7 @@ class SSEControllerBaseTest extends TestCase {
 		$entry_line = self::packed_entry_line( [ 'rid' => 'rA', 'k' => 'error', 'm' => 'boom', 'ts' => 1, 'n' => 1 ] );
 		\file_put_contents( "{$dir}/0.log", $entry_line . "\n" );
 
-		add_filter( 'newspack_nodes/config', function ( array $cfg ) use ( $base ): array {
-			$cfg['base_directory'] = \dirname( $base );
-			$cfg['num_partitions'] = 1;
-			return $cfg;
-		} );
+		$this->use_base_dir( \dirname( $base ) );
 
 		$ctrl            = new BoundedSSEController();
 		$ctrl->max_loops = 8;
@@ -1043,6 +1024,5 @@ class SSEControllerBaseTest extends TestCase {
 		$this->assertStringContainsString( "event: errors\n", $out );
 		$this->assertStringContainsString( "event: positions\n", $out );
 
-		unset( $GLOBALS['_wp_actions']['newspack_nodes/config'] );
 	}
 }

@@ -248,14 +248,7 @@ class AdminTest extends TestCase {
 		$this->base_dir = '/tmp/newspack-event-logger-nodes-admin-test-' . \uniqid();
 		\mkdir( $this->base_dir, 0755, true );
 
-		// Point the runtime base_dir filter at our temp dir so Config::get_locks_directory() works.
-		\add_filter(
-			'newspack_nodes/base_dir',
-			function () {
-				return $this->base_dir;
-			}
-		);
-		Config::reset();
+		$this->use_base_dir( $this->base_dir );
 	}
 
 	protected function tearDown(): void {
@@ -562,25 +555,6 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_maybe_request_worker_restart_filter_extends_groups(): void {
-		$this->prepare_lock_dir( 'custom-workers', 0 );
-
-		\add_filter(
-			'newspack_event_logger_nodes/worker_restart_groups',
-			function ( $groups, $option_short ) {
-				if ( 'significant_events' === $option_short ) {
-					$groups[] = 'custom-workers';
-				}
-				return $groups;
-			}
-		);
-
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
-
-		$this->assertFileExists( $this->base_dir . '/locks/custom-workers.p0.lock.d/restart' );
-	}
-
 	// ---- render_settings_page --------------------------------------------
 
 	public function test_render_settings_page_outputs_settings_fields_markup(): void {
@@ -862,14 +836,8 @@ class AdminTest extends TestCase {
 	}
 
 	public function test_skip_urls_callback_uses_config_default_when_unset(): void {
-		// Inject default skip_urls via filter.
-		\add_filter(
-			'newspack_nodes/config',
-			static function ( array $cfg ): array {
-				$cfg['skip_urls'] = [ '/wp-cron.php' ];
-				return $cfg;
-			}
-		);
+		// Inject default skip_urls via per-test config file.
+		$this->use_base_dir( $this->base_dir, [ 'skip_urls' => [ '/wp-cron.php' ] ] );
 
 		$admin = new Admin();
 		\ob_start();
@@ -1117,48 +1085,6 @@ class AdminTest extends TestCase {
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_unknown_option' );
 		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
 		$this->assertFileDoesNotExist( $this->base_dir . '/locks/job-workers.p0.lock.d/restart' );
-	}
-
-	public function test_maybe_request_worker_restart_filter_returns_empty_clears_groups(): void {
-		// Filter returns empty array → no restart.
-		\add_filter(
-			'newspack_event_logger_nodes/worker_restart_groups',
-			static function () {
-				return [];
-			}
-		);
-		$this->prepare_lock_dir( 'request-workers', 0 );
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
-		// Filter cleared the group → no restart written.
-		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
-	}
-
-	public function test_maybe_request_worker_restart_filter_dedupes_groups(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/worker_restart_groups',
-			static function ( $groups ) {
-				// Add the same group twice — uniqueness must apply.
-				return [ 'request-workers', 'request-workers', 'request-workers' ];
-			}
-		);
-		$this->prepare_lock_dir( 'request-workers', 0 );
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
-		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
-	}
-
-	public function test_maybe_request_worker_restart_filter_drops_non_string_entries(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/worker_restart_groups',
-			static function ( $groups ) {
-				return [ 'request-workers', 42, [ 'nested' ], null ];
-			}
-		);
-		$this->prepare_lock_dir( 'request-workers', 0 );
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
-		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
 	}
 
 	// ---- handle_reset_settings additional branches ------------------------

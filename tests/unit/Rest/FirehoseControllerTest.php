@@ -141,16 +141,6 @@ class FirehoseControllerTest extends TestCase {
 		$this->assertFalse( $resp2->get_data()['success'] );
 	}
 
-	public function test_filter_extends_log_catalog(): void {
-		\add_filter(
-			'newspack_nodes/firehose_logs',
-			static fn ( $logs ) => \array_merge( $logs, [ 'custom' => 'custom.log' ] )
-		);
-		$logs = FirehoseController::get_available_logs();
-		$this->assertArrayHasKey( 'custom', $logs );
-		$this->assertSame( 'custom.log', $logs['custom'] );
-	}
-
 	public function test_permission_callback_rejects_unauthorized(): void {
 		$ctrl                         = new FirehoseController();
 		$GLOBALS['_current_user_can'] = false;

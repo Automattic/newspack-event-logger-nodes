@@ -25,8 +25,7 @@ class RequestLogControllerTest extends TestCase {
 
 		$this->tmp = '/tmp/request-log-controller-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
-		\add_filter( 'newspack_nodes/base_dir', fn () => $this->tmp );
-		Config::reset();
+		$this->use_base_dir( $this->tmp );
 	}
 
 	protected function tearDown(): void {

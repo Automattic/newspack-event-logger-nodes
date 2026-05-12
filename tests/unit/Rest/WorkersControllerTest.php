@@ -25,8 +25,7 @@ class WorkersControllerTest extends TestCase {
 
 		$this->tmp = '/tmp/workers-controller-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
-		\add_filter( 'newspack_nodes/base_dir', fn () => $this->tmp );
-		Config::reset();
+		$this->use_base_dir( $this->tmp );
 
 		// Re-register the application's topology filter — many other tests wipe
 		// $GLOBALS['_wp_actions'] in their setUp, which kills the filter
@@ -162,32 +161,6 @@ class WorkersControllerTest extends TestCase {
 		$this->assertNotNull( $firehose );
 		$this->assertSame( 5, $firehose['cursor_seg'] );
 		$this->assertSame( 1234, $firehose['cursor_offset'] );
-	}
-
-	public function test_get_workers_falls_back_to_saved_positions_filter(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/log_reader_positions',
-			static function () {
-				return [
-					'firehose-workers' => [
-						0 => [ 'firehose.log' => [ 'seg' => 9, 'off' => 5555 ] ],
-					],
-				];
-			}
-		);
-		$ctrl = new WorkersController();
-		$resp = $ctrl->get_workers( new \WP_REST_Request() );
-		$body = $resp->get_data();
-		$firehose = null;
-		foreach ( $body['workers'] as $w ) {
-			if ( 'firehose-workers' === $w['type'] ) {
-				$firehose = $w;
-				break;
-			}
-		}
-		$this->assertNotNull( $firehose );
-		$this->assertSame( 9, $firehose['cursor_seg'] );
-		$this->assertSame( 5555, $firehose['cursor_offset'] );
 	}
 
 	public function test_get_workers_marks_worker_running_when_heartbeat_fresh(): void {

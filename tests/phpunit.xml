@@ -5,6 +5,9 @@
          colors="true"
          cacheDirectory="/tmp/phpunit-cache-newspack-event-logger-nodes"
          beStrictAboutOutputDuringTests="false">
+    <php>
+        <env name="LOCAL_NEWSPACK_NODES_CONF" value="newspack-event-logger-nodes-test-config.php"/>
+    </php>
     <testsuites>
         <testsuite name="Unit Tests"><directory>unit</directory></testsuite>
         <testsuite name="Integration Tests"><directory>integration</directory></testsuite>

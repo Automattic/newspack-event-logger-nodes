@@ -19,27 +19,17 @@ class PerfUrlsControllerTest extends TestCase {
 		$GLOBALS['_rest_routes']      = [];
 		$GLOBALS['_current_user_can'] = true;
 		$GLOBALS['_wp_options']       = [];
-		// Drop any leftover filters from sibling tests.
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
-		// Substrate Config caches; reset so each test sees its own filter overlay.
-		\Newspack_Nodes\Config::reset();
 		$this->cache = new FakeMemcached();
 		PerformanceControllerBase::set_cache( $this->cache );
 		$this->tmp = $this->make_temp_dir();
-		\add_filter(
-			'newspack_nodes/config',
-			fn( array $cfg ): array => \array_merge( $cfg, [
-				'num_partitions' => 1,
-				'base_directory' => $this->tmp,
-				'max_lifespan'   => 86400,
-			] )
-		);
+		$this->use_base_dir( $this->tmp, [
+			'num_partitions' => 1,
+			'max_lifespan'   => 86400,
+		] );
 	}
 
 	protected function tearDown(): void {
 		PerformanceControllerBase::set_cache( null );
-		$GLOBALS['_wp_actions']['newspack_nodes/config'] = [];
-		\Newspack_Nodes\Config::reset();
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}

@@ -115,13 +115,7 @@ class AggregatorStatusControllerTest extends TestCase {
 
 	public function test_get_status_clamps_num_partitions_to_max_16(): void {
 		// Force num_partitions to 64; controller must clamp to 16.
-		\add_filter(
-			'newspack_nodes/config',
-			static function ( array $cfg ): array {
-				$cfg['num_partitions'] = 64;
-				return $cfg;
-			}
-		);
+		$this->use_base_dir( $this->make_temp_dir(), [ 'num_partitions' => 64 ] );
 		\update_option(
 			ServerRegistry::OPTION_KEY,
 			[
@@ -142,13 +136,7 @@ class AggregatorStatusControllerTest extends TestCase {
 	}
 
 	public function test_get_status_clamps_num_partitions_min_1(): void {
-		\add_filter(
-			'newspack_nodes/config',
-			static function ( array $cfg ): array {
-				$cfg['num_partitions'] = 0; // invalid
-				return $cfg;
-			}
-		);
+		$this->use_base_dir( $this->make_temp_dir(), [ 'num_partitions' => 0 ] );
 		\update_option(
 			ServerRegistry::OPTION_KEY,
 			[ 'sp' => [ 'url' => 'https://x.example/', 'enabled' => true ] ]
