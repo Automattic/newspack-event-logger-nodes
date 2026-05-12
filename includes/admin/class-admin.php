@@ -173,7 +173,19 @@ class Admin {
 			return $value;
 		}
 		$defaults = Config::load_config_defaults();
-		if ( ! \array_key_exists( $key, $defaults ) || $value !== $defaults[ $key ] ) {
+		if ( ! \array_key_exists( $key, $defaults ) ) {
+			return $value;
+		}
+		// Normalize bool defaults (`true`/`false` in config files) to int —
+		// our bool-typed sanitize_callbacks (`absint`) always produce int
+		// 0/1, so without this the strict compare never matches a bool
+		// default and the filter is a no-op for every toggle. Other types
+		// (int, string, array) are compared as-is.
+		$default = $defaults[ $key ];
+		if ( \is_bool( $default ) ) {
+			$default = (int) $default;
+		}
+		if ( $value !== $default ) {
 			return $value;
 		}
 		// User is actually changing the stored value back to the default —

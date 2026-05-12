@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-05-12
+
+### Fixed
+
+- **`skip_default_writes` was a no-op for bool-defaulted options after the 0.2.12 strict-comparison fix.** Config-file defaults for `enable_logging`, `enable_workers`, `enable_jobs`, `enable_aggregator` are PHP `bool true/false`, but the bool sanitize_callback (`absint`) produces `int 0/1` — strict `!==` between an int value and a bool default never matched, so the filter never trimmed the options-table row even when the user's value was equivalent to the file default. Normalize a `bool` default to `int` before the strict compare; other types (int, string, array) are compared as-is. Net result: setting a bool option to its file-default value now drops the row, so subsequent file-side changes to the default actually take effect.
+
 ## [0.2.12] - 2026-05-12
 
 ### Fixed
