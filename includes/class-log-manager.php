@@ -410,6 +410,21 @@ class LogManager {
 	}
 
 	/**
+	 * Drain every materialized Partition's in-memory batch to disk.
+	 *
+	 * Equivalent of the legacy `flush_buffer()`. Callers that hand off to a
+	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
+	 * pyrobase's template execution) call this BEFORE `proc_open` so the
+	 * parent's buffered Messages land in segment order before the child starts
+	 * appending. Without it, the subprocess can write between the parent's
+	 * accumulated Messages and the next size-threshold / timer flush, leaving
+	 * entries on disk out of logical order.
+	 */
+	public function flush(): void {
+		$this->topic?->flush();
+	}
+
+	/**
 	 * Refresh firehose segment state from disk.
 	 *
 	 * Call after a subprocess that may have written to or rotated the firehose,
