@@ -101,7 +101,9 @@ class SettingsController extends PerformanceControllerBase {
 			);
 		}
 
-		$updated = \update_option( $option, $sanitized );
+		// Non-autoload (third arg false): matches legacy and keeps the
+		// options-cache footprint bounded as the writable set grows.
+		$updated = \update_option( $option, $sanitized, false );
 
 		// Reset Config cache so the new value is visible on the next read.
 		// Application Config::reset() also resets the substrate Config, so

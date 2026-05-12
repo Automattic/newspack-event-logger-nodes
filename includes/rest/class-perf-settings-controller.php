@@ -103,7 +103,10 @@ class PerfSettingsController extends PerformanceControllerBase {
 		// finally clause guarantees we restore the flag even on update failure.
 		SettingsSync::suppress_sync( true );
 		try {
-			$updated = \update_option( $option, $sanitized );
+			// Non-autoload (third arg false): matches legacy and keeps the
+			// options-cache footprint bounded — log_events / significant_events
+			// in particular can carry hundreds of strings.
+			$updated = \update_option( $option, $sanitized, false );
 		} finally {
 			SettingsSync::suppress_sync( false );
 		}

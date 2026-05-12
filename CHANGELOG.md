@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-05-12
+
+### Fixed
+
+- **`flush_every_line` debug toggle was dead.** `LogManager::__construct` read the flag from Config but `message()` never branched on it, so flipping the Debugging-section toggle had no effect. Now calls `$this->topic->flush()` after each message when set — matches legacy `LogManager::message()`'s behavior.
+- **`RemoteManager::sync_all_settings()` and `queue_sync_all_settings()` silently skipped `newspack_nodes_num_partitions`.** The prefix-strip only handled `newspack_event_logger_nodes_`; substrate-prefixed keys never matched a config slot and were quietly dropped. Both methods now use the same two-prefix `foreach + break` strip as `SettingsSync::maybe_queue_static_sync` — single source of truth across all three call sites.
+- **`SettingsSync::on_option_update()` (instance-mode dispatch) gated on `enable_workers`, the static path gated on `enable_aggregator`.** Split polarity meant a hub configured for aggregator fan-out could skip the instance-mode path while still firing the static one. Both paths now use `enable_aggregator === true`, the documented single operator switch.
+- **REST settings controllers wrote options with autoload defaulting to `true`.** Legacy passed `false` explicitly. Restored — keeps the options-cache footprint bounded as `log_events` / `significant_events` etc. grow.
+
 ## [0.2.7] - 2026-05-12
 
 ### Fixed
