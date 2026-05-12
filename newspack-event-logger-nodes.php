@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.2.5
+ * Version: 0.2.6
  * Requires Plugins: newspack-nodes
  *
  * @package Newspack_Event_Logger_Nodes
@@ -11,7 +11,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.5' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.6' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -409,6 +409,12 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		$rest_url            = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
 		$aggregator_rest_url = \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes-aggregator/v1/' ) : '/wp-json/newspack-nodes-aggregator/v1/';
 		$nonce               = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
+		// Worker-restart endpoints require a second nonce keyed to a
+		// distinct action so a leaked wp_rest nonce can't be used to
+		// force-restart workers. WorkerStatus.js reads `restartNonce`
+		// and passes it as the `nonce` body param; the server checks via
+		// `wp_verify_nonce( $nonce, 'newspack_nodes_restart_worker' )`.
+		$restart_nonce       = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
 		\wp_localize_script(
 			$handle,
 			'NewspackNodesData',
@@ -416,6 +422,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 				'restUrl'           => $rest_url,
 				'aggregatorRestUrl' => $aggregator_rest_url,
 				'nonce'             => $nonce,
+				'restartNonce'      => $restart_nonce,
 				'tree'              => $tree,
 				'version'           => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
 			]

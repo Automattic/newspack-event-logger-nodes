@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-12
+
+### Fixed
+
+- **Worker Status "Restart" buttons returned `Invalid or missing security nonce`.** The plugin localized only `NewspackNodesData.nonce` (action `wp_rest`) but the restart endpoint checks against action `newspack_nodes_restart_worker`, and the React tree reads `NewspackNodesData.restartNonce` — neither side matched the other. Added a second `restartNonce` to `wp_localize_script` keyed to the right action.
+
 ## [0.2.5] - 2026-05-12
 
 ### Fixed
