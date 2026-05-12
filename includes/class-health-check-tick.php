@@ -110,19 +110,28 @@ class HealthCheckTick extends Node {
 
 		$this->last_check = $now;
 
-		$log_manager = LogManager::instance();
-		$log_manager->message(
-			'job',
-			[
-				'm' => [
-					'handler'    => 'remote_manager',
-					'parameters' => [
-						'action'    => 'health_check',
-						'queued_at' => $now,
+		// Worker process REQUEST_URI is the spawn endpoint (in skip_urls),
+		// so the parent LogManager is disabled. begin_job_context suspends
+		// it, swaps REQUEST_URI to /jobs/health-check-tick, and the fresh
+		// LogManager built on first instance() call is enabled.
+		$orig_server = JobWorker::begin_job_context( 'health-check-tick' );
+		try {
+			$log_manager = LogManager::instance();
+			$log_manager->message(
+				'job',
+				[
+					'm' => [
+						'handler'    => 'remote_manager',
+						'parameters' => [
+							'action'    => 'health_check',
+							'queued_at' => $now,
+						],
 					],
-				],
-			]
-		);
-		$log_manager->flush();
+				]
+			);
+			$log_manager->flush();
+		} finally {
+			JobWorker::end_job_context( $orig_server );
+		}
 	}
 }

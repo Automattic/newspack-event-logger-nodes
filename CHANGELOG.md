@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-05-12
+
+### Fixed
+
+- **`HealthCheckTick` enqueues silently dropped.** The aggregator topology worker runs with `REQUEST_URI=/wp-json/newspack-nodes/v1/workers/spawn` (in the default `skip_urls` so the spawn endpoint doesn't pollute the firehose with its own request lifecycle). LogManager's URL filter therefore set `enabled=false` at construction, and the singleton's `ensure_started()` never ran `init_firehose()` — so every subsequent `message('job', …)` from HealthCheckTick returned false without writing. Wrapped the enqueue in `JobWorker::begin_job_context('health-check-tick')` so a fresh LogManager is built under `REQUEST_URI=/jobs/health-check-tick`, which clears `skip_urls` and lets the periodic sweep land in firehose.log. `end_job_context` restores the suspended parent.
+
+### Other
+
+- Companion fix in `newspack-pyrobase` `CronManager::run_job_now` and `newspack-nuclear-gyrobase` `CronManager::run_job_now` — same skip_urls-disables-LogManager symptom, same `begin_job_context` wrap. Those plugins ship independently; without their commits the hub's pyrobase-cron and nuclear-cron periodic ticks stay invisible too.
+
 ## [0.2.8] - 2026-05-12
 
 ### Fixed
