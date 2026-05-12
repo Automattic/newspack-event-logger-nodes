@@ -371,6 +371,14 @@ class LogManager {
 
 		++$this->line_number;
 
+		// Debug-mode: force-drain the Partition batch immediately so logs
+		// survive OOM/crash between this message and the next size-threshold
+		// or timer-driven flush. Matches legacy LogManager::message() behavior
+		// when `flush_every_line` is set.
+		if ( $this->flush_every_line ) {
+			$this->topic->flush();
+		}
+
 		// Stop detailed logging after MAX_LOG_LINES to bound downstream state.
 		// Don't disable started — finish() needs it to close the stack cleanly.
 		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {

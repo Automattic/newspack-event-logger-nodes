@@ -335,7 +335,19 @@ class RemoteManager {
 
 			// Strip both `newspack_event_logger_nodes_` and the synthetic
 			// `remote_` prefix that SettingsSync uses for hub-local tuning.
-			$config_key = \str_replace( 'newspack_event_logger_nodes_', '', (string) $local_option );
+			// Strip the longer prefix first so e.g.
+			// `newspack_event_logger_nodes_remote_num_segments` flattens to
+			// `num_segments` (matches substrate config key) and
+			// `newspack_nodes_num_partitions` flattens to `num_partitions`.
+			// Mirrors SettingsSync::maybe_queue_static_sync — both must use
+			// the same logic or one path silently skips substrate keys.
+			$config_key = (string) $local_option;
+			foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
+				if ( 0 === \strpos( $config_key, $prefix ) ) {
+					$config_key = \substr( $config_key, \strlen( $prefix ) );
+					break;
+				}
+			}
 			$config_key = \preg_replace( '/^remote_/', '', $config_key );
 			if ( ! isset( $config[ $config_key ] ) ) {
 				continue;
@@ -392,7 +404,19 @@ class RemoteManager {
 				continue;
 			}
 
-			$config_key = \str_replace( 'newspack_event_logger_nodes_', '', (string) $local_option );
+			// Strip the longer prefix first so e.g.
+			// `newspack_event_logger_nodes_remote_num_segments` flattens to
+			// `num_segments` (matches substrate config key) and
+			// `newspack_nodes_num_partitions` flattens to `num_partitions`.
+			// Mirrors SettingsSync::maybe_queue_static_sync — both must use
+			// the same logic or one path silently skips substrate keys.
+			$config_key = (string) $local_option;
+			foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
+				if ( 0 === \strpos( $config_key, $prefix ) ) {
+					$config_key = \substr( $config_key, \strlen( $prefix ) );
+					break;
+				}
+			}
 			$config_key = \preg_replace( '/^remote_/', '', $config_key );
 			if ( ! isset( $config[ $config_key ] ) ) {
 				continue;

@@ -330,8 +330,12 @@ class SettingsSync {
 		if ( $this->syncing ) {
 			return; // Re-entrancy guard.
 		}
-		// Fail-closed: strict === true. Anything else (missing, false, 1, "1", etc.) skips.
-		if ( ! isset( $this->config['enable_workers'] ) || true !== $this->config['enable_workers'] ) {
+		// Fail-closed on `enable_aggregator` — same operator switch as the
+		// static path. Earlier this gate read `enable_workers`, which split
+		// the two SettingsSync paths under different polarities and meant a
+		// hub configured for aggregator fan-out would still skip the
+		// instance-mode dispatch.
+		if ( true !== ( $this->config['enable_aggregator'] ?? false ) ) {
 			return;
 		}
 		if ( ! \in_array( $option, $this->synced_options, true ) ) {
