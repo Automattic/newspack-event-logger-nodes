@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.2.13
+ * Version: 0.2.14
  * Requires Plugins: newspack-nodes
  *
  * @package Newspack_Event_Logger_Nodes
@@ -11,7 +11,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.13' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.14' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -166,6 +166,40 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	'newspack_nodes/num_logs',
 	static fn ( int $count ): int => $count + 6
 );
+
+/**
+ * Wrap the substrate's cron-backstop supervisor run with a fresh LogManager
+ * job context so the 595s tick logs as `/jobs/newspack-nodes/supervisor`
+ * (tagged `worker_type='supervisor'`) instead of as an untagged
+ * `/wp-cron.php` request that counts in global averages.
+ *
+ * The substrate (Bootstrap::run_supervisor_tick) sets the env var BEFORE
+ * firing `before_supervisor_run`, so begin_job_context's fresh LogManager
+ * picks up worker_type at init. State carries between the two handlers via
+ * a closure-bound static so we don't pollute $GLOBALS.
+ */
+( static function (): void {
+	$orig_server = null;
+	\add_action(
+		'newspack_nodes/before_supervisor_run',
+		static function () use ( &$orig_server ): void {
+			if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\JobWorker' ) ) {
+				return;
+			}
+			$orig_server = \Newspack_Event_Logger_Nodes\JobWorker::begin_job_context( 'newspack-nodes/supervisor' );
+		}
+	);
+	\add_action(
+		'newspack_nodes/after_supervisor_run',
+		static function () use ( &$orig_server ): void {
+			if ( null === $orig_server || ! \class_exists( '\Newspack_Event_Logger_Nodes\JobWorker' ) ) {
+				return;
+			}
+			\Newspack_Event_Logger_Nodes\JobWorker::end_job_context( $orig_server );
+			$orig_server = null;
+		}
+	);
+} )();
 
 /**
  * Hook the runtime's spawn action: when SpawnController fires
