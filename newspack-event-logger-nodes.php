@@ -147,6 +147,26 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 );
 
 /**
+ * Declare the log streams this application owns so the substrate's
+ * "Total Log Storage" estimate can multiply them in. Each log lays out as
+ * `{base}/logs/{name}.log/p{N}/{segment_id}.log` and obeys the same
+ * segment_size × num_segments × num_partitions geometry, so the count alone
+ * is enough — the substrate handles the arithmetic.
+ *
+ * Streams:
+ *   firehose.log   — LogManager input
+ *   jobintake.log  — JobIntake input (large jobs)
+ *   requests.log   — RequestBuilder output
+ *   errors.log     — RequestBuilder error output
+ *   jobs.log       — JobRouter output
+ *   flames.log     — FlameBuilder output
+ */
+\add_filter(
+	'newspack_nodes/num_logs',
+	static fn ( int $count ): int => $count + 6
+);
+
+/**
  * Hook the runtime's spawn action: when SpawnController fires
  * `newspack_nodes/spawn_worker`, locate the topology config for this {type, partition},
  * build a WorkerBase, and call ->execute() to start the drain loop.

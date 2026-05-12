@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Substrate "Total Log Storage" estimate was 0 MB** because nothing registered with the `newspack_nodes/num_logs` filter, so the substrate multiplied `segment_size × num_segments × num_partitions × 0`. The plugin now declares its 6 log streams (`firehose`, `jobintake`, `requests`, `errors`, `jobs`, `flames`) — each obeys the same per-partition segment geometry, so the count alone is enough for the arithmetic.
+
 ## [0.2.0] - 2026-05-11
 
 ### Removed
