@@ -61,14 +61,26 @@ class SettingsSync {
 	];
 
 	/**
-	 * REST endpoint for syncing options. Validated against
-	 * ALLOWED_ENDPOINT_PREFIXES on every dispatch (including filter-supplied
-	 * endpoints) so plugins can't smuggle a non-newspack-nodes target through
-	 * the synced-settings filter.
+	 * REST endpoint for syncing the four core substrate options
+	 * (`newspack_nodes_num_partitions` etc.) handled by SettingsController.
+	 * Validated against ALLOWED_ENDPOINT_PREFIXES on every dispatch
+	 * (including filter-supplied endpoints) so plugins can't smuggle a
+	 * non-newspack-nodes target through the synced-settings filter.
 	 *
 	 * @var string
 	 */
 	public const ENDPOINT = '/wp-json/newspack-nodes/v1/settings';
+
+	/**
+	 * REST endpoint for syncing the nine performance-tuning options
+	 * (`log_events`, `significant_events`, `auto_*_threshold`, ...) handled
+	 * by PerfSettingsController. Distinct from ENDPOINT because the two
+	 * controllers have different ALLOWED_OPTIONS whitelists — POSTing a
+	 * perf-tuning key to /settings (or vice versa) returns HTTP 400.
+	 *
+	 * @var string
+	 */
+	public const PERF_ENDPOINT = '/wp-json/newspack-nodes/v1/performance/settings';
 
 	/**
 	 * Allowed endpoint prefixes for outbound requests.
@@ -148,12 +160,12 @@ class SettingsSync {
 				'endpoint'      => self::ENDPOINT,
 			];
 		}
-		// Performance-tuning options synced 1:1.
+		// Performance-tuning options synced 1:1, posted to PerfSettingsController.
 		foreach ( self::PERF_TUNING_OPTIONS as $option ) {
 			$settings[] = [
 				'local_option'  => $option,
 				'remote_option' => $option,
-				'endpoint'      => self::ENDPOINT,
+				'endpoint'      => self::PERF_ENDPOINT,
 			];
 		}
 		return $settings;
@@ -256,13 +268,18 @@ class SettingsSync {
 			}
 		}
 
+		// SettingsController (/settings) accepts the substrate-remap keys;
+		// PerfSettingsController (/performance/settings) accepts the
+		// PERF_TUNING_OPTIONS list. Send each option to the matching one.
+		$endpoint = $is_perf ? self::PERF_ENDPOINT : self::ENDPOINT;
+
 		self::queue_job(
 			'remote_manager',
 			[
 				'action'    => 'sync_setting',
 				'option'    => $remote_option,
 				'value'     => $value,
-				'endpoint'  => self::ENDPOINT,
+				'endpoint'  => $endpoint,
 				'queued_at' => \time(),
 			]
 		);

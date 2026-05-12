@@ -141,13 +141,16 @@ class AutoTuner extends Node {
 	 */
 	private function persist( string $option, $value ): void {
 		if ( true === ( Config::load_config()['enable_aggregator'] ?? false ) ) {
+			// AutoTuner only touches PERF_TUNING_OPTIONS
+			// (log_events, custom_events, significant_events), which
+			// PerfSettingsController owns — not /settings.
 			SettingsSync::queue_job(
 				'remote_manager',
 				[
 					'action'    => 'sync_setting',
 					'option'    => $option,
 					'value'     => $value,
-					'endpoint'  => SettingsSync::ENDPOINT,
+					'endpoint'  => SettingsSync::PERF_ENDPOINT,
 					'queued_at' => \time(),
 				]
 			);
