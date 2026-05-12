@@ -744,13 +744,22 @@ class StreamMerger extends Node {
 			return;
 		}
 
+		// Re-decode after the filter ran on the JSON string form (filters may
+		// have mutated the payload). VALUE must be a parsed array (TM_STRUCT)
+		// so RequestBuilder accepts it — TM_BYTESTREAM gets dropped at
+		// RequestBuilder::fill's type-gate, silently dropping every spoke
+		// entry. Match what local LogManager::message() writes.
+		$decoded = \json_decode( $line, true, 64 );
+		if ( ! \is_array( $decoded ) ) {
+			return;
+		}
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
 		$msg[ Message::KEY ]       = (string) ( $data['url'] ?? '' );
-		$msg[ Message::VALUE ]     = $line;
+		$msg[ Message::VALUE ]     = $decoded;
 		$this->sink?->fill( $msg );
 	}
 

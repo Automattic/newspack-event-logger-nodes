@@ -168,7 +168,8 @@ class StreamMergerTest extends TestCase {
 		$sm->on_curl_data( $handle, "event: entry\ndata: {$payload}\n\n" );
 
 		$this->assertCount( 1, $capture->captured );
-		$out = json_decode( $capture->captured[0][ Message::VALUE ], true );
+		$out = $capture->captured[0][ Message::VALUE ];
+		$this->assertIsArray( $out );
 		$this->assertSame( 'remote_job', $out['k'] );
 	}
 
@@ -245,7 +246,8 @@ class StreamMergerTest extends TestCase {
 		// Capture should have exactly one entry (`entry`) — the connected/
 		// heartbeat events don't get forwarded.
 		$this->assertCount( 1, $capture->captured );
-		$out = json_decode( $capture->captured[0][ Message::VALUE ], true );
+		$out = $capture->captured[0][ Message::VALUE ];
+		$this->assertIsArray( $out );
 		$this->assertSame( 'render', $out['k'] );
 		$this->assertSame( 'siteA', $out['_source'], '_source must be injected for entry events' );
 	}
