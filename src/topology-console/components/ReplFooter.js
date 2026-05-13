@@ -1,15 +1,11 @@
 /**
  * REPL footer — collapsible transcript + prompt + command input + status.
  *
- * The transcript surfaces worker output that isn't an `ls` topology
- * snapshot: command echoes (kind='sent'), command responses
- * (kind='recv'), TM_ERROR responses (kind='error'). It's collapsed by
- * default so the footer keeps its 38px drafting-room rhythm; the
- * prompt-side caret expands it. Auto-scrolls to the latest entry.
- *
- * Command parsing: the first whitespace-separated token is the verb
- * name, everything after is the arguments string. Mirrors how the
- * cli's Shell splits `<verb> <args>` before dispatching.
+ * Transcript surfaces worker output: command echoes (kind='sent'),
+ * responses (kind='recv'), errors (kind='error'), info lines
+ * (kind='info'). Expanded by default; the ▼ toggle minimizes back to
+ * the bare 38px bar so the user can reclaim canvas real estate.
+ * Auto-scrolls to the latest entry when growing.
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
@@ -20,12 +16,6 @@ const STATUS_LABELS = {
 	error: 'DISCONNECTED',
 	closed: 'CLOSED',
 };
-
-function previewLine( entry ) {
-	const text = entry.text || '';
-	const idx = text.indexOf( '\n' );
-	return idx === -1 ? text : `${ text.slice( 0, idx ) } …`;
-}
 
 export default function ReplFooter( {
 	topology,
@@ -84,15 +74,11 @@ export default function ReplFooter( {
 		setExpanded( true );
 	}
 
-	const latest = transcript.length
-		? transcript[ transcript.length - 1 ]
-		: null;
-
 	return (
 		<footer
 			className={ `topology-repl${ expanded ? ' is-expanded' : '' }` }
 		>
-			{ expanded ? (
+			{ expanded && (
 				<div className="topology-repl__transcript" ref={ logRef }>
 					<div className="topology-repl__actions">
 						<button
@@ -136,18 +122,6 @@ export default function ReplFooter( {
 						) )
 					) }
 				</div>
-			) : (
-				latest && (
-					<div
-						className={ `topology-repl__peek topology-repl__peek--${ latest.kind }` }
-					>
-						{ latest.kind === 'sent'
-							? `${ topology }.p${ partition }> ${ previewLine(
-									latest
-							  ) }`
-							: previewLine( latest ) }
-					</div>
-				)
 			) }
 			<div className="topology-repl__bar">
 				<span className="topology-repl__prompt">
