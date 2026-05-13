@@ -9,6 +9,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -75,6 +76,14 @@ class RequestBuilder extends Node {
 				}
 			);
 		$this->state_callbacks = $this->build_state_callbacks();
+
+		// Sibling CommandInterpreter for runtime config verbs. See
+		// Partition's ctor for the contract; A1 declares one verb
+		// (set_errors_target) on the patron's :config CI.
+		$ci = new CommandInterpreter();
+		$ci->patron( $this );
+		$ci->commands( self::config_verbs() );
+		$this->attach_interpreter( $ci );
 	}
 
 	/**
@@ -726,5 +735,55 @@ class RequestBuilder extends Node {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Per-class verb table for the sibling `:config` CI. Resolved
+	 * per-instance via `$ci->patron()` at dispatch time.
+	 *
+	 * @return array<string,callable>
+	 */
+	private static function config_verbs(): array {
+		static $verbs = null;
+		if ( null === $verbs ) {
+			$verbs = [
+				'set_errors_target' => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \trim( $args );
+					if ( '' === $args ) {
+						return 'usage: set_errors_target <node_name>';
+					}
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_errors_target( $args );
+					$patron->mark_verb_invoked( 'set_errors_target', $args );
+					return 'ok';
+				},
+			];
+		}
+		return $verbs;
+	}
+
+	/**
+	 * Manifest for the topology console's palette + form rendering.
+	 * See Node::node_schema() for the shape contract.
+	 */
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Transform',
+			'description' => 'Assembles per-request firehose lines into completed-request docs; emits errors to a named partition.',
+			'ctor'        => [
+				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE ],
+				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS ],
+			],
+			'verbs'       => [
+				[
+					'name'        => 'set_errors_target',
+					'description' => 'Forward error/warning keywords to a named partition.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+				],
+			],
+		];
 	}
 }
