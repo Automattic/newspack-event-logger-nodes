@@ -256,6 +256,14 @@ body[class*="_page_newspack-nodes-topology"] {
 			background: $oxide;
 			color: $paper;
 		}
+
+		// Live button hosts both "LIVE" (left) and the uptime slot
+		// (right). Inline-flex lets margin-left:auto push the slot to
+		// the far edge while LIVE stays anchored on the left.
+		&--live {
+			display: inline-flex;
+			align-items: center;
+		}
 	}
 }
 
@@ -275,14 +283,17 @@ body[class*="_page_newspack-nodes-topology"] {
 
 // Worker uptime, rendered inline after "LIVE" in the header — the
 // LIVE LED says the worker is alive, this says how long for.
-// `min-width` covers the realistic upper-bound for our short-lived
-// workers ("9m 59s" / "9h 59m") so the LIVE button doesn't widen
-// when the value first arrives. Workers max out at ~10 minutes so
-// "Xh Ym" / "Xd ..." are vanishingly rare.
+// `margin-left: auto` (the button is inline-flex) pushes the uptime
+// to the far right, leaving LIVE anchored on the left. `min-width`
+// covers the realistic upper-bound for our short-lived workers
+// ("9m 59s" / "9h 59m"); `text-align: right` keeps the value
+// flush-right inside its slot.
 .topology-uptime {
 	display: inline-block;
 	min-width: 48px;
-	text-align: left;
+	margin-left: auto;
+	padding-left: 8px;
+	text-align: right;
 	opacity: 0.75;
 	font-weight: normal;
 	letter-spacing: 0;
