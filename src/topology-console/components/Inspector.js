@@ -157,25 +157,32 @@ function inspectorSparklinePath( history, width, height ) {
 		.join( ' ' );
 }
 
-// One labeled sparkline row. The label sits on top, the current value
-// on the right, and a fixed-height SVG plot beneath. Empty history
-// renders the frame with a dim "—" so the row keeps the layout's
-// vertical rhythm before samples accumulate.
+// One labeled sparkline row. Label sits on top-left, current value on
+// top-right (oxide bold), peak-in-window dimmed below the current.
+// Knowing the peak makes the auto-scaled curve readable — without it
+// a flat-looking line could be 5 msg/s or 5000 msg/s.
 function SparklineRow( { label, history, currentValue, format } ) {
 	const W = 270;
 	const H = 32;
 	const path = inspectorSparklinePath( history, W, H );
-	const formatted = format( currentValue );
+	const peak = history && history.length ? Math.max( ...history, 0 ) : 0;
 	return (
 		<div className="topology-insp__spark-row">
 			<div className="topology-insp__spark-head">
 				<span className="topology-insp__spark-label">{ label }</span>
-				<span
-					className={ `topology-insp__spark-val${
-						currentValue > 0 ? '' : ' topology-insp__spark-val--dim'
-					}` }
-				>
-					{ formatted }
+				<span className="topology-insp__spark-vals">
+					<span
+						className={ `topology-insp__spark-val${
+							currentValue > 0
+								? ''
+								: ' topology-insp__spark-val--dim'
+						}` }
+					>
+						{ format( currentValue ) }
+					</span>
+					<span className="topology-insp__spark-peak">
+						peak { format( peak ) }
+					</span>
 				</span>
 			</div>
 			<svg
@@ -337,26 +344,36 @@ export default function Inspector( {
 				</div>
 			</Section>
 
-			<Section title="Activity" meta="last ~60s">
-				<SparklineRow
-					label="messages /s"
-					history={ rateInfo?.history }
-					currentValue={ rateInfo?.rate || 0 }
-					format={ formatRate }
-				/>
-				<SparklineRow
-					label="bytes read /s"
-					history={ rateInfo?.readHistory }
-					currentValue={ rateInfo?.readRate || 0 }
-					format={ formatByteRate }
-				/>
-				<SparklineRow
-					label="bytes written /s"
-					history={ rateInfo?.writtenHistory }
-					currentValue={ rateInfo?.writtenRate || 0 }
-					format={ formatByteRate }
-				/>
-			</Section>
+			{ ( rateInfo?.hasMessages ||
+				rateInfo?.hasRead ||
+				rateInfo?.hasWritten ) && (
+				<Section title="Activity" meta="last ~60s">
+					{ rateInfo.hasMessages && (
+						<SparklineRow
+							label="messages /s"
+							history={ rateInfo.history }
+							currentValue={ rateInfo.rate || 0 }
+							format={ formatRate }
+						/>
+					) }
+					{ rateInfo.hasRead && (
+						<SparklineRow
+							label="bytes read /s"
+							history={ rateInfo.readHistory }
+							currentValue={ rateInfo.readRate || 0 }
+							format={ formatByteRate }
+						/>
+					) }
+					{ rateInfo.hasWritten && (
+						<SparklineRow
+							label="bytes written /s"
+							history={ rateInfo.writtenHistory }
+							currentValue={ rateInfo.writtenRate || 0 }
+							format={ formatByteRate }
+						/>
+					) }
+				</Section>
+			) }
 
 			<Section title="Throughput" meta="cumulative">
 				<FieldRow

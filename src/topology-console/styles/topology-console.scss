@@ -869,6 +869,13 @@ body[class*="_page_newspack-nodes-topology"] {
 	color: $ink-3;
 }
 
+.topology-insp__spark-vals {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 1px;
+}
+
 .topology-insp__spark-val {
 	font: 700 11px $mono;
 	color: $oxide;
@@ -878,6 +885,13 @@ body[class*="_page_newspack-nodes-topology"] {
 		color: $ink-4;
 		font-weight: 400;
 	}
+}
+
+.topology-insp__spark-peak {
+	font: 400 9px $mono;
+	color: $ink-3;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.05em;
 }
 
 .topology-insp__spark-svg {
