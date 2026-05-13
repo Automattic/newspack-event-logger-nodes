@@ -1,3 +1,31 @@
-// Placeholder entry point — replaced in Task 11 with the real
-// TopologyConsole shell that mounts on #event-logger-topology-console.
-export {};
+/**
+ * Topology Console entry point.
+ *
+ * Mounts on the admin page's #event-logger-topology-console root
+ * (registered in newspack-event-logger-nodes.php under the
+ * `newspack-nodes-topology` dashboard slug).
+ */
+
+import { createRoot } from '@wordpress/element';
+
+import TopologyConsole from './TopologyConsole';
+import './style.scss';
+
+const ROOT_ID = 'event-logger-topology-console';
+
+function mount() {
+	const root = document.getElementById( ROOT_ID );
+	if ( ! root ) {
+		return;
+	}
+	createRoot( root ).render( <TopologyConsole /> );
+}
+
+if (
+	document.readyState === 'complete' ||
+	document.readyState === 'interactive'
+) {
+	mount();
+} else {
+	document.addEventListener( 'DOMContentLoaded', mount );
+}
