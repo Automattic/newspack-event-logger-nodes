@@ -98,11 +98,11 @@ export default function ReplFooter( {
 		setExpanded( true );
 	}
 
-	// Only render the transcript pane when the user has produced
-	// output and chosen to view it. Default state (page just loaded,
-	// nothing typed) keeps the canvas's title block / lower-right
-	// chrome fully visible.
-	const showTranscript = expanded && transcript.length > 0;
+	// Show the transcript pane whenever the user has explicitly
+	// expanded it — even if it's empty. Initial render is minimized,
+	// so an empty pane only appears after a click on ▲ or after the
+	// first command auto-opens; either way the user asked for it.
+	const showTranscript = expanded;
 
 	return (
 		<footer
