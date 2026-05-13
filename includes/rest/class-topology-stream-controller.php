@@ -30,6 +30,16 @@ use Newspack_Nodes\Partition;
 class TopologyStreamController extends SSEControllerBase {
 	public const REST_NAMESPACE = 'newspack-event-logger-nodes/v1';
 
+	public const STATS_INTERVAL_S     = 1.0;
+	public const HEARTBEAT_INTERVAL_S = 5.0;
+	public const LOOP_SLEEP_US        = 50_000;
+
+	private int $test_tick_limit = 0;
+
+	public function set_test_tick_limit( int $n ): void {
+		$this->test_tick_limit = $n;
+	}
+
 	/** Override seam for tests — production uses Bootstrap::base_dir(). */
 	private ?string $base_dir_override = null;
 
@@ -109,13 +119,50 @@ class TopologyStreamController extends SSEControllerBase {
 		$this->drain_and_forward( $reply_in );
 		$this->flush_if_needed();
 
-		if ( $this->test_mode ) {
-			return null;
-		}
+		// Production drain / poll loop. Runs until connection_aborted()
+		// (real streaming) or until $test_tick_limit ticks have fired
+		// (tests). Tick 1 was the initial ls -al above; each subsequent
+		// iteration that hits the STATS_INTERVAL_S window fires one ls -ct.
+		$last_stats     = \microtime( true );
+		$last_heartbeat = \microtime( true );
+		$ticks_fired    = 1;
 
-		// Production loop (heartbeat + ls -ct cadence + connection_aborted)
-		// lands in Task 5.
-		return null;
+		while ( true ) {
+			$now = \microtime( true );
+
+			if ( $now - $last_stats >= self::STATS_INTERVAL_S ) {
+				$this->send_command( $cmd_out, 'ls', '-ct' );
+				$cmd_out->flush();
+				$last_stats = $now;
+				++$ticks_fired;
+			}
+
+			if ( $now - $last_heartbeat >= self::HEARTBEAT_INTERVAL_S ) {
+				$this->send_sse_event( 'heartbeat', [ 'ts' => $now ] );
+				$last_heartbeat = $now;
+			}
+
+			$this->drain_and_forward( $reply_in );
+			$this->flush_if_needed();
+
+			if ( $this->test_mode ) {
+				if ( $ticks_fired >= $this->test_tick_limit ) {
+					return null;
+				}
+				// Force the next iteration to immediately fire a stats
+				// tick instead of waiting a real 1s in test time.
+				\usleep( 100 );
+				$last_stats     = 0.0;
+				$last_heartbeat = 0.0;
+				continue;
+			}
+
+			if ( \connection_aborted() ) {
+				return null;
+			}
+
+			\usleep( self::LOOP_SLEEP_US );
+		}
 	}
 
 	/**
