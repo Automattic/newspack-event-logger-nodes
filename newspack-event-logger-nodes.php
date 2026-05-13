@@ -452,18 +452,33 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// and passes it as the `nonce` body param; the server checks via
 		// `wp_verify_nonce( $nonce, 'newspack_nodes_restart_worker' )`.
 		$restart_nonce       = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
-		\wp_localize_script(
-			$handle,
-			'NewspackNodesData',
-			[
-				'restUrl'           => $rest_url,
-				'aggregatorRestUrl' => $aggregator_rest_url,
-				'nonce'             => $nonce,
-				'restartNonce'      => $restart_nonce,
-				'tree'              => $tree,
-				'version'           => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
-			]
-		);
+		$localized           = [
+			'restUrl'           => $rest_url,
+			'aggregatorRestUrl' => $aggregator_rest_url,
+			'nonce'             => $nonce,
+			'restartNonce'      => $restart_nonce,
+			'tree'              => $tree,
+			'version'           => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+		];
+		// Topology console's partition dropdown needs to know the live
+		// partition count per topology so it doesn't show p0–p3 for a
+		// 1-partition aggregator (or stop at p3 when num_partitions was
+		// bumped to 8). The `newspack_nodes/topologies` filter is the
+		// canonical map the supervisor uses to spawn workers, so reusing
+		// it keeps the dropdown and the worker fleet in lockstep.
+		if ( 'topology-console' === $tree && \function_exists( 'apply_filters' ) ) {
+			$resolved              = \apply_filters( 'newspack_nodes/topologies', [] );
+			$topology_partitions   = [];
+			if ( \is_array( $resolved ) ) {
+				foreach ( $resolved as $name => $def ) {
+					if ( \is_string( $name ) && \is_array( $def ) && isset( $def['num_partitions'] ) ) {
+						$topology_partitions[ $name ] = (int) $def['num_partitions'];
+					}
+				}
+			}
+			$localized['topologyPartitions'] = $topology_partitions;
+		}
+		\wp_localize_script( $handle, 'NewspackNodesData', $localized );
 
 		// Legacy globals the React trees still reference. The dashboards expect
 		// these specific names — `eventLoggerDashboards` for REST root + retention,

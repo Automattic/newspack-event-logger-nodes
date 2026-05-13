@@ -39,16 +39,17 @@ const TOPOLOGIES = [
 	'aggregator',
 ];
 
-// Default to 4 partitions for the selector. The actual live count
-// comes from NewspackNodesData.numPartitions if the admin page wires
-// it in; this is a sane fallback for the v1 visual.
-const DEFAULT_PARTITIONS = 4;
-
-function partitionList() {
-	const n =
+// Per-topology partition counts, injected by the admin page via
+// NewspackNodesData.topologyPartitions (filled from the
+// `newspack_nodes/topologies` filter — the same map the supervisor
+// uses to spawn workers, so the dropdown can't drift). Fallback to a
+// single partition for any topology the map doesn't cover.
+function partitionList( topology ) {
+	const map =
 		( window.NewspackNodesData &&
-			window.NewspackNodesData.numPartitions ) ||
-		DEFAULT_PARTITIONS;
+			window.NewspackNodesData.topologyPartitions ) ||
+		{};
+	const n = map[ topology ] || 1;
 	return Array.from( { length: n }, ( _, i ) => i );
 }
 
@@ -158,7 +159,16 @@ export default function TopologyConsole() {
 	const rateRef = useRef( new Map() );
 	const [ rateVersion, setRateVersion ] = useState( 0 );
 
-	const partitions = useMemo( partitionList, [] );
+	const partitions = useMemo( () => partitionList( topology ), [ topology ] );
+
+	// If the user switches to a topology with fewer partitions than the
+	// one they were on, reset the partition selector to p0 so we don't
+	// stream from a non-existent worker.
+	useEffect( () => {
+		if ( partition >= partitions.length ) {
+			setPartition( 0 );
+		}
+	}, [ partitions, partition ] );
 
 	const appendTranscript = useCallback( ( entry ) => {
 		setTranscript( ( prev ) => {
