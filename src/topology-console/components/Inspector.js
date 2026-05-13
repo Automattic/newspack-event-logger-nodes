@@ -201,8 +201,7 @@ export default function Inspector( {
 		ssePid &&
 		parsed.edges.some(
 			( e ) =>
-				e.from === selectedId &&
-				e.to === `_repl/_output/${ ssePid }`
+				e.from === selectedId && e.to === `_repl/_output/${ ssePid }`
 		);
 
 	return (

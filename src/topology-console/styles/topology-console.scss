@@ -295,7 +295,7 @@ body[class*="_page_newspack-nodes-topology"] {
 	padding-left: 8px;
 	text-align: right;
 	opacity: 0.75;
-	font-weight: normal;
+	font-weight: 400;
 	letter-spacing: 0;
 }
 
@@ -931,23 +931,10 @@ body[class*="_page_newspack-nodes-topology"] {
 	// rather than peeking through them.
 	z-index: 5;
 
-	&__bar {
-		height: 38px;
-		display: flex;
-		align-items: center;
-		padding: 0 18px;
-		gap: 10px;
-
-		// Restore-arrow (▲) sits at the right edge of the bar when
-		// the transcript is minimized. Pull it past the bar's 18px
-		// right padding so its right gap matches its vertical
-		// centering (≈8px on each side of the 22px button in a 38px
-		// bar — symmetric corner.)
-		.topology-repl__toggle {
-			margin-right: -10px;
-		}
-	}
-
+	// Button styles come BEFORE `&__bar` so the descending-specificity
+	// rule is happy — `.topology-repl__bar .topology-repl__toggle`
+	// (defined inside `&__bar`) is more specific than `&__toggle` and
+	// must follow it in source order.
 	&__toggle,
 	&__clear {
 		// Solid background so the button visually clears its own
@@ -974,6 +961,23 @@ body[class*="_page_newspack-nodes-topology"] {
 	&__clear:hover {
 		border-color: $oxide;
 		color: $oxide;
+	}
+
+	&__bar {
+		height: 38px;
+		display: flex;
+		align-items: center;
+		padding: 0 18px;
+		gap: 10px;
+
+		// Restore-arrow (▲) sits at the right edge of the bar when
+		// the transcript is minimized. Pull it past the bar's 18px
+		// right padding so its right gap matches its vertical
+		// centering (≈8px on each side of the 22px button in a 38px
+		// bar — symmetric corner.)
+		.topology-repl__toggle {
+			margin-right: -10px;
+		}
 	}
 
 	&__prompt {
