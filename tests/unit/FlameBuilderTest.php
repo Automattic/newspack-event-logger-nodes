@@ -71,6 +71,27 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 0, $fb->stats_count() );
 	}
 
+	public function test_target_includes_flames_partition_and_auto_tuner(): void {
+		// FlameBuilder writes to two destinations at runtime — the
+		// flames_sink (injected Partition reference) for flame JSONL,
+		// and `auto-tuner` (TO=hardcoded in emit_auto_tune) for tune
+		// decisions. Neither flows through Node::target, so the
+		// topology console can't see those edges. The target()
+		// override exposes them so dump_metadata reports the full
+		// fan-out — same pattern RequestBuilder uses for its
+		// conditional `errors_target`.
+		$fb         = new FlameBuilder();
+		$flames_log = new CaptureSink();
+		$flames_log->name( 'flames:partition' );
+		$fb->set_flames_sink( $flames_log );
+
+		$targets = $fb->target();
+
+		$this->assertIsArray( $targets );
+		$this->assertContains( 'flames:partition', $targets );
+		$this->assertContains( 'auto-tuner', $targets );
+	}
+
 	public function test_non_array_value_skipped(): void {
 		$fb                    = new FlameBuilder();
 		$msg                   = Message::new_message();
