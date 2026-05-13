@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-05-13
+
+### Added
+
+- **Drag nodes to reposition, with snap-to-grid + localStorage persistence.** When the auto-layout makes a placement choice the operator doesn't like, they can drag any node to a new spot. Snaps to half-steps of the auto-layout grid (`X_STEP/2 = 120px`, `Y_STEP/2 = 55px`), anchored at the same `X_PAD`/`Y_PAD` origin the algorithm uses — every other slot is a real auto-layout slot; odd slots are half-step nudges between columns/rows. Persisted via localStorage, keyed by `newspack-nodes:topology:{topology}.p{partition}:positions` so overrides scope per worker fleet. `autoLayout` still runs every poll, so new nodes get sensible defaults and only the user-pinned ones survive. Negative grid indices allowed — a node dragged past the auto-layout origin keeps its dragged position; the viewport math handles any coordinate range. The Reset Layout chip appears in the top-right corner of the canvas (gap below LIVE, above the corner reticle) once at least one override exists; clicking clears every override for this topology+partition.
+
+- **Pan and zoom on the canvas.** Wheel zooms with cursor as anchor (the world point under the cursor stays under the cursor), clamped to a 4x / 0.25x range. Drag on empty canvas pans the viewBox — node drags still work because pointer-down on a node `stopPropagation`s so only background drags reach the pan handler.
+
+- **Click on empty canvas = fit-to-content.** Single click without dragging past a 3px threshold snaps the viewport to the tight bounding box of nodes + a small pad, and deselects any selected node. Replaces the Center button that briefly existed — the gesture is just "click the canvas, it does the right thing." A `dragInOnceCount` ref tracks whether nodes have moved so the fit excludes stale extreme positions on reload.
+
+- **Per-node message rate in the bottom-left of each node card.** Replaces the former "live" label, which was redundant (LIVE in the header already says the topology is alive). Reads from the same `rateRef` the Inspector uses, driven by `rateVersion` for re-render coordination. Formats to two significant figures (e.g. `6664 /s`, `8.15 /s`, `0.42 /s`) so the text fits inside the 196px node width. Hidden below a small threshold so quiet nodes don't fill the canvas with `0 /s` noise.
+
+- **FlameBuilder declares its full fan-out via `target()` override.** FlameBuilder writes to two destinations at runtime that don't flow through `Node::target` — `flames_sink` (injected Partition reference for flame JSONL bulk writes) and `auto-tuner` (hardcoded TO on every `emit_auto_tune` Message). `dump_metadata` only reads `$this->target`, so the topology console couldn't draw those edges. The `target()` override unions the base value with both — same pattern `RequestBuilder::target()` uses for its conditional `errors_target`. Runtime paths unchanged; `flame-builder` now shows both edges in `ls -al` and renders fan-out properly on the topology canvas.
+
+### Fixed
+
+- **Topology endpoint added to `skip_urls`** so the SSE stream and its companion POST don't get logged as long-running requests (the stream is a ~10-minute SSE session) polluting per-URL dashboards. Same mechanism the firehose stream already uses. A `worker_type` stamp follow-up is queued — that fix needs the LogManager-restart dance to land the env var before process_data is captured.
+
+- **Auto-layout grid constants exported** (`X_STEP`, `Y_STEP`, `X_PAD`, `Y_PAD`) so the snap logic uses the canonical values from `utils/autoLayout.js`. Keeps "where can a node sit?" in one place.
+
 ## [0.2.20] - 2026-05-13
 
 ### Added
