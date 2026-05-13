@@ -435,7 +435,13 @@ export default function TopologyConsole() {
 			for ( const n of next.nodes ) {
 				const prevEntry = rateRef.current.get( n.id );
 				if ( prevEntry && prevEntry.ts < now ) {
-					const dCount = n.count - prevEntry.count;
+					// A worker respawn resets the counter, so dCount can
+					// go strongly negative on the first tick of a new
+					// process. Treat that as "rate unknown" (0) — using
+					// the raw delta would draw a deep dip below the
+					// baseline that misrepresents what just happened.
+					const rawDCount = n.count - prevEntry.count;
+					const dCount = rawDCount < 0 ? 0 : rawDCount;
 					const dTime = now - prevEntry.ts;
 					const rate = dTime > 0 ? dCount / dTime : 0;
 					const history = prevEntry.history || [];

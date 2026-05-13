@@ -154,8 +154,14 @@ function sparklinePath( history ) {
 	const startIdx = SPARK_HISTORY_MAX - history.length;
 	return history
 		.map( ( v, i ) => {
+			// Defensive clamp: a negative sample (counter reset) would
+			// otherwise plot below the box. TopologyConsole already
+			// zeros these at source, but the clamp keeps the plot
+			// well-formed even when an explicit zero ends up tiny-
+			// negative from float math.
+			const safeV = v > 0 ? v : 0;
 			const x = SPARK_X + ( startIdx + i ) * step;
-			const y = SPARK_Y + SPARK_H - ( v / max ) * SPARK_H;
+			const y = SPARK_Y + SPARK_H - ( safeV / max ) * SPARK_H;
 			return `${ i === 0 ? 'M' : 'L' } ${ x.toFixed( 2 ) },${ y.toFixed(
 				2
 			) }`;
