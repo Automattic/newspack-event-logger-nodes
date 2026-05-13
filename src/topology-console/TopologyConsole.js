@@ -421,6 +421,7 @@ export default function TopologyConsole() {
 				partition={ partition }
 				onPartitionChange={ setPartition }
 				streamStatus={ status }
+				uptime={ uptime }
 			/>
 			<Palette />
 			<CanvasFrame topology={ topology } partition={ partition }>
