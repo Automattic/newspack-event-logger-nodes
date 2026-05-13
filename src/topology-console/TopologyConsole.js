@@ -86,7 +86,9 @@ function formatTypeLabel( type ) {
 	const flags = TM_LABELS.filter( ( [ flag ] ) => has( type, flag ) ).map(
 		( [ , label ] ) => label
 	);
-	return flags.length ? flags.join( '|' ) : '0';
+	return flags.length
+		? flags.join( ' | ' )
+		: `TM_UNKNOWN(0x${ type.toString( 16 ) })`;
 }
 
 // Stringify VALUE for the debug header — objects get one-line JSON,
@@ -99,36 +101,54 @@ function stringifyValue( value ) {
 		return '';
 	}
 	try {
-		return JSON.stringify( value );
+		return JSON.stringify( value, null, 2 );
 	} catch ( _e ) {
 		return String( value );
 	}
 }
 
-// Build the `debug_level 1` header — one line summarizing the
-// message: `<TM_FLAGS> from <FROM>: <stringified-value>`.
+// `debug_level 1` header — single line summarizing the message:
+// `<TM_FLAGS> from <FROM>:` — NO value on the header line, the
+// curated render that follows produces the payload. Matches the
+// substrate Dumper's `$flags . ' from ' . $from . ':'` exactly.
 function buildDebugHeader1( msg ) {
 	const label = formatTypeLabel(
 		typeof msg.type === 'number' ? msg.type : 0
 	);
-	const from = msg.from || '?';
-	const value = stringifyValue( msg.value );
-	return `${ label } from ${ from }: ${ value }`;
+	const from = msg.from || '';
+	return `${ label } from ${ from }:`;
 }
 
-// Build the `debug_level 2` header — full envelope summary on one
-// line plus the value on the next. Mirrors the substrate Dumper's
-// level-2 format.
+// `debug_level 2` header — full envelope as a structural multi-line
+// render. Mirrors the substrate Dumper's `format_envelope_dump`.
 function buildDebugHeader2( msg ) {
 	const label = formatTypeLabel(
 		typeof msg.type === 'number' ? msg.type : 0
 	);
-	const id = msg.id ?? '';
-	const stream = msg.stream ?? '';
-	const from = msg.from || '?';
-	const to = msg.to || '';
+	const ts = msg.ts ?? '';
+	const tsHuman =
+		typeof ts === 'number' && Number.isFinite( ts )
+			? ` (${ new Date( ts * 1000 )
+					.toISOString()
+					.replace( 'T', ' ' )
+					.replace( /\.\d+Z$/, ' UTC' ) })`
+			: '';
 	const value = stringifyValue( msg.value );
-	return `${ label } id=${ id } stream=${ stream } from=${ from } to=${ to }\n${ value }`;
+	const indentedValue = value
+		.split( '\n' )
+		.map( ( line, i ) => ( i === 0 ? line : '               ' + line ) )
+		.join( '\n' );
+	return [
+		'Message {',
+		'    type:      ' + label,
+		'    from:      ' + ( msg.from ?? '' ),
+		'    to:        ' + ( msg.to ?? '' ),
+		'    id:        ' + ( msg.id ?? '' ),
+		'    key:       ' + ( msg.key ?? '' ),
+		'    timestamp: ' + ts + tsHuman,
+		'    value:     ' + indentedValue,
+		'}',
+	].join( '\n' );
 }
 
 /**
