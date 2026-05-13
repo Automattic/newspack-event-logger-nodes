@@ -31,4 +31,24 @@ class TopologyStreamControllerTest extends TestCase {
 		$this->assertInstanceOf( \WP_Error::class, $resp );
 		$this->assertSame( 404, $resp->data['status'] ?? 0 );
 	}
+
+	public function test_stream_emits_hello_event_when_worker_is_live(): void {
+		\mkdir( $this->tmp . '/locks/firehose-workers.p0.lock.d', 0755, true );
+
+		$ctrl = new TopologyStreamController();
+		$ctrl->set_base_dir( $this->tmp );
+		$ctrl->set_test_mode( true );
+
+		$req = new \WP_REST_Request();
+		$req->set_param( 'topology', 'firehose-workers' );
+		$req->set_param( 'partition', 0 );
+
+		\ob_start();
+		$ctrl->stream( $req );
+		$out = \ob_get_clean();
+
+		$this->assertStringContainsString( "event: hello\n", $out );
+		$this->assertStringContainsString( '"topology":"firehose-workers"', $out );
+		$this->assertStringContainsString( '"partition":0', $out );
+	}
 }

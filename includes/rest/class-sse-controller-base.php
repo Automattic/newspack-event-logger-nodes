@@ -102,6 +102,8 @@ abstract class SSEControllerBase {
 		'complete_batch' => 1,
 		'inflight'       => 1,
 		'errors'         => 1,
+		'hello'          => 1,
+		'msg'            => 1,
 	];
 
 	protected int $user_id        = 0;
