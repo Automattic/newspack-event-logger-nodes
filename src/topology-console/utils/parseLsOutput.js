@@ -30,7 +30,10 @@ export function parseLsOutput( text ) {
 		if ( ! line || /^COUNT\b/.test( line ) ) {
 			continue;
 		}
-		const match = line.match( /^\s*(\d+)\s+(\S+)(?:\s+->\s*(.*))?$/ );
+		// COUNT NAME [-> targets] | COUNT NAME - (bare dash = no sink)
+		const match = line.match(
+			/^\s*(\d+)\s+(\S+)(?:\s+(?:->\s*(.*)|-\s*))?$/
+		);
 		if ( ! match ) {
 			continue;
 		}
