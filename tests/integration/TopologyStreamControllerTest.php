@@ -51,4 +51,35 @@ class TopologyStreamControllerTest extends TestCase {
 		$this->assertStringContainsString( '"topology":"firehose-workers"', $out );
 		$this->assertStringContainsString( '"partition":0', $out );
 	}
+
+	public function test_stream_forwards_worker_output_messages_as_msg_events(): void {
+		\mkdir( $this->tmp . '/locks/firehose-workers.p0.lock.d', 0755, true );
+
+		// Pre-populate the output Partition with one packed Message — simulates
+		// what a worker would have written via _repl conduit before the
+		// controller attached.
+		$output_dir = $this->tmp . '/ipc/firehose-workers.p0/output/p0';
+		\mkdir( $output_dir, 0755, true );
+		$msg = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_BYTESTREAM;
+		$msg[ \Newspack_Nodes\Message::FROM ]  = 'producer';
+		$msg[ \Newspack_Nodes\Message::VALUE ] = 'hello-from-worker';
+		\file_put_contents( $output_dir . '/0.log', \Newspack_Nodes\Message::packed( $msg ) . "\n" );
+
+		$ctrl = new TopologyStreamController();
+		$ctrl->set_base_dir( $this->tmp );
+		$ctrl->set_test_mode( true );
+
+		$req = new \WP_REST_Request();
+		$req->set_param( 'topology', 'firehose-workers' );
+		$req->set_param( 'partition', 0 );
+
+		\ob_start();
+		$ctrl->stream( $req );
+		$out = \ob_get_clean();
+
+		$this->assertStringContainsString( "event: msg\n", $out );
+		$this->assertStringContainsString( '"from":"producer"', $out );
+		$this->assertStringContainsString( '"value":"hello-from-worker"', $out );
+	}
 }
