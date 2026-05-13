@@ -59,20 +59,33 @@ export default function TopologyConsole() {
 		setParsed( { nodes: [], edges: [] } );
 	}, [ topology, partition ] );
 
-	// Re-parse on every new msg envelope that looks like an ls table.
+	// Re-parse on every new msg envelope that carries an ls table.
+	//
+	// Substrate envelope shapes we handle:
+	//   value: "COUNT ..."                  — raw bytestream payload
+	//   value: { name: "ls", payload: "COUNT ..." }  — command-response struct
+	//
+	// The command-response shape is what CommandInterpreter emits for
+	// the `ls -al` / `ls -ct` it gets asked by our SSE controller.
 	useEffect( () => {
 		if ( ! lastMessage ) {
 			return;
 		}
 		const value = lastMessage.value;
-		if ( typeof value !== 'string' ) {
+		let text = null;
+		if ( typeof value === 'string' ) {
+			text = value;
+		} else if (
+			value &&
+			typeof value === 'object' &&
+			typeof value.payload === 'string'
+		) {
+			text = value.payload;
+		}
+		if ( ! text || ! /^COUNT\b/m.test( text ) ) {
 			return;
 		}
-		// `ls -al` and `ls -ct` output starts with a COUNT header.
-		if ( ! /^COUNT\b/m.test( value ) ) {
-			return;
-		}
-		setParsed( parseLsOutput( value ) );
+		setParsed( parseLsOutput( text ) );
 	}, [ lastMessage ] );
 
 	return (

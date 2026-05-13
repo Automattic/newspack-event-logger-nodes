@@ -46,6 +46,23 @@ describe( 'parseLsOutput', () => {
 		expect( edges ).toEqual( [] );
 	} );
 
+	it( 'parses a node with a bare-dash target (no arrow, just "-")', () => {
+		// Real `ls -al` output uses a bare "-" in the TARGET column
+		// for nodes that have no sink — e.g. partitions whose sole
+		// role is to be written to by upstream producers.
+		const text =
+			'    0 errors:partition     -\n' +
+			'    1 jobs:partition       -\n' +
+			'   39 requests:partition   -\n';
+		const { nodes, edges } = parseLsOutput( text );
+		expect( nodes ).toEqual( [
+			{ id: 'errors:partition', count: 0 },
+			{ id: 'jobs:partition', count: 1 },
+			{ id: 'requests:partition', count: 39 },
+		] );
+		expect( edges ).toEqual( [] );
+	} );
+
 	it( 'excludes scaffolding nodes (_command_interpreter, _router, _output, _repl)', () => {
 		const text =
 			'  1 _command_interpreter -> _router\n' +
