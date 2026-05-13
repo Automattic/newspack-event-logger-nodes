@@ -144,9 +144,12 @@ class TopologyStreamControllerTest extends TestCase {
 			},
 			$lines
 		);
-		$this->assertSame(
-			[ 'dump_metadata ', 'dump_metadata ', 'dump_metadata ' ],
-			\array_values( $commands )
-		);
+		// Each tick fires dump_metadata (every STATS_INTERVAL_S) AND
+		// uptime (every UPTIME_INTERVAL_S). In test mode both timers
+		// reset to 0 between iterations so both fire on every tick.
+		$dump_metadata_count = \count( \array_filter( $commands, static fn ( $c ) => 'dump_metadata ' === $c ) );
+		$uptime_count        = \count( \array_filter( $commands, static fn ( $c ) => 'uptime ' === $c ) );
+		$this->assertSame( 3, $dump_metadata_count, 'one dump_metadata per tick' );
+		$this->assertSame( 3, $uptime_count, 'one uptime per tick' );
 	}
 }

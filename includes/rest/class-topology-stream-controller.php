@@ -31,6 +31,7 @@ class TopologyStreamController extends SSEControllerBase {
 	public const REST_NAMESPACE = 'newspack-event-logger-nodes/v1';
 
 	public const STATS_INTERVAL_S     = 1.0;
+	public const UPTIME_INTERVAL_S    = 5.0;
 	public const HEARTBEAT_INTERVAL_S = 5.0;
 	public const LOOP_SLEEP_US        = 50_000;
 
@@ -269,6 +270,9 @@ class TopologyStreamController extends SSEControllerBase {
 		// silently, distinct from user-typed commands which surface
 		// in the transcript.
 		$this->send_command( $cmd_out, 'dump_metadata', '', null, 'gui:auto' );
+		// Initial uptime fire — alongside the first dump_metadata, so the
+		// Inspector's Process section has a value to show on first paint.
+		$this->send_command( $cmd_out, 'uptime', '', null, 'gui:uptime' );
 		$cmd_out->flush();
 
 		$this->drain_and_forward( $reply_in );
@@ -279,6 +283,7 @@ class TopologyStreamController extends SSEControllerBase {
 		// (tests). Tick 1 was the initial ls -al above; each subsequent
 		// iteration that hits the STATS_INTERVAL_S window fires one ls -ct.
 		$last_stats     = \microtime( true );
+		$last_uptime    = \microtime( true );
 		$last_heartbeat = \microtime( true );
 		$ticks_fired    = 1;
 
@@ -290,6 +295,12 @@ class TopologyStreamController extends SSEControllerBase {
 				$cmd_out->flush();
 				$last_stats = $now;
 				++$ticks_fired;
+			}
+
+			if ( $now - $last_uptime >= self::UPTIME_INTERVAL_S ) {
+				$this->send_command( $cmd_out, 'uptime', '', null, 'gui:uptime' );
+				$cmd_out->flush();
+				$last_uptime = $now;
 			}
 
 			if ( $now - $last_heartbeat >= self::HEARTBEAT_INTERVAL_S ) {
@@ -308,6 +319,7 @@ class TopologyStreamController extends SSEControllerBase {
 				// tick instead of waiting a real 1s in test time.
 				\usleep( 100 );
 				$last_stats     = 0.0;
+				$last_uptime    = 0.0;
 				$last_heartbeat = 0.0;
 				continue;
 			}

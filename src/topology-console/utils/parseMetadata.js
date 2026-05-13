@@ -58,6 +58,11 @@ export function parseMetadata( payload ) {
 			debugState:
 				typeof meta.debug_state === 'number' ? meta.debug_state : 0,
 			arguments: typeof meta.arguments === 'string' ? meta.arguments : '',
+			lgstMsg: typeof meta.lgst_msg === 'number' ? meta.lgst_msg : 0,
+			bytesRead:
+				typeof meta.bytes_read === 'number' ? meta.bytes_read : 0,
+			bytesWritten:
+				typeof meta.bytes_written === 'number' ? meta.bytes_written : 0,
 		} );
 
 		const target = meta.target;

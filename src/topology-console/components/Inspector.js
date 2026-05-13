@@ -111,6 +111,25 @@ function formatRate( rate ) {
 	return `${ rate.toFixed( 2 ) } /s`;
 }
 
+// Bytes rendered with K / M / G suffixes once the magnitude makes the
+// raw number unreadable. Mirrors what the Throughput / Process panel
+// in the mockup wants: dense, glanceable values.
+function formatBytes( n ) {
+	if ( typeof n !== 'number' || n < 0 ) {
+		return '—';
+	}
+	if ( n < 1024 ) {
+		return `${ n } B`;
+	}
+	if ( n < 1024 * 1024 ) {
+		return `${ ( n / 1024 ).toFixed( 1 ) } K`;
+	}
+	if ( n < 1024 * 1024 * 1024 ) {
+		return `${ ( n / ( 1024 * 1024 ) ).toFixed( 1 ) } M`;
+	}
+	return `${ ( n / ( 1024 * 1024 * 1024 ) ).toFixed( 1 ) } G`;
+}
+
 function formatLastSeen( ts, live ) {
 	if ( ts === undefined || ts === null ) {
 		return live ? 'streaming' : '—';
@@ -138,6 +157,7 @@ export default function Inspector( {
 	onHover,
 	nodeIds,
 	ssePid,
+	uptime,
 } ) {
 	if ( ! selectedId ) {
 		return (
@@ -264,6 +284,33 @@ export default function Inspector( {
 					}
 				/>
 				<FieldRow
+					k="lgst_msg"
+					v={ formatBytes( node.lgstMsg || 0 ) }
+					vClass={
+						node.lgstMsg
+							? 'topology-field-row__val--num'
+							: 'topology-field-row__val--num topology-field-row__val--dim'
+					}
+				/>
+				<FieldRow
+					k="read"
+					v={ formatBytes( node.bytesRead || 0 ) }
+					vClass={
+						node.bytesRead
+							? 'topology-field-row__val--num'
+							: 'topology-field-row__val--num topology-field-row__val--dim'
+					}
+				/>
+				<FieldRow
+					k="written"
+					v={ formatBytes( node.bytesWritten || 0 ) }
+					vClass={
+						node.bytesWritten
+							? 'topology-field-row__val--num'
+							: 'topology-field-row__val--num topology-field-row__val--dim'
+					}
+				/>
+				<FieldRow
 					k="last_seen"
 					v={ formatLastSeen( rateInfo?.lastChangedTs, live ) }
 					vClass={
@@ -273,6 +320,16 @@ export default function Inspector( {
 					}
 				/>
 			</Section>
+
+			{ uptime && (
+				<Section title="Process" meta="worker">
+					<FieldRow
+						k="uptime"
+						v={ uptime }
+						vClass="topology-field-row__val--num"
+					/>
+				</Section>
+			) }
 
 			<div className="topology-insp__actions">
 				<button
