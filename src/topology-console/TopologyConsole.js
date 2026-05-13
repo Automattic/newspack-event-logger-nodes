@@ -496,6 +496,17 @@ export default function TopologyConsole() {
 				const prevEntry = rateRef.current.get( n.id );
 				const bytesRead = n.bytesRead || 0;
 				const bytesWritten = n.bytesWritten || 0;
+				// Sticky "has ever been non-zero" flags per stat. The
+				// Inspector uses these to gate sparkline rendering — once
+				// a stat has seen activity, the plot stays even when the
+				// counter resets to 0 (e.g. worker respawn). Prevents
+				// graphs from blinking out the moment a worker recycles.
+				const hasMessages =
+					( prevEntry && prevEntry.hasMessages ) || n.count > 0;
+				const hasRead =
+					( prevEntry && prevEntry.hasRead ) || bytesRead > 0;
+				const hasWritten =
+					( prevEntry && prevEntry.hasWritten ) || bytesWritten > 0;
 				if ( prevEntry && prevEntry.ts < now ) {
 					// A worker respawn resets the counter, so dCount can
 					// go strongly negative on the first tick of a new
@@ -541,6 +552,9 @@ export default function TopologyConsole() {
 						history,
 						readHistory,
 						writtenHistory,
+						hasMessages,
+						hasRead,
+						hasWritten,
 					} );
 					touched = true;
 				} else if ( ! prevEntry ) {
@@ -556,6 +570,9 @@ export default function TopologyConsole() {
 						history: [],
 						readHistory: [],
 						writtenHistory: [],
+						hasMessages,
+						hasRead,
+						hasWritten,
 					} );
 					touched = true;
 				}
