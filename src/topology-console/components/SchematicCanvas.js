@@ -130,10 +130,12 @@ function parseViewBox( str ) {
 // (text baseline at y=44) and the bottom rate/counter row (baseline
 // at y=76). Auto-scaled to the window's max so a node that's
 // recently bursty shows the shape regardless of absolute rate.
+// Bottom edge at y=64 leaves a 4px breather before the rate/counter
+// text starts climbing into view (the digits' top edge sits ~y=68).
 const SPARK_X = 11;
 const SPARK_Y = 48;
 const SPARK_W = 174; // NODE_W (196) - 11 - 11
-const SPARK_H = 18;
+const SPARK_H = 16;
 function sparklinePath( history ) {
 	if ( ! history || history.length < 2 ) {
 		return null;
