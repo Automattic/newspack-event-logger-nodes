@@ -141,6 +141,6 @@ class TopologyStreamControllerTest extends TestCase {
 			},
 			$lines
 		);
-		$this->assertSame( [ 'ls -al', 'ls -ct', 'ls -ct' ], \array_values( $commands ) );
+		$this->assertSame( [ 'ls -als', 'ls -ct', 'ls -ct' ], \array_values( $commands ) );
 	}
 }

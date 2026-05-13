@@ -45,11 +45,97 @@ function partitionList() {
 	return Array.from( { length: n }, ( _, i ) => i );
 }
 
+const TRANSCRIPT_MAX = 200;
+
+// Message TYPE bitmask flags, mirroring substrate's class-message.php
+// constants so we can apply Dumper-style type-aware rendering to each
+// incoming SSE msg envelope.
+const TM_BYTESTREAM = 1;
+const TM_EOF = 2;
+const TM_PING = 4;
+const TM_COMMAND = 8;
+const TM_RESPONSE = 16;
+const TM_ERROR = 32;
+const TM_INFO = 64;
+const TM_STRUCT = 256;
+
+// eslint-disable-next-line no-bitwise
+const has = ( type, flag ) => ( type & flag ) !== 0;
+
+/**
+ * Convert a raw SSE msg envelope into a transcript entry, following the
+ * cli Dumper's render rules so the GUI surfaces what the terminal would:
+ *
+ *   - TM_EOF                       → dropped (control marker, no output)
+ *   - TM_COMMAND|TM_RESPONSE       → payload only, never the wrapper JSON
+ *   - TM_COMMAND|TM_ERROR          → "ERROR: <payload>", error styling
+ *   - TM_ERROR                     → "ERROR: <value>"
+ *   - TM_PING                      → "round trip time: X ms"
+ *   - TM_STRUCT                    → JSON-encoded value
+ *   - TM_INFO                      → "INFO[from]: <value>"
+ *   - default (TM_BYTESTREAM)      → value as-is
+ *
+ * Returns null when the message should be dropped silently.
+ *
+ * @param {Object} msg Raw SSE msg envelope (type, from, to, value, ...).
+ * @return {Object|null} { kind, text } transcript entry or null to drop.
+ */
+function dumperRender( msg ) {
+	const type = typeof msg.type === 'number' ? msg.type : 0;
+	const value = msg.value;
+	if ( has( type, TM_EOF ) ) {
+		return null;
+	}
+	const unwrapPayload = () => {
+		if ( value && typeof value === 'object' ) {
+			return typeof value.payload === 'string' ? value.payload : '';
+		}
+		return typeof value === 'string' ? value : '';
+	};
+	if ( has( type, TM_COMMAND ) && has( type, TM_RESPONSE ) ) {
+		const payload = unwrapPayload();
+		if ( ! payload ) {
+			return null;
+		}
+		return { kind: 'recv', text: payload };
+	}
+	if ( has( type, TM_COMMAND ) && has( type, TM_ERROR ) ) {
+		return { kind: 'error', text: 'ERROR: ' + unwrapPayload() };
+	}
+	if ( has( type, TM_ERROR ) ) {
+		return { kind: 'error', text: 'ERROR: ' + String( value ?? '' ) };
+	}
+	if ( has( type, TM_PING ) ) {
+		const sent = parseFloat( value );
+		const now = Date.now() / 1000;
+		const rtt = ( ( now - sent ) * 1000 ).toFixed( 2 );
+		return { kind: 'info', text: `round trip time: ${ rtt } ms` };
+	}
+	if ( has( type, TM_STRUCT ) ) {
+		return {
+			kind: 'recv',
+			text:
+				typeof value === 'string'
+					? value
+					: JSON.stringify( value, null, 2 ),
+		};
+	}
+	if ( has( type, TM_INFO ) ) {
+		const from = msg.from || '?';
+		return { kind: 'info', text: `INFO[${ from }]: ${ value }` };
+	}
+	if ( has( type, TM_BYTESTREAM ) ) {
+		return { kind: 'recv', text: String( value ?? '' ) };
+	}
+	return null;
+}
+
 export default function TopologyConsole() {
 	const [ topology, setTopology ] = useState( TOPOLOGIES[ 0 ] );
 	const [ partition, setPartition ] = useState( 0 );
 	const [ selectedId, setSelectedId ] = useState( null );
 	const [ parsed, setParsed ] = useState( { nodes: [], edges: [] } );
+	const [ transcript, setTranscript ] = useState( [] );
 
 	const partitions = useMemo( partitionList, [] );
 	const { status, lastMessage, ssePid } = useTopologyStream(
@@ -57,40 +143,68 @@ export default function TopologyConsole() {
 		partition
 	);
 
+	const appendTranscript = useCallback( ( entry ) => {
+		setTranscript( ( prev ) => {
+			const next = prev.concat( {
+				...entry,
+				key: `${ Date.now() }-${ Math.random()
+					.toString( 36 )
+					.slice( 2, 7 ) }`,
+			} );
+			return next.length > TRANSCRIPT_MAX
+				? next.slice( next.length - TRANSCRIPT_MAX )
+				: next;
+		} );
+	}, [] );
+
 	const sendCommand = useCallback(
 		( { name, arguments: args } ) => {
 			if ( ! ssePid ) {
 				return;
 			}
+			appendTranscript( {
+				kind: 'sent',
+				text: args ? `${ name } ${ args }` : name,
+			} );
 			apiFetch( {
 				path: `/newspack-event-logger-nodes/v1/topology/${ encodeURIComponent(
 					topology
 				) }/p${ encodeURIComponent( partition ) }/command`,
 				method: 'POST',
 				data: { name, arguments: args, sse_pid: ssePid },
-			} ).catch( () => {
-				// Surfacing per-command errors lives in v2's REPL transcript
-				// pane; for now we silently drop and rely on the next
-				// auto-fired `ls -ct` to keep the canvas honest.
+			} ).catch( ( err ) => {
+				appendTranscript( {
+					kind: 'error',
+					text: `[POST failed] ${
+						( err && err.message ) || 'network error'
+					}`,
+				} );
 			} );
 		},
-		[ topology, partition, ssePid ]
+		[ topology, partition, ssePid, appendTranscript ]
 	);
 
-	// Reset selection + graph when the (topology, partition) pair changes.
+	// Reset selection + graph + transcript when the (topology, partition)
+	// pair changes — we're effectively starting a fresh REPL session.
 	useEffect( () => {
 		setSelectedId( null );
 		setParsed( { nodes: [], edges: [] } );
+		setTranscript( [] );
 	}, [ topology, partition ] );
 
-	// Re-parse on every new msg envelope that carries an ls table.
+	// Route every incoming msg by its KEY:
+	//   key = 'gui:auto'  → response to one of our own SSE-controller polls;
+	//                       feed it to the canvas-parse and never the transcript.
+	//   key = '' (empty)  → either a user-typed command's response or an
+	//                       async broadcast (debug traces, etc.); show it in
+	//                       the transcript verbatim.
+	//
+	// CommandInterpreter copies KEY from each TM_COMMAND request onto its
+	// TM_RESPONSE, so the round-trip correlation is automatic.
 	//
 	// Substrate envelope shapes we handle:
-	//   value: "COUNT ..."                  — raw bytestream payload
-	//   value: { name: "ls", payload: "COUNT ..." }  — command-response struct
-	//
-	// The command-response shape is what CommandInterpreter emits for
-	// the `ls -al` / `ls -ct` it gets asked by our SSE controller.
+	//   value: "COUNT ..."                                  — raw bytestream payload
+	//   value: { name: "ls", payload: "COUNT ..." }         — command-response struct
 	useEffect( () => {
 		if ( ! lastMessage ) {
 			return;
@@ -106,7 +220,28 @@ export default function TopologyConsole() {
 		) {
 			text = value.payload;
 		}
-		if ( ! text || ! /^COUNT\b/m.test( text ) ) {
+		if ( ! text ) {
+			return;
+		}
+		const isOurPoll = lastMessage.key === 'gui:auto';
+		if ( ! isOurPoll ) {
+			// User-typed command response, or an async broadcast. Run it
+			// through the Dumper-style renderer so each message type gets
+			// its appropriate framing — TM_COMMAND|TM_RESPONSE shows the
+			// unwrapped payload, TM_ERROR variants get an "ERROR: " prefix,
+			// TM_INFO carries the FROM tag, etc.
+			const rendered = dumperRender( lastMessage );
+			if ( rendered ) {
+				appendTranscript( {
+					...rendered,
+					text: rendered.text.replace( /\n+$/, '' ),
+				} );
+			}
+			return;
+		}
+		// gui:auto polls only ever emit ls table data. If something else
+		// snuck through, drop it silently rather than misparse.
+		if ( ! /^COUNT\b/m.test( text ) ) {
 			return;
 		}
 		const next = parseLsOutput( text );
@@ -129,7 +264,7 @@ export default function TopologyConsole() {
 				edges: next.edges,
 			};
 		} );
-	}, [ lastMessage ] );
+	}, [ lastMessage, appendTranscript ] );
 
 	return (
 		<div className="topology-app">
@@ -162,6 +297,8 @@ export default function TopologyConsole() {
 				streamStatus={ status }
 				canSend={ status === 'open' && !! ssePid }
 				onSubmit={ sendCommand }
+				onClear={ () => setTranscript( [] ) }
+				transcript={ transcript }
 			/>
 		</div>
 	);
