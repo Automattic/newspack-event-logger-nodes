@@ -12,7 +12,7 @@
  * the canvas stable while counters tick.
  */
 
-import { useMemo } from '@wordpress/element';
+import { useMemo, useState } from '@wordpress/element';
 
 import { autoLayout } from '../utils/autoLayout';
 import { inferType } from '../utils/inferType';
@@ -33,8 +33,18 @@ function edgePath( a, b ) {
 	const y1 = a.position.y + NODE_H / 2;
 	const x2 = b.position.x;
 	const y2 = b.position.y + NODE_H / 2;
-	const mx = ( x1 + x2 ) / 2;
-	return `M ${ x1 },${ y1 } H ${ mx } V ${ y2 } H ${ x2 - 6 }`;
+	// Cubic bezier — control points pulled horizontally from each
+	// port so the curve eases in/out of the node. Orthogonal-elbow
+	// routing made long vertical drops read as column separators
+	// rather than directed edges; a smooth S-curve makes the source/
+	// destination of each edge unmistakable even when several edges
+	// converge on the same input port.
+	const dx = Math.max( 60, Math.abs( x2 - x1 ) * 0.5 );
+	const c1x = x1 + dx;
+	const c2x = x2 - dx;
+	return `M ${ x1 },${ y1 } C ${ c1x },${ y1 } ${ c2x },${ y2 } ${
+		x2 - 6
+	},${ y2 }`;
 }
 
 function viewBoxFor( nodes ) {
@@ -66,6 +76,13 @@ export default function SchematicCanvas( {
 		return map;
 	}, [ nodes ] );
 	const viewBox = useMemo( () => viewBoxFor( nodes ), [ nodes ] );
+
+	// Hovered node id — drives edge highlighting. When the user is
+	// pointing at a node, only its inbound + outbound edges keep the
+	// active style; everything else dims so the user can read each
+	// node's flow neighborhood at a glance. Same disambiguation trick
+	// the live D3 visualizer uses at https://tucsonweekly.com.
+	const [ hoveredId, setHoveredId ] = useState( null );
 
 	return (
 		<svg
@@ -112,10 +129,14 @@ export default function SchematicCanvas( {
 					if ( ! a || ! b ) {
 						return null;
 					}
+					const touches = hoveredId === e.from || hoveredId === e.to;
+					const dimmed = hoveredId && ! touches;
 					return (
 						<path
 							key={ `edge-${ i }-${ e.from }-${ e.to }` }
-							className="topology-edge topology-edge--active"
+							className={ `topology-edge topology-edge--active${
+								touches ? ' is-touched' : ''
+							}${ dimmed ? ' is-dimmed' : '' }` }
 							d={ edgePath( a, b ) }
 							markerEnd="url(#topology-arrow-active)"
 							style={ { animationDelay: `${ 200 + i * 80 }ms` } }
@@ -127,11 +148,15 @@ export default function SchematicCanvas( {
 			<g className="topology-nodes">
 				{ nodes.map( ( n, i ) => {
 					const isSelected = n.id === selectedId;
+					const isHovered = n.id === hoveredId;
+					const isFaded = hoveredId && ! isHovered;
 					return (
 						<g
 							key={ n.id }
 							className={ `topology-node${
 								isSelected ? ' is-selected' : ''
+							}${ isHovered ? ' is-hovered' : '' }${
+								isFaded ? ' is-faded' : ''
 							}` }
 							transform={ `translate(${ n.position.x },${ n.position.y })` }
 							style={ { animationDelay: `${ i * 50 }ms` } }
@@ -141,6 +166,8 @@ export default function SchematicCanvas( {
 									onSelect( n.id );
 								}
 							} }
+							onMouseEnter={ () => setHoveredId( n.id ) }
+							onMouseLeave={ () => setHoveredId( null ) }
 						>
 							<rect
 								className="topology-node__shadow"
