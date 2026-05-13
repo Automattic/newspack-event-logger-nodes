@@ -159,6 +159,12 @@ export default function TopologyConsole() {
 	const rateRef = useRef( new Map() );
 	const [ rateVersion, setRateVersion ] = useState( 0 );
 
+	// Worker uptime, refreshed by `gui:uptime` polls every UPTIME_INTERVAL_S
+	// (5s). Substrate's `uptime` verb returns one line like
+	// `HH:MM:SS  up N days, HH:MM:SS\n` — we keep just the days/HMS half for
+	// the Inspector's Process section.
+	const [ uptime, setUptime ] = useState( null );
+
 	const partitions = useMemo( () => partitionList( topology ), [ topology ] );
 
 	// If the user switches to a topology with fewer partitions than the
@@ -219,6 +225,17 @@ export default function TopologyConsole() {
 				typeof value.payload === 'string'
 			) {
 				text = value.payload;
+			}
+			if ( msg.key === 'gui:uptime' ) {
+				// `09:44:52  up 0 days, 00:01:00\n` → keep the right half.
+				const match =
+					typeof text === 'string'
+						? text.match( /up\s+(.+)$/m )
+						: null;
+				if ( match ) {
+					setUptime( match[ 1 ].trim() );
+				}
+				return;
 			}
 			const isOurPoll = msg.key === 'gui:auto';
 			if ( ! isOurPoll ) {
@@ -426,6 +443,7 @@ export default function TopologyConsole() {
 				onHover={ setHoveredId }
 				nodeIds={ new Set( parsed.nodes.map( ( n ) => n.id ) ) }
 				ssePid={ ssePid }
+				uptime={ uptime }
 			/>
 			<ReplFooter
 				topology={ topology }

@@ -30,6 +30,9 @@ describe( 'parseMetadata', () => {
 				klass: 'Echo',
 				debugState: 0,
 				arguments: '',
+				lgstMsg: 0,
+				bytesRead: 0,
+				bytesWritten: 0,
 			},
 		] );
 		expect( edges ).toEqual( [ { from: 'alpha', to: 'beta' } ] );
@@ -92,6 +95,43 @@ describe( 'parseMetadata', () => {
 		} );
 		expect( nodes.find( ( n ) => n.id === 'alpha' ).debugState ).toBe( 1 );
 		expect( nodes.find( ( n ) => n.id === 'beta' ).debugState ).toBe( 0 );
+	} );
+
+	it( 'exposes lgst_msg / bytes_read / bytes_written from the payload', () => {
+		const { nodes } = parseMetadata( {
+			alpha: {
+				class: 'Echo',
+				counter: 1,
+				sink: '',
+				target: '',
+				debug_state: 0,
+				arguments: '',
+				lgst_msg: 1234,
+				bytes_read: 5678,
+				bytes_written: 9012,
+			},
+		} );
+		const alpha = nodes.find( ( n ) => n.id === 'alpha' );
+		expect( alpha.lgstMsg ).toBe( 1234 );
+		expect( alpha.bytesRead ).toBe( 5678 );
+		expect( alpha.bytesWritten ).toBe( 9012 );
+	} );
+
+	it( 'defaults new counters to 0 when payload omits them', () => {
+		const { nodes } = parseMetadata( {
+			alpha: {
+				class: 'Echo',
+				counter: 0,
+				sink: '',
+				target: '',
+				debug_state: 0,
+				arguments: '',
+			},
+		} );
+		const alpha = nodes.find( ( n ) => n.id === 'alpha' );
+		expect( alpha.lgstMsg ).toBe( 0 );
+		expect( alpha.bytesRead ).toBe( 0 );
+		expect( alpha.bytesWritten ).toBe( 0 );
 	} );
 
 	it( 'skips empty-string targets', () => {
