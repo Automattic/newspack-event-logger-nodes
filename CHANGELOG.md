@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-05-13
+
+### Added
+
+- **Auto-layout: no more crossing streams.** Three refinements to the layered graph drawer in `utils/autoLayout.js`:
+
+  1. **Push-forward depth pass.** Walks nodes in decreasing-depth order and advances each to `min(target_depths) - 1` when that shifts it right. A node with no incoming but a far-away target used to sit in col 0 with a long forward edge cutting across intermediate columns (`jobintake:consumer` → `job-router` curving under `firehose:tee`). Now it sits one column before its earliest target.
+
+  2. **Straightness tiebreaker in deconflict.** When two column-mates both want the same row, the one with more edges (in + out) whose other endpoint is at that row keeps it; the other bumps. Previously alphabetical tiebreaking would give an unrelated leaf the row and break a linear chain — `job-router → jobs:tee → jobs:partition` zigzagged because `errors:partition` alphabetically beat `jobs:tee` at row 0.
+
+  3. **Barycenter snap (not min) in pass 2.** Pass 2 was using `Math.min(...targetRows)` to pull producers to the topmost target row, which collapsed everything to row 0 and forced pass 3 to bump column-mates in a way that re-introduced crossings. Switched to `Math.round(mean)` — a producer with one target at row 0 and one at row 1 now snaps to row 0 or 1 instead of always row 0, giving the natural barycenter ordering room to win.
+
+  End result on a representative `firehose-workers.p0` graph: zero edge crossings, two parallel spines (`jobintake:consumer → job-router → jobs:tee → jobs:partition` on row 0, `firehose:consumer → firehose:tee → request-builder → errors:partition` on row 1), and `firehose:tee`'s fan-out to `job-router` arcs cleanly upward without crossing.
+
+- **Inspector collapses when nothing is selected; palette hidden in v1.** The permanent "Select a node to inspect" empty state was 308px of dead pixels. The palette is a v2 edit-mode affordance (drag node types onto canvas) that's scaffolded but inert in v1. Removing both reclaims the full window width for the canvas; selecting a node re-opens the inspector via `is-inspector-open` on `.topology-app`.
+
+- **Identity section renders real `arguments`.** The Inspector's Identity section was hardcoded to "—". `parseMetadata` was already extracting `arguments` from `dump_metadata`'s payload — now displayed with a smaller-mono variant so long Partition paths (`/tmp/.../requests.log 0 67108864 2 86400`) wrap cleanly inside the 308px column. The `MAKE_NODE` meta tag now earns its label — the section literally renders `make_node <class> <name> <arguments>`.
+
+### Fixed
+
+- **`stylelint` no-descending-specificity escape.** `.topology-repl__bar .topology-repl__toggle` (nested inside `&__bar`) had higher specificity than the bare `&__toggle` rule but appeared first in source order. Reordered the source so the less-specific `&__toggle, &__clear` block precedes `&__bar`. CSS output is unchanged.
+
+### Chores
+
+- **Locked `brainmaestro/composer-git-hooks` in `composer.lock`** for the same cghooks-installer setup determinism as newspack-nodes v0.1.17.
+
 ## [0.2.19] - 2026-05-13
 
 ### Added
