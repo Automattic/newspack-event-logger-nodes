@@ -12,7 +12,7 @@
  * the canvas stable while counters tick.
  */
 
-import { useMemo } from '@wordpress/element';
+import { useMemo, useRef, useState } from '@wordpress/element';
 
 import { autoLayout } from '../utils/autoLayout';
 import { inferType } from '../utils/inferType';
@@ -20,6 +20,28 @@ import { inferType } from '../utils/inferType';
 const NODE_W = 196;
 const NODE_H = 84;
 const PORT_R = 4.5;
+
+// Drag-snap pitch — matches the visible 24px primary grid so dragged
+// nodes always land flush with a grid intersection.
+const GRID_SNAP = 24;
+// Movement threshold (SVG units) before a pointer-down + drag is
+// treated as a drag rather than a click. Anything under suppresses
+// the drag and lets the click handler fire (node selection).
+const DRAG_THRESHOLD = 3;
+
+// Convert a viewport-coords pointer event to SVG-coords. SchematicCanvas
+// uses viewBox so screen pixels and SVG units differ by the CTM scale;
+// without this conversion the dragged node lags behind the cursor at
+// any non-1:1 viewport size.
+function screenToSvg( svg, clientX, clientY ) {
+	const pt = svg.createSVGPoint();
+	pt.x = clientX;
+	pt.y = clientY;
+	const ctm = svg.getScreenCTM();
+	return ctm
+		? pt.matrixTransform( ctm.inverse() )
+		: { x: clientX, y: clientY };
+}
 
 function compactCount( count ) {
 	if ( count === null || count === undefined ) {
@@ -70,14 +92,56 @@ export default function SchematicCanvas( {
 	onDeselect,
 	hoveredId,
 	onHover,
+	positionOverrides,
+	onPositionChange,
 } ) {
-	const { nodes, edges } = useMemo( () => autoLayout( parsed ), [ parsed ] );
+	// Apply user-pinned position overrides on top of the auto-layout
+	// output. autoLayout still runs every poll (so newly-added nodes
+	// get sensible defaults), but any node the user has dragged keeps
+	// its dragged position — keyed by node name, so the override
+	// survives substrate restarts that re-seed counters.
+	const { nodes: laidOutNodes, edges } = useMemo(
+		() => autoLayout( parsed ),
+		[ parsed ]
+	);
+	const nodes = useMemo( () => {
+		if ( ! positionOverrides ) {
+			return laidOutNodes;
+		}
+		return laidOutNodes.map( ( n ) =>
+			positionOverrides[ n.id ]
+				? { ...n, position: positionOverrides[ n.id ] }
+				: n
+		);
+	}, [ laidOutNodes, positionOverrides ] );
+
+	// Active-drag state. Held in a single object so the dragged node
+	// can render at its current (un-snapped) position while everyone
+	// else stays put. Snap happens on pointerup; that's when the
+	// committed override is sent back to the parent.
+	const [ drag, setDrag ] = useState( null );
+	// Whether the most recent pointer-down crossed the drag threshold.
+	// Click handler reads this to suppress selection after a real drag.
+	const draggedRef = useRef( false );
+
+	const displayNodes = useMemo( () => {
+		if ( ! drag ) {
+			return nodes;
+		}
+		return nodes.map( ( n ) =>
+			n.id === drag.nodeId ? { ...n, position: drag.currentPos } : n
+		);
+	}, [ nodes, drag ] );
+
 	const nodeById = useMemo( () => {
 		const map = new Map();
-		nodes.forEach( ( n ) => map.set( n.id, n ) );
+		displayNodes.forEach( ( n ) => map.set( n.id, n ) );
 		return map;
-	}, [ nodes ] );
-	const viewBox = useMemo( () => viewBoxFor( nodes ), [ nodes ] );
+	}, [ displayNodes ] );
+	const viewBox = useMemo(
+		() => viewBoxFor( displayNodes ),
+		[ displayNodes ]
+	);
 
 	// hoveredId is lifted to the parent so the Inspector can drive
 	// it too (hovering a `target` / `← from` value in the inspector
@@ -86,6 +150,75 @@ export default function SchematicCanvas( {
 		if ( onHover ) {
 			onHover( id );
 		}
+	};
+
+	const beginDrag = ( e, node ) => {
+		// Only left-button drags; right/middle reserved for browser.
+		if ( e.button !== 0 ) {
+			return;
+		}
+		e.stopPropagation();
+		draggedRef.current = false;
+		const svg = e.currentTarget.ownerSVGElement;
+		const startSvg = screenToSvg( svg, e.clientX, e.clientY );
+		setDrag( {
+			nodeId: node.id,
+			startSvg,
+			originalPos: node.position,
+			currentPos: node.position,
+		} );
+		e.currentTarget.setPointerCapture( e.pointerId );
+	};
+
+	const updateDrag = ( e ) => {
+		if ( ! drag ) {
+			return;
+		}
+		const svg = e.currentTarget.ownerSVGElement;
+		const cur = screenToSvg( svg, e.clientX, e.clientY );
+		const dx = cur.x - drag.startSvg.x;
+		const dy = cur.y - drag.startSvg.y;
+		if (
+			Math.abs( dx ) > DRAG_THRESHOLD ||
+			Math.abs( dy ) > DRAG_THRESHOLD
+		) {
+			draggedRef.current = true;
+		}
+		setDrag( {
+			...drag,
+			currentPos: {
+				x: drag.originalPos.x + dx,
+				y: drag.originalPos.y + dy,
+			},
+		} );
+	};
+
+	const endDrag = ( e ) => {
+		if ( ! drag ) {
+			return;
+		}
+		try {
+			e.currentTarget.releasePointerCapture( e.pointerId );
+		} catch ( _err ) {
+			// Pointer capture may already be released; ignore.
+		}
+		if ( draggedRef.current && onPositionChange ) {
+			// Snap to the 24px grid on commit so dragged nodes line up
+			// with the canvas's primary grid.
+			const snappedX =
+				Math.round( drag.currentPos.x / GRID_SNAP ) * GRID_SNAP;
+			const snappedY =
+				Math.round( drag.currentPos.y / GRID_SNAP ) * GRID_SNAP;
+			onPositionChange( drag.nodeId, { x: snappedX, y: snappedY } );
+		}
+		setDrag( null );
+		// Reset the click-suppress flag on the next microtask so the
+		// click handler that fires immediately after pointerup can
+		// still see the "we just dragged" signal.
+		const wasDragged = draggedRef.current;
+		setTimeout( () => {
+			draggedRef.current = wasDragged ? true : false;
+		}, 0 );
 	};
 
 	return (
@@ -160,10 +293,11 @@ export default function SchematicCanvas( {
 			</g>
 
 			<g className="topology-nodes">
-				{ nodes.map( ( n, i ) => {
+				{ displayNodes.map( ( n, i ) => {
 					const isSelected = n.id === selectedId;
 					const isHovered = n.id === hoveredId;
 					const isFaded = hoveredId && ! isHovered;
+					const isDragging = drag && drag.nodeId === n.id;
 					return (
 						<g
 							key={ n.id }
@@ -171,15 +305,28 @@ export default function SchematicCanvas( {
 								isSelected ? ' is-selected' : ''
 							}${ isHovered ? ' is-hovered' : '' }${
 								isFaded ? ' is-faded' : ''
-							}` }
+							}${ isDragging ? ' is-dragging' : '' }` }
 							transform={ `translate(${ n.position.x },${ n.position.y })` }
 							style={ { animationDelay: `${ i * 50 }ms` } }
 							onClick={ ( ev ) => {
 								ev.stopPropagation();
+								// Suppress selection after a real drag —
+								// pointer-up sets draggedRef to true in
+								// that case. The flag is reset on the
+								// next microtask so subsequent clicks
+								// (without intervening drags) work.
+								if ( draggedRef.current ) {
+									draggedRef.current = false;
+									return;
+								}
 								if ( onSelect ) {
 									onSelect( n.id );
 								}
 							} }
+							onPointerDown={ ( ev ) => beginDrag( ev, n ) }
+							onPointerMove={ updateDrag }
+							onPointerUp={ endDrag }
+							onPointerCancel={ endDrag }
 							onMouseEnter={ () => setHovered( n.id ) }
 							onMouseLeave={ () => setHovered( null ) }
 						>

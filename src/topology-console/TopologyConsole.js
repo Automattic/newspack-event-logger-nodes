@@ -164,6 +164,48 @@ export default function TopologyConsole() {
 	// the Inspector's Process section.
 	const [ uptime, setUptime ] = useState( null );
 
+	// User-pinned positions, keyed by node name. Survives reloads via
+	// localStorage; scoped per `topology.partition` so positions don't
+	// bleed between worker types. Loaded on topology/partition change;
+	// updates write back synchronously on each drag commit.
+	const positionStorageKey = `newspack-nodes:topology:${ topology }.p${ partition }:positions`;
+	const [ positionOverrides, setPositionOverrides ] = useState( {} );
+	useEffect( () => {
+		try {
+			const raw = window.localStorage.getItem( positionStorageKey );
+			setPositionOverrides( raw ? JSON.parse( raw ) : {} );
+		} catch ( _err ) {
+			setPositionOverrides( {} );
+		}
+	}, [ positionStorageKey ] );
+	const handlePositionChange = useCallback(
+		( nodeId, pos ) => {
+			setPositionOverrides( ( prev ) => {
+				const next = { ...prev, [ nodeId ]: pos };
+				try {
+					window.localStorage.setItem(
+						positionStorageKey,
+						JSON.stringify( next )
+					);
+				} catch ( _err ) {
+					// localStorage may be disabled / quota'd; silently
+					// fall back to in-session-only overrides.
+				}
+				return next;
+			} );
+		},
+		[ positionStorageKey ]
+	);
+	const handleResetLayout = useCallback( () => {
+		setPositionOverrides( {} );
+		try {
+			window.localStorage.removeItem( positionStorageKey );
+		} catch ( _err ) {
+			// Ignore — clearing in-memory state is the important part.
+		}
+	}, [ positionStorageKey ] );
+	const hasOverrides = Object.keys( positionOverrides ).length > 0;
+
 	const partitions = useMemo( () => partitionList( topology ), [ topology ] );
 
 	// If the user switches to a topology with fewer partitions than the
@@ -430,11 +472,17 @@ export default function TopologyConsole() {
 			the canvas). In v1 we're inspect-only — hiding the pane
 			reclaims its 232px column for the canvas. Reintroduce when
 			the EDIT button becomes live. */ }
-			<CanvasFrame topology={ topology } partition={ partition }>
+			<CanvasFrame
+				topology={ topology }
+				partition={ partition }
+				onResetLayout={ hasOverrides ? handleResetLayout : null }
+			>
 				<SchematicCanvas
 					parsed={ parsed }
 					selectedId={ selectedId }
 					onSelect={ setSelectedId }
+					positionOverrides={ positionOverrides }
+					onPositionChange={ handlePositionChange }
 					onDeselect={ () => setSelectedId( null ) }
 					hoveredId={ hoveredId }
 					onHover={ setHoveredId }
