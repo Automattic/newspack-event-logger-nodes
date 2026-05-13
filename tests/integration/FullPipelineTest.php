@@ -89,11 +89,13 @@ class FullPipelineTest extends TestCase {
 		$mc    = new FakeMemcached();
 		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
+		$fb->name( 'flame-builder' );
 		$fb->set_stats_store( $store );
 		$rb->sink( $fb );
 
 		$flame_capture = new CaptureSink();
-		$fb->set_flames_sink( $flame_capture );
+		$fb->sink( $flame_capture );
+		$fb->connect_node( 'flames:partition' );
 
 		// Job pipeline: JobRouter (pure forwarder) → JobWorker (executor).
 		// Production has a jobs.log Partition between them; the test wires
