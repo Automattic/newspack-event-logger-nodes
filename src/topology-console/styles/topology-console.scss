@@ -486,12 +486,14 @@ body[class*="_page_newspack-nodes-topology"] {
 	}
 
 	// Reset-layout chip — only mounted by CanvasFrame when the user
-	// has dragged anything. Sits inline with the topology metadata so
-	// it's visible without obscuring the canvas. pointer-events: auto
-	// to override the meta wrapper's `none`.
+	// has dragged anything. Sits inline with the topology metadata
+	// but pushed past the top-left reticle (.topology-reticle--tl at
+	// top: 70px, height 24px → ends at y≈94) so the chip doesn't
+	// overlap the drafting alignment mark. pointer-events: auto to
+	// override the meta wrapper's `none`.
 	&__reset {
 		display: inline-block;
-		margin-top: 8px;
+		margin-top: 44px;
 		background: transparent;
 		border: 1px solid $ink-3;
 		color: $ink-3;
