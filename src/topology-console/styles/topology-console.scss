@@ -615,6 +615,10 @@ body[class*="_page_newspack-nodes-topology"] {
 	cursor: grab;
 	animation: topology-fadein 0.35s ease-out both;
 	transition: opacity 120ms ease;
+	// Drag inside the SVG should never spill into a browser text
+	// selection of surrounding chrome.
+	user-select: none;
+	-webkit-user-select: none;
 
 	&.is-faded {
 		opacity: 0.4;

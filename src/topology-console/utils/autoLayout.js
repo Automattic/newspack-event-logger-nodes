@@ -22,10 +22,13 @@
  * — does not mutate the input. Edges are returned unchanged.
  */
 
-const X_STEP = 240;
-const Y_STEP = 110;
-const X_PAD = 60;
-const Y_PAD = 80;
+// Exported so drag-snap can land on the same column/row grid the
+// auto-layout uses. Keeping these in one file means a single source
+// of truth for "where can a node sit?"
+export const X_STEP = 240;
+export const Y_STEP = 110;
+export const X_PAD = 60;
+export const Y_PAD = 80;
 
 export function autoLayout( parsed ) {
 	const nodes = parsed?.nodes ?? [];
