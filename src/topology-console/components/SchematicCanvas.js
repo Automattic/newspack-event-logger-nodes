@@ -12,7 +12,7 @@
  * the canvas stable while counters tick.
  */
 
-import { useMemo, useRef, useState } from '@wordpress/element';
+import { useEffect, useMemo, useRef, useState } from '@wordpress/element';
 
 import { autoLayout, X_STEP, Y_STEP, X_PAD, Y_PAD } from '../utils/autoLayout';
 import { inferType } from '../utils/inferType';
@@ -258,6 +258,22 @@ export default function SchematicCanvas( {
 	const viewBox = viewport
 		? `${ viewport.x } ${ viewport.y } ${ viewport.w } ${ viewport.h }`
 		: defaultViewBox;
+	// First-render commit: when there's no persisted viewport AND
+	// we now have nodes, freeze the autofit result so subsequent
+	// renders use it as-is. Without this, `viewport=null` makes
+	// every render re-compute tightViewBoxFor from current node
+	// positions, so a node drag would shift the whole canvas
+	// in real time (live autofit). Click-canvas-to-autofit
+	// already did this via setViewport; the initial state now
+	// matches.
+	useEffect( () => {
+		if ( ! viewport && nodes.length > 0 ) {
+			setViewport( parseViewBox( tightViewBoxFor( nodes ) ) );
+		}
+		// nodes used (not displayNodes) so an in-flight drag doesn't
+		// trigger the commit — only "real" position changes do.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ viewport, nodes.length ] );
 
 	// hoveredId is lifted to the parent so the Inspector can drive
 	// it too (hovering a `target` / `← from` value in the inspector
