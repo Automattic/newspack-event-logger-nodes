@@ -918,7 +918,11 @@ $display-stencil: "Workbench", monospace;
 		overflow-y: auto;
 		background: $ink;
 		border-top: 1px solid rgba(240, 231, 214, 0.12);
-		padding: 8px 18px;
+		// Right padding leaves a corridor wide enough for the sticky
+		// [✕ ▼] actions row to sit on top of without ever overlapping
+		// transcript text. Bottom padding gives the last line clearance
+		// from the bar's border so descenders don't bleed across.
+		padding: 8px 70px 14px 18px;
 		font: 400 11px/1.5 $mono;
 		color: rgba(240, 231, 214, 0.85);
 		box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
@@ -926,17 +930,18 @@ $display-stencil: "Workbench", monospace;
 
 	// Top-right corner controls inside the transcript pane:
 	// [✕ clear] [▼ minimize]. Sticky so they stay visible while
-	// the transcript scrolls underneath them.
+	// the transcript scrolls underneath them. Solid background +
+	// transcript's reserved right-padding (above) means text never
+	// reaches the column they sit in, so no bleed-through.
 	&__actions {
 		position: sticky;
 		top: 0;
 		float: right;
 		display: flex;
 		gap: 4px;
-		margin-left: 12px;
-		padding: 2px 0 2px 8px;
-		// stylelint-disable-next-line @stylistic/declaration-colon-space-after
-		background: linear-gradient(to left, $ink 0, $ink 70%, rgba(24, 34, 46, 0) 100%);
+		padding: 4px 18px 6px 12px;
+		margin-right: -52px;
+		background: $ink;
 		z-index: 1;
 	}
 
