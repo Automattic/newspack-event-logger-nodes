@@ -382,13 +382,22 @@ export default function TopologyConsole() {
 				// at level 0 returns null), so observers can see EVERY
 				// arrival at level 1+.
 				const level = debugLevelRef.current;
-				if ( level >= 1 ) {
+				if ( level >= 2 ) {
+					// Level 2 REPLACES the normal render — the envelope
+					// dump is the whole payload. Matches the substrate
+					// Dumper's `if ($debug_level >= 2) { ... return; }`.
 					appendTranscript( {
 						kind: 'info',
-						text:
-							level >= 2
-								? buildDebugHeader2( msg )
-								: buildDebugHeader1( msg ),
+						text: buildDebugHeader2( msg ),
+					} );
+					return;
+				}
+				if ( level >= 1 ) {
+					// Level 1 AUGMENTS the normal render with a header
+					// line; the curated render below produces the payload.
+					appendTranscript( {
+						kind: 'info',
+						text: buildDebugHeader1( msg ),
 					} );
 				}
 				// User-typed command response, or an async broadcast. Run
