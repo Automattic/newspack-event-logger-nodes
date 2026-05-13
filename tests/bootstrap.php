@@ -265,6 +265,12 @@ if ( ! function_exists( 'esc_url_raw' ) ) {
 	}
 }
 
+if ( ! function_exists( 'esc_html' ) ) {
+	function esc_html( string $value ): string {
+		return \htmlspecialchars( $value, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
 if ( ! function_exists( 'sanitize_file_name' ) ) {
 	function sanitize_file_name( string $name ): string {
 		return \preg_replace( '/[^A-Za-z0-9._\-]/', '', $name ) ?? '';
