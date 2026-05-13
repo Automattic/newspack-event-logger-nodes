@@ -12,7 +12,8 @@
  *   ReplFooter        → prompt + status line
  */
 
-import { useEffect, useMemo, useState } from '@wordpress/element';
+import { useCallback, useEffect, useMemo, useState } from '@wordpress/element';
+import apiFetch from '@wordpress/api-fetch';
 
 import CanvasFrame from './components/CanvasFrame';
 import Header from './components/Header';
@@ -51,7 +52,30 @@ export default function TopologyConsole() {
 	const [ parsed, setParsed ] = useState( { nodes: [], edges: [] } );
 
 	const partitions = useMemo( partitionList, [] );
-	const { status, lastMessage } = useTopologyStream( topology, partition );
+	const { status, lastMessage, ssePid } = useTopologyStream(
+		topology,
+		partition
+	);
+
+	const sendCommand = useCallback(
+		( { name, arguments: args } ) => {
+			if ( ! ssePid ) {
+				return;
+			}
+			apiFetch( {
+				path: `/newspack-event-logger-nodes/v1/topology/${ encodeURIComponent(
+					topology
+				) }/p${ encodeURIComponent( partition ) }/command`,
+				method: 'POST',
+				data: { name, arguments: args, sse_pid: ssePid },
+			} ).catch( () => {
+				// Surfacing per-command errors lives in v2's REPL transcript
+				// pane; for now we silently drop and rely on the next
+				// auto-fired `ls -ct` to keep the canvas honest.
+			} );
+		},
+		[ topology, partition, ssePid ]
+	);
 
 	// Reset selection + graph when the (topology, partition) pair changes.
 	useEffect( () => {
@@ -117,6 +141,8 @@ export default function TopologyConsole() {
 				topology={ topology }
 				partition={ partition }
 				streamStatus={ status }
+				canSend={ status === 'open' && !! ssePid }
+				onSubmit={ sendCommand }
 			/>
 		</div>
 	);

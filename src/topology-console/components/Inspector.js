@@ -95,7 +95,7 @@ export default function Inspector( { selectedId, parsed, streamStatus } ) {
 
 			<Section title="Routing">
 				<FieldRow
-					k="sink →"
+					k="target →"
 					v={ targets[ 0 ] ? targets[ 0 ].to : '—' }
 					vClass={
 						targets[ 0 ]

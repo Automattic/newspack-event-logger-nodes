@@ -72,6 +72,74 @@ class TopologyStreamController extends SSEControllerBase {
 				],
 			]
 		);
+		// Companion POST that writes a single TM_COMMAND on behalf of the
+		// REPL footer. FROM is stamped with the sse_pid the frontend captured
+		// from the corresponding stream's `hello` event so the worker's
+		// reply routes back to the active SSE listener.
+		\register_rest_route(
+			self::REST_NAMESPACE,
+			'/topology/(?P<topology>[a-z0-9_-]+)/p(?P<partition>\d+)/command',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'post_command' ],
+				'permission_callback' => [ $this, 'stream_permissions_check' ],
+				'args'                => [
+					'topology'  => [ 'required' => true, 'type' => 'string' ],
+					'partition' => [ 'required' => true, 'type' => 'integer' ],
+					'name'      => [ 'required' => true, 'type' => 'string' ],
+					'arguments' => [ 'required' => false, 'type' => 'string' ],
+					'sse_pid'   => [ 'required' => true, 'type' => 'integer' ],
+				],
+			]
+		);
+	}
+
+	/**
+	 * POST companion to the SSE stream. Parses {name, arguments, sse_pid}
+	 * from the request body, opens the worker's input Partition, writes a
+	 * single TM_COMMAND addressed to _command_interpreter with FROM stamped
+	 * as the SSE session's `_output/{sse_pid}` so the reply lands on that
+	 * session's reply Consumer.
+	 */
+	public function post_command( \WP_REST_Request $request ) {
+		$topology  = (string) $request->get_param( 'topology' );
+		$partition = (int) $request->get_param( 'partition' );
+		$name      = \trim( (string) $request->get_param( 'name' ) );
+		$arguments = (string) ( $request->get_param( 'arguments' ) ?? '' );
+		$sse_pid   = (int) $request->get_param( 'sse_pid' );
+
+		if ( '' === $name ) {
+			return new \WP_Error(
+				'empty_command',
+				'name is required',
+				[ 'status' => 400 ]
+			);
+		}
+		if ( $sse_pid <= 0 ) {
+			return new \WP_Error(
+				'missing_sse_pid',
+				'sse_pid must be a positive integer (the pid from the hello event)',
+				[ 'status' => 400 ]
+			);
+		}
+
+		$base_dir = $this->base_dir_override ?? Bootstrap::base_dir();
+		$cli      = new Cli( $base_dir );
+		try {
+			$ipc = $cli->attach_to_worker( "{$topology}.p{$partition}" );
+		} catch ( \InvalidArgumentException $e ) {
+			return new \WP_Error(
+				'worker_not_found',
+				$e->getMessage(),
+				[ 'status' => 404 ]
+			);
+		}
+
+		$cmd_out = new Partition( $ipc['input'], 0 );
+		$this->send_command( $cmd_out, $name, $arguments, $sse_pid );
+		$cmd_out->flush();
+
+		return new \WP_REST_Response( [ 'queued' => true ], 202 );
 	}
 
 	public function stream( \WP_REST_Request $request ) {
@@ -171,13 +239,24 @@ class TopologyStreamController extends SSEControllerBase {
 	 * the user types `<verb> <args>` at the cli prompt: FROM=`_output/$pid`
 	 * so worker replies route back via the worker-side `_router` peel of
 	 * `_output` to TO=$pid, which our reply_in Consumer picks up.
+	 *
+	 * The optional $route_to_pid argument lets the POST companion stamp
+	 * FROM with the SSE session's pid (from its `hello` event) instead of
+	 * its own request pid, so worker replies route back to the listener
+	 * that's actually streaming to the browser.
 	 */
-	private function send_command( Partition $cmd_out, string $name, string $arguments ): void {
+	private function send_command(
+		Partition $cmd_out,
+		string $name,
+		string $arguments,
+		?int $route_to_pid = null
+	): void {
+		$pid                       = $route_to_pid ?? \getmypid();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_COMMAND;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::ID ]        = (string) Core::msg_counter();
-		$msg[ Message::FROM ]      = '_output/' . \getmypid();
+		$msg[ Message::FROM ]      = '_output/' . $pid;
 		$msg[ Message::TO ]        = '_command_interpreter';
 		$msg[ Message::VALUE ]     = (string) \wp_json_encode(
 			[

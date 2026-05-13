@@ -18,9 +18,11 @@ import { useEffect, useState, useRef } from '@wordpress/element';
 export function useTopologyStream( topology, partition ) {
 	const [ status, setStatus ] = useState( 'connecting' );
 	const [ lastMessage, setLastMessage ] = useState( null );
+	const [ ssePid, setSsePid ] = useState( null );
 	const messagesRef = useRef( [] );
 
 	useEffect( () => {
+		setSsePid( null );
 		const data = window.NewspackNodesData;
 		if ( ! data || ! data.restUrl ) {
 			setStatus( 'error' );
@@ -35,7 +37,18 @@ export function useTopologyStream( topology, partition ) {
 		) }/stream?_wpnonce=${ encodeURIComponent( nonce ) }`;
 		const es = new EventSource( url, { withCredentials: true } );
 
-		es.addEventListener( 'hello', () => setStatus( 'open' ) );
+		es.addEventListener( 'hello', ( e ) => {
+			setStatus( 'open' );
+			try {
+				const hello = JSON.parse( e.data );
+				if ( hello && typeof hello.pid === 'number' ) {
+					setSsePid( hello.pid );
+				}
+			} catch ( err ) {
+				// Stay connected even if the hello payload is unparseable;
+				// command POSTs will simply have no pid to stamp.
+			}
+		} );
 		es.addEventListener( 'heartbeat', () => {
 			/* keep-alive only */
 		} );
@@ -61,5 +74,5 @@ export function useTopologyStream( topology, partition ) {
 		};
 	}, [ topology, partition ] );
 
-	return { status, lastMessage, messages: messagesRef.current };
+	return { status, lastMessage, ssePid, messages: messagesRef.current };
 }
