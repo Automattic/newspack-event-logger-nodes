@@ -36,10 +36,11 @@ $mono: "JetBrains Mono", ui-monospace, monospace;
 $display-brand: "Major Mono Display", ui-monospace, monospace;
 $display-stencil: "Workbench", monospace;
 
-// Hide WP admin gunk so we own the viewport.
-.toplevel_page_newspack-nodes-topology,
-.newspack-nodes_page_newspack-nodes-topology,
-.admin_page_newspack-nodes-topology {
+// Hide WP admin gunk so we own the viewport. The actual body class
+// is `{parent}_page_newspack-nodes-topology` — the parent slug varies
+// (toplevel vs submenu, slug rename, etc.), so match any class that
+// ends with `_page_newspack-nodes-topology` rather than enumerating.
+body[class*="_page_newspack-nodes-topology"] {
 
 	#wpcontent {
 		padding-left: 0;
