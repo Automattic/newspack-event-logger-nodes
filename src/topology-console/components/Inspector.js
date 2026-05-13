@@ -221,8 +221,12 @@ export default function Inspector( {
 				<FieldRow k="class" v={ type } />
 				<FieldRow
 					k="arguments"
-					v="—"
-					vClass="topology-field-row__val--dim"
+					v={ node.arguments || '—' }
+					vClass={
+						node.arguments
+							? 'topology-field-row__val--mono'
+							: 'topology-field-row__val--dim'
+					}
 				/>
 			</Section>
 
