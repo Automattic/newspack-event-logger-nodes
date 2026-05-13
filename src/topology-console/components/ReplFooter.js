@@ -27,16 +27,6 @@ function previewLine( entry ) {
 	return idx === -1 ? text : `${ text.slice( 0, idx ) } …`;
 }
 
-const KIND_SIGIL = {
-	sent: '>',
-	error: '!',
-	recv: '<',
-};
-
-function sigilFor( kind ) {
-	return KIND_SIGIL[ kind ] || '<';
-}
-
 export default function ReplFooter( {
 	topology,
 	partition,
@@ -135,34 +125,14 @@ export default function ReplFooter( {
 						</div>
 					) : (
 						transcript.map( ( entry ) => (
-							<div
+							<pre
 								key={ entry.key }
 								className={ `topology-repl__entry topology-repl__entry--${ entry.kind }` }
 							>
-								{ entry.kind === 'sent' && (
-									<span className="topology-repl__sigil">
-										&gt;
-									</span>
-								) }
-								{ entry.kind === 'recv' && (
-									<span className="topology-repl__sigil">
-										&lt;
-									</span>
-								) }
-								{ entry.kind === 'error' && (
-									<span className="topology-repl__sigil">
-										!
-									</span>
-								) }
-								{ entry.kind === 'info' && (
-									<span className="topology-repl__sigil">
-										i
-									</span>
-								) }
-								<pre className="topology-repl__entry-text">
-									{ entry.text }
-								</pre>
-							</div>
+								{ entry.kind === 'sent'
+									? `${ topology }.p${ partition }> ${ entry.text }`
+									: entry.text }
+							</pre>
 						) )
 					) }
 				</div>
@@ -171,16 +141,17 @@ export default function ReplFooter( {
 					<div
 						className={ `topology-repl__peek topology-repl__peek--${ latest.kind }` }
 					>
-						<span className="topology-repl__sigil">
-							{ sigilFor( latest.kind ) }
-						</span>
-						{ previewLine( latest ) }
+						{ latest.kind === 'sent'
+							? `${ topology }.p${ partition }> ${ previewLine(
+									latest
+							  ) }`
+							: previewLine( latest ) }
 					</div>
 				)
 			) }
 			<div className="topology-repl__bar">
 				<span className="topology-repl__prompt">
-					{ topology }.p{ partition }&nbsp;&gt;
+					{ topology }.p{ partition }&gt;
 				</span>
 				<input
 					type="text"
