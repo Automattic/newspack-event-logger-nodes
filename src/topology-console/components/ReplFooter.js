@@ -37,6 +37,26 @@ export default function ReplFooter( {
 		}
 	};
 	const logRef = useRef( null );
+	const inputRef = useRef( null );
+
+	// Click anywhere in the transcript pane = refocus the input. Standard
+	// terminal UX — the user expects to keep typing after glancing at
+	// output. Don't steal focus when the click was on a text selection
+	// (we want copy/paste to work), or when it hit one of the action
+	// buttons (their own handlers do the right thing). Uses the
+	// transcript element's ownerDocument so the linter's
+	// no-global-get-selection rule is happy.
+	const handleTranscriptClick = ( ev ) => {
+		const win = ev.currentTarget.ownerDocument?.defaultView;
+		const selection = win?.getSelection();
+		if ( selection && selection.toString().length > 0 ) {
+			return;
+		}
+		if ( ev.target.closest( 'button' ) ) {
+			return;
+		}
+		inputRef.current?.focus();
+	};
 
 	const statusLabel =
 		STATUS_LABELS[ streamStatus ] || streamStatus.toUpperCase();
@@ -111,7 +131,18 @@ export default function ReplFooter( {
 			}` }
 		>
 			{ showTranscript && (
-				<div className="topology-repl__transcript" ref={ logRef }>
+				/* The transcript is a passive display region; the click
+				   handler is a UX nicety (focus the input) and doesn't
+				   make this an "interactive element" in the a11y sense.
+				   Keyboard users already have the input focused from the
+				   start and can re-Tab to it; they don't need a key
+				   binding on the transcript itself. */
+				/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */
+				<div
+					className="topology-repl__transcript"
+					ref={ logRef }
+					onClick={ handleTranscriptClick }
+				>
 					<div className="topology-repl__actions">
 						<button
 							type="button"
@@ -154,6 +185,7 @@ export default function ReplFooter( {
 					{ topology }.p{ partition }&gt;
 				</span>
 				<input
+					ref={ inputRef }
 					type="text"
 					className="topology-repl__input"
 					placeholder={
