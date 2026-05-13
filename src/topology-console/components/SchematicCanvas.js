@@ -133,7 +133,8 @@ export default function SchematicCanvas( {
 					if ( ! a || ! b ) {
 						return null;
 					}
-					const hoverTouches = hoveredId === e.from || hoveredId === e.to;
+					const hoverTouches =
+						hoveredId === e.from || hoveredId === e.to;
 					const selectTouches =
 						! hoveredId &&
 						( selectedId === e.from || selectedId === e.to );
