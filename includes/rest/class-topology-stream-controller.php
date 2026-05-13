@@ -86,8 +86,19 @@ class TopologyStreamController extends SSEControllerBase {
 				'args'                => [
 					'topology'  => [ 'required' => true, 'type' => 'string' ],
 					'partition' => [ 'required' => true, 'type' => 'integer' ],
-					'name'      => [ 'required' => true, 'type' => 'string' ],
+					// One of: 'command' (default), 'ping', 'info',
+					// 'bytestream', 'eof', 'request'. Mirrors the message
+					// types the cli Shell can build (Shell::ping_node,
+					// tell_node, send_node, send_eof, request_node).
+					'type'      => [ 'required' => false, 'type' => 'string' ],
+					// For 'command' type: verb name. For other types the
+					// arguments string is the payload.
+					'name'      => [ 'required' => false, 'type' => 'string' ],
 					'arguments' => [ 'required' => false, 'type' => 'string' ],
+					// Destination path for typed verbs ('tell foo', 'send foo',
+					// 'cmd foo verb', etc.). Empty/omitted = address the
+					// worker's _command_interpreter directly.
+					'to'        => [ 'required' => false, 'type' => 'string' ],
 					'sse_pid'   => [ 'required' => true, 'type' => 'integer' ],
 				],
 			]
@@ -104,21 +115,23 @@ class TopologyStreamController extends SSEControllerBase {
 	public function post_command( \WP_REST_Request $request ) {
 		$topology  = (string) $request->get_param( 'topology' );
 		$partition = (int) $request->get_param( 'partition' );
-		$name      = \trim( (string) $request->get_param( 'name' ) );
+		$type      = \strtolower( (string) ( $request->get_param( 'type' ) ?? 'command' ) );
+		$name      = \trim( (string) ( $request->get_param( 'name' ) ?? '' ) );
 		$arguments = (string) ( $request->get_param( 'arguments' ) ?? '' );
+		$to        = (string) ( $request->get_param( 'to' ) ?? '' );
 		$sse_pid   = (int) $request->get_param( 'sse_pid' );
 
-		if ( '' === $name ) {
-			return new \WP_Error(
-				'empty_command',
-				'name is required',
-				[ 'status' => 400 ]
-			);
-		}
 		if ( $sse_pid <= 0 ) {
 			return new \WP_Error(
 				'missing_sse_pid',
 				'sse_pid must be a positive integer (the pid from the hello event)',
+				[ 'status' => 400 ]
+			);
+		}
+		if ( 'command' === $type && '' === $name ) {
+			return new \WP_Error(
+				'empty_command',
+				'name is required for type=command',
 				[ 'status' => 400 ]
 			);
 		}
@@ -136,15 +149,80 @@ class TopologyStreamController extends SSEControllerBase {
 		}
 
 		// User-typed commands carry no KEY — they should look identical
-		// to what `wp nodes cli` sends. The frontend treats KEY-free
-		// responses as user-correlated and surfaces them in the
-		// transcript; only `gui:auto` (the controller's own polls) is
-		// routed silently to the canvas.
+		// to what `wp nodes cli` sends.
 		$cmd_out = new Partition( $ipc['input'], 0 );
-		$this->send_command( $cmd_out, $name, $arguments, $sse_pid );
+		$this->write_typed_message( $cmd_out, $type, $name, $arguments, $to, $sse_pid );
 		$cmd_out->flush();
 
 		return new \WP_REST_Response( [ 'queued' => true ], 202 );
+	}
+
+	/**
+	 * Build and write a Message of the requested type to the worker's
+	 * input Partition. Mirrors the type-dispatch in cli Shell::interpret()
+	 * so the GUI can drive any of the verb shapes the cli supports
+	 * without having to write its own Shell from scratch.
+	 *
+	 * `command` (default) → TM_COMMAND addressed at $to (or
+	 *                       `_command_interpreter` if empty).
+	 * `ping`              → TM_PING with VALUE = current timestamp;
+	 *                       receiving CommandInterpreter bounces TO=FROM.
+	 * `info`              → TM_INFO addressed at $to, VALUE = $arguments.
+	 * `bytestream`        → TM_BYTESTREAM addressed at $to, VALUE = $arguments.
+	 * `eof`               → TM_EOF addressed at $to (drain marker).
+	 * `request`           → TM_REQUEST addressed at $to, VALUE = $arguments.
+	 */
+	private function write_typed_message(
+		Partition $cmd_out,
+		string $type,
+		string $name,
+		string $arguments,
+		string $to,
+		int $sse_pid
+	): void {
+		$msg                       = Message::new_message();
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::ID ]        = (string) Core::msg_counter();
+		$msg[ Message::FROM ]      = '_output/' . $sse_pid;
+		switch ( $type ) {
+			case 'ping':
+				$msg[ Message::TYPE ]  = Message::TM_PING;
+				$msg[ Message::TO ]    = '' !== $to ? $to : '_command_interpreter';
+				$msg[ Message::VALUE ] = (string) Core::$now;
+				break;
+			case 'info':
+				$msg[ Message::TYPE ]  = Message::TM_INFO;
+				$msg[ Message::TO ]    = $to;
+				$msg[ Message::VALUE ] = $arguments;
+				break;
+			case 'bytestream':
+				$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+				$msg[ Message::TO ]    = $to;
+				$msg[ Message::VALUE ] = $arguments;
+				break;
+			case 'eof':
+				$msg[ Message::TYPE ] = Message::TM_EOF;
+				$msg[ Message::TO ]   = $to;
+				break;
+			case 'request':
+				$msg[ Message::TYPE ]  = Message::TM_REQUEST;
+				$msg[ Message::TO ]    = $to;
+				$msg[ Message::VALUE ] = $arguments;
+				break;
+			case 'command':
+			default:
+				$msg[ Message::TYPE ]  = Message::TM_COMMAND;
+				$msg[ Message::TO ]    = '' !== $to ? $to : '_command_interpreter';
+				$msg[ Message::VALUE ] = (string) \wp_json_encode(
+					[
+						'name'      => $name,
+						'arguments' => $arguments,
+						'payload'   => '',
+					]
+				);
+				break;
+		}
+		$cmd_out->fill( $msg );
 	}
 
 	public function stream( \WP_REST_Request $request ) {

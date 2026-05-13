@@ -24,6 +24,7 @@ import SchematicCanvas from './components/SchematicCanvas';
 
 import { useTopologyStream } from './hooks/useTopologyStream';
 import { parseLsOutput } from './utils/parseLsOutput';
+import { shellInterpret } from './utils/shellInterpret';
 
 const TOPOLOGIES = [
 	'firehose-workers',
@@ -157,21 +158,54 @@ export default function TopologyConsole() {
 		} );
 	}, [] );
 
-	const sendCommand = useCallback(
-		( { name, arguments: args } ) => {
-			if ( ! ssePid ) {
+	const sendLine = useCallback(
+		( line ) => {
+			const interpreted = shellInterpret( line );
+			if ( ! interpreted ) {
 				return;
 			}
-			appendTranscript( {
-				kind: 'sent',
-				text: args ? `${ name } ${ args }` : name,
-			} );
+			// Echo the user's input verbatim so they see what was
+			// dispatched. Sigil styling distinguishes outgoing from
+			// responses in the transcript.
+			appendTranscript( { kind: 'sent', text: line.trim() } );
+
+			if ( interpreted.kind === 'error' ) {
+				appendTranscript( { kind: 'error', text: interpreted.text } );
+				return;
+			}
+			if ( interpreted.kind === 'local' ) {
+				if ( interpreted.name === 'clear' ) {
+					setTranscript( [] );
+				} else if ( interpreted.name === 'help' ) {
+					appendTranscript( {
+						kind: 'info',
+						text: interpreted.text,
+					} );
+				} else if ( interpreted.name === 'debug_level' ) {
+					appendTranscript( {
+						kind: 'info',
+						text:
+							interpreted.level === null
+								? 'debug_level: (no local Dumper yet — try `cmd _command_interpreter debug_state <n>` to set the worker-side level)'
+								: `debug_level: ${ interpreted.level } (frontend acknowledged; full local Dumper lands in v0.3)`,
+					} );
+				}
+				return;
+			}
+			// kind === 'post'
+			if ( ! ssePid ) {
+				appendTranscript( {
+					kind: 'error',
+					text: '[no sse_pid yet] retry once CONNECTED',
+				} );
+				return;
+			}
 			apiFetch( {
 				path: `/newspack-event-logger-nodes/v1/topology/${ encodeURIComponent(
 					topology
 				) }/p${ encodeURIComponent( partition ) }/command`,
 				method: 'POST',
-				data: { name, arguments: args, sse_pid: ssePid },
+				data: { ...interpreted.body, sse_pid: ssePid },
 			} ).catch( ( err ) => {
 				appendTranscript( {
 					kind: 'error',
@@ -296,7 +330,7 @@ export default function TopologyConsole() {
 				partition={ partition }
 				streamStatus={ status }
 				canSend={ status === 'open' && !! ssePid }
-				onSubmit={ sendCommand }
+				onSubmit={ sendLine }
 				onClear={ () => setTranscript( [] ) }
 				transcript={ transcript }
 			/>
