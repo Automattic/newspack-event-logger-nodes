@@ -486,6 +486,8 @@ export default function TopologyConsole() {
 					onDeselect={ () => setSelectedId( null ) }
 					hoveredId={ hoveredId }
 					onHover={ setHoveredId }
+					rateRef={ rateRef }
+					rateVersion={ rateVersion }
 				/>
 			</CanvasFrame>
 			{ /* Inspector is only mounted when a node is selected — the
