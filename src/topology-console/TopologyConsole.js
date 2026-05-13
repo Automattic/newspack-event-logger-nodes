@@ -54,6 +54,11 @@ function partitionList( topology ) {
 
 const TRANSCRIPT_MAX = 200;
 
+// Per-node rate history depth. With STATS_INTERVAL_S = 1s on the
+// controller side, 60 samples = ~1 minute of trailing data, plenty
+// for a quick "is this node busy or quiet?" glance.
+const RATE_HISTORY_MAX = 60;
+
 // Message TYPE bitmask flags, mirroring substrate's class-message.php
 // constants so we can apply Dumper-style type-aware rendering to each
 // incoming SSE msg envelope.
@@ -423,6 +428,8 @@ export default function TopologyConsole() {
 			// Update per-node rate + last-changed tracking. Same tick
 			// drives both — Δcount/Δs gives the msg/s rate, and a
 			// non-zero Δcount marks the node as "live, recently active."
+			// Also append to a ring-buffer history (cap RATE_HISTORY_MAX
+			// samples) so the canvas can draw a per-node sparkline.
 			const now = Date.now() / 1000;
 			let touched = false;
 			for ( const n of next.nodes ) {
@@ -431,12 +438,18 @@ export default function TopologyConsole() {
 					const dCount = n.count - prevEntry.count;
 					const dTime = now - prevEntry.ts;
 					const rate = dTime > 0 ? dCount / dTime : 0;
+					const history = prevEntry.history || [];
+					history.push( rate );
+					if ( history.length > RATE_HISTORY_MAX ) {
+						history.shift();
+					}
 					rateRef.current.set( n.id, {
 						count: n.count,
 						ts: now,
 						rate,
 						lastChangedTs:
 							dCount > 0 ? now : prevEntry.lastChangedTs,
+						history,
 					} );
 					touched = true;
 				} else if ( ! prevEntry ) {
@@ -445,6 +458,7 @@ export default function TopologyConsole() {
 						ts: now,
 						rate: 0,
 						lastChangedTs: now,
+						history: [],
 					} );
 					touched = true;
 				}

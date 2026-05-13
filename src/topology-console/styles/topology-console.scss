@@ -685,6 +685,21 @@ body[class*="_page_newspack-nodes-topology"] {
 		font-variant-numeric: tabular-nums;
 	}
 
+	// Sparkline of trailing message rates, drawn between the id row
+	// and the bottom rate/counter row. Auto-scaled to the window's
+	// max so the curve shape is always readable; oxide stroke at low
+	// opacity so it reads as decoration rather than competing with
+	// the foreground text.
+	&__spark {
+		fill: none;
+		stroke: $oxide;
+		stroke-width: 1.25;
+		stroke-linejoin: round;
+		stroke-linecap: round;
+		opacity: 0.55;
+		pointer-events: none;
+	}
+
 	&__counter {
 		font: 700 13px $mono;
 		fill: $oxide;

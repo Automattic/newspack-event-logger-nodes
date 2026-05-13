@@ -126,6 +126,31 @@ function parseViewBox( str ) {
 	return { x: parts[ 0 ], y: parts[ 1 ], w: parts[ 2 ], h: parts[ 3 ] };
 }
 
+// Sparkline area inside each node card — sits between the id row
+// (text baseline at y=44) and the bottom rate/counter row (baseline
+// at y=76). Auto-scaled to the window's max so a node that's
+// recently bursty shows the shape regardless of absolute rate.
+const SPARK_X = 11;
+const SPARK_Y = 48;
+const SPARK_W = 174; // NODE_W (196) - 11 - 11
+const SPARK_H = 18;
+function sparklinePath( history ) {
+	if ( ! history || history.length < 2 ) {
+		return null;
+	}
+	const max = Math.max( ...history, 1e-9 );
+	const step = SPARK_W / Math.max( history.length - 1, 1 );
+	return history
+		.map( ( v, i ) => {
+			const x = SPARK_X + i * step;
+			const y = SPARK_Y + SPARK_H - ( v / max ) * SPARK_H;
+			return `${ i === 0 ? 'M' : 'L' } ${ x.toFixed( 2 ) },${ y.toFixed(
+				2
+			) }`;
+		} )
+		.join( ' ' );
+}
+
 // Per-node rate format, lower-left of each node card. Shaved to two
 // significant figures so the text fits inside the 196px node width
 // without wrapping. Returns null below a threshold so dead nodes
@@ -572,6 +597,29 @@ export default function SchematicCanvas( {
 							>
 								{ n.id }
 							</text>
+							{ /* Per-node rate sparkline — client-side
+							ring buffer of the last RATE_HISTORY_MAX
+							samples (~1 minute at 1s tick cadence).
+							Auto-scaled to the window's max so bursty
+							nodes show their shape regardless of
+							absolute magnitude. Hidden until we have
+							two samples to draw a line between. */ }
+							{ rateRef &&
+								( () => {
+									const history = rateRef.current.get(
+										n.id
+									)?.history;
+									const path = sparklinePath( history );
+									if ( ! path ) {
+										return null;
+									}
+									return (
+										<path
+											className="topology-node__spark"
+											d={ path }
+										/>
+									);
+								} )() }
 							{ /* Per-node rate in the BOTTOM-left, baseline-
 							aligned with the counter in the bottom-right.
 							Reading from rateRef via the rateVersion-driven
