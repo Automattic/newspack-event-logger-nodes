@@ -6,13 +6,13 @@ describe( 'shellInterpret', () => {
 		expect( shellInterpret( '   ' ) ).toBeNull();
 	} );
 
-	it( 'dispatches local builtins: clear / help / debug_level', () => {
+	it( 'dispatches local builtins: clear / :help / debug_level', () => {
 		expect( shellInterpret( 'clear' ) ).toEqual( {
 			kind: 'local',
 			name: 'clear',
 		} );
-		expect( shellInterpret( 'help' ).kind ).toBe( 'local' );
-		expect( shellInterpret( 'help' ).name ).toBe( 'help' );
+		expect( shellInterpret( ':help' ).kind ).toBe( 'local' );
+		expect( shellInterpret( ':help' ).name ).toBe( 'help' );
 		expect( shellInterpret( 'debug_level' ) ).toEqual( {
 			kind: 'local',
 			name: 'debug_level',
@@ -24,6 +24,13 @@ describe( 'shellInterpret', () => {
 			level: 2,
 		} );
 		expect( shellInterpret( 'debug_level 9' ).kind ).toBe( 'error' );
+	} );
+
+	it( 'does NOT intercept `help` — it goes to the worker for the authoritative verb list', () => {
+		expect( shellInterpret( 'help' ) ).toEqual( {
+			kind: 'post',
+			body: { type: 'command', name: 'help', arguments: '' },
+		} );
 	} );
 
 	it( 'parses ping with no path', () => {

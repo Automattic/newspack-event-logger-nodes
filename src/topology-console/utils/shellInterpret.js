@@ -3,12 +3,18 @@
  * builtin action or a typed POST descriptor.
  *
  * Mirrors the verb dispatch in newspack-nodes/includes/class-shell.php
- * so the GUI accepts the same vocabulary as `wp nodes cli`:
+ * so the GUI accepts the same vocabulary as `wp nodes cli`.
  *
- *   Local builtins (no POST):
- *     clear                         — wipe transcript
- *     debug_level [0|1|2]           — toggle local Dumper verbosity
- *     help                          — list available verbs
+ * Local builtins (handled in the browser, never sent to the worker):
+ *   clear                         — wipe transcript
+ *   debug_level [0|1|2]           — toggle local Dumper verbosity
+ *   :help                         — list these GUI-side builtins
+ *
+ * Note: `help` is NOT intercepted locally. The worker's
+ * CommandInterpreter has its own authoritative `help` verb that
+ * enumerates every verb it actually accepts; intercepting `help`
+ * here would silently lie about what's available. Use `:help` for
+ * the GUI-local list, or `help` to ask the worker.
  *
  *   Typed-message verbs (POST with type=…):
  *     ping [<path>]                 — TM_PING
@@ -30,16 +36,17 @@
  *   null                            — empty input
  */
 
-const LOCAL_BUILTINS = new Set( [ 'clear', 'debug_level', 'help' ] );
+const LOCAL_BUILTINS = new Set( [ 'clear', 'debug_level', ':help' ] );
 
 const HELP_TEXT = [
-	'Built-ins (run locally):',
+	'GUI-local builtins (handled in the browser, not the worker):',
 	'  clear                          — wipe the transcript',
 	'  debug_level [0|1|2]            — local Dumper verbosity',
-	'  help                           — show this list',
+	'  :help                          — show this list',
 	'',
-	'Typed verbs (sent to the worker):',
-	'  ping [<path>]                  — round-trip a TM_PING',
+	'Everything else flows to the worker. Type `help` to see the verbs',
+	'the worker accepts; or build a typed message directly:',
+	'  ping [<path>]                  — TM_PING (RTT measured locally)',
 	'  tell <path> <bytes>            — TM_INFO',
 	'  send <path> <bytes>            — TM_BYTESTREAM',
 	'  send_eof <path>                — TM_EOF',
@@ -68,7 +75,7 @@ export function shellInterpret( line ) {
 	if ( verb === 'clear' ) {
 		return { kind: 'local', name: 'clear' };
 	}
-	if ( verb === 'help' ) {
+	if ( verb === ':help' ) {
 		return { kind: 'local', name: 'help', text: HELP_TEXT };
 	}
 	if ( verb === 'debug_level' ) {
