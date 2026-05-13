@@ -397,18 +397,14 @@ export default function SchematicCanvas( {
 			// control while still landing on a predictable lattice
 			// (every other slot is a real auto-layout slot). Anchored
 			// at X_PAD / Y_PAD so n=0 still matches the algorithm.
-			// Math.max(0, ...) so a drag past the top/left edge
-			// doesn't produce negative grid indices.
+			// Negative xi / yi are allowed — a node dragged above or
+			// left of the auto-layout origin is just a node the user
+			// wanted there; pan/zoom + the tight-bbox autofit handle
+			// the resulting viewport adjustment.
 			const halfX = X_STEP / 2;
 			const halfY = Y_STEP / 2;
-			const xi = Math.max(
-				0,
-				Math.round( ( drag.currentPos.x - X_PAD ) / halfX )
-			);
-			const yi = Math.max(
-				0,
-				Math.round( ( drag.currentPos.y - Y_PAD ) / halfY )
-			);
+			const xi = Math.round( ( drag.currentPos.x - X_PAD ) / halfX );
+			const yi = Math.round( ( drag.currentPos.y - Y_PAD ) / halfY );
 			onPositionChange( drag.nodeId, {
 				x: X_PAD + xi * halfX,
 				y: Y_PAD + yi * halfY,
