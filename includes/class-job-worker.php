@@ -248,13 +248,18 @@ class JobWorker extends Node {
 			if ( \function_exists( 'wp_cache_flush' ) ) {
 				\wp_cache_flush();
 			}
+			$this->set_state(
+				'CACHE_FLUSH',
+				[ 'jobs' => $this->cache_flush_interval ]
+			);
 			$this->jobs_since_cache_flush = 0;
 		}
 
 		// Memory watermark check. If we cross 80% of memory_limit, latch the
 		// pressure flag — topology code reads memory_pressure() in its drain
 		// predicate and exits cleanly so the supervisor respawns.
-		if ( $this->is_memory_high() ) {
+		if ( $this->is_memory_high() && ! $this->memory_pressure ) {
+			$this->set_state( 'MEMORY_PRESSURE', [ 'usage' => \memory_get_usage( true ) ] );
 			$this->memory_pressure = true;
 		}
 

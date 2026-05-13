@@ -724,6 +724,10 @@ class StreamMerger extends Node {
 		// rejecting here saves a write attempt and a filter invocation.
 		if ( \strlen( $line ) > self::MAX_LINE_BYTES ) {
 			Core::print_less_often( "StreamMerger: dropping {$server_id} entry > " . self::MAX_LINE_BYTES . ' bytes' );
+			$this->set_state(
+				'DROPPED',
+				[ 'server' => $server_id, 'reason' => 'oversize', 'size' => \strlen( $line ) ]
+			);
 			return;
 		}
 
@@ -946,6 +950,10 @@ class StreamMerger extends Node {
 		} else {
 			$state['last_error'] = 'Connection closed by server';
 		}
+		$this->set_state(
+			'DISCONNECTED',
+			[ 'server' => $server_id, 'error' => $state['last_error'], 'http' => $http_code ]
+		);
 
 		$this->detach_handle( $server_id, $handle );
 		$this->increase_backoff( $server_id );

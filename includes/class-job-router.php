@@ -98,12 +98,14 @@ class JobRouter extends Node {
 		$handler = (string) ( $body['handler'] ?? '' );
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
 			Core::print_less_often( "JobRouter: invalid handler name: $handler" );
+			$this->set_state( 'DROPPED', [ 'reason' => 'invalid_handler', 'handler' => $handler ] );
 			return;
 		}
 
 		$parameters = $body['parameters'] ?? [];
 		if ( ! \is_array( $parameters ) ) {
 			Core::print_less_often( "JobRouter: $handler has non-array parameters; dropping" );
+			$this->set_state( 'DROPPED', [ 'reason' => 'non_array_params', 'handler' => $handler ] );
 			return;
 		}
 
@@ -119,6 +121,10 @@ class JobRouter extends Node {
 		$encoded = \wp_json_encode( $normalized );
 		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
 			Core::print_less_often( "JobRouter: $handler entry exceeds MAX_JOB_SIZE; dropping" );
+			$this->set_state(
+				'DROPPED',
+				[ 'reason' => 'oversize', 'handler' => $handler, 'size' => \strlen( $encoded ) ]
+			);
 			return;
 		}
 

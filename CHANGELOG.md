@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-05-13
+
+### Added
+
+- **More `set_state()` coverage** across the application Node subclasses so `debug_state <node> 1` surfaces meaningful events for tracing:
+  - **`FlameBuilder::emit_auto_tune`** — `AUTO_TUNE_FIRED` with key + count per tune decision. Rare events that operators want to know about whenever they fire.
+  - **`JobRouter::fill`** — three `DROPPED` flavors (`invalid_handler`, `non_array_params`, `oversize`) with the handler name and size where applicable. Previously these only emitted rate-limited stderr; debug_state observers see the same event with structured context.
+  - **`JobWorker::run`** — `CACHE_FLUSH` on each `wp_cache_flush()` interval trip and `MEMORY_PRESSURE` on the first watermark cross (latched, doesn't re-fire each tick).
+  - **`StreamMerger`** — `DROPPED` with `reason=oversize` per remote entry that exceeds `MAX_LINE_BYTES`, and `DISCONNECTED` with server + error + http code on every remote completion (cURL failure, non-200, clean close).
+
 ## [0.2.21] - 2026-05-13
 
 ### Added

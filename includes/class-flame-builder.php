@@ -1593,6 +1593,12 @@ class FlameBuilder extends Node {
 		if ( empty( $items ) || null === $this->sink ) {
 			return;
 		}
+		// Auto-tune decisions are rare and important — narrate so
+		// debug_state on flame-builder surfaces every fire.
+		$this->set_state(
+			'AUTO_TUNE_FIRED',
+			[ 'key' => $key, 'count' => \count( $items ) ]
+		);
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
