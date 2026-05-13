@@ -121,6 +121,43 @@ class FlameBuilder extends Node {
 	}
 
 	/**
+	 * Expose every named destination this node actually writes to so
+	 * `dump_metadata` / `ls -al` show the full fan-out. FlameBuilder
+	 * runs two outputs at runtime that don't flow through
+	 * `Node::target`:
+	 *
+	 *   - `flames_sink` (injected Partition reference) — flame JSONL
+	 *     bulk writes. Direct sink reference for speed; the Partition's
+	 *     node name (e.g. `flames:partition`) is the visible label.
+	 *   - `auto-tuner` — hardcoded TO on every auto-tune Message emitted
+	 *     by `emit_auto_tune()`. Always declared so the topology console
+	 *     shows the edge even when no tune decisions have fired yet.
+	 *
+	 * Same pattern as RequestBuilder::target() exposing its
+	 * conditional `errors_target`.
+	 */
+	public function target( $value = null ) {
+		if ( null !== $value ) {
+			return parent::target( $value );
+		}
+		$primary = parent::target();
+		$extras  = [];
+		if ( null !== $this->flames_sink ) {
+			$extras[] = $this->flames_sink->name();
+		}
+		$extras[] = 'auto-tuner';
+		$all      = \is_array( $primary )
+			? $primary
+			: ( '' !== (string) $primary ? [ $primary ] : [] );
+		foreach ( $extras as $e ) {
+			if ( ! \in_array( $e, $all, true ) ) {
+				$all[] = $e;
+			}
+		}
+		return $all;
+	}
+
+	/**
 	 * Toggle hub mode (per-server tracking).
 	 */
 	public function set_is_hub( bool $is_hub ): void {
