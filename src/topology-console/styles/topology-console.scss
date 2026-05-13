@@ -484,6 +484,30 @@ body[class*="_page_newspack-nodes-topology"] {
 		margin-top: 6px;
 		text-transform: none;
 	}
+
+	// Reset-layout chip — only mounted by CanvasFrame when the user
+	// has dragged anything. Sits inline with the topology metadata so
+	// it's visible without obscuring the canvas. pointer-events: auto
+	// to override the meta wrapper's `none`.
+	&__reset {
+		display: inline-block;
+		margin-top: 8px;
+		background: transparent;
+		border: 1px solid $ink-3;
+		color: $ink-3;
+		font: 500 10px/1 $mono;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		padding: 5px 10px;
+		cursor: pointer;
+		pointer-events: auto;
+		transition: all 100ms ease;
+
+		&:hover {
+			border-color: $oxide;
+			color: $oxide;
+		}
+	}
 }
 
 .topology-canvas-svg {
@@ -588,12 +612,21 @@ body[class*="_page_newspack-nodes-topology"] {
 // =====================================================================
 
 .topology-node {
-	cursor: pointer;
+	cursor: grab;
 	animation: topology-fadein 0.35s ease-out both;
 	transition: opacity 120ms ease;
 
 	&.is-faded {
 		opacity: 0.4;
+	}
+
+	// While being dragged: cursor flips to grabbing and the node sits
+	// above its peers so it isn't occluded by neighboring shadow
+	// rectangles. No animated transition — drag updates positions
+	// many times per second and any transition would feel laggy.
+	&.is-dragging {
+		cursor: grabbing;
+		opacity: 0.9;
 	}
 
 	&__shadow {

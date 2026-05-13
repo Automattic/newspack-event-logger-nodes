@@ -16,7 +16,12 @@ function todayISO() {
 	return new Date().toISOString().slice( 0, 10 );
 }
 
-export default function CanvasFrame( { topology, partition, children } ) {
+export default function CanvasFrame( {
+	topology,
+	partition,
+	children,
+	onResetLayout,
+} ) {
 	return (
 		<div className="topology-canvas">
 			<div className="topology-canvas__meta">
@@ -24,6 +29,19 @@ export default function CanvasFrame( { topology, partition, children } ) {
 				<div className="topology-canvas__topology-name">
 					topologies/{ topology }.php
 				</div>
+				{ /* Only appears once the user has dragged anything —
+				clicking it clears every override for this topology/
+				partition and the canvas re-auto-lays out. */ }
+				{ onResetLayout && (
+					<button
+						type="button"
+						className="topology-canvas__reset"
+						onClick={ onResetLayout }
+						title="Discard dragged positions and re-auto-layout"
+					>
+						↺ Reset layout
+					</button>
+				) }
 			</div>
 
 			<div className="topology-reticle topology-reticle--tl" />
