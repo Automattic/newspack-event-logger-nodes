@@ -69,6 +69,68 @@ const TM_STRUCT = 256;
 // eslint-disable-next-line no-bitwise
 const has = ( type, flag ) => ( type & flag ) !== 0;
 
+// Render TM_FLAGS as a pipe-joined uppercase label string, matching
+// the substrate Dumper's debug header. `TM_COMMAND|TM_RESPONSE`,
+// `TM_INFO`, etc. Empty type renders as `0`.
+const TM_LABELS = [
+	[ TM_BYTESTREAM, 'TM_BYTESTREAM' ],
+	[ TM_EOF, 'TM_EOF' ],
+	[ TM_PING, 'TM_PING' ],
+	[ TM_COMMAND, 'TM_COMMAND' ],
+	[ TM_RESPONSE, 'TM_RESPONSE' ],
+	[ TM_ERROR, 'TM_ERROR' ],
+	[ TM_INFO, 'TM_INFO' ],
+	[ TM_STRUCT, 'TM_STRUCT' ],
+];
+function formatTypeLabel( type ) {
+	const flags = TM_LABELS.filter( ( [ flag ] ) => has( type, flag ) ).map(
+		( [ , label ] ) => label
+	);
+	return flags.length ? flags.join( '|' ) : '0';
+}
+
+// Stringify VALUE for the debug header — objects get one-line JSON,
+// strings pass through, everything else gets String()'d.
+function stringifyValue( value ) {
+	if ( typeof value === 'string' ) {
+		return value;
+	}
+	if ( value === null || value === undefined ) {
+		return '';
+	}
+	try {
+		return JSON.stringify( value );
+	} catch ( _e ) {
+		return String( value );
+	}
+}
+
+// Build the `debug_level 1` header — one line summarizing the
+// message: `<TM_FLAGS> from <FROM>: <stringified-value>`.
+function buildDebugHeader1( msg ) {
+	const label = formatTypeLabel(
+		typeof msg.type === 'number' ? msg.type : 0
+	);
+	const from = msg.from || '?';
+	const value = stringifyValue( msg.value );
+	return `${ label } from ${ from }: ${ value }`;
+}
+
+// Build the `debug_level 2` header — full envelope summary on one
+// line plus the value on the next. Mirrors the substrate Dumper's
+// level-2 format.
+function buildDebugHeader2( msg ) {
+	const label = formatTypeLabel(
+		typeof msg.type === 'number' ? msg.type : 0
+	);
+	const id = msg.id ?? '';
+	const stream = msg.stream ?? '';
+	const from = msg.from || '?';
+	const to = msg.to || '';
+	const value = stringifyValue( msg.value );
+	return `${ label } id=${ id } stream=${ stream } from=${ from } to=${ to }\n${ value }`;
+}
+
 /**
  * Convert a raw SSE msg envelope into a transcript entry, following the
  * cli Dumper's render rules so the GUI surfaces what the terminal would:
@@ -79,7 +141,9 @@ const has = ( type, flag ) => ( type & flag ) !== 0;
  *   - TM_ERROR                     → "ERROR: <value>"
  *   - TM_PING                      → "round trip time: X ms"
  *   - TM_STRUCT                    → JSON-encoded value
- *   - TM_INFO                      → "INFO[from]: <value>"
+ *   - TM_INFO                      → value as-is (no prefix; debug_level 1
+ *                                    adds the `TM_INFO from <from>:` header
+ *                                    when verbosity is wanted)
  *   - default (TM_BYTESTREAM)      → value as-is
  *
  * Returns null when the message should be dropped silently.
@@ -127,11 +191,11 @@ function dumperRender( msg ) {
 					: JSON.stringify( value, null, 2 ),
 		};
 	}
-	if ( has( type, TM_INFO ) ) {
-		const from = msg.from || '?';
-		return { kind: 'info', text: `INFO[${ from }]: ${ value }` };
-	}
-	if ( has( type, TM_BYTESTREAM ) ) {
+	// TM_INFO and default TM_BYTESTREAM both render as plain
+	// payload — the substrate Dumper does the same. `debug_level 1`
+	// adds the `TM_INFO from <from>:` header for verbosity; the
+	// curated level-0 render shows the payload only.
+	if ( has( type, TM_INFO ) || has( type, TM_BYTESTREAM ) ) {
 		return { kind: 'recv', text: String( value ?? '' ) };
 	}
 	return null;
@@ -163,6 +227,15 @@ export default function TopologyConsole() {
 	// `HH:MM:SS  up N days, HH:MM:SS\n` — we keep just the days/HMS half for
 	// the Inspector's Process section.
 	const [ uptime, setUptime ] = useState( null );
+
+	// Local Dumper verbosity dial. 0 = curated render only (default);
+	// 1 = prepend a one-line `<TM_FLAGS> from <from>: <value>` header
+	// to every incoming msg; 2 = same as 1 but full envelope on the
+	// header line and the value on the next line. Mirrors the substrate
+	// Dumper's `debug_level` semantics. Held in a ref (not state) so
+	// reads happen synchronously inside handleMessage without re-binding
+	// the SSE callback every time the level changes.
+	const debugLevelRef = useRef( 0 );
 
 	// User-pinned positions, keyed by node name. Survives reloads via
 	// localStorage; scoped per `topology.partition` so positions don't
@@ -280,6 +353,24 @@ export default function TopologyConsole() {
 			}
 			const isOurPoll = msg.key === 'gui:auto';
 			if ( ! isOurPoll ) {
+				// `debug_level 1+` injects a header BEFORE the curated
+				// render — same shape the substrate Dumper produces.
+				// Level 1: single-line `<TM_FLAGS> from <from>: <value>`.
+				// Level 2: full envelope on one line + value on next.
+				// The header always appears regardless of whether the
+				// curated render would suppress the message (e.g. TM_EOF
+				// at level 0 returns null), so observers can see EVERY
+				// arrival at level 1+.
+				const level = debugLevelRef.current;
+				if ( level >= 1 ) {
+					appendTranscript( {
+						kind: 'info',
+						text:
+							level >= 2
+								? buildDebugHeader2( msg )
+								: buildDebugHeader1( msg ),
+					} );
+				}
 				// User-typed command response, or an async broadcast. Run
 				// it through the Dumper-style renderer so each message
 				// type gets its appropriate framing.
@@ -366,12 +457,12 @@ export default function TopologyConsole() {
 				if ( interpreted.name === 'clear' ) {
 					setTranscript( [] );
 				} else if ( interpreted.name === 'debug_level' ) {
+					if ( interpreted.level !== null ) {
+						debugLevelRef.current = interpreted.level;
+					}
 					appendTranscript( {
 						kind: 'info',
-						text:
-							interpreted.level === null
-								? 'debug_level: (no local Dumper yet — try `cmd _command_interpreter debug_state <n>` to set the worker-side level)'
-								: `debug_level: ${ interpreted.level } (frontend acknowledged; full local Dumper lands in v0.3)`,
+						text: `debug_level: ${ debugLevelRef.current }`,
 					} );
 				}
 				return;
