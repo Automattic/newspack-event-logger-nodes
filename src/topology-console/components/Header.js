@@ -78,11 +78,12 @@ export default function Header( {
 							}` }
 						/>
 						LIVE
-						{ /* Always-rendered slot — shows an em-dash until the
-						first `gui:uptime` poll lands (~5s after connect) so
-						the button width doesn't jump on first appearance. */ }
+						{ /* Always-rendered right-aligned slot — shows an
+						em-dash until the first `gui:uptime` poll lands
+						(~5s after connect) so the button width doesn't
+						jump on first appearance. Spatial separation is
+						provided by the flex layout instead of a bullet. */ }
 						<span className="topology-uptime">
-							{ ' · ' }
 							{ uptime || '—' }
 						</span>
 					</button>
