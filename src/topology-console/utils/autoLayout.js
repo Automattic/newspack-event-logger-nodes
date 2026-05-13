@@ -133,10 +133,14 @@ export function autoLayout( parsed ) {
 		scored.forEach( ( s, i ) => row.set( s.node.id, i ) );
 	}
 
-	// Pass 2: snap each producer's row to the minimum row of its
-	// targets, right-to-left. This shifts producers DOWN past their
-	// own siblings' targets so a producer never visually sits at the
-	// row of a target it doesn't feed.
+	// Pass 2: snap each producer's row to the BARYCENTER (mean) of
+	// its target rows, right-to-left. Mean instead of min so a
+	// producer with one target at row 0 and one at row 1 sits
+	// between them — pulling everything to row 0 used to force
+	// pass 3 to bump column-mates in a way that broke crossing-
+	// free placements (firehose:tee → request-builder and
+	// jobintake:consumer → job-router both crossing in col 1→col 2
+	// was the canonical symptom).
 	for ( let i = depthsAscending.length - 1; i >= 0; i-- ) {
 		const d = depthsAscending[ i ];
 		for ( const n of byDepth.get( d ) ) {
@@ -145,7 +149,10 @@ export function autoLayout( parsed ) {
 				.map( ( t ) => row.get( t ) )
 				.filter( ( r ) => r !== undefined );
 			if ( targetRows.length ) {
-				row.set( n.id, Math.min( ...targetRows ) );
+				const mean =
+					targetRows.reduce( ( a, b ) => a + b, 0 ) /
+					targetRows.length;
+				row.set( n.id, Math.round( mean ) );
 			}
 		}
 	}
