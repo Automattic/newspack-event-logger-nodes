@@ -799,15 +799,48 @@ $display-stencil: "Workbench", monospace;
 
 .topology-repl {
 	grid-area: repl;
+	position: relative;
 	border-top: 1px solid $ink;
 	background: $ink;
 	color: $paper;
-	display: flex;
-	align-items: center;
-	padding: 0 18px;
-	gap: 10px;
 	font: 400 12px $mono;
-	z-index: 3;
+	// Above the reticles (z=4) so the expanded transcript pane and
+	// the single-line peek both occlude the corner alignment marks
+	// rather than peeking through them.
+	z-index: 5;
+
+	&__bar {
+		height: 38px;
+		display: flex;
+		align-items: center;
+		padding: 0 18px;
+		gap: 10px;
+	}
+
+	&__toggle,
+	&__clear {
+		background: transparent;
+		border: 1px solid rgba(240, 231, 214, 0.25);
+		color: rgba(240, 231, 214, 0.55);
+		width: 22px;
+		height: 22px;
+		font: 700 11px $mono;
+		line-height: 1;
+		cursor: pointer;
+		border-radius: 0;
+		padding: 0;
+		transition: all 100ms ease;
+
+		&:hover {
+			border-color: $brass;
+			color: $brass;
+		}
+	}
+
+	&__clear:hover {
+		border-color: $oxide;
+		color: $oxide;
+	}
 
 	&__prompt {
 		color: $brass;
@@ -847,6 +880,105 @@ $display-stencil: "Workbench", monospace;
 		&.is-pulsing {
 			animation: topology-pulse 1.4s ease-in-out infinite;
 		}
+	}
+
+	// Collapsed single-line peek of the last entry. Lives inside the bar
+	// row by sitting between the prompt and the input — visually a
+	// breadcrumb above the cursor.
+	&__peek {
+		position: absolute;
+		left: 18px;
+		right: 18px;
+		bottom: 38px;
+		height: 22px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 0 8px;
+		background: rgba(24, 34, 46, 0.92);
+		border-top: 1px dotted rgba(240, 231, 214, 0.15);
+		font: 400 11px $mono;
+		color: rgba(240, 231, 214, 0.7);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		pointer-events: none;
+
+		&--error {
+			color: rgba(178, 85, 56, 0.95);
+		}
+	}
+
+	&__transcript {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 38px;
+		max-height: 280px;
+		overflow-y: auto;
+		background: $ink;
+		border-top: 1px solid rgba(240, 231, 214, 0.12);
+		padding: 8px 18px;
+		font: 400 11px/1.5 $mono;
+		color: rgba(240, 231, 214, 0.85);
+		box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+	}
+
+	// Top-right corner controls inside the transcript pane:
+	// [✕ clear] [▼ minimize]. Sticky so they stay visible while
+	// the transcript scrolls underneath them.
+	&__actions {
+		position: sticky;
+		top: 0;
+		float: right;
+		display: flex;
+		gap: 4px;
+		margin-left: 12px;
+		padding: 2px 0 2px 8px;
+		// stylelint-disable-next-line @stylistic/declaration-colon-space-after
+		background: linear-gradient(to left, $ink 0, $ink 70%, rgba(24, 34, 46, 0) 100%);
+		z-index: 1;
+	}
+
+	&__transcript-empty {
+		color: rgba(240, 231, 214, 0.35);
+		font-style: italic;
+	}
+
+	&__entry {
+		display: flex;
+		gap: 8px;
+		padding: 2px 0;
+
+		&--sent {
+			color: $brass;
+		}
+
+		&--error {
+			color: #cf6f4c;
+		}
+	}
+
+	&__sigil {
+		width: 12px;
+		flex-shrink: 0;
+		color: rgba(240, 231, 214, 0.4);
+		font-weight: 700;
+
+		.topology-repl__entry--sent & {
+			color: $brass;
+		}
+
+		.topology-repl__entry--error & {
+			color: $oxide;
+		}
+	}
+
+	&__entry-text {
+		margin: 0;
+		font: inherit;
+		white-space: pre-wrap;
+		word-break: break-all;
 	}
 }
 

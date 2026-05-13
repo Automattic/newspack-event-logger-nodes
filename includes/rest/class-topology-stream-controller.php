@@ -135,6 +135,11 @@ class TopologyStreamController extends SSEControllerBase {
 			);
 		}
 
+		// User-typed commands carry no KEY — they should look identical
+		// to what `wp nodes cli` sends. The frontend treats KEY-free
+		// responses as user-correlated and surfaces them in the
+		// transcript; only `gui:auto` (the controller's own polls) is
+		// routed silently to the canvas.
 		$cmd_out = new Partition( $ipc['input'], 0 );
 		$this->send_command( $cmd_out, $name, $arguments, $sse_pid );
 		$cmd_out->flush();
@@ -182,7 +187,10 @@ class TopologyStreamController extends SSEControllerBase {
 		// Inspector can show each node's framework fall-through target
 		// distinct from its explicit owners. The periodic refresh below
 		// uses -ct (counters only) because sinks are static topology.
-		$this->send_command( $cmd_out, 'ls', '-als' );
+		// KEY=gui:auto tags both auto-fired commands so the frontend
+		// routes their responses to the canvas-refresh path silently,
+		// distinct from user-typed commands which show in the transcript.
+		$this->send_command( $cmd_out, 'ls', '-als', null, 'gui:auto' );
 		$cmd_out->flush();
 
 		$this->drain_and_forward( $reply_in );
@@ -200,7 +208,7 @@ class TopologyStreamController extends SSEControllerBase {
 			$now = \microtime( true );
 
 			if ( $now - $last_stats >= self::STATS_INTERVAL_S ) {
-				$this->send_command( $cmd_out, 'ls', '-ct' );
+				$this->send_command( $cmd_out, 'ls', '-ct', null, 'gui:auto' );
 				$cmd_out->flush();
 				$last_stats = $now;
 				++$ticks_fired;
@@ -250,7 +258,8 @@ class TopologyStreamController extends SSEControllerBase {
 		Partition $cmd_out,
 		string $name,
 		string $arguments,
-		?int $route_to_pid = null
+		?int $route_to_pid = null,
+		string $key = ''
 	): void {
 		$pid                       = $route_to_pid ?? \getmypid();
 		$msg                       = Message::new_message();
@@ -259,6 +268,10 @@ class TopologyStreamController extends SSEControllerBase {
 		$msg[ Message::ID ]        = (string) Core::msg_counter();
 		$msg[ Message::FROM ]      = '_output/' . $pid;
 		$msg[ Message::TO ]        = '_command_interpreter';
+		// KEY is correlation metadata: user-typed commands stamp it with
+		// `gui:typed` so the frontend can distinguish their responses
+		// from auto-fired snapshot refreshes that leave KEY empty.
+		$msg[ Message::KEY ]       = $key;
 		$msg[ Message::VALUE ]     = (string) \wp_json_encode(
 			[
 				'name'      => $name,
