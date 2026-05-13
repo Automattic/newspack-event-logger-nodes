@@ -856,6 +856,21 @@ $display-stencil: "Workbench", monospace;
 			cursor: not-allowed;
 			opacity: 0.5;
 		}
+
+		// Inverted/pressed state for toggles whose action is currently
+		// "in effect" (Trace = debug_state on, Tail = our session is
+		// in the Tee's target list). Mirrors the substrate state so
+		// the visual is authoritative.
+		&.is-active {
+			background: $oxide;
+			color: $paper;
+			border-color: $oxide-dark;
+		}
+
+		&.is-active:hover:not([disabled]) {
+			background: $oxide-dark;
+			color: $paper;
+		}
 	}
 }
 

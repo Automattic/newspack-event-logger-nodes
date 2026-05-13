@@ -137,6 +137,7 @@ export default function Inspector( {
 	onSelect,
 	onHover,
 	nodeIds,
+	ssePid,
 } ) {
 	if ( ! selectedId ) {
 		return (
@@ -161,8 +162,21 @@ export default function Inspector( {
 
 	const targets = parsed.edges.filter( ( e ) => e.from === selectedId );
 	const sources = parsed.edges.filter( ( e ) => e.to === selectedId );
-	const type = inferType( node.id );
+	// Prefer the authoritative class name from dump_metadata; fall
+	// back to inferring from the node name if (somehow) absent.
+	const type = node.klass || inferType( node.id );
 	const live = streamStatus === 'open';
+
+	// Authoritative button state, derived from server metadata —
+	// no client-side bookkeeping that could drift from worker reality.
+	const traceOn = node.debugState > 0;
+	const tailOn =
+		ssePid &&
+		parsed.edges.some(
+			( e ) =>
+				e.from === selectedId &&
+				( e.to === `_output/${ ssePid }` || e.to === `${ ssePid }` )
+		);
 
 	return (
 		<aside className="topology-inspector">
@@ -283,38 +297,41 @@ export default function Inspector( {
 				</button>
 				<button
 					type="button"
-					className="topology-insp__actions-full"
-					onClick={ () => onAction && onAction( 'trace', node.id ) }
+					className={ `topology-insp__actions-full${
+						traceOn ? ' is-active' : ''
+					}` }
+					onClick={ () =>
+						onAction &&
+						onAction( 'trace', node.id, traceOn ? 0 : 1 )
+					}
 					disabled={ ! live }
-					title="Enable state-transition logging via `debug_state <name> 1` — events broadcast to listeners as TM_INFO"
+					title={
+						traceOn
+							? 'Stop tracing — `debug_state <name> 0`'
+							: 'Start tracing — `debug_state <name> 1`'
+					}
 				>
-					Trace
+					{ traceOn ? 'Stop Trace' : 'Trace' }
 				</button>
 				{ type === 'Tee' && (
-					<>
-						<button
-							type="button"
-							className="topology-insp__actions-full"
-							onClick={ () =>
-								onAction && onAction( 'tail', node.id )
-							}
-							disabled={ ! live }
-							title="Tee this node's output into the transcript via `connect_node <name>` (default target = this session)"
-						>
-							Tail
-						</button>
-						<button
-							type="button"
-							className="topology-insp__actions-full"
-							onClick={ () =>
-								onAction && onAction( 'disconnect', node.id )
-							}
-							disabled={ ! live }
-							title="Stop tailing via `disconnect_node <name>` (default target = this session)"
-						>
-							Disconnect
-						</button>
-					</>
+					<button
+						type="button"
+						className={ `topology-insp__actions-full${
+							tailOn ? ' is-active' : ''
+						}` }
+						onClick={ () =>
+							onAction &&
+							onAction( tailOn ? 'disconnect' : 'tail', node.id )
+						}
+						disabled={ ! live }
+						title={
+							tailOn
+								? 'Disconnect this session from the Tee — `disconnect_node <name>`'
+								: 'Connect this session to the Tee — `connect_node <name>` (its output then flows into the transcript)'
+						}
+					>
+						{ tailOn ? 'Disconnect' : 'Connect' }
+					</button>
 				) }
 			</div>
 		</aside>
