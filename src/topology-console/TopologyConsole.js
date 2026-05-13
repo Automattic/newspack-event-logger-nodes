@@ -483,10 +483,19 @@ export default function TopologyConsole() {
 			// non-zero Δcount marks the node as "live, recently active."
 			// Also append to a ring-buffer history (cap RATE_HISTORY_MAX
 			// samples) so the canvas can draw a per-node sparkline.
+			//
+			// Byte-rate histories (readHistory / writtenHistory) ride
+			// alongside on the same tick so the inspector can plot
+			// bytes/s read and written with the same horizontal axis as
+			// the msg/s sparkline. A worker respawn resets the counters
+			// the same way the message counter resets, so we clamp
+			// negatives to zero the same way.
 			const now = Date.now() / 1000;
 			let touched = false;
 			for ( const n of next.nodes ) {
 				const prevEntry = rateRef.current.get( n.id );
+				const bytesRead = n.bytesRead || 0;
+				const bytesWritten = n.bytesWritten || 0;
 				if ( prevEntry && prevEntry.ts < now ) {
 					// A worker respawn resets the counter, so dCount can
 					// go strongly negative on the first tick of a new
@@ -495,29 +504,58 @@ export default function TopologyConsole() {
 					// baseline that misrepresents what just happened.
 					const rawDCount = n.count - prevEntry.count;
 					const dCount = rawDCount < 0 ? 0 : rawDCount;
+					const rawDRead = bytesRead - ( prevEntry.bytesRead || 0 );
+					const dRead = rawDRead < 0 ? 0 : rawDRead;
+					const rawDWritten =
+						bytesWritten - ( prevEntry.bytesWritten || 0 );
+					const dWritten = rawDWritten < 0 ? 0 : rawDWritten;
 					const dTime = now - prevEntry.ts;
 					const rate = dTime > 0 ? dCount / dTime : 0;
+					const readRate = dTime > 0 ? dRead / dTime : 0;
+					const writtenRate = dTime > 0 ? dWritten / dTime : 0;
 					const history = prevEntry.history || [];
+					const readHistory = prevEntry.readHistory || [];
+					const writtenHistory = prevEntry.writtenHistory || [];
 					history.push( rate );
+					readHistory.push( readRate );
+					writtenHistory.push( writtenRate );
 					if ( history.length > RATE_HISTORY_MAX ) {
 						history.shift();
 					}
+					if ( readHistory.length > RATE_HISTORY_MAX ) {
+						readHistory.shift();
+					}
+					if ( writtenHistory.length > RATE_HISTORY_MAX ) {
+						writtenHistory.shift();
+					}
 					rateRef.current.set( n.id, {
 						count: n.count,
+						bytesRead,
+						bytesWritten,
 						ts: now,
 						rate,
+						readRate,
+						writtenRate,
 						lastChangedTs:
 							dCount > 0 ? now : prevEntry.lastChangedTs,
 						history,
+						readHistory,
+						writtenHistory,
 					} );
 					touched = true;
 				} else if ( ! prevEntry ) {
 					rateRef.current.set( n.id, {
 						count: n.count,
+						bytesRead,
+						bytesWritten,
 						ts: now,
 						rate: 0,
+						readRate: 0,
+						writtenRate: 0,
 						lastChangedTs: now,
 						history: [],
+						readHistory: [],
+						writtenHistory: [],
 					} );
 					touched = true;
 				}

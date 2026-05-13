@@ -111,6 +111,92 @@ function formatRate( rate ) {
 	return `${ rate.toFixed( 2 ) } /s`;
 }
 
+// Bytes-per-second formatter — same magnitude suffixes as formatBytes
+// with a `/s` tail. Used for the read/write sparkline current-value
+// labels.
+function formatByteRate( rate ) {
+	if ( rate === undefined || rate === null ) {
+		return '— /s';
+	}
+	if ( rate < 1 ) {
+		return '0 B/s';
+	}
+	if ( rate < 1024 ) {
+		return `${ Math.round( rate ) } B/s`;
+	}
+	if ( rate < 1024 * 1024 ) {
+		return `${ ( rate / 1024 ).toFixed( 1 ) } K/s`;
+	}
+	if ( rate < 1024 * 1024 * 1024 ) {
+		return `${ ( rate / ( 1024 * 1024 ) ).toFixed( 1 ) } M/s`;
+	}
+	return `${ ( rate / ( 1024 * 1024 * 1024 ) ).toFixed( 1 ) } G/s`;
+}
+
+// Inspector-resident sparkline. Same right-aligned fixed-step approach
+// as the node-card sparkline (history grows leftward until the ring is
+// full), but parameterized for the wider, taller plot area inside the
+// inspector pane. Auto-scales to the window's max so a bursty node
+// shows shape regardless of absolute magnitude.
+const INSP_SPARK_HISTORY_MAX = 60;
+function inspectorSparklinePath( history, width, height ) {
+	if ( ! history || history.length < 2 ) {
+		return null;
+	}
+	const max = Math.max( ...history, 1e-9 );
+	const step = width / ( INSP_SPARK_HISTORY_MAX - 1 );
+	const startIdx = INSP_SPARK_HISTORY_MAX - history.length;
+	return history
+		.map( ( v, i ) => {
+			const safeV = v > 0 ? v : 0;
+			const x = ( startIdx + i ) * step;
+			const y = height - ( safeV / max ) * height;
+			return `${ i === 0 ? 'M' : 'L' } ${ x.toFixed( 2 ) },${ y.toFixed(
+				2
+			) }`;
+		} )
+		.join( ' ' );
+}
+
+// One labeled sparkline row. The label sits on top, the current value
+// on the right, and a fixed-height SVG plot beneath. Empty history
+// renders the frame with a dim "—" so the row keeps the layout's
+// vertical rhythm before samples accumulate.
+function SparklineRow( { label, history, currentValue, format } ) {
+	const W = 270;
+	const H = 32;
+	const path = inspectorSparklinePath( history, W, H );
+	const formatted = format( currentValue );
+	return (
+		<div className="topology-insp__spark-row">
+			<div className="topology-insp__spark-head">
+				<span className="topology-insp__spark-label">{ label }</span>
+				<span
+					className={ `topology-insp__spark-val${
+						currentValue > 0 ? '' : ' topology-insp__spark-val--dim'
+					}` }
+				>
+					{ formatted }
+				</span>
+			</div>
+			<svg
+				className="topology-insp__spark-svg"
+				viewBox={ `0 0 ${ W } ${ H }` }
+				preserveAspectRatio="none"
+				aria-hidden="true"
+			>
+				{ path && (
+					<path
+						d={ path }
+						className="topology-insp__spark-path"
+						fill="none"
+					/>
+				) }
+			</svg>
+		</div>
+	);
+}
+
 // Bytes rendered with K / M / G suffixes once the magnitude makes the
 // raw number unreadable. Mirrors what the Throughput / Process panel
 // in the mockup wants: dense, glanceable values.
@@ -265,6 +351,27 @@ export default function Inspector( {
 						onHover={ onHover }
 					/>
 				</div>
+			</Section>
+
+			<Section title="Activity" meta="last ~60s">
+				<SparklineRow
+					label="messages /s"
+					history={ rateInfo?.history }
+					currentValue={ rateInfo?.rate || 0 }
+					format={ formatRate }
+				/>
+				<SparklineRow
+					label="bytes read /s"
+					history={ rateInfo?.readHistory }
+					currentValue={ rateInfo?.readRate || 0 }
+					format={ formatByteRate }
+				/>
+				<SparklineRow
+					label="bytes written /s"
+					history={ rateInfo?.writtenHistory }
+					currentValue={ rateInfo?.writtenRate || 0 }
+					format={ formatByteRate }
+				/>
 			</Section>
 
 			<Section title="Throughput" meta="cumulative">
