@@ -69,10 +69,14 @@ $display-stencil: "Workbench", monospace;
 	display: grid;
 	grid-template-rows: 64px 1fr 38px;
 	grid-template-columns: 232px 1fr 308px;
+	// REPL footer only spans the middle (canvas) column so the palette
+	// and inspector extend full-height down to the bottom of the app;
+	// the prompt + transcript live snug between the two side panes,
+	// matching where the live canvas sits visually.
 	grid-template-areas:
-		"header header header"
+		"header  header header"
 		"palette canvas inspector"
-		"repl   repl   repl";
+		"palette repl   inspector";
 	font-family: $mono;
 	font-size: 13px;
 	line-height: 1.45;
@@ -382,7 +386,13 @@ $display-stencil: "Workbench", monospace;
 		bottom: 0;
 		left: 0;
 		right: 0;
-		padding: 10px 16px;
+		// Match the REPL bar's 38px so the bottom edge of palette,
+		// canvas (bar), and inspector all share a clean horizontal
+		// baseline.
+		height: 38px;
+		display: flex;
+		align-items: center;
+		padding: 0 16px;
 		border-top: 1px solid $ink-4;
 		background: $paper-3;
 		font: 400 9px $mono;
@@ -753,6 +763,15 @@ $display-stencil: "Workbench", monospace;
 			text-align: right;
 		}
 
+		// `--right` is the alignment-only modifier — same right-justify
+		// as --num but without the oxide color or bold weight. Used
+		// for text-shaped values that should align to the value column
+		// (e.g. `last_seen` "14.2s ago") alongside numeric siblings.
+		&--right {
+			text-align: right;
+			font-variant-numeric: tabular-nums;
+		}
+
 		&--link {
 			color: $cyan-dark;
 			cursor: pointer;
@@ -760,8 +779,13 @@ $display-stencil: "Workbench", monospace;
 			text-underline-offset: 2px;
 		}
 
+		// `--dim` is purely a color/weight modifier. It deliberately
+		// leaves text-align alone so it composes cleanly with --num
+		// or --right when a numeric field is currently zero/empty
+		// (still right-aligned, just muted).
 		&--dim {
 			color: $ink-4;
+			font-weight: 400;
 			font-style: italic;
 		}
 	}
@@ -903,21 +927,33 @@ $display-stencil: "Workbench", monospace;
 
 	&__transcript {
 		position: absolute;
+		// Fills the REPL footer's column (canvas column only, thanks
+		// to the grid-template-areas reshuffle in `.topology-app`).
+		// Same horizontal extent as the prompt bar — no offset.
 		left: 0;
 		right: 0;
 		bottom: 38px;
-		max-height: 280px;
+		// Fill the entire canvas row when expanded so the operator
+		// gets maximum reading area for long `ls`/`help`/`dump`
+		// outputs. 134px = 32 (wp admin bar) + 64 (header) + 38 (bar
+		// underneath us).
+		height: calc(100vh - 134px);
 		overflow-y: auto;
-		background: $ink;
-		border-top: 1px solid rgba(240, 231, 214, 0.12);
+		// 85% opacity so the schematic peeks through behind the
+		// transcript — the canvas updates are still visible while
+		// you're reading command output.
+		background: rgba(24, 34, 46, 0.85);
+		backdrop-filter: blur(2px);
+		border-top: 1px solid rgba(240, 231, 214, 0.18);
+		border-bottom: 1px solid rgba(240, 231, 214, 0.18);
 		// Right padding leaves a corridor wide enough for the sticky
 		// [✕ ▼] actions row to sit on top of without ever overlapping
 		// transcript text. Bottom padding gives the last line clearance
 		// from the bar's border so descenders don't bleed across.
 		padding: 8px 70px 14px 18px;
 		font: 400 11px/1.5 $mono;
-		color: rgba(240, 231, 214, 0.85);
-		box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+		color: rgba(240, 231, 214, 0.92);
+		box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
 	}
 
 	// Top-right corner controls inside the transcript pane:
@@ -933,7 +969,10 @@ $display-stencil: "Workbench", monospace;
 		gap: 4px;
 		padding: 4px 18px 6px 12px;
 		margin-right: -52px;
-		background: $ink;
+		// Slightly more opaque than the transcript's translucent
+		// backdrop so scrolling content behind the buttons is fully
+		// occluded.
+		background: rgba(24, 34, 46, 0.95);
 		z-index: 1;
 	}
 

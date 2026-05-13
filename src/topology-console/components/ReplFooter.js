@@ -25,13 +25,17 @@ export default function ReplFooter( {
 	onSubmit,
 	onClear,
 	transcript = [],
+	expanded,
+	onExpandedChange,
 } ) {
 	const [ value, setValue ] = useState( '' );
-	// Start minimized so the canvas (and its title block / reticles)
-	// are unobscured on first load. The Enter handler flips this to
-	// true on the first command, so as soon as the user types
-	// something they get the transcript automatically.
-	const [ expanded, setExpanded ] = useState( false );
+	const setExpanded = ( next ) => {
+		if ( onExpandedChange ) {
+			onExpandedChange(
+				typeof next === 'function' ? next( expanded ) : next
+			);
+		}
+	};
 	const logRef = useRef( null );
 
 	const statusLabel =
@@ -45,6 +49,25 @@ export default function ReplFooter( {
 			logRef.current.scrollTop = logRef.current.scrollHeight;
 		}
 	}, [ transcript, expanded ] );
+
+	// Esc minimizes the transcript when it's open. Document-level so
+	// it works whether the user is focused on the input, the canvas,
+	// or anywhere else on the page. Listener only attaches while
+	// expanded — no cost when minimized.
+	useEffect( () => {
+		if ( ! expanded ) {
+			return undefined;
+		}
+		const handler = ( ev ) => {
+			if ( ev.key === 'Escape' ) {
+				ev.preventDefault();
+				setExpanded( false );
+			}
+		};
+		document.addEventListener( 'keydown', handler );
+		return () => document.removeEventListener( 'keydown', handler );
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ expanded ] );
 
 	function handleKeyDown( ev ) {
 		// Ctrl+L (or Cmd+L on macOS): clear the transcript, terminal-style.

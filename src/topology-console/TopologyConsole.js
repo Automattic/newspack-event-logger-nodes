@@ -12,7 +12,13 @@
  *   ReplFooter        → prompt + status line
  */
 
-import { useCallback, useEffect, useMemo, useState } from '@wordpress/element';
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 
 import CanvasFrame from './components/CanvasFrame';
@@ -137,6 +143,17 @@ export default function TopologyConsole() {
 	const [ selectedId, setSelectedId ] = useState( null );
 	const [ parsed, setParsed ] = useState( { nodes: [], edges: [] } );
 	const [ transcript, setTranscript ] = useState( [] );
+	// Lifted: ReplFooter's transcript visibility, so Inspector actions
+	// (Dump, Tail) can pop the pane open when they fire commands the
+	// user wants to see the response of.
+	const [ replExpanded, setReplExpanded ] = useState( false );
+
+	// Per-node rate tracking: { id: { count, ts, rate, lastChangedTs } }
+	// Updated each time a `gui:auto` ls table arrives. rate = Δcount/Δs
+	// across consecutive ticks; lastChangedTs marks the last tick where
+	// count grew so the Inspector can render "Xs ago" without polling.
+	const rateRef = useRef( new Map() );
+	const [ rateVersion, setRateVersion ] = useState( 0 );
 
 	const partitions = useMemo( partitionList, [] );
 
@@ -210,6 +227,40 @@ export default function TopologyConsole() {
 				return;
 			}
 			const next = parseLsOutput( text );
+
+			// Update per-node rate + last-changed tracking. Same tick
+			// drives both — Δcount/Δs gives the msg/s rate, and a
+			// non-zero Δcount marks the node as "live, recently active."
+			const now = Date.now() / 1000;
+			let touched = false;
+			for ( const n of next.nodes ) {
+				const prevEntry = rateRef.current.get( n.id );
+				if ( prevEntry && prevEntry.ts < now ) {
+					const dCount = n.count - prevEntry.count;
+					const dTime = now - prevEntry.ts;
+					const rate = dTime > 0 ? dCount / dTime : 0;
+					rateRef.current.set( n.id, {
+						count: n.count,
+						ts: now,
+						rate,
+						lastChangedTs:
+							dCount > 0 ? now : prevEntry.lastChangedTs,
+					} );
+					touched = true;
+				} else if ( ! prevEntry ) {
+					rateRef.current.set( n.id, {
+						count: n.count,
+						ts: now,
+						rate: 0,
+						lastChangedTs: now,
+					} );
+					touched = true;
+				}
+			}
+			if ( touched ) {
+				setRateVersion( ( v ) => v + 1 );
+			}
+
 			// `ls -als` (initial) carries the SINK column. Subsequent
 			// `ls -ct` counter refreshes don't — so merge the prior
 			// parse's sink data into nodes that came back without one,
@@ -306,6 +357,35 @@ export default function TopologyConsole() {
 		[ topology, partition, ssePid, appendTranscript ]
 	);
 
+	// Inspector action dispatch. Each action maps to a verb the user
+	// could have typed at the REPL; routing through sendLine keeps the
+	// echo + response visible in the transcript instead of being a
+	// silent backchannel.
+	const handleInspectorAction = useCallback(
+		( action, nodeId ) => {
+			if ( action === 'dump' ) {
+				sendLine( `dump_node ${ nodeId }` );
+			} else if ( action === 'tail' ) {
+				sendLine( `connect_node ${ nodeId }` );
+			}
+			// Always pop the transcript open after an Inspector action
+			// — the user's expecting to see the worker's reply.
+			setReplExpanded( true );
+		},
+		[ sendLine ]
+	);
+
+	// Pull rate info for the selected node. rateVersion is the
+	// "something changed in the rate map" signal that drives the
+	// useMemo recompute; the actual data lives in rateRef (mutable so
+	// hot-path ls -ct ticks don't trigger a full state update per
+	// node).
+	const selectedRateInfo = useMemo(
+		() => ( selectedId ? rateRef.current.get( selectedId ) : null ),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[ selectedId, rateVersion ]
+	);
+
 	return (
 		<div className="topology-app">
 			<Header
@@ -330,6 +410,8 @@ export default function TopologyConsole() {
 				selectedId={ selectedId }
 				parsed={ parsed }
 				streamStatus={ status }
+				rateInfo={ selectedRateInfo }
+				onAction={ handleInspectorAction }
 			/>
 			<ReplFooter
 				topology={ topology }
@@ -339,6 +421,8 @@ export default function TopologyConsole() {
 				onSubmit={ sendLine }
 				onClear={ () => setTranscript( [] ) }
 				transcript={ transcript }
+				expanded={ replExpanded }
+				onExpandedChange={ setReplExpanded }
 			/>
 		</div>
 	);
