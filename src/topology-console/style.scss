@@ -1,8 +1,870 @@
-// Topology Console styles — engineering-plotter aesthetic.
-//
-// This file is a stub for Task 11; the full drafting-room treatment
-// lands in Task 12 (paper grid, reticles, title block, drafting fonts,
-// LEDs, oxide counters, flow-dashed edges).
+/**
+ * Topology Console — engineering plotter aesthetic.
+ *
+ * Drafting paper background, 24px primary + 96px secondary grid, ink
+ * outlines, oxide accents, brass+sage+oxide status LEDs, JetBrains
+ * Mono body, Major Mono Display brand, Workbench display. Three-pane
+ * shell (palette / canvas / inspector) plus header and REPL footer.
+ */
+
+// Google Fonts — imported into the admin page asset graph.
+// @import url is fine here; wp-scripts' sass loader pipes the URL
+// through to the final CSS without trying to inline it.
+@import url(https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=Workbench&family=JetBrains+Mono:wght@300;400;500;700&display=swap);
+
+// Palette.
+$paper:         #f0e7d6;
+$paper-2:       #e8dcc4;
+$paper-3:       #dbcdb1;
+$paper-shadow:  #c8b998;
+$ink:           #18222e;
+$ink-2:         #2e3f4f;
+$ink-3:         #5a6f7f;
+$ink-4:         #8294a2;
+$grid:          rgba(60, 80, 96, 0.1);
+$grid-coarse:   rgba(60, 80, 96, 0.07);
+$oxide:         #b25538;
+$oxide-dark:    #8a3d24;
+$brass:         #b4914a;
+$brass-dark:    #876a2e;
+$cyan:          #4a7290;
+$cyan-dark:     #305670;
+$sage:          #7a8f6a;
+$sage-dark:     #5b6e4d;
+
+$mono: "JetBrains Mono", ui-monospace, monospace;
+$display-brand: "Major Mono Display", ui-monospace, monospace;
+$display-stencil: "Workbench", monospace;
+
+// Hide WP admin gunk so we own the viewport.
+.toplevel_page_newspack-nodes-topology,
+.newspack-nodes_page_newspack-nodes-topology,
+.admin_page_newspack-nodes-topology {
+
+	#wpcontent {
+		padding-left: 0;
+	}
+
+	#wpbody-content {
+		padding-bottom: 0;
+	}
+
+	.wrap {
+		margin: 0;
+	}
+}
+
+// Paper backdrop + grid is painted as full-viewport fixed layers so
+// the schematic plotter feel persists when the user scrolls inside
+// the panes.
+.event-logger-topology-console-page {
+	margin: 0;
+	padding: 0;
+}
+
 .topology-app {
-	font-family: 'JetBrains Mono', ui-monospace, monospace;
+	position: relative;
+	z-index: 2;
+	height: calc(100vh - 32px); // leave WP admin bar visible.
+	display: grid;
+	grid-template-rows: 64px 1fr 38px;
+	grid-template-columns: 232px 1fr 308px;
+	grid-template-areas:
+		"header header header"
+		"palette canvas inspector"
+		"repl   repl   repl";
+	font-family: $mono;
+	font-size: 13px;
+	line-height: 1.45;
+	color: $ink;
+	background: $paper;
+	-webkit-font-smoothing: antialiased;
+	overflow: hidden;
+
+	&::before,
+	&::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		z-index: 0;
+	}
+
+	&::before {
+		background-image:
+			linear-gradient(to right, $grid 1px, transparent 1px),
+			linear-gradient(to bottom, $grid 1px, transparent 1px);
+		background-size: 24px 24px;
+	}
+
+	&::after {
+		background-image:
+			linear-gradient(to right, $grid-coarse 1px, transparent 1px),
+			linear-gradient(to bottom, $grid-coarse 1px, transparent 1px);
+		background-size: 96px 96px;
+	}
+
+	* {
+		box-sizing: border-box;
+	}
+}
+
+@keyframes topology-pulse {
+
+	0%,
+	100% {
+		opacity: 1;
+	}
+
+	50% {
+		opacity: 0.3;
+	}
+}
+
+@keyframes topology-flow {
+
+	to {
+		stroke-dashoffset: -8;
+	}
+}
+
+@keyframes topology-fadein {
+
+	from {
+		opacity: 0;
+	}
+
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes topology-draw {
+
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+// =====================================================================
+// Header
+// =====================================================================
+
+.topology-header {
+	grid-area: header;
+	border-bottom: 1px solid $ink;
+	background: $paper;
+	display: flex;
+	align-items: stretch;
+	padding: 0 18px;
+	gap: 24px;
+	z-index: 3;
+	box-shadow: 0 1px 0 $paper-shadow;
+}
+
+.topology-brand {
+	font-family: $display-brand;
+	font-size: 19px;
+	letter-spacing: 0.04em;
+	align-self: center;
+
+	&__colon {
+		color: $oxide;
+	}
+}
+
+.topology-subtitle {
+	align-self: center;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.22em;
+	color: $ink-3;
+	border-left: 1px solid $ink-4;
+	padding-left: 16px;
+}
+
+.topology-header__controls {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.topology-ctl-label {
+	font-size: 9px;
+	text-transform: uppercase;
+	letter-spacing: 0.22em;
+	color: $ink-3;
+}
+
+.topology-select {
+	appearance: none;
+	background: transparent;
+	border: 1px solid $ink-2;
+	color: $ink;
+	font: 500 12px/1 $mono;
+	padding: 7px 22px 7px 10px;
+	background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0L5 6L10 0Z' fill='%2318222E'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 8px center;
+	background-size: 8px;
+	border-radius: 0;
+	cursor: pointer;
+
+	&:focus-visible {
+		outline: 2px solid $oxide;
+		outline-offset: -1px;
+	}
+}
+
+.topology-mode {
+	display: inline-flex;
+	border: 1px solid $ink;
+	overflow: hidden;
+	margin-left: 4px;
+
+	&__btn {
+		background: transparent;
+		border: 0;
+		padding: 7px 14px;
+		font: 700 10px $mono;
+		color: $ink-3;
+		letter-spacing: 0.16em;
+		cursor: pointer;
+		transition: all 100ms ease;
+
+		&[disabled] {
+			cursor: not-allowed;
+			opacity: 0.5;
+		}
+
+		&--live.is-active {
+			background: $oxide;
+			color: $paper;
+		}
+	}
+}
+
+.topology-live-led {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: $paper;
+	margin-right: 6px;
+	vertical-align: middle;
+
+	&.is-pulsing {
+		animation: topology-pulse 1.4s ease-in-out infinite;
+	}
+}
+
+// =====================================================================
+// Palette
+// =====================================================================
+
+.topology-palette {
+	grid-area: palette;
+	border-right: 1px solid $ink;
+	background: $paper-2;
+	padding: 14px 0 60px;
+	overflow-y: auto;
+	position: relative;
+
+	&__group {
+		margin: 14px 16px 8px;
+		font: 700 9px/1 $mono;
+		text-transform: uppercase;
+		letter-spacing: 0.22em;
+		color: $ink-3;
+		border-bottom: 1px dotted $ink-4;
+		padding-bottom: 8px;
+
+		&:first-child {
+			margin-top: 0;
+		}
+	}
+
+	&__item {
+		display: flex;
+		align-items: center;
+		padding: 7px 16px 7px 13px;
+		cursor: grab;
+		border-left: 3px solid transparent;
+		transition: all 80ms ease;
+
+		&:hover {
+			background: $paper;
+			border-left-color: $oxide;
+
+			.topology-palette__glyph {
+				background: $paper-2;
+			}
+		}
+	}
+
+	/* stylelint-disable-next-line no-descending-specificity */
+	&__glyph {
+		width: 28px;
+		height: 18px;
+		margin-right: 11px;
+		border: 1px solid $ink-2;
+		background: $paper;
+		position: relative;
+		flex-shrink: 0;
+
+		&::before,
+		&::after {
+			content: "";
+			position: absolute;
+			width: 5px;
+			height: 5px;
+			border-radius: 50%;
+			background: $ink-2;
+			top: 6px;
+		}
+
+		&::before {
+			left: -3px;
+		}
+
+		&::after {
+			right: -3px;
+		}
+	}
+
+	// Variant glyphs — keyed on the data-type attribute the React
+	// component sets, exposed here through chained BEM class names.
+	// stylelint-disable no-descending-specificity
+	&__item--tee &__glyph::after {
+		box-shadow: 0 8px 0 $ink-2, 0 -8px 0 $ink-2;
+	}
+
+	&__item--partition &__glyph {
+		// stylelint-disable-next-line @stylistic/declaration-colon-space-after
+		background-image: linear-gradient(to bottom, transparent 4px, $ink-2 4px, $ink-2 5px, transparent 5px, transparent 9px, $ink-2 9px, $ink-2 10px, transparent 10px, transparent 14px, $ink-2 14px, $ink-2 15px, transparent 15px);
+	}
+
+	&__item--tail &__glyph::before {
+		background: $brass;
+	}
+
+	&__item--topic &__glyph::after {
+		background: $oxide;
+	}
+
+	&__item--timer &__glyph {
+		background:
+			radial-gradient(circle at center, $ink-2 1px, transparent 1.5px) center / 4px 4px no-repeat,
+			conic-gradient(from -90deg, $ink-2 90deg, transparent 90deg) center / 12px 12px no-repeat;
+
+		&::before,
+		&::after {
+			display: none;
+		}
+	}
+	// stylelint-enable no-descending-specificity
+
+	&__name {
+		font: 500 12px $mono;
+		color: $ink;
+	}
+
+	&__badge {
+		margin-left: auto;
+		font: 700 8px $mono;
+		color: $ink-4;
+		letter-spacing: 0.1em;
+	}
+
+	&__footer {
+		position: absolute;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		padding: 10px 16px;
+		border-top: 1px solid $ink-4;
+		background: $paper-3;
+		font: 400 9px $mono;
+		letter-spacing: 0.1em;
+		color: $ink-3;
+		text-transform: uppercase;
+	}
+
+	&__count {
+		color: $ink;
+		font-weight: 700;
+	}
+}
+
+// =====================================================================
+// Canvas
+// =====================================================================
+
+.topology-canvas {
+	grid-area: canvas;
+	position: relative;
+	overflow: hidden;
+	background: $paper;
+
+	&__meta {
+		position: absolute;
+		top: 14px;
+		left: 18px;
+		font: 700 9px/1.5 $mono;
+		text-transform: uppercase;
+		letter-spacing: 0.22em;
+		color: $ink-3;
+		pointer-events: none;
+		z-index: 5;
+	}
+
+	&__topology-name {
+		font-family: $display-stencil;
+		font-variation-settings: "BLCK" 5, "ROND" 20;
+		font-size: 18px;
+		font-weight: 400;
+		color: $ink;
+		letter-spacing: 0.02em;
+		margin-top: 6px;
+		text-transform: none;
+	}
+}
+
+.topology-canvas-svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+	cursor: default;
+}
+
+.topology-reticle {
+	position: absolute;
+	width: 24px;
+	height: 24px;
+	border: 1px solid $ink-2;
+	pointer-events: none;
+	z-index: 4;
+
+	&::before {
+		content: "";
+		position: absolute;
+		inset: 50% 50% 50% 50%;
+		width: 4px;
+		height: 4px;
+		border: 1px solid $oxide;
+		border-radius: 50%;
+		transform: translate(-50%, -50%);
+		background: $paper;
+	}
+
+	&--tl {
+		top: 70px;
+		left: 16px;
+		border-right: 0;
+		border-bottom: 0;
+	}
+
+	&--tr {
+		top: 70px;
+		right: 16px;
+		border-left: 0;
+		border-bottom: 0;
+	}
+
+	&--bl {
+		bottom: 16px;
+		left: 16px;
+		border-right: 0;
+		border-top: 0;
+	}
+
+	&--br {
+		bottom: 16px;
+		right: 16px;
+		border-left: 0;
+		border-top: 0;
+	}
+}
+
+.topology-title-block {
+	position: absolute;
+	bottom: 14px;
+	right: 18px;
+	background: $paper;
+	border: 1px solid $ink;
+	font: 400 10px $mono;
+	z-index: 5;
+	box-shadow: 2px 2px 0 $paper-shadow;
+
+	&__row {
+		display: grid;
+		grid-template-columns: 70px 130px;
+		border-bottom: 1px solid $ink-2;
+
+		&:last-child {
+			border-bottom: 0;
+		}
+	}
+
+	&__k {
+		padding: 3px 8px;
+		border-right: 1px solid $ink-2;
+		font: 700 8px $mono;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: $ink-3;
+		background: $paper-2;
+	}
+
+	&__v {
+		padding: 3px 8px;
+		font-size: 10px;
+
+		&--proj {
+			font: 700 11px $display-stencil;
+			font-variation-settings: "BLCK" 8;
+		}
+	}
+}
+
+// =====================================================================
+// SVG nodes + edges
+// =====================================================================
+
+.topology-node {
+	cursor: pointer;
+	animation: topology-fadein 0.35s ease-out both;
+
+	&__shadow {
+		fill: rgba(0, 0, 0, 0.04);
+	}
+
+	&__bg {
+		fill: $paper-2;
+		stroke: $ink;
+		stroke-width: 1;
+	}
+
+	&__divider {
+		stroke: $ink-2;
+		stroke-width: 1;
+	}
+
+	&__type {
+		font: 700 9px $mono;
+		fill: $ink-3;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+	}
+
+	&__led {
+		fill: $sage;
+		stroke: $sage-dark;
+		stroke-width: 0.6;
+	}
+
+	&__id {
+		font: 700 13px $mono;
+		fill: $ink;
+	}
+
+	&__meta {
+		font: 400 10px $mono;
+		fill: $ink-3;
+	}
+
+	&__counter {
+		font: 700 13px $mono;
+		fill: $oxide;
+		font-variant-numeric: tabular-nums;
+	}
+
+	&:hover &__bg {
+		fill: $paper;
+	}
+
+	&.is-selected &__bg {
+		stroke: $oxide;
+		stroke-width: 2;
+	}
+}
+
+.topology-port {
+	fill: $paper;
+	stroke: $ink;
+	stroke-width: 1;
+
+	&--out {
+		// Same default; active state will flip to brass once we wire
+		// per-edge throughput. Live counter ticks already animate, so
+		// keeping ports static for v1 avoids visual noise.
+	}
+}
+
+.topology-edge {
+	fill: none;
+	stroke: $ink-3;
+	stroke-width: 1.2;
+	stroke-dasharray: 1000;
+	stroke-dashoffset: 1000;
+	animation: topology-draw 0.8s ease-out 0.2s forwards;
+
+	&--active {
+		stroke: $cyan;
+		stroke-width: 1.6;
+		stroke-dasharray: 5 3;
+		animation:
+			topology-draw 0.8s ease-out 0.2s forwards,
+			topology-flow 0.8s linear 1s infinite;
+	}
+}
+
+.topology-arrow-head {
+	fill: $ink-3;
+
+	&--active {
+		fill: $cyan-dark;
+	}
+}
+
+// =====================================================================
+// Inspector
+// =====================================================================
+
+.topology-inspector {
+	grid-area: inspector;
+	background: $paper-2;
+	border-left: 1px solid $ink;
+	padding: 20px 18px 24px;
+	overflow-y: auto;
+}
+
+.topology-insp__empty {
+	text-align: center;
+	color: $ink-4;
+	padding: 100px 20px;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.18em;
+}
+
+.topology-insp__title {
+	font-family: $display-stencil;
+	font-variation-settings: "BLCK" 4, "ROND" 10;
+	font-size: 19px;
+	font-weight: 400;
+	margin: 0 0 2px;
+	color: $ink;
+	word-break: break-all;
+}
+
+.topology-insp__type {
+	font: 700 9px $mono;
+	text-transform: uppercase;
+	letter-spacing: 0.22em;
+	color: $oxide;
+	margin-bottom: 16px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid $ink-4;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.topology-insp__led {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: $sage;
+	box-shadow: 0 0 0 1px $sage-dark;
+
+	&.is-pulsing {
+		animation: topology-pulse 1.4s ease-in-out infinite;
+	}
+}
+
+.topology-insp__section {
+	margin: 18px 0;
+
+	&-title {
+		font: 700 9px $mono;
+		text-transform: uppercase;
+		letter-spacing: 0.22em;
+		color: $ink-3;
+		margin: 0 0 9px;
+		display: flex;
+		justify-content: space-between;
+	}
+
+	&-meta {
+		color: $ink-4;
+		font-weight: 400;
+		letter-spacing: 0.1em;
+	}
+}
+
+.topology-field-row {
+	display: grid;
+	grid-template-columns: 88px 1fr;
+	padding: 5px 0;
+	border-bottom: 1px dotted $ink-4;
+	gap: 10px;
+	align-items: baseline;
+
+	&:last-child {
+		border-bottom: 0;
+	}
+
+	&__key {
+		font: 400 10px $mono;
+		color: $ink-3;
+	}
+
+	&__val {
+		font: 500 11px $mono;
+		color: $ink;
+		word-break: break-all;
+
+		&--num {
+			color: $oxide;
+			font-variant-numeric: tabular-nums;
+			font-weight: 700;
+			text-align: right;
+		}
+
+		&--link {
+			color: $cyan-dark;
+			cursor: pointer;
+			text-decoration: underline dotted;
+			text-underline-offset: 2px;
+		}
+
+		&--dim {
+			color: $ink-4;
+			font-style: italic;
+		}
+	}
+}
+
+.topology-insp__actions {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 6px;
+	margin-top: 18px;
+
+	button {
+		background: transparent;
+		border: 1px solid $ink-2;
+		color: $ink;
+		padding: 8px 10px;
+		font: 700 10px $mono;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		text-align: left;
+		cursor: pointer;
+		transition: all 100ms ease;
+		border-radius: 0;
+
+		&:hover:not([disabled]) {
+			background: $ink;
+			color: $paper;
+		}
+
+		&[disabled] {
+			cursor: not-allowed;
+			opacity: 0.5;
+		}
+	}
+}
+
+.topology-insp__actions-full {
+	grid-column: span 2;
+}
+
+.topology-insp__actions-danger {
+	color: $oxide !important;
+	border-color: $oxide !important;
+
+	&:hover:not([disabled]) {
+		background: $oxide !important;
+		color: $paper !important;
+	}
+}
+
+// =====================================================================
+// REPL footer
+// =====================================================================
+
+.topology-repl {
+	grid-area: repl;
+	border-top: 1px solid $ink;
+	background: $ink;
+	color: $paper;
+	display: flex;
+	align-items: center;
+	padding: 0 18px;
+	gap: 10px;
+	font: 400 12px $mono;
+	z-index: 3;
+
+	&__prompt {
+		color: $brass;
+		font-weight: 700;
+	}
+
+	&__input {
+		flex: 1;
+		background: transparent;
+		border: 0;
+		color: $paper;
+		font: inherit;
+		outline: none;
+		padding: 6px 0;
+		caret-color: $brass;
+
+		&::placeholder {
+			color: rgba(240, 231, 214, 0.35);
+		}
+	}
+
+	&__status {
+		font: 700 9px $mono;
+		letter-spacing: 0.22em;
+		color: rgba(240, 231, 214, 0.5);
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	&__dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: $sage;
+
+		&.is-pulsing {
+			animation: topology-pulse 1.4s ease-in-out infinite;
+		}
+	}
+}
+
+// Scrollbars — paper-themed.
+.topology-app ::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+.topology-app ::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.topology-app ::-webkit-scrollbar-thumb {
+	background: $ink-4;
+	border: 2px solid $paper-2;
+}
+
+.topology-app ::-webkit-scrollbar-thumb:hover {
+	background: $ink-3;
 }
