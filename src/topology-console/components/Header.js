@@ -78,9 +78,13 @@ export default function Header( {
 							}` }
 						/>
 						LIVE
-						{ uptime && (
-							<span className="topology-uptime"> · { uptime }</span>
-						) }
+						{ /* Always-rendered slot — shows an em-dash until the
+						first `gui:uptime` poll lands (~5s after connect) so
+						the button width doesn't jump on first appearance. */ }
+						<span className="topology-uptime">
+							{ ' · ' }
+							{ uptime || '—' }
+						</span>
 					</button>
 				</div>
 			</div>

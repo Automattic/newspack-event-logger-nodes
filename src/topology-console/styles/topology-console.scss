@@ -275,7 +275,14 @@ body[class*="_page_newspack-nodes-topology"] {
 
 // Worker uptime, rendered inline after "LIVE" in the header — the
 // LIVE LED says the worker is alive, this says how long for.
+// `min-width` covers the realistic upper-bound for our short-lived
+// workers ("9m 59s" / "9h 59m") so the LIVE button doesn't widen
+// when the value first arrives. Workers max out at ~10 minutes so
+// "Xh Ym" / "Xd ..." are vanishingly rare.
 .topology-uptime {
+	display: inline-block;
+	min-width: 48px;
+	text-align: left;
 	opacity: 0.75;
 	font-weight: normal;
 	letter-spacing: 0;
