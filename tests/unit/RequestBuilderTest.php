@@ -534,4 +534,42 @@ class RequestBuilderTest extends TestCase {
 		$rb->maintenance();
 		$this->assertSame( 0, $rb->cache_size() );
 	}
+
+	// ── A1: sibling-CI + node_schema ─────────────────────────
+
+	public function test_request_builder_constructs_sibling_ci(): void {
+		$rb = new RequestBuilder();
+		$rb->name( 'req_builder' );
+
+		$sibling = $rb->interpreter();
+		$this->assertNotNull( $sibling );
+		$this->assertSame( 'req_builder:config', $sibling->name() );
+		$this->assertSame( $rb, $sibling->patron() );
+	}
+
+	public function test_request_builder_set_errors_target_verb_records_and_dumps(): void {
+		$rb = new RequestBuilder();
+		$rb->name( 'req_builder' );
+
+		$result = $rb->interpreter()->execute( 'set_errors_target errors:partition' );
+		$this->assertSame( 'ok', $result );
+
+		$dump = $rb->dump_config();
+		$this->assertStringContainsString( 'cmd req_builder:config set_errors_target errors:partition', $dump );
+	}
+
+	public function test_request_builder_set_errors_target_verb_requires_target(): void {
+		$rb = new RequestBuilder();
+		$rb->name( 'req_builder' );
+
+		$result = $rb->interpreter()->execute( 'set_errors_target' );
+		$this->assertStringContainsString( 'usage', $result );
+	}
+
+	public function test_request_builder_node_schema_declares_verb(): void {
+		$schema = RequestBuilder::node_schema();
+		$this->assertSame( 'Transform', $schema['category'] );
+		$verb_names = \array_column( $schema['verbs'], 'name' );
+		$this->assertContains( 'set_errors_target', $verb_names );
+	}
 }
