@@ -64,6 +64,35 @@ export function autoLayout( parsed ) {
 	};
 	nodes.forEach( ( n ) => visit( n.id ) );
 
+	// Push each node forward to `min(target depths) - 1` when that
+	// shifts it RIGHT. The DFS pass computes the minimum depth a node
+	// can occupy (one past its deepest predecessor); for a node with
+	// no incoming but a far-away target, that leaves a long forward
+	// edge cutting across intermediate columns. Pulling the node
+	// rightward to sit one column before its earliest target shortens
+	// the edge and stops it from cutting under unrelated nodes.
+	// Walk in DECREASING-depth order so each node sees its targets'
+	// final depths before deciding its own.
+	const sortedByDepthDesc = [ ...nodes ].sort(
+		( a, b ) => depth.get( b.id ) - depth.get( a.id )
+	);
+	for ( const n of sortedByDepthDesc ) {
+		const targets = outgoing.get( n.id ) || [];
+		if ( targets.length === 0 ) {
+			continue;
+		}
+		const targetDepths = targets
+			.map( ( t ) => depth.get( t ) )
+			.filter( ( d ) => d !== undefined );
+		if ( targetDepths.length === 0 ) {
+			continue;
+		}
+		const minTargetDepth = Math.min( ...targetDepths );
+		if ( minTargetDepth - 1 > depth.get( n.id ) ) {
+			depth.set( n.id, minTargetDepth - 1 );
+		}
+	}
+
 	// Bucket nodes by depth.
 	const byDepth = new Map();
 	for ( const n of nodes ) {
@@ -124,7 +153,30 @@ export function autoLayout( parsed ) {
 	// Pass 3: deconflict — within each column, two nodes may now share
 	// a row (e.g. two producers whose first targets are both at row 0).
 	// Walk each column in row order and bump duplicates down to the
-	// next free row, ties broken alphabetically for stable layout.
+	// next free row.
+	//
+	// Tiebreaker = "straightness": when two column-mates both want row
+	// R, the one with more edges (in + out) whose OTHER endpoint is
+	// also at row R keeps it; the other bumps. This preserves linear
+	// chains — `job-router (col 2 row 0) → jobs:tee (col 3 row ?) →
+	// jobs:partition (col 4 row 0)` resolves to row 0 for jobs:tee
+	// because both endpoints are there, even when an unrelated
+	// column-mate (e.g. errors:partition) also wants row 0. Alphabetical
+	// is the final fallback for fully equal cases.
+	const straightnessAt = ( nodeId, targetRow ) => {
+		let count = 0;
+		for ( const p of incoming.get( nodeId ) || [] ) {
+			if ( row.get( p ) === targetRow ) {
+				count++;
+			}
+		}
+		for ( const t of outgoing.get( nodeId ) || [] ) {
+			if ( row.get( t ) === targetRow ) {
+				count++;
+			}
+		}
+		return count;
+	};
 	for ( const d of depthsAscending ) {
 		const columnNodes = byDepth.get( d ).slice();
 		columnNodes.sort( ( a, b ) => {
@@ -132,6 +184,11 @@ export function autoLayout( parsed ) {
 			const rb = row.get( b.id );
 			if ( ra !== rb ) {
 				return ra - rb;
+			}
+			const sa = straightnessAt( a.id, ra );
+			const sb = straightnessAt( b.id, rb );
+			if ( sa !== sb ) {
+				return sb - sa; // higher straightness wins the row
 			}
 			return a.id.localeCompare( b.id );
 		} );
