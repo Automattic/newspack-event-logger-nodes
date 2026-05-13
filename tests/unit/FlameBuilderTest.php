@@ -72,18 +72,15 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_target_includes_flames_partition_and_auto_tuner(): void {
-		// FlameBuilder writes to two destinations at runtime — the
-		// flames_sink (injected Partition reference) for flame JSONL,
-		// and `auto-tuner` (TO=hardcoded in emit_auto_tune) for tune
-		// decisions. Neither flows through Node::target, so the
-		// topology console can't see those edges. The target()
-		// override exposes them so dump_metadata reports the full
-		// fan-out — same pattern RequestBuilder uses for its
-		// conditional `errors_target`.
-		$fb         = new FlameBuilder();
-		$flames_log = new CaptureSink();
-		$flames_log->name( 'flames:partition' );
-		$fb->set_flames_sink( $flames_log );
+		// FlameBuilder's flame-write path uses the standard
+		// target/sink pair like any other Node connection (set via
+		// `connect_node flame-builder flames:partition`). The
+		// auto-tune emit hardcodes TO=`auto-tuner` so the topology
+		// console wouldn't otherwise see that edge — `target()`
+		// override exposes it on top of the standard target.
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+		$fb->connect_node( 'flames:partition' );
 
 		$targets = $fb->target();
 
@@ -115,7 +112,9 @@ class FlameBuilderTest extends TestCase {
 	public function test_flame_tree_built_from_entries_with_lifo_matching(): void {
 		$fb     = new FlameBuilder();
 		$capture = new CaptureSink();
-		$fb->set_flames_sink( $capture );
+		$fb->name( 'fb' );
+		$fb->sink( $capture );
+		$fb->connect_node( 'flames:partition' );
 
 		$req = $this->completed_request( [
 			'duration_ms' => 50.0,
@@ -149,7 +148,9 @@ class FlameBuilderTest extends TestCase {
 	public function test_orphaned_complete_event_ignored(): void {
 		$fb      = new FlameBuilder();
 		$capture = new CaptureSink();
-		$fb->set_flames_sink( $capture );
+		$fb->name( 'fb' );
+		$fb->sink( $capture );
+		$fb->connect_node( 'flames:partition' );
 
 		$req = $this->completed_request( [
 			'entries' => [
@@ -170,7 +171,9 @@ class FlameBuilderTest extends TestCase {
 		// before storage / display.
 		$fb      = new FlameBuilder();
 		$capture = new CaptureSink();
-		$fb->set_flames_sink( $capture );
+		$fb->name( 'fb' );
+		$fb->sink( $capture );
+		$fb->connect_node( 'flames:partition' );
 
 		$req = $this->completed_request( [
 			'entries' => [
@@ -517,5 +520,48 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayNotHasKey( 'sum_value', $node );
 		$this->assertArrayNotHasKey( 'seen_count', $node );
 		$this->assertArrayNotHasKey( 'ts', $node );
+	}
+
+	// ── A3: sibling-CI + verbs ─────────────────────────────────
+
+	public function test_flame_builder_constructs_sibling_ci(): void {
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+		$this->assertNotNull( $fb->interpreter() );
+		$this->assertSame( 'fb:config', $fb->interpreter()->name() );
+	}
+
+	public function test_flame_builder_set_is_hub_verb_round_trips(): void {
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+		$this->assertSame( 'ok', $fb->interpreter()->execute( 'set_is_hub true' ) );
+		$dump = $fb->dump_config();
+		$this->assertStringContainsString( 'cmd fb:config set_is_hub true', $dump );
+	}
+
+	public function test_flame_builder_set_auto_tune_verb_round_trips(): void {
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+		$this->assertSame( 'ok', $fb->interpreter()->execute( 'set_auto_tune 100 0.5' ) );
+		$dump = $fb->dump_config();
+		$this->assertStringContainsString( 'cmd fb:config set_auto_tune 100 0.5', $dump );
+	}
+
+	public function test_flame_builder_set_significant_events_verb_round_trips(): void {
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+		$this->assertSame( 'ok', $fb->interpreter()->execute( 'set_significant_events init,wp_loaded,shutdown' ) );
+		$dump = $fb->dump_config();
+		$this->assertStringContainsString( 'cmd fb:config set_significant_events init,wp_loaded,shutdown', $dump );
+	}
+
+	public function test_flame_builder_node_schema_declares_verbs(): void {
+		$schema = FlameBuilder::node_schema();
+		$this->assertSame( 'Transform', $schema['category'] );
+		$verb_names = \array_column( $schema['verbs'], 'name' );
+		$this->assertContains( 'set_is_hub', $verb_names );
+		$this->assertContains( 'set_auto_tune', $verb_names );
+		$this->assertContains( 'set_significant_events', $verb_names );
+		$this->assertContains( 'configure_stats', $verb_names );
 	}
 }

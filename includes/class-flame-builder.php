@@ -10,6 +10,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -94,8 +95,6 @@ class FlameBuilder extends Node {
 	/** @var Stats_Store|null Memcache-backed stats store. */
 	private $stats_store = null;
 
-	/** @var Node|null Sink for flame JSONL writes. */
-	private $flames_sink = null;
 
 	/** @var callable|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
@@ -104,6 +103,15 @@ class FlameBuilder extends Node {
 		$this->stats_cache     = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
 		$this->last_flush_time = \microtime( true );
 		$this->reset_pending();
+
+		// Sibling CommandInterpreter — TSL topology files configure
+		// FlameBuilder via verbs (set_flames_sink, set_is_hub,
+		// set_auto_tune, set_significant_events, configure_stats)
+		// instead of PHP-side setter calls.
+		$ci = new CommandInterpreter();
+		$ci->patron( $this );
+		$ci->commands( self::config_verbs() );
+		$this->attach_interpreter( $ci );
 	}
 
 	/**
@@ -114,45 +122,23 @@ class FlameBuilder extends Node {
 	}
 
 	/**
-	 * Inject the flames-log sink.
-	 */
-	public function set_flames_sink( ?Node $sink ): void {
-		$this->flames_sink = $sink;
-	}
-
-	/**
-	 * Expose every named destination this node actually writes to so
-	 * `dump_metadata` / `ls -al` show the full fan-out. FlameBuilder
-	 * runs two outputs at runtime that don't flow through
-	 * `Node::target`:
-	 *
-	 *   - `flames_sink` (injected Partition reference) — flame JSONL
-	 *     bulk writes. Direct sink reference for speed; the Partition's
-	 *     node name (e.g. `flames:partition`) is the visible label.
-	 *   - `auto-tuner` — hardcoded TO on every auto-tune Message emitted
-	 *     by `emit_auto_tune()`. Always declared so the topology console
-	 *     shows the edge even when no tune decisions have fired yet.
-	 *
-	 * Same pattern as RequestBuilder::target() exposing its
-	 * conditional `errors_target`.
+	 * Expose the implicit `auto-tuner` edge on top of the standard
+	 * `Node::target`. emit_auto_tune() hardcodes TO=`auto-tuner` so
+	 * the topology console wouldn't otherwise know about that edge.
+	 * The flames-write path flows through the standard target/sink
+	 * pair like any other Node connection (set via
+	 * `connect_node flame-builder <flames-partition>`).
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
 			return parent::target( $value );
 		}
 		$primary = parent::target();
-		$extras  = [];
-		if ( null !== $this->flames_sink ) {
-			$extras[] = $this->flames_sink->name();
-		}
-		$extras[] = 'auto-tuner';
-		$all      = \is_array( $primary )
+		$all     = \is_array( $primary )
 			? $primary
 			: ( '' !== (string) $primary ? [ $primary ] : [] );
-		foreach ( $extras as $e ) {
-			if ( ! \in_array( $e, $all, true ) ) {
-				$all[] = $e;
-			}
+		if ( ! \in_array( 'auto-tuner', $all, true ) ) {
+			$all[] = 'auto-tuner';
 		}
 		return $all;
 	}
@@ -371,16 +357,17 @@ class FlameBuilder extends Node {
 		$flame_data['rid']      = $rid;
 		$flame_data['url_hash'] = $url_hash;
 
-		if ( null === $this->flames_sink ) {
+		if ( '' === $this->target || null === $this->sink ) {
 			return true; // Aggregation still happens; just no on-disk flame.
 		}
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::TO ]        = $this->target;
 		$msg[ Message::KEY ]       = (string) ( $flame_data['rid'] ?? '' );
 		$msg[ Message::VALUE ]     = $flame_data;
-		$this->flames_sink->fill( $msg );
+		$this->sink->fill( $msg );
 		return true;
 	}
 
@@ -1623,5 +1610,112 @@ class FlameBuilder extends Node {
 		$min        = (int) \gmdate( 'i', $timestamp );
 		$bucket_min = \str_pad( (string) ( (int) \floor( $min / self::BUCKET_MINUTES ) * self::BUCKET_MINUTES ), 2, '0', STR_PAD_LEFT );
 		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
+	}
+
+	// -------------------------------------------------------------------------
+	// Sibling-CI verb table + node_schema (A3).
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Verbs the TSL `cmd flame-builder:config <verb>` invocations
+	 * dispatch through. Resolved per-instance via $ci->patron().
+	 *
+	 * @return array<string,callable>
+	 */
+	private static function config_verbs(): array {
+		static $verbs = null;
+		if ( null === $verbs ) {
+			$verbs = [
+				'set_is_hub'             => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \strtolower( \trim( $args ) );
+					$bool = ( 'true' === $args || '1' === $args );
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_is_hub( $bool );
+					$patron->mark_verb_invoked( 'set_is_hub', $bool ? 'true' : 'false' );
+					return 'ok';
+				},
+				'set_auto_tune'          => static function ( CommandInterpreter $ci, string $args ): string {
+					$parts = \preg_split( '/\s+/', \trim( $args ) );
+					if ( \count( $parts ) < 2 ) {
+						return 'usage: set_auto_tune <count_threshold> <time_threshold>';
+					}
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_auto_tune( (int) $parts[0], (float) $parts[1] );
+					$patron->mark_verb_invoked( 'set_auto_tune', $args );
+					return 'ok';
+				},
+				'set_significant_events' => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \trim( $args );
+					$list = '' === $args
+						? []
+						: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ) ) );
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_significant_events( $list );
+					$patron->mark_verb_invoked( 'set_significant_events', $args );
+					return 'ok';
+				},
+				'configure_stats'        => static function ( CommandInterpreter $ci, string $args ): string {
+					$parts = \preg_split( '/\s+/', \trim( $args ) );
+					if ( \count( $parts ) < 1 || '' === $parts[0] ) {
+						return 'usage: configure_stats <partition>';
+					}
+					$partition = (int) $parts[0];
+
+					// Read current substrate config for memcache + retention.
+					$config           = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+					$max_lifespan     = (int) ( $config['max_lifespan'] ?? 86400 );
+					$memcache_servers = $config['memcache_servers'] ?? \Newspack_Event_Logger_Nodes\Memcached_Cache::DEFAULT_SERVERS;
+					if ( ! \is_array( $memcache_servers ) ) {
+						$memcache_servers = \Newspack_Event_Logger_Nodes\Memcached_Cache::DEFAULT_SERVERS;
+					}
+
+					$cache       = new \Newspack_Event_Logger_Nodes\Memcached_Cache( $memcache_servers );
+					$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $cache, $partition, $max_lifespan );
+
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_stats_store( $stats_store );
+					$patron->mark_verb_invoked( 'configure_stats', (string) $partition );
+					return 'ok';
+				},
+			];
+		}
+		return $verbs;
+	}
+
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Transform',
+			'description' => 'Aggregates per-event count + sum_time into the 9-namespace memcache schema; emits flame JSONL.',
+			'ctor'        => [],
+			'verbs'       => [
+				[
+					'name'        => 'set_is_hub',
+					'description' => 'Toggle hub mode (per-server tracking).',
+					'args'        => [ [ 'name' => 'is_hub', 'type' => 'bool', 'required' => true ] ],
+				],
+				[
+					'name'        => 'set_auto_tune',
+					'description' => 'Auto-disable / auto-protect thresholds.',
+					'args'        => [
+						[ 'name' => 'count_threshold', 'type' => 'int',   'required' => true ],
+						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true ],
+					],
+				],
+				[
+					'name'        => 'set_significant_events',
+					'description' => 'Comma-separated list of event names to always preserve.',
+					'args'        => [ [ 'name' => 'names', 'type' => 'string', 'required' => false ] ],
+				],
+				[
+					'name'        => 'configure_stats',
+					'description' => 'Build the Stats_Store from substrate config (memcache + retention).',
+					'args'        => [ [ 'name' => 'partition', 'type' => 'int', 'required' => true ] ],
+				],
+			],
+		];
 	}
 }
