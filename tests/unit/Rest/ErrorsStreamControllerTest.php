@@ -23,6 +23,9 @@ class ErrorsStreamControllerTest extends TestCase {
 	private static function packed_entry_line( array $entry ): string {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		// Stamp KEY=rid to mirror the v0.2.17+ producer convention
+		// (RequestBuilder::emit_error sets KEY = $rid).
+		$msg[ Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
 		$msg[ Message::VALUE ]     = $entry;
 		return Message::packed( $msg );
 	}

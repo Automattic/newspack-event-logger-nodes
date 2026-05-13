@@ -112,10 +112,12 @@ class InflightTrackerTest extends TestCase {
 		$t->process_line( 'not json' );
 		$t->process_line( '' );
 		// `process_line` consumes the wire-format Message; build one whose
-		// VALUE is the entry the tracker should observe.
+		// VALUE is the entry the tracker should observe. Stamp KEY=rid to
+		// match producer convention — process_line reads rid from KEY.
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = [ 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ];
+		$msg[ Message::KEY ]       = 'r1';
+		$msg[ Message::VALUE ]     = [ 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ];
 		$t->process_line( Message::packed( $msg ) );
 		$this->assertSame( 1, $t->active_count() );
 	}

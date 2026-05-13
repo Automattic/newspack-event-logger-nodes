@@ -295,9 +295,9 @@ class ReqgrepCommandTest extends TestCase {
 			\json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 ] ) . "\n"
 		);
 
-		// Pump ~1KB lines until we'd exceed the 1MB cap. Exiting via cap is
+		// Pump ~10KB lines until we'd exceed the 10MB cap. Exiting via cap is
 		// silent — append_to_state returns false but doesn't print.
-		$msg = \str_repeat( 'X', 1000 );
+		$msg = \str_repeat( 'X', 10000 );
 		for ( $i = 0; $i < 2000; $i++ ) {
 			$this->process_line->invoke(
 				$cmd,
@@ -310,24 +310,7 @@ class ReqgrepCommandTest extends TestCase {
 		$state    = $inflight->get( $rid );
 
 		$this->assertNotNull( $state, 'rid should still be tracked' );
-		$this->assertLessThanOrEqual( 1024 * 1024, $state->bytes, 'state bytes must respect MAX_BYTES_PER_REQUEST' );
-	}
-
-	public function test_truncate_oversized_m_field(): void {
-		$cmd = $this->make_cmd( 'truncR' );
-		\ob_start();
-
-		$rid       = 'truncR';
-		$ts        = 1700000000.0;
-		$long_text = \str_repeat( 'A', 2000 );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/' . $long_text, 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/' . $long_text, 'ts' => $ts + 0.1 ] ) . "\n" );
-
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( "request_id:{$rid}", $out );
-		// `m` truncated to 1024 chars + ellipsis; output should NOT have 1500 A's.
-		$this->assertStringNotContainsString( \str_repeat( 'A', 1500 ), $out );
-		$this->assertStringContainsString( '…', $out );
+		$this->assertLessThanOrEqual( 10 * 1024 * 1024, $state->bytes, 'state bytes must respect MAX_BYTES_PER_REQUEST' );
 	}
 
 	public function test_history_tracks_non_matching_rids(): void {
@@ -497,6 +480,7 @@ class ReqgrepCommandTest extends TestCase {
 		$message = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $ts;
+		$message[ \Newspack_Nodes\Message::KEY ]       = $rid;
 		$message[ \Newspack_Nodes\Message::VALUE ]     = [
 			'n'   => 1,
 			'rid' => $rid,
@@ -511,6 +495,7 @@ class ReqgrepCommandTest extends TestCase {
 		$message2 = \Newspack_Nodes\Message::new_message();
 		$message2[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$message2[ \Newspack_Nodes\Message::TIMESTAMP ] = $ts + 0.1;
+		$message2[ \Newspack_Nodes\Message::KEY ]       = $rid;
 		$message2[ \Newspack_Nodes\Message::VALUE ]     = [
 			'n'           => 2,
 			'rid'         => $rid,
@@ -604,7 +589,7 @@ class ReqgrepCommandTest extends TestCase {
 			\json_encode( [ 'n' => 1, 'rid' => 'rawX', 'k' => 'a', 'm' => 'one', 'ts' => 1700000000.0 ] ),
 			\json_encode( [ 'n' => 2, 'rid' => 'rawX', 'k' => 'b', 'm' => 'two', 'ts' => 1700000000.1 ] ),
 		];
-		$this->output_request->invoke( $cmd, $lines );
+		$this->output_request->invoke( $cmd, $lines, 'rawX' );
 
 		$out = \ob_get_clean();
 		// Raw mode emits each line verbatim.
@@ -621,7 +606,7 @@ class ReqgrepCommandTest extends TestCase {
 			\json_encode( [ 'n' => 1, 'rid' => 'fmtX', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ),
 			\json_encode( [ 'n' => 2, 'rid' => 'fmtX', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ),
 		];
-		$this->output_request->invoke( $cmd, $lines );
+		$this->output_request->invoke( $cmd, $lines, 'fmtX' );
 
 		$out = \ob_get_clean();
 		// Header line carries request_id:fmtX.
@@ -638,51 +623,10 @@ class ReqgrepCommandTest extends TestCase {
 			'this-is-not-json',
 			\json_encode( [ 'n' => 2, 'rid' => 'pthroughX', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ),
 		];
-		$this->output_request->invoke( $cmd, $lines );
+		$this->output_request->invoke( $cmd, $lines, 'pthroughX' );
 
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'this-is-not-json', $out );
-	}
-
-	// -------------------------------------------------------------------------
-	// truncate_line_message: oversized m field.
-	// -------------------------------------------------------------------------
-
-	public function test_truncate_line_message_does_nothing_when_under_cap(): void {
-		// Use the rid as the pattern so $rid === $this->pattern matches and
-		// the new state gets stored (default `.` pattern is preg_quote-escaped
-		// to literal period, which the JSON line doesn't contain).
-		$cmd = $this->make_cmd( 'shortR' );
-		\ob_start();
-		$small = \str_repeat( 'a', 100 );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => 'shortR', 'k' => 'process (start)', 'm' => $small, 'ts' => 1700000000 ] ) . "\n" );
-		\ob_get_clean();
-		// State carries the un-truncated line.
-		$inflight = $this->get_prop( 'inflight' );
-		$state    = $inflight->get( 'shortR' );
-		$this->assertNotNull( $state );
-		// The bytes counter should be small since no truncation needed.
-		$this->assertLessThan( 1000, $state->bytes );
-	}
-
-	public function test_truncate_line_message_skips_when_m_is_not_string(): void {
-		$cmd = $this->make_cmd( 'arrayR' );
-		\ob_start();
-		// m is an array — truncation logic must NOT fire (arrays are passed through).
-		$this->process_line->invoke(
-			$cmd,
-			\json_encode( [
-				'n'   => 1,
-				'rid' => 'arrayR',
-				'k'   => 'process (start)',
-				'm'   => [ 'key' => 'value' ],
-				'ts'  => 1700000000,
-			] ) . "\n"
-		);
-		\ob_get_clean();
-		$inflight = $this->get_prop( 'inflight' );
-		$state    = $inflight->get( 'arrayR' );
-		$this->assertNotNull( $state );
 	}
 
 	// -------------------------------------------------------------------------
@@ -818,6 +762,7 @@ class ReqgrepCommandTest extends TestCase {
 			$msg                       = \Newspack_Nodes\Message::new_message();
 			$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 			$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
+			$msg[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
 			$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 			$p->fill( $msg );
 		}
@@ -1335,6 +1280,10 @@ class ReqgrepCommandTest extends TestCase {
 		$msg                                       = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
+		// Producer convention: rid is stamped in Message::KEY (LogManager since
+		// v0.2.17). Tests mirror that here — reqgrep's ingest_line reads rid
+		// from KEY only.
+		$msg[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		return $msg;
 	}

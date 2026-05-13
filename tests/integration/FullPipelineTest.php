@@ -36,16 +36,18 @@ class FullPipelineTest extends TestCase {
 
 	/**
 	 * Write an entry through the canonical Topic::fill path. Constructs a
-	 * TM_STRUCT Message keyed by URL (Topic hashes KEY → partition) so the
-	 * line lands in the correct partition's segment in the canonical packed
-	 * Tachikoma wire format. Consumer auto-unpacks on the read side; VALUE is
-	 * the entry array directly (no JSON wrapper).
+	 * TM_STRUCT Message keyed by rid (Topic hashes KEY → partition, and the
+	 * v0.2.17+ producer convention is KEY = rid so every entry for a single
+	 * request co-locates in one partition). Consumer auto-unpacks on the read
+	 * side; VALUE is the entry array directly (no JSON wrapper). The `$url`
+	 * arg is retained for call-site readability but isn't used as the routing
+	 * key anymore.
 	 */
 	private function topic_write( Topic $topic, string $url, array $entry ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::KEY ]       = $url;
+		$msg[ Message::KEY ]       = (string) ( $entry['rid'] ?? $url );
 		$msg[ Message::VALUE ]     = $entry;
 		$topic->fill( $msg );
 		$topic->flush();

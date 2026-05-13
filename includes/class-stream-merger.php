@@ -761,7 +761,7 @@ class StreamMerger extends Node {
 		// KEY = rid so hub-side partition routing co-locates entries by request,
 		// matching the producer-side convention. The upstream SSE controller
 		// back-fills entry['rid'] from the source Message::KEY, so `$data['rid']`
-		// is populated for both v0.2.17+ and pre-cutover spokes.
+		// is populated.
 		$msg[ Message::KEY ]       = (string) ( $data['rid'] ?? '' );
 		$msg[ Message::VALUE ]     = $decoded;
 		$this->sink?->fill( $msg );

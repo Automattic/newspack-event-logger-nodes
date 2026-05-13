@@ -43,6 +43,9 @@ class RequestBuilderTest extends TestCase {
 
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		// Producer convention: rid lives in Message::KEY (LogManager since v0.2.17).
+		// Tests must stamp it here too — RequestBuilder reads rid from KEY only.
+		$msg[ Message::KEY ]       = $rid;
 		$msg[ Message::VALUE ]     = $entry;
 		return $msg;
 	}

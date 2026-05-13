@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-05-13
+
+### Added
+
+- **Topology Console.** New admin page at `admin.php?page=newspack-nodes-topology` that renders any live worker's node graph as an engineering-schematic SVG canvas, fed by a long-lived SSE stream that's effectively a pivoted-REPL session over HTTP. Auto-fired `ls -als` (initial) + `ls -ct` (every second) keep the canvas in sync; the worker's CommandInterpreter response carries `KEY='gui:auto'` so frontend routes them silently to the canvas-parse path. User-typed commands carry no KEY and their responses surface in a collapsible cli-faithful transcript pane.
+
+  Architecture: backend `TopologyStreamController` extends `SSEControllerBase`; on connect it opens the worker's input + output partitions (same paths `wp nodes cli` uses), writes a TM_COMMAND for `ls -als` and forwards every reply the worker emits to `_output/{sse_pid}` as an SSE `msg` event. Frontend uses `useTopologyStream` (callback pattern — every message handled synchronously so React state batching can't drop responses under broadcast pressure) and a Dumper-style renderer that unwraps TM_COMMAND envelope payloads, prefixes `ERROR:` on TM_ERROR variants, computes RTT for TM_PING bounces, etc.
+
+  REPL has full cli vocabulary via a `POST .../command` companion endpoint that accepts `{type, name, arguments, to, sse_pid}` and builds the right Message envelope: `ping`/`tell`/`send`/`send_eof`/`request`/`cmd`/`<verb>` all work, plus local builtins `clear` and `debug_level`. Typing `help` prepends a `### SHELL BUILTINS ###` blurb (mirroring Perl Tachikoma's `CommandInterpreter::help` shell-then-server concatenation) before forwarding to the worker's authoritative help verb.
+
+  Drafting-room aesthetic: paper background with 24px+96px grid overlay, ink outlines, oxide/brass/sage/cyan accents, corner alignment reticles, bottom-right title block, JetBrains Mono body + Major Mono Display brand + Workbench display fonts. Three-pane layout (palette / canvas / inspector) plus header and REPL footer. Canvas auto-layout: barycenter row ordering + snap-to-first-target second pass + deconflict pass; edges are cubic beziers with hover-highlight neighborhood (point at any node and its connected edges light up in oxide, the rest dim). Inspector surfaces `target →`, `also →`, `sink ↦`, `← from` distinctly, with `sink` populated from the new `ls -als` SINK column.
+
+- **`RequestBuilder::target()` advertises both `errors_target` and the primary target.** Mirrors the Perl Tachikoma `RegexTee::owner` pattern — `ls -al`'s TARGET column now reflects request-builder's full fan-out (`requests:partition, errors:partition`) instead of orphaning `errors:partition` as a node with no inbound edges.
+
+### Changed
+
+- **Reqgrep spool stores raw lines verbatim instead of decode-mutate-re-encode.** `process_line` previously decoded each firehose envelope, extracted `VALUE` into an `$entry` array, mutated `$entry['rid']` from `Message::KEY`, re-encoded as entry-shape JSON, and stored that. Raw mode then echoed the re-encoded entry (presenting it as "raw"); formatted mode decoded again at output. That's 1 decode + 1 encode + 1 decode per line where 1 decode is enough. Now `process_line` decodes once for control flow (rid, k) and spools `$line` as-is; `output_request` decodes per line in formatted mode and unwraps envelope vs. entry shape on the fly. Raw mode now shows what was actually on disk (wire envelope for disk reads, entry-shape JSON for stdin pipes), which is what `--raw` should mean. `output_request` takes `$rid` as a parameter from callers (all four sites already have it in scope), eliminating the per-output scan-for-rid loop.
+
+### Removed
+
+- **`ReqgrepCommand::truncate_line_message` and `MAX_ENTRY_MESSAGE_LENGTH = 1024`.** The `m`-field truncation existed as defense-in-depth, but `LogManager` already PIPE_BUF-caps lines at 4KB and `RequestBuilder` already truncates `m` to 1KB at source for `requests.log`, so on the canonical disk path the function was a no-op for almost every line. It only ever fired on stdin-fed lines from non-canonical producers. The per-request byte cap (`MAX_BYTES_PER_REQUEST`) is the real memory-blowup defense and remains; raised it from 1MB to 10MB to give stdin-fed inputs more room. Three tests removed: `test_truncate_oversized_m_field`, `test_truncate_line_message_does_nothing_when_under_cap`, `test_truncate_line_message_skips_when_m_is_not_string`.
+
+- **`BC-rid-in-key` back-fill fallback dropped from every wire-format consumer.** All seven marker sites (`RequestBuilder::fill`, `InflightTracker::process_line`, the firehose / errors / events SSE controllers, `reqgrep_command::ingest_line`, and the `LogManagerTest` extract helper) now read `rid` from `Message::KEY` unconditionally. Pre-v0.2.17 segments that embedded `rid` inside the inner entry are no longer recognized — the `??=` / two-branch fallback was load-bearing only while pre-cutover segments still lived on disk, and those have rolled off retention by now. `RequestBuilder::fill` simplifies from a two-branch read to a single assignment from `Message::KEY`; the other six sites change from `$entry['rid'] ??= …` to `$entry['rid'] = …` (canonical back-fill, no longer conditional). Companion comment cleanups in `LogManager::message`, `StreamMerger::forward_entry`, and `StreamMergerTest::test_forward_entry_uses_rid_as_key` drop the "old vs new segments" framing — there's only one shape now.
+
 ## [0.2.17] - 2026-05-12
 
 ### Changed

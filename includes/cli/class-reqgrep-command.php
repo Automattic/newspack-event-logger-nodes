@@ -18,9 +18,8 @@
  * Behaviour preserved 1:1:
  *  - 300-slot 3-bucket × 100 LruCache with 60-second timed rotation; on-evict
  *    callback prints `[incomplete]` and drops.
- *  - Per-rid byte cap MAX_BYTES_PER_REQUEST = 1MB.
+ *  - Per-rid byte cap MAX_BYTES_PER_REQUEST = 10MB.
  *  - Line caps MAX_LINES_PER_REQUEST = 20000, MAX_LINES_PER_REQUEST_IN_HISTORY = 10000.
- *  - MAX_ENTRY_MESSAGE_LENGTH = 1024 truncation (matches RequestBuilder).
  *  - Output buffer drain (`ob_get_level` loop, capped at 16 iterations).
  *  - Indent state machine: `(start)` increases indent by 4, `(complete)`
  *    decreases by 4 (clamped at 0).
@@ -54,17 +53,13 @@ class ReqgrepCommand {
 	private const MAX_LINES_PER_REQUEST = 20000;
 
 	/**
-	 * Maximum bytes per in-progress request (safety cap on top of line count
-	 * and per-entry `m` truncation). 300 slots × 1MB = 300MB ceiling under PHP's
-	 * default 512MB limit.
+	 * Maximum bytes per in-progress request. Disk-sourced lines are already
+	 * PIPE_BUF-capped at 4KB by LogManager and RequestBuilder already truncates
+	 * the `m` field to 1KB at source, so 10MB only matters when stdin pipes in
+	 * giant lines from a non-canonical producer. 300 slots × 10MB = 3GB worst
+	 * case ceiling; the typical run stays well under PHP's memory_limit.
 	 */
-	private const MAX_BYTES_PER_REQUEST = 1024 * 1024;
-
-	/**
-	 * Maximum length of each entry's `m` (message) field. Mirrors RequestBuilder's
-	 * cap so any entry longer is decoded, truncated, and re-encoded once at ingest.
-	 */
-	private const MAX_ENTRY_MESSAGE_LENGTH = 1024;
+	private const MAX_BYTES_PER_REQUEST = 10 * 1024 * 1024;
 
 	/** Maximum lines per request retained in history buckets. */
 	private const MAX_LINES_PER_REQUEST_IN_HISTORY = 10000;
@@ -227,7 +222,7 @@ class ReqgrepCommand {
 					if ( ! $state instanceof \stdClass ) {
 						return;
 					}
-					$this->output_request( $state->lines );
+					$this->output_request( $state->lines, $rid );
 					echo "[incomplete]\n\n";
 				}
 			);
@@ -514,36 +509,27 @@ class ReqgrepCommand {
 		}
 
 		// Lines on disk are 7-element positional Message envelopes (the firehose
-		// writes packed Messages); but stdin pipes and legacy callers may pass
+		// writes packed Messages); stdin pipes and legacy callers may pass
 		// entry-shape JSON directly. Detect either: a list-shaped decode is the
-		// envelope (entry payload at Message::VALUE); a hash with `rid` is
-		// already entry-shaped. Re-encode the inner entry as $line so every
-		// downstream re-decode (history storage, output_request, raw mode)
-		// sees clean entry-shaped JSON either way.
+		// envelope (entry payload at Message::VALUE; rid at Message::KEY); a
+		// hash carries rid inside. We decode once for control flow but spool
+		// $line verbatim — raw mode echoes whatever came in, and formatted
+		// mode decodes again at output time.
 		$decoded = \json_decode( $line, true, 64 );
 		if ( ! \is_array( $decoded ) ) {
 			return;
 		}
 		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
 			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			if ( \is_array( $entry ) ) {
-				// BC-rid-in-key: v0.2.17+ producers carry rid in Message::KEY
-				// only. ?? leaves pre-cutover entries' embedded rid alone.
-				// Drop the fallback once those segments have rolled off.
-				$entry['rid'] ??= (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
-			}
-			$line = \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
+			$rid   = (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
 		} else {
 			$entry = $decoded;
+			$rid   = (string) ( $entry['rid'] ?? '' );
 		}
-		if ( ! \is_array( $entry ) || empty( $entry['rid'] ) ) {
+		if ( ! \is_array( $entry ) || '' === $rid ) {
 			return;
 		}
 
-		// Truncate oversized `m` once at ingest. Matches RequestBuilder's cap.
-		$line = $this->truncate_line_message( $line, $entry );
-
-		$rid = (string) $entry['rid'];
 		$key = (string) ( $entry['k'] ?? '' );
 
 		$state = $this->inflight->get( $rid );
@@ -552,7 +538,7 @@ class ReqgrepCommand {
 			$this->append_to_state( $state, $line );
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
-					$this->output_request( $state->lines );
+					$this->output_request( $state->lines, $rid );
 				}
 				$this->inflight->delete( $rid );
 			}
@@ -584,7 +570,7 @@ class ReqgrepCommand {
 
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
-					$this->output_request( $state->lines );
+					$this->output_request( $state->lines, $rid );
 				}
 				$this->inflight->delete( $rid );
 			}
@@ -610,25 +596,6 @@ class ReqgrepCommand {
 		// Roll the LruCache on its own schedule — the on-evict callback prints
 		// `[incomplete]` for any rids that fell out of the oldest bucket.
 		$this->inflight->rotate_if_due();
-	}
-
-	/**
-	 * Truncate oversized `m` (message) field in a JSON line, matching
-	 * RequestBuilder::MAX_ENTRY_MESSAGE_LENGTH.
-	 *
-	 * @param string $line  Raw JSON line.
-	 * @param array  $entry Already-decoded array (avoid double decode).
-	 * @return string Truncated line, or the original if no truncation needed.
-	 */
-	private function truncate_line_message( string $line, array $entry ): string {
-		if ( ! isset( $entry['m'] ) || ! \is_string( $entry['m'] ) ) {
-			return $line;
-		}
-		if ( \strlen( $entry['m'] ) <= self::MAX_ENTRY_MESSAGE_LENGTH ) {
-			return $line;
-		}
-		$entry['m'] = \substr( $entry['m'], 0, self::MAX_ENTRY_MESSAGE_LENGTH ) . '…';
-		return \wp_json_encode( $entry, JSON_UNESCAPED_SLASHES );
 	}
 
 	/**
@@ -659,7 +626,7 @@ class ReqgrepCommand {
 			if ( ! $state instanceof \stdClass ) {
 				continue;
 			}
-			$this->output_request( $state->lines );
+			$this->output_request( $state->lines, (string) $rid );
 			echo "[incomplete]\n\n";
 		}
 	}
@@ -668,9 +635,14 @@ class ReqgrepCommand {
 	 * Output a completed request — either the raw JSON lines (raw mode) or the
 	 * formatted indented tree.
 	 *
+	 * Raw mode echoes spooled lines verbatim: whatever shape came in is what
+	 * goes out (wire-format envelope for disk reads, entry-shape JSON for
+	 * stdin pipes). Formatted mode decodes each line and unwraps envelopes.
+	 *
 	 * @param array<string> $lines JSON lines for the request.
+	 * @param string        $rid   Request id, used for the formatted header.
 	 */
-	private function output_request( array $lines ): void {
+	private function output_request( array $lines, string $rid ): void {
 		if ( $this->raw ) {
 			foreach ( $lines as $line ) {
 				echo $line . "\n";
@@ -683,22 +655,23 @@ class ReqgrepCommand {
 		$this->fmt_last_number    = 0;
 		$this->fmt_last_timestamp = 0;
 
-		// Print the rid header so it's always visible regardless of where
-		// `process (start)` lands in the line ordering.
-		$rid = '';
-		foreach ( $lines as $line ) {
-			$entry = \json_decode( $line, true, 64 );
-			if ( \is_array( $entry ) && ! empty( $entry['rid'] ) ) {
-				$rid = (string) $entry['rid'];
-				break;
-			}
-		}
 		if ( '' !== $rid ) {
 			echo \sprintf( "      %22s request_id:%s\n", '', $rid );
 		}
 
 		foreach ( $lines as $line ) {
-			$entry = \json_decode( $line, true, 64 );
+			$decoded = \json_decode( $line, true, 64 );
+			if ( ! \is_array( $decoded ) ) {
+				echo $line . "\n";
+				continue;
+			}
+			// Unwrap envelope (positional list with VALUE at index 6) vs entry
+			// (hash). Mirrors the detection in process_line().
+			if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
+				$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
+			} else {
+				$entry = $decoded;
+			}
 			if ( ! \is_array( $entry ) ) {
 				echo $line . "\n";
 				continue;

@@ -9,6 +9,14 @@
 
 \defined( 'ABSPATH' ) || exit;
 
+// Surface SSE rate-limit rejects (429s) in PHP error_log so operators can
+// see when the slot pool is saturated. Cheap default — site-specific
+// observability without forcing every deployment to remember to wire it up.
+\add_action( 'newspack_event_logger_nodes/sse_rate_limited', function ( $user_id, $class ) {
+	// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+	\error_log( "[EventLoggerNodes] SSE 429: user={$user_id} controller={$class}" );
+}, 10, 2 );
+
 return [
 	'allowed_users'               => [],
 
@@ -21,7 +29,7 @@ return [
 	// Aggregator spoke list (hubs only; spokes leave empty).
 	'aggregator_servers'          => [],
 	'remote_num_segments'         => 2,
-	'remote_segment_size'         => 64 * 1024 * 1024,
+	'remote_segment_size'         => 10 * 1024 * 1024,
 	'remote_max_lifespan'         => 3600,
 	'aggregator_verify_ssl'       => true,
 	'aggregator_require_https'    => true,
@@ -115,6 +123,40 @@ return [
 		'rest_api_init',
 		'rest_post_dispatch',
 		'rest_pre_dispatch',
+
+		// Admin & lifecycle (commonly worth profiling on managed-host sites).
+		'activated_plugin',
+		'admin_enqueue_scripts',
+		'admin_footer',
+		'admin_init',
+		'admin_menu',
+		'admin_notices',
+		'admin_print_footer_scripts',
+		'after_password_reset',
+		'authenticate',
+		'cron_schedules',
+		'deactivate_jetpack-boost/jetpack-boost.php',
+		'deactivate_pwa/pwa.php',
+		'deactivate_woocommerce-memberships/woocommerce-memberships.php',
+		'deactivate_woocommerce/woocommerce.php',
+		'deactivate_wordpress-seo/wp-seo.php',
+		'deactivated_plugin',
+		'enqueue_block_editor_assets',
+		'googlesitekit_deactivation',
+		'load-plugins.php',
+		'load-themes.php',
+		'newspack_my_account_version',
+		'pre_set_site_transient_update_plugins',
+		'updated_option',
+		'wp_ajax_woocommerce_load_status_widget',
+		'wp_authenticate_user',
+		'wp_maybe_auto_update',
+		'wp_robots',
+		'wp_update_plugins',
+		'wp_version_check',
+		'wpseo_deactivate',
+		'wpseo_indexables_unindexed_calculated',
+		'wpseo_saved_indexable',
 	],
 
 	// Topology fleet. `gated_by` is a config-array key, or an array of

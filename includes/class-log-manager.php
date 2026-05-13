@@ -375,7 +375,7 @@ class LogManager {
 		// rid lives in Message::KEY (set below) — drop from the inner entry to
 		// stop duplicating ~40 bytes per line. Readers back-fill `entry['rid']`
 		// from KEY at extraction time so the broad set of `$entry['rid']`
-		// consumers keeps working uniformly across old and new segments.
+		// consumers keeps working.
 		// Strip a caller-supplied `rid` defensively so misuse (or hostile
 		// input via `message($k, $_POST)`) can't smuggle a fake request id —
 		// previously rid was set on the left of the `+` so user values lost,
