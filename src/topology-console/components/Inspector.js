@@ -170,19 +170,19 @@ export default function Inspector( {
 	// Authoritative button state, derived from server metadata —
 	// no client-side bookkeeping that could drift from worker reality.
 	const traceOn = node.debugState > 0;
-	// The worker's input Partition (`_repl`) stamps `_repl/` onto every
-	// incoming command's FROM, so a `connect_node <tee>` from this
-	// session lands in the tee's target list as `_repl/_output/{pid}`,
-	// not the bare `_output/{pid}` the SSE controller stamped. Accept
-	// either path-shape (and the bare `{pid}` form for completeness).
+	// The worker's input Partition is named `_repl`, so it stamps
+	// `_repl/` onto every incoming command's FROM before CI sees it —
+	// `connect_node <tee>` from this SSE session therefore lands in
+	// the tee's target list as `_repl/_output/{sse_pid}`. The bare
+	// `_output/{pid}` and `{pid}` forms only exist transiently on TO
+	// as Router peels path segments; they're never stored in any
+	// target list, so we only need to match the stamped form.
 	const tailOn =
 		ssePid &&
 		parsed.edges.some(
 			( e ) =>
 				e.from === selectedId &&
-				( e.to === `_repl/_output/${ ssePid }` ||
-					e.to === `_output/${ ssePid }` ||
-					e.to === `${ ssePid }` )
+				e.to === `_repl/_output/${ ssePid }`
 		);
 
 	return (
