@@ -342,6 +342,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			'newspack-nodes-rawlogs'     => [ 'Raw Logs', 'Raw Logs', '<div id="event-logger-rawlogs" class="event-logger-rawlogs-page"></div>' ],
 			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
 			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
+			'newspack-nodes-topology'    => [ 'Topology', 'Topology', '<div id="event-logger-topology-console" class="event-logger-topology-console-page"></div>' ],
 		];
 		// Aggregator submenu is gated on the same option that gates the
 		// topology — when the aggregator is disabled there's nothing
@@ -392,6 +393,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			'newspack-nodes-stream'                  => 'performance-request-log',
 			'newspack-nodes-aggregator'              => 'event-aggregator',
 			'newspack-event-logger-nodes'            => 'performance-logger',
+			'newspack-nodes-topology'                => 'topology-console',
 		];
 		if ( ! \array_key_exists( $page, $page_to_tree ) ) {
 			return;
