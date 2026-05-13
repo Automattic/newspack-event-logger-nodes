@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-05-13
+
+### Added
+
+- **Topology Console v2 — single-poll architecture + authoritative button state.** Replaces v1's `ls -als` (initial) + `ls -ct` (per-second) text-table polling with a single `dump_metadata` JSON poll per tick. One verb returns class, counter, sink, target(s), debug_state, arguments, **and** the new per-node counters (largest_msg_sent, bytes_read, bytes_written) in one envelope. Inspector button states — TRACE active when `debugState > 0`, CONNECT active when our session's `_repl/_output/{pid}` is in the Tee's target list — are now derived from authoritative server data on every poll, eliminating the drift risk of client-side bookkeeping.
+
+- **Inspector Throughput section adds `lgst_msg` / `read` / `written` rows** with K/M/G byte-suffix formatting. Logic nodes show 0 (their fill overrides don't run base tracking); I/O nodes (Partition) show real numbers — `requests:partition` ~500KB written, `request-builder` ~74KB largest message on a representative install.
+
+- **Worker uptime in the LIVE button.** Visible immediately without selecting a node — "alive" + "for how long" in one glance. Fixed 48px right-aligned slot reserves space so the LIVE button doesn't widen tick-to-tick (zero-padded seconds/minutes via the substrate verb keep the value steady at character level too). Em-dash placeholder until the first `gui:uptime` poll lands (~5s after connect). Also rendered in a dedicated Process section in the Inspector for in-context reference.
+
+- **Process panel hooks** — SSE controller fires `uptime` every UPTIME_INTERVAL_S (5s) with KEY=`gui:uptime` alongside the per-second `dump_metadata` poll; TopologyConsole routes `gui:uptime` responses to a `uptime` state bucket via a regex match on the verb's text response.
+
+- **Per-topology partition count** in the partition dropdown — `NewspackNodesData.topologyPartitions` is now injected from the `newspack_nodes/topologies` filter results, the same authoritative map the supervisor uses to spawn workers. Switching to a topology with fewer partitions snaps the selector back to p0 to avoid streaming from a non-existent worker.
+
+- **Selected-node bold edge highlight** — selecting a node now applies the same `is-touched` highlight to its connected edges that hovering does, but without the `is-dimmed` fade on unconnected edges. The rest of the graph stays at full intensity so context is still readable. Hover still owns full focus mode (bold + dim) when active.
+
+### Fixed
+
+- **WP admin chrome wasn't being hidden.** The page's actual body class is `event-logger_page_newspack-nodes-topology`; none of the three hand-enumerated selectors matched, so #wpcontent kept its 20px padding-left, #wpbody-content kept its 65px padding-bottom, and #wpfooter stayed visible. Replaced with `body[class*="_page_newspack-nodes-topology"]` so the rule survives parent-slug renames. Console now spans flush against the collapsed admin sidebar and the right viewport edge.
+
+- **CONNECT button toggle never flipped.** The worker's input Partition is named `_repl`, so it stamps `_repl/` onto every incoming command's FROM before CommandInterpreter sees it. `connect_node <tee>` from this SSE session therefore lands in the tee's target list as `_repl/_output/{sse_pid}`, not the bare `_output/{sse_pid}` Inspector was checking for. Now matches the stamped form.
+
+### Changed
+
+- **`parseLsOutput` → `parseMetadata`** for the canvas parse layer. JSON object input instead of pseudo-`ls -al` text parsing; exposes `lgstMsg` / `bytesRead` / `bytesWritten` (camelCase JS, substrate keys stay snake_case on the wire) on each node entry. 8/8 tests passing.
+
 ## [0.2.18] - 2026-05-13
 
 ### Added
