@@ -44,7 +44,46 @@ function Section( { title, meta, children } ) {
 	);
 }
 
-export default function Inspector( { selectedId, parsed, streamStatus } ) {
+function formatRate( rate ) {
+	if ( rate === undefined || rate === null ) {
+		return '— /s';
+	}
+	if ( rate === 0 ) {
+		return '0 /s';
+	}
+	if ( rate >= 100 ) {
+		return `${ Math.round( rate ) } /s`;
+	}
+	if ( rate >= 1 ) {
+		return `${ rate.toFixed( 1 ) } /s`;
+	}
+	return `${ rate.toFixed( 2 ) } /s`;
+}
+
+function formatLastSeen( ts, live ) {
+	if ( ts === undefined || ts === null ) {
+		return live ? 'streaming' : '—';
+	}
+	const ago = Date.now() / 1000 - ts;
+	if ( ago < 1 ) {
+		return 'just now';
+	}
+	if ( ago < 60 ) {
+		return `${ ago.toFixed( 1 ) }s ago`;
+	}
+	if ( ago < 3600 ) {
+		return `${ Math.round( ago / 60 ) }m ago`;
+	}
+	return `${ Math.round( ago / 3600 ) }h ago`;
+}
+
+export default function Inspector( {
+	selectedId,
+	parsed,
+	streamStatus,
+	rateInfo,
+	onAction,
+} ) {
 	if ( ! selectedId ) {
 		return (
 			<aside className="topology-inspector">
@@ -149,60 +188,68 @@ export default function Inspector( { selectedId, parsed, streamStatus } ) {
 				/>
 				<FieldRow
 					k="rate"
-					v="— /s"
-					vClass="topology-field-row__val--dim"
-				/>
-				<FieldRow
-					k="dropped"
-					v="—"
-					vClass="topology-field-row__val--dim"
-				/>
-			</Section>
-
-			<Section title="Process">
-				<FieldRow
-					k="memory"
-					v="—"
-					vClass="topology-field-row__val--dim"
-				/>
-				<FieldRow
-					k="uptime"
-					v="—"
-					vClass="topology-field-row__val--dim"
+					v={ formatRate( rateInfo?.rate ) }
+					vClass={
+						rateInfo && rateInfo.rate > 0
+							? 'topology-field-row__val--num'
+							: 'topology-field-row__val--num topology-field-row__val--dim'
+					}
 				/>
 				<FieldRow
 					k="last_seen"
-					v={ live ? 'streaming' : streamStatus }
-					vClass={ live ? '' : 'topology-field-row__val--dim' }
+					v={ formatLastSeen( rateInfo?.lastChangedTs, live ) }
+					vClass={
+						rateInfo && rateInfo.rate > 0
+							? 'topology-field-row__val--right'
+							: 'topology-field-row__val--right topology-field-row__val--dim'
+					}
 				/>
 			</Section>
 
 			<div className="topology-insp__actions">
-				<button type="button" disabled>
+				<button
+					type="button"
+					onClick={ () => onAction && onAction( 'dump', node.id ) }
+					disabled={ ! live }
+					title="Send `dump_node <name>` to the worker"
+				>
 					Dump
 				</button>
-				<button type="button" disabled>
+				<button
+					type="button"
+					disabled
+					title="v0.3 (needs payload prompt)"
+				>
 					Send
 				</button>
-				<button type="button" disabled>
-					Tail
-				</button>
-				<button type="button" disabled>
-					Trace
-				</button>
+				{ type === 'TEE' && (
+					<button
+						type="button"
+						className="topology-insp__actions-full"
+						onClick={ () =>
+							onAction && onAction( 'tail', node.id )
+						}
+						disabled={ ! live }
+						title="Add `_repl` as another fan-out target so messages tee into the transcript"
+					>
+						Tail (fan to _repl)
+					</button>
+				) }
 				<button
 					type="button"
 					className="topology-insp__actions-full"
 					disabled
+					title="EDIT mode only (v0.3) — `disconnect_node <name>`"
 				>
-					Open in REPL
+					Disconnect
 				</button>
 				<button
 					type="button"
 					className="topology-insp__actions-full topology-insp__actions-danger"
 					disabled
+					title="EDIT mode only (v0.3) — `remove_node <name>`"
 				>
-					Disconnect
+					Remove
 				</button>
 			</div>
 		</aside>
