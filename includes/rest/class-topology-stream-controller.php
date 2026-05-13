@@ -261,14 +261,14 @@ class TopologyStreamController extends SSEControllerBase {
 		// a live worker and only cares about new traffic — read from end.
 		$reply_in->next_offset( $this->test_mode ? 'start' : 'end' );
 
-		// Initial topology snapshot. -als includes a SINK column so the
-		// Inspector can show each node's framework fall-through target
-		// distinct from its explicit owners. The periodic refresh below
-		// uses -ct (counters only) because sinks are static topology.
-		// KEY=gui:auto tags both auto-fired commands so the frontend
-		// routes their responses to the canvas-refresh path silently,
-		// distinct from user-typed commands which show in the transcript.
-		$this->send_command( $cmd_out, 'ls', '-als', null, 'gui:auto' );
+		// `dump_metadata` is the single per-poll command that gives the
+		// GUI everything it needs to render the graph: per-node class,
+		// counter, sink, target(s), debug_state, arguments. Replaces
+		// the old `ls -als` + `ls -ct` pair. KEY=gui:auto so the
+		// frontend routes responses to the canvas-refresh path
+		// silently, distinct from user-typed commands which surface
+		// in the transcript.
+		$this->send_command( $cmd_out, 'dump_metadata', '', null, 'gui:auto' );
 		$cmd_out->flush();
 
 		$this->drain_and_forward( $reply_in );
@@ -286,7 +286,7 @@ class TopologyStreamController extends SSEControllerBase {
 			$now = \microtime( true );
 
 			if ( $now - $last_stats >= self::STATS_INTERVAL_S ) {
-				$this->send_command( $cmd_out, 'ls', '-ct', null, 'gui:auto' );
+				$this->send_command( $cmd_out, 'dump_metadata', '', null, 'gui:auto' );
 				$cmd_out->flush();
 				$last_stats = $now;
 				++$ticks_fired;

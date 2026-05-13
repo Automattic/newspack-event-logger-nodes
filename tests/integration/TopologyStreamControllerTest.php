@@ -108,13 +108,16 @@ class TopologyStreamControllerTest extends TestCase {
 		$msg = \Newspack_Nodes\Message::unpacked( (string) \reset( $lines ) );
 		$this->assertTrue( (bool) ( $msg[ \Newspack_Nodes\Message::TYPE ] & \Newspack_Nodes\Message::TM_COMMAND ) );
 		$payload = \json_decode( (string) $msg[ \Newspack_Nodes\Message::VALUE ], true );
-		$this->assertSame( 'ls',   $payload['name']      ?? '' );
-		$this->assertSame( '-als', $payload['arguments'] ?? '' );
+		$this->assertSame( 'dump_metadata', $payload['name']      ?? '' );
+		$this->assertSame( '',              $payload['arguments'] ?? '' );
 	}
 
 	public function test_stream_writes_periodic_ls_ct_at_one_second_cadence(): void {
 		// Test-mode loop runs until tick_limit ticks have fired. Tick 1 is
-		// the initial ls -al; subsequent ticks are ls -ct.
+		// Every tick fires `dump_metadata` (single-poll architecture —
+		// returns counter+sink+target+debug_state for every node in
+		// one envelope, replacing the older `ls -als` initial +
+		// `ls -ct` periodic pair).
 		\mkdir( $this->tmp . '/locks/firehose-workers.p0.lock.d', 0755, true );
 
 		$ctrl = new TopologyStreamController();
@@ -141,6 +144,9 @@ class TopologyStreamControllerTest extends TestCase {
 			},
 			$lines
 		);
-		$this->assertSame( [ 'ls -als', 'ls -ct', 'ls -ct' ], \array_values( $commands ) );
+		$this->assertSame(
+			[ 'dump_metadata ', 'dump_metadata ', 'dump_metadata ' ],
+			\array_values( $commands )
+		);
 	}
 }
