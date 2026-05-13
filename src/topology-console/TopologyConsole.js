@@ -137,8 +137,8 @@ function buildDebugHeader2( msg ) {
  *
  *   - TM_EOF                       → dropped (control marker, no output)
  *   - TM_COMMAND|TM_RESPONSE       → payload only, never the wrapper JSON
- *   - TM_COMMAND|TM_ERROR          → "ERROR: <payload>", error styling
- *   - TM_ERROR                     → "ERROR: <value>"
+ *   - TM_COMMAND|TM_ERROR          → unwrapped payload, error styling
+ *   - TM_ERROR                     → value as-is, error styling
  *   - TM_PING                      → "round trip time: X ms"
  *   - TM_STRUCT                    → JSON-encoded value
  *   - TM_INFO                      → value as-is (no prefix; debug_level 1
@@ -171,10 +171,10 @@ function dumperRender( msg ) {
 		return { kind: 'recv', text: payload };
 	}
 	if ( has( type, TM_COMMAND ) && has( type, TM_ERROR ) ) {
-		return { kind: 'error', text: 'ERROR: ' + unwrapPayload() };
+		return { kind: 'error', text: unwrapPayload() };
 	}
 	if ( has( type, TM_ERROR ) ) {
-		return { kind: 'error', text: 'ERROR: ' + String( value ?? '' ) };
+		return { kind: 'error', text: String( value ?? '' ) };
 	}
 	if ( has( type, TM_PING ) ) {
 		const sent = parseFloat( value );
@@ -457,8 +457,19 @@ export default function TopologyConsole() {
 				if ( interpreted.name === 'clear' ) {
 					setTranscript( [] );
 				} else if ( interpreted.name === 'debug_level' ) {
-					if ( interpreted.level !== null ) {
-						debugLevelRef.current = interpreted.level;
+					// Match the substrate Shell's `debug_level` builtin:
+					// no-arg = toggle between 0 and 1; numeric = set
+					// explicitly (clamped 0..2). The shellInterpret parser
+					// already returns `null` for no-arg and rejects
+					// out-of-range numeric input.
+					if ( interpreted.level === null ) {
+						debugLevelRef.current =
+							debugLevelRef.current > 0 ? 0 : 1;
+					} else {
+						debugLevelRef.current = Math.max(
+							0,
+							Math.min( 2, interpreted.level )
+						);
 					}
 					appendTranscript( {
 						kind: 'info',
