@@ -136,15 +136,25 @@ const SPARK_X = 11;
 const SPARK_Y = 48;
 const SPARK_W = 174; // NODE_W (196) - 11 - 11
 const SPARK_H = 16;
+// Must equal TopologyConsole's RATE_HISTORY_MAX — the per-sample step
+// is computed against this constant, not the current history length,
+// so early ticks render right-aligned at the fixed step width instead
+// of stretching to fill the plot. Keep these two in sync.
+const SPARK_HISTORY_MAX = 60;
 function sparklinePath( history ) {
 	if ( ! history || history.length < 2 ) {
 		return null;
 	}
 	const max = Math.max( ...history, 1e-9 );
-	const step = SPARK_W / Math.max( history.length - 1, 1 );
+	const step = SPARK_W / ( SPARK_HISTORY_MAX - 1 );
+	// Right-align: the newest sample lands at the right edge of the
+	// plot; earlier samples walk left at the fixed step. While history
+	// is short, the curve only spans the rightmost portion of the
+	// plot area — as samples accumulate it grows leftward until full.
+	const startIdx = SPARK_HISTORY_MAX - history.length;
 	return history
 		.map( ( v, i ) => {
-			const x = SPARK_X + i * step;
+			const x = SPARK_X + ( startIdx + i ) * step;
 			const y = SPARK_Y + SPARK_H - ( v / max ) * SPARK_H;
 			return `${ i === 0 ? 'M' : 'L' } ${ x.toFixed( 2 ) },${ y.toFixed(
 				2
