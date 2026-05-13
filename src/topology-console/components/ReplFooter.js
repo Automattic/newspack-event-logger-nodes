@@ -83,13 +83,13 @@ export default function ReplFooter( {
 		}
 		ev.preventDefault();
 		const trimmed = value.trim();
-		if ( ! trimmed || ! canSend ) {
+		if ( ! trimmed ) {
 			return;
 		}
-		const idx = trimmed.search( /\s/ );
-		const name = idx === -1 ? trimmed : trimmed.slice( 0, idx );
-		const args = idx === -1 ? '' : trimmed.slice( idx + 1 ).trim();
-		onSubmit( { name, arguments: args } );
+		// Pass the raw line up — the parent runs it through
+		// shellInterpret so the same shell layer drives every code
+		// path (local builtins included).
+		onSubmit( trimmed );
 		setValue( '' );
 		setExpanded( true );
 	}
@@ -179,17 +179,6 @@ export default function ReplFooter( {
 				)
 			) }
 			<div className="topology-repl__bar">
-				{ ! expanded && (
-					<button
-						type="button"
-						className="topology-repl__toggle"
-						onClick={ () => setExpanded( true ) }
-						title="Restore transcript"
-						aria-label="Restore transcript"
-					>
-						▲
-					</button>
-				) }
 				<span className="topology-repl__prompt">
 					{ topology }.p{ partition }&nbsp;&gt;
 				</span>
@@ -216,6 +205,17 @@ export default function ReplFooter( {
 					/>
 					{ statusLabel }
 				</span>
+				{ ! expanded && (
+					<button
+						type="button"
+						className="topology-repl__toggle"
+						onClick={ () => setExpanded( true ) }
+						title="Restore transcript"
+						aria-label="Restore transcript"
+					>
+						▲
+					</button>
+				) }
 			</div>
 		</footer>
 	);
