@@ -310,6 +310,18 @@ class TopologyStreamController extends SSEControllerBase {
 	 * the frontend doesn't double-decode.
 	 */
 	public function emit_message_as_sse( array $message ): void {
+		// Multi-session TO filter — same rule the substrate Dumper applies:
+		// render iff TO is empty (broadcasts, async info, prompt fan-out)
+		// OR TO matches `_output/$pid` / `$pid` (a reply addressed to THIS
+		// session). Other cli/SSE sessions write their responses to the
+		// same worker output partition; without this filter, we'd render
+		// their traffic into our transcript.
+		$to  = (string) ( $message[ Message::TO ] ?? '' );
+		$pid = (string) \getmypid();
+		if ( '' !== $to && ! \preg_match( '/^(?:_output\/)?' . \preg_quote( $pid, '/' ) . '$/', $to ) ) {
+			return;
+		}
+
 		$value = $message[ Message::VALUE ] ?? '';
 		if ( \is_string( $value ) && '' !== $value && ( '{' === $value[0] || '[' === $value[0] ) ) {
 			$decoded = \json_decode( $value, true );
