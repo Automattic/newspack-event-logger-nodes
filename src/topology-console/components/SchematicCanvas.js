@@ -14,16 +14,12 @@
 
 import { useMemo, useRef, useState } from '@wordpress/element';
 
-import { autoLayout } from '../utils/autoLayout';
+import { autoLayout, X_STEP, Y_STEP, X_PAD, Y_PAD } from '../utils/autoLayout';
 import { inferType } from '../utils/inferType';
 
 const NODE_W = 196;
 const NODE_H = 84;
 const PORT_R = 4.5;
-
-// Drag-snap pitch — matches the visible 24px primary grid so dragged
-// nodes always land flush with a grid intersection.
-const GRID_SNAP = 24;
 // Movement threshold (SVG units) before a pointer-down + drag is
 // treated as a drag rather than a click. Anything under suppresses
 // the drag and lets the click handler fire (node selection).
@@ -203,13 +199,29 @@ export default function SchematicCanvas( {
 			// Pointer capture may already be released; ignore.
 		}
 		if ( draggedRef.current && onPositionChange ) {
-			// Snap to the 24px grid on commit so dragged nodes line up
-			// with the canvas's primary grid.
-			const snappedX =
-				Math.round( drag.currentPos.x / GRID_SNAP ) * GRID_SNAP;
-			const snappedY =
-				Math.round( drag.currentPos.y / GRID_SNAP ) * GRID_SNAP;
-			onPositionChange( drag.nodeId, { x: snappedX, y: snappedY } );
+			// Snap to HALF-steps of the auto-layout grid (X_STEP / 2,
+			// Y_STEP / 2). Whole-step snap kept dragged nodes aligned
+			// with auto-placed neighbors but didn't leave room to
+			// "nudge between columns" — half-steps give that finer
+			// control while still landing on a predictable lattice
+			// (every other slot is a real auto-layout slot). Anchored
+			// at X_PAD / Y_PAD so n=0 still matches the algorithm.
+			// Math.max(0, ...) so a drag past the top/left edge
+			// doesn't produce negative grid indices.
+			const halfX = X_STEP / 2;
+			const halfY = Y_STEP / 2;
+			const xi = Math.max(
+				0,
+				Math.round( ( drag.currentPos.x - X_PAD ) / halfX )
+			);
+			const yi = Math.max(
+				0,
+				Math.round( ( drag.currentPos.y - Y_PAD ) / halfY )
+			);
+			onPositionChange( drag.nodeId, {
+				x: X_PAD + xi * halfX,
+				y: Y_PAD + yi * halfY,
+			} );
 		}
 		setDrag( null );
 		// Reset the click-suppress flag on the next microtask so the
