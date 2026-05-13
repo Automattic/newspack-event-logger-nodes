@@ -749,7 +749,6 @@ export default function TopologyConsole() {
 					onHover={ setHoveredId }
 					nodeIds={ new Set( parsed.nodes.map( ( n ) => n.id ) ) }
 					ssePid={ ssePid }
-					uptime={ uptime }
 				/>
 			) }
 			<ReplFooter
