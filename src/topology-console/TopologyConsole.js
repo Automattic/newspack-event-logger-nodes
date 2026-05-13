@@ -141,6 +141,9 @@ export default function TopologyConsole() {
 	const [ topology, setTopology ] = useState( TOPOLOGIES[ 0 ] );
 	const [ partition, setPartition ] = useState( 0 );
 	const [ selectedId, setSelectedId ] = useState( null );
+	// Hover state — lifted so the Inspector can highlight a node by
+	// hovering one of its routing-list links (target/also/from).
+	const [ hoveredId, setHoveredId ] = useState( null );
 	const [ parsed, setParsed ] = useState( { nodes: [], edges: [] } );
 	const [ transcript, setTranscript ] = useState( [] );
 	// Lifted: ReplFooter's transcript visibility, so Inspector actions
@@ -362,13 +365,17 @@ export default function TopologyConsole() {
 	// echo + response visible in the transcript instead of being a
 	// silent backchannel.
 	const handleInspectorAction = useCallback(
-		( action, nodeId ) => {
+		( action, nodeId, payload ) => {
 			if ( action === 'dump' ) {
 				sendLine( `dump_node ${ nodeId }` );
 			} else if ( action === 'tail' ) {
 				sendLine( `connect_node ${ nodeId }` );
 			} else if ( action === 'disconnect' ) {
 				sendLine( `disconnect_node ${ nodeId }` );
+			} else if ( action === 'send' ) {
+				sendLine( `send_node ${ nodeId } ${ payload }` );
+			} else if ( action === 'trace' ) {
+				sendLine( `debug_state ${ nodeId } 1` );
 			}
 			// Always pop the transcript open after an Inspector action
 			// — the user's expecting to see the worker's reply.
@@ -406,6 +413,8 @@ export default function TopologyConsole() {
 					selectedId={ selectedId }
 					onSelect={ setSelectedId }
 					onDeselect={ () => setSelectedId( null ) }
+					hoveredId={ hoveredId }
+					onHover={ setHoveredId }
 				/>
 			</CanvasFrame>
 			<Inspector
@@ -414,6 +423,9 @@ export default function TopologyConsole() {
 				streamStatus={ status }
 				rateInfo={ selectedRateInfo }
 				onAction={ handleInspectorAction }
+				onSelect={ setSelectedId }
+				onHover={ setHoveredId }
+				nodeIds={ new Set( parsed.nodes.map( ( n ) => n.id ) ) }
 			/>
 			<ReplFooter
 				topology={ topology }

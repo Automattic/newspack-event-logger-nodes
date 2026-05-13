@@ -28,6 +28,57 @@ function FieldRow( { k, v, vClass } ) {
 	);
 }
 
+// Comma-joined list of clickable node-name links — used for the
+// Routing section's `target →`, `also →`, and `← from` values.
+// Hover highlights the node's edges on the canvas (same hoveredId
+// state the canvas's onMouseEnter drives); click selects it.
+// Names that don't correspond to a known node in the parsed graph
+// (substrate scaffolding like `_command_interpreter`, or path-shaped
+// targets like `_repl/_output/1490`) render as plain dim text — no
+// point hovering or clicking something the canvas can't show.
+function NodeLinks( { names, nodeIds, onSelect, onHover } ) {
+	if ( ! names || ! names.length ) {
+		return (
+			<span className="topology-field-row__val topology-field-row__val--dim">
+				—
+			</span>
+		);
+	}
+	return (
+		<span className="topology-field-row__val">
+			{ names.map( ( name, i ) => {
+				const known = nodeIds && nodeIds.has( name );
+				const sep = i < names.length - 1 ? ', ' : '';
+				if ( ! known ) {
+					return (
+						<span
+							key={ name }
+							className="topology-field-row__val--dim"
+						>
+							{ name }
+							{ sep }
+						</span>
+					);
+				}
+				return (
+					<span key={ name }>
+						<button
+							type="button"
+							className="topology-field-row__nav"
+							onClick={ () => onSelect && onSelect( name ) }
+							onMouseEnter={ () => onHover && onHover( name ) }
+							onMouseLeave={ () => onHover && onHover( null ) }
+						>
+							{ name }
+						</button>
+						{ sep }
+					</span>
+				);
+			} ) }
+		</span>
+	);
+}
+
 function Section( { title, meta, children } ) {
 	return (
 		<div className="topology-insp__section">
@@ -83,6 +134,9 @@ export default function Inspector( {
 	streamStatus,
 	rateInfo,
 	onAction,
+	onSelect,
+	onHover,
+	nodeIds,
 } ) {
 	if ( ! selectedId ) {
 		return (
@@ -133,47 +187,40 @@ export default function Inspector( {
 			</Section>
 
 			<Section title="Routing">
-				<FieldRow
-					k="target →"
-					v={ targets[ 0 ] ? targets[ 0 ].to : '—' }
-					vClass={
-						targets[ 0 ]
-							? 'topology-field-row__val--link'
-							: 'topology-field-row__val--dim'
-					}
-				/>
-				{ targets.length > 1 && (
-					<FieldRow
-						k="also →"
-						v={ targets
-							.slice( 1 )
-							.map( ( t ) => t.to )
-							.join( ', ' ) }
-						vClass="topology-field-row__val--link"
+				<div className="topology-field-row">
+					<span className="topology-field-row__key">target →</span>
+					<NodeLinks
+						names={ targets.slice( 0, 1 ).map( ( t ) => t.to ) }
+						nodeIds={ nodeIds }
+						onSelect={ onSelect }
+						onHover={ onHover }
 					/>
+				</div>
+				{ targets.length > 1 && (
+					<div className="topology-field-row">
+						<span className="topology-field-row__key">also →</span>
+						<NodeLinks
+							names={ targets.slice( 1 ).map( ( t ) => t.to ) }
+							nodeIds={ nodeIds }
+							onSelect={ onSelect }
+							onHover={ onHover }
+						/>
+					</div>
 				) }
 				<FieldRow
 					k="sink ↦"
 					v={ node.sink !== undefined ? node.sink : '—' }
-					vClass={
-						node.sink !== undefined
-							? 'topology-field-row__val--dim'
-							: 'topology-field-row__val--dim'
-					}
+					vClass="topology-field-row__val--dim"
 				/>
-				<FieldRow
-					k="← from"
-					v={
-						sources.length
-							? sources.map( ( s ) => s.from ).join( ', ' )
-							: '—'
-					}
-					vClass={
-						sources.length
-							? 'topology-field-row__val--link'
-							: 'topology-field-row__val--dim'
-					}
-				/>
+				<div className="topology-field-row">
+					<span className="topology-field-row__key">← from</span>
+					<NodeLinks
+						names={ sources.map( ( s ) => s.from ) }
+						nodeIds={ nodeIds }
+						onSelect={ onSelect }
+						onHover={ onHover }
+					/>
+				</div>
 			</Section>
 
 			<Section title="Throughput" meta="cumulative">
@@ -217,12 +264,33 @@ export default function Inspector( {
 				</button>
 				<button
 					type="button"
-					disabled
-					title="v0.3 (needs payload prompt)"
+					onClick={ () => {
+						// eslint-disable-next-line no-alert
+						const payload = window.prompt(
+							`Send bytes to ${ node.id }:`,
+							''
+						);
+						if ( payload !== null && payload !== '' ) {
+							if ( onAction ) {
+								onAction( 'send', node.id, payload );
+							}
+						}
+					} }
+					disabled={ ! live }
+					title="Send a TM_BYTESTREAM payload to this node via `send_node <name> <bytes>`"
 				>
 					Send
 				</button>
-				{ type === 'TEE' && (
+				<button
+					type="button"
+					className="topology-insp__actions-full"
+					onClick={ () => onAction && onAction( 'trace', node.id ) }
+					disabled={ ! live }
+					title="Enable state-transition logging via `debug_state <name> 1` — events broadcast to listeners as TM_INFO"
+				>
+					Trace
+				</button>
+				{ type === 'Tee' && (
 					<>
 						<button
 							type="button"
@@ -248,14 +316,6 @@ export default function Inspector( {
 						</button>
 					</>
 				) }
-				<button
-					type="button"
-					className="topology-insp__actions-full topology-insp__actions-danger"
-					disabled
-					title="EDIT mode only (v0.3) — `remove_node <name>`"
-				>
-					Remove
-				</button>
 			</div>
 		</aside>
 	);
