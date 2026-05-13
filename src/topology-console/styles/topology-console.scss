@@ -52,6 +52,15 @@ $display-stencil: "Workbench", monospace;
 	.wrap {
 		margin: 0;
 	}
+
+	// "Thank you for creating with WordPress" + version line at the
+	// page bottom — visible as a fragment below our console because
+	// .topology-app's calc(100vh - 32px) accounts only for the admin
+	// bar at the top, not this footer. Console fills the whole space
+	// without it.
+	#wpfooter {
+		display: none;
+	}
 }
 
 // Paper backdrop + grid is painted as full-viewport fixed layers so
