@@ -374,10 +374,19 @@ export default function SchematicCanvas( {
 		const wasDragged = panRef.current.dragged;
 		panRef.current = null;
 		if ( ! wasDragged ) {
-			// Plain click on empty canvas = fit-to-content + deselect.
-			setViewport( parseViewBox( tightViewBoxFor( displayNodes ) ) );
-			if ( onDeselect ) {
-				onDeselect();
+			// Plain click on empty canvas. Two-stage:
+			//   - If a node is selected, first click just deselects
+			//     (closes the inspector). Don't autofit yet — the user
+			//     probably wanted to dismiss the inspector, not jump
+			//     the viewport.
+			//   - If nothing is selected (inspector already closed),
+			//     autofit to the tight bbox.
+			if ( selectedId ) {
+				if ( onDeselect ) {
+					onDeselect();
+				}
+			} else {
+				setViewport( parseViewBox( tightViewBoxFor( displayNodes ) ) );
 			}
 		}
 	};
