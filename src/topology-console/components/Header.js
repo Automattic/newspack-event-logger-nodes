@@ -18,6 +18,7 @@ export default function Header( {
 	partition,
 	onPartitionChange,
 	streamStatus,
+	uptime,
 } ) {
 	return (
 		<header className="topology-header">
@@ -77,6 +78,9 @@ export default function Header( {
 							}` }
 						/>
 						LIVE
+						{ uptime && (
+							<span className="topology-uptime"> · { uptime }</span>
+						) }
 					</button>
 				</div>
 			</div>

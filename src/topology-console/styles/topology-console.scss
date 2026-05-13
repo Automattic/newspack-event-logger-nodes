@@ -273,6 +273,14 @@ body[class*="_page_newspack-nodes-topology"] {
 	}
 }
 
+// Worker uptime, rendered inline after "LIVE" in the header — the
+// LIVE LED says the worker is alive, this says how long for.
+.topology-uptime {
+	opacity: 0.75;
+	font-weight: normal;
+	letter-spacing: 0;
+}
+
 // =====================================================================
 // Palette
 // =====================================================================
