@@ -9,7 +9,7 @@
 import { createRoot } from '@wordpress/element';
 
 import TopologyConsole from './TopologyConsole';
-import './style.scss';
+import './styles/topology-console.scss';
 
 const ROOT_ID = 'event-logger-topology-console';
 
