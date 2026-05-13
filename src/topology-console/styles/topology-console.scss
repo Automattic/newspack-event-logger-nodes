@@ -789,6 +789,34 @@ $display-stencil: "Workbench", monospace;
 			font-style: italic;
 		}
 	}
+
+	// Interactive node-name link inside a routing row (target/also/
+	// from). Looks like a link, behaves like a button — hover
+	// highlights the corresponding node's edges on the canvas; click
+	// selects it. Sink is intentionally NOT rendered as one of these
+	// (it's framework plumbing, not navigable).
+	&__nav {
+		background: transparent;
+		border: 0;
+		padding: 0;
+		margin: 0;
+		font: inherit;
+		color: $cyan-dark;
+		cursor: pointer;
+		text-decoration: underline dotted;
+		text-underline-offset: 2px;
+		transition: color 100ms ease;
+
+		&:hover {
+			color: $oxide;
+			text-decoration-style: solid;
+		}
+
+		&:focus-visible {
+			outline: 1px solid $oxide;
+			outline-offset: 2px;
+		}
+	}
 }
 
 .topology-insp__actions {

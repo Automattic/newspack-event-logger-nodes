@@ -12,7 +12,7 @@
  * the canvas stable while counters tick.
  */
 
-import { useMemo, useState } from '@wordpress/element';
+import { useMemo } from '@wordpress/element';
 
 import { autoLayout } from '../utils/autoLayout';
 import { inferType } from '../utils/inferType';
@@ -68,6 +68,8 @@ export default function SchematicCanvas( {
 	selectedId,
 	onSelect,
 	onDeselect,
+	hoveredId,
+	onHover,
 } ) {
 	const { nodes, edges } = useMemo( () => autoLayout( parsed ), [ parsed ] );
 	const nodeById = useMemo( () => {
@@ -77,12 +79,14 @@ export default function SchematicCanvas( {
 	}, [ nodes ] );
 	const viewBox = useMemo( () => viewBoxFor( nodes ), [ nodes ] );
 
-	// Hovered node id — drives edge highlighting. When the user is
-	// pointing at a node, only its inbound + outbound edges keep the
-	// active style; everything else dims so the user can read each
-	// node's flow neighborhood at a glance. Same disambiguation trick
-	// the live D3 visualizer uses at https://tucsonweekly.com.
-	const [ hoveredId, setHoveredId ] = useState( null );
+	// hoveredId is lifted to the parent so the Inspector can drive
+	// it too (hovering a `target` / `← from` value in the inspector
+	// highlights the same edges as hovering the node on the canvas).
+	const setHovered = ( id ) => {
+		if ( onHover ) {
+			onHover( id );
+		}
+	};
 
 	return (
 		<svg
@@ -166,8 +170,8 @@ export default function SchematicCanvas( {
 									onSelect( n.id );
 								}
 							} }
-							onMouseEnter={ () => setHoveredId( n.id ) }
-							onMouseLeave={ () => setHoveredId( null ) }
+							onMouseEnter={ () => setHovered( n.id ) }
+							onMouseLeave={ () => setHovered( null ) }
 						>
 							<rect
 								className="topology-node__shadow"
