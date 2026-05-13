@@ -946,39 +946,25 @@ $display-stencil: "Workbench", monospace;
 	}
 
 	&__entry {
-		display: flex;
-		gap: 8px;
+		margin: 0;
 		padding: 2px 0;
+		font: inherit;
+		white-space: pre-wrap;
+		word-break: break-all;
 
+		// `sent` entries are echoes of what the user typed at the
+		// prompt; render in brass to match the live prompt's caret/
+		// prefix and stand out from worker responses.
 		&--sent {
 			color: $brass;
 		}
 
+		// `error` entries already carry an "ERROR: " prefix from the
+		// Dumper-style renderer; just colorize them to make them
+		// scannable in a busy transcript.
 		&--error {
 			color: #cf6f4c;
 		}
-	}
-
-	&__sigil {
-		width: 12px;
-		flex-shrink: 0;
-		color: rgba(240, 231, 214, 0.4);
-		font-weight: 700;
-
-		.topology-repl__entry--sent & {
-			color: $brass;
-		}
-
-		.topology-repl__entry--error & {
-			color: $oxide;
-		}
-	}
-
-	&__entry-text {
-		margin: 0;
-		font: inherit;
-		white-space: pre-wrap;
-		word-break: break-all;
 	}
 }
 
