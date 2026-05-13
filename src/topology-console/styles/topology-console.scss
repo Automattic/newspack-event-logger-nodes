@@ -858,6 +858,15 @@ $display-stencil: "Workbench", monospace;
 		align-items: center;
 		padding: 0 18px;
 		gap: 10px;
+
+		// Restore-arrow (▲) sits at the right edge of the bar when
+		// the transcript is minimized. Pull it past the bar's 18px
+		// right padding so its right gap matches its vertical
+		// centering (≈8px on each side of the 22px button in a 38px
+		// bar — symmetric corner.)
+		.topology-repl__toggle {
+			margin-right: -10px;
+		}
 	}
 
 	&__toggle,
@@ -971,7 +980,12 @@ $display-stencil: "Workbench", monospace;
 		float: right;
 		display: flex;
 		gap: 4px;
-		margin: 0 8px 0 0;
+		// Transcript reserves 70px right-padding so text never slides
+		// under the buttons. Float-right normally sits the buttons at
+		// THAT edge (way too far from the box edge); negative margin
+		// pulls them back into the corridor so the right offset
+		// matches the 4px top offset for a clean corner anchor.
+		margin: 0 -60px 0 0;
 		background: transparent;
 		z-index: 1;
 	}

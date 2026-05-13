@@ -367,6 +367,8 @@ export default function TopologyConsole() {
 				sendLine( `dump_node ${ nodeId }` );
 			} else if ( action === 'tail' ) {
 				sendLine( `connect_node ${ nodeId }` );
+			} else if ( action === 'disconnect' ) {
+				sendLine( `disconnect_node ${ nodeId }` );
 			}
 			// Always pop the transcript open after an Inspector action
 			// — the user's expecting to see the worker's reply.

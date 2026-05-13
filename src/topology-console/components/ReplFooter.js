@@ -115,25 +115,26 @@ export default function ReplFooter( {
 					<div className="topology-repl__actions">
 						<button
 							type="button"
-							className="topology-repl__clear"
-							onClick={ () => {
-								if ( onClear ) {
-									onClear();
-								}
-							} }
-							title="Clear transcript (Ctrl+L)"
-							aria-label="Clear transcript"
-						>
-							✕
-						</button>
-						<button
-							type="button"
 							className="topology-repl__toggle"
 							onClick={ () => setExpanded( false ) }
 							title="Minimize transcript"
 							aria-label="Minimize transcript"
 						>
 							▼
+						</button>
+						<button
+							type="button"
+							className="topology-repl__clear"
+							onClick={ () => {
+								if ( onClear ) {
+									onClear();
+								}
+								setExpanded( false );
+							} }
+							title="Clear and minimize transcript (Ctrl+L clears only)"
+							aria-label="Clear and minimize transcript"
+						>
+							✕
 						</button>
 					</div>
 					{ transcript.map( ( entry ) => (
