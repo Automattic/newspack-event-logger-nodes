@@ -38,22 +38,26 @@
 
 const LOCAL_BUILTINS = new Set( [ 'clear', 'debug_level', ':help' ] );
 
-const HELP_TEXT = [
-	'GUI-local builtins (handled in the browser, not the worker):',
+// Shell-builtins blurb that prepends the worker's `help` output —
+// mirrors the `### SHELL BUILTINS ###` section in Perl Tachikoma where
+// CommandInterpreter::help concatenates its responder Shell's help
+// topics with its own server commands. We don't have direct access to
+// the worker's CI from here, so we inject our half locally before the
+// remote `help` POST flies.
+const SHELL_BUILTINS_BLURB = [
+	'### SHELL BUILTINS ###',
 	'  clear                          — wipe the transcript',
 	'  debug_level [0|1|2]            — local Dumper verbosity',
 	'  :help                          — show this list',
-	'',
-	'Everything else flows to the worker. Type `help` to see the verbs',
-	'the worker accepts; or build a typed message directly:',
 	'  ping [<path>]                  — TM_PING (RTT measured locally)',
 	'  tell <path> <bytes>            — TM_INFO',
 	'  send <path> <bytes>            — TM_BYTESTREAM',
 	'  send_eof <path>                — TM_EOF',
 	'  request <path> <args>          — TM_REQUEST',
 	'  cmd <path> <verb> [<args>]     — TM_COMMAND at <path>',
-	'  <verb> [<args>]                — TM_COMMAND at _command_interpreter',
 ].join( '\n' );
+
+const HELP_TEXT = SHELL_BUILTINS_BLURB;
 
 function splitFirst( s ) {
 	const idx = s.search( /\s/ );
@@ -154,4 +158,4 @@ export function shellInterpret( line ) {
 	};
 }
 
-export { LOCAL_BUILTINS, HELP_TEXT };
+export { LOCAL_BUILTINS, HELP_TEXT, SHELL_BUILTINS_BLURB };
