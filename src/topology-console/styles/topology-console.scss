@@ -862,7 +862,10 @@ $display-stencil: "Workbench", monospace;
 
 	&__toggle,
 	&__clear {
-		background: transparent;
+		// Solid background so the button visually clears its own
+		// footprint from any transcript text scrolling behind —
+		// without a wrapping rectangle around both controls.
+		background: $ink;
 		border: 1px solid rgba(240, 231, 214, 0.25);
 		color: rgba(240, 231, 214, 0.55);
 		width: 22px;
@@ -958,21 +961,18 @@ $display-stencil: "Workbench", monospace;
 
 	// Top-right corner controls inside the transcript pane:
 	// [✕ clear] [▼ minimize]. Sticky so they stay visible while
-	// the transcript scrolls underneath them. Solid background +
-	// transcript's reserved right-padding (above) means text never
-	// reaches the column they sit in, so no bleed-through.
+	// the transcript scrolls underneath them. The wrapper itself is
+	// transparent — only the individual buttons carry opaque
+	// backgrounds, so scrolling text behind only gets occluded under
+	// each button's footprint rather than under a full rectangle.
 	&__actions {
 		position: sticky;
-		top: 0;
+		top: 4px;
 		float: right;
 		display: flex;
 		gap: 4px;
-		padding: 4px 18px 6px 12px;
-		margin-right: -52px;
-		// Slightly more opaque than the transcript's translucent
-		// backdrop so scrolling content behind the buttons is fully
-		// occluded.
-		background: rgba(24, 34, 46, 0.95);
+		margin: 0 8px 0 0;
+		background: transparent;
 		z-index: 1;
 	}
 
