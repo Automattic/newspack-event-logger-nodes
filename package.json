@@ -6,7 +6,7 @@
 	"author": "Automattic",
 	"license": "GPL-2.0-or-later",
 	"scripts": {
-		"build": "npm run clean && npm run build:dashboards && npm run build:performance && npm run build:logger && npm run build:gyroscope && npm run build:request-log && npm run build:aggregator && npm run build:aggregator-settings",
+		"build": "npm run clean && npm run build:dashboards && npm run build:performance && npm run build:logger && npm run build:gyroscope && npm run build:request-log && npm run build:aggregator && npm run build:aggregator-settings && npm run build:topology-console",
 		"build:aggregator": "wp-scripts build src/event-aggregator/index.js --output-path=build/event-aggregator",
 		"build:aggregator-settings": "wp-scripts build src/event-aggregator/settings.js --output-path=build/event-aggregator-settings",
 		"build:dashboards": "wp-scripts build src/event-dashboards/index.js --output-path=build/event-dashboards",
@@ -14,6 +14,7 @@
 		"build:logger": "wp-scripts build src/performance-logger/index.js --output-path=build/performance-logger",
 		"build:performance": "wp-scripts build src/performance-dashboards/index.js --output-path=build/performance-dashboards",
 		"build:request-log": "wp-scripts build src/performance-request-log/index.js --output-path=build/performance-request-log",
+		"build:topology-console": "wp-scripts build src/topology-console/index.js --output-path=build/topology-console",
 		"clean": "rm -rf build",
 		"release:archive": "./build-release.sh",
 		"fix:js": "wp-scripts lint-js --fix 'src/**/*.{js,jsx}'",
@@ -24,20 +25,22 @@
 		"lint:js": "wp-scripts lint-js 'src/**/*.{js,jsx}'",
 		"lint:php": "phpcs",
 		"lint:scss": "wp-scripts lint-style 'src/**/*.scss' --customSyntax postcss-scss",
-		"watch": "npm run clean && concurrently \"npm run watch:dashboards\" \"npm run watch:performance\" \"npm run watch:logger\" \"npm run watch:gyroscope\" \"npm run watch:request-log\" \"npm run watch:aggregator\" \"npm run watch:aggregator-settings\"",
+		"watch": "npm run clean && concurrently \"npm run watch:dashboards\" \"npm run watch:performance\" \"npm run watch:logger\" \"npm run watch:gyroscope\" \"npm run watch:request-log\" \"npm run watch:aggregator\" \"npm run watch:aggregator-settings\" \"npm run watch:topology-console\"",
 		"watch:aggregator": "wp-scripts start src/event-aggregator/index.js --output-path=build/event-aggregator",
 		"watch:aggregator-settings": "wp-scripts start src/event-aggregator/settings.js --output-path=build/event-aggregator-settings",
 		"watch:dashboards": "wp-scripts start src/event-dashboards/index.js --output-path=build/event-dashboards",
 		"watch:gyroscope": "wp-scripts start src/performance-gyroscope/index.js --output-path=build/performance-gyroscope",
 		"watch:logger": "wp-scripts start src/performance-logger/index.js --output-path=build/performance-logger",
 		"watch:performance": "wp-scripts start src/performance-dashboards/index.js --output-path=build/performance-dashboards",
-		"watch:request-log": "wp-scripts start src/performance-request-log/index.js --output-path=build/performance-request-log"
+		"watch:request-log": "wp-scripts start src/performance-request-log/index.js --output-path=build/performance-request-log",
+		"watch:topology-console": "wp-scripts start src/topology-console/index.js --output-path=build/topology-console"
 	},
 	"dependencies": {
 		"@wordpress/api-fetch": "^7.0.0",
 		"@wordpress/components": "^28.0.0",
 		"@wordpress/element": "^6.0.0",
 		"@wordpress/icons": "^10.0.0",
+		"@xyflow/react": "^12.0.0",
 		"d3": "^7.8.5",
 		"d3-flame-graph": "^4.1.3"
 	},
