@@ -84,6 +84,37 @@ class RequestBuilder extends Node {
 		$this->errors_target = $target;
 	}
 
+	/**
+	 * Expose every named destination this node actually writes to so
+	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
+	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
+	 * (which Node::target stores in $this->target) plus the
+	 * conditional errors_target the topology may have wired.
+	 *
+	 * Without this override `errors:partition` would orphan on the
+	 * topology console (a node with `0` count, no inbound edges) even
+	 * though RequestBuilder writes to it under error conditions.
+	 */
+	public function target( $value = null ) {
+		if ( null !== $value ) {
+			return parent::target( $value );
+		}
+		$primary = parent::target();
+		$extras  = '' !== $this->errors_target ? [ $this->errors_target ] : [];
+		if ( ! $extras ) {
+			return $primary;
+		}
+		$all = \is_array( $primary )
+			? $primary
+			: ( '' !== (string) $primary ? [ $primary ] : [] );
+		foreach ( $extras as $e ) {
+			if ( ! \in_array( $e, $all, true ) ) {
+				$all[] = $e;
+			}
+		}
+		return $all;
+	}
+
 	public function cache_size(): int {
 		$count = 0;
 		foreach ( $this->cache->iterate() as $_ ) {
@@ -169,16 +200,8 @@ class RequestBuilder extends Node {
 			return;
 		}
 
-		// BC-rid-in-key: legacy entries (pre-v0.2.17 producers) embed rid
-		// inside the entry; v0.2.17+ producers stop duplicating it and rely
-		// on Message::KEY instead. Prefer entry['rid'] (so pre-cutover
-		// segments keep working as-is) and fall back to KEY for new entries.
-		// Drop the entry['rid'] branch once pre-cutover segments have rolled off.
-		$rid = $entry['rid'] ?? '';
+		$rid = (string) ( $message[ Message::KEY ] ?? '' );
 		if ( '' === $rid ) {
-			$rid = (string) ( $message[ Message::KEY ] ?? '' );
-		}
-		if ( ! \is_string( $rid ) || '' === $rid ) {
 			return;
 		}
 
