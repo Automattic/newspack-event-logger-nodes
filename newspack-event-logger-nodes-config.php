@@ -39,6 +39,19 @@ return [
 	'skip_urls'                   => [
 		'/wp-json/newspack-nodes/v1/firehose',
 		'/wp-json/newspack-nodes/v1/workers/spawn',
+		// Topology Console SSE + companion POST. The stream is a
+		// ~10-minute long-running request that would otherwise show
+		// up as a slow request in dashboards; the POST companion is
+		// short but lives at the same prefix.
+		// TODO: also stamp `$_SERVER['NEWSPACK_NODES_WORKER_TYPE']`
+		// on this endpoint (and the other SSE endpoints) so that
+		// even when an operator removes the skip pattern the request
+		// gets tagged as worker traffic and excluded from global
+		// stats. Timing: env var must be set before LogManager
+		// initializes process_data, so the fix involves restarting
+		// LogManager at the top of stream() — see the
+		// JobWorker::begin_job_context pattern in CHANGELOG 0.2.x.
+		'/wp-json/newspack-event-logger-nodes/v1/topology',
 	],
 
 	// Hooks instrumentation.
