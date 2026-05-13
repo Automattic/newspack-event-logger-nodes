@@ -78,15 +78,24 @@ body[class*="_page_newspack-nodes-topology"] {
 	height: calc(100vh - 32px); // leave WP admin bar visible.
 	display: grid;
 	grid-template-rows: 64px 1fr 38px;
-	grid-template-columns: 232px 1fr 308px;
-	// REPL footer only spans the middle (canvas) column so the palette
-	// and inspector extend full-height down to the bottom of the app;
-	// the prompt + transcript live snug between the two side panes,
-	// matching where the live canvas sits visually.
+	// v1 is inspect-only — the palette pane is hidden until EDIT
+	// mode lands. Inspector is only mounted when a node is selected;
+	// the default layout reclaims the full width for the canvas, and
+	// `.is-inspector-open` (toggled by the React parent when
+	// `selectedId` is set) brings back the 308px right column.
+	grid-template-columns: 1fr;
 	grid-template-areas:
-		"header  header header"
-		"palette canvas inspector"
-		"palette repl   inspector";
+		"header"
+		"canvas"
+		"repl";
+
+	&.is-inspector-open {
+		grid-template-columns: 1fr 308px;
+		grid-template-areas:
+			"header header"
+			"canvas inspector"
+			"repl   inspector";
+	}
 	font-family: $mono;
 	font-size: 13px;
 	line-height: 1.45;
@@ -823,6 +832,17 @@ body[class*="_page_newspack-nodes-topology"] {
 			color: $ink-4;
 			font-weight: 400;
 			font-style: italic;
+		}
+
+		// `--mono` is the long-string / path / arguments variant —
+		// slightly smaller and tighter so a Partition's full
+		// constructor args ("/tmp/.../requests.log 0 67108864 2 86400")
+		// stay readable inside the 308px inspector column without
+		// blowing past the value cell.
+		&--mono {
+			font: 400 10px/1.4 $mono;
+			color: $ink-2;
+			word-break: break-all;
 		}
 	}
 

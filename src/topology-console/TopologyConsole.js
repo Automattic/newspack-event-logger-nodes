@@ -24,7 +24,6 @@ import apiFetch from '@wordpress/api-fetch';
 import CanvasFrame from './components/CanvasFrame';
 import Header from './components/Header';
 import Inspector from './components/Inspector';
-import Palette from './components/Palette';
 import ReplFooter from './components/ReplFooter';
 import SchematicCanvas from './components/SchematicCanvas';
 
@@ -412,7 +411,11 @@ export default function TopologyConsole() {
 	);
 
 	return (
-		<div className="topology-app">
+		<div
+			className={ `topology-app${
+				selectedId ? ' is-inspector-open' : ''
+			}` }
+		>
 			<Header
 				topologies={ TOPOLOGIES }
 				topology={ topology }
@@ -423,7 +426,10 @@ export default function TopologyConsole() {
 				streamStatus={ status }
 				uptime={ uptime }
 			/>
-			<Palette />
+			{ /* Palette is a v2 edit-mode affordance (drag node types onto
+			the canvas). In v1 we're inspect-only — hiding the pane
+			reclaims its 232px column for the canvas. Reintroduce when
+			the EDIT button becomes live. */ }
 			<CanvasFrame topology={ topology } partition={ partition }>
 				<SchematicCanvas
 					parsed={ parsed }
@@ -434,18 +440,24 @@ export default function TopologyConsole() {
 					onHover={ setHoveredId }
 				/>
 			</CanvasFrame>
-			<Inspector
-				selectedId={ selectedId }
-				parsed={ parsed }
-				streamStatus={ status }
-				rateInfo={ selectedRateInfo }
-				onAction={ handleInspectorAction }
-				onSelect={ setSelectedId }
-				onHover={ setHoveredId }
-				nodeIds={ new Set( parsed.nodes.map( ( n ) => n.id ) ) }
-				ssePid={ ssePid }
-				uptime={ uptime }
-			/>
+			{ /* Inspector is only mounted when a node is selected — the
+			"Select a node to inspect" empty state was a permanent 308px
+			of dead pixels. Selecting any node restores the column via
+			the `is-inspector-open` class on `.topology-app`. */ }
+			{ selectedId && (
+				<Inspector
+					selectedId={ selectedId }
+					parsed={ parsed }
+					streamStatus={ status }
+					rateInfo={ selectedRateInfo }
+					onAction={ handleInspectorAction }
+					onSelect={ setSelectedId }
+					onHover={ setHoveredId }
+					nodeIds={ new Set( parsed.nodes.map( ( n ) => n.id ) ) }
+					ssePid={ ssePid }
+					uptime={ uptime }
+				/>
+			) }
 			<ReplFooter
 				topology={ topology }
 				partition={ partition }
