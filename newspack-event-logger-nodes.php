@@ -281,7 +281,6 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		( new \Newspack_Event_Logger_Nodes\Rest\ErrorsStreamController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\GyroscopeStreamController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\RequestsStreamController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\TopologyStreamController() )->register_routes();
 	}
 );
 
