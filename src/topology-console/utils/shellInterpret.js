@@ -8,13 +8,13 @@
  * Local builtins (handled in the browser, never sent to the worker):
  *   clear                         — wipe transcript
  *   debug_level [0|1|2]           — toggle local Dumper verbosity
- *   :help                         — list these GUI-side builtins
  *
- * Note: `help` is NOT intercepted locally. The worker's
- * CommandInterpreter has its own authoritative `help` verb that
- * enumerates every verb it actually accepts; intercepting `help`
- * here would silently lie about what's available. Use `:help` for
- * the GUI-local list, or `help` to ask the worker.
+ * Note: `help` is NOT intercepted locally. It passes through to the
+ * worker's CommandInterpreter, which has the authoritative list of
+ * verbs it accepts. The TopologyConsole prepends a
+ * `### SHELL BUILTINS ###` blurb to the response so the user sees
+ * GUI-local verbs alongside server commands in one transcript view
+ * (Perl Tachikoma CommandInterpreter::help pattern).
  *
  *   Typed-message verbs (POST with type=…):
  *     ping [<path>]                 — TM_PING
@@ -36,7 +36,7 @@
  *   null                            — empty input
  */
 
-const LOCAL_BUILTINS = new Set( [ 'clear', 'debug_level', ':help' ] );
+const LOCAL_BUILTINS = new Set( [ 'clear', 'debug_level' ] );
 
 // Shell-builtins blurb that prepends the worker's `help` output —
 // mirrors the `### SHELL BUILTINS ###` section in Perl Tachikoma where
@@ -48,7 +48,6 @@ const SHELL_BUILTINS_BLURB = [
 	'### SHELL BUILTINS ###',
 	'  clear                          — wipe the transcript',
 	'  debug_level [0|1|2]            — local Dumper verbosity',
-	'  :help                          — show this list',
 	'  ping [<path>]                  — TM_PING (RTT measured locally)',
 	'  tell <path> <bytes>            — TM_INFO',
 	'  send <path> <bytes>            — TM_BYTESTREAM',
@@ -56,8 +55,6 @@ const SHELL_BUILTINS_BLURB = [
 	'  request <path> <args>          — TM_REQUEST',
 	'  cmd <path> <verb> [<args>]     — TM_COMMAND at <path>',
 ].join( '\n' );
-
-const HELP_TEXT = SHELL_BUILTINS_BLURB;
 
 function splitFirst( s ) {
 	const idx = s.search( /\s/ );
@@ -78,9 +75,6 @@ export function shellInterpret( line ) {
 
 	if ( verb === 'clear' ) {
 		return { kind: 'local', name: 'clear' };
-	}
-	if ( verb === ':help' ) {
-		return { kind: 'local', name: 'help', text: HELP_TEXT };
 	}
 	if ( verb === 'debug_level' ) {
 		const level = rest === '' ? null : parseInt( rest, 10 );
@@ -158,4 +152,4 @@ export function shellInterpret( line ) {
 	};
 }
 
-export { LOCAL_BUILTINS, HELP_TEXT, SHELL_BUILTINS_BLURB };
+export { LOCAL_BUILTINS, SHELL_BUILTINS_BLURB };
