@@ -29,25 +29,27 @@ export default function CanvasFrame( {
 				<div className="topology-canvas__topology-name">
 					topologies/{ topology }.php
 				</div>
-				{ /* Only appears once the user has dragged anything —
-				clicking it clears every override for this topology/
-				partition and the canvas re-auto-lays out. */ }
-				{ onResetLayout && (
-					<button
-						type="button"
-						className="topology-canvas__reset"
-						onClick={ onResetLayout }
-						title="Discard dragged positions and re-auto-layout"
-					>
-						↺ Reset layout
-					</button>
-				) }
 			</div>
 
 			<div className="topology-reticle topology-reticle--tl" />
 			<div className="topology-reticle topology-reticle--tr" />
 			<div className="topology-reticle topology-reticle--bl" />
 			<div className="topology-reticle topology-reticle--br" />
+
+			{ /* Reset Layout chip — only mounted when there's an
+			override to clear. Sits in the gap between the header bar
+			and the top-right reticle so it's discoverable without
+			fighting the topology metadata at top-left. */ }
+			{ onResetLayout && (
+				<button
+					type="button"
+					className="topology-canvas__reset"
+					onClick={ onResetLayout }
+					title="Discard dragged positions and re-auto-layout"
+				>
+					↺ Reset layout
+				</button>
+			) }
 
 			{ children }
 

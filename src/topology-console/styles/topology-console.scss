@@ -485,15 +485,15 @@ body[class*="_page_newspack-nodes-topology"] {
 		text-transform: none;
 	}
 
-	// Reset-layout chip — only mounted by CanvasFrame when the user
-	// has dragged anything. Sits inline with the topology metadata
-	// but pushed past the top-left reticle (.topology-reticle--tl at
-	// top: 70px, height 24px → ends at y≈94) so the chip doesn't
-	// overlap the drafting alignment mark. pointer-events: auto to
-	// override the meta wrapper's `none`.
+	// Reset-layout chip — top-right of the canvas, in the gap between
+	// the header bar and the TR alignment reticle (top: 70px,
+	// 24x24 → ends at y≈94). Sits above the reticle, with right edge
+	// aligned to where the LIVE button lives in the header above.
 	&__reset {
-		display: inline-block;
-		margin-top: 44px;
+		position: absolute;
+		top: 14px;
+		right: 16px;
+		z-index: 5;
 		background: transparent;
 		border: 1px solid $ink-3;
 		color: $ink-3;
@@ -502,7 +502,6 @@ body[class*="_page_newspack-nodes-topology"] {
 		text-transform: uppercase;
 		padding: 5px 10px;
 		cursor: pointer;
-		pointer-events: auto;
 		transition: all 100ms ease;
 
 		&:hover {
@@ -518,6 +517,7 @@ body[class*="_page_newspack-nodes-topology"] {
 	display: block;
 	cursor: default;
 }
+
 
 .topology-reticle {
 	position: absolute;
@@ -671,6 +671,18 @@ body[class*="_page_newspack-nodes-topology"] {
 	&__meta {
 		font: 400 10px $mono;
 		fill: $ink-3;
+	}
+
+	// Per-node message rate in the lower-left. Same slot the former
+	// "live" label occupied — labels are useless ("LIVE" lives in
+	// the header for the whole topology), so we put the actually-
+	// informative signal there instead. Format and threshold come
+	// from formatNodeRate; the renderer returns null below the
+	// threshold so the slot is empty rather than "0 /s".
+	&__rate {
+		font: 400 10px $mono;
+		fill: $oxide;
+		font-variant-numeric: tabular-nums;
 	}
 
 	&__counter {
