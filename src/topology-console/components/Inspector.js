@@ -223,26 +223,31 @@ export default function Inspector( {
 					Send
 				</button>
 				{ type === 'TEE' && (
-					<button
-						type="button"
-						className="topology-insp__actions-full"
-						onClick={ () =>
-							onAction && onAction( 'tail', node.id )
-						}
-						disabled={ ! live }
-						title="Add `_repl` as another fan-out target so messages tee into the transcript"
-					>
-						Tail (fan to _repl)
-					</button>
+					<>
+						<button
+							type="button"
+							className="topology-insp__actions-full"
+							onClick={ () =>
+								onAction && onAction( 'tail', node.id )
+							}
+							disabled={ ! live }
+							title="Tee this node's output into the transcript via `connect_node <name>` (default target = this session)"
+						>
+							Tail
+						</button>
+						<button
+							type="button"
+							className="topology-insp__actions-full"
+							onClick={ () =>
+								onAction && onAction( 'disconnect', node.id )
+							}
+							disabled={ ! live }
+							title="Stop tailing via `disconnect_node <name>` (default target = this session)"
+						>
+							Disconnect
+						</button>
+					</>
 				) }
-				<button
-					type="button"
-					className="topology-insp__actions-full"
-					disabled
-					title="EDIT mode only (v0.3) — `disconnect_node <name>`"
-				>
-					Disconnect
-				</button>
 				<button
 					type="button"
 					className="topology-insp__actions-full topology-insp__actions-danger"
