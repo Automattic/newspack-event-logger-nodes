@@ -28,8 +28,19 @@ class TopologyStreamController extends SSEControllerBase {
 	/** Override seam for tests — production uses Bootstrap::base_dir(). */
 	private ?string $base_dir_override = null;
 
+	/**
+	 * Override seam for tests — production loops on connection_aborted().
+	 * Test mode does one drain pass and returns so ob_start()/ob_get_clean()
+	 * can capture the emitted SSE bytes synchronously.
+	 */
+	private bool $test_mode = false;
+
 	public function set_base_dir( string $dir ): void {
 		$this->base_dir_override = $dir;
+	}
+
+	public function set_test_mode( bool $on ): void {
+		$this->test_mode = $on;
 	}
 
 	public function register_routes(): void {
@@ -62,8 +73,27 @@ class TopologyStreamController extends SSEControllerBase {
 				[ 'status' => 404 ]
 			);
 		}
-		// Real stream loop lands in subsequent tasks. For now the route
-		// exists and validates that the worker is alive.
-		return new \WP_REST_Response( [ 'ipc' => $ipc ], 200 );
+		// Skip init_sse_headers() in test mode — it calls ob_end_clean
+		// which would consume our test's outer ob_start() capture buffer.
+		if ( ! $this->test_mode ) {
+			$this->init_sse_headers();
+		}
+
+		$this->send_sse_event(
+			'hello',
+			[
+				'topology'  => $topology,
+				'partition' => $partition,
+				'pid'       => \getmypid(),
+			]
+		);
+		$this->flush_if_needed();
+
+		if ( $this->test_mode ) {
+			return null;
+		}
+
+		// Real drain + production loop lands in subsequent tasks.
+		return null;
 	}
 }
