@@ -111,4 +111,36 @@ class TopologyStreamControllerTest extends TestCase {
 		$this->assertSame( 'ls',  $payload['name']      ?? '' );
 		$this->assertSame( '-al', $payload['arguments'] ?? '' );
 	}
+
+	public function test_stream_writes_periodic_ls_ct_at_one_second_cadence(): void {
+		// Test-mode loop runs until tick_limit ticks have fired. Tick 1 is
+		// the initial ls -al; subsequent ticks are ls -ct.
+		\mkdir( $this->tmp . '/locks/firehose-workers.p0.lock.d', 0755, true );
+
+		$ctrl = new TopologyStreamController();
+		$ctrl->set_base_dir( $this->tmp );
+		$ctrl->set_test_mode( true );
+		$ctrl->set_test_tick_limit( 3 );
+
+		$req = new \WP_REST_Request();
+		$req->set_param( 'topology', 'firehose-workers' );
+		$req->set_param( 'partition', 0 );
+
+		\ob_start();
+		$ctrl->stream( $req );
+		\ob_get_clean();
+
+		$input_log = $this->tmp . '/ipc/firehose-workers.p0/input/p0/0.log';
+		$content   = (string) \file_get_contents( $input_log );
+		$lines     = \array_filter( \explode( "\n", $content ) );
+		$commands  = \array_map(
+			static function ( string $packed ) {
+				$msg     = \Newspack_Nodes\Message::unpacked( $packed );
+				$decoded = \json_decode( (string) $msg[ \Newspack_Nodes\Message::VALUE ], true );
+				return ( $decoded['name'] ?? '' ) . ' ' . ( $decoded['arguments'] ?? '' );
+			},
+			$lines
+		);
+		$this->assertSame( [ 'ls -al', 'ls -ct', 'ls -ct' ], \array_values( $commands ) );
+	}
 }
