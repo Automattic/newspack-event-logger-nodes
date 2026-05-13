@@ -133,8 +133,17 @@ export default function SchematicCanvas( {
 					if ( ! a || ! b ) {
 						return null;
 					}
-					const touches = hoveredId === e.from || hoveredId === e.to;
-					const dimmed = hoveredId && ! touches;
+					const hoverTouches = hoveredId === e.from || hoveredId === e.to;
+					const selectTouches =
+						! hoveredId &&
+						( selectedId === e.from || selectedId === e.to );
+					// Hover applies the bold highlight + dims everything
+					// else. Selection applies the same bold highlight to
+					// the selected node's edges but DOESN'T dim — the rest
+					// of the graph stays at full intensity so the user can
+					// still see the surrounding context.
+					const touches = hoverTouches || selectTouches;
+					const dimmed = hoveredId && ! hoverTouches;
 					return (
 						<path
 							key={ `edge-${ i }-${ e.from }-${ e.to }` }
