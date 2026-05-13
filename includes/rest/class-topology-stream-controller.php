@@ -21,7 +21,9 @@ use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Callback;
 use Newspack_Nodes\Cli;
 use Newspack_Nodes\Consumer;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Partition;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -91,11 +93,18 @@ class TopologyStreamController extends SSEControllerBase {
 			]
 		);
 
-		$reply_in = new Consumer( $ipc['output'], 0, '' );
+		$cmd_out  = new Partition( $ipc['input'],  0 );
+		$reply_in = new Consumer(  $ipc['output'], 0, '' );
 		// Tests pre-populate the output Partition with messages BEFORE
 		// attaching, so we read from segment start. Production attaches to
 		// a live worker and only cares about new traffic — read from end.
 		$reply_in->next_offset( $this->test_mode ? 'start' : 'end' );
+
+		// Initial topology snapshot. The worker's CommandInterpreter handles
+		// this TM_COMMAND and writes its response back through `_repl/_output/$pid`,
+		// which arrives at our reply_in Consumer.
+		$this->send_command( $cmd_out, 'ls', '-al' );
+		$cmd_out->flush();
 
 		$this->drain_and_forward( $reply_in );
 		$this->flush_if_needed();
@@ -107,6 +116,30 @@ class TopologyStreamController extends SSEControllerBase {
 		// Production loop (heartbeat + ls -ct cadence + connection_aborted)
 		// lands in Task 5.
 		return null;
+	}
+
+	/**
+	 * Build a TM_COMMAND addressed to the worker's _command_interpreter and
+	 * write it to the worker's input Partition. Mirrors what Shell does when
+	 * the user types `<verb> <args>` at the cli prompt: FROM=`_output/$pid`
+	 * so worker replies route back via the worker-side `_router` peel of
+	 * `_output` to TO=$pid, which our reply_in Consumer picks up.
+	 */
+	private function send_command( Partition $cmd_out, string $name, string $arguments ): void {
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_COMMAND;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::ID ]        = (string) Core::msg_counter();
+		$msg[ Message::FROM ]      = '_output/' . \getmypid();
+		$msg[ Message::TO ]        = '_command_interpreter';
+		$msg[ Message::VALUE ]     = (string) \wp_json_encode(
+			[
+				'name'      => $name,
+				'arguments' => $arguments,
+				'payload'   => '',
+			]
+		);
+		$cmd_out->fill( $msg );
 	}
 
 	/**

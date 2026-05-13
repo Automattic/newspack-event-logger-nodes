@@ -82,4 +82,33 @@ class TopologyStreamControllerTest extends TestCase {
 		$this->assertStringContainsString( '"from":"producer"', $out );
 		$this->assertStringContainsString( '"value":"hello-from-worker"', $out );
 	}
+
+	public function test_stream_writes_initial_ls_al_command_to_worker_input(): void {
+		\mkdir( $this->tmp . '/locks/firehose-workers.p0.lock.d', 0755, true );
+
+		$ctrl = new TopologyStreamController();
+		$ctrl->set_base_dir( $this->tmp );
+		$ctrl->set_test_mode( true );
+
+		$req = new \WP_REST_Request();
+		$req->set_param( 'topology', 'firehose-workers' );
+		$req->set_param( 'partition', 0 );
+
+		\ob_start();
+		$ctrl->stream( $req );
+		\ob_get_clean();
+
+		// The worker's input Partition for this topology should now contain
+		// at least one TM_COMMAND addressed to _command_interpreter.
+		$input_log = $this->tmp . '/ipc/firehose-workers.p0/input/p0/0.log';
+		$this->assertFileExists( $input_log );
+		$content = (string) \file_get_contents( $input_log );
+		$lines   = \array_filter( \explode( "\n", $content ) );
+		$this->assertNotEmpty( $lines, 'cmd-out Partition should have at least one line' );
+		$msg = \Newspack_Nodes\Message::unpacked( (string) \reset( $lines ) );
+		$this->assertTrue( (bool) ( $msg[ \Newspack_Nodes\Message::TYPE ] & \Newspack_Nodes\Message::TM_COMMAND ) );
+		$payload = \json_decode( (string) $msg[ \Newspack_Nodes\Message::VALUE ], true );
+		$this->assertSame( 'ls',  $payload['name']      ?? '' );
+		$this->assertSame( '-al', $payload['arguments'] ?? '' );
+	}
 }
