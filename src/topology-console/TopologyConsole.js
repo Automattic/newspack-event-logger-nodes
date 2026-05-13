@@ -139,10 +139,6 @@ export default function TopologyConsole() {
 	const [ transcript, setTranscript ] = useState( [] );
 
 	const partitions = useMemo( partitionList, [] );
-	const { status, lastMessage, ssePid } = useTopologyStream(
-		topology,
-		partition
-	);
 
 	const appendTranscript = useCallback( ( entry ) => {
 		setTranscript( ( prev ) => {
@@ -157,6 +153,92 @@ export default function TopologyConsole() {
 				: next;
 		} );
 	}, [] );
+
+	// Reset selection + graph + transcript when the (topology, partition)
+	// pair changes — we're effectively starting a fresh REPL session.
+	useEffect( () => {
+		setSelectedId( null );
+		setParsed( { nodes: [], edges: [] } );
+		setTranscript( [] );
+	}, [ topology, partition ] );
+
+	// Process every incoming SSE msg synchronously. Routing by KEY:
+	//   key = 'gui:auto'  → response to one of our own SSE-controller polls;
+	//                       feed it to the canvas-parse and never the transcript.
+	//   key = '' (empty)  → either a user-typed command's response or an
+	//                       async broadcast (debug traces, etc.); show it in
+	//                       the transcript verbatim.
+	//
+	// Synchronous handling is critical: a burst of TM_STRUCT broadcasts
+	// could otherwise coalesce React state updates and drop intermediate
+	// values (a command response could land BETWEEN auto-fired ls polls
+	// and get clobbered by setLastMessage). Callback-based processing
+	// guarantees every message is observed.
+	//
+	// CommandInterpreter copies KEY from each TM_COMMAND request onto its
+	// TM_RESPONSE, so the round-trip correlation is automatic.
+	const handleMessage = useCallback(
+		( msg ) => {
+			const value = msg.value;
+			let text = null;
+			if ( typeof value === 'string' ) {
+				text = value;
+			} else if (
+				value &&
+				typeof value === 'object' &&
+				typeof value.payload === 'string'
+			) {
+				text = value.payload;
+			}
+			const isOurPoll = msg.key === 'gui:auto';
+			if ( ! isOurPoll ) {
+				// User-typed command response, or an async broadcast. Run
+				// it through the Dumper-style renderer so each message
+				// type gets its appropriate framing.
+				const rendered = dumperRender( msg );
+				if ( rendered ) {
+					appendTranscript( {
+						...rendered,
+						text: rendered.text.replace( /\n+$/, '' ),
+					} );
+				}
+				return;
+			}
+			// gui:auto polls only ever emit ls table data. If something
+			// else snuck through, drop it silently rather than misparse.
+			if ( ! text || ! /^COUNT\b/m.test( text ) ) {
+				return;
+			}
+			const next = parseLsOutput( text );
+			// `ls -als` (initial) carries the SINK column. Subsequent
+			// `ls -ct` counter refreshes don't — so merge the prior
+			// parse's sink data into nodes that came back without one,
+			// keyed by id.
+			setParsed( ( prev ) => {
+				const priorSinks = new Map();
+				for ( const n of prev.nodes ) {
+					if ( n.sink !== undefined ) {
+						priorSinks.set( n.id, n.sink );
+					}
+				}
+				return {
+					nodes: next.nodes.map( ( n ) =>
+						n.sink !== undefined || ! priorSinks.has( n.id )
+							? n
+							: { ...n, sink: priorSinks.get( n.id ) }
+					),
+					edges: next.edges,
+				};
+			} );
+		},
+		[ appendTranscript ]
+	);
+
+	const { status, ssePid } = useTopologyStream(
+		topology,
+		partition,
+		handleMessage
+	);
 
 	const sendLine = useCallback(
 		( line ) => {
@@ -223,88 +305,6 @@ export default function TopologyConsole() {
 		},
 		[ topology, partition, ssePid, appendTranscript ]
 	);
-
-	// Reset selection + graph + transcript when the (topology, partition)
-	// pair changes — we're effectively starting a fresh REPL session.
-	useEffect( () => {
-		setSelectedId( null );
-		setParsed( { nodes: [], edges: [] } );
-		setTranscript( [] );
-	}, [ topology, partition ] );
-
-	// Route every incoming msg by its KEY:
-	//   key = 'gui:auto'  → response to one of our own SSE-controller polls;
-	//                       feed it to the canvas-parse and never the transcript.
-	//   key = '' (empty)  → either a user-typed command's response or an
-	//                       async broadcast (debug traces, etc.); show it in
-	//                       the transcript verbatim.
-	//
-	// CommandInterpreter copies KEY from each TM_COMMAND request onto its
-	// TM_RESPONSE, so the round-trip correlation is automatic.
-	//
-	// Substrate envelope shapes we handle:
-	//   value: "COUNT ..."                                  — raw bytestream payload
-	//   value: { name: "ls", payload: "COUNT ..." }         — command-response struct
-	useEffect( () => {
-		if ( ! lastMessage ) {
-			return;
-		}
-		const value = lastMessage.value;
-		let text = null;
-		if ( typeof value === 'string' ) {
-			text = value;
-		} else if (
-			value &&
-			typeof value === 'object' &&
-			typeof value.payload === 'string'
-		) {
-			text = value.payload;
-		}
-		if ( ! text ) {
-			return;
-		}
-		const isOurPoll = lastMessage.key === 'gui:auto';
-		if ( ! isOurPoll ) {
-			// User-typed command response, or an async broadcast. Run it
-			// through the Dumper-style renderer so each message type gets
-			// its appropriate framing — TM_COMMAND|TM_RESPONSE shows the
-			// unwrapped payload, TM_ERROR variants get an "ERROR: " prefix,
-			// TM_INFO carries the FROM tag, etc.
-			const rendered = dumperRender( lastMessage );
-			if ( rendered ) {
-				appendTranscript( {
-					...rendered,
-					text: rendered.text.replace( /\n+$/, '' ),
-				} );
-			}
-			return;
-		}
-		// gui:auto polls only ever emit ls table data. If something else
-		// snuck through, drop it silently rather than misparse.
-		if ( ! /^COUNT\b/m.test( text ) ) {
-			return;
-		}
-		const next = parseLsOutput( text );
-		// `ls -als` (initial) carries the SINK column. Subsequent `ls -ct`
-		// counter refreshes don't — so merge the prior parse's sink data
-		// into nodes that came back without one, keyed by id.
-		setParsed( ( prev ) => {
-			const priorSinks = new Map();
-			for ( const n of prev.nodes ) {
-				if ( n.sink !== undefined ) {
-					priorSinks.set( n.id, n.sink );
-				}
-			}
-			return {
-				nodes: next.nodes.map( ( n ) =>
-					n.sink !== undefined || ! priorSinks.has( n.id )
-						? n
-						: { ...n, sink: priorSinks.get( n.id ) }
-				),
-				edges: next.edges,
-			};
-		} );
-	}, [ lastMessage, appendTranscript ] );
 
 	return (
 		<div className="topology-app">
