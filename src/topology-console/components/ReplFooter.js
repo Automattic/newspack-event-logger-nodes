@@ -27,10 +27,11 @@ export default function ReplFooter( {
 	transcript = [],
 } ) {
 	const [ value, setValue ] = useState( '' );
-	// Default to expanded so command output is always visible. The
-	// toggle still lets the user collapse the panel down to the
-	// single-line peek when they want canvas real estate.
-	const [ expanded, setExpanded ] = useState( true );
+	// Start minimized so the canvas (and its title block / reticles)
+	// are unobscured on first load. The Enter handler flips this to
+	// true on the first command, so as soon as the user types
+	// something they get the transcript automatically.
+	const [ expanded, setExpanded ] = useState( false );
 	const logRef = useRef( null );
 
 	const statusLabel =
@@ -74,11 +75,19 @@ export default function ReplFooter( {
 		setExpanded( true );
 	}
 
+	// Only render the transcript pane when the user has produced
+	// output and chosen to view it. Default state (page just loaded,
+	// nothing typed) keeps the canvas's title block / lower-right
+	// chrome fully visible.
+	const showTranscript = expanded && transcript.length > 0;
+
 	return (
 		<footer
-			className={ `topology-repl${ expanded ? ' is-expanded' : '' }` }
+			className={ `topology-repl${
+				showTranscript ? ' is-expanded' : ''
+			}` }
 		>
-			{ expanded && (
+			{ showTranscript && (
 				<div className="topology-repl__transcript" ref={ logRef }>
 					<div className="topology-repl__actions">
 						<button
@@ -104,23 +113,16 @@ export default function ReplFooter( {
 							▼
 						</button>
 					</div>
-					{ transcript.length === 0 ? (
-						<div className="topology-repl__transcript-empty">
-							No command output yet. Try `ls` or `make_node Echo
-							my_node`.
-						</div>
-					) : (
-						transcript.map( ( entry ) => (
-							<pre
-								key={ entry.key }
-								className={ `topology-repl__entry topology-repl__entry--${ entry.kind }` }
-							>
-								{ entry.kind === 'sent'
-									? `${ topology }.p${ partition }> ${ entry.text }`
-									: entry.text }
-							</pre>
-						) )
-					) }
+					{ transcript.map( ( entry ) => (
+						<pre
+							key={ entry.key }
+							className={ `topology-repl__entry topology-repl__entry--${ entry.kind }` }
+						>
+							{ entry.kind === 'sent'
+								? `${ topology }.p${ partition }> ${ entry.text }`
+								: entry.text }
+						</pre>
+					) ) }
 				</div>
 			) }
 			<div className="topology-repl__bar">
