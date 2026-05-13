@@ -294,6 +294,51 @@ export default function TopologyConsole() {
 		},
 		[ positionStorageKey ]
 	);
+	// Pan/zoom viewport — same persistence shape as positionOverrides
+	// so reloads / topology switches preserve the user's last view.
+	// Null means "no override" → SchematicCanvas autofits to the
+	// tight bbox. Writes debounce via a 200ms timeout so a pan-drag's
+	// 60 setState/sec doesn't hammer localStorage.
+	const viewportStorageKey = `newspack-nodes:topology:${ topology }.p${ partition }:viewport`;
+	const [ viewport, setViewport ] = useState( null );
+	useEffect( () => {
+		try {
+			const raw = window.localStorage.getItem( viewportStorageKey );
+			setViewport( raw ? JSON.parse( raw ) : null );
+		} catch ( _err ) {
+			setViewport( null );
+		}
+	}, [ viewportStorageKey ] );
+	const viewportSaveTimerRef = useRef( null );
+	const handleViewportChange = useCallback(
+		( next ) => {
+			setViewport( next );
+			if ( viewportSaveTimerRef.current ) {
+				clearTimeout( viewportSaveTimerRef.current );
+			}
+			viewportSaveTimerRef.current = setTimeout( () => {
+				try {
+					if ( next === null ) {
+						window.localStorage.removeItem( viewportStorageKey );
+					} else {
+						window.localStorage.setItem(
+							viewportStorageKey,
+							JSON.stringify( next )
+						);
+					}
+				} catch ( _err ) {
+					// localStorage quota'd / disabled; in-memory only.
+				}
+			}, 200 );
+		},
+		[ viewportStorageKey ]
+	);
+
+	// Reset Layout also clears any pan/zoom override and signals the
+	// canvas to autofit to the (refreshed) tight bbox via a `null`
+	// viewport — SchematicCanvas treats null as "autofit on next
+	// render." Deferred by one tick so the cleared positions have
+	// time to flow through before the autofit recomputes the bbox.
 	const handleResetLayout = useCallback( () => {
 		setPositionOverrides( {} );
 		try {
@@ -301,7 +346,15 @@ export default function TopologyConsole() {
 		} catch ( _err ) {
 			// Ignore — clearing in-memory state is the important part.
 		}
-	}, [ positionStorageKey ] );
+		setTimeout( () => {
+			setViewport( null );
+			try {
+				window.localStorage.removeItem( viewportStorageKey );
+			} catch ( _err ) {
+				// Ignore.
+			}
+		}, 0 );
+	}, [ positionStorageKey, viewportStorageKey ] );
 	const hasOverrides = Object.keys( positionOverrides ).length > 0;
 
 	const partitions = useMemo( () => partitionList( topology ), [ topology ] );
@@ -639,6 +692,8 @@ export default function TopologyConsole() {
 					onHover={ setHoveredId }
 					rateRef={ rateRef }
 					rateVersion={ rateVersion }
+					viewport={ viewport }
+					onViewportChange={ handleViewportChange }
 				/>
 			</CanvasFrame>
 			{ /* Inspector is only mounted when a node is selected — the

@@ -12,7 +12,7 @@
  * the canvas stable while counters tick.
  */
 
-import { useEffect, useMemo, useRef, useState } from '@wordpress/element';
+import { useMemo, useRef, useState } from '@wordpress/element';
 
 import { autoLayout, X_STEP, Y_STEP, X_PAD, Y_PAD } from '../utils/autoLayout';
 import { inferType } from '../utils/inferType';
@@ -65,32 +65,20 @@ function edgePath( a, b ) {
 	},${ y2 }`;
 }
 
-// Default viewBox: anchored at the canvas origin with a fixed minimum
-// size so small graphs don't blow up to fill the pane. Tight-bbox
-// centering is opt-in via the Center button.
-function viewBoxFor( nodes ) {
-	if ( ! nodes.length ) {
-		return '0 0 1280 720';
-	}
-	let maxX = 0;
-	let maxY = 0;
-	for ( const n of nodes ) {
-		maxX = Math.max( maxX, n.position.x + NODE_W );
-		maxY = Math.max( maxY, n.position.y + NODE_H );
-	}
-	return `0 0 ${ Math.max( 1280, maxX + 60 ) } ${ Math.max(
-		720,
-		maxY + 80
-	) }`;
-}
-
 // Tight bbox of every node, padded so the graph isn't flush against
 // the pane edges. The SVG's `preserveAspectRatio="xMidYMid meet"`
-// centers this within the pane automatically — no extra math.
+// centers this within the pane automatically. A floor on width/
+// height caps the effective zoom — small graphs (2–3 nodes) used
+// to autofit so aggressively that nodes looked giant; the floor
+// expands the viewBox to AUTOFIT_MIN_W/H while keeping it centered
+// on the bbox, so the graph stays at a reasonable cap and the pane
+// has surrounding breathing room.
 const CENTER_PAD = 80;
+const AUTOFIT_MIN_W = 1280;
+const AUTOFIT_MIN_H = 720;
 function tightViewBoxFor( nodes ) {
 	if ( ! nodes.length ) {
-		return '0 0 1280 720';
+		return `0 0 ${ AUTOFIT_MIN_W } ${ AUTOFIT_MIN_H }`;
 	}
 	let minX = Infinity;
 	let minY = Infinity;
@@ -102,10 +90,15 @@ function tightViewBoxFor( nodes ) {
 		maxX = Math.max( maxX, n.position.x + NODE_W );
 		maxY = Math.max( maxY, n.position.y + NODE_H );
 	}
-	const x = minX - CENTER_PAD;
-	const y = minY - CENTER_PAD;
-	const w = maxX - minX + CENTER_PAD * 2;
-	const h = maxY - minY + CENTER_PAD * 2;
+	const bboxW = maxX - minX + CENTER_PAD * 2;
+	const bboxH = maxY - minY + CENTER_PAD * 2;
+	const w = Math.max( AUTOFIT_MIN_W, bboxW );
+	const h = Math.max( AUTOFIT_MIN_H, bboxH );
+	// Center the (possibly enlarged) viewBox on the bbox center.
+	const centerX = ( minX + maxX ) / 2;
+	const centerY = ( minY + maxY ) / 2;
+	const x = centerX - w / 2;
+	const y = centerY - h / 2;
 	return `${ x } ${ y } ${ w } ${ h }`;
 }
 
@@ -201,6 +194,8 @@ export default function SchematicCanvas( {
 	// the node render loop. Listed as a prop so React knows about it.
 	// eslint-disable-next-line no-unused-vars
 	rateVersion,
+	viewport,
+	onViewportChange,
 } ) {
 	// Apply user-pinned position overrides on top of the auto-layout
 	// output. autoLayout still runs every poll (so newly-added nodes
@@ -245,35 +240,24 @@ export default function SchematicCanvas( {
 		displayNodes.forEach( ( n ) => map.set( n.id, n ) );
 		return map;
 	}, [ displayNodes ] );
-	// Active viewport override — when null, we use the default
-	// fixed-origin viewBox (good for the first render and after Reset
-	// Layout). When set, it's a tight-bbox autofit OR a user pan/zoom
-	// result. Either way, the SVG's `preserveAspectRatio="xMidYMid
-	// meet"` centers/scales it within the pane automatically.
-	const [ viewport, setViewport ] = useState( null );
+	// Viewport is controlled by the parent — `null` means "no
+	// override, autofit to the tight bbox". The parent persists this
+	// to localStorage so reloads and topology switches preserve the
+	// user's last view. A local setter wraps the prop-handler so
+	// in-flight pan/zoom math stays terse.
+	const setViewport = onViewportChange || ( () => {} );
 	// Active pan drag on the empty canvas. Holds the starting viewport
 	// (so each move re-reads from a stable origin) plus the starting
 	// pointer position and whether the drag has crossed the threshold.
 	const panRef = useRef( null );
 
 	const defaultViewBox = useMemo(
-		() => viewBoxFor( displayNodes ),
+		() => tightViewBoxFor( displayNodes ),
 		[ displayNodes ]
 	);
 	const viewBox = viewport
 		? `${ viewport.x } ${ viewport.y } ${ viewport.w } ${ viewport.h }`
 		: defaultViewBox;
-	// Drop a stale viewport whenever the displayed node count changes
-	// — easiest way to keep the default fixed-origin behavior working
-	// when nodes are added/removed without forcing the user to refit.
-	// Pan/zoom users will just press to refit.
-	const lastNodeCountRef = useRef( displayNodes.length );
-	useEffect( () => {
-		if ( lastNodeCountRef.current !== displayNodes.length ) {
-			lastNodeCountRef.current = displayNodes.length;
-			setViewport( null );
-		}
-	}, [ displayNodes.length ] );
 
 	// hoveredId is lifted to the parent so the Inspector can drive
 	// it too (hovering a `target` / `← from` value in the inspector
