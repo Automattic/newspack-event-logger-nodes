@@ -114,6 +114,15 @@ export default function Inspector( { selectedId, parsed, streamStatus } ) {
 					/>
 				) }
 				<FieldRow
+					k="sink ↦"
+					v={ node.sink !== undefined ? node.sink : '—' }
+					vClass={
+						node.sink !== undefined
+							? 'topology-field-row__val--dim'
+							: 'topology-field-row__val--dim'
+					}
+				/>
+				<FieldRow
 					k="← from"
 					v={
 						sources.length

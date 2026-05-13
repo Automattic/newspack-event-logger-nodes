@@ -109,7 +109,26 @@ export default function TopologyConsole() {
 		if ( ! text || ! /^COUNT\b/m.test( text ) ) {
 			return;
 		}
-		setParsed( parseLsOutput( text ) );
+		const next = parseLsOutput( text );
+		// `ls -als` (initial) carries the SINK column. Subsequent `ls -ct`
+		// counter refreshes don't — so merge the prior parse's sink data
+		// into nodes that came back without one, keyed by id.
+		setParsed( ( prev ) => {
+			const priorSinks = new Map();
+			for ( const n of prev.nodes ) {
+				if ( n.sink !== undefined ) {
+					priorSinks.set( n.id, n.sink );
+				}
+			}
+			return {
+				nodes: next.nodes.map( ( n ) =>
+					n.sink !== undefined || ! priorSinks.has( n.id )
+						? n
+						: { ...n, sink: priorSinks.get( n.id ) }
+				),
+				edges: next.edges,
+			};
+		} );
 	}, [ lastMessage ] );
 
 	return (

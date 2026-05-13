@@ -178,10 +178,11 @@ class TopologyStreamController extends SSEControllerBase {
 		// a live worker and only cares about new traffic — read from end.
 		$reply_in->next_offset( $this->test_mode ? 'start' : 'end' );
 
-		// Initial topology snapshot. The worker's CommandInterpreter handles
-		// this TM_COMMAND and writes its response back through `_repl/_output/$pid`,
-		// which arrives at our reply_in Consumer.
-		$this->send_command( $cmd_out, 'ls', '-al' );
+		// Initial topology snapshot. -als includes a SINK column so the
+		// Inspector can show each node's framework fall-through target
+		// distinct from its explicit owners. The periodic refresh below
+		// uses -ct (counters only) because sinks are static topology.
+		$this->send_command( $cmd_out, 'ls', '-als' );
 		$cmd_out->flush();
 
 		$this->drain_and_forward( $reply_in );

@@ -96,6 +96,49 @@ describe( 'parseLsOutput', () => {
 		] );
 	} );
 
+	it( 'parses `ls -als` lines with a SINK column', () => {
+		const text = [
+			'COUNT NAME                 SINK                   TARGET',
+			'    0 errors:partition     > _command_interpreter -',
+			'  590 firehose:consumer    > _command_interpreter -> firehose:tee',
+			'  590 firehose:tee         > _command_interpreter -> request-builder, job-router',
+			' 2076 _router              -                      -',
+			'',
+		].join( '\n' );
+		const { nodes, edges } = parseLsOutput( text );
+		expect( nodes ).toEqual( [
+			{
+				id: 'errors:partition',
+				count: 0,
+				sink: '_command_interpreter',
+			},
+			{
+				id: 'firehose:consumer',
+				count: 590,
+				sink: '_command_interpreter',
+			},
+			{
+				id: 'firehose:tee',
+				count: 590,
+				sink: '_command_interpreter',
+			},
+			// _router excluded as scaffolding
+		] );
+		expect( edges ).toEqual( [
+			{ from: 'firehose:consumer', to: 'firehose:tee' },
+			{ from: 'firehose:tee', to: 'request-builder' },
+			{ from: 'firehose:tee', to: 'job-router' },
+		] );
+	} );
+
+	it( 'still parses `ls -al` lines (no SINK column) without a sink field', () => {
+		// Backwards compatibility: periodic `ls -ct` ticks use the older
+		// two-column format. Nodes from that input have no sink data.
+		const text = '  42 alpha          -> beta\n';
+		const { nodes } = parseLsOutput( text );
+		expect( nodes ).toEqual( [ { id: 'alpha', count: 42 } ] );
+	} );
+
 	it( 'skips malformed lines', () => {
 		const text =
 			'this is garbage\n' +
