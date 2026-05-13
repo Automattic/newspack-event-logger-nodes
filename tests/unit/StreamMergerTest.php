@@ -1323,8 +1323,7 @@ class StreamMergerTest extends TestCase {
 		// hub-side partition routing matches the producer convention (every
 		// entry for a single request co-located in one partition). The
 		// firehose SSE controller back-fills entry['rid'] from the source
-		// Message::KEY, so this works whether the upstream spoke is
-		// v0.2.17+ (rid in wire KEY) or pre-cutover (rid in inner entry).
+		// Message::KEY, so this works for any well-formed spoke entry.
 		$sm      = $this->make_merger();
 		$capture = new CaptureSink();
 		$sm->sink( $capture );

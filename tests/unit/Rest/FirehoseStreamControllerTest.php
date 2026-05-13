@@ -76,6 +76,10 @@ class FirehoseStreamControllerTest extends TestCase {
 	private function packed_entry( array $entry ): string {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		// Producer convention: rid lives in Message::KEY (LogManager since
+		// v0.2.17). FirehoseStreamController back-fills entry['rid'] from KEY
+		// at read time, so test fixtures must stamp it here.
+		$msg[ Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
 		$msg[ Message::VALUE ]     = $entry;
 		return Message::packed( $msg );
 	}

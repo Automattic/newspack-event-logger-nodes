@@ -153,10 +153,9 @@ class FirehoseStreamController extends SSEControllerBase {
 					if ( ! \is_array( $entry ) ) {
 						continue;
 					}
-					// BC-rid-in-key: v0.2.17+ producers carry rid in Message::KEY
-					// only. ?? leaves pre-cutover entries' embedded rid alone.
-					// Drop the fallback once those segments have rolled off.
-					$entry['rid']      ??= (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+					// rid lives in Message::KEY on the wire; back-fill so the SSE
+					// payload carries it without forcing clients to decode envelope.
+					$entry['rid']        = (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
 					$entry['position']   = $reader->get_position();
 					$this->send_sse_event( 'entry', $entry );
 					++$lines_read;

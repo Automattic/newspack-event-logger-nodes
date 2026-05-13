@@ -155,12 +155,9 @@ class InflightTracker {
 		$decoded = \json_decode( $line, true, 64 );
 		$entry   = \is_array( $decoded ) ? ( $decoded[ \Newspack_Nodes\Message::VALUE ] ?? null ) : null;
 		if ( \is_array( $entry ) ) {
-			// BC-rid-in-key: producers (>= v0.2.17) put rid in Message::KEY
-			// and dropped it from the inner entry. Back-fill so process()'s
-			// `$entry['rid']` read keeps working uniformly across old and
-			// new segments. Drop the back-fill once pre-cutover segments
-			// have rolled off.
-			$entry['rid'] ??= (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+			// rid lives in Message::KEY on the wire; back-fill so process()'s
+			// `$entry['rid']` read works against firehose lines.
+			$entry['rid'] = (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
 			$this->process( $entry );
 		}
 	}
