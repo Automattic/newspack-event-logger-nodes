@@ -18,7 +18,10 @@
 namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Nodes\Bootstrap;
+use Newspack_Nodes\Callback;
 use Newspack_Nodes\Cli;
+use Newspack_Nodes\Consumer;
+use Newspack_Nodes\Message;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -87,13 +90,71 @@ class TopologyStreamController extends SSEControllerBase {
 				'pid'       => \getmypid(),
 			]
 		);
+
+		$reply_in = new Consumer( $ipc['output'], 0, '' );
+		// Tests pre-populate the output Partition with messages BEFORE
+		// attaching, so we read from segment start. Production attaches to
+		// a live worker and only cares about new traffic — read from end.
+		$reply_in->next_offset( $this->test_mode ? 'start' : 'end' );
+
+		$this->drain_and_forward( $reply_in );
 		$this->flush_if_needed();
 
 		if ( $this->test_mode ) {
 			return null;
 		}
 
-		// Real drain + production loop lands in subsequent tasks.
+		// Production loop (heartbeat + ls -ct cadence + connection_aborted)
+		// lands in Task 5.
 		return null;
+	}
+
+	/**
+	 * Drain whatever's pending on the worker's output Consumer and forward
+	 * each Message as an SSE `msg` event. Wires a Callback sink that calls
+	 * back into emit_message_as_sse() per Message.
+	 */
+	private function drain_and_forward( Consumer $reply_in ): void {
+		$controller = $this;
+		$sink       = new Callback(
+			static function ( array &$message ) use ( $controller ): void {
+				$controller->emit_message_as_sse( $message );
+			}
+		);
+		$reply_in->sink( $sink );
+		$reply_in->poll();
+	}
+
+	/**
+	 * Encode a single Message envelope as an SSE `msg` event.
+	 *
+	 * Public so the Callback closure in drain_and_forward() can reach it
+	 * (closure binding through `use ($controller)` keeps it scoped to a
+	 * single request lifetime).
+	 *
+	 * VALUE is decoded one level when it's a JSON envelope (TM_COMMAND
+	 * payloads are `{"name":...,"payload":...}` strings on the wire) so
+	 * the frontend doesn't double-decode.
+	 */
+	public function emit_message_as_sse( array $message ): void {
+		$value = $message[ Message::VALUE ] ?? '';
+		if ( \is_string( $value ) && '' !== $value && ( '{' === $value[0] || '[' === $value[0] ) ) {
+			$decoded = \json_decode( $value, true );
+			if ( \is_array( $decoded ) ) {
+				$value = $decoded;
+			}
+		}
+		$this->send_sse_event(
+			'msg',
+			[
+				'type'  => $message[ Message::TYPE ]      ?? 0,
+				'ts'    => $message[ Message::TIMESTAMP ] ?? 0,
+				'from'  => $message[ Message::FROM ]      ?? '',
+				'to'    => $message[ Message::TO ]        ?? '',
+				'id'    => $message[ Message::ID ]        ?? '',
+				'key'   => $message[ Message::KEY ]       ?? '',
+				'value' => $value,
+			]
+		);
 	}
 }
