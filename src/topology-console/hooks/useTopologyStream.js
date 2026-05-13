@@ -13,13 +13,34 @@
  * ls commands.
  */
 
-import { useEffect, useState, useRef } from '@wordpress/element';
+import { useEffect, useRef, useState } from '@wordpress/element';
 
-export function useTopologyStream( topology, partition ) {
+/**
+ * Subscribe to the topology SSE stream.
+ *
+ * @param {string}   topology    Topology name (e.g. 'firehose-workers').
+ * @param {number}   partition   Partition number.
+ * @param {Function} [onMessage] Called synchronously for every `msg` event.
+ *                               Bypasses React state, so a burst of
+ *                               messages can't get coalesced away by
+ *                               state batching the way setLastMessage
+ *                               could (when a TM_STRUCT broadcast flood
+ *                               clobbered a single setLastMessage call,
+ *                               command responses got lost).
+ * @return {{status, ssePid}} Connection state + the worker's pid from
+ *                            the hello event.
+ */
+export function useTopologyStream( topology, partition, onMessage ) {
 	const [ status, setStatus ] = useState( 'connecting' );
-	const [ lastMessage, setLastMessage ] = useState( null );
 	const [ ssePid, setSsePid ] = useState( null );
-	const messagesRef = useRef( [] );
+
+	// Stash the latest onMessage in a ref so the EventSource handler
+	// always sees the freshest closure without needing to re-subscribe
+	// on every render.
+	const onMessageRef = useRef( onMessage );
+	useEffect( () => {
+		onMessageRef.current = onMessage;
+	}, [ onMessage ] );
 
 	useEffect( () => {
 		setSsePid( null );
@@ -55,11 +76,9 @@ export function useTopologyStream( topology, partition ) {
 		es.addEventListener( 'msg', ( e ) => {
 			try {
 				const m = JSON.parse( e.data );
-				messagesRef.current.push( m );
-				if ( messagesRef.current.length > 100 ) {
-					messagesRef.current.shift();
+				if ( onMessageRef.current ) {
+					onMessageRef.current( m );
 				}
-				setLastMessage( m );
 			} catch ( err ) {
 				// Malformed payloads are dropped silently — the SSE
 				// controller already validates JSON before emit, so this
@@ -74,5 +93,5 @@ export function useTopologyStream( topology, partition ) {
 		};
 	}, [ topology, partition ] );
 
-	return { status, lastMessage, ssePid, messages: messagesRef.current };
+	return { status, ssePid };
 }
