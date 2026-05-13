@@ -535,6 +535,11 @@ $display-stencil: "Workbench", monospace;
 .topology-node {
 	cursor: pointer;
 	animation: topology-fadein 0.35s ease-out both;
+	transition: opacity 120ms ease;
+
+	&.is-faded {
+		opacity: 0.4;
+	}
 
 	&__shadow {
 		fill: rgba(0, 0, 0, 0.04);
@@ -609,6 +614,7 @@ $display-stencil: "Workbench", monospace;
 	stroke-dasharray: 1000;
 	stroke-dashoffset: 1000;
 	animation: topology-draw 0.8s ease-out 0.2s forwards;
+	transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
 
 	&--active {
 		stroke: $cyan;
@@ -618,7 +624,20 @@ $display-stencil: "Workbench", monospace;
 			topology-draw 0.8s ease-out 0.2s forwards,
 			topology-flow 0.8s linear 1s infinite;
 	}
+
+	// Hovering a node lights up its inbound + outbound edges and
+	// dims the rest, so the user can read the flow neighborhood of
+	// any node at a glance.
+	&.is-touched {
+		stroke: $oxide;
+		stroke-width: 2.2;
+	}
+
+	&.is-dimmed {
+		opacity: 0.15;
+	}
 }
+
 
 .topology-arrow-head {
 	fill: $ink-3;
