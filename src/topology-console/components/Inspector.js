@@ -3,12 +3,11 @@
  *
  * Inspect-only in v1. The available data is what `ls -al` exposes —
  * id, counter, and the edges connecting it. Type is inferred from the
- * name. Rate, message-size histogram, memory, uptime, and process
- * metadata are v2 affordances that will land once the substrate gains
- * an `inspect <node>` verb returning the full state envelope.
- *
- * The action buttons are inert in v1 — they're scaffolded as a hint of
- * the v2 surface and to keep the visual rhythm of the mockup intact.
+ * name. Activity sparklines (msg/s, bytes read/s, bytes written/s) are
+ * computed client-side from the cumulative counters. Message-size
+ * histogram, memory, and richer per-node diagnostics are v2 affordances
+ * that will land once the substrate gains an `inspect <node>` verb
+ * returning the full state envelope.
  */
 
 import { inferType } from '../utils/inferType';
@@ -243,7 +242,6 @@ export default function Inspector( {
 	onHover,
 	nodeIds,
 	ssePid,
-	uptime,
 } ) {
 	if ( ! selectedId ) {
 		return (
@@ -301,20 +299,6 @@ export default function Inspector( {
 				/>
 				{ type } · { live ? 'LIVE' : streamStatus.toUpperCase() }
 			</div>
-
-			<Section title="Identity" meta="make_node">
-				<FieldRow k="name" v={ node.id } />
-				<FieldRow k="class" v={ type } />
-				<FieldRow
-					k="arguments"
-					v={ node.arguments || '—' }
-					vClass={
-						node.arguments
-							? 'topology-field-row__val--mono'
-							: 'topology-field-row__val--dim'
-					}
-				/>
-			</Section>
 
 			<Section title="Routing">
 				<div className="topology-field-row">
@@ -430,16 +414,6 @@ export default function Inspector( {
 					}
 				/>
 			</Section>
-
-			{ uptime && (
-				<Section title="Process" meta="worker">
-					<FieldRow
-						k="uptime"
-						v={ uptime }
-						vClass="topology-field-row__val--num"
-					/>
-				</Section>
-			) }
 
 			<div className="topology-insp__actions">
 				<button
