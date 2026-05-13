@@ -918,11 +918,6 @@ $display-stencil: "Workbench", monospace;
 		z-index: 1;
 	}
 
-	&__transcript-empty {
-		color: rgba(240, 231, 214, 0.35);
-		font-style: italic;
-	}
-
 	&__entry {
 		margin: 0;
 		padding: 2px 0;
