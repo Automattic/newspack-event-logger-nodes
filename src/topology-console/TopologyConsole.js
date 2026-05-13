@@ -176,11 +176,6 @@ export default function TopologyConsole() {
 			if ( interpreted.kind === 'local' ) {
 				if ( interpreted.name === 'clear' ) {
 					setTranscript( [] );
-				} else if ( interpreted.name === 'help' ) {
-					appendTranscript( {
-						kind: 'info',
-						text: interpreted.text,
-					} );
 				} else if ( interpreted.name === 'debug_level' ) {
 					appendTranscript( {
 						kind: 'info',

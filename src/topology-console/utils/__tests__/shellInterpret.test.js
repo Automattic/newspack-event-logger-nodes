@@ -6,13 +6,11 @@ describe( 'shellInterpret', () => {
 		expect( shellInterpret( '   ' ) ).toBeNull();
 	} );
 
-	it( 'dispatches local builtins: clear / :help / debug_level', () => {
+	it( 'dispatches local builtins: clear / debug_level', () => {
 		expect( shellInterpret( 'clear' ) ).toEqual( {
 			kind: 'local',
 			name: 'clear',
 		} );
-		expect( shellInterpret( ':help' ).kind ).toBe( 'local' );
-		expect( shellInterpret( ':help' ).name ).toBe( 'help' );
 		expect( shellInterpret( 'debug_level' ) ).toEqual( {
 			kind: 'local',
 			name: 'debug_level',
