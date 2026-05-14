@@ -37,6 +37,11 @@
 namespace Newspack_Event_Logger_Nodes\Admin;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\Memcached_Cache;
+use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Nodes\Bootstrap;
+use Newspack_Nodes\Cli;
+use Newspack_Nodes\Config as Substrate_Config;
 use Newspack_Nodes\Lock;
 
 \defined( 'ABSPATH' ) || exit;
@@ -77,6 +82,12 @@ class Admin {
 	 */
 	public const RESET_ACTION = 'newspack_event_logger_nodes_reset_settings';
 	public const RESET_NONCE  = 'newspack_event_logger_nodes_reset_nonce';
+
+	/**
+	 * Nonce action / field name for the flush-memcache-stats form.
+	 */
+	public const FLUSH_STATS_ACTION = 'newspack_event_logger_nodes_flush_stats';
+	public const FLUSH_STATS_NONCE  = 'newspack_event_logger_nodes_flush_stats_nonce';
 
 	/**
 	 * Application-level option names cleared by `handle_reset_settings()`.
@@ -145,6 +156,8 @@ class Admin {
 		\add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
 		\add_action( 'admin_init', [ $this, 'register_settings' ] );
 		\add_action( 'admin_post_' . self::RESET_ACTION, [ $this, 'handle_reset_settings' ] );
+		\add_action( 'admin_post_' . self::FLUSH_STATS_ACTION, [ $this, 'handle_flush_stats' ] );
+		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
 
 		// Per-option granular worker-restart on save. Both `added_option` (first
 		// save) and `updated_option` (subsequent saves) fire this so newly-added
@@ -243,6 +256,32 @@ class Admin {
 		?>
 		<div class="wrap event-logger-settings-wrap">
 			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
+			<?php
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
+			if ( isset( $_GET['flushed'] ) ) {
+				// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				$restarted = isset( $_GET['restarted'] ) ? (int) $_GET['restarted'] : 0;
+				echo '<div class="notice notice-success is-dismissible"><p>'
+					. \esc_html(
+						\sprintf(
+							/* translators: %d = number of workers restarted. */
+							\_n(
+								'Cache flushed. %d worker restart requested — fresh prefix takes effect on its next graceful exit.',
+								'Cache flushed. %d workers restart requested — fresh prefix takes effect on their next graceful exit.',
+								$restarted,
+								'newspack-event-logger-nodes'
+							),
+							$restarted
+						)
+					) . '</p></div>';
+			}
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			if ( isset( $_GET['reset'] ) ) {
+				echo '<div class="notice notice-success is-dismissible"><p>'
+					. \esc_html__( 'Settings reset to defaults.', 'newspack-event-logger-nodes' )
+					. '</p></div>';
+			}
+			?>
 			<form method="post" action="options.php">
 				<?php
 				\settings_fields( self::OPTIONS_GROUP );
@@ -1099,6 +1138,103 @@ class Admin {
 				[
 					'page'  => self::MENU_SLUG,
 					'reset' => '1',
+				],
+				\admin_url( 'options-general.php' )
+			)
+			: '';
+		if ( '' !== $redirect ) {
+			\wp_safe_redirect( $redirect );
+			exit;
+		}
+		exit;
+	}
+
+	/**
+	 * Maintenance section — rendered below the form via
+	 * `newspack_event_logger_nodes/settings_after_form`. Mirrors the legacy
+	 * `Clear Memcache Stats` button: a confirm dialog feeds a hidden form
+	 * that POSTs to `admin-post.php`, which routes to `handle_flush_stats`.
+	 */
+	public function render_maintenance_section(): void {
+		$flush_url = \function_exists( 'admin_url' ) ? \admin_url( 'admin-post.php' ) : '';
+		?>
+		<hr style="margin: 30px 0;">
+		<h2><?php \esc_html_e( 'Maintenance', 'newspack-event-logger-nodes' ); ?></h2>
+		<p>
+			<input type="button" class="button button-secondary"
+				value="<?php \esc_attr_e( 'Flush Cache', 'newspack-event-logger-nodes' ); ?>"
+				onclick="if ( confirm( '<?php echo \esc_js( \__( 'Flush all performance stats from memcache? Hourly stats, leaderboards, and URL data will be orphaned (TTL handles cleanup). request-workers will restart so the new salt takes effect immediately. This cannot be undone.', 'newspack-event-logger-nodes' ) ); ?>' ) ) { document.getElementById( 'newspack-event-logger-nodes-flush-form' ).submit(); }" />
+			<span class="description" style="margin-left: 10px;">
+				<?php \esc_html_e( 'Rotates the stats-salt so every existing stats key in memcache orphans instantly. Per-URL flame data expires via TTL.', 'newspack-event-logger-nodes' ); ?>
+			</span>
+		</p>
+		<form id="newspack-event-logger-nodes-flush-form" method="post" action="<?php echo \esc_url( $flush_url ); ?>" style="display:none;">
+			<input type="hidden" name="action" value="<?php echo \esc_attr( self::FLUSH_STATS_ACTION ); ?>">
+			<?php \wp_nonce_field( self::FLUSH_STATS_ACTION, self::FLUSH_STATS_NONCE ); ?>
+		</form>
+		<?php
+	}
+
+	/**
+	 * Flush memcache stats by rotating the schema salt. Every existing
+	 * `evlog[:salt]:p{N}:…` key orphans instantly and ages out by TTL.
+	 * request-workers are restarted because FlameBuilder caches `prefix`
+	 * at construction — without a restart the live FlameBuilder keeps
+	 * writing under the OLD salt, defeating the flush.
+	 */
+	public function handle_flush_stats(): void {
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$nonce = isset( $_POST[ self::FLUSH_STATS_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::FLUSH_STATS_NONCE ] ) ) : '';
+		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, self::FLUSH_STATS_ACTION ) ) {
+			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
+		}
+		if ( ! self::current_user_allowed() ) {
+			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
+		}
+
+		// Stats_Store::flush_all() only writes to the salt option — the
+		// Cache_Interface is unused on this path. Pass a real
+		// Memcached_Cache so the constructor signature is happy without
+		// allocating a separate test-double class.
+		$config         = Config::load_config( 'full' );
+		$memcache_hosts = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
+		if ( ! \is_array( $memcache_hosts ) ) {
+			$memcache_hosts = Memcached_Cache::DEFAULT_SERVERS;
+		}
+		$stats = new Stats_Store( new Memcached_Cache( $memcache_hosts ), 0, (int) ( $config['max_lifespan'] ?? 86400 ) );
+		$stats->flush_all();
+
+		// Restart every worker across every active topology. Long-running
+		// nodes cache the prefix at construction (Stats_Store reads the
+		// salt option ONCE in __construct); they need a restart to pick up
+		// the new prefix. Today FlameBuilder is the only writer, but any
+		// future Node that uses Stats_Store inherits the same caching, so
+		// scoping the restart to one hardcoded topology name would silently
+		// break the moment a second consumer landed. Iterating the canonical
+		// `Bootstrap::expand_workers()` descriptor list reaches every
+		// (type, partition) the supervisor knows about, including custom
+		// topologies and operator-disabled subsets, with no naming knowledge
+		// baked into this file.
+		$restarted = 0;
+		try {
+			$workers   = Bootstrap::expand_workers();
+			$base_dir  = (string) ( Substrate_Config::load_config()['base_directory'] ?? '/tmp/newspack-nodes' );
+			$restarted = ( new Cli( $base_dir ) )->restart_workers( $workers, [], -1 );
+		} catch ( \Throwable $e ) {
+			// Best-effort: the next supervisor pass picks up the new salt
+			// on the next spawn regardless. Log via the substrate's
+			// rate-limited stderr so a misconfigured locks_dir is visible.
+			\Newspack_Nodes\Core::print_less_often(
+				'Stats flush: restart_workers failed — ' . $e->getMessage()
+			);
+		}
+
+		$redirect = \function_exists( 'admin_url' )
+			? \add_query_arg(
+				[
+					'page'      => self::MENU_SLUG,
+					'flushed'   => '1',
+					'restarted' => $restarted,
 				],
 				\admin_url( 'options-general.php' )
 			)

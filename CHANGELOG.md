@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Flush Cache button under Settings → Event Logger Nodes → Maintenance.** Mirrors the legacy `newspack-performance-dashboards` "Clear Memcache Stats" button, now backed by the new substrate. Clicking it confirms, then rotates `Stats_Store`'s 8-char salt (every existing `evlog[:salt]:p{N}:…` key orphans instantly; TTL handles cleanup) and requests a graceful restart for every active worker via `Bootstrap::expand_workers()` + `Cli::restart_workers()` — no hardcoded topology names, so future Stats_Store consumers and operator-customized topologies are picked up automatically. The settings page surfaces a `notice-success` reporting how many worker restarts were requested.
+
 ## [0.2.25] - 2026-05-14
 
 ### Changed
