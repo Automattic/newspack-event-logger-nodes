@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`RemoteSource` is now a real Node class — one per enabled spoke in `ServerRegistry`.** Each `RemoteSource` owns its own cURL multi handle (registered with the substrate's `EventFramework`), one cURL easy handle, one SSE connection, and its own `{segment_id, offset}` cursor; `fill()` is a no-op (it's a source like `Tail`), and `dispatch_event()` applies the `newspack_nodes/aggregator_ingest_line` rewrite filter then sinks straight to `firehose:topic`. The class is visible in the topology console (no patron link) — operators see every spoke as `{merger}:remote:{server_id}` instead of an opaque internal map. `StreamMerger` keeps a one-way ref list to its `RemoteSource` children, drives their periodic ticks, and owns the single shared offsetlog Partition — its `commit_all()` walks the ref list and writes one combined JSONL line covering every spoke. `add_remote()` is now an orchestrator method that instantiates a `RemoteSource`, restores its position from the offsetlog, and registers it in `Core`. ~1000 lines of per-remote SSE / cURL / heartbeat / status logic moved out of `StreamMerger` into the new class; the old `$this->remotes[server_id]` flat-array layout is gone.
+- **`start_periodic_tick` is no longer a `StreamMerger` verb** — it fires automatically from `name()` on first name set, same pattern `FlameBuilder` uses for its `AutoTuner` sibling. Mandatory + zero-arg + always needed in the aggregator topology, so the verb was pure boilerplate; the `cmd stream-merger:config start_periodic_tick` line is dropped from `aggregator.tsl`.
+- **`add_remote` is no longer a `StreamMerger` verb** — the single-arg shape was registry-driven (only `server_id` survived to TSL while url/creds came from `ServerRegistry`), confusing in the Inspector, and redundant with `load_remotes_from_registry` for production hubs. The PHP method stays so `load_remotes_from_registry` can call it.
+
 ## [0.2.24] - 2026-05-14
 
 ### Fixed

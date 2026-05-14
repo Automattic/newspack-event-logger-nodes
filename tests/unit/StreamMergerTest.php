@@ -1,6 +1,7 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use Newspack_Event_Logger_Nodes\RemoteSource;
 use Newspack_Event_Logger_Nodes\StreamMerger;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
@@ -56,6 +57,51 @@ class StreamMergerTest extends TestCase {
 		$sm->set_logs_dir( $this->tmp_dir );
 		$sm->set_require_https( false );  // back-compat: most legacy tests use http://
 		return $sm;
+	}
+
+	/**
+	 * Grab the RemoteSource child for a given server_id. Tests poke per-remote
+	 * state via these helpers now that the per-remote logic lives on a
+	 * separate node class rather than as array entries inside StreamMerger.
+	 */
+	private function remote( StreamMerger $sm, string $server_id ): RemoteSource {
+		$nodes = $sm->remote_nodes();
+		if ( ! isset( $nodes[ $server_id ] ) ) {
+			throw new \RuntimeException( "no RemoteSource for server_id '{$server_id}'" );
+		}
+		return $nodes[ $server_id ];
+	}
+
+	private function poke_remote( StreamMerger $sm, string $server_id, string $field, $value ): void {
+		$remote = $this->remote( $sm, $server_id );
+		$ref    = new \ReflectionProperty( RemoteSource::class, $field );
+		$ref->setAccessible( true );
+		$ref->setValue( $remote, $value );
+	}
+
+	private function peek_remote( StreamMerger $sm, string $server_id, string $field ) {
+		$remote = $this->remote( $sm, $server_id );
+		$ref    = new \ReflectionProperty( RemoteSource::class, $field );
+		$ref->setAccessible( true );
+		return $ref->getValue( $remote );
+	}
+
+	private function invoke_remote( StreamMerger $sm, string $server_id, string $method, array $args = [] ) {
+		$remote = $this->remote( $sm, $server_id );
+		$m      = new \ReflectionMethod( RemoteSource::class, $method );
+		$m->setAccessible( true );
+		return $m->invoke( $remote, ...$args );
+	}
+
+	/**
+	 * Force a manually-constructed RemoteSource into StreamMerger's ref map
+	 * (used by the few tests that need to bypass the add_remote HTTPS gate).
+	 */
+	private function poke_merger_remote_nodes( StreamMerger $sm, array $nodes ): void {
+		$ref = new \ReflectionProperty( StreamMerger::class, 'remote_nodes' );
+		$ref->setAccessible( true );
+		$existing = $ref->getValue( $sm );
+		$ref->setValue( $sm, \array_merge( \is_array( $existing ) ? $existing : [], $nodes ) );
 	}
 
 	// =========================================================================
@@ -818,13 +864,18 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 2, $sm->remote_count() );
 	}
 
-	public function test_init_curl_multi_idempotent_when_called_directly(): void {
-		// Public init_curl_multi should be safe to call repeatedly.
+	public function test_ensure_multi_idempotent_per_remote_source(): void {
+		// The cURL multi handle now lives on each RemoteSource (one per
+		// spoke), registered with EventFramework lazily on first connect
+		// attempt. `ensure_multi` is idempotent.
 		$sm = $this->make_merger();
-		$sm->init_curl_multi();
-		$sm->init_curl_multi();
-		$sm->init_curl_multi();
-		$this->addToAssertionCount( 1 );
+		$sm->add_remote( 'siteA', 'http://siteA.test/', 'tok' );
+		// Drive maybe_connect three times — only the first creates a handle;
+		// the others go through the backoff-or-already-connected guard.
+		$this->invoke_remote( $sm, 'siteA', 'maybe_connect' );
+		$this->invoke_remote( $sm, 'siteA', 'maybe_connect' );
+		$this->invoke_remote( $sm, 'siteA', 'maybe_connect' );
+		$this->assertNotNull( $sm->test_get_handle( 'siteA' ) );
 	}
 
 	// =========================================================================
@@ -1008,50 +1059,51 @@ class StreamMergerTest extends TestCase {
 		$sm = $this->make_merger();
 		$sm->add_remote( 'siteOversize', 'http://siteOversize.test/', 'tok' );
 
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$remotes = $ref->getValue( $sm );
-		// Pre-fill current_event.data to MAX_EVENT_SIZE bytes — equal to cap, not over.
-		$remotes['siteOversize']['current_event']['data'] = \str_repeat( 'A', StreamMerger::MAX_EVENT_SIZE );
-		$remotes['siteOversize']['connected']             = true;
-		$ref->setValue( $sm, $remotes );
+		$this->poke_remote(
+			$sm,
+			'siteOversize',
+			'current_event',
+			[ 'event' => '', 'data' => \str_repeat( 'A', RemoteSource::MAX_EVENT_SIZE ) ]
+		);
+		$this->poke_remote( $sm, 'siteOversize', 'connected', true );
 
-		$parse = new \ReflectionMethod( StreamMerger::class, 'parse_sse_line' );
-		$parse->setAccessible( true );
-
-		// Send a tiny `data: X` line — append `"\nX"` (2 bytes) → total > MAX_EVENT_SIZE.
-		$ok = $parse->invoke( $sm, 'siteOversize', 'data: X' );
+		// `data: X` → append `"\nX"` (2 bytes) → total > MAX_EVENT_SIZE.
+		$ok = $this->invoke_remote( $sm, 'siteOversize', 'parse_sse_line', [ 'data: X' ] );
 		$this->assertFalse( $ok, 'parse_sse_line must return false on event-data overflow' );
 		$this->assertStringContainsString( 'Event data overflow', (string) $sm->get_last_error( 'siteOversize' ) );
 	}
 
 	public function test_max_queue_size_overflow_at_test_path(): void {
 		// Synthetic remote test-path enforces MAX_QUEUE_SIZE. Reach into the
-		// internal state via reflection to inflate the queue above the cap,
-		// then drive ONE more dispatch_event to trigger the overflow path.
-		// We invoke dispatch_event directly (rather than process_sse_chunk) so
-		// the post-failure drain_test_queue doesn't replay all our padded events.
+		// __test__ RemoteSource's queue + current_event via reflection,
+		// inflate the queue above the cap, then drive ONE more dispatch_event
+		// to trigger the overflow path. We invoke dispatch_event directly
+		// (rather than process_sse_chunk) so the post-failure drain doesn't
+		// replay all our padded events.
 		$sm = $this->make_merger();
 		$sm->process_sse_chunk( "data: priming\n\n" );
 
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$remotes = $ref->getValue( $sm );
-		// Pad to exactly MAX_QUEUE_SIZE; the next dispatch hits the cap.
-		$remotes['__test__']['event_queue']    = \array_fill( 0, StreamMerger::MAX_QUEUE_SIZE, [ 'type' => 'x', 'data' => null, 'raw_data' => 'x' ] );
-		// Stage a non-empty current_event so dispatch has something to dispatch.
-		$remotes['__test__']['current_event']  = [ 'event' => 'x', 'data' => 'overflow-trigger' ];
-		$remotes['__test__']['connected']      = true;
-		$ref->setValue( $sm, $remotes );
+		$this->poke_remote(
+			$sm,
+			'__test__',
+			'event_queue',
+			\array_fill( 0, RemoteSource::MAX_QUEUE_SIZE, [ 'type' => 'x', 'data' => null, 'raw_data' => 'x' ] )
+		);
+		$this->poke_remote(
+			$sm,
+			'__test__',
+			'current_event',
+			[ 'event' => 'x', 'data' => 'overflow-trigger' ]
+		);
+		$this->poke_remote( $sm, '__test__', 'connected', true );
 
-		$dispatch = new \ReflectionMethod( StreamMerger::class, 'dispatch_event' );
-		$dispatch->setAccessible( true );
-		$result = $dispatch->invoke( $sm, '__test__' );
+		$result = $this->invoke_remote( $sm, '__test__', 'dispatch_event' );
 		$this->assertFalse( $result, 'dispatch_event must return false on queue overflow' );
-
-		$state = $ref->getValue( $sm );
-		$this->assertFalse( $state['__test__']['connected'] );
-		$this->assertStringContainsString( 'Event queue overflow', (string) $state['__test__']['last_error'] );
+		$this->assertFalse( $this->peek_remote( $sm, '__test__', 'connected' ) );
+		$this->assertStringContainsString(
+			'Event queue overflow',
+			(string) $this->peek_remote( $sm, '__test__', 'last_error' )
+		);
 	}
 
 	// =========================================================================
@@ -1059,41 +1111,23 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_maybe_send_heartbeat_skipped_when_url_not_https_with_strict_https(): void {
-		// HTTPS-only mode rejects http heartbeats too. Need a connected SSE
-		// connection state for the heartbeat path.
+		// HTTPS-only mode rejects http heartbeats too. add_remote refuses
+		// http URLs at registration, so we construct a RemoteSource directly
+		// and add it to the merger's ref list so the helper can reach it.
 		$sm = new StreamMerger( 0 );
 		$sm->set_logs_dir( $this->tmp_dir );
-		// require_https defaults to true. add_remote refuses http URLs entirely;
-		// we have to manually inject a remote in connected state with an http URL.
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$remotes = [
-			'http-remote' => [
-				'url'             => 'http://insecure.test',
-				'auth_username'   => '',
-				'auth_password'   => '',
-				'auth_token'      => 'tok',
-				'handle'          => null,
-				'buffer'          => '',
-				'current_event'   => [ 'event' => '', 'data' => '' ],
-				'event_queue'     => [],
-				'slot'            => 5,
-				'position'        => [ 'segment_id' => 0, 'offset' => 0 ],
-				'last_event_time' => 0.0,
-				'current_backoff' => 1,
-				'last_attempt'    => 0.0,
-				'connected'       => true,
-				'last_error'      => null,
-				'last_http_code'  => null,
-				'last_heartbeat'  => 0,
-			],
-		];
-		$ref->setValue( $sm, $remotes );
+		$cache = new FakeMemcached();
+		$sm->set_cache( $cache );
+		$remote = new RemoteSource( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
+		$remote->set_require_https( true );
+		$remote->set_cache( $cache );
+		$this->poke_merger_remote_nodes( $sm, [ 'http-remote' => $remote ] );
+		// Connected + slot acquired so the maybe-send path is reached.
+		$this->poke_remote( $sm, 'http-remote', 'connected', true );
+		$this->poke_remote( $sm, 'http-remote', 'slot', 5 );
 
 		Core::$now = 1000.0;
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_send_heartbeat' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'http-remote' );
+		$this->invoke_remote( $sm, 'http-remote', 'maybe_send_heartbeat' );
 
 		$this->assertSame( 'heartbeat endpoint not HTTPS', $sm->get_last_error( 'http-remote' ) );
 	}
@@ -1101,90 +1135,63 @@ class StreamMergerTest extends TestCase {
 	public function test_maybe_send_heartbeat_skipped_when_disconnected(): void {
 		$sm = $this->make_merger();
 		$sm->add_remote( 'site-disc', 'http://site-disc.test/', 'tok' );
-		// Force disconnected state.
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$remotes = $ref->getValue( $sm );
-		$remotes['site-disc']['connected']      = false;
-		$remotes['site-disc']['slot']           = 3;
-		$remotes['site-disc']['last_heartbeat'] = 0;
-		$ref->setValue( $sm, $remotes );
+		$this->poke_remote( $sm, 'site-disc', 'connected', false );
+		$this->poke_remote( $sm, 'site-disc', 'slot', 3 );
+		$this->poke_remote( $sm, 'site-disc', 'last_heartbeat', 0 );
 
 		Core::$now = 1000.0;
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_send_heartbeat' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'site-disc' );
+		$this->invoke_remote( $sm, 'site-disc', 'maybe_send_heartbeat' );
 
 		// last_heartbeat NOT updated → still 0.
-		$post = $ref->getValue( $sm );
-		$this->assertSame( 0, $post['site-disc']['last_heartbeat'] );
+		$this->assertSame( 0, $this->peek_remote( $sm, 'site-disc', 'last_heartbeat' ) );
 	}
 
 	public function test_maybe_send_heartbeat_skipped_when_no_slot(): void {
 		$sm = $this->make_merger();
 		$sm->add_remote( 'site-noslot', 'http://site-noslot.test/', 'tok' );
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$remotes = $ref->getValue( $sm );
-		$remotes['site-noslot']['connected']      = true;
-		$remotes['site-noslot']['slot']           = null; // No slot acquired.
-		$remotes['site-noslot']['last_heartbeat'] = 0;
-		$ref->setValue( $sm, $remotes );
+		$this->poke_remote( $sm, 'site-noslot', 'connected', true );
+		$this->poke_remote( $sm, 'site-noslot', 'slot', null );
+		$this->poke_remote( $sm, 'site-noslot', 'last_heartbeat', 0 );
 
 		Core::$now = 1000.0;
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_send_heartbeat' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'site-noslot' );
+		$this->invoke_remote( $sm, 'site-noslot', 'maybe_send_heartbeat' );
 
-		// No update.
-		$post = $ref->getValue( $sm );
-		$this->assertSame( 0, $post['site-noslot']['last_heartbeat'] );
+		$this->assertSame( 0, $this->peek_remote( $sm, 'site-noslot', 'last_heartbeat' ) );
 	}
 
 	public function test_maybe_send_heartbeat_skipped_when_recent(): void {
 		$sm = $this->make_merger();
 		$sm->add_remote( 'site-recent', 'http://site-recent.test/', 'tok' );
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$remotes = $ref->getValue( $sm );
-		$remotes['site-recent']['connected']      = true;
-		$remotes['site-recent']['slot']           = 0;
-		$remotes['site-recent']['last_heartbeat'] = 1000;
-		$ref->setValue( $sm, $remotes );
+		$this->poke_remote( $sm, 'site-recent', 'connected', true );
+		$this->poke_remote( $sm, 'site-recent', 'slot', 0 );
+		$this->poke_remote( $sm, 'site-recent', 'last_heartbeat', 1000 );
 
 		Core::$now = 1005.0; // Only 5s after — under HEARTBEAT_INTERVAL=15s.
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_send_heartbeat' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'site-recent' );
+		$this->invoke_remote( $sm, 'site-recent', 'maybe_send_heartbeat' );
 
-		$post = $ref->getValue( $sm );
 		// Unchanged — early return.
-		$this->assertSame( 1000, $post['site-recent']['last_heartbeat'] );
+		$this->assertSame( 1000, $this->peek_remote( $sm, 'site-recent', 'last_heartbeat' ) );
 	}
 
 	public function test_maybe_send_heartbeat_unknown_server_noop(): void {
 		$sm = $this->make_merger();
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_send_heartbeat' );
-		$invoke->setAccessible( true );
-		// Should not crash for unknown server.
-		$invoke->invoke( $sm, 'phantom' );
-		$this->addToAssertionCount( 1 );
+		// `phantom` doesn't exist as a RemoteSource — the orchestrator's role
+		// here is just "don't crash". With no child, there's nothing to invoke.
+		$this->assertNull( $sm->get_slot( 'phantom' ) );
 	}
 
 	public function test_update_heartbeat_status_success_response(): void {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
-
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_heartbeat_status' );
-		$invoke->setAccessible( true );
+		$sm->add_remote( 'siteHB', 'http://siteHB.test/', 'tok' );
 
 		Core::$now = 1000.0;
 		$response = [
 			'response' => [ 'code' => 200 ],
 			'body'     => json_encode( [ 'success' => true ] ),
 		];
-		$invoke->invoke( $sm, 'siteHB', $response, 12.5, 999 );
+		$this->invoke_remote( $sm, 'siteHB', 'update_heartbeat_status', [ $response, 12.5, 999 ] );
 
 		$status = $cache->get( 'aggregator_status:siteHB:p0' );
 		$this->assertSame( 'success', $status['last_heartbeat_response_status'] );
@@ -1197,13 +1204,11 @@ class StreamMergerTest extends TestCase {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
-
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_heartbeat_status' );
-		$invoke->setAccessible( true );
+		$sm->add_remote( 'siteWPE', 'http://siteWPE.test/', 'tok' );
 
 		Core::$now = 1000.0;
 		$wpe = new \WP_Error( 'timeout', 'Connection timed out' );
-		$invoke->invoke( $sm, 'siteWPE', $wpe, 5000.0, 999 );
+		$this->invoke_remote( $sm, 'siteWPE', 'update_heartbeat_status', [ $wpe, 5000.0, 999 ] );
 
 		$status = $cache->get( 'aggregator_status:siteWPE:p0' );
 		$this->assertSame( 'error', $status['last_heartbeat_response_status'] );
@@ -1214,16 +1219,14 @@ class StreamMergerTest extends TestCase {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
-
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_heartbeat_status' );
-		$invoke->setAccessible( true );
+		$sm->add_remote( 'siteHTTPErr', 'http://siteHTTPErr.test/', 'tok' );
 
 		Core::$now = 1000.0;
 		$response = [
 			'response' => [ 'code' => 500 ],
 			'body'     => 'Internal Server Error',
 		];
-		$invoke->invoke( $sm, 'siteHTTPErr', $response, 50.0, 999 );
+		$this->invoke_remote( $sm, 'siteHTTPErr', 'update_heartbeat_status', [ $response, 50.0, 999 ] );
 
 		$status = $cache->get( 'aggregator_status:siteHTTPErr:p0' );
 		$this->assertSame( 'error', $status['last_heartbeat_response_status'] );
@@ -1234,16 +1237,14 @@ class StreamMergerTest extends TestCase {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
-
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_heartbeat_status' );
-		$invoke->setAccessible( true );
+		$sm->add_remote( 'siteSlotExp', 'http://siteSlotExp.test/', 'tok' );
 
 		Core::$now = 1000.0;
 		$response = [
 			'response' => [ 'code' => 200 ],
 			'body'     => json_encode( [ 'success' => false, 'error' => 'Slot not found' ] ),
 		];
-		$invoke->invoke( $sm, 'siteSlotExp', $response, 25.0, 999 );
+		$this->invoke_remote( $sm, 'siteSlotExp', 'update_heartbeat_status', [ $response, 25.0, 999 ] );
 
 		$status = $cache->get( 'aggregator_status:siteSlotExp:p0' );
 		$this->assertSame( 'slot_expired', $status['last_heartbeat_response_status'] );
@@ -1255,12 +1256,10 @@ class StreamMergerTest extends TestCase {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
-
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_heartbeat_status' );
-		$invoke->setAccessible( true );
+		$sm->add_remote( 'siteOdd', 'http://siteOdd.test/', 'tok' );
 
 		Core::$now = 1000.0;
-		$invoke->invoke( $sm, 'siteOdd', 'plain string', 0.0, 999 );
+		$this->invoke_remote( $sm, 'siteOdd', 'update_heartbeat_status', [ 'plain string', 0.0, 999 ] );
 
 		$status = $cache->get( 'aggregator_status:siteOdd:p0' );
 		$this->assertSame( 'error', $status['last_heartbeat_response_status'] );
@@ -1272,12 +1271,15 @@ class StreamMergerTest extends TestCase {
 		$failing = new FakeMemcached( fail_all: true );
 		$sm      = $this->make_merger();
 		$sm->set_cache( $failing );
-
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_heartbeat_status' );
-		$invoke->setAccessible( true );
+		$sm->add_remote( 'siteCacheDown', 'http://siteCacheDown.test/', 'tok' );
 
 		Core::$now = 1000.0;
-		$invoke->invoke( $sm, 'siteCacheDown', [ 'response' => [ 'code' => 200 ], 'body' => '' ], 0.0, 999 );
+		$this->invoke_remote(
+			$sm,
+			'siteCacheDown',
+			'update_heartbeat_status',
+			[ [ 'response' => [ 'code' => 200 ], 'body' => '' ], 0.0, 999 ]
+		);
 		$this->addToAssertionCount( 1 );
 	}
 
@@ -1365,8 +1367,9 @@ class StreamMergerTest extends TestCase {
 
 		$sm->on_curl_data( $h, "event: entry\ndata: " . json_encode( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) . "\n\n" );
 
-		// The merger's name is 'test-stream-merger' (set by make_merger).
-		$this->assertSame( 'test-stream-merger', $capture->captured[0][ Message::FROM ] );
+		// Each entry now exits via RemoteSource (the per-spoke child node),
+		// whose name is namespaced under the merger as `{merger}:remote:{id}`.
+		$this->assertSame( 'test-stream-merger:remote:siteFrom', $capture->captured[0][ Message::FROM ] );
 	}
 
 	// =========================================================================
@@ -1651,19 +1654,21 @@ class StreamMergerTest extends TestCase {
 		// Drive the buffer overflow via process_sse_chunk on the test path.
 		$sm = $this->make_merger();
 
-		// First chunk forces the synthetic __test__ remote to exist.
+		// First chunk forces the synthetic __test__ RemoteSource child to
+		// exist and seeds `connected=false`. We flip it so the second-chunk
+		// overflow disconnect is detectable as a state transition.
 		$sm->process_sse_chunk( "data: priming\n\n" );
+		$this->poke_remote( $sm, '__test__', 'connected', true );
 
 		// Now feed a single huge chunk with no newline — buffer overflows.
-		$big = \str_repeat( 'x', StreamMerger::MAX_BUFFER_SIZE + 1 );
+		$big = \str_repeat( 'x', RemoteSource::MAX_BUFFER_SIZE + 1 );
 		$sm->process_sse_chunk( $big );
 
-		// The synthetic remote should be marked disconnected with overflow error.
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remotes' );
-		$ref->setAccessible( true );
-		$state = $ref->getValue( $sm );
-		$this->assertFalse( $state['__test__']['connected'] );
-		$this->assertStringContainsString( 'Buffer overflow', (string) $state['__test__']['last_error'] );
+		$this->assertFalse( $this->peek_remote( $sm, '__test__', 'connected' ) );
+		$this->assertStringContainsString(
+			'Buffer overflow',
+			(string) $this->peek_remote( $sm, '__test__', 'last_error' )
+		);
 	}
 
 	// =========================================================================
@@ -1720,18 +1725,17 @@ class StreamMergerTest extends TestCase {
 
 		// Try to reconnect within the 2s backoff — must NOT reopen.
 		Core::$now = 1001.0;
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_connect' );
-		$invoke->setAccessible( true );
-		$result = $invoke->invoke( $sm, 'siteBackoff' );
+		$result = $this->invoke_remote( $sm, 'siteBackoff', 'maybe_connect' );
 		$this->assertFalse( $result );
 		$this->assertNull( $sm->test_get_handle( 'siteBackoff' ) );
 	}
 
 	public function test_maybe_connect_unknown_server_returns_false(): void {
-		$sm     = $this->make_merger();
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'maybe_connect' );
-		$invoke->setAccessible( true );
-		$this->assertFalse( $invoke->invoke( $sm, 'nonexistent' ) );
+		// With no RemoteSource for the given server_id, the merger never
+		// instantiates anything to call maybe_connect on. Public surface:
+		// the test_get_handle accessor returns null for unknown servers.
+		$sm = $this->make_merger();
+		$this->assertNull( $sm->test_get_handle( 'nonexistent' ) );
 	}
 
 	// =========================================================================
@@ -1743,10 +1747,9 @@ class StreamMergerTest extends TestCase {
 		$failing = new FakeMemcached( fail_all: true );
 		$sm      = $this->make_merger();
 		$sm->set_cache( $failing );
+		$sm->add_remote( 'siteCacheDown', 'http://siteCacheDown.test/', 'tok' );
 
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'record_successful_heartbeat' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'siteCacheDown' );
+		$this->invoke_remote( $sm, 'siteCacheDown', 'record_successful_heartbeat' );
 
 		// FakeMemcached(fail_all=true).get returns null → no key created.
 		$this->assertNull( $failing->get( 'aggregator_status:siteCacheDown:p0' ) );
@@ -1756,6 +1759,7 @@ class StreamMergerTest extends TestCase {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
+		$sm->add_remote( 'siteClear', 'http://siteClear.test/', 'tok' );
 
 		$key = 'aggregator_status:siteClear:p0';
 		$cache->set( $key, [
@@ -1768,9 +1772,7 @@ class StreamMergerTest extends TestCase {
 			'kept_field'                     => 'kept',
 		], 300 );
 
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'clear_heartbeat_status' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'siteClear' );
+		$this->invoke_remote( $sm, 'siteClear', 'clear_heartbeat_status' );
 
 		$status = $cache->get( $key );
 		$this->assertNull( $status['last_heartbeat_sent'] );
@@ -1787,10 +1789,9 @@ class StreamMergerTest extends TestCase {
 		$cache = new FakeMemcached();
 		$sm    = $this->make_merger();
 		$sm->set_cache( $cache );
+		$sm->add_remote( 'siteSSEHB', 'http://siteSSEHB.test/', 'tok' );
 
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'update_sse_heartbeat' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'siteSSEHB', 1700000000 );
+		$this->invoke_remote( $sm, 'siteSSEHB', 'update_sse_heartbeat', [ 1700000000 ] );
 
 		$status = $cache->get( 'aggregator_status:siteSSEHB:p0' );
 		$this->assertSame( 1700000000, $status['last_sse_heartbeat'] );
@@ -1800,15 +1801,12 @@ class StreamMergerTest extends TestCase {
 	// detach_handle: closes idempotently.
 	// =========================================================================
 
-	public function test_detach_handle_clears_handle_to_server_mapping(): void {
+	public function test_detach_handle_clears_handle(): void {
 		$sm = $this->make_merger();
 		$sm->add_remote( 'siteDetach', 'http://siteDetach.test/', 'tok' );
-		$h = $sm->test_get_handle( 'siteDetach' );
-		$this->assertNotNull( $h );
+		$this->assertNotNull( $sm->test_get_handle( 'siteDetach' ) );
 
-		$invoke = new \ReflectionMethod( StreamMerger::class, 'detach_handle' );
-		$invoke->setAccessible( true );
-		$invoke->invoke( $sm, 'siteDetach', $h );
+		$this->invoke_remote( $sm, 'siteDetach', 'detach_handle' );
 
 		// Handle ref is null on the remote.
 		$this->assertNull( $sm->test_get_handle( 'siteDetach' ) );
@@ -1917,21 +1915,22 @@ class StreamMergerTest extends TestCase {
 		$this->assertStringContainsString( 'cmd sm:config set_require_https true', $dump );
 	}
 
-	public function test_stream_merger_add_remote_verb_requires_id(): void {
-		$sm = new StreamMerger();
-		$sm->name( 'sm' );
-		$result = $sm->interpreter()->execute( 'add_remote' );
-		$this->assertStringContainsString( 'usage', $result );
-	}
-
 	public function test_stream_merger_node_schema_declares_verbs(): void {
 		$schema = StreamMerger::node_schema();
 		$this->assertSame( 'I/O', $schema['category'] );
 		$verb_names = \array_column( $schema['verbs'], 'name' );
 		$this->assertContains( 'set_verify_ssl', $verb_names );
 		$this->assertContains( 'set_require_https', $verb_names );
-		$this->assertContains( 'start_periodic_tick', $verb_names );
-		$this->assertContains( 'add_remote', $verb_names );
 		$this->assertContains( 'load_remotes_from_registry', $verb_names );
+		// `start_periodic_tick` is no longer a verb — it fires automatically
+		// from name() on first name set (mandatory, zero-arg, always needed
+		// in the aggregator topology, so the verb was pure boilerplate).
+		$this->assertNotContains( 'start_periodic_tick', $verb_names );
+		// `add_remote` is no longer a verb — the single-arg shape was
+		// registry-driven (only `server_id` survived to TSL while url/creds
+		// came from ServerRegistry), confusing in the Inspector, and
+		// redundant with `load_remotes_from_registry` for production hubs.
+		// The PHP method stays so `load_remotes_from_registry` can call it.
+		$this->assertNotContains( 'add_remote', $verb_names );
 	}
 }
