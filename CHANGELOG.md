@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.27] - 2026-05-14
+
+### Changed
+
+- **`newspack_nodes/topologies` filter callback delegates to `Topology_Registry::synthesize_entry()`.** Drops the inline `resolve` + `frontmatter` + entry-shape dance in favor of the substrate's new shared helper, so both the app's catalog-publishing path and the substrate's admin-overlay fallback build entries from a single source of truth.
+- Drops six `class_exists()` guards for same-plugin classes (`Config` × 3, `JobWorker` × 2, `StatusController`, `ServerRegistry`). With the classmap autoloader, these defended against load-order races that can't happen.
+
+**Requires:** [newspack-nodes ≥ v0.1.23](https://github.com/Automattic/newspack-nodes/releases/tag/v0.1.23) — for `Topology_Registry::synthesize_entry()`.
+
 ## [0.2.26] - 2026-05-14
 
 ### Added
