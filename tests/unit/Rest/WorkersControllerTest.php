@@ -81,6 +81,35 @@ class WorkersControllerTest extends TestCase {
 		return $lock_dir;
 	}
 
+	/**
+	 * Seed an offsetlog entry with the new metadata so the controller
+	 * emits a per-Consumer row for the given worker_type. Mirrors what
+	 * Consumer::checkpoint writes at runtime.
+	 */
+	private function seed_offsetlog( string $source_basename, int $partition, array $extra = [] ): void {
+		$dir = "{$this->tmp}/offsets/{$source_basename}.p{$partition}/p{$partition}";
+		\mkdir( $dir, 0755, true );
+		$entry = \array_merge(
+			[
+				'seg'         => 0,
+				'off'         => 0,
+				'ts'          => \microtime( true ),
+				'name'        => "{$source_basename}:consumer",
+				'target'      => '',
+				'worker_type' => '',
+			],
+			$extra
+		);
+		$msg                                       = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \microtime( true );
+		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		\file_put_contents(
+			"{$dir}/0.log",
+			\Newspack_Nodes\Message::packed( $msg ) . "\n"
+		);
+	}
+
 	private function set_standalone_heartbeat( string $name, int $age_seconds = 0 ): string {
 		$lock_dir = "{$this->tmp}/locks/{$name}.lock.d";
 		\mkdir( $lock_dir, 0755, true );
@@ -135,10 +164,10 @@ class WorkersControllerTest extends TestCase {
 	}
 
 	public function test_get_workers_uses_live_position_from_cache(): void {
-		// Seed a live cursor for an arbitrary worker type — controller will pick
-		// it up if the topology happens to include that type. The point of this
-		// test is: the resolver path (cache → fallback) at least doesn't crash
-		// and respects the FakeMemcached injection.
+		// Worker discovery is offsetlog-driven; seed a metadata entry so
+		// the controller emits a firehose-workers row, then seed memcache
+		// with the live cursor that should override the offsetlog seg/off.
+		$this->seed_offsetlog( 'firehose', 0, [ 'worker_type' => 'firehose-workers' ] );
 		$source_path = "{$this->tmp}/logs/firehose.log";
 		$host        = \gethostname() ?: 'unknown';
 		$this->cache->set(
@@ -238,10 +267,18 @@ class WorkersControllerTest extends TestCase {
 		$this->assertContains( 'partitioned-thing', $names );
 	}
 
-	public function test_get_workers_reports_correct_input_log_per_type(): void {
+	public function test_get_workers_emits_one_row_per_consumer_with_input_log(): void {
+		// Seed offsetlog metadata so the controller can attribute one
+		// Consumer to each topology type. Each row reports the Consumer's
+		// single input_log + immediate downstream `target` (a node name,
+		// not a log file).
+		$this->seed_offsetlog( 'firehose',  0, [ 'worker_type' => 'firehose-workers', 'name' => 'firehose:consumer',  'target' => 'firehose:tee' ] );
+		$this->seed_offsetlog( 'jobintake', 0, [ 'worker_type' => 'firehose-workers', 'name' => 'jobintake:consumer', 'target' => 'job-router' ] );
+		$this->seed_offsetlog( 'requests',  0, [ 'worker_type' => 'request-workers',  'name' => 'requests:consumer',  'target' => 'flame-builder' ] );
+		$this->seed_offsetlog( 'jobs',      0, [ 'worker_type' => 'job-workers',      'name' => 'jobs:consumer',      'target' => 'job-worker' ] );
+
 		$ctrl = new WorkersController();
 		$resp = $ctrl->get_workers( new \WP_REST_Request() );
-		$this->assertInstanceOf( \WP_REST_Response::class, $resp );
 		$body = $resp->get_data();
 
 		$by_type = [];
@@ -249,59 +286,23 @@ class WorkersControllerTest extends TestCase {
 			$by_type[ $w['type'] ?? '' ][] = $w;
 		}
 
-		$expected_inputs = [
-			'firehose-workers' => 'firehose.log',
-			'request-workers'  => 'requests.log',
-			'job-workers'      => 'jobs.log',
-			'aggregator'       => '',
-		];
-		foreach ( $expected_inputs as $type => $expected ) {
-			$this->assertArrayHasKey( $type, $by_type, "Missing topology type: {$type}" );
-			foreach ( $by_type[ $type ] as $worker ) {
-				$this->assertSame(
-					$expected,
-					$worker['input_log'] ?? null,
-					"Worker {$type} reported wrong input_log"
-				);
-			}
-		}
+		// firehose-workers has TWO consumers (firehose + jobintake).
+		$this->assertCount( 2, $by_type['firehose-workers'] );
+		$handlers = \array_column( $by_type['firehose-workers'], 'handler' );
+		$this->assertContains( 'firehose:consumer', $handlers );
+		$this->assertContains( 'jobintake:consumer', $handlers );
 
-		// firehose-workers also tails jobintake.log as a secondary input.
-		$firehose = $by_type['firehose-workers'][0] ?? null;
-		$this->assertNotNull( $firehose );
-		$this->assertContains( 'jobintake.log', $firehose['inputs'] ?? [] );
-		$this->assertContains( 'firehose.log', $firehose['inputs'] ?? [] );
+		// request-workers and job-workers each have one consumer.
+		$this->assertCount( 1, $by_type['request-workers'] );
+		$this->assertSame( 'requests.log', $by_type['request-workers'][0]['input_log'] );
+		$this->assertSame( 'flame-builder', $by_type['request-workers'][0]['target'] );
 
-		// firehose-workers writes requests.log + errors.log + jobs.log.
-		$this->assertContains( 'requests.log', $firehose['outputs'] ?? [] );
-		$this->assertContains( 'errors.log', $firehose['outputs'] ?? [] );
-		$this->assertContains( 'jobs.log', $firehose['outputs'] ?? [] );
+		$this->assertCount( 1, $by_type['job-workers'] );
+		$this->assertSame( 'jobs.log', $by_type['job-workers'][0]['input_log'] );
 
-		// Primary input has cursor; secondary input does not.
-		$primary = $firehose['inputs_status'][0] ?? [];
-		$this->assertSame( 'firehose.log', $primary['name'] ?? null );
-		$this->assertArrayHasKey( 'cursor_seg', $primary );
-		$this->assertArrayHasKey( 'cursor_offset', $primary );
-		// Outputs never carry cursor data.
-		foreach ( $firehose['outputs_status'] as $out ) {
-			$this->assertArrayNotHasKey( 'cursor_seg', $out );
-			$this->assertArrayNotHasKey( 'cursor_offset', $out );
-		}
-
-		$flame = $by_type['request-workers'][0] ?? null;
-		$this->assertNotNull( $flame );
-		$this->assertCount( 1, $flame['inputs_status'] ?? [] );
-		$this->assertCount( 1, $flame['outputs_status'] ?? [] );
-
-		$jobw = $by_type['job-workers'][0] ?? null;
-		$this->assertNotNull( $jobw );
-		$this->assertCount( 1, $jobw['inputs_status'] ?? [] );
-		$this->assertCount( 0, $jobw['outputs_status'] ?? [] );
-
-		$agg = $by_type['aggregator'][0] ?? null;
-		$this->assertNotNull( $agg );
-		$this->assertCount( 0, $agg['inputs_status'] ?? [] );
-		$this->assertCount( 1, $agg['outputs_status'] ?? [] );
+		// aggregator has no Consumer; emits a placeholder row with blank input.
+		$this->assertCount( 1, $by_type['aggregator'] );
+		$this->assertSame( '', $by_type['aggregator'][0]['input_log'] );
 	}
 
 	public function test_get_workers_reports_segment_data(): void {
@@ -310,6 +311,8 @@ class WorkersControllerTest extends TestCase {
 		\mkdir( $dir, 0755, true );
 		\file_put_contents( "{$dir}/0.log", \str_repeat( 'X', 500 ) );
 		\file_put_contents( "{$dir}/1.log", \str_repeat( 'Y', 200 ) );
+
+		$this->seed_offsetlog( 'firehose', 0, [ 'worker_type' => 'firehose-workers' ] );
 
 		$ctrl = new WorkersController();
 		$resp = $ctrl->get_workers( new \WP_REST_Request() );
@@ -342,6 +345,7 @@ class WorkersControllerTest extends TestCase {
 		if ( false === @\symlink( "{$dir}/0.log", "{$dir}/9.log" ) ) {
 			$this->markTestSkipped( 'symlink() not supported in this filesystem' );
 		}
+		$this->seed_offsetlog( 'firehose', 0, [ 'worker_type' => 'firehose-workers' ] );
 
 		$ctrl = new WorkersController();
 		$resp = $ctrl->get_workers( new \WP_REST_Request() );
