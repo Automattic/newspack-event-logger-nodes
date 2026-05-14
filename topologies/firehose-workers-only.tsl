@@ -13,5 +13,5 @@ make_node RequestBuilder request-builder
 connect_node request-builder requests:partition
 cmd request-builder:config set_errors_target errors:partition
 
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:base_directory>/offsets/firehose.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:offsets_dir>/firehose.p<partition>
 connect_node firehose:consumer request-builder

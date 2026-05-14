@@ -15,5 +15,5 @@ cmd flame-builder:config set_is_hub <config:is_hub>
 cmd flame-builder:config set_auto_tune <config:auto_disable_threshold> <config:auto_protect_time_threshold>
 cmd flame-builder:config set_significant_events <config:significant_events_csv>
 
-make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> <config:base_directory>/offsets/requests.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> <config:offsets_dir>/requests.p<partition>
 connect_node requests:consumer flame-builder
