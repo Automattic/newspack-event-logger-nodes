@@ -72,6 +72,22 @@ class WorkersControllerRealShapeTest extends TestCase {
 		}
 	}
 
+	private function seed_offsetlog_metadata( string $source_basename, int $partition, string $worker_type ): void {
+		$config   = \Newspack_Nodes\Config::load_config( 'full' );
+		$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$this->seed_offsetlog_entry(
+			"{$base_dir}/offsets/{$source_basename}.p{$partition}",
+			[
+				'seg'         => 0,
+				'off'         => 0,
+				'ts'          => \microtime( true ),
+				'name'        => "{$source_basename}:consumer",
+				'target'      => '',
+				'worker_type' => $worker_type,
+			]
+		);
+	}
+
 	public function test_workers_resolve_live_position_when_cache_has_one(): void {
 		// Cursor lives in memcache keyed by the source path Consumer writes to:
 		// `np:pos:{hostname}:{base_directory}/logs/{input_log}:p{N}`. Test
@@ -79,6 +95,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 		// controller reads via the same interface.
 		$config      = \Newspack_Nodes\Config::load_config( 'full' );
 		$base_dir    = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$this->seed_offsetlog_metadata( 'firehose', 0, 'firehose-workers-and-jobs' );
 		$source_path = "{$base_dir}/logs/firehose.log";
 		$host        = \gethostname() ?: 'unknown';
 		$this->cache->set(
@@ -103,6 +120,72 @@ class WorkersControllerRealShapeTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
+	public function test_workers_emit_one_row_per_consumer_from_offsetlog_metadata(): void {
+		// New shape: a worker with two Consumers (firehose:consumer +
+		// jobintake:consumer) should produce two rows under the same
+		// worker_type, each carrying its own handler / input_log / target.
+		// The data comes from offsetlog entries — no hardcoded
+		// WORKER_INPUTS map.
+		$config   = \Newspack_Nodes\Config::load_config( 'full' );
+		$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+
+		$this->seed_offsetlog_entry(
+			"{$base_dir}/offsets/firehose.p0",
+			[
+				'seg'         => 0,
+				'off'         => 0,
+				'ts'          => \microtime( true ),
+				'name'        => 'firehose:consumer',
+				'target'      => 'firehose:tee',
+				'worker_type' => 'firehose-workers-and-jobs',
+			]
+		);
+		$this->seed_offsetlog_entry(
+			"{$base_dir}/offsets/jobintake.p0",
+			[
+				'seg'         => 0,
+				'off'         => 0,
+				'ts'          => \microtime( true ),
+				'name'        => 'jobintake:consumer',
+				'target'      => 'job-router',
+				'worker_type' => 'firehose-workers-and-jobs',
+			]
+		);
+
+		$ctrl = new WorkersController();
+		$resp = $ctrl->get_workers( new \WP_REST_Request() );
+		$body = $resp->get_data();
+
+		$rows = \array_values( \array_filter(
+			$body['workers'],
+			static fn ( $w ) => 'firehose-workers-and-jobs' === ( $w['type'] ?? '' )
+		) );
+		$handlers = \array_column( $rows, 'handler' );
+		$this->assertContains( 'firehose:consumer', $handlers );
+		$this->assertContains( 'jobintake:consumer', $handlers );
+
+		$by_handler = [];
+		foreach ( $rows as $r ) {
+			$by_handler[ $r['handler'] ] = $r;
+		}
+		$this->assertSame( 'firehose.log',  $by_handler['firehose:consumer']['input_log'] );
+		$this->assertSame( 'firehose:tee',  $by_handler['firehose:consumer']['target'] );
+		$this->assertSame( 'jobintake.log', $by_handler['jobintake:consumer']['input_log'] );
+		$this->assertSame( 'job-router',    $by_handler['jobintake:consumer']['target'] );
+	}
+
+	private function seed_offsetlog_entry( string $offsetlog_dir, array $entry ): void {
+		\Newspack_Event_Logger_Nodes\Config::ensure_path( "{$offsetlog_dir}/p0" );
+		$msg                                       = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \microtime( true );
+		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		\file_put_contents(
+			"{$offsetlog_dir}/p0/0.log",
+			\Newspack_Nodes\Message::packed( $msg ) . "\n"
+		);
+	}
+
 	public function test_offsetlog_fallback_when_no_live_position(): void {
 		// When memcache has no live cursor, the controller reads the latest
 		// committed entry from the on-disk offsetlog at
@@ -111,12 +194,17 @@ class WorkersControllerRealShapeTest extends TestCase {
 		$config        = \Newspack_Nodes\Config::load_config( 'full' );
 		$base_dir      = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$offsetlog_dir = "{$base_dir}/offsets/firehose.p0";
-		\Newspack_Event_Logger_Nodes\Config::ensure_path( "{$offsetlog_dir}/p0" );
-		$msg                                       = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \microtime( true );
-		$msg[ \Newspack_Nodes\Message::VALUE ]     = [ 'seg' => 1, 'off' => 100, 'ts' => \microtime( true ) ];
-		\file_put_contents( "{$offsetlog_dir}/p0/0.log", \Newspack_Nodes\Message::packed( $msg ) . "\n" );
+		$this->seed_offsetlog_entry(
+			$offsetlog_dir,
+			[
+				'seg'         => 1,
+				'off'         => 100,
+				'ts'          => \microtime( true ),
+				'name'        => 'firehose:consumer',
+				'target'      => 'firehose:tee',
+				'worker_type' => 'firehose-workers-and-jobs',
+			]
+		);
 
 		$ctrl = new WorkersController();
 		$resp = $ctrl->get_workers( new \WP_REST_Request() );

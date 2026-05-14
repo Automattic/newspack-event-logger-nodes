@@ -138,6 +138,32 @@ class WorkersController extends PerformanceControllerBase {
 			}
 		}
 
+		$logs = [];
+
+		// Enumerate active Consumers from offsetlog metadata. Each
+		// offsetlog entry now carries `name`, `target`, `worker_type`
+		// (Consumer publishes them on checkpoint), so the dashboard can
+		// render one row per (worker_type, consumer_name, partition)
+		// without hardcoding a per-type inputs/outputs map.
+		$offsetlog_rows = $this->enumerate_offsetlog_rows( $base_dir );
+		// Track which sources are consumed (have an offsetlog row) — any
+		// log directory that isn't represented is a terminal output that
+		// should still appear in the response so the dashboard can render
+		// it as a producer-only step.
+		$consumed_basenames = [];
+		foreach ( $offsetlog_rows as $row ) {
+			$consumed_basenames[ $row['source_basename'] ] = true;
+		}
+		// Index rows by (worker_type, partition).
+		$rows_by_worker = [];
+		foreach ( $offsetlog_rows as $row ) {
+			$key = $row['worker_type'] . '|' . $row['partition'];
+			if ( ! isset( $rows_by_worker[ $key ] ) ) {
+				$rows_by_worker[ $key ] = [];
+			}
+			$rows_by_worker[ $key ][] = $row;
+		}
+
 		foreach ( $descriptors as $w ) {
 			$type      = (string) ( $w['type'] ?? '' );
 			$partition = (int) ( $w['partition'] ?? 0 );
@@ -147,80 +173,75 @@ class WorkersController extends PerformanceControllerBase {
 			}
 			$lock_dir = "{$locks_base}/{$type}.p{$partition}.lock.d";
 
-			// Resolve inputs/outputs from the static topology map; default to
-			// firehose.log when a topology isn't listed so we don't report a
-			// blank source.
-			$static_cfg = self::WORKER_INPUTS[ $type ] ?? [];
-			$inputs     = $static_cfg['inputs'] ?? null;
-			$outputs    = $static_cfg['outputs'] ?? null;
-			if ( ! \is_array( $inputs ) ) {
-				$inputs = [ 'firehose.log' ];
+			$consumer_rows = $rows_by_worker[ "{$type}|{$partition}" ] ?? [];
+			if ( empty( $consumer_rows ) ) {
+				// Worker hasn't checkpointed yet (fresh spawn) — emit a
+				// single placeholder row so the dashboard still renders
+				// the worker_type. No consumer metadata available.
+				$placeholder = $this->build_worker_status(
+					$type,
+					$partition,
+					'',
+					null,
+					$log_base,
+					$lock_dir,
+					$now,
+					$stale_to,
+					null
+				);
+				$placeholder['inputs']         = [];
+				$placeholder['outputs']        = [];
+				$placeholder['inputs_status']  = [];
+				$placeholder['outputs_status'] = [];
+				$placeholder['target']         = '';
+				$workers[]                     = $placeholder;
+				continue;
 			}
-			if ( ! \is_array( $outputs ) ) {
-				$outputs = [];
-			}
-			$input_log  = ! empty( $inputs ) ? (string) $inputs[0] : '';
-			$output_log = ! empty( $outputs ) ? (string) $outputs[0] : null;
 
-			$worker = $this->build_worker_status(
-				$type,
-				$partition,
-				$input_log,
-				$output_log,
-				$log_base,
-				$lock_dir,
-				$now,
-				$stale_to,
-				null
-			);
-			// Surface the full lists so the dashboard can display secondary inputs
-			// (e.g. firehose-workers also tails jobintake.log) and downstream
-			// outputs (e.g. requests.log + errors.log + jobs.log).
-			$input_names       = \array_values( \array_filter( $inputs, 'is_string' ) );
-			$output_names      = \array_values( \array_filter( $outputs, 'is_string' ) );
-			$worker['inputs']  = $input_names;
-			$worker['outputs'] = $output_names;
-
-			// Per-input segment status. Cursor is reported only for the primary
-			// input (inputs[0]) — secondary inputs are tailed from a separate
-			// Consumer whose offsetlog isn't surfaced through this row, so we
-			// render them without cursor data (segments rendered all-green).
-			$inputs_status = [];
-			foreach ( $input_names as $idx => $log_name ) {
-				$is_primary = ( 0 === $idx );
-				if ( $is_primary ) {
-					$cursor_seg    = (int) ( $worker['cursor_seg'] ?? 0 );
-					$cursor_offset = (int) ( $worker['cursor_offset'] ?? 0 );
-				} else {
-					$cursor        = $this->get_live_position( $type, $partition, $log_name );
-					$cursor_seg    = null !== $cursor ? (int) ( $cursor['seg'] ?? 0 ) : null;
-					$cursor_offset = null !== $cursor ? (int) ( $cursor['off'] ?? 0 ) : null;
+			foreach ( $consumer_rows as $row ) {
+				$input_log = "{$row['source_basename']}.log";
+				// Each Consumer can have multiple downstream processors
+				// (Tee fan-out: firehose:tee → request-builder + job-router).
+				// Emit one dashboard row per processor so the operator sees
+				// the actual work units — RequestBuilder + JobRouter — not
+				// the Consumer plumbing.
+				$targets = ! empty( $row['targets'] )
+					? $row['targets']
+					: [ [ 'name' => $row['target'] ?? '', 'class' => '' ] ];
+				foreach ( $targets as $t ) {
+					$handler = (string) ( $t['class'] ?? '' );
+					if ( '' === $handler ) {
+						$handler = (string) ( $t['name'] ?? '' );
+					}
+					$worker = $this->build_worker_status(
+						$type,
+						$partition,
+						$input_log,
+						$t['name'] ?? null,
+						$log_base,
+						$lock_dir,
+						$now,
+						$stale_to,
+						$handler
+					);
+					$worker['target']         = $t['name'] ?? '';
+					$worker['target_class']   = $t['class'] ?? '';
+					$worker['source']         = $row['name'];
+					$worker['inputs']         = [ $input_log ];
+					$worker['outputs']        = [];
+					$worker['inputs_status']  = [
+						$this->build_log_status_entry(
+							$input_log,
+							$partition,
+							(int) $worker['cursor_seg'],
+							(int) $worker['cursor_offset'],
+							$log_base
+						),
+					];
+					$worker['outputs_status'] = [];
+					$workers[]                = $worker;
 				}
-				$inputs_status[] = $this->build_log_status_entry(
-					$log_name,
-					$partition,
-					$cursor_seg,
-					$cursor_offset,
-					$log_base
-				);
 			}
-			$worker['inputs_status'] = $inputs_status;
-
-			// Per-output segment status. No cursor — outputs aren't tailed by
-			// this worker; the LogSection treats them as fully-processed.
-			$outputs_status = [];
-			foreach ( $output_names as $log_name ) {
-				$outputs_status[] = $this->build_log_status_entry(
-					$log_name,
-					$partition,
-					null,
-					null,
-					$log_base
-				);
-			}
-			$worker['outputs_status'] = $outputs_status;
-
-			$workers[] = $worker;
 		}
 
 		// Standalone workers (supervisor + plugin-registered partitioned/non-partitioned).
@@ -246,14 +267,19 @@ class WorkersController extends PerformanceControllerBase {
 			}
 		}
 
-		// Each worker now owns its inputs/outputs via inputs_status/outputs_status,
-		// so there's no separate "logs" array — outputs render under their
-		// producing worker, never as orphan top-level rows.
+		// Terminal logs: filesystem-discovered `{logs_dir}/*.log/` directories
+		// that no Consumer reads (e.g. errors.log, flames.log, plus jobs.log
+		// when no job-workers Consumer is active). These are Partitions
+		// written by some node in a topology but never tailed — the
+		// dashboard renders them as producer-only output cards. Sources
+		// that ARE consumed already render under their Consumer row.
+		$logs = $this->enumerate_terminal_logs( $log_base, $consumed_basenames );
 
 		return new \WP_REST_Response(
 			[
 				'workers'        => $workers,
 				'standalone'     => $standalone,
+				'logs'           => $logs,
 				'num_partitions' => $num_partitions,
 				'num_segments'   => $num_segments,
 				'segment_size'   => $segment_size,
@@ -261,6 +287,64 @@ class WorkersController extends PerformanceControllerBase {
 			],
 			200
 		);
+	}
+
+	/**
+	 * Walk `{logs_dir}/*.log/` and return one entry per log whose basename
+	 * isn't in `$consumed_basenames`. Each entry's `partitions[]` lists
+	 * segment data per partition (no cursor — these are producer-only).
+	 *
+	 * @return array<int,array{name:string,partitions:array}>
+	 */
+	private function enumerate_terminal_logs( string $log_base, array $consumed_basenames ): array {
+		if ( ! \is_dir( $log_base ) ) {
+			return [];
+		}
+		$entries = @\scandir( $log_base );
+		if ( false === $entries ) {
+			return [];
+		}
+		$logs = [];
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+			if ( ! \preg_match( '/^(.+)\.log$/', $entry, $m ) ) {
+				continue;
+			}
+			$basename = $m[1];
+			if ( isset( $consumed_basenames[ $basename ] ) ) {
+				continue;
+			}
+			$log_dir     = "{$log_base}/{$entry}";
+			$partitions  = [];
+			$part_entries = @\scandir( $log_dir );
+			if ( false === $part_entries ) {
+				continue;
+			}
+			foreach ( $part_entries as $pe ) {
+				if ( ! \preg_match( '/^p(\d+)$/', $pe, $pm ) ) {
+					continue;
+				}
+				$partition_idx = (int) $pm[1];
+				$status        = $this->build_log_status_entry(
+					$entry,
+					$partition_idx,
+					null,
+					null,
+					$log_base
+				);
+				$partitions[] = [
+					'partition'  => $partition_idx,
+					'segments'   => $status['segments'] ?? [],
+					'total_size' => $status['total_size'] ?? 0,
+				];
+			}
+			if ( ! empty( $partitions ) ) {
+				$logs[] = [ 'name' => $entry, 'partitions' => $partitions ];
+			}
+		}
+		return $logs;
 	}
 
 	public function restart_workers( \WP_REST_Request $request ): \WP_REST_Response|\WP_Error {
@@ -537,6 +621,92 @@ class WorkersController extends PerformanceControllerBase {
 			}
 		}
 		return $this->read_offsetlog_position( $input_log, $partition );
+	}
+
+	/**
+	 * Scan `{base}/offsets/` and return one entry per active Consumer.
+	 *
+	 * Each Consumer publishes its name + target + worker_type into its
+	 * offsetlog on every checkpoint (see Consumer::checkpoint), so the
+	 * latest entry of each `{source}.p{N}/` directory tells the dashboard
+	 * everything it needs to render a per-Consumer row without hardcoding
+	 * a per-worker-type inputs/outputs map.
+	 *
+	 * @return array<int,array{name:string,target:string,worker_type:string,source_basename:string,partition:int,seg:int,off:int,ts:float}>
+	 */
+	private function enumerate_offsetlog_rows( string $base_dir ): array {
+		$offsets_dir = "{$base_dir}/offsets";
+		if ( ! \is_dir( $offsets_dir ) ) {
+			return [];
+		}
+		$entries = @\scandir( $offsets_dir );
+		if ( false === $entries ) {
+			return [];
+		}
+		$rows = [];
+		foreach ( $entries as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+			// Expect `{source}.p{N}` directory naming.
+			if ( ! \preg_match( '/^(.+)\.p(\d+)$/', $entry, $m ) ) {
+				continue;
+			}
+			$source_basename = $m[1];
+			$partition       = (int) $m[2];
+			$row             = $this->read_offsetlog_latest_entry( "{$offsets_dir}/{$entry}", $partition );
+			if ( null === $row ) {
+				continue;
+			}
+			// Skip entries that pre-date the metadata addition (no
+			// worker_type means the controller can't attribute the row
+			// to a worker).
+			if ( '' === ( $row['worker_type'] ?? '' ) ) {
+				continue;
+			}
+			$rows[] = [
+				'name'            => (string) ( $row['name']   ?? '' ),
+				'target'          => (string) ( $row['target'] ?? '' ),
+				'targets'         => \is_array( $row['targets'] ?? null ) ? $row['targets'] : [],
+				'worker_type'     => (string) $row['worker_type'],
+				'source_basename' => $source_basename,
+				'partition'       => $partition,
+				'seg'             => (int) ( $row['seg'] ?? 0 ),
+				'off'             => (int) ( $row['off'] ?? 0 ),
+				'ts'              => (float) ( $row['ts']  ?? 0 ),
+			];
+		}
+		return $rows;
+	}
+
+	/**
+	 * Read the latest committed offsetlog entry and return its VALUE array
+	 * (or null if empty/unreadable).
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	private function read_offsetlog_latest_entry( string $offsetlog_dir, int $partition ): ?array {
+		try {
+			$offsetlog = new Partition( $offsetlog_dir, $partition );
+			$segments  = $offsetlog->get_segments( true );
+			if ( empty( $segments ) ) {
+				return null;
+			}
+			$newest = \end( $segments );
+			$bytes  = $offsetlog->read_at( $newest['id'], 0, $newest['size'] );
+			if ( '' === $bytes ) {
+				return null;
+			}
+			$lines = \array_filter( \explode( "\n", $bytes ), static fn ( $l ) => '' !== $l );
+			if ( empty( $lines ) ) {
+				return null;
+			}
+			$msg   = \Newspack_Nodes\Message::unpacked( (string) \end( $lines ) );
+			$entry = $msg[ \Newspack_Nodes\Message::VALUE ] ?? null;
+			return \is_array( $entry ) ? $entry : null;
+		} catch ( \Throwable $e ) {
+			return null;
+		}
 	}
 
 	/**

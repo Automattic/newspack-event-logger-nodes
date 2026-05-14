@@ -617,28 +617,44 @@ const StandaloneWorkers = memo( function StandaloneWorkers( {
  * @param {Array} workers Worker descriptors from the REST endpoint.
  * @return {Array} Render plan items.
  */
-function buildRenderPlan( workers ) {
+function buildRenderPlan( workers, terminalLogs = [] ) {
 	if ( ! workers || workers.length === 0 ) {
-		return [];
+		if ( terminalLogs.length === 0 ) {
+			return [];
+		}
+		return terminalLogs.map( ( log ) => ( {
+			kind: 'log',
+			name: log.name,
+			partitions: log.partitions || [],
+			hasCursor: false,
+		} ) );
 	}
 
-	// Group workers by type. One "step" per worker type (multiple partitions
-	// roll up into one connector row).
-	const stepsByType = new Map();
+	// Group workers by (type, handler). One "step" per Consumer — a worker
+	// type with multiple Consumers (e.g. firehose-workers-and-jobs running
+	// firehose:consumer + jobintake:consumer) gets one step per Consumer.
+	// Multiple partitions of the same (type, handler) still roll up into
+	// the same step.
+	const stepsByKey = new Map();
 	workers.forEach( ( w ) => {
-		const type = w.type;
-		if ( ! stepsByType.has( type ) ) {
-			stepsByType.set( type, {
-				type,
-				handlerName: w.handler || type,
+		const handler = w.handler || w.type;
+		const key     = `${ w.type }|${ handler }`;
+		if ( ! stepsByKey.has( key ) ) {
+			stepsByKey.set( key, {
+				// Keep `type` as the worker_type so styling/category code that
+				// keys on it still works; `key` is what identifies this step
+				// uniquely.
+				type: w.type,
+				key,
+				handlerName: handler,
 				inputs: Array.isArray( w.inputs ) ? w.inputs : [],
 				outputs: Array.isArray( w.outputs ) ? w.outputs : [],
 				workers: [],
 			} );
 		}
-		stepsByType.get( type ).workers.push( w );
+		stepsByKey.get( key ).workers.push( w );
 	} );
-	const steps = [ ...stepsByType.values() ];
+	const steps = [ ...stepsByKey.values() ];
 
 	// Build producer/consumer maps: log name → step type(s).
 	const producers = new Map(); // name → step.type that writes this log.
@@ -648,34 +664,35 @@ function buildRenderPlan( workers ) {
 			if ( ! producers.has( name ) ) {
 				producers.set( name, [] );
 			}
-			producers.get( name ).push( step.type );
+			producers.get( name ).push( step.key );
 		} );
 		step.inputs.forEach( ( name ) => {
 			if ( ! consumers.has( name ) ) {
 				consumers.set( name, [] );
 			}
-			consumers.get( name ).push( step.type );
+			consumers.get( name ).push( step.key );
 		} );
 	} );
 
 	// Topological sort: a step that reads log X must come after any step that
 	// writes log X. Stable order on tie (preserves API order for visual
-	// consistency).
-	const stepIndex = new Map( steps.map( ( s, i ) => [ s.type, i ] ) );
+	// consistency). Indexed by step.key so two Consumers under the same
+	// worker_type don't collide.
+	const stepIndex = new Map( steps.map( ( s, i ) => [ s.key, i ] ) );
 	const visited = new Set();
 	const sorted = [];
 	const visit = ( step ) => {
-		if ( visited.has( step.type ) ) {
+		if ( visited.has( step.key ) ) {
 			return;
 		}
-		visited.add( step.type );
+		visited.add( step.key );
 		step.inputs.forEach( ( name ) => {
-			const producerTypes = producers.get( name ) || [];
-			producerTypes.forEach( ( ptype ) => {
-				if ( ptype === step.type ) {
+			const producerKeys = producers.get( name ) || [];
+			producerKeys.forEach( ( pkey ) => {
+				if ( pkey === step.key ) {
 					return;
 				}
-				const pstep = steps[ stepIndex.get( ptype ) ];
+				const pstep = steps[ stepIndex.get( pkey ) ];
 				if ( pstep ) {
 					visit( pstep );
 				}
@@ -693,33 +710,33 @@ function buildRenderPlan( workers ) {
 	//  - If producer + consumer exist: render BEFORE the consumer step.
 	//  - If only consumer: render BEFORE the consumer step (source).
 	//  - If only producer: render AFTER the producer step (terminal).
-	const beforeStep = new Map(); // step.type → log[] to render above it.
-	const afterStep = new Map(); // step.type → log[] to render below it.
+	const beforeStep = new Map(); // step.key → log[] to render above it.
+	const afterStep = new Map(); // step.key → log[] to render below it.
 	const allLogs = new Set( [ ...producers.keys(), ...consumers.keys() ] );
 	allLogs.forEach( ( name ) => {
-		const consumerTypes = consumers.get( name ) || [];
-		const producerTypes = producers.get( name ) || [];
-		if ( consumerTypes.length > 0 ) {
+		const consumerKeys = consumers.get( name ) || [];
+		const producerKeys = producers.get( name ) || [];
+		if ( consumerKeys.length > 0 ) {
 			// Render once above the FIRST consumer (in topo order).
 			const firstConsumer = sorted.find( ( s ) =>
-				consumerTypes.includes( s.type )
+				consumerKeys.includes( s.key )
 			);
 			if ( firstConsumer ) {
-				if ( ! beforeStep.has( firstConsumer.type ) ) {
-					beforeStep.set( firstConsumer.type, [] );
+				if ( ! beforeStep.has( firstConsumer.key ) ) {
+					beforeStep.set( firstConsumer.key, [] );
 				}
-				beforeStep.get( firstConsumer.type ).push( name );
+				beforeStep.get( firstConsumer.key ).push( name );
 			}
-		} else if ( producerTypes.length > 0 ) {
+		} else if ( producerKeys.length > 0 ) {
 			// No consumer — terminal output. Render below the LAST producer.
 			const lastProducer = [ ...sorted ]
 				.reverse()
-				.find( ( s ) => producerTypes.includes( s.type ) );
+				.find( ( s ) => producerKeys.includes( s.key ) );
 			if ( lastProducer ) {
-				if ( ! afterStep.has( lastProducer.type ) ) {
-					afterStep.set( lastProducer.type, [] );
+				if ( ! afterStep.has( lastProducer.key ) ) {
+					afterStep.set( lastProducer.key, [] );
 				}
-				afterStep.get( lastProducer.type ).push( name );
+				afterStep.get( lastProducer.key ).push( name );
 			}
 		}
 	} );
@@ -728,12 +745,12 @@ function buildRenderPlan( workers ) {
 	// rendering, gather the partition data from the consumer's inputs_status
 	// (if any), falling back to a producer's outputs_status.
 	const collectLogPartitions = ( logName ) => {
-		const consumerTypes = consumers.get( logName ) || [];
-		const producerTypes = producers.get( logName ) || [];
+		const consumerKeys = consumers.get( logName ) || [];
+		const producerKeys = producers.get( logName ) || [];
 
 		// Prefer consumer side (has cursor data).
-		for ( const ctype of consumerTypes ) {
-			const step = steps[ stepIndex.get( ctype ) ];
+		for ( const ckey of consumerKeys ) {
+			const step = steps[ stepIndex.get( ckey ) ];
 			if ( ! step ) {
 				continue;
 			}
@@ -758,8 +775,8 @@ function buildRenderPlan( workers ) {
 		}
 
 		// Fall back to producer side.
-		for ( const ptype of producerTypes ) {
-			const step = steps[ stepIndex.get( ptype ) ];
+		for ( const pkey of producerKeys ) {
+			const step = steps[ stepIndex.get( pkey ) ];
 			if ( ! step ) {
 				continue;
 			}
@@ -801,7 +818,7 @@ function buildRenderPlan( workers ) {
 	};
 
 	sorted.forEach( ( step ) => {
-		( beforeStep.get( step.type ) || [] ).forEach( renderLog );
+		( beforeStep.get( step.key ) || [] ).forEach( renderLog );
 		const hasInputs = step.inputs.length > 0;
 		const hasOutputs = step.outputs.length > 0;
 		plan.push( {
@@ -809,7 +826,23 @@ function buildRenderPlan( workers ) {
 			step,
 			showArrows: hasInputs || hasOutputs,
 		} );
-		( afterStep.get( step.type ) || [] ).forEach( renderLog );
+		( afterStep.get( step.key ) || [] ).forEach( renderLog );
+	} );
+
+	// Append terminal logs (filesystem-discovered producer-only outputs that
+	// no Consumer reads, e.g. errors.log / flames.log). The controller emits
+	// these in `body.logs[]` already filtered against `consumed_basenames`.
+	terminalLogs.forEach( ( log ) => {
+		if ( rendered.has( log.name ) ) {
+			return;
+		}
+		rendered.add( log.name );
+		plan.push( {
+			kind: 'log',
+			name: log.name,
+			partitions: log.partitions || [],
+			hasCursor: false,
+		} );
 	} );
 
 	return plan;
@@ -826,6 +859,7 @@ function buildRenderPlan( workers ) {
 export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	const [ workers, setWorkers ] = useState( [] );
 	const [ standalone, setStandalone ] = useState( [] ); // Standalone workers.
+	const [ terminalLogs, setTerminalLogs ] = useState( [] ); // Top-level `logs` array.
 	const [ loading, setLoading ] = useState( true );
 	const [ error, setError ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
@@ -1013,6 +1047,7 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 
 			setWorkers( data.workers || [] );
 			setStandalone( data.standalone || [] );
+			setTerminalLogs( data.logs || [] );
 			setByteRates( newByteRates );
 			setWriteRates( newWriteRates );
 			if ( data.segment_size ) {
@@ -1076,7 +1111,10 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	}, [ fetchWorkers, refreshInterval, isPageVisible ] );
 
 	// Build the linear render plan from the current worker list.
-	const renderPlan = useMemo( () => buildRenderPlan( workers ), [ workers ] );
+	const renderPlan = useMemo(
+		() => buildRenderPlan( workers, terminalLogs ),
+		[ workers, terminalLogs ]
+	);
 
 	// Helper to format worker type as display name.
 	const formatWorkerName = ( type ) => {
