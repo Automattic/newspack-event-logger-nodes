@@ -137,9 +137,22 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// the WP option and are owned by the substrate. The app's job
 		// is just to describe what topologies exist and their default
 		// metadata.
-		$file_defaults  = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
-		$names          = $file_defaults['topologies'] ?? [];
-		$num_partitions = (int) ( $file_defaults['num_partitions'] ?? 1 );
+		// Topology name list — read MERGED app config (file defaults
+		// overlaid by any WP-option override). The substrate's
+		// `Bootstrap::get_topologies()` further filters by the
+		// substrate-owned `newspack_nodes_topologies` operator-overlay
+		// option, but the catalog this filter publishes IS the
+		// authoritative "what topologies exist" list — and operators
+		// must always be able to override file defaults via WP options.
+		$config = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+		$names  = $config['topologies'] ?? [];
+
+		// Partition count — substrate-owned option. Already merged via
+		// `\Newspack_Event_Logger_Nodes\Config::load_config()`'s
+		// substrate-overlay step (it composes substrate config first),
+		// so reading $config['num_partitions'] picks up the operator
+		// override for `newspack_nodes_num_partitions` automatically.
+		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
 		if ( ! \is_array( $names ) ) {
 			return $topologies;

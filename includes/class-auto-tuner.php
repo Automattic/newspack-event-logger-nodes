@@ -48,6 +48,13 @@ class AutoTuner extends Node {
 			return;
 		}
 
+		// AutoTuner runs inside a long-lived request-workers process,
+		// and each apply_* method below does read-modify-write on a WP
+		// option. Without invalidating the alloptions snapshot, the
+		// RMW would clobber writes made by other workers / SettingsSync
+		// fanouts / admin edits since this worker spawned.
+		\Newspack_Nodes\Config::invalidate_options_cache();
+
 		switch ( $message[ Message::KEY ] ?? '' ) {
 			case 'disable_hooks':
 				$this->apply_disable_hooks( $items, $context );
