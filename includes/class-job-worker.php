@@ -213,7 +213,12 @@ class JobWorker extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
+		$type = $message[ Message::TYPE ];
+		if ( ( $type & Message::TM_REQUEST ) && ! ( $type & Message::TM_RESPONSE ) ) {
+			$this->handle_request( $message );
+			return;
+		}
+		if ( ! ( $type & Message::TM_STRUCT ) ) {
 			return;
 		}
 		$entry = $message[ Message::VALUE ];
@@ -403,6 +408,37 @@ class JobWorker extends Node {
 		return [];
 	}
 
+	private function handle_request( array $message ): void {
+		$value = (string) $message[ Message::VALUE ];
+		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_HEALTH' === $verb ) {
+			$mem_limit = $this->memory_limit_bytes();
+			$mem_used  = \memory_get_usage( true );
+			$payload   = [
+				'memory_used_mb'           => (int) \round( $mem_used / 1048576, 1 ),
+				'memory_limit_mb'          => $mem_limit > 0 ? (int) \round( $mem_limit / 1048576, 1 ) : -1,
+				'memory_pressure'          => $this->memory_pressure,
+				'jobs_since_cache_flush'   => $this->jobs_since_cache_flush,
+				'cache_flush_interval'     => $this->cache_flush_interval,
+				'local_handler_count'      => \count( $this->local_handlers ),
+				'remote_handler_count'     => \count( $this->remote_handlers ),
+				'counter'                  => $this->counter,
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink?->fill( $reply );
+	}
+
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Control',
@@ -413,6 +449,13 @@ class JobWorker extends Node {
 				[ 'name' => 'max_runtime',          'type' => 'int', 'default' => self::DEFAULT_MAX_RUNTIME ],
 			],
 			'verbs'       => [],
+			'requests'    => [
+				[
+					'name'        => 'GET_HEALTH',
+					'description' => 'Memory pressure + handler counts + cache-flush progress.',
+					'reply_shape' => '{ memory_used_mb, memory_limit_mb, memory_pressure, jobs_since_cache_flush, cache_flush_interval, local_handler_count, remote_handler_count, counter }',
+				],
+			],
 		];
 	}
 }

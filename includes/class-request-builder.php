@@ -200,7 +200,12 @@ class RequestBuilder extends Node {
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
+		$type = $message[ Message::TYPE ];
+		if ( ( $type & Message::TM_REQUEST ) && ! ( $type & Message::TM_RESPONSE ) ) {
+			$this->handle_request( $message );
+			return;
+		}
+		if ( ! ( $type & Message::TM_STRUCT ) ) {
 			return;
 		}
 		$entry = $message[ Message::VALUE ];
@@ -767,6 +772,48 @@ class RequestBuilder extends Node {
 	 * Manifest for the topology console's palette + form rendering.
 	 * See Node::node_schema() for the shape contract.
 	 */
+	private function handle_request( array $message ): void {
+		$value = (string) $message[ Message::VALUE ];
+		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_CACHE' === $verb ) {
+			$now     = (int) Core::$now;
+			$samples = [];
+			$oldest_rid = null;
+			$oldest_ts  = $now;
+			$count      = 0;
+			foreach ( $this->cache->iterate() as $rid => $request ) {
+				++$count;
+				$created = is_array( $request ) ? (int) ( $request['process']['ts_start'] ?? $request['ts'] ?? 0 ) : 0;
+				if ( $created > 0 && $created < $oldest_ts ) {
+					$oldest_ts  = $created;
+					$oldest_rid = $rid;
+				}
+				if ( count( $samples ) < 5 ) {
+					$samples[] = (string) $rid;
+				}
+			}
+			$payload = [
+				'pending_count' => $count,
+				'oldest_rid'    => $oldest_rid,
+				'oldest_age_s'  => null !== $oldest_rid ? $now - $oldest_ts : 0,
+				'sample'        => $samples,
+				'line_counter'  => $this->line_counter,
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink?->fill( $reply );
+	}
+
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
@@ -782,6 +829,13 @@ class RequestBuilder extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
+				],
+			],
+			'requests'    => [
+				[
+					'name'        => 'GET_CACHE',
+					'description' => 'In-flight request count + oldest pending rid + sample.',
+					'reply_shape' => '{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }',
 				],
 			],
 		];

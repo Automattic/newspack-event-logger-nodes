@@ -276,7 +276,12 @@ class FlameBuilder extends Node {
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
+		$type = $message[ Message::TYPE ];
+		if ( ( $type & Message::TM_REQUEST ) && ! ( $type & Message::TM_RESPONSE ) ) {
+			$this->handle_request( $message );
+			return;
+		}
+		if ( ! ( $type & Message::TM_STRUCT ) ) {
 			return;
 		}
 		$request = $message[ Message::VALUE ];
@@ -1704,6 +1709,39 @@ class FlameBuilder extends Node {
 		return $verbs;
 	}
 
+	private function handle_request( array $message ): void {
+		$value = (string) $message[ Message::VALUE ];
+		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_STATS' === $verb ) {
+			$stats_count = 0;
+			foreach ( $this->stats_cache->iterate() as $_ ) {
+				++$stats_count;
+			}
+			$now = (float) ( Core::$now ?: \microtime( true ) );
+			$payload = [
+				'stats_count'              => $stats_count,
+				'pending_url_count'        => \count( $this->pending ),
+				'pending_bucket'           => $this->pending_bucket,
+				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
+				'auto_tune_pending_count'  => \count( $this->hooks_to_disable ) + \count( $this->custom_events_to_disable ) + \count( $this->new_significant_events ),
+				'is_hub'                   => $this->is_hub,
+				'significant_events_count' => \count( $this->significant_events ),
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink?->fill( $reply );
+	}
+
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
@@ -1732,6 +1770,13 @@ class FlameBuilder extends Node {
 					'name'        => 'configure_stats',
 					'description' => 'Build the Stats_Store from substrate config (memcache + retention).',
 					'args'        => [ [ 'name' => 'partition', 'type' => 'int', 'required' => true ] ],
+				],
+			],
+			'requests'    => [
+				[
+					'name'        => 'GET_STATS',
+					'description' => 'Stats cache + pending bucket + auto-tune queue depth.',
+					'reply_shape' => '{ stats_count, pending_url_count, pending_bucket, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count }',
 				],
 			],
 		];
