@@ -114,68 +114,48 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 }
 
 /**
- * Topology registration. Two topologies:
- *  - `firehose-workers` runs N partitions of the worker graph (Tail → Tee →
- *    RequestBuilder/JobRouter → JobWorker).
- *  - `aggregator` runs a single hub-side ingest graph (StreamMerger → Topic).
+ * Topology registration. Reads the substrate's flat `topologies`
+ * config list (a flat array of TSL topology names) and emits one
+ * descriptor per name, with per-topology metadata sourced from each
+ * TSL file's `var` frontmatter via Topology_Registry::frontmatter().
  *
- * The runtime's Bootstrap::expand_workers() reads the resulting array and
- * spawns workers per partition; this plugin file owns the filter wiring.
+ * The runtime's Bootstrap::expand_workers() reads the resulting
+ * array and spawns workers per partition; this plugin file owns the
+ * filter wiring. Worker dispatch (the `newspack_nodes/spawn_worker`
+ * action handler below) loads each topology via Topology_Loader.
  */
 \add_filter(
 	'newspack_nodes/topologies',
 	static function ( array $topologies ): array {
-		// Topology fleet is declared as data in
-		// newspack-event-logger-nodes-config.php so per-site overrides can
-		// add/remove entries without patching the plugin. This filter
-		// resolves each entry's path (relative → plugin-rooted), applies
-		// `num_partitions` defaults from substrate config so a single
-		// setting drives both LogManager (producer) and the worker fleet
-		// (consumer) — hardcoding diverges them — and honors `gated_by`
-		// so an operator-facing flag (e.g. `enable_aggregator`) can keep
-		// the supervisor from spawning a topology's workers at all.
-		// `gated_by` names a config-array key, or an array of keys (any-of);
-		// strict polarity — only `=== true` enables, anything else
-		// (missing, false, int 1, "1") fails closed. The Config layer
-		// composes file overlays + WP options + the schema's `bool`
-		// sanitizer so the merged value is always a real PHP bool.
-		if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\Config' ) ) {
+		if (
+			! \class_exists( '\Newspack_Event_Logger_Nodes\Config' )
+			|| ! \class_exists( '\Newspack_Nodes\Topology_Registry' )
+		) {
 			return $topologies;
 		}
 		$config         = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
 
-		$defs = $config['topologies'] ?? [];
-		if ( ! \is_array( $defs ) ) {
+		$active = $config['topologies'] ?? [];
+		if ( ! \is_array( $active ) ) {
 			return $topologies;
 		}
 
-		foreach ( $defs as $name => $def ) {
-			if ( ! \is_string( $name ) || ! \is_array( $def ) || empty( $def['topology'] ) ) {
+		foreach ( $active as $name ) {
+			if ( ! \is_string( $name ) || '' === $name ) {
 				continue;
 			}
-			if ( isset( $def['gated_by'] ) ) {
-				$gated_keys = (array) $def['gated_by'];
-				$enabled    = false;
-				foreach ( $gated_keys as $gated_key ) {
-					if ( \is_string( $gated_key ) && true === ( $config[ $gated_key ] ?? false ) ) {
-						$enabled = true;
-						break;
-					}
-				}
-				if ( ! $enabled ) {
-					continue;
-				}
+			if ( null === \Newspack_Nodes\Topology_Registry::resolve( $name ) ) {
+				// Skip names that don't resolve to a TSL file. The
+				// supervisor would crash trying to spawn them.
+				continue;
 			}
-			$path = (string) $def['topology'];
-			if ( '/' !== \substr( $path, 0, 1 ) ) {
-				$path = NEWSPACK_EVENT_LOGGER_NODES_DIR . \ltrim( $path, '/' );
-			}
+			$front = \Newspack_Nodes\Topology_Registry::frontmatter( $name );
 			$topologies[ $name ] = [
-				'topology'       => $path,
-				'num_partitions' => isset( $def['num_partitions'] ) ? (int) $def['num_partitions'] : $num_partitions,
-				'stale_timeout'  => isset( $def['stale_timeout'] ) ? (int) $def['stale_timeout'] : 60,
+				'topology'       => $name,
+				'num_partitions' => isset( $front['num_partitions'] ) ? (int) $front['num_partitions'] : $num_partitions,
+				'stale_timeout'  => isset( $front['stale_timeout'] ) ? (int) $front['stale_timeout'] : 60,
 			];
 		}
 		return $topologies;
@@ -267,9 +247,33 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 				$partition,
 				stale_timeout: $w['stale_timeout']
 			);
-			$topology   = require $w['topology'];
-			$spawn_url  = \rest_url( 'newspack-nodes/v1/workers/spawn' );
-			$token      = $supervisor->generate_spawn_token( \time() );
+
+			// `topology` is now a TSL topology name. WorkerBase::execute
+			// expects a callable of shape `($ci, $partition): void`;
+			// build one that invokes Topology_Loader against the worker's
+			// CommandInterpreter with the live merged config.
+			$topology_name = (string) $w['topology'];
+			$config        = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+			// Pre-derived `<config:logs_dir>` since topologies use it
+			// frequently; let topology authors write the short form
+			// rather than `<config:base_directory>/logs` everywhere.
+			if ( ! isset( $config['logs_dir'] ) && isset( $config['base_directory'] ) ) {
+				$config['logs_dir'] = \rtrim( (string) $config['base_directory'], '/' ) . '/logs';
+			}
+			$topology = static function (
+				\Newspack_Nodes\CommandInterpreter $ci,
+				int $partition_arg
+			) use ( $topology_name, $config ): void {
+				\Newspack_Nodes\Topology_Loader::load(
+					$topology_name,
+					$partition_arg,
+					$ci,
+					$config
+				);
+			};
+
+			$spawn_url = \rest_url( 'newspack-nodes/v1/workers/spawn' );
+			$token     = $supervisor->generate_spawn_token( \time() );
 			$wb->execute( $topology, $spawn_url, $token );
 			break;
 		}
