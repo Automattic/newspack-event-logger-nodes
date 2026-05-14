@@ -30,6 +30,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -49,6 +50,16 @@ class HealthCheckTick extends Node {
 
 	/** Unix timestamp of the last sweep enqueue (0 = never). */
 	protected int $last_check = 0;
+
+	public function __construct() {
+		// Sibling CommandInterpreter — TSL aggregator topology
+		// invokes `cmd health-check-tick:config start_periodic_tick`
+		// to register with _router's TIMER event.
+		$ci = new CommandInterpreter();
+		$ci->patron( $this );
+		$ci->commands( self::config_verbs() );
+		$this->attach_interpreter( $ci );
+	}
 
 	/**
 	 * Register with `_router`'s TIMER event so `fill()` receives a TM_INFO
@@ -133,5 +144,40 @@ class HealthCheckTick extends Node {
 		} finally {
 			JobWorker::end_job_context( $orig_server );
 		}
+	}
+
+	// -------------------------------------------------------------------------
+	// Sibling-CI verb table + node_schema (A3).
+	// -------------------------------------------------------------------------
+
+	private static function config_verbs(): array {
+		static $verbs = null;
+		if ( null === $verbs ) {
+			$verbs = [
+				'start_periodic_tick' => static function ( CommandInterpreter $ci, string $args ): string {
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->start_periodic_tick();
+					$patron->mark_verb_invoked( 'start_periodic_tick', '' );
+					return 'ok';
+				},
+			];
+		}
+		return $verbs;
+	}
+
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Control',
+			'description' => 'Drives the aggregator periodic discovery + sync sweep (5-min debounce).',
+			'ctor'        => [],
+			'verbs'       => [
+				[
+					'name'        => 'start_periodic_tick',
+					'description' => 'Register with _router TIMER for periodic ticks.',
+					'args'        => [],
+				],
+			],
+		];
 	}
 }
