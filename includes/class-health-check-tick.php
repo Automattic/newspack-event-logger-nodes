@@ -161,8 +161,14 @@ class HealthCheckTick extends Node {
 	}
 
 	public static function node_schema(): array {
+		// Hidden: HealthCheckTick is instantiated as an owned sibling
+		// of StreamMerger (patron-linked in StreamMerger's constructor),
+		// not built directly in TSL. Aggregator topology has a single
+		// `cmd stream-merger:config start_periodic_tick` line that
+		// kicks off both periodic ticks. Class stays usable for direct
+		// instantiation in tests.
 		return [
-			'category'    => 'Control',
+			'category'    => 'Hidden',
 			'description' => 'Drives the aggregator periodic discovery + sync sweep (5-min debounce).',
 			'ctor'        => [],
 			'verbs'       => [

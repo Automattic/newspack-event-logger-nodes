@@ -167,8 +167,12 @@ class AutoTuner extends Node {
 	}
 
 	public static function node_schema(): array {
+		// Hidden: AutoTuner is instantiated as a sibling/patron of
+		// FlameBuilder (handled via $ci->patron()), not built directly
+		// in TSL. Keeping it out of the palette prevents operators from
+		// wiring up a second instance that nothing routes messages to.
 		return [
-			'category'    => 'Control',
+			'category'    => 'Hidden',
 			'description' => 'Receives FlameBuilder auto-tune decisions and applies them via WP options.',
 			'ctor'        => [],
 			'verbs'       => [],

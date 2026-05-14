@@ -133,6 +133,9 @@ class StreamMerger extends Node {
 	 *                       partition (the StreamMerger is a fan-in; the destination
 	 *                       Topic distributes by KEY).
 	 */
+	/** @var HealthCheckTick|null Owned sibling — drives aggregator's periodic health-check sweep. */
+	private ?HealthCheckTick $health_check = null;
+
 	public function __construct( int $partition = 0 ) {
 		$this->partition = \max( 0, $partition );
 
@@ -144,6 +147,43 @@ class StreamMerger extends Node {
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
+
+		// Owned HealthCheckTick sibling — also TIMER-driven, only
+		// meaningful when the aggregator topology is running, and
+		// never independently configurable. Patron-linked so
+		// dump_metadata hides it from the canvas, and so a single
+		// `start_periodic_tick` verb on the StreamMerger kicks off
+		// both ticks. Named on first patron name() (see name()
+		// override below) and cascade-cleaned in remove_node().
+		$this->health_check = new HealthCheckTick();
+		$this->health_check->patron( $this );
+	}
+
+	/**
+	 * Override name() so the owned HealthCheckTick sibling tracks
+	 * `{patron_name}:health-check` whenever the patron is named or
+	 * renamed. Mirrors FlameBuilder::name()'s AutoTuner cascade.
+	 */
+	public function name( ?string $name = null ): string {
+		$result = parent::name( $name );
+		if ( null !== $name && null !== $this->health_check ) {
+			$this->health_check->name( $name . ':health-check' );
+		}
+		return $result;
+	}
+
+	/**
+	 * Cascade-unregister the owned HealthCheckTick sibling alongside
+	 * the patron. Without this the satellite orphans in
+	 * Core::$nodes_by_name and a re-spawned StreamMerger with the
+	 * same name collides on its sibling.
+	 */
+	public function remove_node(): void {
+		if ( null !== $this->health_check && '' !== $this->health_check->name() ) {
+			\Newspack_Nodes\Core::unregister_node( $this->health_check->name() );
+		}
+		$this->health_check = null;
+		parent::remove_node();
 	}
 
 	/**
@@ -265,6 +305,13 @@ class StreamMerger extends Node {
 			return;
 		}
 		$router->register( 'TIMER', $this->name );
+		// Kick off the owned HealthCheckTick sibling's TIMER
+		// hitchhike too. Both are TIMER-driven, hub-only, and
+		// share the same start signal — the operator never wants
+		// one without the other.
+		if ( null !== $this->health_check ) {
+			$this->health_check->start_periodic_tick();
+		}
 	}
 
 	// =========================================================================
