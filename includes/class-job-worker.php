@@ -32,6 +32,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -94,6 +95,15 @@ class JobWorker extends Node {
 		$this->cache_flush_interval = \max( 1, $cache_flush_interval );
 		$this->stale_timeout        = \max( 1, $stale_timeout );
 		$this->max_runtime          = \max( 1, $max_runtime );
+
+		// Sibling CommandInterpreter — TSL invokes
+		// `cmd job-worker:config load_handlers` to wire the local
+		// + remote handler maps from WP filters at topology-load
+		// time.
+		$ci = new CommandInterpreter();
+		$ci->patron( $this );
+		$ci->commands( self::config_verbs() );
+		$this->attach_interpreter( $ci );
 	}
 
 	private function validate_handler_name( string $name ): void {
@@ -369,5 +379,50 @@ class JobWorker extends Node {
 				break;
 		}
 		return $num;
+	}
+
+	// -------------------------------------------------------------------------
+	// Sibling-CI verb table + node_schema (A3).
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Verbs the TSL `cmd job-worker:config <verb>` invocations
+	 * dispatch through. Resolved per-instance via $ci->patron().
+	 *
+	 * @return array<string,callable>
+	 */
+	private static function config_verbs(): array {
+		static $verbs = null;
+		if ( null === $verbs ) {
+			$verbs = [
+				'load_handlers' => static function ( CommandInterpreter $ci, string $args ): string {
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->load_handlers_from_filters();
+					$patron->mark_verb_invoked( 'load_handlers', '' );
+					return 'ok';
+				},
+			];
+		}
+		return $verbs;
+	}
+
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Control',
+			'description' => 'Consumes jobs.log entries and dispatches to registered handlers.',
+			'ctor'        => [
+				[ 'name' => 'cache_flush_interval', 'type' => 'int', 'default' => self::CACHE_FLUSH_INTERVAL ],
+				[ 'name' => 'stale_timeout',        'type' => 'int', 'default' => self::DEFAULT_STALE_TIMEOUT ],
+				[ 'name' => 'max_runtime',          'type' => 'int', 'default' => self::DEFAULT_MAX_RUNTIME ],
+			],
+			'verbs'       => [
+				[
+					'name'        => 'load_handlers',
+					'description' => 'Populate the local + remote handler maps from newspack_nodes/job_handlers + remote_job_handlers WP filters.',
+					'args'        => [],
+				],
+			],
+		];
 	}
 }
