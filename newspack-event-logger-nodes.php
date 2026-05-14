@@ -133,29 +133,21 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		) {
 			return $topologies;
 		}
-		$config         = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
-		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+		// Publish ONLY the application's file-default topologies. The
+		// substrate's Bootstrap layers `get_option(newspack_nodes_topologies)`
+		// on top to compute the active set — operator overrides live in
+		// the WP option and are owned by the substrate. The app's job
+		// is just to describe what topologies exist and their default
+		// metadata.
+		$file_defaults  = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
+		$names          = $file_defaults['topologies'] ?? [];
+		$num_partitions = (int) ( $file_defaults['num_partitions'] ?? 1 );
 		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
-
-		// `topologies` is a substrate-owned key. The substrate's
-		// settings UI writes `newspack_nodes_topologies` when the
-		// operator checks boxes; that's the authoritative active
-		// list. Fall back to the application's file default only
-		// when the option has never been written (fresh install) —
-		// gives a sensible starter set without shadowing operator
-		// choices. `[]` is a valid stored value (operator unchecked
-		// everything), distinct from `false` (option never set).
-		$option = \function_exists( 'get_option' )
-			? \get_option( 'newspack_nodes_topologies', false )
-			: false;
-		$active = false === $option
-			? ( $config['topologies'] ?? [] )
-			: $option;
-		if ( ! \is_array( $active ) ) {
+		if ( ! \is_array( $names ) ) {
 			return $topologies;
 		}
 
-		foreach ( $active as $name ) {
+		foreach ( $names as $name ) {
 			if ( ! \is_string( $name ) || '' === $name ) {
 				continue;
 			}
