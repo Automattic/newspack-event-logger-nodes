@@ -165,4 +165,13 @@ class AutoTuner extends Node {
 			SettingsSync::suppress_sync( false );
 		}
 	}
+
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Control',
+			'description' => 'Receives FlameBuilder auto-tune decisions and applies them via WP options.',
+			'ctor'        => [],
+			'verbs'       => [],
+		];
+	}
 }

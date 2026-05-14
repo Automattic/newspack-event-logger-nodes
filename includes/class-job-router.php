@@ -134,4 +134,13 @@ class JobRouter extends Node {
 		$message[ Message::VALUE ] = $normalized;
 		parent::fill( $message );
 	}
+
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Routing',
+			'description' => 'Splits firehose entries by `k` field; routes job entries to jobs:partition.',
+			'ctor'        => [],
+			'verbs'       => [],
+		];
+	}
 }
