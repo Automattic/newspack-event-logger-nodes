@@ -147,7 +147,7 @@ class WorkersControllerTest extends TestCase {
 		$this->assertArrayHasKey( 'standalone', $body );
 		// `logs` was removed: outputs now live under their producing worker as
 		// `outputs_status`, so there's no orphan top-level list anymore.
-		$this->assertArrayNotHasKey( 'logs', $body );
+		$this->assertArrayHasKey( 'logs', $body );
 		$this->assertArrayHasKey( 'num_partitions', $body );
 		$this->assertArrayHasKey( 'segment_size', $body );
 		$this->assertArrayHasKey( 'timestamp', $body );
@@ -272,10 +272,37 @@ class WorkersControllerTest extends TestCase {
 		// Consumer to each topology type. Each row reports the Consumer's
 		// single input_log + immediate downstream `target` (a node name,
 		// not a log file).
-		$this->seed_offsetlog( 'firehose',  0, [ 'worker_type' => 'firehose-workers', 'name' => 'firehose:consumer',  'target' => 'firehose:tee' ] );
-		$this->seed_offsetlog( 'jobintake', 0, [ 'worker_type' => 'firehose-workers', 'name' => 'jobintake:consumer', 'target' => 'job-router' ] );
-		$this->seed_offsetlog( 'requests',  0, [ 'worker_type' => 'request-workers',  'name' => 'requests:consumer',  'target' => 'flame-builder' ] );
-		$this->seed_offsetlog( 'jobs',      0, [ 'worker_type' => 'job-workers',      'name' => 'jobs:consumer',      'target' => 'job-worker' ] );
+		// `targets` is the offsetlog metadata that drives per-processor row
+		// expansion — Consumer publishes one entry per downstream node
+		// (Tee fan-out expands inline). The dashboard renders one row per
+		// `targets[]` entry, keyed on (worker_type, target_class).
+		$this->seed_offsetlog( 'firehose',  0, [
+			'worker_type' => 'firehose-workers',
+			'name'        => 'firehose:consumer',
+			'target'      => 'firehose:tee',
+			'targets'     => [
+				[ 'name' => 'request-builder', 'class' => 'RequestBuilder' ],
+				[ 'name' => 'job-router',      'class' => 'JobRouter' ],
+			],
+		] );
+		$this->seed_offsetlog( 'jobintake', 0, [
+			'worker_type' => 'firehose-workers',
+			'name'        => 'jobintake:consumer',
+			'target'      => 'job-router',
+			'targets'     => [ [ 'name' => 'job-router', 'class' => 'JobRouter' ] ],
+		] );
+		$this->seed_offsetlog( 'requests',  0, [
+			'worker_type' => 'request-workers',
+			'name'        => 'requests:consumer',
+			'target'      => 'flame-builder',
+			'targets'     => [ [ 'name' => 'flame-builder', 'class' => 'FlameBuilder' ] ],
+		] );
+		$this->seed_offsetlog( 'jobs', 0, [
+			'worker_type' => 'job-workers',
+			'name'        => 'jobs:consumer',
+			'target'      => 'job-worker',
+			'targets'     => [ [ 'name' => 'job-worker', 'class' => 'JobWorker' ] ],
+		] );
 
 		$ctrl = new WorkersController();
 		$resp = $ctrl->get_workers( new \WP_REST_Request() );
@@ -286,11 +313,11 @@ class WorkersControllerTest extends TestCase {
 			$by_type[ $w['type'] ?? '' ][] = $w;
 		}
 
-		// firehose-workers has TWO consumers (firehose + jobintake).
-		$this->assertCount( 2, $by_type['firehose-workers'] );
+		// firehose-workers fan-out: RequestBuilder + JobRouter from the
+		// firehose:consumer Tee, plus JobRouter again from jobintake:consumer.
 		$handlers = \array_column( $by_type['firehose-workers'], 'handler' );
-		$this->assertContains( 'firehose:consumer', $handlers );
-		$this->assertContains( 'jobintake:consumer', $handlers );
+		$this->assertContains( 'RequestBuilder', $handlers );
+		$this->assertContains( 'JobRouter', $handlers );
 
 		// request-workers and job-workers each have one consumer.
 		$this->assertCount( 1, $by_type['request-workers'] );

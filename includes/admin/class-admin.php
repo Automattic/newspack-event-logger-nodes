@@ -903,10 +903,14 @@ class Admin {
 	}
 
 	public function skip_urls_callback(): void {
-		$config  = Config::load_config( 'full' );
-		$default = $this->normalize_string_list( $config['skip_urls'] ?? [] );
-		$stored  = \get_option( 'newspack_event_logger_nodes_skip_urls', null );
-		$values  = ( null === $stored || false === $stored )
+		// Defaults are the operator-shipped values in the config FILE, not
+		// the merged-with-WP-options view — clicking "Reset to default" on
+		// a field that the operator just modified should restore the file
+		// value, not the value they just typed.
+		$defaults = Config::load_config_defaults();
+		$default  = $this->normalize_string_list( $defaults['skip_urls'] ?? [] );
+		$stored   = \get_option( 'newspack_event_logger_nodes_skip_urls', null );
+		$values   = ( null === $stored || false === $stored )
 			? $default
 			: $this->normalize_string_list( $stored );
 		$this->render_array_field(
@@ -919,10 +923,10 @@ class Admin {
 	}
 
 	public function log_events_callback(): void {
-		$config         = Config::load_config( 'full' );
-		$default        = $this->normalize_string_list( $config['recommended_log_events'] ?? [] );
-		$stored         = \get_option( 'newspack_event_logger_nodes_log_events', [] );
-		$values         = $this->normalize_string_list( $stored );
+		$defaults = Config::load_config_defaults();
+		$default  = $this->normalize_string_list( $defaults['recommended_log_events'] ?? [] );
+		$stored   = \get_option( 'newspack_event_logger_nodes_log_events', [] );
+		$values   = $this->normalize_string_list( $stored );
 		$this->render_array_field(
 			'log_events',
 			$values,
