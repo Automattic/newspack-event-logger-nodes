@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`newspack_nodes/topologies` filter callback publishes the file-default catalog only.** Reads `Config::load_config_defaults()` (not `load_config('full')`), so no `get_option` lookups happen on the application side — the substrate's `Bootstrap::get_topologies()` now owns the `newspack_nodes_topologies` operator overlay. The filter is the catalog; the option is the overlay; the substrate composes them. Drops the brief `newspack_nodes/topologies_defaults` filter that lived here for the admin's `↺` chip.
+
 ## [0.2.23] - 2026-05-14
 
 ### Added
