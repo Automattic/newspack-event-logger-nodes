@@ -25,12 +25,12 @@ make_node JobRouter job-router
 connect_node job-router jobs:partition
 
 # --- Firehose input: Consumer → Tee fan-out → both branches ---
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:base_directory>/offsets/firehose.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:offsets_dir>/firehose.p<partition>
 make_node Tee firehose:tee
 connect_node firehose:tee request-builder
 connect_node firehose:tee job-router
 connect_node firehose:consumer firehose:tee
 
 # --- jobintake input: separate Consumer feeding the same JobRouter ---
-make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> <config:base_directory>/offsets/jobintake.p<partition>
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> <config:offsets_dir>/jobintake.p<partition>
 connect_node jobintake:consumer job-router
