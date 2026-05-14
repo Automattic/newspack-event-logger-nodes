@@ -22,43 +22,13 @@ class SettingsSyncTest extends TestCase {
 
 	// --- Instance mode (closure-dispatch with encryption) -------------------
 
-	public function test_skips_when_enable_aggregator_unset(): void {
-		$called = false;
-		$sync = new SettingsSync(
-			config: [ /* enable_aggregator absent */ ],
-			synced_options: [ 'log_urls' ],
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertFalse( $called, 'fail-closed: missing enable_aggregator must skip sync' );
-	}
-
-	public function test_skips_when_enable_aggregator_false(): void {
-		$called = false;
-		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => false ],
-			synced_options: [ 'log_urls' ],
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertFalse( $called );
-	}
-
-	public function test_skips_when_enable_aggregator_truthy_but_not_true(): void {
-		$called = false;
-		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => 1 ], // truthy but !== true
-			synced_options: [ 'log_urls' ],
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertFalse( $called, 'strict === true required, not just truthy' );
-	}
-
-	public function test_syncs_when_enable_aggregator_strictly_true(): void {
+	public function test_syncs_dispatches_unconditionally(): void {
+		// A3: enable_aggregator gate removed. Dispatch always runs;
+		// without an aggregator topology + enabled remotes the queued
+		// remote_manager job has no consumer (silent no-op).
 		$received = null;
 		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => true ],
+			config: [],
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $ciphertext ) use ( &$received ) {
 				$received = [ 'option' => $option, 'value' => $value, 'ciphertext' => $ciphertext ];
@@ -383,27 +353,19 @@ class SettingsSyncTest extends TestCase {
 		$this->assertArrayNotHasKey( 'random_unrelated_option', $GLOBALS['_wp_options'] );
 	}
 
-	public function test_static_handler_skips_when_enable_workers_false(): void {
-		// fail-closed strict polarity: enable_workers must be === true.
-		// Set it to false in WP options so Config sees it false.
-		// (Actual config read goes through Config::load_config which we can't
-		// easily override here without filesystem manipulation — this is a
-		// smoke test ensuring the call doesn't crash.)
+	public function test_static_handler_does_not_crash_on_log_events(): void {
+		// A3: enable_workers gate removed. Smoke test that the static
+		// handler runs end-to-end without crashing for a
+		// PERF_TUNING_OPTIONS entry.
 		SettingsSync::suppress_sync( false );
 		Config::reset();
-		// PERF_TUNING_OPTIONS contains log_events; passing it triggers the
-		// strict enable_workers === true check inside maybe_queue_static_sync.
 		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
-
-		// No crash; the queue skipped because enable_workers !== true.
 		$this->assertTrue( true );
 	}
 
 	public function test_static_handler_with_perf_tuning_option(): void {
-		// Pass an option from PERF_TUNING_OPTIONS (1:1 mapping). Without
-		// enable_workers === true the handler short-circuits inside
-		// maybe_queue_static_sync. We exercise the perf-tuning recognition
-		// branch.
+		// Smoke test: pass an option from PERF_TUNING_OPTIONS (1:1
+		// mapping). Just exercises the perf-tuning recognition branch.
 		SettingsSync::suppress_sync( false );
 		Config::reset();
 
@@ -436,13 +398,13 @@ class SettingsSyncTest extends TestCase {
 	// --- Instance-mode skip-unsynced-option ----------------------------------
 
 	public function test_instance_mode_skips_when_dispatch_returns_no_signal(): void {
-		// Instance mode: option in synced_options + enable_aggregator === true →
-		// dispatch is invoked. Verifies the dispatch closure receives the
-		// option name, the value, and a non-empty ciphertext.
+		// Instance mode: option in synced_options → dispatch is invoked.
+		// Verifies the dispatch closure receives the option name,
+		// the value, and a non-empty ciphertext.
 		$received_option = null;
 		$received_value  = null;
 		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => true ],
+			config: [],
 			synced_options: [ 'log_events', 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$received_option, &$received_value ) {
 				$received_option = $option;
@@ -659,18 +621,19 @@ class SettingsSyncTest extends TestCase {
 		$this->assertNull( $out['value'] );
 	}
 
-	// --- Instance mode skipping when not in synced_options ------------------
+	// --- Instance mode skipping when option not in synced_options ----------
 
-	public function test_instance_mode_dispatch_failure_when_value_is_empty_string(): void {
-		// Instance mode: unset enable_workers + sync option → fail-closed.
+	public function test_instance_mode_skips_when_option_not_in_synced_list(): void {
+		// Option not in $synced_options must not dispatch even though the
+		// aggregator gate is gone — there's still no point dispatching
+		// options the hub doesn't care about.
 		$called = false;
 		$sync   = new SettingsSync(
 			config: [],
-			synced_options: [ 'log_urls' ],
+			synced_options: [ 'log_urls' ], // 'other_option' NOT in this list
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
-		// Empty new value still dispatches (no defaults-substitution at instance mode).
-		$sync->on_option_update( 'log_urls', 'old', '' );
-		$this->assertFalse( $called, 'fail-closed: enable_workers absent → no dispatch' );
+		$sync->on_option_update( 'other_option', 'old', 'new' );
+		$this->assertFalse( $called, 'option not in synced list must skip' );
 	}
 }

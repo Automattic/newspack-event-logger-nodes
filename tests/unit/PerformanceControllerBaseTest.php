@@ -105,7 +105,7 @@ class PerformanceControllerBaseTest extends TestCase {
 		$this->assertIsArray( $config['memcache_servers'] );
 		$this->assertIsString( $config['base_directory'] );
 		$this->assertIsArray( $config['aggregator_servers'] );
-		$this->assertFalse( $config['enable_workers'] );
+		$this->assertIsArray( $config['topologies'] );
 	}
 
 }

@@ -100,12 +100,7 @@ class Admin {
 		'newspack_event_logger_nodes_skip_urls',
 		'newspack_event_logger_nodes_log_events',
 		'newspack_event_logger_nodes_custom_events',
-		// Jobs.
-		'newspack_event_logger_nodes_enable_jobs',
-		// Performance workers (hub designation).
-		'newspack_event_logger_nodes_enable_workers',
 		// Aggregator.
-		'newspack_event_logger_nodes_enable_aggregator',
 		'newspack_event_logger_nodes_aggregator_servers',
 		// Performance Workers (application-side).
 		'newspack_event_logger_nodes_significant_events',
@@ -365,48 +360,13 @@ class Admin {
 			'newspack_event_logger_nodes_instrumentation_section'
 		);
 
-		// -- Jobs section ---------------------------------------------------
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_enable_jobs',
-			[ 'sanitize_callback' => 'absint' ]
-		);
-
-		\add_settings_section(
-			'newspack_event_logger_nodes_jobs_section',
-			\__( 'Jobs', 'newspack-event-logger-nodes' ),
-			[ $this, 'jobs_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'enable_jobs',
-			\__( 'Enable Jobs', 'newspack-event-logger-nodes' ),
-			[ $this, 'enable_jobs_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_jobs_section'
-		);
-
-		// -- Workers section ------------------------------------------------
-		// `enable_workers` gates the `request-workers` topology — spokes
-		// skip FlameBuilder over data the hub will rebuild anyway. Remote
-		// fan-out (settings + auto-tune → spokes) is gated separately by
-		// `enable_aggregator`.
-		// Real-bool storage (not `absint` int) so Config's strict `=== true`
-		// checks downstream actually match. Checkbox posts '1' on check,
-		// the hidden zero posts '0' on uncheck; `(bool) (int) $v` gives
-		// real PHP true/false.
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_enable_workers',
-			// Store as int 0/1 (not bool) — get_option returns false BOTH for
-			// missing-option AND for stored-false, so Config::load_config()
-			// can't tell them apart and stored-false silently loses to the
-			// file default. Storing 0/1 keeps stored-false distinguishable.
-			[
-				'sanitize_callback' => 'absint',
-				'autoload'          => true,
-			]
-		);
+		// -- Performance Workers section -----------------------------------
+		// A3: enable_workers / enable_jobs / enable_aggregator gates are gone.
+		// Worker fleet activation is driven by the substrate's flat
+		// `topologies` config list (managed in the substrate Admin's
+		// Topologies multi-select). What stays here are the per-fleet
+		// app-level knobs that DON'T toggle whether a fleet runs:
+		// auto-tune thresholds, significant-events whitelist.
 		\register_setting(
 			self::OPTIONS_GROUP,
 			'newspack_event_logger_nodes_significant_events',
@@ -439,13 +399,6 @@ class Admin {
 			self::SETTINGS_PAGE
 		);
 		\add_settings_field(
-			'enable_workers',
-			\__( 'Enable Workers', 'newspack-event-logger-nodes' ),
-			[ $this, 'enable_workers_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_workers_section'
-		);
-		\add_settings_field(
 			'auto_tune',
 			\__( 'Auto-Tune', 'newspack-event-logger-nodes' ),
 			[ $this, 'auto_tune_callback' ],
@@ -461,38 +414,16 @@ class Admin {
 		);
 
 		// -- Remote Servers section -----------------------------------------
-		// The legacy newspack-event-aggregator plugin owned this UI; the new
-		// monorepo absorbs it. `enable_aggregator` gates whether the
-		// aggregator topology spawns workers (gates the topology filter in
-		// newspack-event-logger-nodes.php).
-		// Int 0/1 storage so stored-false survives the get_option false-vs-missing
-		// ambiguity (see enable_workers above).
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_enable_aggregator',
-			[ 'sanitize_callback' => 'absint' ]
-		);
-
 		// Aggregator spoke list is managed by the Remote Servers REST CRUD
-		// (ServerRegistry → encrypted WP option) — NOT a settings-form field.
-		// Registering it here would make options.php's whitelist-iteration
-		// pass `null` to the sanitizer on every save and clobber the list,
-		// including any config-file-defined defaults that flow through
-		// ServerRegistry::get_all's merge. Legacy newspack-event-aggregator
-		// also only does add_settings_field for display, not register_setting.
+		// (ServerRegistry → encrypted WP option) — NOT a settings-form
+		// field. The aggregator fleet itself runs whenever 'aggregator' is
+		// in the substrate `topologies` list.
 
 		\add_settings_section(
 			'newspack_event_logger_nodes_aggregator_section',
 			\__( 'Remote Servers', 'newspack-event-logger-nodes' ),
 			[ $this, 'aggregator_section_callback' ],
 			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'enable_aggregator',
-			\__( 'Enable Aggregator', 'newspack-event-logger-nodes' ),
-			[ $this, 'enable_aggregator_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_aggregator_section'
 		);
 		\add_settings_field(
 			'configured_servers',
@@ -711,10 +642,6 @@ class Admin {
 		echo '<p>' . \esc_html__( 'URL filters and hooks to time. Use Browse Hooks / Browse Events to populate from the recommended set.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	public function jobs_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Enable background job dispatch via JobIntake / JobRouter.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
-
 	public function workers_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Automatically disable noisy events and protect slow ones.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
@@ -734,88 +661,10 @@ class Admin {
 		<?php
 	}
 
-	public function enable_jobs_callback(): void {
-		$config  = Config::load_config();
-		$enabled = \get_option( 'newspack_event_logger_nodes_enable_jobs', $config['enable_jobs'] ?? 1 );
-		?>
-		<input type="hidden" name="newspack_event_logger_nodes_enable_jobs" value="0" />
-		<input type="checkbox" id="enable_jobs" name="newspack_event_logger_nodes_enable_jobs" value="1" <?php \checked( 1, $enabled ); ?> />
-		<label for="enable_jobs"><?php \esc_html_e( 'Enable JobIntake and JobWorker', 'newspack-event-logger-nodes' ); ?></label>
-		<?php
-		$dependents = self::collect_job_dependents();
-		if ( ! empty( $dependents ) ) {
-			?>
-			<p class="description" style="color: #b32d2e;">
-				<strong><?php \esc_html_e( 'Required by features active on this site:', 'newspack-event-logger-nodes' ); ?></strong>
-				<?php echo \esc_html( \implode( ', ', $dependents ) ); ?>.
-				<?php \esc_html_e( 'Disabling jobs will silently break these flows — settings will not propagate, FlameBuilder auto-tuning will not apply, and queued jobs will accumulate in firehose unprocessed.', 'newspack-event-logger-nodes' ); ?>
-			</p>
-			<?php
-		}
-	}
-
-	/**
-	 * Collect human-readable names of features that depend on the job pipeline.
-	 * Used by `enable_jobs_callback()` to surface a red warning when active
-	 * dependents would silently break if jobs are disabled.
-	 *
-	 * Detection is by option state, not class_exists() — all the relevant code
-	 * ships in this plugin, so what matters is whether the feature is configured
-	 * for THIS site (not whether the code is loadable).
-	 *
-	 * @return string[] Active dependents; empty if none configured.
-	 */
-	private static function collect_job_dependents(): array {
-		$dependents = [];
-		$config     = Config::load_config( 'full' );
-
-		// Aggregator settings sync routes hub→spoke config changes through
-		// JobIntake. Active when any remote spokes are registered AND the
-		// aggregator toggle is on (the single operator switch).
-		$servers           = $config['aggregator_servers'] ?? [];
-		$enable_aggregator = true === ( $config['enable_aggregator'] ?? false );
-		if ( ! empty( $servers ) && $enable_aggregator ) {
-			$dependents[] = \__( 'Aggregator settings sync', 'newspack-event-logger-nodes' );
-		}
-
-		// FlameBuilder auto-tune writes settings via JobIntake when it detects
-		// noisy/significant events. Active when either threshold is non-zero.
-		$count_threshold = (int) \get_option( 'newspack_event_logger_nodes_auto_disable_threshold', 0 );
-		$time_threshold  = (float) \get_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', 0 );
-		if ( $count_threshold > 0 || $time_threshold > 0.0 ) {
-			$dependents[] = \__( 'FlameBuilder auto-tune', 'newspack-event-logger-nodes' );
-		}
-
-		return $dependents;
-	}
-
-	public function enable_workers_callback(): void {
-		// Gates the `request-workers` topology — when off, spokes skip
-		// their own FlameBuilder over data the hub will rebuild anyway.
-		// Strict `=== true` polarity; default OFF.
-		$enabled = true === ( Config::load_config( 'full' )['enable_workers'] ?? false );
-		?>
-		<input type="hidden" name="newspack_event_logger_nodes_enable_workers" value="0" />
-		<input type="checkbox" id="enable_workers" name="newspack_event_logger_nodes_enable_workers" value="1" <?php \checked( true, $enabled ); ?> />
-		<label for="enable_workers"><?php \esc_html_e( 'Enable Performance Workers (RequestBuilder + FlameBuilder)', 'newspack-event-logger-nodes' ); ?></label>
-		<?php
-	}
-
 	// ---- Aggregator field callbacks --------------------------------------
 
 	public function aggregator_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
-
-	public function enable_aggregator_callback(): void {
-		// Strict `=== true` polarity; default OFF. Operator opt-in for
-		// cross-site activity (pull + push).
-		$enabled = true === ( Config::load_config( 'full' )['enable_aggregator'] ?? false );
-		?>
-		<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
-		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( true, $enabled ); ?> />
-		<label for="enable_aggregator"><?php \esc_html_e( 'Enable aggregator worker (pulls firehose from configured Remote Servers via SSE)', 'newspack-event-logger-nodes' ); ?></label>
-		<?php
+		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
 	/**

@@ -272,7 +272,6 @@ class AdminTest extends TestCase {
 			'newspack_event_logger_nodes_skip_urls',
 			'newspack_event_logger_nodes_log_events',
 			'newspack_event_logger_nodes_custom_events',
-			'newspack_event_logger_nodes_enable_jobs',
 			'newspack_event_logger_nodes_significant_events',
 			'newspack_event_logger_nodes_auto_disable_threshold',
 			'newspack_event_logger_nodes_auto_protect_time_threshold',
@@ -344,7 +343,7 @@ class AdminTest extends TestCase {
 
 		// Application-side fields populated under the right page. Storage
 		// fields (substrate) are NOT asserted here.
-		foreach ( [ 'enable_logging', 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'enable_jobs', 'significant_events' ] as $field ) {
+		foreach ( [ 'enable_logging', 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events' ] as $field ) {
 			$this->assertArrayHasKey( $field, $GLOBALS['_registered_fields'], "field $field not registered" );
 			$this->assertSame( Admin::SETTINGS_PAGE, $GLOBALS['_registered_fields'][ $field ]['page'] );
 		}
@@ -751,14 +750,6 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'URL', $out );
 	}
 
-	public function test_jobs_section_callback_describes_dispatch(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->jobs_section_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'job', \strtolower( $out ) );
-	}
-
 	public function test_workers_section_callback_describes_workers(): void {
 		$admin = new Admin();
 		\ob_start();
@@ -798,15 +789,6 @@ class AdminTest extends TestCase {
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'type="checkbox"', $out );
 		$this->assertStringNotContainsString( 'checked="checked"', $out );
-	}
-
-	public function test_enable_jobs_callback_renders_checkbox(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->enable_jobs_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_enable_jobs"', $out );
-		$this->assertStringContainsString( 'type="checkbox"', $out );
 	}
 
 	// ---- Field callbacks: array fields (log_urls, skip_urls, etc.) -------
@@ -909,28 +891,6 @@ class AdminTest extends TestCase {
 		$admin->aggregator_section_callback();
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'Configure remote', $out );
-	}
-
-	public function test_enable_aggregator_callback_renders_checkbox_unchecked_by_default(): void {
-		// Strict polarity, default OFF — fresh install (no option, no file
-		// override) renders unchecked. Hubs opt in explicitly.
-		$admin = new Admin();
-		\ob_start();
-		$admin->enable_aggregator_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_enable_aggregator"', $out );
-		$this->assertStringNotContainsString( "checked='checked'", $out );
-		$this->assertStringNotContainsString( 'checked="checked"', $out );
-	}
-
-	public function test_enable_aggregator_callback_checked_when_enabled(): void {
-		\update_option( 'newspack_event_logger_nodes_enable_aggregator', true );
-		\Newspack_Event_Logger_Nodes\Config::reset();
-		$admin = new Admin();
-		\ob_start();
-		$admin->enable_aggregator_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'checked', $out );
 	}
 
 	public function test_configured_servers_callback_renders_empty_state_with_no_servers(): void {

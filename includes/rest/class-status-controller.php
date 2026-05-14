@@ -45,7 +45,7 @@ class StatusController extends PerformanceControllerBase {
 				'version'          => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
 				'runtime_version'  => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
 				'num_partitions'   => (int) ( $config['num_partitions'] ?? 1 ),
-				'enable_workers'   => true === ( $config['enable_workers'] ?? false ), // Strict — same polarity as SettingsSync.
+				'topologies'       => \is_array( $config['topologies'] ?? null ) ? \array_values( $config['topologies'] ) : [],
 				'cache_available'  => $cache_available,
 				'timestamp'        => \time(),
 			],

@@ -20,11 +20,21 @@
 return [
 	'allowed_users'               => [],
 
-	// Pipeline toggles. Strict `=== true` polarity, default OFF.
+	// Logging on/off. Application-level — distinct from the
+	// substrate `topologies` list, which decides which worker
+	// fleets run.
 	'enable_logging'              => true,
-	'enable_jobs'                 => false,
-	'enable_workers'              => true,
-	'enable_aggregator'           => false,
+
+	// Active topologies (appended to substrate's `topologies`
+	// list). Each entry is a TSL topology name resolvable by
+	// Newspack_Nodes\Topology_Registry. Comment a line out to
+	// disable that fleet.
+	'topologies'                  => [
+		'firehose-workers',  // alt: 'firehose-workers+jobs', 'firehose-jobs'
+		'request-workers',
+		// 'job-workers',
+		// 'aggregator',
+	],
 
 	// Aggregator spoke list (hubs only; spokes leave empty).
 	'aggregator_servers'          => [],
@@ -160,29 +170,4 @@ return [
 		'wpseo_saved_indexable',
 	],
 
-	// Topology fleet. `gated_by` is a config-array key, or an array of
-	// keys (any-of). Strict `=== true`.
-	'topologies'                  => [
-		'firehose-workers' => [
-			'topology'      => 'topologies/firehose-workers.php',
-			'stale_timeout' => 60,
-			'gated_by'      => [ 'enable_workers', 'enable_jobs' ],
-		],
-		'request-workers'  => [
-			'topology'      => 'topologies/request-workers.php',
-			'stale_timeout' => 60,
-			'gated_by'      => 'enable_workers',
-		],
-		'job-workers'      => [
-			'topology'      => 'topologies/job-workers.php',
-			'stale_timeout' => 600,
-			'gated_by'      => 'enable_jobs',
-		],
-		'aggregator'       => [
-			'topology'       => 'topologies/aggregator.php',
-			'num_partitions' => 1,
-			'stale_timeout'  => 60,
-			'gated_by'       => 'enable_aggregator',
-		],
-	],
 ];

@@ -2,8 +2,10 @@
 /**
  * Settings Sync
  *
- * Hub-side sync of WP options to remote spokes. Gated by `enable_aggregator`
- * — the single operator switch for cross-site activity.
+ * Hub-side sync of WP options to remote spokes. No explicit gate —
+ * runs whenever a synced option changes. Without an aggregator
+ * topology + enabled remotes, the queued remote_manager jobs have
+ * no consumer (silent no-op).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -217,9 +219,9 @@ class SettingsSync {
 	 * Queue a static-mode sync via JobIntake when the option is in our list.
 	 *
 	 * Routes through JobIntake (jobintake.log) because settings payloads can
-	 * exceed the 4KB PIPE_BUF atomic write limit. Short-circuits when the
-	 * operator-facing `enable_aggregator` toggle is off — same gate as the
-	 * StreamMerger pull-side, so one switch stops both directions.
+	 * exceed the 4KB PIPE_BUF atomic write limit. Always queues; without an
+	 * aggregator topology + enabled remotes, the queued remote_manager
+	 * job has no consumer (silent no-op).
 	 *
 	 * @param string $option Option name.
 	 * @param mixed  $value  Option value.
@@ -236,12 +238,12 @@ class SettingsSync {
 			return;
 		}
 
-		// Aggregator gate: strict — only an explicit bool-true enables
-		// cross-site activity. Default OFF; anything truthy-but-not-true
-		// (`1`, `"1"`, missing) fails closed. Same polarity AutoTuner uses.
-		if ( true !== ( Config::load_config()['enable_aggregator'] ?? false ) ) {
-			return;
-		}
+		// No gate: this dispatch is a write to RemoteManager / JobIntake
+		// addressed at remote spokes. With no aggregator topology
+		// running and no enabled remotes registered, the downstream
+		// JobWorker has no remote_manager handler to invoke and the
+		// jobs silently no-op. Any topology that DOES run aggregator
+		// machinery picks them up automatically.
 
 		// Map local → remote option name.
 		$remote_option = $is_remap ? self::SYNCED_OPTIONS[ $option ] : $option;
@@ -330,14 +332,9 @@ class SettingsSync {
 		if ( $this->syncing ) {
 			return; // Re-entrancy guard.
 		}
-		// Fail-closed on `enable_aggregator` — same operator switch as the
-		// static path. Earlier this gate read `enable_workers`, which split
-		// the two SettingsSync paths under different polarities and meant a
-		// hub configured for aggregator fan-out would still skip the
-		// instance-mode dispatch.
-		if ( true !== ( $this->config['enable_aggregator'] ?? false ) ) {
-			return;
-		}
+		// No aggregator gate: a hub topology (or any topology that
+		// dispatches remote_manager jobs) consumes this; without one,
+		// the encrypted payload queues a job nobody picks up. Silent.
 		if ( ! \in_array( $option, $this->synced_options, true ) ) {
 			return;
 		}

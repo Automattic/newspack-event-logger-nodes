@@ -102,18 +102,12 @@ class HealthCheckTick extends Node {
 			return;
 		}
 
-		// Long-running worker: Config and ServerRegistry both cache their
-		// view at first read and never reload, so an operator turning the
-		// aggregator on (or enabling a spoke) AFTER this worker spawned
-		// would otherwise be invisible until the worker's ~595s respawn.
-		// Reset both before re-reading the gate.
-		Config::reset();
+		// Long-running worker: ServerRegistry caches its view at first
+		// read and never reloads, so an operator enabling a spoke
+		// AFTER this worker spawned would otherwise be invisible
+		// until the worker's ~595s respawn. Reset before re-reading.
 		$registry = ServerRegistry::get_instance();
 		$registry->reset_cache();
-
-		if ( true !== ( Config::load_config()['enable_aggregator'] ?? false ) ) {
-			return;
-		}
 
 		if ( empty( $registry->get_enabled() ) ) {
 			return;
