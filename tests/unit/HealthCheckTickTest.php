@@ -27,7 +27,9 @@ class HealthCheckTickTest extends TestCase {
 
 	public function test_health_check_tick_node_schema_declares_verb(): void {
 		$schema = HealthCheckTick::node_schema();
-		$this->assertSame( 'Control', $schema['category'] );
+		// Hidden from the topology console — instantiated as a
+		// patron-linked sibling of StreamMerger, not built from TSL.
+		$this->assertSame( 'Hidden', $schema['category'] );
 		$verb_names = \array_column( $schema['verbs'], 'name' );
 		$this->assertContains( 'start_periodic_tick', $verb_names );
 	}

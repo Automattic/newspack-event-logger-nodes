@@ -1,7 +1,11 @@
 # Aggregator topology (hub side).
 #
 #   StreamMerger ─→ Topic (firehose:topic)   (multi-partition, KEY-routed)
-#   HealthCheckTick (Router-TIMER hitchhike, owned by aggregator)
+#
+# StreamMerger owns a HealthCheckTick sibling (patron-linked, named
+# `stream-merger:health-check`) that hitchhikes the same Router TIMER
+# heartbeat and enqueues the periodic discovery + sync sweep — see
+# StreamMerger::__construct() / start_periodic_tick().
 #
 # Always single-partition (the StreamMerger is itself a fan-in; partition
 # count comes from the destination Topic). The k:"job" -> k:"remote_job"
@@ -19,6 +23,3 @@ cmd stream-merger:config set_verify_ssl <config:aggregator_verify_ssl>
 cmd stream-merger:config set_require_https <config:aggregator_require_https>
 cmd stream-merger:config load_remotes_from_registry
 cmd stream-merger:config start_periodic_tick
-
-make_node HealthCheckTick health-check-tick
-cmd health-check-tick:config start_periodic_tick
