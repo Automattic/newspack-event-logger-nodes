@@ -140,21 +140,21 @@ class AutoTuner extends Node {
 	 * re-queue what we just queued).
 	 */
 	private function persist( string $option, $value ): void {
-		if ( true === ( Config::load_config()['enable_aggregator'] ?? false ) ) {
-			// AutoTuner only touches PERF_TUNING_OPTIONS
-			// (log_events, custom_events, significant_events), which
-			// PerfSettingsController owns — not /settings.
-			SettingsSync::queue_job(
-				'remote_manager',
-				[
-					'action'    => 'sync_setting',
-					'option'    => $option,
-					'value'     => $value,
-					'endpoint'  => SettingsSync::PERF_ENDPOINT,
-					'queued_at' => \time(),
-				]
-			);
-		}
+		// Always queue the remote fan-out job. AutoTuner only touches
+		// PERF_TUNING_OPTIONS (log_events, custom_events,
+		// significant_events), which PerfSettingsController owns —
+		// not /settings. Without an aggregator topology + enabled
+		// remotes, the queued job has no consumer (silent no-op).
+		SettingsSync::queue_job(
+			'remote_manager',
+			[
+				'action'    => 'sync_setting',
+				'option'    => $option,
+				'value'     => $value,
+				'endpoint'  => SettingsSync::PERF_ENDPOINT,
+				'queued_at' => \time(),
+			]
+		);
 		if ( ! \function_exists( 'update_option' ) ) {
 			return;
 		}

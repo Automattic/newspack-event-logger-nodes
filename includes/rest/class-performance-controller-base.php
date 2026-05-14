@@ -103,7 +103,7 @@ abstract class PerformanceControllerBase {
 			'max_lifespan'       => 86400,
 			'memcache_servers'   => Memcached_Cache::DEFAULT_SERVERS,
 			'base_directory'     => '/tmp/newspack-nodes',
-			'enable_workers'     => false,
+			'topologies'         => [],
 			'aggregator_servers' => [],
 		];
 		// Layer in the substrate's runtime config so deployments that set
