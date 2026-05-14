@@ -614,7 +614,8 @@ const StandaloneWorkers = memo( function StandaloneWorkers( {
  *  - `{ kind: 'log', ... }` — a LogSection to draw.
  *  - `{ kind: 'worker', ... }` — a WorkerConnector to draw.
  *
- * @param {Array} workers Worker descriptors from the REST endpoint.
+ * @param {Array} workers      Worker descriptors from the REST endpoint.
+ * @param {Array} terminalLogs Top-level `logs` array — producer-only outputs.
  * @return {Array} Render plan items.
  */
 function buildRenderPlan( workers, terminalLogs = [] ) {
@@ -638,7 +639,7 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 	const stepsByKey = new Map();
 	workers.forEach( ( w ) => {
 		const handler = w.handler || w.type;
-		const key     = `${ w.type }|${ handler }`;
+		const key = `${ w.type }|${ handler }`;
 		if ( ! stepsByKey.has( key ) ) {
 			stepsByKey.set( key, {
 				// Keep `type` as the worker_type so styling/category code that
