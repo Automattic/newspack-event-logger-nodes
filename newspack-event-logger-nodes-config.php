@@ -49,7 +49,7 @@ return [
 	'skip_urls'                   => [
 		'/wp-json/newspack-nodes/v1/firehose',
 		'/wp-json/newspack-nodes/v1/workers/spawn',
-		'/wp-json/newspack-event-logger-nodes/v1/topology',
+		'/wp-json/newspack-nodes/v1/topology',
 	],
 
 	// Hooks instrumentation.
