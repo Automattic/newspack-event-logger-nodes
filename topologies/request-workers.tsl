@@ -1,0 +1,19 @@
+# Request-workers topology.
+#
+#   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition)
+#                                            └→ Stats_Store (memcache, hidden via configure_stats)
+#                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
+
+make_node Partition flames:partition {config:logs_dir}/flames.log {partition} {config:segment_size} {config:num_segments} {config:max_lifespan}
+cmd flames:partition:config allow_large_writes
+cmd flames:partition:config with_index flame-index
+
+make_node FlameBuilder flame-builder
+connect_node flame-builder flames:partition
+cmd flame-builder:config configure_stats {partition}
+cmd flame-builder:config set_is_hub {config:is_hub}
+cmd flame-builder:config set_auto_tune {config:auto_disable_threshold} {config:auto_protect_time_threshold}
+cmd flame-builder:config set_significant_events {config:significant_events_csv}
+
+make_node Consumer requests:consumer {config:logs_dir}/requests.log {partition} {config:base_directory}/offsets/requests.p{partition}
+connect_node requests:consumer flame-builder
