@@ -7,10 +7,10 @@
 #   Tail (jobintake.log) ───────────→ JobRouter
 
 # --- Workers branch: requests + errors partitions ---
-make_node Partition requests:partition {config:logs_dir}/requests.log {partition} {config:segment_size} {config:num_segments} {config:max_lifespan}
+make_node Partition requests:partition <config:logs_dir>/requests.log <partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd requests:partition:config allow_large_writes
 cmd requests:partition:config with_index request-index
-make_node Partition errors:partition {config:logs_dir}/errors.log {partition} {config:segment_size} {config:num_segments} {config:max_lifespan}
+make_node Partition errors:partition <config:logs_dir>/errors.log <partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd errors:partition:config allow_large_writes
 
 make_node RequestBuilder request-builder
@@ -18,19 +18,19 @@ connect_node request-builder requests:partition
 cmd request-builder:config set_errors_target errors:partition
 
 # --- Jobs branch: jobs partition + JobRouter ---
-make_node Partition jobs:partition {config:logs_dir}/jobs.log {partition} {config:segment_size} {config:num_segments} {config:max_lifespan}
+make_node Partition jobs:partition <config:logs_dir>/jobs.log <partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd jobs:partition:config allow_large_writes
 
 make_node JobRouter job-router
 connect_node job-router jobs:partition
 
 # --- Firehose input: Consumer → Tee fan-out → both branches ---
-make_node Consumer firehose:consumer {config:logs_dir}/firehose.log {partition} {config:base_directory}/offsets/firehose.p{partition}
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:base_directory>/offsets/firehose.p<partition>
 make_node Tee firehose:tee
 connect_node firehose:tee request-builder
 connect_node firehose:tee job-router
 connect_node firehose:consumer firehose:tee
 
 # --- jobintake input: separate Consumer feeding the same JobRouter ---
-make_node Consumer jobintake:consumer {config:logs_dir}/jobintake.log {partition} {config:base_directory}/offsets/jobintake.p{partition}
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> <config:base_directory>/offsets/jobintake.p<partition>
 connect_node jobintake:consumer job-router

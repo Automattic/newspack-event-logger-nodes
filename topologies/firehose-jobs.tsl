@@ -4,14 +4,14 @@
 #                          ├─→ JobRouter ─→ Partition (jobs:partition)
 #   Tail (jobintake.log) ──┘
 
-make_node Partition jobs:partition {config:logs_dir}/jobs.log {partition} {config:segment_size} {config:num_segments} {config:max_lifespan}
+make_node Partition jobs:partition <config:logs_dir>/jobs.log <partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd jobs:partition:config allow_large_writes
 
 make_node JobRouter job-router
 connect_node job-router jobs:partition
 
-make_node Consumer firehose:consumer {config:logs_dir}/firehose.log {partition} {config:base_directory}/offsets/firehose.p{partition}
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:base_directory>/offsets/firehose.p<partition>
 connect_node firehose:consumer job-router
 
-make_node Consumer jobintake:consumer {config:logs_dir}/jobintake.log {partition} {config:base_directory}/offsets/jobintake.p{partition}
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> <config:base_directory>/offsets/jobintake.p<partition>
 connect_node jobintake:consumer job-router
