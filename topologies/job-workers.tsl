@@ -1,0 +1,9 @@
+# Job-workers topology.
+#
+#   Consumer (jobs.log) ─→ JobWorker
+
+make_node JobWorker job-worker
+cmd job-worker:config load_handlers
+
+make_node Consumer jobs:consumer {config:logs_dir}/jobs.log {partition} {config:base_directory}/offsets/jobs.p{partition}
+connect_node jobs:consumer job-worker
