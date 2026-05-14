@@ -99,19 +99,58 @@ class FlameBuilder extends Node {
 	/** @var callable|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
 
+	/** @var AutoTuner|null Owned sibling — receives auto-tune decisions. */
+	private ?AutoTuner $auto_tuner = null;
+
 	public function __construct() {
 		$this->stats_cache     = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
 		$this->last_flush_time = \microtime( true );
 		$this->reset_pending();
 
 		// Sibling CommandInterpreter — TSL topology files configure
-		// FlameBuilder via verbs (set_flames_sink, set_is_hub,
-		// set_auto_tune, set_significant_events, configure_stats)
-		// instead of PHP-side setter calls.
+		// FlameBuilder via verbs (set_is_hub, set_auto_tune,
+		// set_significant_events, configure_stats) instead of
+		// PHP-side setter calls.
 		$ci = new CommandInterpreter();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
+
+		// Owned auto-tuner sibling. Patron-linked so dump_metadata
+		// hides it from the canvas — it's plumbing for FlameBuilder,
+		// not a graph node operators interact with. Named on first
+		// patron name() (see name() override below).
+		$this->auto_tuner = new AutoTuner();
+		$this->auto_tuner->patron( $this );
+	}
+
+	/**
+	 * Override name() so the owned auto-tuner sibling tracks
+	 * `{patron_name}:auto-tuner` whenever the patron is named or
+	 * renamed. The base Node::name() handles $this->interpreter;
+	 * we extend it for our own custom sibling.
+	 */
+	public function name( ?string $name = null ): string {
+		$result = parent::name( $name );
+		if ( null !== $name && null !== $this->auto_tuner ) {
+			$this->auto_tuner->name( $name . ':auto-tuner' );
+		}
+		return $result;
+	}
+
+	/**
+	 * Cascade-unregister the owned auto-tuner sibling alongside
+	 * the patron, mirroring Node::remove_node's $interpreter
+	 * cleanup. Without this the auto-tuner orphans in
+	 * Core::$nodes_by_name and a re-spawned FlameBuilder with the
+	 * same name collides on its sibling.
+	 */
+	public function remove_node(): void {
+		if ( null !== $this->auto_tuner && '' !== $this->auto_tuner->name() ) {
+			\Newspack_Nodes\Core::unregister_node( $this->auto_tuner->name() );
+		}
+		$this->auto_tuner = null;
+		parent::remove_node();
 	}
 
 	/**
@@ -121,27 +160,6 @@ class FlameBuilder extends Node {
 		$this->stats_store = $store;
 	}
 
-	/**
-	 * Expose the implicit `auto-tuner` edge on top of the standard
-	 * `Node::target`. emit_auto_tune() hardcodes TO=`auto-tuner` so
-	 * the topology console wouldn't otherwise know about that edge.
-	 * The flames-write path flows through the standard target/sink
-	 * pair like any other Node connection (set via
-	 * `connect_node flame-builder <flames-partition>`).
-	 */
-	public function target( $value = null ) {
-		if ( null !== $value ) {
-			return parent::target( $value );
-		}
-		$primary = parent::target();
-		$all     = \is_array( $primary )
-			? $primary
-			: ( '' !== (string) $primary ? [ $primary ] : [] );
-		if ( ! \in_array( 'auto-tuner', $all, true ) ) {
-			$all[] = 'auto-tuner';
-		}
-		return $all;
-	}
 
 	/**
 	 * Toggle hub mode (per-server tracking).
@@ -1590,7 +1608,7 @@ class FlameBuilder extends Node {
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = 'auto-tuner';
+		$msg[ Message::TO ]        = $this->name . ':auto-tuner';
 		$msg[ Message::KEY ]       = $key;
 		$msg[ Message::VALUE ]     = [
 			'items'   => $items,

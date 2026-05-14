@@ -75,18 +75,32 @@ class FlameBuilderTest extends TestCase {
 		// FlameBuilder's flame-write path uses the standard
 		// target/sink pair like any other Node connection (set via
 		// `connect_node flame-builder flames:partition`). The
-		// auto-tune emit hardcodes TO=`auto-tuner` so the topology
-		// console wouldn't otherwise see that edge — `target()`
-		// override exposes it on top of the standard target.
+		// owned auto-tuner sibling is patron-linked, so the GUI
+		// hides it via dump_metadata's filter — no extra edge
+		// surfaces from target().
 		$fb = new FlameBuilder();
 		$fb->name( 'fb' );
 		$fb->connect_node( 'flames:partition' );
 
-		$targets = $fb->target();
+		$this->assertSame( 'flames:partition', $fb->target() );
+	}
 
-		$this->assertIsArray( $targets );
-		$this->assertContains( 'flames:partition', $targets );
-		$this->assertContains( 'auto-tuner', $targets );
+	public function test_flame_builder_owns_auto_tuner_sibling(): void {
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+
+		// Auto-tuner registered under {patron}:auto-tuner with patron link.
+		$at = \Newspack_Nodes\Core::node( 'fb:auto-tuner' );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\AutoTuner::class, $at );
+		$this->assertSame( $fb, $at->patron() );
+	}
+
+	public function test_flame_builder_remove_node_cascades_auto_tuner(): void {
+		$fb = new FlameBuilder();
+		$fb->name( 'fb' );
+		$this->assertNotNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
+		$fb->remove_node();
+		$this->assertNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
 	}
 
 	public function test_non_array_value_skipped(): void {
