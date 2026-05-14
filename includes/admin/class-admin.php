@@ -834,9 +834,7 @@ class Admin {
 	 * servers_field_callback).
 	 */
 	public function configured_servers_callback(): void {
-		$servers = \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' )
-			? \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance()->get_all()
-			: [];
+		$servers = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance()->get_all();
 		?>
 		<div id="event-aggregator-servers">
 			<table class="wp-list-table widefat fixed striped" style="max-width: 800px;">

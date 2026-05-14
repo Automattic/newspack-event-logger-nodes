@@ -128,10 +128,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 \add_filter(
 	'newspack_nodes/topologies',
 	static function ( array $topologies ): array {
-		if (
-			! \class_exists( '\Newspack_Event_Logger_Nodes\Config' )
-			|| ! \class_exists( '\Newspack_Nodes\Topology_Registry' )
-		) {
+		if ( ! \class_exists( '\Newspack_Nodes\Topology_Registry' ) ) {
 			return $topologies;
 		}
 		// Publish ONLY the application's file-default topologies. The
@@ -152,17 +149,10 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			if ( ! \is_string( $name ) || '' === $name ) {
 				continue;
 			}
-			if ( null === \Newspack_Nodes\Topology_Registry::resolve( $name ) ) {
-				// Skip names that don't resolve to a TSL file. The
-				// supervisor would crash trying to spawn them.
-				continue;
+			$entry = \Newspack_Nodes\Topology_Registry::synthesize_entry( $name, $num_partitions, 60 );
+			if ( null !== $entry ) {
+				$topologies[ $name ] = $entry;
 			}
-			$front = \Newspack_Nodes\Topology_Registry::frontmatter( $name );
-			$topologies[ $name ] = [
-				'topology'       => $name,
-				'num_partitions' => isset( $front['num_partitions'] ) ? (int) $front['num_partitions'] : $num_partitions,
-				'stale_timeout'  => isset( $front['stale_timeout'] ) ? (int) $front['stale_timeout'] : 60,
-			];
 		}
 		return $topologies;
 	}
@@ -204,16 +194,13 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	\add_action(
 		'newspack_nodes/before_supervisor_run',
 		static function () use ( &$orig_server ): void {
-			if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\JobWorker' ) ) {
-				return;
-			}
 			$orig_server = \Newspack_Event_Logger_Nodes\JobWorker::begin_job_context( 'newspack-nodes/supervisor' );
 		}
 	);
 	\add_action(
 		'newspack_nodes/after_supervisor_run',
 		static function () use ( &$orig_server ): void {
-			if ( null === $orig_server || ! \class_exists( '\Newspack_Event_Logger_Nodes\JobWorker' ) ) {
+			if ( null === $orig_server ) {
 				return;
 			}
 			\Newspack_Event_Logger_Nodes\JobWorker::end_job_context( $orig_server );
@@ -301,9 +288,6 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 \add_action(
 	'rest_api_init',
 	static function (): void {
-		if ( ! \class_exists( '\Newspack_Event_Logger_Nodes\Rest\StatusController' ) ) {
-			return; // Plugin classes not loaded; nothing to register.
-		}
 		( new \Newspack_Event_Logger_Nodes\Rest\StatusController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\AggregatorController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\AggregatorStatusController() )->register_routes();
@@ -525,9 +509,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 				$hook_categories = $decoded;
 			}
 		}
-		$custom_colors = \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' )
-			? \Newspack_Event_Logger_Nodes\Config::get_custom_colors()
-			: [];
+		$custom_colors = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
 		// Legacy `restUrl` is the bare `/wp-json/` root — JS appends
 		// `newspack-nodes/v1/firehose/...` itself, so don't pre-namespace it.
 		$rest_root = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
@@ -549,7 +531,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// for the registered custom-event registry. Both come from the merged
 		// config so any plugin-registered events (via filters) flow through
 		// without redeploying.
-		if ( 'performance-logger' === $tree && \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
+		if ( 'performance-logger' === $tree ) {
 			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
 			$recommended         = $cfg['recommended_log_events'] ?? [];
 			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
