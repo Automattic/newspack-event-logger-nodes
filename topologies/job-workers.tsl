@@ -2,8 +2,13 @@
 #
 #   Consumer (jobs.log) ─→ JobWorker
 
+# Frontmatter — supervisor reads these via Topology_Registry::frontmatter().
+# Job handlers run user code that can be slow; lift the lock-stale timeout so
+# in-flight jobs aren't killed mid-execution.
+var stale_timeout = 600;
+
 make_node JobWorker job-worker
 cmd job-worker:config load_handlers
 
-make_node Consumer jobs:consumer {config:logs_dir}/jobs.log {partition} {config:base_directory}/offsets/jobs.p{partition}
+make_node Consumer jobs:consumer <config:logs_dir>/jobs.log <partition> <config:base_directory>/offsets/jobs.p<partition>
 connect_node jobs:consumer job-worker
