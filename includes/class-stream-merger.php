@@ -275,18 +275,60 @@ class StreamMerger extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
+		$type = $message[ Message::TYPE ];
+		if ( ( $type & Message::TM_REQUEST ) && ! ( $type & Message::TM_RESPONSE ) ) {
+			$this->handle_request( $message );
+			return;
+		}
 		// Router-hitchhike TIMER notification (TM_INFO, KEY='TIMER') drives
 		// tick() — the spoke's aggregator-slot TTL (30s) is short enough that
 		// without a periodic heartbeat POST from this side the spoke closes
 		// the SSE connection cleanly after one TTL window. See start_periodic_tick().
 		if (
-			( $message[ Message::TYPE ] & Message::TM_INFO )
+			( $type & Message::TM_INFO )
 			&& 'TIMER' === $message[ Message::KEY ]
 		) {
 			$this->tick();
 			return;
 		}
 		$this->sink?->fill( $message );
+	}
+
+	private function handle_request( array $message ): void {
+		$value = (string) $message[ Message::VALUE ];
+		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_REMOTES' === $verb ) {
+			$remotes = [];
+			foreach ( $this->remotes as $server_id => $r ) {
+				$remotes[ (string) $server_id ] = [
+					'connected'      => (bool) ( $r['connected'] ?? false ),
+					'last_error'     => $r['last_error'] ?? null,
+					'last_http_code' => $r['last_http_code'] ?? null,
+					'position'       => $r['position'] ?? [ 'segment_id' => 0, 'offset' => 0 ],
+					'last_event_age_s' => isset( $r['last_event_time'] ) && $r['last_event_time'] > 0
+						? (int) ( (float) ( Core::$now ?: \microtime( true ) ) - (float) $r['last_event_time'] )
+						: null,
+					'current_backoff' => (int) ( $r['current_backoff'] ?? self::INITIAL_BACKOFF ),
+					'slot'            => $r['slot'] ?? null,
+				];
+			}
+			$payload = [
+				'count'   => \count( $remotes ),
+				'remotes' => $remotes,
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink?->fill( $reply );
 	}
 
 	/**
@@ -1553,6 +1595,13 @@ class StreamMerger extends Node {
 					'name'        => 'load_remotes_from_registry',
 					'description' => 'Iterate ServerRegistry::get_enabled() and add each remote.',
 					'args'        => [],
+				],
+			],
+			'requests'    => [
+				[
+					'name'        => 'GET_REMOTES',
+					'description' => 'Per-remote connection state for every registered spoke.',
+					'reply_shape' => '{ count, remotes: { server_id: { connected, last_error, last_http_code, position, last_event_age_s, current_backoff, slot } } }',
 				],
 			],
 		];
