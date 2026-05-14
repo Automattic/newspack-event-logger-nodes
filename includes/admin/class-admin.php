@@ -433,6 +433,63 @@ class Admin {
 			'newspack_event_logger_nodes_aggregator_section'
 		);
 
+		// -- Remote Server Settings section ---------------------------------
+		// Storage geometry pushed to remote spokes via SettingsSync. The
+		// hub stores these under `_remote_*` so retuning a spoke doesn't
+		// accidentally retune the hub itself; spokes receive them under
+		// the substrate's `newspack_nodes_*` keys.
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_remote_num_segments',
+			[
+				'type'              => 'string',
+				'sanitize_callback' => [ $this, 'sanitize_remote_num_segments' ],
+			]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_remote_segment_size',
+			[
+				'type'              => 'string',
+				'sanitize_callback' => [ $this, 'sanitize_remote_segment_size' ],
+			]
+		);
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_remote_max_lifespan',
+			[
+				'type'              => 'string',
+				'sanitize_callback' => [ $this, 'sanitize_remote_max_lifespan' ],
+			]
+		);
+		\add_settings_section(
+			'newspack_event_logger_nodes_remote_settings_section',
+			\__( 'Remote Server Settings', 'newspack-event-logger-nodes' ),
+			[ $this, 'remote_settings_section_callback' ],
+			self::SETTINGS_PAGE
+		);
+		\add_settings_field(
+			'remote_num_segments',
+			\__( 'Remote Segment Count', 'newspack-event-logger-nodes' ),
+			[ $this, 'remote_num_segments_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_remote_settings_section'
+		);
+		\add_settings_field(
+			'remote_segment_size',
+			\__( 'Remote Segment Size', 'newspack-event-logger-nodes' ),
+			[ $this, 'remote_segment_size_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_remote_settings_section'
+		);
+		\add_settings_field(
+			'remote_max_lifespan',
+			\__( 'Remote Min Retention', 'newspack-event-logger-nodes' ),
+			[ $this, 'remote_max_lifespan_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_remote_settings_section'
+		);
+
 		// -- Debugging section ----------------------------------------------
 		\register_setting(
 			self::OPTIONS_GROUP,
@@ -480,6 +537,27 @@ class Admin {
 			return '';
 		}
 		return \absint( $input );
+	}
+
+	public function sanitize_remote_num_segments( $value ) {
+		if ( '' === $value || null === $value ) {
+			return '';
+		}
+		return \max( 2, \min( 16, \absint( $value ) ) );
+	}
+
+	public function sanitize_remote_segment_size( $value ) {
+		if ( '' === $value || null === $value ) {
+			return '';
+		}
+		return \max( 1024 * 1024, \min( 256 * 1024 * 1024, \absint( $value ) ) );
+	}
+
+	public function sanitize_remote_max_lifespan( $value ) {
+		if ( '' === $value || null === $value ) {
+			return '';
+		}
+		return \max( 60, \min( 604800, \absint( $value ) ) );
 	}
 
 	/**
@@ -665,6 +743,46 @@ class Admin {
 
 	public function aggregator_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	public function remote_settings_section_callback(): void {
+		echo '<p>' . \esc_html__(
+			'Storage geometry pushed to remote spokes (may differ from hub settings). Blank fields use the config-file default.',
+			'newspack-event-logger-nodes'
+		) . '</p>';
+	}
+
+	public function remote_num_segments_callback(): void {
+		$default = (int) ( \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_num_segments'] ?? 2 );
+		$this->render_number_field(
+			'remote_num_segments',
+			$default,
+			2,
+			16,
+			\__( 'Number of log segments on remote servers (2-16).', 'newspack-event-logger-nodes' )
+		);
+	}
+
+	public function remote_segment_size_callback(): void {
+		$default = (int) ( \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_segment_size'] ?? 10485760 );
+		$this->render_number_field(
+			'remote_segment_size',
+			$default,
+			1024 * 1024,
+			256 * 1024 * 1024,
+			\__( 'Segment size on remote servers in bytes (1MB-256MB).', 'newspack-event-logger-nodes' )
+		);
+	}
+
+	public function remote_max_lifespan_callback(): void {
+		$default = (int) ( \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_max_lifespan'] ?? 3600 );
+		$this->render_number_field(
+			'remote_max_lifespan',
+			$default,
+			60,
+			604800,
+			\__( 'Minimum retention on remote servers in seconds. Spokes keep data at least this long for the aggregator to pull.', 'newspack-event-logger-nodes' )
+		);
 	}
 
 	/**
