@@ -182,6 +182,8 @@ class RemoteManager {
 	 * @param array|null $servers  Optional list of server IDs (null = all enabled).
 	 */
 	public static function sync_setting( string $option, $value, string $endpoint = '/wp-json/newspack-nodes/v1/settings', ?array $servers = null ): void {
+		self::reset_config_snapshots();
+
 		$registry    = self::registry();
 		$server_ids  = $servers ?? \array_keys( $registry->get_all() );
 
@@ -239,6 +241,8 @@ class RemoteManager {
 	 * job.
 	 */
 	public static function health_check(): void {
+		self::reset_config_snapshots();
+
 		$registry   = self::registry();
 		$server_ids = \array_keys( $registry->get_all() );
 
@@ -297,13 +301,7 @@ class RemoteManager {
 	 * @param array|null $server_ids Optional list of server IDs to sync to (null = all enabled).
 	 */
 	public static function sync_all_settings( ?array $server_ids = null ): void {
-		// Long-running JobWorker caches the registry + Config singletons across
-		// many dispatches; reset so newly-added or re-enabled spokes (and
-		// newly-saved option values) are visible without waiting for the
-		// worker's ~595s respawn. Matches legacy newspack-event-aggregator
-		// RemoteManager::sync_all_settings.
-		Config::reset();
-		ServerRegistry::get_instance()->reset_cache();
+		self::reset_config_snapshots();
 
 		$settings = \function_exists( 'apply_filters' )
 			? \apply_filters( 'newspack_event_logger_nodes/synced_settings', [] )
@@ -369,11 +367,7 @@ class RemoteManager {
 			return 0;
 		}
 
-		// Long-running JobWorker caches Config + the registry; reset both
-		// so admin-saved option values land in the fanned-out jobs without
-		// waiting for the worker's ~595s respawn.
-		Config::reset();
-		ServerRegistry::get_instance()->reset_cache();
+		self::reset_config_snapshots();
 
 		$settings = \function_exists( 'apply_filters' )
 			? \apply_filters( 'newspack_event_logger_nodes/synced_settings', [] )
@@ -438,6 +432,20 @@ class RemoteManager {
 			}
 		}
 		return $queued;
+	}
+
+	/**
+	 * Drop every per-process cache the fan-out entrypoints depend on so
+	 * a long-lived JobWorker (~595s) sees admin option changes on its
+	 * next dispatch instead of waiting for respawn. Three layers:
+	 * WP's `alloptions` snapshot, the application `Config` static cache
+	 * (which transitively resets the substrate), and the `ServerRegistry`
+	 * singleton's in-memory copy of `aggregator_servers`.
+	 */
+	private static function reset_config_snapshots(): void {
+		\Newspack_Nodes\Config::invalidate_options_cache();
+		Config::reset();
+		ServerRegistry::get_instance()->reset_cache();
 	}
 
 	/**

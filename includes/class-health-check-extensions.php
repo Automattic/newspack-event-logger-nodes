@@ -32,6 +32,11 @@ class HealthCheckExtensions {
 	 * @param array $all_discovery Map of server_id => discovery data.
 	 */
 	public static function process_discovery( array $all_discovery ): void {
+		// Long-lived JobWorker; merge_hooks / merge_events below do
+		// read-modify-write on WP options and would clobber concurrent
+		// writes without a fresh alloptions snapshot.
+		\Newspack_Nodes\Config::invalidate_options_cache();
+
 		$all_hooks  = [];
 		$all_events = [];
 

@@ -961,14 +961,17 @@ class Admin {
 
 	public function log_events_callback(): void {
 		$defaults = Config::load_config_defaults();
-		$default  = $this->normalize_string_list( $defaults['recommended_log_events'] ?? [] );
+		// Reset chip restores the file-default `log_events` value (not
+		// `recommended_log_events` — that's a separate config key that
+		// drives the Select Hooks modal's highlight, not the runtime list).
+		$default  = $this->normalize_string_list( $defaults['log_events'] ?? [] );
 		$stored   = \get_option( 'newspack_event_logger_nodes_log_events', [] );
 		$values   = $this->normalize_string_list( $stored );
 		$this->render_array_field(
 			'log_events',
 			$values,
 			$default,
-			\__( 'Hooks to time. Use Select Hooks to browse the registered set, or Reset to restore the recommended set.', 'newspack-event-logger-nodes' ),
+			\__( 'Hooks to time. Use Select Hooks to browse the registered set, or Reset to restore the file default.', 'newspack-event-logger-nodes' ),
 			''
 		);
 	}
