@@ -267,11 +267,15 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			// CommandInterpreter with the live merged config.
 			$topology_name = (string) $w['topology'];
 			$config        = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
-			// Pre-derived `<config:logs_dir>` since topologies use it
-			// frequently; let topology authors write the short form
-			// rather than `<config:base_directory>/logs` everywhere.
+			// Pre-derived `<config:logs_dir>` and `<config:offsets_dir>`
+			// since topologies use them frequently; let topology authors
+			// write the short form rather than
+			// `<config:base_directory>/logs` everywhere.
 			if ( ! isset( $config['logs_dir'] ) && isset( $config['base_directory'] ) ) {
 				$config['logs_dir'] = \rtrim( (string) $config['base_directory'], '/' ) . '/logs';
+			}
+			if ( ! isset( $config['offsets_dir'] ) && isset( $config['base_directory'] ) ) {
+				$config['offsets_dir'] = \rtrim( (string) $config['base_directory'], '/' ) . '/offsets';
 			}
 			$topology = static function (
 				\Newspack_Nodes\CommandInterpreter $ci,
