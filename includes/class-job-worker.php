@@ -96,14 +96,22 @@ class JobWorker extends Node {
 		$this->stale_timeout        = \max( 1, $stale_timeout );
 		$this->max_runtime          = \max( 1, $max_runtime );
 
-		// Sibling CommandInterpreter — TSL invokes
-		// `cmd job-worker:config load_handlers` to wire the local
-		// + remote handler maps from WP filters at topology-load
-		// time.
+		// Sibling CommandInterpreter — kept for `mark_verb_invoked()`
+		// metadata hooks even though there are no operator-facing
+		// config verbs today.
 		$ci = new CommandInterpreter();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
+
+		// Handler maps are eager init, not config — a JobWorker with
+		// no handlers is dead weight. By the time a worker's TSL is
+		// evaluated, plugins_loaded has fired, so every registered
+		// `newspack_nodes/{job,remote_job}_handlers` filter is in
+		// place. Eager-load avoids the operator having to remember a
+		// `cmd job-worker:config load_handlers` line in every TSL
+		// file that uses JobWorker.
+		$this->load_handlers_from_filters();
 	}
 
 	private function validate_handler_name( string $name ): void {
@@ -392,19 +400,7 @@ class JobWorker extends Node {
 	 * @return array<string,callable>
 	 */
 	private static function config_verbs(): array {
-		static $verbs = null;
-		if ( null === $verbs ) {
-			$verbs = [
-				'load_handlers' => static function ( CommandInterpreter $ci, string $args ): string {
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->load_handlers_from_filters();
-					$patron->mark_verb_invoked( 'load_handlers', '' );
-					return 'ok';
-				},
-			];
-		}
-		return $verbs;
+		return [];
 	}
 
 	public static function node_schema(): array {
@@ -416,13 +412,7 @@ class JobWorker extends Node {
 				[ 'name' => 'stale_timeout',        'type' => 'int', 'default' => self::DEFAULT_STALE_TIMEOUT ],
 				[ 'name' => 'max_runtime',          'type' => 'int', 'default' => self::DEFAULT_MAX_RUNTIME ],
 			],
-			'verbs'       => [
-				[
-					'name'        => 'load_handlers',
-					'description' => 'Populate the local + remote handler maps from newspack_nodes/job_handlers + remote_job_handlers WP filters.',
-					'args'        => [],
-				],
-			],
+			'verbs'       => [],
 		];
 	}
 }

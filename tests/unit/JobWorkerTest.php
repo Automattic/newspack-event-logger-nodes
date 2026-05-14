@@ -434,7 +434,7 @@ class JobWorkerTest extends TestCase {
 		$this->assertFalse( $jw->has_local_handler( 'ok' ) );
 	}
 
-	// ── A3: sibling-CI + load_handlers verb ────────────────────
+	// ── Sibling CI + eager handler loading ─────────────────────
 
 	public function test_job_worker_constructs_sibling_ci(): void {
 		$jw = new JobWorker();
@@ -443,26 +443,23 @@ class JobWorkerTest extends TestCase {
 		$this->assertSame( 'jw:config', $jw->interpreter()->name() );
 	}
 
-	public function test_job_worker_load_handlers_verb_round_trips(): void {
+	public function test_job_worker_ctor_eager_loads_handlers_from_filters(): void {
 		\add_filter(
 			'newspack_nodes/job_handlers',
-			static fn ( $h ) => \array_merge( (array) $h, [ 'verb_test' => static fn () => null ] )
+			static fn ( $h ) => \array_merge( (array) $h, [ 'ctor_test' => static fn () => null ] )
+		);
+		\add_filter(
+			'newspack_nodes/remote_job_handlers',
+			static fn ( $h ) => \array_merge( (array) $h, [ 'ctor_remote' => static fn () => null ] )
 		);
 		$jw = new JobWorker();
-		$jw->name( 'jw' );
-
-		$result = $jw->interpreter()->execute( 'load_handlers' );
-		$this->assertSame( 'ok', $result );
-		$this->assertTrue( $jw->has_local_handler( 'verb_test' ) );
-
-		$dump = $jw->dump_config();
-		$this->assertStringContainsString( 'cmd jw:config load_handlers', $dump );
+		$this->assertTrue( $jw->has_local_handler( 'ctor_test' ) );
+		$this->assertTrue( $jw->has_remote_handler( 'ctor_remote' ) );
 	}
 
-	public function test_job_worker_node_schema_declares_verb(): void {
+	public function test_job_worker_node_schema_no_verbs(): void {
 		$schema = JobWorker::node_schema();
 		$this->assertSame( 'Control', $schema['category'] );
-		$verb_names = \array_column( $schema['verbs'], 'name' );
-		$this->assertContains( 'load_handlers', $verb_names );
+		$this->assertSame( [], $schema['verbs'] );
 	}
 }
