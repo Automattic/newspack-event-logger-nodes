@@ -1891,4 +1891,47 @@ class StreamMergerTest extends TestCase {
 		$decoded = json_decode( $ret6, true );
 		$this->assertSame( 'remote_job', $decoded['k'] );
 	}
+
+	// ── A3: sibling-CI + verbs ─────────────────────────────────
+
+	public function test_stream_merger_constructs_sibling_ci(): void {
+		$sm = new StreamMerger();
+		$sm->name( 'sm' );
+		$this->assertNotNull( $sm->interpreter() );
+		$this->assertSame( 'sm:config', $sm->interpreter()->name() );
+	}
+
+	public function test_stream_merger_set_verify_ssl_verb_round_trips(): void {
+		$sm = new StreamMerger();
+		$sm->name( 'sm' );
+		$this->assertSame( 'ok', $sm->interpreter()->execute( 'set_verify_ssl false' ) );
+		$dump = $sm->dump_config();
+		$this->assertStringContainsString( 'cmd sm:config set_verify_ssl false', $dump );
+	}
+
+	public function test_stream_merger_set_require_https_verb_round_trips(): void {
+		$sm = new StreamMerger();
+		$sm->name( 'sm' );
+		$this->assertSame( 'ok', $sm->interpreter()->execute( 'set_require_https true' ) );
+		$dump = $sm->dump_config();
+		$this->assertStringContainsString( 'cmd sm:config set_require_https true', $dump );
+	}
+
+	public function test_stream_merger_add_remote_verb_requires_id(): void {
+		$sm = new StreamMerger();
+		$sm->name( 'sm' );
+		$result = $sm->interpreter()->execute( 'add_remote' );
+		$this->assertStringContainsString( 'usage', $result );
+	}
+
+	public function test_stream_merger_node_schema_declares_verbs(): void {
+		$schema = StreamMerger::node_schema();
+		$this->assertSame( 'I/O', $schema['category'] );
+		$verb_names = \array_column( $schema['verbs'], 'name' );
+		$this->assertContains( 'set_verify_ssl', $verb_names );
+		$this->assertContains( 'set_require_https', $verb_names );
+		$this->assertContains( 'start_periodic_tick', $verb_names );
+		$this->assertContains( 'add_remote', $verb_names );
+		$this->assertContains( 'load_remotes_from_registry', $verb_names );
+	}
 }

@@ -9,6 +9,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
 use Newspack_Nodes\Message;
@@ -134,6 +135,15 @@ class StreamMerger extends Node {
 	 */
 	public function __construct( int $partition = 0 ) {
 		$this->partition = \max( 0, $partition );
+
+		// Sibling CommandInterpreter — TSL aggregator topology
+		// configures StreamMerger via verbs (set_verify_ssl,
+		// set_require_https, start_periodic_tick,
+		// load_remotes_from_registry).
+		$ci = new CommandInterpreter();
+		$ci->patron( $this );
+		$ci->commands( self::config_verbs() );
+		$this->attach_interpreter( $ci );
 	}
 
 	/**
@@ -1397,5 +1407,107 @@ class StreamMerger extends Node {
 			] ),
 			self::STATUS_TTL
 		);
+	}
+
+	// -------------------------------------------------------------------------
+	// Sibling-CI verb table + node_schema (A3).
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Verbs the TSL `cmd stream-merger:config <verb>` invocations
+	 * dispatch through. Resolved per-instance via $ci->patron().
+	 *
+	 * @return array<string,callable>
+	 */
+	private static function config_verbs(): array {
+		static $verbs = null;
+		if ( null === $verbs ) {
+			$verbs = [
+				'set_verify_ssl'             => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \strtolower( \trim( $args ) );
+					$bool = ( 'true' === $args || '1' === $args );
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_verify_ssl( $bool );
+					$patron->mark_verb_invoked( 'set_verify_ssl', $bool ? 'true' : 'false' );
+					return 'ok';
+				},
+				'set_require_https'          => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \strtolower( \trim( $args ) );
+					$bool = ( 'true' === $args || '1' === $args );
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_require_https( $bool );
+					$patron->mark_verb_invoked( 'set_require_https', $bool ? 'true' : 'false' );
+					return 'ok';
+				},
+				'start_periodic_tick'        => static function ( CommandInterpreter $ci, string $args ): string {
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->start_periodic_tick();
+					$patron->mark_verb_invoked( 'start_periodic_tick', '' );
+					return 'ok';
+				},
+				'add_remote'                 => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \trim( $args );
+					if ( '' === $args ) {
+						return 'usage: add_remote <server_id>';
+					}
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->add_remote( $args );
+					$patron->mark_verb_invoked( 'add_remote', $args );
+					return 'ok';
+				},
+				'load_remotes_from_registry' => static function ( CommandInterpreter $ci, string $args ): string {
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$registry = ServerRegistry::get_instance();
+					foreach ( $registry->get_enabled() as $server_id => $entry ) {
+						$patron->add_remote( (string) $server_id );
+					}
+					$patron->mark_verb_invoked( 'load_remotes_from_registry', '' );
+					return 'ok';
+				},
+			];
+		}
+		return $verbs;
+	}
+
+	public static function node_schema(): array {
+		return [
+			'category'    => 'I/O',
+			'description' => 'Pulls remote firehoses via SSE (cURL multi) and fans them into a local Topic.',
+			'ctor'        => [
+				[ 'name' => 'partition', 'type' => 'int', 'default' => 0 ],
+			],
+			'verbs'       => [
+				[
+					'name'        => 'set_verify_ssl',
+					'description' => 'Toggle SSL certificate verification on outbound SSE connections.',
+					'args'        => [ [ 'name' => 'verify', 'type' => 'bool', 'required' => true ] ],
+				],
+				[
+					'name'        => 'set_require_https',
+					'description' => 'Refuse to connect to non-HTTPS remote URLs.',
+					'args'        => [ [ 'name' => 'require', 'type' => 'bool', 'required' => true ] ],
+				],
+				[
+					'name'        => 'start_periodic_tick',
+					'description' => 'Register with _router TIMER for periodic heartbeat + stale-check.',
+					'args'        => [],
+				],
+				[
+					'name'        => 'add_remote',
+					'description' => 'Add a single remote SSE source (registry-driven).',
+					'args'        => [ [ 'name' => 'server_id', 'type' => 'string', 'required' => true ] ],
+				],
+				[
+					'name'        => 'load_remotes_from_registry',
+					'description' => 'Iterate ServerRegistry::get_enabled() and add each remote.',
+					'args'        => [],
+				],
+			],
+		];
 	}
 }
