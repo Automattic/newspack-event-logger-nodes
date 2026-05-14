@@ -334,7 +334,9 @@ const WorkerConnector = memo( function WorkerConnector( {
 			<div className="connector-content">
 				<span className="connector-name">{ name }</span>
 				{ sorted.map( ( w ) => {
-					const key = `${ w.handler || w.type }-${ w.partition }`;
+					const key = `${ w.handler || w.type }-${ w.partition }-${
+						w.source || ''
+					}`;
 					return (
 						<span
 							key={ w.partition }
@@ -631,15 +633,18 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 		} ) );
 	}
 
-	// Group workers by (type, handler). One "step" per Consumer — a worker
-	// type with multiple Consumers (e.g. firehose-workers-and-jobs running
-	// firehose:consumer + jobintake:consumer) gets one step per Consumer.
-	// Multiple partitions of the same (type, handler) still roll up into
-	// the same step.
+	// Group workers by (type, handler, source). One step per (Consumer,
+	// target) pair — a single handler can be fed by multiple Consumers
+	// (e.g. JobRouter receives from firehose:consumer via Tee fan-out AND
+	// from jobintake:consumer directly), and each Consumer has its own
+	// cursor / lag / read-rate. Collapsing across sources renders both
+	// as duplicate-looking pills under one header. Multiple partitions of
+	// the same (type, handler, source) still roll up into the same step.
 	const stepsByKey = new Map();
 	workers.forEach( ( w ) => {
 		const handler = w.handler || w.type;
-		const key = `${ w.type }|${ handler }`;
+		const source = w.source || '';
+		const key = `${ w.type }|${ handler }|${ source }`;
 		if ( ! stepsByKey.has( key ) ) {
 			stepsByKey.set( key, {
 				// Keep `type` as the worker_type so styling/category code that
@@ -648,6 +653,7 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 				type: w.type,
 				key,
 				handlerName: handler,
+				source,
 				inputs: Array.isArray( w.inputs ) ? w.inputs : [],
 				outputs: Array.isArray( w.outputs ) ? w.outputs : [],
 				workers: [],
@@ -940,10 +946,15 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 				: 0;
 
 			// Per-worker read rates (cursor advancement against primary input).
+			// Key by (handler, partition, source) — a single handler can be
+			// fed by multiple Consumers (e.g. JobRouter from firehose:consumer
+			// AND jobintake:consumer), each with its own cursor. Keying only
+			// by handler+partition collapses both rows into one slot and the
+			// rate becomes whichever cursor was processed last.
 			( data.workers || [] ).forEach( ( worker ) => {
 				const workerKey = `${ worker.handler || worker.type }-${
 					worker.partition
-				}`;
+				}-${ worker.source || '' }`;
 
 				// Sum processed bytes across every input — workers can tail
 				// multiple logs (firehose-workers reads firehose + jobintake).
