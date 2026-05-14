@@ -23,30 +23,25 @@ class WorkersControllerRealShapeTest extends TestCase {
 	}
 
 	private function register_topologies(): void {
-		$dir = \dirname( __DIR__, 2 );
+		// Post-A3: descriptors carry topology NAMES, not file paths.
+		// Resolution happens via Topology_Registry at spawn time.
 		\add_filter(
 			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( $dir ): array {
-				$topologies['firehose-workers'] = [
-					'topology'       => $dir . '/topologies/firehose-workers.php',
-					'num_partitions' => 1,
-					'stale_timeout'  => 60,
-				];
-				$topologies['request-workers'] = [
-					'topology'       => $dir . '/topologies/request-workers.php',
-					'num_partitions' => 1,
-					'stale_timeout'  => 60,
-				];
-				$topologies['job-workers'] = [
-					'topology'       => $dir . '/topologies/job-workers.php',
-					'num_partitions' => 1,
-					'stale_timeout'  => 60,
-				];
-				$topologies['aggregator'] = [
-					'topology'       => $dir . '/topologies/aggregator.php',
-					'num_partitions' => 1,
-					'stale_timeout'  => 60,
-				];
+			static function ( array $topologies ): array {
+				foreach (
+					[
+						'firehose-workers-and-jobs',
+						'request-workers',
+						'job-workers',
+						'aggregator',
+					] as $name
+				) {
+					$topologies[ $name ] = [
+						'topology'       => $name,
+						'num_partitions' => 1,
+						'stale_timeout'  => 60,
+					];
+				}
 				return $topologies;
 			}
 		);
@@ -97,7 +92,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 
 		$body = $resp->get_data();
 		foreach ( $body['workers'] as $worker ) {
-			if ( 'firehose-workers' === ( $worker['type'] ?? '' ) && 0 === ( $worker['partition'] ?? -1 ) ) {
+			if (  'firehose-workers-and-jobs' === ( $worker['type'] ?? '' ) && 0 === ( $worker['partition'] ?? -1 ) ) {
 				$this->assertSame( 9, $worker['cursor_seg'] );
 				$this->assertSame( 4096, $worker['cursor_offset'] );
 				return;
@@ -128,7 +123,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 		$body = $resp->get_data();
 
 		foreach ( $body['workers'] as $worker ) {
-			if ( 'firehose-workers' === ( $worker['type'] ?? '' ) && 0 === ( $worker['partition'] ?? -1 ) ) {
+			if (  'firehose-workers-and-jobs' === ( $worker['type'] ?? '' ) && 0 === ( $worker['partition'] ?? -1 ) ) {
 				$this->assertSame( 1, $worker['cursor_seg'] );
 				$this->assertSame( 100, $worker['cursor_offset'] );
 				return;
