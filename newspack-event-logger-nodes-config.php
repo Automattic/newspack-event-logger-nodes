@@ -30,7 +30,7 @@ return [
 	// Newspack_Nodes\Topology_Registry. Comment a line out to
 	// disable that fleet.
 	'topologies'                  => [
-		'firehose-workers',  // alt: 'firehose-workers+jobs', 'firehose-jobs'
+		'firehose-workers-only',  // alt: 'firehose-workers-and-jobs', 'firehose-jobs-only'
 		'request-workers',
 		// 'job-workers',
 		// 'aggregator',
