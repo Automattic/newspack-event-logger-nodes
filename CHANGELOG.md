@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.23] - 2026-05-14
+
+### Added
+
+- **Remote Server Settings admin section** — ported from the legacy `newspack-event-aggregator` plugin. Three int fields under Settings → Event Logger Nodes: Remote Segment Count (2-16), Remote Segment Size (1MB-256MB), Remote Min Retention (60s-7d). Blank fields fall through to the config-file default; SettingsSync's hub→spoke fan-out remaps them to the substrate's `newspack_nodes_{num_segments,segment_size,max_lifespan}` keys on the remote. Previously these were declared in `newspack-event-logger-nodes-config.php` and consumed by `SettingsSync::SYNCED_OPTIONS`, but with no UI + no schema entry there was no way for an operator to actually set them — the sync wiring pushed nothing.
+- **JobWorker eager-loads handlers in the constructor.** `load_handlers` was a TSL verb that took no args and just ran the `newspack_nodes/{job,remote_job}_handlers` filter chains — a JobWorker without handlers loaded is dead weight, so it doesn't belong as a config knob. By the time a worker's TSL is evaluated, `plugins_loaded` has fired and every registered handler filter is in place. Drops the verb from `config_verbs()` + `node_schema()`, drops `cmd job-worker:config load_handlers` from `job-workers.tsl`.
+
+### Changed
+
+- **`HealthCheckTick` is now an owned sibling of `StreamMerger`, not a standalone TSL node.** Same Router-TIMER hitchhike pattern FlameBuilder uses to own its AutoTuner sibling — `StreamMerger::__construct()` instantiates a HealthCheckTick, patrons it, names it `{stream-merger-name}:health-check`, and cascades through `name()` + `remove_node()`. A single `start_periodic_tick` verb on StreamMerger kicks off both timers. HealthCheckTick + AutoTuner both flip to `category: 'Hidden'` so the topology console doesn't surface them as buildable nodes (the class stays directly instantiable for tests).
+- **`aggregator.tsl` drops the HealthCheckTick lines** in favor of the owned-sibling pattern. The aggregator topology is now just `StreamMerger → Topic`, with HCT implicit.
+- **Config layer DRY:** all the sanitize / validate / path-guard primitives that used to be duplicated between the substrate Config and the application Config now live in `Newspack_Nodes\Config_Utils`. The application's `Config::sanitize_option` is an 18-line wrapper that handles the application-specific `aggregator_servers` case locally and delegates everything else; `load_config_file`, `validate_config_values`, `is_within`, `sanitize_string` are gone. Cuts ~210 lines from `includes/class-config.php` (623→412). Requires `newspack-nodes` 0.1.19.
+- **Topology TSL files reference `<config:offsets_dir>` instead of building `<config:base_directory>/offsets/...` inline.** Substrate now derives `offsets_dir` from `base_directory` in `WorkerCliCommand` so each Consumer line in the topologies stays terse.
+- **`recommended_log_events` defaults trimmed:** dropped a handful of site-specific plugin-deactivation hooks (jetpack-boost, pwa, woocommerce*, wordpress-seo, googlesitekit, wpseo_deactivate) that don't belong in a generic recommended set. Existing installs that already selected those events are unaffected — this only changes what the "Select Recommended" button populates.
+
+### Fixed
+
+- **Substrate `topologies` option is now honored.** The application's `newspack_nodes/topologies` filter callback was reading `$config['topologies']` from its own merged config — but because the app's `load_config` does `array_merge($substrate, $appDefaults)`, the app's file default always shadowed the substrate WP option. Checking boxes in the Topologies admin UI silently had no effect. The callback now reads `newspack_nodes_topologies` directly via `get_option`, using `false` as a sentinel for "operator has never saved" so the app file default still seeds fresh installs.
+
 ## [0.2.22] - 2026-05-13
 
 ### Added
