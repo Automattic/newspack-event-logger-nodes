@@ -58,6 +58,41 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
 
+	// A3 plumbing: register the stock topology dir so Topology_Loader
+	// can resolve names like 'firehose-workers+jobs' to .tsl paths;
+	// point the user-customizations dir at {base_dir}/topologies/ so
+	// operator-saved variants shadow stock by name.
+	if ( \class_exists( '\Newspack_Nodes\Topology_Registry' ) ) {
+		\Newspack_Nodes\Topology_Registry::register_stock_dir(
+			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+		);
+		$base_dir = \class_exists( '\Newspack_Nodes\Bootstrap' )
+			? \Newspack_Nodes\Bootstrap::base_dir()
+			: '/tmp/newspack-nodes';
+		\Newspack_Nodes\Topology_Registry::set_user_dir( $base_dir . '/topologies' );
+	}
+
+	// A3: register named formatters used by `with_index` verbs in the
+	// stock TSL files. Closures aren't expressible in TSL — formatters
+	// land here once at plugin load and TSL references them by name.
+	if ( \class_exists( '\Newspack_Nodes\Formatters' ) ) {
+		\Newspack_Nodes\Formatters::register(
+			'request-index',
+			static fn ( $line, $position, &$data = null )
+				=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
+		);
+		\Newspack_Nodes\Formatters::register(
+			'flame-index',
+			static fn ( $line, $position, &$data = null )
+				=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
+		);
+	}
+
+	// A3: hub-side `k:"job"` -> `k:"remote_job"` rewrite. Static side-
+	// effect; was previously called inline from aggregator.php each time
+	// the topology loaded. Idempotent (internal static guard).
+	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
+
 	// Wire one-shot static initializers for the static-mode classes.
 	\Newspack_Event_Logger_Nodes\Config::register_cache_invalidation();
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
