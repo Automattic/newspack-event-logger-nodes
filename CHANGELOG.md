@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-05-14
+
 ### Fixed
 
 - **Workers dashboard collapsed handlers fed by multiple Consumers into one row.** JobRouter has two upstreams in the firehose-workers-and-jobs topology — `firehose:consumer` (via Tee fan-out) and `jobintake:consumer` (direct, for >4KB jobs) — so the controller emits one row per (Consumer, target) pair. The React side keyed both the render group (`buildRenderPlan`) and the rate cache (`workerKey` for `readRates` / `prevPositionsRef`) by `(type, handler) + partition` only, which (a) packed both rows under one header showing two P0 chips side-by-side and (b) overwrote the firehose JobRouter's cursor delta with the jobintake JobRouter's (which is caught up at the tip), making the firehose row display as "R 0 B/s — stalled" while RequestBuilder on the same Consumer correctly showed ~40 KB/s. Both keys now include `worker.source`, so each (Consumer, target) renders as its own row with its own rate.
