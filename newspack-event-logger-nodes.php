@@ -137,7 +137,20 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
 
-		$active = $config['topologies'] ?? [];
+		// `topologies` is a substrate-owned key. The substrate's
+		// settings UI writes `newspack_nodes_topologies` when the
+		// operator checks boxes; that's the authoritative active
+		// list. Fall back to the application's file default only
+		// when the option has never been written (fresh install) —
+		// gives a sensible starter set without shadowing operator
+		// choices. `[]` is a valid stored value (operator unchecked
+		// everything), distinct from `false` (option never set).
+		$option = \function_exists( 'get_option' )
+			? \get_option( 'newspack_nodes_topologies', false )
+			: false;
+		$active = false === $option
+			? ( $config['topologies'] ?? [] )
+			: $option;
 		if ( ! \is_array( $active ) ) {
 			return $topologies;
 		}
