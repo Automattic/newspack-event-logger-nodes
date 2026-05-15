@@ -64,6 +64,40 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 	);
 
+	// Node-class registrations. These are `::class` constants (compile-
+	// time FQCN strings) into a static hashmap, so they don't autoload
+	// anything — virtually free at boot. They have to be at boot because
+	// the topology console's REST schema endpoint (admin, not worker)
+	// reads the class registry to populate the palette + per-node
+	// inspector. Deferring them to spawn_worker left the editor unable
+	// to render any application node — palette only listed substrate
+	// nodes, and selecting an existing RequestBuilder showed
+	// "No constructor arguments. No verbs registered."
+	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\AutoTuner::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\FlameBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\HealthCheckTick::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\JobRouter::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\JobWorker::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\RemoteSource::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
+
+	// Named formatters are similarly cheap (one map insert each) and the
+	// captured closures don't autoload until invoked. `request-index`
+	// and `flame-index` are read by `Cli::format_index_entry` when an
+	// operator inspects a log offset from the REPL — admin context, not
+	// worker-only.
+	\Newspack_Nodes\Formatters::register(
+		'request-index',
+		static fn ( $line, $position, &$data = null )
+			=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
+	);
+	\Newspack_Nodes\Formatters::register(
+		'flame-index',
+		static fn ( $line, $position, &$data = null )
+			=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
+	);
+
 	// `SettingsSync::init` listens for `update_option` / `add_option` —
 	// which can fire from admin saves, REST settings endpoints, CLI,
 	// or programmatic callers. All of these should sync to remote
@@ -114,36 +148,20 @@ $_newspack_event_logger_nodes_register_user_topology_dir = static function (): v
 \add_action( 'admin_init',    $_newspack_event_logger_nodes_register_user_topology_dir );
 
 /**
- * Worker-execution prerequisites: Node-class registrations, named
- * formatters, hub-side k:"job" → k:"remote_job" rewrite filter,
- * RemoteManager's worker-internal hook registrations. Only needed
- * inside the spawn_worker action handler before Topology_Loader parses
- * the TSL. Every callee is independently idempotent
- * (`register_class` / `Formatters::register` are last-write-wins,
- * `register_remote_job_rewrite_filter` and `RemoteManager::init` carry
- * their own static guards), so no outer guard is necessary.
+ * Worker-execution prerequisites that actually autoload meaningful
+ * setup: the hub-side k:"job" → k:"remote_job" rewrite filter (forces
+ * StreamMerger autoload) and RemoteManager::init (autoload +
+ * `add_action` hookups). Only needed inside the spawn_worker action
+ * handler before Topology_Loader parses the TSL. Class registrations
+ * and named formatters used to live here too, but they're cheap
+ * `::class`-string + map-insert operations that the editor REST schema
+ * endpoint also needs at boot, so they moved up.
+ *
+ * Every callee is independently idempotent
+ * (`register_remote_job_rewrite_filter` and `RemoteManager::init`
+ * carry their own static guards), so no outer guard is necessary.
  */
 $_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
-	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\AutoTuner::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\FlameBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\HealthCheckTick::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\JobRouter::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\JobWorker::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\RemoteSource::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
-
-	\Newspack_Nodes\Formatters::register(
-		'request-index',
-		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
-	);
-	\Newspack_Nodes\Formatters::register(
-		'flame-index',
-		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
-	);
-
 	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
 	\Newspack_Event_Logger_Nodes\RemoteManager::init();
 };
