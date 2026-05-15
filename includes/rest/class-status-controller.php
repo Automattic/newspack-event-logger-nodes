@@ -15,6 +15,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Cache_Interface;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class StatusController extends PerformanceControllerBase {
 	public function register_routes(): void {
@@ -30,7 +31,7 @@ class StatusController extends PerformanceControllerBase {
 	}
 
 	public function get_status( \WP_REST_Request $request ): \WP_REST_Response {
-		$config = self::load_config();
+		$config = RuntimeConfig::load_config();
 
 		$cache_available = false;
 		try {

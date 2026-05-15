@@ -185,7 +185,7 @@ class LogManager {
 		// (LogManager wrote path-only, Gyrobase::Log wrote scheme://host/path).
 		$this->partition_idx = Partition::hash_to_partition( $this->request_id, $num_partitions );
 		// Pass segment_size/num_segments/max_lifespan from core config to avoid Topic
-		// calling load_config('full'), which fires option schema filters and re-enters LogManager.
+		// calling load_config(), which fires option schema filters and re-enters LogManager.
 		$segment_size = (int) ( $config['segment_size'] ?? Partition::DEFAULT_SEGMENT_SIZE );
 		$num_segments = (int) ( $config['num_segments'] ?? Partition::DEFAULT_NUM_SEGMENTS );
 		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition::DEFAULT_MAX_LIFESPAN );

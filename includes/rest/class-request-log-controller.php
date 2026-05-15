@@ -18,6 +18,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class RequestLogController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -64,7 +65,7 @@ class RequestLogController extends PerformanceControllerBase {
 		}
 
 		$limit          = (int) $request->get_param( 'limit' );
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$log_base       = $base_dir . '/logs';
@@ -132,7 +133,7 @@ class RequestLogController extends PerformanceControllerBase {
 			return $this->not_found_error( 'request id missing' );
 		}
 
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$log_base       = $base_dir . '/logs';

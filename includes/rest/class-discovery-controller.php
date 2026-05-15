@@ -19,6 +19,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 \defined( 'ABSPATH' ) || exit;
 
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class DiscoveryController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -41,7 +42,7 @@ class DiscoveryController extends PerformanceControllerBase {
 			return $check;
 		}
 
-		$config = self::load_config();
+		$config = RuntimeConfig::load_config();
 
 		$registered_hooks = $this->extract_string_list( $config['log_events'] ?? [] );
 		$custom_events    = $this->extract_string_list( $config['custom_events'] ?? [] );

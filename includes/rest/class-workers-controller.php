@@ -20,6 +20,7 @@ use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Lock;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class WorkersController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -117,7 +118,7 @@ class WorkersController extends PerformanceControllerBase {
 		}
 
 		$now            = \time();
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$num_segments   = (int) ( $config['num_segments'] ?? 8 );
 		$segment_size   = (int) ( $config['segment_size'] ?? ( 16 * 1024 * 1024 ) );
@@ -348,7 +349,7 @@ class WorkersController extends PerformanceControllerBase {
 		$partition      = (int) $request->get_param( 'partition' );
 		$all_partitions = (bool) $request->get_param( 'all_partitions' );
 
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$locks_base     = $base_dir . '/locks';
@@ -603,7 +604,7 @@ class WorkersController extends PerformanceControllerBase {
 		// transparently; the production `Memcached_Cache` and Consumer's
 		// direct `\Memcached` both hit the same physical server, so keys
 		// stay coherent.
-		$config      = self::load_config();
+		$config      = RuntimeConfig::load_config();
 		$base_dir    = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$source_path = "{$base_dir}/logs/{$input_log}";
 		$host        = \gethostname() ?: 'unknown';
@@ -717,37 +718,14 @@ class WorkersController extends PerformanceControllerBase {
 	 * @return array{seg:int, off:int}|null
 	 */
 	private function read_offsetlog_position( string $input_log, int $partition ): ?array {
-		$config        = self::load_config();
+		$config        = RuntimeConfig::load_config();
 		$base_dir      = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$basename      = \preg_replace( '/\.log$/', '', $input_log );
-		$offsetlog_dir = "{$base_dir}/offsets/{$basename}.p{$partition}";
-		if ( ! \is_dir( $offsetlog_dir ) ) {
+		$entry         = $this->read_offsetlog_latest_entry( "{$base_dir}/offsets/{$basename}.p{$partition}" );
+		if ( null === $entry || ! isset( $entry['seg'], $entry['off'] ) ) {
 			return null;
 		}
-		try {
-			$offsetlog = new Partition( $offsetlog_dir, $partition );
-			$segments  = $offsetlog->get_segments( true );
-			if ( empty( $segments ) ) {
-				return null;
-			}
-			$newest = \end( $segments );
-			$bytes  = $offsetlog->read_at( $newest['id'], 0, $newest['size'] );
-			if ( '' === $bytes ) {
-				return null;
-			}
-			$lines = \array_filter( \explode( "\n", $bytes ), static fn ( $l ) => '' !== $l );
-			if ( empty( $lines ) ) {
-				return null;
-			}
-			$msg   = \Newspack_Nodes\Message::unpacked( (string) \end( $lines ) );
-			$entry = $msg[ \Newspack_Nodes\Message::VALUE ] ?? null;
-			if ( ! \is_array( $entry ) || ! isset( $entry['seg'], $entry['off'] ) ) {
-				return null;
-			}
-			return [ 'seg' => (int) $entry['seg'], 'off' => (int) $entry['off'] ];
-		} catch ( \Throwable $e ) {
-			return null;
-		}
+		return [ 'seg' => (int) $entry['seg'], 'off' => (int) $entry['off'] ];
 	}
 
 	private function resolve_cache(): Cache_Interface {

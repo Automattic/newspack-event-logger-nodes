@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.29] - 2026-05-14
+## [0.2.30] - 2026-05-15
+
+**Requires:** [newspack-nodes ≥ v0.1.28](https://github.com/Automattic/newspack-nodes/releases/tag/v0.1.28) — for the `Config::RESET_ACTION` broadcast and the `Supervisor::$curl_exec` test seam.
+
+### Fixed
+
+- **App `Config` cache invalidates alongside substrate `Config`** — the actual root cause behind "only aggregator spawns when `num_partitions` changes". Both classes maintain merged-result static caches, but the supervisor's per-tick `check_config()` only ran the substrate's `Config::reset()`. The app's filter callback in `newspack_nodes/topologies` therefore kept publishing the catalog with a stale `num_partitions`, while the substrate's `synthesize_entry` for `aggregator` (operator-overlay only) saw the fresh value — producing 7 (1 + 3×2) worker descriptors instead of 8. Listener on the substrate's new `Config::RESET_ACTION` invalidates `Newspack_Event_Logger_Nodes\Config::reset_local_cache()` whenever the substrate resets; the listener does NOT call back into substrate reset (would recurse).
+- **`StreamMerger::ensure_offsetlog()` was constructing `new Partition( $dir )` with only one arg.** Partition requires `($base_dir, $partition)` — this would have fataled the moment `aggregator_servers` was non-empty. Pinned the inner partition to `0` (Consumer pattern: outer `{source}.p{N}/` dir name encodes the spoke partition; inner Partition is always p0).
+- **`WorkersController::read_offsetlog_position()` constructed `Partition( $dir, $partition )` looking at `firehose.p1/p1/`** when files actually live at `firehose.p1/p0/`. Same offsetlog-inner-axis-is-always-0 fix already applied to `read_offsetlog_latest_entry()` last release; method now delegates to that helper.
+- **`reqgrep` and dashboards no longer reach a different memcache than workers do.** `PerformanceControllerBase::cache()` (the REST-side request-path helper) called the now-deleted `self::load_config()`; after the substrate dropped its `'full'`-mode toggle and folded `memcache_servers` into the always-loaded core schema, every Memcached_Cache build site reaches the same overlay. See `Memcached_Cache::from_substrate_config()` below.
+
+### Changed
+
+- **REST controllers and SSE/Remote infrastructure migrated from `self::load_config()` → `\Newspack_Nodes\Config::load_config()`** (substrate-only). Affects 14+ controllers under `includes/rest/` plus `RemoteSource`, `SSEControllerBase`, `FirehoseStreamController`. `PerformanceControllerBase::load_config()` no longer exists; subclasses that need app-merged keys call `\Newspack_Event_Logger_Nodes\Config::load_config()` explicitly (only `ServersController::test_connection` needed that path).
+- **Plugin-load defer refactor: worker-only initializers moved to the `newspack_nodes/spawn_worker` action handler.** Stops every admin / REST / front-end request from paying for setup it never uses. Deferred work:
+  - 8× `CommandInterpreter::register_class()` for app Node subclasses.
+  - 2× `Formatters::register()` (`request-index`, `flame-index`).
+  - `StreamMerger::register_remote_job_rewrite_filter()` (autoloads StreamMerger — the most expensive of the bunch).
+  - `RemoteManager::init()` — verified worker-internal (hooks `job_handlers` filter consulted by JobRouter, plus an action fired from inside a job handler running in the aggregator worker; no wp-cron involvement).
+  - `Topology_Registry::set_user_dir()` (needs `Bootstrap::base_dir()` which hits Config) is moved to an idempotent closure invoked from both the `newspack_nodes/topologies` filter callback and the `spawn_worker` action handler.
+  - `Topology_Registry::register_stock_dir()` stays at plugin load — single array append, zero config dependency, needed by `Topology_Registry::resolve()` from any context (tests, admin, REST, CLI).
+- **`Config` mode dispatching deleted** — mirrors substrate. `$option_schema_extended` (only contained `aggregator_servers`) folded into a single `$option_schema`; dual cache collapsed to single `$config`; `$mode` parameter dropped. `load_config('full')` callers throughout the plugin migrated to `load_config()`.
+
+### Added
+
+- **`Memcached_Cache::from_substrate_config()` factory** consolidates three near-identical `$servers = $config['memcache_servers'] ?? DEFAULT_SERVERS; if ( ! is_array( $servers ) ) ...; new Memcached_Cache( $servers )` blocks across `PerformanceControllerBase::cache()`, `SSEControllerBase::cache()`, and `RemoteSource::cache()`.
+
+### Removed (continuation of pre-release "tree chopping")
+
+- **`StreamMerger::set_logs_dir()` / `$logs_dir` field / `resolve_logs_dir()` helper.** Offsetlog placement now flows from `\Newspack_Nodes\Config::get_offsets_directory()` directly. Tests redirect via `$_wp_options['newspack_nodes_base_directory']` + `Config::reset()` instead of the deleted setter.
+
+### Tests
+
+- **`Supervisor::$curl_exec` test seam** (from substrate v0.1.28) routed through `tests/bootstrap.php`: real curl handle goes through `curl_init` + `curl_setopt_array` + errno classification unmocked; only the actual network call is swapped, with URL captured via `curl_getinfo` and POST body passed in directly as a 2nd seam arg (POSTFIELDS isn't recoverable via getinfo).
+- **`Cli_Stdin_Reader::$readline_handler_install` / `$readline_read_char` seams** (from substrate v0.1.28) no-op'd in `tests/bootstrap.php` so phpunit-in-a-terminal stays clean and `fire()` doesn't block on real stdin.
+- Stale `remote_firehose.log` test paths updated to the new `{offsets}/aggregator.p{N}/p0/{seg}.log` shape.
+- `test_set_logs_dir_resets_offsetlog` deleted (the method it tested was the user's chop).
 
 ### Removed
 

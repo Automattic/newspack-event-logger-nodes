@@ -44,9 +44,19 @@ class StreamMergerTest extends TestCase {
 		unset( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] );
 		// Use a fresh tmp dir per test so offsetlog Partition state never leaks.
 		$this->tmp_dir = $this->make_temp_dir( 'stream-merger-' );
+		// Redirect the substrate's base_directory to our tmp dir so
+		// StreamMerger::ensure_offsetlog() writes its offsetlog at
+		// `{tmp}/offsets/aggregator.p{N}/p0/{seg}.log`. Previously the test
+		// helper called `set_logs_dir($tmp)` to inject the path directly;
+		// that method was deleted in favor of going through Config. Reset
+		// the Config cache so the value takes effect this test run.
+		$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $this->tmp_dir;
+		\Newspack_Nodes\Config::reset();
 	}
 
 	protected function tearDown(): void {
+		unset( $GLOBALS['_wp_options']['newspack_nodes_base_directory'] );
+		\Newspack_Nodes\Config::reset();
 		$this->rmdir_recursive( $this->tmp_dir );
 		parent::tearDown();
 	}
@@ -54,7 +64,6 @@ class StreamMergerTest extends TestCase {
 	private function make_merger(): StreamMerger {
 		$sm = new StreamMerger( 0 );
 		$sm->name( 'test-stream-merger' );
-		$sm->set_logs_dir( $this->tmp_dir );
 		$sm->set_require_https( false );  // back-compat: most legacy tests use http://
 		return $sm;
 	}
@@ -418,7 +427,6 @@ class StreamMergerTest extends TestCase {
 
 	public function test_https_only_default_refuses_http(): void {
 		$sm = new StreamMerger( 0 );
-		$sm->set_logs_dir( $this->tmp_dir );
 		// require_https defaults to true.
 		$sm->add_remote( 'insecure', 'http://insecure.test/', 'tok' );
 		// add_remote refuses non-HTTPS — no entry stored, no handle opened.
@@ -428,7 +436,6 @@ class StreamMergerTest extends TestCase {
 
 	public function test_https_only_default_accepts_https(): void {
 		$sm = new StreamMerger( 0 );
-		$sm->set_logs_dir( $this->tmp_dir );
 		// HTTPS URL: registration succeeds even with require_https=true. The
 		// connect attempt itself will fail (no real server) but the entry is
 		// stored and a connect attempt is made.
@@ -438,7 +445,6 @@ class StreamMergerTest extends TestCase {
 
 	public function test_require_https_opt_out_permits_http(): void {
 		$sm = new StreamMerger( 0 );
-		$sm->set_logs_dir( $this->tmp_dir );
 		$sm->set_require_https( false );
 		$sm->add_remote( 'plain', 'http://plain.test/', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
@@ -453,8 +459,12 @@ class StreamMergerTest extends TestCase {
 		// Partition; every byte on disk is a packed Tachikoma Message, and
 		// StreamMerger::restore_offset unpacks the outer envelope before
 		// reading the position struct out of VALUE.
-		$logs_dir = $this->tmp_dir;
-		$dir      = "{$logs_dir}/remote_firehose.log";
+		//
+		// Path matches what `StreamMerger::ensure_offsetlog()` builds:
+		// `{base}/offsets/aggregator.p{merger_partition}` — our merger
+		// is constructed with partition=0 in `make_merger()`.
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$dir         = "{$offsets_dir}/aggregator.p0";
 		if ( ! is_dir( $dir ) ) {
 			mkdir( $dir, 0755, true );
 		}
@@ -501,7 +511,8 @@ class StreamMergerTest extends TestCase {
 		// packed Tachikoma Message envelope; the position struct is stored as
 		// an array on Message::VALUE (TM_STRUCT), already JSON-encoded by
 		// Message::packed.
-		$content = (string) file_get_contents( "{$this->tmp_dir}/remote_firehose.log/p0/0.log" );
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/p0/0.log" );
 		$line    = trim( $content );
 		$msg     = Message::unpacked( $line );
 		$decoded = $msg[ Message::VALUE ];
@@ -637,7 +648,6 @@ class StreamMergerTest extends TestCase {
 
 	public function test_add_remote_registers_curl_handle_with_event_framework(): void {
 		$sm = new StreamMerger();
-		$sm->set_logs_dir( $this->tmp_dir );
 		$sm->set_require_https( false );
 		$sm->add_remote( 'site-a', 'http://localhost:9999/stream', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
@@ -758,35 +768,6 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 	// Configuration / DI
 	// =========================================================================
-
-	public function test_set_logs_dir_resets_offsetlog(): void {
-		// Setting the logs dir after offsetlog creation forces re-creation on
-		// the next ensure_offsetlog() call. Verify by writing to the original,
-		// switching dirs, and confirming commit lands in the new location.
-		$dir1 = $this->make_temp_dir( 'logs1-' );
-		$dir2 = $this->make_temp_dir( 'logs2-' );
-
-		$sm = new StreamMerger( 0 );
-		$sm->name( 'reset-test-merger' );
-		$sm->set_logs_dir( $dir1 );
-		$sm->set_require_https( false );
-		$sm->add_remote( 'siteX', 'http://siteX.test/', 'tok' );
-
-		// Force a position update so commit_all writes something.
-		$h = $sm->test_get_handle( 'siteX' );
-		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 1, 'offset' => 50 ] ] ) . "\n\n" );
-		$sm->commit_all();
-
-		$this->assertFileExists( "{$dir1}/remote_firehose.log/p0/0.log" );
-
-		// Switch logs dir → next commit writes to the new dir.
-		$sm->set_logs_dir( $dir2 );
-		$sm->commit_all();
-		$this->assertFileExists( "{$dir2}/remote_firehose.log/p0/0.log" );
-
-		$this->rmdir_recursive( $dir1 );
-		$this->rmdir_recursive( $dir2 );
-	}
 
 	public function test_set_require_https_warns_first_time_disabled(): void {
 		// require_https=false should emit a one-time stern warning on the print
@@ -1115,7 +1096,6 @@ class StreamMergerTest extends TestCase {
 		// http URLs at registration, so we construct a RemoteSource directly
 		// and add it to the merger's ref list so the helper can reach it.
 		$sm = new StreamMerger( 0 );
-		$sm->set_logs_dir( $this->tmp_dir );
 		$cache = new FakeMemcached();
 		$sm->set_cache( $cache );
 		$remote = new RemoteSource( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
@@ -1541,10 +1521,11 @@ class StreamMergerTest extends TestCase {
 
 		// Second tick at +2s — under COMMIT_INTERVAL_S=5, no second commit.
 		Core::$now = 1002.0;
-		$sizes_before = \filesize( "{$this->tmp_dir}/remote_firehose.log/p0/0.log" );
+		$offsetlog_seg = \Newspack_Nodes\Config::get_offsets_directory() . '/aggregator.p0/p0/0.log';
+		$sizes_before  = \filesize( $offsetlog_seg );
 		$sm->tick();
 		\clearstatcache();
-		$sizes_after = \filesize( "{$this->tmp_dir}/remote_firehose.log/p0/0.log" );
+		$sizes_after = \filesize( $offsetlog_seg );
 		$this->assertSame( $sizes_before, $sizes_after, 'tick under interval must not write' );
 	}
 
@@ -1560,10 +1541,12 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteReal', 'http://siteReal.test/', 'tok' );
 		$sm->commit_all();
 
-		$content = (string) file_get_contents( "{$this->tmp_dir}/remote_firehose.log/p0/0.log" );
-		$line    = trim( $content );
-		$msg     = Message::unpacked( $line );
-		$decoded = $msg[ Message::VALUE ];
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$line        = trim( $content );
+		$msg         = Message::unpacked( $line );
+		$decoded     = $msg[ Message::VALUE ];
+		$this->assertIsArray( $decoded );
 		$this->assertArrayHasKey( 'siteReal', $decoded );
 		$this->assertArrayNotHasKey( '__test__', $decoded );
 	}
@@ -1572,8 +1555,9 @@ class StreamMergerTest extends TestCase {
 		// Empty remotes table — commit_all returns early.
 		$sm = $this->make_merger();
 		$sm->commit_all();
-		// No remote_firehose.log directory created.
-		$this->assertDirectoryDoesNotExist( "{$this->tmp_dir}/remote_firehose.log" );
+		// No aggregator.p0 offsetlog directory created.
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$this->assertDirectoryDoesNotExist( "{$offsets_dir}/aggregator.p0/p0" );
 	}
 
 	// =========================================================================
@@ -1700,8 +1684,9 @@ class StreamMergerTest extends TestCase {
 		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 2, 'offset' => 50 ] ] ) . "\n\n" );
 
 		$sm->tick();
-		// First tick committed; verify file exists.
-		$this->assertFileExists( "{$this->tmp_dir}/remote_firehose.log/p0/0.log" );
+		// First tick committed; verify offsetlog file exists.
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
 	}
 
 	// =========================================================================

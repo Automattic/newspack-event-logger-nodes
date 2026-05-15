@@ -17,6 +17,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\HookCategorizer;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class LoggerController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -52,7 +53,7 @@ class LoggerController extends PerformanceControllerBase {
 		// strings) are kept since they're already managed via WP options.
 		return new \WP_REST_Response(
 			[
-				'data' => self::load_config(),
+				'data' => RuntimeConfig::load_config(),
 				'meta' => [],
 			],
 			200

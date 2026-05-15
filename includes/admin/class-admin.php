@@ -139,7 +139,7 @@ class Admin {
 			return false;
 		}
 
-		$config        = Config::load_config( 'full' );
+		$config        = Config::load_config();
 		$allowed_users = $config['allowed_users'] ?? [];
 		if ( empty( $allowed_users ) ) {
 			return true;
@@ -1197,7 +1197,7 @@ class Admin {
 		// Cache_Interface is unused on this path. Pass a real
 		// Memcached_Cache so the constructor signature is happy without
 		// allocating a separate test-double class.
-		$config         = Config::load_config( 'full' );
+		$config         = Config::load_config();
 		$memcache_hosts = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
 		if ( ! \is_array( $memcache_hosts ) ) {
 			$memcache_hosts = Memcached_Cache::DEFAULT_SERVERS;
@@ -1349,7 +1349,7 @@ class Admin {
 		}
 
 		try {
-			$config         = Config::load_config( 'full' );
+			$config         = Config::load_config();
 			$locks_dir      = Config::get_locks_directory();
 			$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		} catch ( \Throwable $e ) {

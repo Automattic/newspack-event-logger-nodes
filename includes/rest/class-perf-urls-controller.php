@@ -18,6 +18,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class PerfUrlsController extends PerfOverviewController {
 
@@ -326,7 +327,7 @@ class PerfUrlsController extends PerfOverviewController {
 	private function find_recent_requests_for_url( string $url_hash ): array {
 		$requests       = [];
 		$entries_count  = 0;
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$log_base       = $base_dir . '/logs';

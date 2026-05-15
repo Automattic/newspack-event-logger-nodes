@@ -281,7 +281,7 @@ class ServersControllerTest extends TestCase {
 		$this->assertSame( 'spoke1', $body['id'] );
 
 		// Verify the server is gone. Reset Config too — ServerRegistry's
-		// get_all() calls Config::load_config('full') which caches the merged
+		// get_all() calls Config::load_config() which caches the merged
 		// `aggregator_servers` set; without this reset the cache resurrects
 		// spoke1 even after the option store is cleared.
 		Config::reset();

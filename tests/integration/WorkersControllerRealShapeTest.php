@@ -73,7 +73,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 	}
 
 	private function seed_offsetlog_metadata( string $source_basename, int $partition, string $worker_type ): void {
-		$config   = \Newspack_Nodes\Config::load_config( 'full' );
+		$config   = \Newspack_Nodes\Config::load_config();
 		$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$this->seed_offsetlog_entry(
 			"{$base_dir}/offsets/{$source_basename}.p{$partition}",
@@ -93,7 +93,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 		// `np:pos:{hostname}:{base_directory}/logs/{input_log}:p{N}`. Test
 		// writes through the injected Cache_Interface (FakeMemcached);
 		// controller reads via the same interface.
-		$config      = \Newspack_Nodes\Config::load_config( 'full' );
+		$config      = \Newspack_Nodes\Config::load_config();
 		$base_dir    = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$this->seed_offsetlog_metadata( 'firehose', 0, 'firehose-workers-and-jobs' );
 		$source_path = "{$base_dir}/logs/firehose.log";
@@ -126,7 +126,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 		// worker_type, each carrying its own handler / input_log / target.
 		// The data comes from offsetlog entries — no hardcoded
 		// WORKER_INPUTS map.
-		$config   = \Newspack_Nodes\Config::load_config( 'full' );
+		$config   = \Newspack_Nodes\Config::load_config();
 		$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 
 		$this->seed_offsetlog_entry(
@@ -197,7 +197,7 @@ class WorkersControllerRealShapeTest extends TestCase {
 		// committed entry from the on-disk offsetlog at
 		// `{base_directory}/offsets/{logname}.p{N}`. Seed one segment with a
 		// single packed Message carrying VALUE = {seg, off, ts}.
-		$config        = \Newspack_Nodes\Config::load_config( 'full' );
+		$config        = \Newspack_Nodes\Config::load_config();
 		$base_dir      = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$offsetlog_dir = "{$base_dir}/offsets/firehose.p0";
 		$this->seed_offsetlog_entry(

@@ -110,7 +110,7 @@ class ServerRegistry {
 	 */
 	public function get_all(): array {
 		if ( null === $this->servers ) {
-			// Read config-file defaults DIRECTLY, not via load_config('full').
+			// Read config-file defaults DIRECTLY, not via load_config().
 			// load_config caches the merged config (file + WP options), and
 			// since WP_OPTION_KEY === 'newspack_event_logger_nodes_aggregator_servers'
 			// it ALSO lives in the option schema, so the cache's
@@ -191,7 +191,7 @@ class ServerRegistry {
 	 * Check whether a server ID originates from the config file.
 	 *
 	 * Reads file-only defaults via `Config::load_config_defaults()` to avoid the
-	 * circular case where `load_config('full')` would merge the WP option into
+	 * circular case where `load_config()` would merge the WP option into
 	 * `aggregator_servers` and make every WP-option server look like a config
 	 * server.
 	 *

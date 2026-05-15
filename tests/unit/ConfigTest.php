@@ -74,31 +74,17 @@ class ConfigTest extends TestCase {
 		$this->assertSame( $config1, $config2 );
 	}
 
-	public function test_load_config_full_includes_extended(): void {
-		$config = Config::load_config( 'full' );
-		$this->assertIsArray( $config );
-		// Extended schema includes memcache_servers (substrate-owned), which
-		// the substrate sample overlay populates with a default and which
-		// the application Config layers in via load_config('full').
+	public function test_load_config_includes_substrate_memcache_servers(): void {
+		// Substrate-owned key reaches us via the substrate-overlay layer
+		// in `load_config()`.
+		$config = Config::load_config();
 		$this->assertArrayHasKey( 'memcache_servers', $config );
 	}
 
-	public function test_full_config_cached_separately_from_core(): void {
-		$core  = Config::load_config( 'core' );
-		$full  = Config::load_config( 'full' );
-		$full2 = Config::load_config( 'full' );
-		$this->assertSame( $full, $full2 );
-		// memcache_servers is a substrate extended option; reads
-		// `newspack_nodes_memcache_servers`.
-		\update_option( 'newspack_nodes_memcache_servers', "test-host:11211" );
+	public function test_memcache_servers_wp_option_override_applies(): void {
+		\update_option( 'newspack_nodes_memcache_servers', 'test-host:11211' );
 		Config::reset();
-		$config_core = Config::load_config( 'core' );
-		$config_full = Config::load_config( 'full' );
-		// Core mode should NOT pick up the extended override.
-		$core_servers = $config_core['memcache_servers'] ?? [];
-		$full_servers = $config_full['memcache_servers'] ?? [];
-		$this->assertNotEquals( [ 'test-host:11211' ], $core_servers );
-		$this->assertSame( [ 'test-host:11211' ], $full_servers );
+		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
 	}
 
 	public function test_reset_clears_cache(): void {

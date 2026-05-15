@@ -72,6 +72,21 @@ class Memcached_Cache implements Cache_Interface {
 	 *
 	 * @param array $servers Array of memcache servers (host:port strings). Default: ['127.0.0.1:11211'].
 	 */
+	/**
+	 * Build a Memcached_Cache from the substrate's `memcache_servers` config
+	 * key, falling back to DEFAULT_SERVERS when the value is missing or
+	 * malformed. Consolidates the same array-or-default plumbing previously
+	 * inlined at every cache call-site.
+	 */
+	public static function from_substrate_config(): self {
+		$config  = \Newspack_Nodes\Config::load_config();
+		$servers = $config['memcache_servers'] ?? self::DEFAULT_SERVERS;
+		if ( ! \is_array( $servers ) ) {
+			$servers = self::DEFAULT_SERVERS;
+		}
+		return new self( $servers );
+	}
+
 	public function __construct( array $servers = self::DEFAULT_SERVERS ) {
 		// Parse servers into host/port pairs.
 		$parsed = [];
