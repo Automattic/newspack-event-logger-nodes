@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.32] - 2026-05-15
+
+**Requires:** [newspack-nodes ≥ v0.1.29](https://github.com/Automattic/newspack-nodes/releases/tag/v0.1.29) — for `Node::dump_node()` overridable hook and `serializeTsl` schema-default expansion.
+
+### Fixed
+
+- **Application nodes are visible in the topology editor again.** v0.2.30's plugin-load defer pushed the 8 `CommandInterpreter::register_class()` and 2 `Formatters::register()` calls into the `spawn_worker` action handler. That handler doesn't fire for admin/REST requests, so the topology console's REST schema endpoint saw an empty class registry — every application node (RequestBuilder, FlameBuilder, JobRouter, JobWorker, RemoteSource, StreamMerger, AutoTuner, HealthCheckTick) disappeared from the palette, and selecting an existing one in the editor showed "No constructor arguments. No verbs registered." These calls are `::class` constants (compile-time FQCN strings) into a static hashmap — virtually free at boot. Moved back to plugin load. The genuinely expensive deferred work (`StreamMerger::register_remote_job_rewrite_filter`, `RemoteManager::init`) stays in the `spawn_worker` closure.
+- **`Topology_Registry::user_dir()` is populated in admin + REST contexts.** v0.2.30's defer left `set_user_dir()` registered only via the `newspack_nodes/topologies` filter callback and `spawn_worker` action — neither fires for an admin user saving a topology. `TopologiesController` POST then hit `user_dir()` directly and got `''`, returning 500 *"Topology_Registry has no writable user dir."* Wired the existing idempotent closure to `rest_api_init` + `admin_init`.
+- **`RemoteSource::dump_node()` redacts auth credentials.** Default `Node::dump_node` reflects every property; `dump_node my_remote` from the REPL printed raw `auth_password` / `auth_token`. Override scrubs both slots to `[REDACTED]` while leaving empty credentials empty. Requires substrate v0.1.29 (override mechanism lives there).
+- **`StreamMerger::process_sse_chunk()` no longer calls deleted `drain_test_queue()`.** The synthetic `__test__` RemoteSource test entrypoint had an orphaned method call left over from the queue removal; any caller would have crashed with "Call to undefined method".
+
+### Added
+
+- **TSL-substitution defaults on application verb args.** Mirror the active topology TSL invocations as schema defaults so the editor pre-fills the same tokens the live workers run with: FlameBuilder's `set_is_hub`/`set_auto_tune`/`set_significant_events`/`configure_stats` and StreamMerger's `set_verify_ssl`/`set_require_https`. Adding a FlameBuilder via the palette gets a working out-of-the-box config without re-typing what's already in the TSL files.
+
+### Build
+
+- **`00-newspack-profiler.php` ships as a standalone release asset, not bundled inside the plugin zip.** The mu-plugin file used to be in both places; the in-zip copy showed up in `wp plugin list` as a phantom `newspack-event-logger-nodes/00-newspack-profiler` and risked double-load. Now `.distignore` + `build-release.sh` exclude it from the zip and produce a standalone `release/00-newspack-profiler.php` for the Atomic-side deploy script.
+
+### Tests
+
+- **Coverage push: every class in `includes/` is now ≥80%** (lowest is `FlameBuilder` at 80.6%; total moved from 83.1% → 91.1% across 52 classes). New: `RemoteSourceTest` (110 methods). Existing extended: Admin, HealthCheckTick, JobWorker, StreamMerger, PartitionReader (timing-race fix), `tests/Helpers/TestCase.php` (helper now whitelists per-test temp dir in app Config too — without this, `$extras` overrides were silently rejected and tests saw bundled defaults instead).
+- 8 process_sse_chunk tests + 5 drain_test_queue tests refactored or removed (RemoteSource no longer keeps an event_queue / drain_test_queue seam — refactored to assert via CaptureSink on the real production path). Same treatment applied to StreamMergerTest's SSE-parser tests via a new `entry_frame()` helper.
+
 ## [0.2.31] - 2026-05-15
 
 ### Fixed
