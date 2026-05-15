@@ -85,17 +85,17 @@ class RemoteSource extends Node {
 	/** Active easy handle when connected, null otherwise. */
 	private ?\CurlHandle $handle = null;
 
-	private string $buffer        = '';
-	private array  $current_event = [ 'event' => '', 'data' => '' ];
-	private ?int   $slot          = null;
-	private array  $position      = [ 'segment_id' => 0, 'offset' => 0 ];
-	private float  $last_event_time = 0.0;
-	private int    $current_backoff = self::INITIAL_BACKOFF;
-	private float  $last_attempt    = 0.0;
-	private bool   $connected       = false;
+	private string  $buffer        = '';
+	private array   $current_event = [ 'event' => '', 'data' => '' ];
+	private ?int    $slot          = null;
+	private array   $position      = [ 'segment_id' => 0, 'offset' => 0 ];
+	private float   $last_event_time = 0.0;
+	private int     $current_backoff = self::INITIAL_BACKOFF;
+	private float   $last_attempt    = 0.0;
+	private bool    $connected       = false;
 	private ?string $last_error     = null;
-	private ?int   $last_http_code  = null;
-	private int    $last_heartbeat  = 0;
+	private ?int    $last_http_code  = null;
+	private int     $last_heartbeat  = 0;
 
 	/**
 	 * Constructor.
