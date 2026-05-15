@@ -366,8 +366,9 @@ class LogManager {
 		$data_json = \wp_json_encode( $data );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d). Use JobIntake::queue() for payloads >4KB.', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
-			$data = [ 'truncated' => true ];
+			\error_log( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d).', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
+			$category .= ' (truncated)';
+			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
 		}
 		if ( null === $this->topic ) {
 			return false;

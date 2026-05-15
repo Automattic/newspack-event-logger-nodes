@@ -16,6 +16,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Partition;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -175,8 +176,7 @@ class JobIntake {
 
 		$encoded = \wp_json_encode( $job );
 		if ( false === $encoded || \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( '[EventLogger] JobIntake: Job exceeds size limit for handler: ' . $handler );
+			Core::stderr( '[EventLogger] JobIntake: Job exceeds size limit for handler: ' . $handler );
 			return false;
 		}
 

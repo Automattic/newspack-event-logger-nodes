@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-05-14
+
+### Fixed
+
+- **Workers dashboard renders P1+ partition rows under their parent log.** When `num_partitions` flipped from 1 to 2, P1 worker rows came back from `WorkersController` with empty `handler` / `source` / `input_log` metadata and rendered as orphans floating outside the log groups. Root cause: `read_offsetlog_latest_entry()` was constructing the offsetlog Partition with the worker's partition number (`new Partition($dir, $partition)`), but each Consumer's offsetlog is itself a single-partition Partition with files at `{source}.p{N}/p0/0.log` regardless of which spoke partition it tracks (Consumer constructs it as `new Partition($dir, 0)`). Pinning the read-side Partition to 0 lets the controller find the offsetlog entries for any spoke partition and emit full per-row metadata.
+- **Aggregator pulls every spoke partition, not just p0.** `aggregator.tsl` had `var num_partitions = 1` plus a comment claiming "always single-partition by design" — that was a default I'd written into the file with no architectural basis, then cited as if it were the design. With the frontmatter dropped and the StreamMerger ctor switched from `0` to `<partition>`, the supervisor now spawns one StreamMerger worker per partition, each pulling its own slice from each spoke. Previously partitions 1+ on a multi-partition spoke were never aggregated.
+
+### Changed
+
+- **Workers dashboard handler labels show node names, not PHP class names.** `request-builder` / `job-router` / `flame-builder` instead of `RequestBuilder` / `JobRouter` / `FlameBuilder`. Matches what the topology console renders for the same nodes. `WorkersController` no longer emits `target_class`; the React tree title-cases the node name for display (`Request Builder`).
+- **`JobIntake` oversized-payload warnings route through `Core::stderr()`.** Drops the bare `\error_log()` call so the diagnostic actually surfaces in the cli session of a pivoted-mode operator.
+- **`LogManager` truncation now stores a 1KB preview** (`['m' => substr($data_json, 0, 1000) . '...']` plus a `(truncated)` category suffix) instead of replacing the entire payload with `['truncated' => true]`. Keeps debugging context for oversize entries that LogManager has to drop. The category-suffix delimitation makes truncated rows easy to filter for in `wp nodes reqgrep`.
+- **`ServerRegistry::decrypt()` no longer falls back to legacy plaintext.** The pre-encryption fallback path (return the stored value as-is + emit a one-time "legacy plaintext credential detected" warning) is gone. Stored credentials must now be encrypted (with `ENCRYPTED_PREFIX`); anything else returns empty. Operators with legacy plaintext rows get a `has_credentials: false` from the REST endpoint until they re-save the spoke through the admin form (which encrypts on save). Two test cases for the old fallback path were dropped.
+
+**Requires:** [newspack-nodes ≥ v0.1.26](https://github.com/Automattic/newspack-nodes/releases/tag/v0.1.26) — for `Core::stderr()`.
+
 ## [0.2.27] - 2026-05-14
 
 ### Changed

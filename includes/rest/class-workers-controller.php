@@ -203,16 +203,13 @@ class WorkersController extends PerformanceControllerBase {
 				// Each Consumer can have multiple downstream processors
 				// (Tee fan-out: firehose:tee → request-builder + job-router).
 				// Emit one dashboard row per processor so the operator sees
-				// the actual work units — RequestBuilder + JobRouter — not
+				// the actual work units — request-builder + job-router — not
 				// the Consumer plumbing.
 				$targets = ! empty( $row['targets'] )
 					? $row['targets']
-					: [ [ 'name' => $row['target'] ?? '', 'class' => '' ] ];
+					: [ [ 'name' => $row['target'] ?? '' ] ];
 				foreach ( $targets as $t ) {
-					$handler = (string) ( $t['class'] ?? '' );
-					if ( '' === $handler ) {
-						$handler = (string) ( $t['name'] ?? '' );
-					}
+					$handler = (string) ( $t['name'] ?? '' );
 					$worker = $this->build_worker_status(
 						$type,
 						$partition,
@@ -225,7 +222,6 @@ class WorkersController extends PerformanceControllerBase {
 						$handler
 					);
 					$worker['target']         = $t['name'] ?? '';
-					$worker['target_class']   = $t['class'] ?? '';
 					$worker['source']         = $row['name'];
 					$worker['inputs']         = [ $input_log ];
 					$worker['outputs']        = [];
@@ -654,7 +650,7 @@ class WorkersController extends PerformanceControllerBase {
 			}
 			$source_basename = $m[1];
 			$partition       = (int) $m[2];
-			$row             = $this->read_offsetlog_latest_entry( "{$offsets_dir}/{$entry}", $partition );
+			$row             = $this->read_offsetlog_latest_entry( "{$offsets_dir}/{$entry}" );
 			if ( null === $row ) {
 				continue;
 			}
@@ -685,9 +681,15 @@ class WorkersController extends PerformanceControllerBase {
 	 *
 	 * @return array<string,mixed>|null
 	 */
-	private function read_offsetlog_latest_entry( string $offsetlog_dir, int $partition ): ?array {
+	private function read_offsetlog_latest_entry( string $offsetlog_dir ): ?array {
 		try {
-			$offsetlog = new Partition( $offsetlog_dir, $partition );
+			// Each Consumer's offsetlog is itself a single-partition
+			// Partition (Consumer constructs it as `new Partition( $dir,
+			// 0 )` in class-consumer.php). The OUTER `{source}.p{N}/`
+			// dir name encodes the spoke partition; the inner Partition
+			// is always p0. Pin to 0 here so reads land at the right
+			// path for any spoke partition.
+			$offsetlog = new Partition( $offsetlog_dir, 0 );
 			$segments  = $offsetlog->get_segments( true );
 			if ( empty( $segments ) ) {
 				return null;
