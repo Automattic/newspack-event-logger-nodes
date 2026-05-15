@@ -77,6 +77,12 @@ find "${STAGING_DIR}/${PLUGIN}" \( -name '._*' -o -name '.DS_Store' \) -delete
 # Clean up.
 rm -rf "${STAGING_DIR}"
 
+# Also publish the mu-plugin file as a standalone asset. The deploy script
+# (deploy-event-logger.sh, run on the Atomic side) fetches it directly from
+# the release URL because it lives under mu-plugins/ on the target site,
+# not under wp-content/plugins/.
+cp "${SCRIPT_DIR}/00-newspack-profiler.php" "${RELEASE_DIR}/"
+
 echo ""
 echo "=== Release artifacts ==="
 ls -lh "${RELEASE_DIR}"/*

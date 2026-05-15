@@ -56,15 +56,18 @@ dndocker/tools/bump-event-logger-nodes-version.sh <version>
 # 2. Bump version across plugin header + constant + package.json:
 dndocker/tools/bump-event-logger-nodes-version.sh <version>
 # 3. Commit the changelog entry + version bump together (e.g. `chore: release v<version>`).
-# 4. Build the release zip:
-./build-release.sh           # outputs to release/newspack-event-logger-nodes.zip
-# 5. Tag, push, and create GitHub release with the zip:
+# 4. Build the release artifacts:
+./build-release.sh           # outputs release/newspack-event-logger-nodes.zip + release/00-newspack-profiler.php
+# 5. Tag, push, and create GitHub release with BOTH artifacts:
 git tag v<version>
 git push origin main --tags
-gh release create v<version> release/newspack-event-logger-nodes.zip --title "v<version>" --notes "changelog here"
+gh release create v<version> \
+    release/newspack-event-logger-nodes.zip \
+    release/00-newspack-profiler.php \
+    --title "v<version>" --notes "changelog here"
 ```
 
-`build-release.sh` runs `composer install --no-dev --optimize-autoloader`, then `npm run build` (the React dashboards must ship pre-built), then rsyncs the plugin into `release/newspack-event-logger-nodes/` minus development artifacts (`src/`, `tests/`, `node_modules/`, `composer.{json,lock}`, `package*.json`, `phpcs.xml.dist`, `build-release.sh`, AppleDouble sidecars, etc.) and zips it. The zip contains the plugin directory at root so `wp plugin install --force --activate <url>.zip` works as-is.
+`build-release.sh` runs `composer install --no-dev --optimize-autoloader`, then `npm run build` (the React dashboards must ship pre-built), then rsyncs the plugin into `release/newspack-event-logger-nodes/` minus development artifacts (`src/`, `tests/`, `node_modules/`, `composer.{json,lock}`, `package*.json`, `phpcs.xml.dist`, `build-release.sh`, AppleDouble sidecars, etc.) and zips it. The zip contains the plugin directory at root so `wp plugin install --force --activate <url>.zip` works as-is. The script ALSO copies `00-newspack-profiler.php` into `release/` as a standalone asset — the Atomic-side `deploy-event-logger.sh` script fetches it directly from the release URL because it lives under `mu-plugins/` on the target site, not under `wp-content/plugins/`. Both files must be attached to the GitHub release for the deploy script to succeed.
 
 **Note on coupling**: this plugin's version is not tied to `newspack-nodes`'s — they release independently. If a release depends on a specific runtime version, call it out in the CHANGELOG entry; consider bumping the `newspack-nodes` requirement in the plugin header (`Requires Plugins:` once we use it).
 
