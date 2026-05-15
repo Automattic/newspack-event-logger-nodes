@@ -45,26 +45,27 @@ mkdir -p "${STAGING_DIR}/${PLUGIN}"
 # '._*' catches any AppleDouble companion files left over from macOS
 # tooling — letting them through means WP loads them as PHP at runtime.
 rsync -a \
-	--exclude='src' \
-	--exclude='tests' \
-	--exclude='node_modules' \
-	--exclude='release' \
-	--exclude='.release-staging' \
-	--exclude='.git' \
-	--exclude='.github' \
-	--exclude='composer.json' \
-	--exclude='composer.lock' \
-	--exclude='package.json' \
-	--exclude='package-lock.json' \
-	--exclude='phpcs.xml.dist' \
-	--exclude='commitlint.config.js' \
-	--exclude='build-release.sh' \
-	--exclude='.distignore' \
-	--exclude='.gitignore' \
-	--exclude='.gitkeep' \
+	--exclude='*.log' \
 	--exclude='.DS_Store' \
 	--exclude='._*' \
-	--exclude='*.log' \
+	--exclude='.distignore' \
+	--exclude='.git' \
+	--exclude='.github' \
+	--exclude='.gitignore' \
+	--exclude='.gitkeep' \
+	--exclude='.release-staging' \
+	--exclude='00-newspack-profiler.php' \
+	--exclude='build-release.sh' \
+	--exclude='commitlint.config.js' \
+	--exclude='composer.json' \
+	--exclude='composer.lock' \
+	--exclude='node_modules' \
+	--exclude='package-lock.json' \
+	--exclude='package.json' \
+	--exclude='phpcs.xml.dist' \
+	--exclude='release' \
+	--exclude='src' \
+	--exclude='tests' \
 	"${SCRIPT_DIR}/" "${STAGING_DIR}/${PLUGIN}/"
 
 # Belt-and-suspenders: scrub anything the rsync excludes might've missed.
