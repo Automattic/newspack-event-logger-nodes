@@ -49,63 +49,29 @@ class Config {
 	private static $config_defaults = null;
 
 	/**
-	 * Get core option schema - loaded on every request (autoloaded).
-	 *
-	 * Plugins can add their core options via the
-	 * 'newspack_event_logger_nodes_option_schema_core' filter. Core options
-	 * are needed for request logging and hook timing.
-	 *
-	 * @return array Associative array of option_name => type.
+	 * Core options are needed for request logging and hook timing.
 	 */
-	private static function get_option_schema_core(): array {
-		// Application core options (substrate keys live on RuntimeConfig).
-		$schema = [
-			'enable_logging'              => 'bool',
-			'log_urls'                    => 'array_strings',
-			'skip_urls'                   => 'array_strings',
-			'log_events'                  => 'array_strings',
-			'custom_events'               => 'array_strings',
-			'log_memory'                  => 'bool',
-			'flush_every_line'            => 'bool',
-			'significant_events'          => 'array_strings',
-			'hook_start_priority'         => 'int',
-			'allowed_users'               => 'array_strings',
-			'auto_disable_threshold'      => 'int',
-			'auto_protect_time_threshold' => 'float',
-		];
-
-		// Allow plugins to add their core options.
-		if ( \function_exists( 'apply_filters' ) ) {
-			$schema = \apply_filters( 'newspack_event_logger_nodes_option_schema_core', $schema );
-		}
-
-		return \is_array( $schema ) ? $schema : [];
-	}
+	private static $option_schema_core = [
+		'enable_logging'              => 'bool',
+		'log_urls'                    => 'array_strings',
+		'skip_urls'                   => 'array_strings',
+		'log_events'                  => 'array_strings',
+		'custom_events'               => 'array_strings',
+		'log_memory'                  => 'bool',
+		'flush_every_line'            => 'bool',
+		'significant_events'          => 'array_strings',
+		'hook_start_priority'         => 'int',
+		'allowed_users'               => 'array_strings',
+		'auto_disable_threshold'      => 'int',
+		'auto_protect_time_threshold' => 'float',
+	];
 
 	/**
-	 * Get extended option schema - only loaded for workers/admin (not autoloaded).
-	 *
-	 * Plugins can add their extended options via the
-	 * 'newspack_event_logger_nodes_option_schema_extended' filter. Extended
-	 * options are only needed by workers (FlameBuilder) and admin settings.
-	 *
-	 * @return array Associative array of option_name => type.
+	 * Extended options are only needed by workers (FlameBuilder) and admin settings.
 	 */
-	private static function get_option_schema_extended(): array {
-		// Application-level extended options. Substrate-level extended
-		// options (memcache_servers) live on RuntimeConfig and are merged
-		// into the returned config via load_config().
-		$schema = [
-			'aggregator_servers' => 'aggregator_servers',
-		];
-
-		// Allow plugins to add their extended options.
-		if ( \function_exists( 'apply_filters' ) ) {
-			$schema = \apply_filters( 'newspack_event_logger_nodes_option_schema_extended', $schema );
-		}
-
-		return \is_array( $schema ) ? $schema : [];
-	}
+	private static $option_schema_extended = [
+		'aggregator_servers' => 'aggregator_servers',
+	];
 
 	/**
 	 * Allowed directories for local config override files.
@@ -150,7 +116,7 @@ class Config {
 		// Override with WordPress options (with sanitization).
 		if ( \defined( 'ABSPATH' ) && \function_exists( 'get_option' ) ) {
 			// Always load core options.
-			foreach ( self::get_option_schema_core() as $key => $type ) {
+			foreach ( self::$option_schema_core as $key => $type ) {
 				$value = \get_option( "newspack_event_logger_nodes_{$key}" );
 				if ( false !== $value && '' !== $value ) {
 					$sanitized = self::sanitize_option( $value, $type );
@@ -162,7 +128,7 @@ class Config {
 
 			// Load extended options only for 'full' mode.
 			if ( $is_full ) {
-				foreach ( self::get_option_schema_extended() as $key => $type ) {
+				foreach ( self::$option_schema_extended as $key => $type ) {
 					$value = \get_option( "newspack_event_logger_nodes_{$key}" );
 					if ( false !== $value && '' !== $value ) {
 						$sanitized = self::sanitize_option( $value, $type );
@@ -174,15 +140,6 @@ class Config {
 			}
 		}
 
-		// Cache the computed config. Late-loading plugins (alphabetically
-		// later in the plugin load order) may add to the option schema via
-		// the `newspack_event_logger_nodes_option_schema_core` filter AFTER this
-		// call, so the main plugin file hooks a one-shot cache reset on
-		// `plugins_loaded` at priority PHP_INT_MIN — see the
-		// `register_cache_invalidation` static initializer below. That
-		// guarantees post-plugins_loaded reads pick up the full schema
-		// without forcing every pre-plugins_loaded caller to re-run the
-		// full filter chain.
 		if ( $is_full ) {
 			self::$config_full = $config;
 		} else {
@@ -190,32 +147,6 @@ class Config {
 		}
 
 		return $config;
-	}
-
-	/**
-	 * Invalidate cached config so the next load_config() call rebuilds with
-	 * the complete schema. Called once on plugins_loaded (see register_cache_invalidation).
-	 */
-	public static function invalidate_cache(): void {
-		self::$config          = null;
-		self::$config_full     = null;
-		self::$config_defaults = null;
-	}
-
-	/**
-	 * Hook a one-shot cache invalidation on plugins_loaded so that any
-	 * schema additions registered by late-loading plugins are picked up by
-	 * the next load_config() call. Invoked from the plugin main file.
-	 */
-	public static function register_cache_invalidation(): void {
-		static $registered = false;
-		if ( $registered ) {
-			return;
-		}
-		$registered = true;
-		if ( \function_exists( 'add_action' ) ) {
-			\add_action( 'plugins_loaded', [ self::class, 'invalidate_cache' ], PHP_INT_MIN );
-		}
 	}
 
 	/**
