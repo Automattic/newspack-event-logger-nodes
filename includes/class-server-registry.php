@@ -54,13 +54,6 @@ class ServerRegistry {
 	private ?array $servers = null;
 
 	/**
-	 * One-shot legacy-plaintext warning latch.
-	 *
-	 * @var bool
-	 */
-	private static bool $legacy_warned = false;
-
-	/**
 	 * Singleton accessor.
 	 */
 	public static function get_instance(): ServerRegistry {

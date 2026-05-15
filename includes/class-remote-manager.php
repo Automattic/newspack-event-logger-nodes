@@ -217,10 +217,7 @@ class RemoteManager {
 			);
 
 			if ( \function_exists( 'is_wp_error' ) && \is_wp_error( $response ) ) {
-				$message = \method_exists( $response, 'get_error_message' )
-					? (string) $response->get_error_message()
-					: 'wp_error';
-				self::log_status( $server_id, 'sync_error', $message );
+				self::log_status( $server_id, 'sync_error', (string) $response->get_error_message() );
 			} else {
 				$code = self::response_code( $response );
 				if ( 200 !== $code ) {
@@ -460,10 +457,7 @@ class RemoteManager {
 		$response = self::get_from_server( $server, '/wp-json/newspack-nodes/v1/discovery' );
 
 		if ( \function_exists( 'is_wp_error' ) && \is_wp_error( $response ) ) {
-			$message = \method_exists( $response, 'get_error_message' )
-				? (string) $response->get_error_message()
-				: 'wp_error';
-			self::log_status( $server_id, 'error', $message );
+			self::log_status( $server_id, 'error', (string) $response->get_error_message() );
 			return null;
 		}
 		$code = self::response_code( $response );
@@ -687,9 +681,7 @@ class RemoteManager {
 		// Generate a fresh request id.
 		$rid = '';
 		try {
-			$rid = \method_exists( LogManager::class, 'generate_request_id' )
-				? (string) LogManager::generate_request_id()
-				: '';
+			$rid = LogManager::generate_request_id();
 		} catch ( \Throwable $e ) {
 			$rid = '';
 		}
@@ -823,18 +815,12 @@ class RemoteManager {
 	private static function registry(): ServerRegistry {
 		static $registry = null;
 		if ( $registry instanceof ServerRegistry ) {
-			// Reset cache when the future ServerRegistry exposes that API
-			// (long-running workers may have cached enabled-list state).
-			if ( \method_exists( $registry, 'reset_cache' ) ) {
-				$registry->reset_cache();
-			}
+			// Reset cache before reuse — long-running workers may have
+			// cached enabled-list state.
+			$registry->reset_cache();
 			return $registry;
 		}
-		if ( \method_exists( ServerRegistry::class, 'get_instance' ) ) {
-			$registry = ServerRegistry::get_instance();
-			return $registry;
-		}
-		$registry = new ServerRegistry();
+		$registry = ServerRegistry::get_instance();
 		return $registry;
 	}
 }

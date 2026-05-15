@@ -82,7 +82,6 @@ class FlameBuilder extends Node {
 	private $custom_events_to_disable    = [];
 	private $significant_events          = [];
 	private $new_significant_events      = [];
-	private $last_significant_refresh    = 0.0;
 	private $custom_event_names          = [];
 	private $is_hub                      = false;
 
@@ -388,7 +387,7 @@ class FlameBuilder extends Node {
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = $this->target;
-		$msg[ Message::KEY ]       = (string) ( $flame_data['rid'] ?? '' );
+		$msg[ Message::KEY ]       = $flame_data['rid'];
 		$msg[ Message::VALUE ]     = $flame_data;
 		$this->sink->fill( $msg );
 		return true;

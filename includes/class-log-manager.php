@@ -35,7 +35,7 @@ class LogManager {
 	private $request_time    = null;
 	private $request_id      = '';
 	private $request_url     = '';
-	private static $instance = null;
+	private static ?self $instance = null;
 
 	/** @var array Stack of suspended parent LogManager instances. */
 	private static $context_stack = [];
@@ -49,8 +49,8 @@ class LogManager {
 	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
 	private $flush_every_line = false;
 
-	/** @var string|null Saved UNIQUE_ID for suspend/resume. */
-	private $saved_unique_id = null;
+	/** Saved UNIQUE_ID for suspend/resume. */
+	private ?string $saved_unique_id = null;
 
 	/** @var string|null Compiled regex for skip URL patterns. */
 	private $skip_regex = null;
@@ -67,7 +67,7 @@ class LogManager {
 	/** @var int Mute start/complete after this many lines, leaving room for messages + finish. */
 	private const MAX_LOG_LINES = 40000;
 
-	/** @var float Nanoseconds-to-milliseconds divisor. */
+	/** @var int Nanoseconds-to-milliseconds divisor. */
 	private const NS_PER_MS = 1_000_000;
 
 	/**
@@ -259,7 +259,8 @@ class LogManager {
 			self::$instance->topic?->flush();
 			// Save UNIQUE_ID so resume() can restore it (child may overwrite it).
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- saving our own generated ID for restore.
-			self::$instance->saved_unique_id = $_SERVER['UNIQUE_ID'] ?? null;
+			$saved                           = $_SERVER['UNIQUE_ID'] ?? null;
+			self::$instance->saved_unique_id = \is_string( $saved ) ? $saved : null;
 			self::$context_stack[]           = self::$instance;
 			self::$instance                  = null;
 		}
@@ -693,11 +694,11 @@ class LogManager {
 		$complete_extra = [];
 		$error          = \error_get_last();
 		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
-			$complete_extra['fatal_error']  = \substr( $error['message'] ?? '', 0, 1024 );
-			$complete_extra['fatal_file']   = $error['file'] ?? '';
-			$complete_extra['fatal_line']   = $error['line'] ?? 0;
+			$complete_extra['fatal_error']  = \substr( $error['message'], 0, 1024 );
+			$complete_extra['fatal_file']   = $error['file'];
+			$complete_extra['fatal_line']   = $error['line'];
 			$complete_extra['fatal_type']   = $error['type'];
-			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] ?? '' );
+			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
 			$complete_extra['error_status'] = 'F';
 		}
 

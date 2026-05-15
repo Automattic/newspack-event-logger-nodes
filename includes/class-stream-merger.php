@@ -106,7 +106,7 @@ class StreamMerger extends Node {
 	 * explicit TSL `start_periodic_tick` verb invocation.
 	 */
 	public function name( ?string $name = null ): string {
-		$was_named = '' !== ( $this->name ?? '' );
+		$was_named = '' !== $this->name;
 		$result    = parent::name( $name );
 		if ( null !== $name && '' !== $name ) {
 			if ( null !== $this->health_check ) {

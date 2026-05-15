@@ -28,7 +28,6 @@ class SettingsSyncTest extends TestCase {
 		// remote_manager job has no consumer (silent no-op).
 		$received = null;
 		$sync = new SettingsSync(
-			config: [],
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $ciphertext ) use ( &$received ) {
 				$received = [ 'option' => $option, 'value' => $value, 'ciphertext' => $ciphertext ];
@@ -49,7 +48,6 @@ class SettingsSyncTest extends TestCase {
 	public function test_skips_unsynced_option(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -60,7 +58,6 @@ class SettingsSyncTest extends TestCase {
 	public function test_suppress_sync_blocks_sync(): void {
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -150,7 +147,6 @@ class SettingsSyncTest extends TestCase {
 	public function test_dispatch_receives_non_empty_ciphertext_when_encryption_works(): void {
 		$dispatched = null;
 		$sync       = new SettingsSync(
-			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$dispatched ) {
 				$dispatched = $cipher;
@@ -404,7 +400,6 @@ class SettingsSyncTest extends TestCase {
 		$received_option = null;
 		$received_value  = null;
 		$sync = new SettingsSync(
-			config: [],
 			synced_options: [ 'log_events', 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$received_option, &$received_value ) {
 				$received_option = $option;
@@ -526,7 +521,6 @@ class SettingsSyncTest extends TestCase {
 		// suppress_instance_sync() with no arg defaults to true.
 		$called = false;
 		$sync = new SettingsSync(
-			config: [ 'enable_aggregator' => true ],
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -629,7 +623,6 @@ class SettingsSyncTest extends TestCase {
 		// options the hub doesn't care about.
 		$called = false;
 		$sync   = new SettingsSync(
-			config: [],
 			synced_options: [ 'log_urls' ], // 'other_option' NOT in this list
 			dispatch: function () use ( &$called ) { $called = true; }
 		);

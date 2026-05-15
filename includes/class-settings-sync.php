@@ -105,18 +105,15 @@ class SettingsSync {
 	 */
 	private static bool $static_syncing = false;
 
-	private array $config;
 	private array $synced_options;
 	/** @var callable */
 	private $dispatch;
 	private bool $syncing = false;
 
 	public function __construct(
-		array $config,
 		array $synced_options,
 		callable $dispatch
 	) {
-		$this->config         = $config;
 		$this->synced_options = $synced_options;
 		$this->dispatch       = $dispatch;
 	}
