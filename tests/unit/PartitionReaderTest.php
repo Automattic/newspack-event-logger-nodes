@@ -568,9 +568,11 @@ class PartitionReaderTest extends TestCase {
 		while ( null !== $reader->read_line() ) {
 		}
 
-		// Touch segment 0 to make it look fresh (mtime = now). The "fresh
-		// segment, don't advance yet" branch: stale_secs < 1.
-		\touch( $p->get_segment_path( 0 ) );
+		// Set mtime one second in the future so the "fresh segment, don't
+		// advance yet" branch (stale_secs < 1) survives the second-boundary
+		// race: a plain `touch()` (mtime = time()) can roll to stale_secs=1
+		// if next_segment() runs in the next wall-clock second.
+		\touch( $p->get_segment_path( 0 ), \time() + 1 );
 		\clearstatcache( true, $p->get_segment_path( 0 ) );
 
 		$reader->next_segment();

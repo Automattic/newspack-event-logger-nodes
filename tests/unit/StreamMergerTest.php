@@ -9,6 +9,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Router;
 use Newspack_Nodes\Tests\CaptureSink;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -1917,5 +1918,287 @@ class StreamMergerTest extends TestCase {
 		// redundant with `load_remotes_from_registry` for production hubs.
 		// The PHP method stays so `load_remotes_from_registry` can call it.
 		$this->assertNotContains( 'add_remote', $verb_names );
+	}
+
+	// =========================================================================
+	// handle_request: TM_REQUEST/GET_REMOTES + unknown verbs.
+	// =========================================================================
+
+	public function test_fill_with_tm_request_get_remotes_replies_with_status_map(): void {
+		// Drive the TM_REQUEST branch of fill() → handle_request() → GET_REMOTES.
+		// The reply is sunk back to the caller; we capture it and verify the
+		// payload shape (count + per-remote status snapshots) matches what
+		// dashboards/`GET_REMOTES` consumers expect.
+		$sm      = $this->make_merger();
+		$capture = new CaptureSink();
+		$sm->sink( $capture );
+		$sm->add_remote( 'siteReqA', 'http://siteReqA.test/', 'tok' );
+		$sm->add_remote( 'siteReqB', 'http://siteReqB.test/', 'tok' );
+
+		$req                       = Message::new_message();
+		$req[ Message::TYPE ]      = Message::TM_REQUEST;
+		$req[ Message::FROM ]      = 'caller';
+		$req[ Message::ID ]        = 'req-id-1';
+		$req[ Message::KEY ]       = 'req-key';
+		$req[ Message::VALUE ]     = 'GET_REMOTES';
+		$sm->fill( $req );
+
+		// The capture should have exactly the response message (no other traffic).
+		$this->assertCount( 1, $capture->captured );
+		$reply = $capture->captured[0];
+		$this->assertSame(
+			Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT,
+			$reply[ Message::TYPE ],
+			'reply TYPE must be TM_REQUEST|TM_RESPONSE|TM_STRUCT'
+		);
+		$this->assertSame( 'caller', $reply[ Message::TO ], 'reply TO must mirror request FROM' );
+		$this->assertSame( 'req-id-1', $reply[ Message::ID ], 'reply ID must echo the request ID' );
+		$this->assertSame( 'req-key', $reply[ Message::KEY ], 'reply KEY must echo the request KEY' );
+		$this->assertSame( $sm->name(), $reply[ Message::FROM ] );
+
+		$payload = $reply[ Message::VALUE ];
+		$this->assertIsArray( $payload );
+		$this->assertSame( 2, $payload['count'] );
+		$this->assertArrayHasKey( 'siteReqA', $payload['remotes'] );
+		$this->assertArrayHasKey( 'siteReqB', $payload['remotes'] );
+		// current_status() snapshot shape — see RemoteSource::current_status().
+		foreach ( [ 'siteReqA', 'siteReqB' ] as $sid ) {
+			$status = $payload['remotes'][ $sid ];
+			$this->assertArrayHasKey( 'connected', $status );
+			$this->assertArrayHasKey( 'current_backoff', $status );
+			$this->assertArrayHasKey( 'position', $status );
+			$this->assertArrayHasKey( 'slot', $status );
+		}
+	}
+
+	public function test_fill_with_tm_request_unknown_verb_replies_with_error_payload(): void {
+		// Any verb other than GET_REMOTES drops into the error-payload branch.
+		$sm      = $this->make_merger();
+		$capture = new CaptureSink();
+		$sm->sink( $capture );
+
+		$req                   = Message::new_message();
+		$req[ Message::TYPE ]  = Message::TM_REQUEST;
+		$req[ Message::FROM ]  = 'caller';
+		$req[ Message::ID ]    = 'req-id-2';
+		$req[ Message::VALUE ] = 'FROBNICATE somearg';
+		$sm->fill( $req );
+
+		$this->assertCount( 1, $capture->captured );
+		$payload = $capture->captured[0][ Message::VALUE ];
+		$this->assertIsArray( $payload );
+		$this->assertArrayHasKey( 'error', $payload );
+		$this->assertStringContainsString( 'FROBNICATE', $payload['error'] );
+	}
+
+	public function test_fill_ignores_tm_request_with_tm_response_bit(): void {
+		// fill() only dispatches handle_request when TM_REQUEST is set AND
+		// TM_RESPONSE is NOT set — this branch is the "incoming response, not
+		// a request" path that bypasses handle_request and falls through to
+		// the sink pass-through. Verify the response message is forwarded
+		// untouched (counter increments, sink sees the original VALUE).
+		$sm      = $this->make_merger();
+		$capture = new CaptureSink();
+		$sm->sink( $capture );
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$msg[ Message::VALUE ] = 'a-response-not-a-request';
+		$sm->fill( $msg );
+
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame( 'a-response-not-a-request', $capture->captured[0][ Message::VALUE ] );
+	}
+
+	public function test_fill_with_tm_info_timer_triggers_tick(): void {
+		// The TIMER branch in fill() runs tick(); with COMMIT_INTERVAL_S
+		// elapsed AND a remote with a non-default position, this drives
+		// commit_all() and produces an offsetlog segment file. Confirms the
+		// router-hitchhike entry point is wired the same way HealthCheckTick's
+		// is — TM_INFO + KEY==='TIMER' is the fan-out shape.
+		$sm = $this->make_merger();
+		Core::$now = 1000.0;
+		$sm->add_remote( 'siteTimerFill', 'http://siteTimerFill.test/', 'tok' );
+
+		// Update position so commit_all() has something to write.
+		$h = $sm->test_get_handle( 'siteTimerFill' );
+		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 1, 'offset' => 25 ] ] ) . "\n\n" );
+
+		// Build the TIMER fan-out message identical to Router::notify('TIMER', ...).
+		$tick                  = Message::new_message();
+		$tick[ Message::TYPE ] = Message::TM_INFO;
+		$tick[ Message::KEY ]  = 'TIMER';
+		$sm->fill( $tick );
+
+		// Offsetlog file exists — proves tick() ran maybe_commit() through fill().
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+	}
+
+	public function test_fill_with_tm_info_non_timer_key_falls_through_to_sink(): void {
+		// TM_INFO with a KEY other than 'TIMER' must NOT trigger tick(); it
+		// falls through to the sink pass-through.
+		$sm      = $this->make_merger();
+		$capture = new CaptureSink();
+		$sm->sink( $capture );
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_INFO;
+		$msg[ Message::KEY ]   = 'NOT_TIMER';
+		$msg[ Message::VALUE ] = 'other-info';
+		$sm->fill( $msg );
+
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame( 'other-info', $capture->captured[0][ Message::VALUE ] );
+	}
+
+	// =========================================================================
+	// load_remotes_from_registry verb body.
+	// =========================================================================
+
+	public function test_load_remotes_from_registry_verb_loads_enabled_entries(): void {
+		// Seed the WP option directly (bypasses encryption — get_all() tolerates
+		// legacy plaintext) so ServerRegistry::get_enabled() returns the entry.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+			'site-enabled-a' => [
+				'url'           => 'http://site-enabled-a.test/',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			],
+			'site-enabled-b' => [
+				'url'           => 'http://site-enabled-b.test/',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			],
+			'site-disabled'  => [
+				'url'           => 'http://site-disabled.test/',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => false,
+				'logs'          => [ 'firehose.log' ],
+			],
+		];
+
+		// Reset the ServerRegistry singleton + its instance-cache so get_enabled()
+		// reflects the test-seeded option (the registry caches at first read).
+		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' ) ) {
+			$reg = new \ReflectionClass( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' );
+			if ( $reg->hasProperty( 'instance' ) ) {
+				$prop = $reg->getProperty( 'instance' );
+				$prop->setAccessible( true );
+				$prop->setValue( null, null );
+			}
+		}
+
+		$sm = $this->make_merger();
+		try {
+			$result = $sm->interpreter()->execute( 'load_remotes_from_registry' );
+
+			$this->assertSame( 'ok', $result );
+			$this->assertSame( 2, $sm->remote_count(), 'only enabled entries must be loaded' );
+			$nodes = $sm->remote_nodes();
+			$this->assertArrayHasKey( 'site-enabled-a', $nodes );
+			$this->assertArrayHasKey( 'site-enabled-b', $nodes );
+			$this->assertArrayNotHasKey( 'site-disabled', $nodes );
+
+			// dump_config round-trips the invoked verb so a worker restart can
+			// rebuild the StreamMerger's runtime state.
+			$dump = $sm->dump_config();
+			$this->assertStringContainsString( 'cmd test-stream-merger:config load_remotes_from_registry', $dump );
+		} finally {
+			unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
+		}
+	}
+
+	public function test_load_remotes_from_registry_verb_with_empty_registry_succeeds(): void {
+		// Empty registry → the foreach loop is skipped but the verb still
+		// returns 'ok' + marks itself invoked. Confirms the no-entry path.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [];
+		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' ) ) {
+			$reg = new \ReflectionClass( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' );
+			if ( $reg->hasProperty( 'instance' ) ) {
+				$prop = $reg->getProperty( 'instance' );
+				$prop->setAccessible( true );
+				$prop->setValue( null, null );
+			}
+		}
+
+		$sm     = $this->make_merger();
+		try {
+			$result = $sm->interpreter()->execute( 'load_remotes_from_registry' );
+
+			$this->assertSame( 'ok', $result );
+			$this->assertSame( 0, $sm->remote_count() );
+		} finally {
+			unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
+		}
+	}
+
+	// =========================================================================
+	// start_periodic_tick: success path (with a real _router).
+	// =========================================================================
+
+	public function test_start_periodic_tick_registers_with_router_when_present(): void {
+		// Build a Router and register it as `_router` BEFORE naming the
+		// StreamMerger. That way the auto-fire from name() lands on the
+		// real Router and hits the register('TIMER', $this->name) branch
+		// (the version covered by the rest of the suite goes through the
+		// `null === $router` print_less_often path).
+		$router = new Router();
+		$router->name( '_router' );
+
+		$sm = new StreamMerger( 0 );
+		$sm->set_require_https( false );
+		$sm->name( 'sm-with-router' );
+
+		// Reflect into Router to assert the TIMER registration landed. The
+		// listener key is the StreamMerger's name; the HealthCheckTick sibling
+		// registers under its own name simultaneously (mirroring decision in
+		// StreamMerger::start_periodic_tick).
+		$ref = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
+		$ref->setAccessible( true );
+		$regs = $ref->getValue( $router );
+		$this->assertArrayHasKey( 'TIMER', $regs );
+		$this->assertArrayHasKey( 'sm-with-router', $regs['TIMER'] );
+		$this->assertArrayHasKey( 'sm-with-router:health-check', $regs['TIMER'] );
+
+		// Calling start_periodic_tick a second time must remain idempotent
+		// (the underlying Node::register overwrites the same key — no double
+		// registration, no exception).
+		$sm->start_periodic_tick();
+		$regs = $ref->getValue( $router );
+		$this->assertCount( 2, $regs['TIMER'], 'no duplicate TIMER registrations after second call' );
+	}
+
+	// =========================================================================
+	// remove_node: tear down children + unregister health_check.
+	// =========================================================================
+
+	public function test_remove_node_tears_down_remote_children_and_clears_state(): void {
+		// remove_node walks $remote_nodes, calls remove_node() on each, drops
+		// the array, then unregisters the named health_check sibling from Core
+		// before the parent::remove_node() cascade completes. After it returns,
+		// the merger should look empty + the previously-registered health_check
+		// name should be free for re-registration.
+		$sm = $this->make_merger();
+		$sm->add_remote( 'siteRm1', 'http://siteRm1.test/', 'tok' );
+		$sm->add_remote( 'siteRm2', 'http://siteRm2.test/', 'tok' );
+		$this->assertSame( 2, $sm->remote_count() );
+
+		$health_name = 'test-stream-merger:health-check';
+		$this->assertNotNull( Core::node( $health_name ), 'health_check sibling must be registered after name()' );
+
+		$sm->remove_node();
+
+		// Children purged.
+		$this->assertSame( 0, $sm->remote_count() );
+		// Health check sibling unregistered (name is free for re-use).
+		$this->assertNull( Core::node( $health_name ) );
+		// Parent::remove_node() unregisters the merger itself.
+		$this->assertNull( Core::node( 'test-stream-merger' ) );
 	}
 }
