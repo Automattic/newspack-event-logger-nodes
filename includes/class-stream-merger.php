@@ -474,7 +474,6 @@ class StreamMerger extends Node {
 			$this->remote_nodes['__test__'] = $remote;
 		}
 		$this->remote_nodes['__test__']->process_sse_chunk( $chunk );
-		$this->remote_nodes['__test__']->drain_test_queue();
 	}
 
 	// =========================================================================

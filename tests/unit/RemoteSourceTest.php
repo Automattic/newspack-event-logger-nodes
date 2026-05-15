@@ -118,15 +118,42 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_constructor_sets_arguments_for_dump_config(): void {
 		// `arguments` is set in the ctor so `dump_config()` can round-trip
-		// the make_node line. Verify all six positional args are joined.
+		// the make_node line. Verify all six positional args are joined,
+		// with the two credential slots scrubbed to `[REDACTED]` so a
+		// saved topology TSL never contains live passwords.
 		$remote = new RemoteSource( 'siteA', 'https://siteA.test', 'admin', 'pw', 'tok', 3 );
 		$args   = $remote->arguments();
 		$this->assertStringContainsString( 'siteA', $args );
 		$this->assertStringContainsString( 'https://siteA.test', $args );
 		$this->assertStringContainsString( 'admin', $args );
-		$this->assertStringContainsString( 'pw', $args );
-		$this->assertStringContainsString( 'tok', $args );
+		$this->assertStringContainsString( '[REDACTED]', $args );
 		$this->assertStringContainsString( '3', $args );
+		$this->assertStringNotContainsString( 'pw', $args, 'auth_password must not appear in arguments' );
+		$this->assertStringNotContainsString( 'tok', $args, 'auth_token must not appear in arguments' );
+	}
+
+	public function test_dump_node_redacts_auth_password_and_token(): void {
+		// `dump_node my_remote` from the REPL used to print raw passwords
+		// because Node::dump_node reflects every property. RemoteSource
+		// overrides it to scrub the two credential slots; both must
+		// survive in `[REDACTED]` form so the operator can tell whether
+		// they were set, but the raw secret must NOT leak.
+		$remote   = new RemoteSource( 'siteA', 'https://siteA.test', 'admin', 'secret-pw', 'secret-tok', 0 );
+		$snapshot = $remote->dump_node();
+		$this->assertSame( '[REDACTED]', $snapshot['auth_password'] );
+		$this->assertSame( '[REDACTED]', $snapshot['auth_token'] );
+		$encoded = (string) \wp_json_encode( $snapshot );
+		$this->assertStringNotContainsString( 'secret-pw', $encoded );
+		$this->assertStringNotContainsString( 'secret-tok', $encoded );
+	}
+
+	public function test_dump_node_leaves_empty_credentials_alone(): void {
+		// Empty-string credentials stay empty (not redacted to "[REDACTED]")
+		// so the operator can tell at a glance which auth mode is in use.
+		$remote   = new RemoteSource( 'siteA', 'https://siteA.test', '', '', '', 0 );
+		$snapshot = $remote->dump_node();
+		$this->assertSame( '', $snapshot['auth_password'] );
+		$this->assertSame( '', $snapshot['auth_token'] );
 	}
 
 	public function test_fill_is_no_op_and_increments_counter(): void {
@@ -350,12 +377,10 @@ class RemoteSourceTest extends TestCase {
 		$remote = $this->make_remote();
 		// Pre-populate stale buffer / events.
 		$this->poke( $remote, 'buffer', 'old garbage' );
-		$this->poke( $remote, 'event_queue', [ [ 'stale' ] ] );
 		$this->poke( $remote, 'current_event', [ 'event' => 'leftover', 'data' => 'stuff' ] );
 
 		$this->invoke( $remote, 'maybe_connect' );
 		$this->assertSame( '', $this->peek( $remote, 'buffer' ) );
-		$this->assertSame( [], $this->peek( $remote, 'event_queue' ) );
 		$this->assertSame( [ 'event' => '', 'data' => '' ], $this->peek( $remote, 'current_event' ) );
 	}
 
@@ -493,63 +518,87 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_process_sse_chunk_parses_data_line(): void {
-		$remote = $this->make_remote();
-		$ok     = $remote->process_sse_chunk( "data: hello\n\n" );
+		// Drive the parser via a real `entry` event so dispatch_event lands
+		// in forward_entry → sink. Previous incarnation peeked at an
+		// internal `event_queue` that production no longer keeps — the
+		// queue collected forever with no consumer.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$ok      = $remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
 		$this->assertTrue( $ok );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertCount( 1, $queue );
-		$this->assertSame( 'hello', $queue[0]['raw_data'] );
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_process_sse_chunk_concatenates_multiline_data(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk( "data: line1\ndata: line2\n\n" );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertCount( 1, $queue );
-		$this->assertSame( "line1\nline2", $queue[0]['raw_data'] );
+		// Multi-line `data:` fields are joined with "\n" inside the parser;
+		// JSON tolerates whitespace between tokens, so a JSON object split
+		// across two lines parses back identically.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$remote->process_sse_chunk(
+			"event: entry\ndata: {\"k\":\"render\",\ndata: \"ts\":1700000000}\n\n"
+		);
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_process_sse_chunk_handles_partial_chunks(): void {
-		$remote = $this->make_remote();
-		// Incomplete chunk — no events queued yet.
-		$remote->process_sse_chunk( 'data: partial' );
-		$this->assertCount( 0, $this->peek( $remote, 'event_queue' ) );
-		// Complete the event.
-		$remote->process_sse_chunk( " text\n\n" );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertCount( 1, $queue );
-		$this->assertSame( 'partial text', $queue[0]['raw_data'] );
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$wire    = "event: entry\ndata: {$payload}\n\n";
+		$cut     = (int) ( \strlen( $wire ) / 2 );
+		// First half: no terminator yet — sink still empty.
+		$remote->process_sse_chunk( \substr( $wire, 0, $cut ) );
+		$this->assertCount( 0, $capture->captured );
+		// Second half completes the event.
+		$remote->process_sse_chunk( \substr( $wire, $cut ) );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_process_sse_chunk_strips_carriage_return(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk( "data: hi\r\n\r\n" );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertCount( 1, $queue );
-		$this->assertSame( 'hi', $queue[0]['raw_data'] );
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$remote->process_sse_chunk( "event: entry\r\ndata: {$payload}\r\n\r\n" );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_process_sse_chunk_ignores_comment_lines(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk( ": keepalive\n: another comment\ndata: payload\n\n" );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertCount( 1, $queue );
-		$this->assertSame( 'payload', $queue[0]['raw_data'] );
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$remote->process_sse_chunk(
+			": keepalive\n: another comment\nevent: entry\ndata: {$payload}\n\n"
+		);
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_process_sse_chunk_field_without_leading_space(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk( "data:nospace\n\n" );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertSame( 'nospace', $queue[0]['raw_data'] );
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$remote->process_sse_chunk( "event:entry\ndata:{$payload}\n\n" );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_process_sse_chunk_unknown_fields_ignored(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk( "id: 123\nretry: 5000\ndata: surfaced\n\n" );
-		$queue = $this->peek( $remote, 'event_queue' );
-		$this->assertCount( 1, $queue );
-		$this->assertSame( 'surfaced', $queue[0]['raw_data'] );
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$remote->process_sse_chunk(
+			"id: 123\nretry: 5000\nevent: entry\ndata: {$payload}\n\n"
+		);
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_process_sse_chunk_buffer_overflow_returns_false(): void {
@@ -583,10 +632,12 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_process_sse_chunk_empty_event_block_dropped(): void {
-		// `\n\n` with no preceding field — empty dispatch, no event added.
-		$remote = $this->make_remote();
+		// `\n\n` with no preceding field — empty dispatch, sink never called.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
 		$remote->process_sse_chunk( "\n\n" );
-		$this->assertCount( 0, $this->peek( $remote, 'event_queue' ) );
+		$this->assertCount( 0, $capture->captured );
 	}
 
 	// =========================================================================
@@ -632,25 +683,12 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_malformed_entry_data_dropped_silently(): void {
-		$remote = $this->make_remote();
-		// Invalid JSON in an `entry` event — dispatch_event drops it without queueing.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+		// Invalid JSON in an `entry` event — dispatch_event drops it; sink unchanged.
 		$remote->process_sse_chunk( "event: entry\ndata: not-json-at-all\n\n" );
-		$this->assertCount( 0, $this->peek( $remote, 'event_queue' ) );
-	}
-
-	public function test_event_queue_overflow_returns_false(): void {
-		$remote = $this->make_remote();
-		// Pre-fill the queue to one under the cap — then dispatch one more.
-		$queue = [];
-		for ( $i = 0; $i < RemoteSource::MAX_QUEUE_SIZE; $i++ ) {
-			$queue[] = [ 'type' => 'x', 'data' => null, 'raw_data' => '' ];
-		}
-		$this->poke( $remote, 'event_queue', $queue );
-
-		// Now dispatch one more — must trip overflow.
-		$ok = $remote->process_sse_chunk( "data: one-more\n\n" );
-		$this->assertFalse( $ok );
-		$this->assertStringContainsString( 'queue overflow', (string) $remote->get_last_error() );
+		$this->assertCount( 0, $capture->captured );
 	}
 
 	// =========================================================================
@@ -838,64 +876,6 @@ class RemoteSourceTest extends TestCase {
 		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
 
 		$this->assertCount( 0, $capture->captured );
-	}
-
-	// =========================================================================
-	// drain_test_queue
-	// =========================================================================
-
-	public function test_drain_test_queue_forwards_to_sink_as_bytestream(): void {
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-
-		$remote->process_sse_chunk( "data: hello-world\n\n" );
-		$this->assertCount( 0, $capture->captured, 'test path queues but does not flush automatically' );
-
-		$remote->drain_test_queue();
-		$this->assertCount( 1, $capture->captured );
-		$msg = $capture->captured[0];
-		$this->assertSame( Message::TM_BYTESTREAM, $msg[ Message::TYPE ] );
-		$this->assertSame( 'hello-world', $msg[ Message::VALUE ] );
-	}
-
-	public function test_drain_test_queue_applies_filter(): void {
-		\add_filter(
-			'newspack_nodes/aggregator_ingest_line',
-			static fn ( $line ) => '[filtered] ' . $line
-		);
-
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-
-		$remote->process_sse_chunk( "data: payload\n\n" );
-		$remote->drain_test_queue();
-
-		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( '[filtered] payload', $capture->captured[0][ Message::VALUE ] );
-	}
-
-	public function test_drain_test_queue_skips_dropped_lines(): void {
-		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => '' );
-
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-
-		$remote->process_sse_chunk( "data: dropped\n\n" );
-		$remote->drain_test_queue();
-
-		$this->assertCount( 0, $capture->captured );
-	}
-
-	public function test_drain_test_queue_no_sink_safe(): void {
-		// No sink set — drain_test_queue must not crash.
-		$remote = $this->make_remote();
-		$remote->sink( null );
-		$remote->process_sse_chunk( "data: payload\n\n" );
-		$remote->drain_test_queue();
-		$this->addToAssertionCount( 1 );
 	}
 
 	// =========================================================================
