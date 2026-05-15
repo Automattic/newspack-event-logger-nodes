@@ -103,6 +103,16 @@ $_newspack_event_logger_nodes_register_user_topology_dir = static function (): v
 	);
 };
 
+// Wire the closure to every entrypoint that may read user_dir() before
+// the `newspack_nodes/topologies` filter or `spawn_worker` action fires:
+// REST handlers (admin "save topology" POST → TopologiesController hits
+// user_dir() directly; without this it returned 500 "Topology_Registry
+// has no writable user dir.") and admin pages (list/edit UIs need
+// describe()/list() to see user overrides). The closure's static guard
+// keeps repeated registrations free.
+\add_action( 'rest_api_init', $_newspack_event_logger_nodes_register_user_topology_dir );
+\add_action( 'admin_init',    $_newspack_event_logger_nodes_register_user_topology_dir );
+
 /**
  * Worker-execution prerequisites: Node-class registrations, named
  * formatters, hub-side k:"job" → k:"remote_job" rewrite filter,
