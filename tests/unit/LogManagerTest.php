@@ -116,6 +116,47 @@ class LogManagerTest extends TestCase {
 		$this->assertNotSame( $instance1, $instance2 );
 	}
 
+	/**
+	 * Reentrant instance() during __construct() must return the partial $this,
+	 * not create a second LogManager.
+	 *
+	 * Production trigger: Config::load_config() calls get_option(), which (when
+	 * alloptions isn't cached) calls wpdb->query() → apply_filters('query', ...)
+	 * → Core::hook_start → LogManager::instance(). Without assigning
+	 * self::$instance = $this at the top of __construct, this recurses until
+	 * xdebug's 512-frame limit kills the request.
+	 *
+	 * @see LogManager::__construct()
+	 */
+	public function test_construct_blocks_reentrant_instance(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+
+		$reentrant_instance = null;
+		$reentry_count      = 0;
+		// Mute after first re-entry so the test exits even when the production
+		// bug is reintroduced — assertNotSame below catches the regression
+		// without the stack-overflow risk.
+		$GLOBALS['_test_get_option_hook'] = function () use ( &$reentrant_instance, &$reentry_count ): void {
+			if ( $reentry_count++ > 0 ) {
+				return;
+			}
+			$reentrant_instance = LogManager::instance();
+		};
+
+		try {
+			$top_instance = LogManager::instance();
+			$this->assertSame(
+				$top_instance,
+				$reentrant_instance,
+				'Reentrant instance() during construct must return the partial $this, not a new LogManager.'
+			);
+		} finally {
+			unset( $GLOBALS['_test_get_option_hook'] );
+		}
+	}
+
 	public function test_constructor_sets_enabled_when_logging_enabled(): void {
 		$this->require_config_or_skip();
 		$lm = LogManager::instance();

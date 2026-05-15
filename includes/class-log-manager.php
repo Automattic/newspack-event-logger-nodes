@@ -119,6 +119,17 @@ class LogManager {
 	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
 
 	public function __construct() {
+		// Block re-entrant instance() calls during construction. Config::load_config()
+		// triggers get_option() which can fall through to wpdb->get_results() →
+		// apply_filters( 'query', ... ) → Core::hook_start → LogManager::instance().
+		// Without assigning self first, re-entry sees a still-null $instance and
+		// spawns a SECOND LM, recursing until xdebug's 512-frame limit kills the
+		// request. The partial instance is safe to return: $enabled defaults to
+		// false (set true only by matches_url_filter, which runs at the end of
+		// this constructor), so re-entrant hook_start short-circuits at its
+		// existing `! $lm->enabled` check.
+		self::$instance = $this;
+
 		$this->config = Config::load_config();
 
 		if ( empty( $this->config['enable_logging'] ) ) {
