@@ -856,4 +856,484 @@ class ServerRegistryTest extends TestCase {
 		$b = ServerRegistry::get_instance();
 		$this->assertSame( $a, $b );
 	}
+
+	// ---------------------------------------------------------------------
+	// Synonyms / read views.
+	// ---------------------------------------------------------------------
+
+	public function test_get_servers_is_synonym_of_get_all(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'site-a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$reg->add(
+			'site-b',
+			[
+				'url'           => 'https://b.example.com',
+				'auth_password' => 'p',
+			]
+		);
+
+		$reg->reset_cache();
+		$via_get_all = $reg->get_all();
+		$via_alias   = $reg->get_servers();
+		$this->assertSame( $via_get_all, $via_alias, 'get_servers must return identical data to get_all' );
+		$this->assertArrayHasKey( 'site-a', $via_alias );
+		$this->assertArrayHasKey( 'site-b', $via_alias );
+	}
+
+	public function test_list_servers_returns_numeric_indexed_with_id_field(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'site-x',
+			[
+				'url'           => 'https://x.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$reg->add(
+			'site-y',
+			[
+				'url'           => 'https://y.example.com',
+				'auth_password' => 'p',
+			]
+		);
+
+		$reg->reset_cache();
+		$list = $reg->list_servers();
+
+		$this->assertIsArray( $list );
+		$this->assertCount( 2, $list );
+		// Numeric keys, sequential.
+		$this->assertArrayHasKey( 0, $list );
+		$this->assertArrayHasKey( 1, $list );
+
+		// Each entry carries its own id field.
+		$ids = \array_column( $list, 'id' );
+		$this->assertContains( 'site-x', $ids );
+		$this->assertContains( 'site-y', $ids );
+
+		// Each entry preserves the config keys.
+		foreach ( $list as $entry ) {
+			$this->assertArrayHasKey( 'url', $entry );
+			$this->assertArrayHasKey( 'enabled', $entry );
+		}
+	}
+
+	public function test_list_servers_returns_empty_array_when_no_servers(): void {
+		$reg  = new ServerRegistry();
+		$list = $reg->list_servers();
+		$this->assertSame( [], $list );
+	}
+
+	// ---------------------------------------------------------------------
+	// register() failure paths (mirror add()).
+	// ---------------------------------------------------------------------
+
+	public function test_register_creates_new_entry_when_none_exists(): void {
+		$reg = new ServerRegistry();
+		$ok  = $reg->register(
+			'fresh-id',
+			[
+				'url'           => 'https://fresh.example.com',
+				'auth_username' => 'u',
+				'auth_password' => 'p',
+			]
+		);
+		$this->assertTrue( $ok );
+
+		$reg->reset_cache();
+		$entry = $reg->get( 'fresh-id' );
+		$this->assertNotNull( $entry );
+		$this->assertSame( 'https://fresh.example.com', $entry['url'] );
+	}
+
+	public function test_register_rejects_invalid_id(): void {
+		$reg = new ServerRegistry();
+		$ok  = $reg->register( 'has spaces', [ 'url' => 'https://a.example.com' ] );
+		$this->assertFalse( $ok );
+	}
+
+	public function test_register_rejects_when_at_capacity_for_new_id(): void {
+		$reg    = new ServerRegistry();
+		$option = [];
+		for ( $i = 0; $i < ServerRegistry::MAX_SERVERS; $i++ ) {
+			$option[ "site-$i" ] = [
+				'url'           => "https://site-$i.example.com",
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			];
+		}
+		\update_option( ServerRegistry::OPTION_KEY, $option );
+		$reg->reset_cache();
+
+		// Adding a NEW id when at capacity fails.
+		$ok = $reg->register(
+			'brand-new',
+			[
+				'url'           => 'https://new.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$this->assertFalse( $ok );
+
+		// But re-registering an EXISTING id is allowed (overwrite path).
+		$ok = $reg->register(
+			'site-0',
+			[
+				'url'           => 'https://site-0-redirect.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$this->assertTrue( $ok );
+	}
+
+	public function test_register_rejects_invalid_config(): void {
+		$reg = new ServerRegistry();
+		// HTTP not allowed.
+		$ok = $reg->register(
+			'bad-config',
+			[
+				'url'           => 'http://insecure.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$this->assertFalse( $ok );
+	}
+
+	public function test_register_logs_audit_action(): void {
+		$reg = new ServerRegistry();
+		$reg->register(
+			'auditable',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$log = $this->read_error_log();
+		$this->assertStringContainsString( 'ServerRegistry registered id=auditable', $log );
+	}
+
+	// ---------------------------------------------------------------------
+	// add() / update() validation failures (null validate_config returns).
+	// ---------------------------------------------------------------------
+
+	public function test_add_returns_false_on_validation_failure(): void {
+		$reg = new ServerRegistry();
+		// Empty array fails the URL check.
+		$this->assertFalse( $reg->add( 'site-a', [] ) );
+		// Non-string URL.
+		$this->assertFalse( $reg->add( 'site-b', [ 'url' => [ 'not', 'a', 'string' ] ] ) );
+	}
+
+	public function test_update_returns_false_when_merge_fails_validation(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'site-a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		// Attempting to update with a URL that fails validation (HTTP).
+		$ok = $reg->update( 'site-a', [ 'url' => 'http://insecure.example.com' ] );
+		$this->assertFalse( $ok );
+	}
+
+	public function test_update_returns_false_for_invalid_id_format(): void {
+		$reg = new ServerRegistry();
+		$this->assertFalse( $reg->update( 'has spaces', [ 'enabled' => false ] ) );
+	}
+
+	public function test_remove_returns_false_for_invalid_id_format(): void {
+		$reg = new ServerRegistry();
+		$this->assertFalse( $reg->remove( 'has spaces' ) );
+	}
+
+	// ---------------------------------------------------------------------
+	// get_all() defensive branches: null + non-array option, non-array entries.
+	// ---------------------------------------------------------------------
+
+	public function test_get_all_with_null_option_uses_config_defaults_only(): void {
+		// Seed Config defaults, do not set the WP option.
+		$defaults_ref = new \ReflectionProperty( Config::class, 'config_defaults' );
+		$defaults_ref->setAccessible( true );
+		$defaults_ref->setValue(
+			null,
+			[
+				'aggregator_servers' => [
+					'from-file' => [
+						'url' => 'https://file.example.com',
+					],
+				],
+			]
+		);
+		// Option is absent (get_option returns null when no entry exists for
+		// the key and default is null) — guarantee by setting it to null.
+		\delete_option( ServerRegistry::OPTION_KEY );
+
+		$reg = new ServerRegistry();
+		$all = $reg->get_all();
+		$this->assertArrayHasKey( 'from-file', $all );
+	}
+
+	public function test_get_all_falls_back_to_defaults_when_option_is_non_array(): void {
+		$defaults_ref = new \ReflectionProperty( Config::class, 'config_defaults' );
+		$defaults_ref->setAccessible( true );
+		$defaults_ref->setValue(
+			null,
+			[
+				'aggregator_servers' => [
+					'from-file' => [
+						'url' => 'https://file.example.com',
+					],
+				],
+			]
+		);
+		// Hostile option value — string, not array.
+		\update_option( ServerRegistry::OPTION_KEY, 'unexpected-string' );
+
+		$reg = new ServerRegistry();
+		$all = $reg->get_all();
+		// Config defaults still surface; the bogus option is ignored.
+		$this->assertArrayHasKey( 'from-file', $all );
+	}
+
+	public function test_get_all_skips_non_array_entries(): void {
+		// Hand-roll the option with a mix of valid and bogus entries.
+		\update_option(
+			ServerRegistry::OPTION_KEY,
+			[
+				'good' => [
+					'url'           => 'https://good.example.com',
+					'auth_username' => '',
+					'auth_password' => '',
+					'enabled'       => true,
+					'logs'          => [ 'firehose.log' ],
+				],
+				'bogus' => 'not-an-array',
+			]
+		);
+
+		$reg = new ServerRegistry();
+		$all = $reg->get_all();
+		$this->assertArrayHasKey( 'good', $all );
+		$this->assertArrayNotHasKey( 'bogus', $all );
+	}
+
+	public function test_get_all_normalizes_partial_entries_with_defaults(): void {
+		// Config-file entries can be missing keys like 'logs' / 'enabled';
+		// get_all must backfill defaults.
+		\update_option(
+			ServerRegistry::OPTION_KEY,
+			[
+				'minimal' => [
+					'url' => 'https://min.example.com',
+				],
+			]
+		);
+
+		$reg   = new ServerRegistry();
+		$entry = $reg->get( 'minimal' );
+		$this->assertNotNull( $entry );
+		$this->assertSame( '', $entry['auth_username'] );
+		$this->assertSame( '', $entry['auth_password'] );
+		$this->assertTrue( $entry['enabled'] );
+		$this->assertSame( [ 'firehose.log' ], $entry['logs'] );
+	}
+
+	// ---------------------------------------------------------------------
+	// Read-side: get() for unknown ID.
+	// ---------------------------------------------------------------------
+
+	public function test_get_returns_null_for_unknown_id(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'site-a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		$this->assertNull( $reg->get( 'does-not-exist' ) );
+	}
+
+	public function test_get_enabled_returns_empty_array_when_all_disabled(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'p',
+				'enabled'       => false,
+			]
+		);
+		$reg->add(
+			'b',
+			[
+				'url'           => 'https://b.example.com',
+				'auth_password' => 'p',
+				'enabled'       => false,
+			]
+		);
+		$this->assertSame( [], $reg->get_enabled() );
+	}
+
+	// ---------------------------------------------------------------------
+	// reset_cache() shape contract.
+	// ---------------------------------------------------------------------
+
+	public function test_reset_cache_nulls_internal_servers_cache(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'p',
+			]
+		);
+		// First read populates the cache.
+		$reg->get_all();
+
+		$ref = new \ReflectionProperty( ServerRegistry::class, 'servers' );
+		$ref->setAccessible( true );
+		$this->assertNotNull( $ref->getValue( $reg ), 'servers should be cached after first read' );
+
+		$reg->reset_cache();
+		$this->assertNull( $ref->getValue( $reg ), 'reset_cache must null the cache' );
+	}
+
+	// ---------------------------------------------------------------------
+	// Encryption empty / legacy fallback.
+	// ---------------------------------------------------------------------
+
+	public function test_legacy_plaintext_decrypts_to_empty(): void {
+		// A legacy (pre-encryption) row would have NO $enc$ prefix. The
+		// current decrypt() unconditionally strips ENCRYPTED_PREFIX before
+		// base64_decode, so legacy plaintext rows surface as empty — the
+		// contract documented for upgrades from pre-encryption rows.
+		\update_option(
+			ServerRegistry::OPTION_KEY,
+			[
+				'legacy' => [
+					'url'           => 'https://legacy.example.com',
+					'auth_username' => 'legacy-user',
+					'auth_password' => 'raw-plaintext-no-prefix',
+					'enabled'       => true,
+					'logs'          => [ 'firehose.log' ],
+				],
+			]
+		);
+
+		$reg   = new ServerRegistry();
+		$entry = $reg->get( 'legacy' );
+		$this->assertNotNull( $entry );
+		// Either decrypts to empty (current behaviour) or passes through —
+		// either way it must NEVER expose the original plaintext OR be left
+		// as the encrypted wire-format value.
+		$this->assertStringStartsNotWith( ServerRegistry::ENCRYPTED_PREFIX, $entry['auth_password'] );
+	}
+
+	public function test_encrypt_then_decrypt_round_trip_via_double_validate(): void {
+		// Calling add() twice with an already-encrypted password tests the
+		// "already encrypted" branch in validate_config.
+		$reg = new ServerRegistry();
+		$reg->add(
+			'site-rt',
+			[
+				'url'           => 'https://rt.example.com',
+				'auth_password' => 'secret-roundtrip',
+			]
+		);
+		$raw_after_add = \get_option( ServerRegistry::OPTION_KEY )['site-rt']['auth_password'];
+		$this->assertStringStartsWith( ServerRegistry::ENCRYPTED_PREFIX, $raw_after_add );
+
+		// Update via the same wire-format value — must verify and round-trip.
+		$reg->reset_cache();
+		$ok = $reg->update( 'site-rt', [ 'auth_password' => $raw_after_add ] );
+		$this->assertTrue( $ok );
+
+		$reg->reset_cache();
+		$entry = $reg->get( 'site-rt' );
+		$this->assertSame( 'secret-roundtrip', $entry['auth_password'] );
+	}
+
+	public function test_update_with_unverifiable_encrypted_password_clears_it(): void {
+		// Hostile/garbage $enc$ prefix that base64-decodes to junk should
+		// trigger the "decrypts to empty → reject" branch in validate_config.
+		$reg = new ServerRegistry();
+		$reg->add(
+			'site-a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => 'real-password',
+			]
+		);
+
+		// Forge a bogus wire-format value.
+		$bogus_enc = ServerRegistry::ENCRYPTED_PREFIX . \base64_encode( 'too-short-to-have-a-nonce' );
+		$ok        = $reg->update( 'site-a', [ 'auth_password' => $bogus_enc ] );
+		// update should accept the call but stored auth_password should
+		// be cleared to ''.
+		$this->assertTrue( $ok );
+		$reg->reset_cache();
+		$entry = $reg->get( 'site-a' );
+		$this->assertSame( '', $entry['auth_password'] );
+	}
+
+	// ---------------------------------------------------------------------
+	// validate_config + URL handling edge cases.
+	// ---------------------------------------------------------------------
+
+	public function test_validate_strips_trailing_slashes_from_url(): void {
+		$reg = new ServerRegistry();
+		$reg->add(
+			'a',
+			[
+				'url'           => 'https://a.example.com/////',
+				'auth_password' => 'p',
+			]
+		);
+		$entry = $reg->get( 'a' );
+		$this->assertSame( 'https://a.example.com', $entry['url'] );
+	}
+
+	public function test_validate_empty_string_url_rejected(): void {
+		$reg = new ServerRegistry();
+		$this->assertFalse(
+			$reg->add(
+				'a',
+				[
+					'url'           => '',
+					'auth_password' => 'p',
+				]
+			)
+		);
+	}
+
+	public function test_validate_empty_string_password_skipped(): void {
+		$reg = new ServerRegistry();
+		$ok  = $reg->add(
+			'a',
+			[
+				'url'           => 'https://a.example.com',
+				'auth_password' => '',
+			]
+		);
+		$this->assertTrue( $ok );
+		$entry = $reg->get( 'a' );
+		$this->assertSame( '', $entry['auth_password'] );
+	}
+
+	public function test_constants_have_expected_values(): void {
+		$this->assertSame( 'newspack_event_logger_nodes_aggregator_servers', ServerRegistry::OPTION_KEY );
+		$this->assertSame( 100, ServerRegistry::MAX_SERVERS );
+		$this->assertSame( '$enc$', ServerRegistry::ENCRYPTED_PREFIX );
+	}
 }

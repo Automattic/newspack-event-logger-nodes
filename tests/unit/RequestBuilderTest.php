@@ -572,4 +572,642 @@ class RequestBuilderTest extends TestCase {
 		$verb_names = \array_column( $schema['verbs'], 'name' );
 		$this->assertContains( 'set_errors_target', $verb_names );
 	}
+
+	// --- target() override fan-out ----------------------------------------
+
+	public function test_target_returns_primary_only_when_errors_target_empty(): void {
+		$rb = new RequestBuilder();
+		$rb->connect_node( 'main:target' );
+		// No set_errors_target → primary is returned untouched.
+		$this->assertSame( 'main:target', $rb->target() );
+	}
+
+	public function test_target_appends_errors_target_when_primary_is_string(): void {
+		$rb = new RequestBuilder();
+		$rb->connect_node( 'main:target' );
+		$rb->set_errors_target( 'errors:target' );
+
+		$result = $rb->target();
+		$this->assertIsArray( $result );
+		$this->assertContains( 'main:target', $result );
+		$this->assertContains( 'errors:target', $result );
+	}
+
+	public function test_target_appends_errors_target_when_primary_is_empty(): void {
+		// Primary target unset, errors_target set → result is just [errors_target].
+		$rb = new RequestBuilder();
+		$rb->set_errors_target( 'errors:target' );
+
+		$result = $rb->target();
+		$this->assertIsArray( $result );
+		$this->assertSame( [ 'errors:target' ], $result );
+	}
+
+	public function test_target_does_not_duplicate_errors_target_already_in_array(): void {
+		// Primary is already an array containing errors_target — must not duplicate.
+		$rb = new RequestBuilder();
+		$rb->target( [ 'main:target', 'errors:target' ] );
+		$rb->set_errors_target( 'errors:target' );
+
+		$result = $rb->target();
+		$this->assertSame( [ 'main:target', 'errors:target' ], $result );
+	}
+
+	public function test_target_setter_passes_through_to_parent(): void {
+		$rb     = new RequestBuilder();
+		$result = $rb->target( 'new:target' );
+		// Setter returns the stored value (Node::target's storage).
+		$this->assertSame( 'new:target', $result );
+		// And subsequent get reflects the new primary.
+		$this->assertSame( 'new:target', $rb->target() );
+	}
+
+	// --- evict_request() early-return paths -------------------------------
+
+	public function test_lru_eviction_skips_request_with_empty_url(): void {
+		// Open r1 with NO `request` keyword → url stays empty → evict_request
+		// hits the `empty( $request->url )` early return.
+		$rb      = new RequestBuilder( bucket_size: 1, num_buckets: 2 );
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		// Force r1 out by setting r2 (no request keyword → also has no url).
+		$this->fill( $rb, 1, 'r2', 'process (start)' );
+
+		// Neither was emitted: both had empty url, evict_request bailed early.
+		$this->assertCount( 0, $capture->captured );
+	}
+
+	public function test_lru_eviction_skips_already_completed_request(): void {
+		// In normal operation a completed request is delete()'d from the cache
+		// before LRU could evict it, but evict_request still gates on state to
+		// guard the path. Stuff a complete-state stdClass directly into the
+		// cache via restore_state and force a rotation.
+		$rb      = new RequestBuilder( bucket_size: 1, num_buckets: 2 );
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		// Seed cache with a complete request via restore_state.
+		$rb->restore_state(
+			[
+				'request_cache' => [
+					'buckets' => [
+						0 => [
+							'r1' => [
+								'rid'   => 'r1',
+								'url'   => '/done',
+								'state' => 'complete',
+							],
+						],
+					],
+					'current' => 0,
+				],
+			]
+		);
+
+		// Push two new rids: bucket_size=1, num_buckets=2 means the bucket
+		// containing r1 ends up oldest and evicts. (Two new entries fill the
+		// next buckets and push beyond num_buckets.)
+		$this->fill( $rb, 1, 'r2', 'process (start)' );
+		$this->fill( $rb, 1, 'r3', 'process (start)' );
+
+		// Completed r1 was evicted but evict_request short-circuited on state
+		// === 'complete'; no emission.
+		$this->assertCount( 0, $capture->captured );
+	}
+
+	// --- handle_request (TM_REQUEST) --------------------------------------
+
+	private function request_msg( string $verb, string $from = 'asker', string $id = 'req-1' ): array {
+		$msg                      = Message::new_message();
+		$msg[ Message::TYPE ]     = Message::TM_REQUEST;
+		$msg[ Message::FROM ]     = $from;
+		$msg[ Message::ID ]       = $id;
+		$msg[ Message::KEY ]      = '';
+		$msg[ Message::VALUE ]    = $verb;
+		return $msg;
+	}
+
+	public function test_handle_request_get_cache_returns_empty_payload_on_empty_cache(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		$msg = $this->request_msg( 'GET_CACHE' );
+		$rb->fill( $msg );
+
+		$this->assertCount( 1, $capture->captured );
+		$reply = $capture->captured[0];
+		$this->assertSame(
+			Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT,
+			$reply[ Message::TYPE ]
+		);
+		$this->assertSame( 'rb', $reply[ Message::FROM ] );
+		$this->assertSame( 'asker', $reply[ Message::TO ] );
+		$this->assertSame( 'req-1', $reply[ Message::ID ] );
+		$payload = $reply[ Message::VALUE ];
+		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 0, $payload['data']['pending_count'] );
+		$this->assertNull( $payload['data']['oldest_rid'] );
+		$this->assertSame( 0, $payload['data']['oldest_age_s'] );
+		$this->assertSame( [], $payload['data']['sample'] );
+	}
+
+	public function test_handle_request_get_cache_reports_pending_count_and_sample(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		// Open seven in-flight requests (no `process (complete)`).
+		for ( $i = 1; $i <= 7; $i++ ) {
+			$this->fill( $rb, $i, "rid-$i", 'process (start)' );
+		}
+
+		$msg = $this->request_msg( 'GET_CACHE' );
+		$rb->fill( $msg );
+
+		// Discard early captured emits (this test doesn't emit any since no
+		// `process (complete)`). The GET_CACHE reply is the only message.
+		$this->assertCount( 1, $capture->captured );
+		$payload = $capture->captured[0][ Message::VALUE ];
+		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 7, $payload['data']['pending_count'] );
+		// Cache iterator yields newest first; sample caps at 5.
+		$this->assertCount( 5, $payload['data']['sample'] );
+		// Sample values are rid strings (not arbitrary stdClass objects).
+		foreach ( $payload['data']['sample'] as $sample ) {
+			$this->assertIsString( $sample );
+		}
+		// Each sample rid is one of the seven we opened.
+		$opened = [ 'rid-1', 'rid-2', 'rid-3', 'rid-4', 'rid-5', 'rid-6', 'rid-7' ];
+		foreach ( $payload['data']['sample'] as $sample ) {
+			$this->assertContains( $sample, $opened );
+		}
+	}
+
+	public function test_handle_request_get_cache_increments_line_counter(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		// Three real lines bump line_counter; the GET_CACHE request goes
+		// through the TM_REQUEST branch and does NOT bump it.
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'process (complete)' );
+
+		$msg = $this->request_msg( 'GET_CACHE' );
+		$rb->fill( $msg );
+
+		// The TM_REQUEST response is the last captured message (after the
+		// `process (complete)` emission).
+		$last    = $capture->captured[ \count( $capture->captured ) - 1 ];
+		$payload = $last[ Message::VALUE ];
+		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 3, $payload['data']['line_counter'] );
+	}
+
+	public function test_handle_request_with_request_response_flag_is_ignored(): void {
+		// TM_REQUEST + TM_RESPONSE is a reply, not a query — must not be
+		// re-dispatched as a request (would loop forever).
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		$msg                      = Message::new_message();
+		$msg[ Message::TYPE ]     = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$msg[ Message::FROM ]     = 'asker';
+		$msg[ Message::ID ]       = 'req-1';
+		$msg[ Message::VALUE ]    = 'GET_CACHE';
+		$rb->fill( $msg );
+
+		// Neither dispatched as a request nor as a TM_STRUCT entry (no flag).
+		$this->assertCount( 0, $capture->captured );
+	}
+
+	public function test_handle_request_unknown_verb_returns_error_payload(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		$msg = $this->request_msg( 'WHATEVER_NOT_REAL' );
+		$rb->fill( $msg );
+
+		$this->assertCount( 1, $capture->captured );
+		$payload = $capture->captured[0][ Message::VALUE ];
+		// Verb is upper-cased — anything else is a bug in handle_request.
+		$this->assertSame( 'WHATEVER_NOT_REAL', $payload['verb'] );
+		$this->assertArrayHasKey( 'error', $payload['data'] );
+		$this->assertStringContainsString( 'unknown request verb', $payload['data']['error'] );
+		$this->assertStringContainsString( 'WHATEVER_NOT_REAL', $payload['data']['error'] );
+	}
+
+	public function test_handle_request_lowercase_verb_uppercased(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		// Lowercased verb still routes to GET_CACHE via strtoupper.
+		$msg = $this->request_msg( 'get_cache' );
+		$rb->fill( $msg );
+
+		$payload = $capture->captured[0][ Message::VALUE ];
+		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertArrayHasKey( 'pending_count', $payload['data'] );
+	}
+
+	// --- fill(): non-string keyword / non-struct messages -----------------
+
+	public function test_fill_non_struct_message_silently_dropped(): void {
+		// Pure TM_BYTESTREAM (no TM_STRUCT flag) is ignored: VALUE is presumed
+		// to be a string, not an array.
+		$rb                    = new RequestBuilder();
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::KEY ]   = 'r1';
+		$msg[ Message::VALUE ] = 'raw line';
+		$rb->fill( $msg );
+		$this->assertSame( 0, $rb->cache_size() );
+	}
+
+	public function test_fill_non_string_keyword_silently_dropped(): void {
+		// Entry has a non-string `k` field (corrupt firehose line). Must drop
+		// before push/pop/state callbacks, not crash.
+		$rb                    = new RequestBuilder();
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::KEY ]   = 'r1';
+		$msg[ Message::VALUE ] = [ 'n' => 1, 'rid' => 'r1', 'k' => [ 'not', 'a', 'string' ] ];
+		$rb->fill( $msg );
+		$this->assertSame( 0, $rb->cache_size() );
+	}
+
+	public function test_fill_stores_peak_mb_and_label_on_entry(): void {
+		// Stored entries carry optional duration_ms / peak_mb / l (label) fields
+		// when present on the source line.
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill(
+			$rb,
+			3,
+			'r1',
+			'wpdb',
+			[ 'm' => 'SELECT ...', 'l' => 'SELECT', 'duration_ms' => 4.2, 'peak_mb' => 31.5 ]
+		);
+		$this->fill( $rb, 4, 'r1', 'process (complete)', [ 'duration_ms' => 50.0 ] );
+
+		$req = $this->captured_request( $capture );
+		// Find the `wpdb` entry.
+		$wpdb_entry = null;
+		foreach ( $req['entries'] as $entry ) {
+			if ( 'wpdb' === ( $entry['k'] ?? '' ) ) {
+				$wpdb_entry = $entry;
+				break;
+			}
+		}
+		$this->assertNotNull( $wpdb_entry );
+		$this->assertSame( 'SELECT', $wpdb_entry['l'] );
+		$this->assertEqualsWithDelta( 4.2, $wpdb_entry['duration_ms'], 1e-9 );
+		$this->assertEqualsWithDelta( 31.5, $wpdb_entry['peak_mb'], 1e-9 );
+	}
+
+	public function test_fill_truncates_long_string_m_to_max_entry_message_length(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$long = \str_repeat( 'A', 2048 );
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'noise', [ 'm' => $long ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		$found = null;
+		foreach ( $req['entries'] as $e ) {
+			if ( 'noise' === ( $e['k'] ?? '' ) ) {
+				$found = $e;
+				break;
+			}
+		}
+		$this->assertNotNull( $found );
+		// MAX_ENTRY_MESSAGE_LENGTH = 1024.
+		$this->assertSame( 1024, \strlen( $found['m'] ) );
+	}
+
+	// --- process (complete): error_status validation ----------------------
+
+	public function test_process_complete_invalid_error_status_normalized_to_dash(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		// Bogus multi-char error_status falls back to '-'.
+		$this->fill(
+			$rb,
+			3,
+			'r1',
+			'process (complete)',
+			[ 'duration_ms' => 1.0, 'error_status' => 'BOGUS' ]
+		);
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( '-', $req['error_status'] );
+	}
+
+	public function test_process_complete_unknown_single_char_error_status_normalized_to_dash(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		// Single char but not in [-, F, T] → fall back.
+		$this->fill(
+			$rb,
+			3,
+			'r1',
+			'process (complete)',
+			[ 'duration_ms' => 1.0, 'error_status' => 'X' ]
+		);
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( '-', $req['error_status'] );
+	}
+
+	public function test_process_complete_accepts_f_status(): void {
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill(
+			$rb,
+			3,
+			'r1',
+			'process (complete)',
+			[ 'duration_ms' => 1.0, 'error_status' => 'F' ]
+		);
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 'F', $req['error_status'] );
+	}
+
+	// --- restore_state() defensive branches -------------------------------
+
+	public function test_restore_state_no_request_cache_key_noop(): void {
+		// Saved state without the expected 'request_cache' key is a no-op
+		// (used to be a fatal `undefined index`).
+		$rb = new RequestBuilder();
+		$rb->restore_state( [] );
+		$this->assertSame( 0, $rb->cache_size() );
+	}
+
+	public function test_restore_state_with_array_request_rehydrates_to_object(): void {
+		// save_state converted stdClass → array; restore_state must rehydrate.
+		// Round-trip via the public surface: save → swap to a new builder →
+		// restore → continue.
+		$rb1     = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb1->sink( $capture );
+
+		$this->fill( $rb1, 1, 'r1', 'process (start)' );
+		$this->fill( $rb1, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$saved = $rb1->save_state();
+
+		// Confirm save_state converted the in-flight request to an array (since
+		// restore_state's rehydrate branch is the one we're targeting).
+		$bucket0 = $saved['request_cache']['buckets'][0] ?? [];
+		$this->assertIsArray( $bucket0['r1'] ?? null, 'save_state converts stdClass to array' );
+
+		$rb2 = new RequestBuilder();
+		$rb2->sink( $capture );
+		$rb2->restore_state( $saved );
+
+		// If the rehydrate worked, completing on rb2 emits an assembled doc.
+		$this->fill( $rb2, 3, 'r1', 'process (complete)' );
+		$this->assertCount( 1, $capture->captured );
+		$req = $this->captured_request( $capture );
+		$this->assertSame( '/x', $req['url'] );
+	}
+
+	// --- format_index_entry: size bounds + method codes -------------------
+
+	private function format_index_for( array $value, array $position ): ?string {
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = $value;
+		$line                  = Message::packed( $msg );
+		return RequestBuilder::format_index_entry( $line, $position );
+	}
+
+	public function test_format_index_entry_returns_empty_when_offset_exceeds_cap(): void {
+		$out = $this->format_index_for(
+			[ 'rid' => 'r1', 'url' => '/x' ],
+			// 10_000_000_000 > 9_999_999_999 ceiling.
+			[ 'segment_id' => 0, 'offset' => 10_000_000_000, 'length' => 100 ]
+		);
+		$this->assertSame( '', $out );
+	}
+
+	public function test_format_index_entry_returns_empty_when_length_exceeds_cap(): void {
+		$out = $this->format_index_for(
+			[ 'rid' => 'r1', 'url' => '/x' ],
+			// 100_000_000 > 99_999_999 ceiling.
+			[ 'segment_id' => 0, 'offset' => 0, 'length' => 100_000_000 ]
+		);
+		$this->assertSame( '', $out );
+	}
+
+	public function test_format_index_entry_returns_empty_when_segment_id_exceeds_cap(): void {
+		$out = $this->format_index_for(
+			[ 'rid' => 'r1', 'url' => '/x' ],
+			// 1_000_000 > 999_999 ceiling.
+			[ 'segment_id' => 1_000_000, 'offset' => 0, 'length' => 100 ]
+		);
+		$this->assertSame( '', $out );
+	}
+
+	public function test_format_index_entry_returns_null_when_value_is_not_array(): void {
+		// A packed message where VALUE is a string (TM_BYTESTREAM-shaped wire).
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::VALUE ] = 'raw';
+		$line                  = Message::packed( $msg );
+		$this->assertNull(
+			RequestBuilder::format_index_entry(
+				$line,
+				[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+			)
+		);
+	}
+
+	public function test_format_index_entry_clamps_peak_mb_at_999999(): void {
+		$line = $this->format_index_for(
+			[ 'rid' => 'big', 'url' => '/x', 'peak_mb' => 5_000_000.0 ],
+			[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+		);
+		$this->assertNotNull( $line );
+		$this->assertNotSame( '', $line );
+		// peak_mb field: 6 chars starting at position 89.
+		$peak_segment = \substr( $line, 89, 6 );
+		$this->assertSame( '999999', $peak_segment );
+	}
+
+	public function test_format_index_entry_encodes_method_codes(): void {
+		$cases = [
+			'GET'     => 'G',
+			'POST'    => 'P',
+			'HEAD'    => 'H',
+			'DELETE'  => 'D',
+			'PUT'     => 'U',
+			'PATCH'   => 'A',
+			'OPTIONS' => 'O',
+			'CLI'     => 'C',
+		];
+		foreach ( $cases as $method => $code ) {
+			$line = $this->format_index_for(
+				[ 'rid' => 'r1', 'url' => '/x', 'request_method' => $method ],
+				[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+			);
+			$this->assertNotNull( $line, "method=$method produces a line" );
+			$this->assertNotSame( '', $line );
+			// Method code: 1 char at position 95.
+			$this->assertSame( $code, \substr( $line, 95, 1 ), "method=$method → code=$code" );
+		}
+	}
+
+	public function test_format_index_entry_unknown_method_falls_back_to_get_code(): void {
+		$line = $this->format_index_for(
+			[ 'rid' => 'r1', 'url' => '/x', 'request_method' => 'WEIRDVERB' ],
+			[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+		);
+		$this->assertNotNull( $line );
+		$this->assertSame( 'G', \substr( $line, 95, 1 ) );
+	}
+
+	public function test_format_index_entry_writes_error_status_t_when_timed_out(): void {
+		$line = $this->format_index_for(
+			[ 'rid' => 'r1', 'url' => '/x', 'error_status' => 'T' ],
+			[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+		);
+		$this->assertNotNull( $line );
+		// error_status: 1 char at position 96.
+		$this->assertSame( 'T', \substr( $line, 96, 1 ) );
+	}
+
+	// --- parse_request_index defensive paths ------------------------------
+
+	public function test_parse_request_index_returns_null_for_short_line(): void {
+		$this->assertNull( RequestBuilder::parse_request_index( 'too-short' ) );
+		$this->assertNull( RequestBuilder::parse_request_index( \str_repeat( 'x', 88 ) ) );
+	}
+
+	public function test_parse_request_index_v3_unknown_method_code_falls_back_to_literal_char(): void {
+		// v3 layout with an unknown 1-char method code: parse should fall back
+		// to the raw character (per the static $methods table's `?? \substr(...)`).
+		$base = \str_pad( 'rid', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 6, '0', \STR_PAD_LEFT );
+		$v3   = $base . 'Z';
+		$this->assertSame( 96, \strlen( $v3 ) );
+		$parsed = RequestBuilder::parse_request_index( $v3 );
+		$this->assertNotNull( $parsed );
+		$this->assertSame( 'Z', $parsed['method'] );
+	}
+
+	public function test_parse_request_index_v4_invalid_error_status_dropped(): void {
+		// v4-length line but error_status char is neither 'F' nor 'T' → field
+		// is omitted from the parsed array.
+		$base = \str_pad( 'rid', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 6, '0', \STR_PAD_LEFT );
+		$v4   = $base . 'G' . '-';
+		$this->assertSame( 97, \strlen( $v4 ) );
+		$parsed = RequestBuilder::parse_request_index( $v4 );
+		$this->assertNotNull( $parsed );
+		// '-' is not in [F, T] → no error_status key.
+		$this->assertArrayNotHasKey( 'error_status', $parsed );
+	}
+
+	public function test_parse_request_index_strips_trailing_newline(): void {
+		// Lines on disk are JSONL — newline-terminated. parse_request_index
+		// should rtrim before measuring length.
+		$base = \str_pad( 'rid_nl', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT );
+		$parsed = RequestBuilder::parse_request_index( $base . "\n" );
+		$this->assertNotNull( $parsed );
+		$this->assertSame( 'rid_nl', $parsed['rid'] );
+	}
+
+	// --- emit_error: silent on missing target / missing sink --------------
+
+	public function test_emit_error_silent_when_errors_target_unset(): void {
+		// No set_errors_target call → emit_error early-returns; the completed
+		// request still emits.
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'boom' ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		// Only the completed-request emission; the error line did NOT bounce
+		// to an errors target.
+		$this->assertCount( 1, $capture->captured );
+		$req = $this->captured_request( $capture );
+		$this->assertSame( '/x', $req['url'] );
+	}
+
+	public function test_emit_error_silent_when_sink_is_null(): void {
+		// errors_target set but no sink wired → emit_error early-returns.
+		$rb = new RequestBuilder();
+		$rb->set_errors_target( 'errors:target' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		// Must not crash even though sink is null.
+		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'boom' ] );
+		// Cache still holds r1 since complete hasn't arrived.
+		$this->assertSame( 1, $rb->cache_size() );
+	}
+
+	// --- environment_v2 long message guard --------------------------------
+
+	public function test_environment_v2_skipped_when_message_exceeds_8192_bytes(): void {
+		// Lines longer than 8192 bytes are silently dropped (DoS guard).
+		$rb      = new RequestBuilder();
+		$capture = new CaptureSink();
+		$rb->sink( $capture );
+
+		$huge = 'REMOTE_ADDR => "' . \str_repeat( '1', 9000 ) . '"';
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => $huge ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		// remote_addr never set because the line was skipped before the regex.
+		$this->assertArrayNotHasKey( 'remote_addr', $req );
+	}
 }
