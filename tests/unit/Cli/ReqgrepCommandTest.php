@@ -1287,4 +1287,553 @@ class ReqgrepCommandTest extends TestCase {
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		return $msg;
 	}
+
+	// -------------------------------------------------------------------------
+	// drain_output_buffers — direct unit coverage of the OB drain path.
+	// -------------------------------------------------------------------------
+
+	public function test_drain_output_buffers_clears_userspace_layers(): void {
+		// __invoke calls this on production runs to flush plugin-installed ob
+		// layers so the streaming echoes hit the terminal. Stack three extra
+		// layers and verify the method tears at least those down (the safety
+		// cap is 16 so 3 stays well below). Restore PHPUnit's baseline before
+		// the test ends so other tests don't see torn-down buffers.
+		$cmd = $this->make_cmd();
+		$ref = new \ReflectionMethod( $cmd, 'drain_output_buffers' );
+		$ref->setAccessible( true );
+
+		$start_level = \ob_get_level();
+		\ob_start();
+		\ob_start();
+		\ob_start();
+		$mid_level = \ob_get_level();
+		$this->assertSame( $start_level + 3, $mid_level );
+
+		$ref->invoke( $cmd );
+
+		// At minimum the 3 pushed layers were torn down (the cap is 16 so
+		// three is well within reach).
+		$end_level = \ob_get_level();
+		$this->assertLessThan( $mid_level, $end_level, 'drain_output_buffers must remove pushed layers' );
+
+		// Restore baseline so subsequent tests don't see fewer layers.
+		while ( \ob_get_level() < $start_level ) {
+			\ob_start();
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// process_line: warning emission when history miss + non-first entry.
+	// -------------------------------------------------------------------------
+
+	public function test_process_line_warns_on_missing_history_when_not_first_entry(): void {
+		// num_buckets=2 keeps the history bounded. Push enough non-matching
+		// rids to fill the bucket array; THEN feed a matching rid whose
+		// `n` > 1 (no history) — process_line emits a WP_CLI::warning.
+		$cmd = $this->make_cmd( 'targetWarn', false, false, 1, 2 );
+
+		// Fill 2 history buckets so the warning branch's
+		// `count(history) >= num_buckets` predicate fires.
+		for ( $i = 0; $i < 4; $i++ ) {
+			$this->process_line->invoke(
+				$cmd,
+				\json_encode( [ 'n' => 1, 'rid' => "noise-{$i}", 'k' => 'init', 'm' => '/x', 'ts' => 1700000000 + $i ] ) . "\n"
+			);
+		}
+
+		$GLOBALS['_test_wp_cli_warns'] = [];
+
+		// Matching rid with n=5 (NOT 1) so process_line goes through the
+		// "non-first entry, no history" warning branch.
+		$this->process_line->invoke(
+			$cmd,
+			\json_encode( [ 'n' => 5, 'rid' => 'targetWarn', 'k' => 'init', 'm' => 'late-arrival', 'ts' => 1700001000 ] ) . "\n"
+		);
+
+		$this->assertNotEmpty( $GLOBALS['_test_wp_cli_warns'] );
+		$this->assertStringContainsString(
+			"Couldn't find request start in history",
+			$GLOBALS['_test_wp_cli_warns'][0]
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// format_entry: escalating-interval dot-row compression for huge gaps.
+	// -------------------------------------------------------------------------
+
+	public function test_format_entry_escalating_dot_intervals_for_long_gaps(): void {
+		// A 200-second gap should NOT produce 200 dot rows — the first 10
+		// rows are at 1s spacing, then 10 at 10s, etc. This caps the row
+		// count at roughly O(log gap) so multi-hour gaps stay readable.
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$rid = 'longGapR';
+		$ts0 = 1700000000.0;
+		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] ) . "\n" );
+		// Jump 200 seconds.
+		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-long', 'ts' => $ts0 + 200 ] ) . "\n" );
+		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 200.1 ] ) . "\n" );
+
+		$out = \ob_get_clean();
+		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
+		// First 10 rows at 1s + ~10 rows at 10s = ~20 max. Asserting <50 keeps
+		// the test robust against floor/jump alignment edge cases.
+		$this->assertGreaterThanOrEqual( 1, $dot_rows );
+		$this->assertLessThan( 50, $dot_rows );
+	}
+
+	public function test_format_entry_no_dot_rows_for_consecutive_seconds(): void {
+		// A 1-second gap should NOT emit any dot rows (curr_sec <= last_sec+1
+		// branch short-circuits).
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$rid = 'tightR';
+		$ts0 = 1700000000.0;
+		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/t', 'ts' => $ts0 ] ) . "\n" );
+		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'a', 'ts' => $ts0 + 0.5 ] ) . "\n" );
+		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/t', 'ts' => $ts0 + 1.0 ] ) . "\n" );
+
+		$out      = \ob_get_clean();
+		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
+		$this->assertSame( 0, $dot_rows, 'sub-second gaps must not emit dot rows' );
+	}
+
+	// -------------------------------------------------------------------------
+	// output_request: empty rid means no header line.
+	// -------------------------------------------------------------------------
+
+	public function test_output_request_skips_header_when_rid_empty(): void {
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$lines = [
+			\json_encode( [ 'n' => 1, 'rid' => 'noheaderR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ),
+			\json_encode( [ 'n' => 2, 'rid' => 'noheaderR', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ),
+		];
+		// Pass empty rid → no "request_id:" header line should appear.
+		$this->output_request->invoke( $cmd, $lines, '' );
+
+		$out = \ob_get_clean();
+		$this->assertStringNotContainsString( 'request_id:', $out );
+		// Body still emitted.
+		$this->assertStringContainsString( 'process (start)', $out );
+	}
+
+	public function test_output_request_formatted_unwraps_packed_envelope(): void {
+		// Formatted mode (raw=false) must unwrap packed Message envelopes the
+		// same way process_line does, so on-disk envelopes render correctly.
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$rid     = 'envR';
+		$ts      = 1700000000.0;
+		$packed1 = \Newspack_Nodes\Message::packed( $this->packed_struct( [
+			'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/env', 'ts' => $ts,
+		] ) );
+		$packed2 = \Newspack_Nodes\Message::packed( $this->packed_struct( [
+			'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/env', 'ts' => $ts + 0.1,
+		] ) );
+		$this->output_request->invoke( $cmd, [ $packed1, $packed2 ], $rid );
+
+		$out = \ob_get_clean();
+		// Header + key strings make it through the unwrap.
+		$this->assertStringContainsString( 'request_id:' . $rid, $out );
+		$this->assertStringContainsString( '/env', $out );
+		$this->assertStringContainsString( 'process (complete)', $out );
+	}
+
+	// -------------------------------------------------------------------------
+	// __invoke: dispatcher branches — --follow flag and --raw/--incomplete flags.
+	// -------------------------------------------------------------------------
+
+	public function test_invoke_clamps_bucket_size_to_max(): void {
+		// bucket-size >10000 must clamp to 10000.
+		$base_dir = '/tmp/reqgrep-invoke-clamp-' . \uniqid();
+		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		try {
+			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
+			$this->use_base_dir( $base_dir );
+			\Newspack_Event_Logger_Nodes\Config::reset();
+
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
+			$ref->setAccessible( true );
+			$ref->setValue( $cmd, false );
+
+			\ob_start();
+			$cmd->__invoke(
+				[ '.' ],
+				[
+					'path'        => "{$base_dir}/logs/firehose.log",
+					'bucket-size' => '99999', // > 10000 cap.
+					'num-buckets' => '99999', // > 100 cap.
+				]
+			);
+			\ob_get_clean();
+
+			$bucket = new \ReflectionProperty( $cmd, 'bucket_size' );
+			$bucket->setAccessible( true );
+			$buckets_n = new \ReflectionProperty( $cmd, 'num_buckets' );
+			$buckets_n->setAccessible( true );
+			$this->assertSame( 10000, $bucket->getValue( $cmd ) );
+			$this->assertSame( 100, $buckets_n->getValue( $cmd ) );
+		} finally {
+			$GLOBALS['_wp_actions'] = [];
+			\Newspack_Nodes\Config::reset();
+			\Newspack_Event_Logger_Nodes\Config::reset();
+			$this->rmdir_recursive( $base_dir );
+		}
+	}
+
+	public function test_invoke_clamps_bucket_size_to_min(): void {
+		// bucket-size <1 must clamp to 1.
+		$base_dir = '/tmp/reqgrep-invoke-clamp-min-' . \uniqid();
+		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		try {
+			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
+			$this->use_base_dir( $base_dir );
+			\Newspack_Event_Logger_Nodes\Config::reset();
+
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
+			$ref->setAccessible( true );
+			$ref->setValue( $cmd, false );
+
+			\ob_start();
+			$cmd->__invoke(
+				[ '.' ],
+				[
+					'path'        => "{$base_dir}/logs/firehose.log",
+					'bucket-size' => '0',  // Below min 1.
+					'num-buckets' => '0',  // Below min 1.
+				]
+			);
+			\ob_get_clean();
+
+			$bucket = new \ReflectionProperty( $cmd, 'bucket_size' );
+			$bucket->setAccessible( true );
+			$buckets_n = new \ReflectionProperty( $cmd, 'num_buckets' );
+			$buckets_n->setAccessible( true );
+			$this->assertSame( 1, $bucket->getValue( $cmd ) );
+			$this->assertSame( 1, $buckets_n->getValue( $cmd ) );
+		} finally {
+			$GLOBALS['_wp_actions'] = [];
+			\Newspack_Nodes\Config::reset();
+			\Newspack_Event_Logger_Nodes\Config::reset();
+			$this->rmdir_recursive( $base_dir );
+		}
+	}
+
+	public function test_invoke_recent_offset_takes_effect(): void {
+		// --recent must propagate to the cat_offset property which cat_mode
+		// reads.
+		$base_dir = '/tmp/reqgrep-invoke-recent-' . \uniqid();
+		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		try {
+			\file_put_contents(
+				"{$base_dir}/logs/firehose.log/p0/0.log",
+				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+					'n' => 1, 'rid' => 'recent-rid', 'k' => 'process (start)', 'm' => '/r', 'ts' => 1700000000.0,
+				] ) ) . "\n"
+			);
+
+			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
+			$this->use_base_dir( $base_dir );
+			\Newspack_Event_Logger_Nodes\Config::reset();
+
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
+			$ref->setAccessible( true );
+			$ref->setValue( $cmd, false );
+
+			\ob_start();
+			$cmd->__invoke(
+				[ '.' ],
+				[
+					'path'   => "{$base_dir}/logs/firehose.log",
+					'recent' => true,
+				]
+			);
+			\ob_get_clean();
+
+			$offset = new \ReflectionProperty( $cmd, 'cat_offset' );
+			$offset->setAccessible( true );
+			$this->assertSame( 'recent', $offset->getValue( $cmd ) );
+		} finally {
+			$GLOBALS['_wp_actions'] = [];
+			\Newspack_Nodes\Config::reset();
+			\Newspack_Event_Logger_Nodes\Config::reset();
+			$this->rmdir_recursive( $base_dir );
+		}
+	}
+
+	public function test_follow_mode_emits_entry_log_lines(): void {
+		// follow_mode prints "Base dir:" + "Following N partition(s)" via
+		// WP_CLI::log before entering the poll loop. With max_iterations=0
+		// the loop is a no-op and only the entry log lines fire — the same
+		// emissions __invoke triggers when it dispatches to follow_mode.
+		$tmp = '/tmp/reqgrep-follow-entry-log-' . \uniqid();
+		\mkdir( "{$tmp}/p0", 0755, true );
+		try {
+			$GLOBALS['_test_wp_cli_logs'] = [];
+
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 1 );
+
+			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
+			$ref->setAccessible( true );
+			$ref->invoke( $cmd, 0 );
+
+			$joined = \implode( "\n", $GLOBALS['_test_wp_cli_logs'] );
+			$this->assertStringContainsString( 'Base dir:', $joined );
+			$this->assertStringContainsString( 'Following 1 partition(s)', $joined );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// seed_follow_cursors: multiple partitions.
+	// -------------------------------------------------------------------------
+
+	public function test_seed_follow_cursors_builds_one_entry_per_partition(): void {
+		$tmp = '/tmp/reqgrep-seed-multi-' . \uniqid();
+		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}/p1", 0755, true );
+		try {
+			\file_put_contents(
+				"{$tmp}/p0/2.log",
+				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+					'n' => 1, 'rid' => 'r0', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
+				] ) ) . "\n"
+			);
+			\file_put_contents(
+				"{$tmp}/p1/7.log",
+				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/y', 'ts' => 1700000001.0,
+				] ) ) . "\n"
+			);
+
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 2 );
+
+			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
+			$ref->setAccessible( true );
+			$cursors = $ref->invoke( $cmd );
+
+			$this->assertCount( 2, $cursors );
+			$this->assertSame( 2, $cursors[0]['seg'] );
+			$this->assertSame( 7, $cursors[1]['seg'] );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// follow_tick: cursor advance past an empty range without consuming.
+	// -------------------------------------------------------------------------
+
+	public function test_follow_tick_advances_past_empty_intervening_segments(): void {
+		// Cursor sits at end of seg 0. Seg 2 exists but is empty (zero bytes).
+		// Tick must advance cursor over the empty range without firing
+		// $had_data.
+		$tmp = '/tmp/reqgrep-tick-empty-' . \uniqid();
+		\mkdir( "{$tmp}/p0", 0755, true );
+		try {
+			\file_put_contents(
+				"{$tmp}/p0/0.log",
+				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+					'n' => 1, 'rid' => 'r0', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
+				] ) ) . "\n"
+			);
+			$seg0_size = \filesize( "{$tmp}/p0/0.log" );
+			// Empty segment 2.
+			\file_put_contents( "{$tmp}/p0/2.log", '' );
+
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 1 );
+
+			$cursors = [ 0 => [ 'seg' => 0, 'off' => $seg0_size ] ];
+			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
+			$ref->setAccessible( true );
+
+			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
+			// No data from either segment (seg0 at-end, seg2 empty) → false.
+			$this->assertFalse( $had_data );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// follow_tick: skips partitions with no segments.
+	// -------------------------------------------------------------------------
+
+	public function test_follow_tick_skips_partition_with_no_segments(): void {
+		$tmp = '/tmp/reqgrep-tick-empty-part-' . \uniqid();
+		\mkdir( "{$tmp}/p0", 0755, true );
+		try {
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 1 );
+
+			$cursors = [ 0 => [ 'seg' => 0, 'off' => 0 ] ];
+			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
+			$ref->setAccessible( true );
+
+			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
+			$this->assertFalse( $had_data );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// cat_mode: skip partition with no segments.
+	// -------------------------------------------------------------------------
+
+	public function test_cat_mode_skips_partition_with_no_segments(): void {
+		$tmp = '/tmp/reqgrep-cat-nosegs-' . \uniqid();
+		\mkdir( "{$tmp}/p0", 0755, true );
+		try {
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 1 );
+			$set( 'cat_offset', 'start' );
+
+			\ob_start();
+			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
+			$ref->setAccessible( true );
+			$ref->invoke( $cmd );
+			$out = \ob_get_clean();
+
+			// Empty partition → no output (other than possibly nothing).
+			$this->assertSame( '', $out );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// process_stdin: null stream branch when STDIN undefined.
+	// -------------------------------------------------------------------------
+
+	public function test_process_stdin_with_empty_stream_emits_nothing(): void {
+		// Empty stream → fgets() returns false immediately → loop exits
+		// → output_remaining() fires with empty inflight (no output).
+		$cmd = $this->make_cmd();
+		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
+		$ref->setAccessible( true );
+
+		$stream = \fopen( 'php://memory', 'r+' );
+		// Don't write anything → stream starts at EOF.
+
+		\ob_start();
+		$ref->invoke( $cmd, $stream );
+		$out = \ob_get_clean();
+		\fclose( $stream );
+		$this->assertSame( '', $out );
+	}
+
+	// -------------------------------------------------------------------------
+	// __invoke: --raw flag sets the raw property.
+	// -------------------------------------------------------------------------
+
+	public function test_invoke_propagates_raw_flag(): void {
+		$base_dir = '/tmp/reqgrep-invoke-raw-' . \uniqid();
+		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		try {
+			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
+			$this->use_base_dir( $base_dir );
+			\Newspack_Event_Logger_Nodes\Config::reset();
+
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
+			$ref->setAccessible( true );
+			$ref->setValue( $cmd, false );
+
+			\ob_start();
+			$cmd->__invoke(
+				[ '.' ],
+				[
+					'path' => "{$base_dir}/logs/firehose.log",
+					'raw'  => true,
+				]
+			);
+			\ob_get_clean();
+
+			$prop = new \ReflectionProperty( $cmd, 'raw' );
+			$prop->setAccessible( true );
+			$this->assertTrue( $prop->getValue( $cmd ) );
+		} finally {
+			$GLOBALS['_wp_actions'] = [];
+			\Newspack_Nodes\Config::reset();
+			\Newspack_Event_Logger_Nodes\Config::reset();
+			$this->rmdir_recursive( $base_dir );
+		}
+	}
+
+	public function test_invoke_propagates_incomplete_flag(): void {
+		$base_dir = '/tmp/reqgrep-invoke-incomplete-' . \uniqid();
+		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		try {
+			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
+			$this->use_base_dir( $base_dir );
+			\Newspack_Event_Logger_Nodes\Config::reset();
+
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
+			$ref->setAccessible( true );
+			$ref->setValue( $cmd, false );
+
+			\ob_start();
+			$cmd->__invoke(
+				[ '.' ],
+				[
+					'path'       => "{$base_dir}/logs/firehose.log",
+					'incomplete' => true,
+				]
+			);
+			\ob_get_clean();
+
+			$prop = new \ReflectionProperty( $cmd, 'incomplete' );
+			$prop->setAccessible( true );
+			$this->assertTrue( $prop->getValue( $cmd ) );
+		} finally {
+			$GLOBALS['_wp_actions'] = [];
+			\Newspack_Nodes\Config::reset();
+			\Newspack_Event_Logger_Nodes\Config::reset();
+			$this->rmdir_recursive( $base_dir );
+		}
+	}
 }

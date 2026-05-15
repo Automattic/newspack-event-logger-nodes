@@ -690,4 +690,520 @@ class LogManagerTest extends TestCase {
 			LogManager::FATAL_TYPES
 		);
 	}
+
+	// -- suspend / resume context stack --------------------------------------
+
+	/**
+	 * Read the static context stack via reflection.
+	 *
+	 * @return array
+	 */
+	private function read_context_stack(): array {
+		$ref = new \ReflectionProperty( LogManager::class, 'context_stack' );
+		$ref->setAccessible( true );
+		return $ref->getValue();
+	}
+
+	/**
+	 * Empty the static context stack via reflection. Tests share class state
+	 * (context_stack is private static) and reset()/setUp() don't drain it
+	 * automatically — a previous suspend that didn't resume would leak into
+	 * the next test.
+	 */
+	private function clear_context_stack(): void {
+		$ref = new \ReflectionProperty( LogManager::class, 'context_stack' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, [] );
+	}
+
+	public function test_suspend_pushes_current_instance_onto_stack(): void {
+		$this->require_config_or_skip();
+		$this->clear_context_stack();
+
+		$parent = LogManager::instance();
+		// Trigger started state so suspend exercises the flush path.
+		$parent->start( 'parent_op' );
+
+		$this->assertCount( 0, $this->read_context_stack() );
+
+		LogManager::suspend();
+
+		$stack = $this->read_context_stack();
+		$this->assertCount( 1, $stack, 'suspend() must push the instance onto the stack' );
+		$this->assertSame( $parent, $stack[0] );
+
+		// After suspend, instance() returns a NEW LogManager.
+		$child = LogManager::instance();
+		$this->assertNotSame( $parent, $child );
+
+		// Drain so the static stack doesn't leak into the next test.
+		$this->clear_context_stack();
+	}
+
+	public function test_suspend_when_no_instance_is_noop(): void {
+		$this->clear_context_stack();
+		LogManager::reset();
+		// reset() finishes the singleton then nulls it. suspend() with null
+		// instance should be a no-op (no fatal, no stack growth).
+		LogManager::suspend();
+		$this->assertCount( 0, $this->read_context_stack() );
+	}
+
+	public function test_resume_restores_parent_from_stack(): void {
+		$this->require_config_or_skip();
+		$this->clear_context_stack();
+
+		$parent = LogManager::instance();
+		$parent->start( 'parent_op' );
+		LogManager::suspend();
+
+		$child = LogManager::instance();
+		$this->assertNotSame( $parent, $child );
+
+		LogManager::resume();
+
+		$this->assertSame( $parent, LogManager::instance(), 'resume() should restore the parent context' );
+		$this->assertCount( 0, $this->read_context_stack(), 'stack should be empty after resume' );
+	}
+
+	public function test_resume_with_empty_stack_clears_instance(): void {
+		$this->require_config_or_skip();
+		$this->clear_context_stack();
+
+		// No suspend before resume — should still finish current and null out.
+		$lm = LogManager::instance();
+		$lm->start( 'work' );
+
+		LogManager::resume();
+
+		// instance() now creates a fresh one (different identity).
+		$fresh = LogManager::instance();
+		$this->assertNotSame( $lm, $fresh );
+	}
+
+	public function test_suspend_resume_restores_unique_id(): void {
+		$this->require_config_or_skip();
+		$this->clear_context_stack();
+
+		LogManager::reset();
+		Config::reset();
+		$_SERVER['UNIQUE_ID'] = 'parent-rid-abc';
+
+		$parent = LogManager::instance();
+		// ensure_started populates request_id from UNIQUE_ID; trigger it.
+		$parent->start( 'init' );
+		$this->assertSame( 'parent-rid-abc', $parent->get_request_id() );
+
+		LogManager::suspend();
+
+		// Child overwrites UNIQUE_ID with its own.
+		$_SERVER['UNIQUE_ID'] = 'child-rid-def';
+		$child                = LogManager::instance();
+		$child->start( 'child_work' );
+		$this->assertSame( 'child-rid-def', $child->get_request_id() );
+
+		LogManager::resume();
+
+		$this->assertSame( 'parent-rid-abc', $_SERVER['UNIQUE_ID'], 'resume() must restore parent UNIQUE_ID' );
+	}
+
+	public function test_suspend_resume_nested_three_levels(): void {
+		$this->require_config_or_skip();
+		$this->clear_context_stack();
+
+		$lm1 = LogManager::instance();
+		$lm1->start( 'lm1' );
+		LogManager::suspend();
+
+		$lm2 = LogManager::instance();
+		$lm2->start( 'lm2' );
+		LogManager::suspend();
+
+		$lm3 = LogManager::instance();
+		$lm3->start( 'lm3' );
+
+		$this->assertCount( 2, $this->read_context_stack() );
+		$this->assertSame( $lm3, LogManager::instance() );
+
+		LogManager::resume();
+		$this->assertSame( $lm2, LogManager::instance() );
+
+		LogManager::resume();
+		$this->assertSame( $lm1, LogManager::instance() );
+
+		$this->assertCount( 0, $this->read_context_stack() );
+	}
+
+	// -- flush() / refresh_firehose() ----------------------------------------
+
+	public function test_flush_no_topic_is_noop(): void {
+		$this->require_config_or_skip();
+
+		// Brand-new LogManager — topic isn't created until ensure_started().
+		$lm = LogManager::instance();
+		// No exception should fire from flush() before any start/message.
+		$lm->flush();
+		$this->assertTrue( true );
+	}
+
+	public function test_flush_calls_topic_flush_after_start(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+
+		$lm = LogManager::instance();
+		$lm->start( 'work' );
+		$lm->message( 'before_flush', [ 'm' => 'data1' ] );
+		$lm->flush();
+
+		// After flush, contents should be visible on disk for any future read.
+		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$this->assertDirectoryExists( $log_dir );
+		$files = \glob( $log_dir . '/*.log' );
+		$this->assertNotEmpty( $files, 'flush() must drain the buffered batch to disk' );
+	}
+
+	public function test_refresh_firehose_no_topic_is_noop(): void {
+		$this->require_config_or_skip();
+
+		$lm = LogManager::instance();
+		// No exception when topic is null.
+		$lm->refresh_firehose();
+		$this->assertTrue( true );
+	}
+
+	public function test_refresh_firehose_after_start_succeeds(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+
+		$lm = LogManager::instance();
+		$lm->start( 'work' );
+		$lm->message( 'pre_refresh', [ 'm' => 'data' ] );
+		$lm->flush();
+
+		// Refresh should not throw even after a flush has materialized the segment.
+		$lm->refresh_firehose();
+		$this->assertTrue( true );
+
+		// Subsequent writes should still land.
+		$lm->message( 'post_refresh', [ 'm' => 'data2' ] );
+		$lm->flush();
+	}
+
+	// -- log_environment / log_resources / log_process -----------------------
+
+	public function test_finish_emits_environment_resources_memory_and_process_complete(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['HTTP_REFERER']     = 'https://example.com/page?token=SHHH&id=ok';
+		$_SERVER['DB_PASSWORD']      = 'do-not-log';
+		$_SERVER['SOME_API_KEY']     = 'k-do-not-log';
+		$_SERVER['CUSTOM_NICE_VAR']  = "hello\x07world";
+
+		$lm = LogManager::instance();
+		$lm->start( 'unit' );
+		$lm->complete( 'unit' );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		$kinds   = \array_column( $entries, 'k' );
+
+		// log_environment emits one entry per non-sensitive $_SERVER key under k=environment_v2.
+		$this->assertContains( 'environment_v2', $kinds, 'log_environment must emit environment_v2 entries' );
+
+		// log_resources emits k=resources.
+		$this->assertContains( 'resources', $kinds, 'log_resources must emit a resources entry' );
+
+		// finish() emits k=memory and k=process (complete).
+		$this->assertContains( 'memory', $kinds, 'finish must emit a memory entry' );
+		$this->assertContains( 'process (complete)', $kinds, 'finish must emit process (complete)' );
+
+		// Sensitive keys redacted — DB_PASSWORD must NOT appear as an
+		// environment_v2 entry, but CUSTOM_NICE_VAR should.
+		$env_msgs = [];
+		foreach ( $entries as $entry ) {
+			if ( 'environment_v2' === ( $entry['k'] ?? '' ) ) {
+				$env_msgs[] = $entry['m'] ?? '';
+			}
+		}
+		$env_blob = \implode( "\n", $env_msgs );
+		$this->assertStringNotContainsString( 'DB_PASSWORD', $env_blob, 'DB_PASSWORD must be filtered out' );
+		$this->assertStringNotContainsString( 'do-not-log', $env_blob, 'DB_PASSWORD value must not appear' );
+		$this->assertStringNotContainsString( 'SOME_API_KEY', $env_blob, 'KEY-substring keys must be filtered' );
+		$this->assertStringNotContainsString( 'k-do-not-log', $env_blob, 'API key value must not appear' );
+		$this->assertStringContainsString( 'CUSTOM_NICE_VAR', $env_blob, 'Non-sensitive keys must be logged' );
+		// Control-char stripped from value.
+		$this->assertStringNotContainsString( "\x07", $env_blob, 'Control chars must be stripped from env values' );
+		// HTTP_REFERER must be redacted at the value layer.
+		$this->assertStringContainsString( 'HTTP_REFERER', $env_blob );
+		$this->assertStringNotContainsString( 'token=SHHH', $env_blob, 'URL-value sensitive params must be redacted' );
+		$this->assertStringContainsString( 'token=[REDACTED]', $env_blob );
+
+		unset( $_SERVER['HTTP_REFERER'], $_SERVER['DB_PASSWORD'], $_SERVER['SOME_API_KEY'], $_SERVER['CUSTOM_NICE_VAR'] );
+	}
+
+	public function test_log_process_records_method_and_full_url(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['REQUEST_METHOD'] = 'POST';
+		$_SERVER['SERVER_NAME']    = 'example.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/api/work?key=hidden&q=visible';
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		$request = null;
+		foreach ( $entries as $entry ) {
+			if ( 'request' === ( $entry['k'] ?? '' ) ) {
+				$request = $entry;
+			}
+		}
+		$this->assertNotNull( $request, 'process should log a request entry' );
+		$this->assertStringContainsString( 'POST https://example.test/api/work', (string) ( $request['m'] ?? '' ) );
+		$this->assertStringContainsString( 'key=[REDACTED]', (string) ( $request['m'] ?? '' ), 'request URL must be redacted' );
+		$this->assertStringNotContainsString( 'key=hidden', (string) ( $request['m'] ?? '' ) );
+		$this->assertStringContainsString( 'q=visible', (string) ( $request['m'] ?? '' ) );
+	}
+
+	public function test_log_process_https_off_uses_http_scheme(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['SERVER_NAME'] = 'plain.test';
+		$_SERVER['HTTPS']       = 'off';
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		$request = null;
+		foreach ( $entries as $entry ) {
+			if ( 'request' === ( $entry['k'] ?? '' ) ) {
+				$request = $entry;
+			}
+		}
+		$this->assertNotNull( $request );
+		$this->assertStringContainsString( 'http://plain.test', (string) ( $request['m'] ?? '' ) );
+		$this->assertStringNotContainsString( 'https://plain.test', (string) ( $request['m'] ?? '' ) );
+	}
+
+	public function test_log_process_without_server_name_uses_path_only(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		unset( $_SERVER['SERVER_NAME'], $_SERVER['HTTPS'] );
+		$_SERVER['REQUEST_URI']    = '/cli/path';
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		$request = null;
+		foreach ( $entries as $entry ) {
+			if ( 'request' === ( $entry['k'] ?? '' ) ) {
+				$request = $entry;
+			}
+		}
+		$this->assertNotNull( $request );
+		// No server_name = bare path (no scheme/host prefix).
+		$this->assertStringContainsString( 'GET /cli/path', (string) ( $request['m'] ?? '' ) );
+		$this->assertStringNotContainsString( '://', (string) ( $request['m'] ?? '' ) );
+	}
+
+	// -- finish() orphan handling --------------------------------------------
+
+	public function test_finish_emits_orphaned_complete_for_unclosed_starts(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		// Three unclosed starts on top of the root 'process' entry.
+		$lm->start( 'outer' );
+		$lm->start( 'middle' );
+		$lm->start( 'inner' );
+
+		$lm->finish();
+
+		$entries  = $this->read_firehose_entries();
+		$orphaned = [];
+		foreach ( $entries as $entry ) {
+			$k = $entry['k'] ?? '';
+			$m = $entry['m'] ?? '';
+			if ( '(orphaned)' === $m && \str_ends_with( $k, ' (complete)' ) ) {
+				$orphaned[] = $k;
+			}
+		}
+		$this->assertContains( 'outer (complete)', $orphaned );
+		$this->assertContains( 'middle (complete)', $orphaned );
+		$this->assertContains( 'inner (complete)', $orphaned );
+		// Each orphan must carry a duration_ms key.
+		foreach ( $entries as $entry ) {
+			if ( '(orphaned)' === ( $entry['m'] ?? '' ) ) {
+				$this->assertArrayHasKey( 'duration_ms', $entry );
+			}
+		}
+	}
+
+	public function test_finish_second_call_is_idempotent(): void {
+		$this->require_config_or_skip();
+
+		$lm = LogManager::instance();
+		$lm->start( 'work' );
+		$lm->finish();
+
+		// Read property to confirm finished latch.
+		$ref = new \ReflectionProperty( LogManager::class, 'finished' );
+		$ref->setAccessible( true );
+		$this->assertTrue( $ref->getValue( $lm ) );
+
+		// Second finish must be a no-op (no exception, no extra writes).
+		$lm->finish();
+		$this->assertTrue( true );
+	}
+
+	public function test_finish_before_started_is_noop(): void {
+		$this->require_config_or_skip();
+
+		$lm = LogManager::instance();
+		// Never started — finish should bail out without emitting any entries.
+		$lm->finish();
+
+		// 'finished' latch should remain unchanged because started was false.
+		$ref = new \ReflectionProperty( LogManager::class, 'finished' );
+		$ref->setAccessible( true );
+		$this->assertFalse( $ref->getValue( $lm ) );
+	}
+
+	// -- request_id forwarders / header sources ------------------------------
+
+	public function test_http_x_a8c_request_id_takes_priority_over_unique_id(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-priority-rid';
+		$_SERVER['UNIQUE_ID']             = 'should-be-ignored';
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$this->assertSame( 'a8c-priority-rid', $lm->get_request_id() );
+
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+	}
+
+	public function test_request_id_header_capped_at_64_chars(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = \str_repeat( 'A', 200 );
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$rid = $lm->get_request_id();
+		$this->assertSame( 64, \strlen( $rid ), 'Request id from header must be capped at 64 chars' );
+
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+	}
+
+	public function test_request_id_generated_when_no_header_present(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$rid = $lm->get_request_id();
+		$this->assertSame( 32, \strlen( $rid ), 'Generated rid must be 32 chars' );
+		$this->assertMatchesRegularExpression( '/^[a-z0-9]+$/', $rid );
+		// UNIQUE_ID must be back-populated to the generated value.
+		$this->assertSame( $rid, $_SERVER['UNIQUE_ID'] ?? null );
+	}
+
+	// -- message() guards ----------------------------------------------------
+
+	public function test_message_returns_false_when_logging_disabled(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-disabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		$this->assertFalse( $lm->enabled );
+		// message() routes through ensure_started; with enabled=false it
+		// returns false without writing.
+		$this->assertFalse( $lm->message( 'never', [ 'm' => 'no-go' ] ) );
+	}
+
+	public function test_start_short_circuits_when_message_returns_false(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-disabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		// Disabled logger: start() should NOT push onto $times because
+		// message() fails. Confirm via reflection.
+		$lm->start( 'dud' );
+
+		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref->setAccessible( true );
+		$this->assertSame( [], $ref->getValue( $lm ), 'Disabled logger must not accumulate timer entries' );
+	}
+
+	public function test_start_blocks_at_max_timer_depth(): void {
+		$this->require_config_or_skip();
+
+		$cap_ref = new \ReflectionClassConstant( LogManager::class, 'MAX_TIMER_DEPTH' );
+		$cap     = (int) $cap_ref->getValue();
+
+		$lm = LogManager::instance();
+		// Seed the timer stack at the cap via reflection — saves doing 100
+		// real start() calls.
+		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref->setAccessible( true );
+		$seeded = [];
+		for ( $i = 0; $i < $cap; $i++ ) {
+			$seeded[] = [ 'label' => "seed_$i", 'ts' => \hrtime( true ), 'muted' => false ];
+		}
+		$ref->setValue( $lm, $seeded );
+
+		$lm->start( 'overflow' );
+		$stack_after = $ref->getValue( $lm );
+		$this->assertCount( $cap, $stack_after, 'start() must refuse to grow past MAX_TIMER_DEPTH' );
+
+		// Reset for tearDown sanity.
+		$ref->setValue( $lm, [] );
+	}
 }
