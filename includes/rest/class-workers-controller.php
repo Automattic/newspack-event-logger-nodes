@@ -25,37 +25,6 @@ use Newspack_Nodes\Config as RuntimeConfig;
 class WorkersController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
 
-	/**
-	 * Static map of topology worker type → input/output log files. Source-of-truth
-	 * for what each worker actually tails / writes; topology PHP files (which own
-	 * the real wiring) aren't safe to load at REST-time without spawning workers,
-	 * so this mirrors them. The `inputs[0]` entry is the primary tail used to
-	 * resolve segments + bytes-behind; additional inputs are reported in the API
-	 * but not factored into the headline stats.
-	 *
-	 * `aggregator` has no local input — StreamMerger pulls remote firehoses via
-	 * SSE — so it gets `inputs => []` and the controller reports zero segments
-	 * for that row.
-	 */
-	private const WORKER_INPUTS = [
-		'firehose-workers' => [
-			'inputs'  => [ 'firehose.log', 'jobintake.log' ],
-			'outputs' => [ 'requests.log', 'errors.log', 'jobs.log' ],
-		],
-		'request-workers'   => [
-			'inputs'  => [ 'requests.log' ],
-			'outputs' => [ 'flames.log' ],
-		],
-		'job-workers'      => [
-			'inputs'  => [ 'jobs.log' ],
-			'outputs' => [],
-		],
-		'aggregator'       => [
-			'inputs'  => [],
-			'outputs' => [ 'firehose.log' ],
-		],
-	];
-
 	public function register_routes(): void {
 		\register_rest_route(
 			self::NAMESPACE,
@@ -629,7 +598,7 @@ class WorkersController extends PerformanceControllerBase {
 	 * everything it needs to render a per-Consumer row without hardcoding
 	 * a per-worker-type inputs/outputs map.
 	 *
-	 * @return array<int,array{name:string,target:string,worker_type:string,source_basename:string,partition:int,seg:int,off:int,ts:float}>
+	 * @return array<int,array{name:string,target:string,targets:array<int,array<string,mixed>>,worker_type:string,source_basename:string,partition:int,seg:int,off:int,ts:float}>
 	 */
 	private function enumerate_offsetlog_rows( string $base_dir ): array {
 		$offsets_dir = "{$base_dir}/offsets";

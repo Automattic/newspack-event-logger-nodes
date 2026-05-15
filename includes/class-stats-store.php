@@ -37,8 +37,6 @@ class Stats_Store {
 
 	private const PREFIX_BASE  = 'evlog';
 	private const SALT_OPTION  = 'newspack_nodes_stats_salt';
-	private const BUCKET_SECS  = 300; // 5-minute buckets.
-	private const HOUR_SECS    = 3600;
 	private const PREFIX_FLOOR = 3600;
 
 	private Cache_Interface $mc;
@@ -548,7 +546,7 @@ class Stats_Store {
 			}
 
 			if ( \count( $entries_out ) > 100 ) {
-				\uasort( $entries_out, fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+				\uasort( $entries_out, fn( $a, $b ) => $b[0] <=> $a[0] );
 				$entries_out = \array_slice( $entries_out, 0, 50, true );
 			}
 

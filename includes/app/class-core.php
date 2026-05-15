@@ -26,8 +26,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Core class - WordPress hook instrumentation.
  */
 class Core {
-	private $log_manager;
-
 	/**
 	 * Short name for a callback (no namespace, no priority).
 	 *
@@ -81,8 +79,7 @@ class Core {
 		// scope, that fresh LM may be enabled even though the parent (worker
 		// spawn URL, skip-listed) wasn't. Caching the parent's `enabled = false`
 		// at construction would silently disable all hook instrumentation
-		// inside the job too.
-		$this->log_manager = LogManager::instance();
+		// inside the job too. Hence: no $log_manager property.
 
 		// Load event filters from config.
 		$config            = Config::load_config();

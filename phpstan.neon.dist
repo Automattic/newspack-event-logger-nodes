@@ -1,0 +1,34 @@
+parameters:
+    level: 5
+    # PHP 8.2+ — application code uses constants-in-traits and other 8.2
+    # syntax; composer.json's `platform.php: 8.0` is the minimum-INSTALL
+    # floor, but actual runtime is PHP 8.2+ (Eve / Atomic ship PHP 8.4).
+    phpVersion: 80200
+    paths:
+        - newspack-event-logger-nodes.php
+        - 00-newspack-profiler.php
+        - includes
+    excludePaths:
+        - vendor
+        - tests
+        - build
+        - release
+        - node_modules
+    bootstrapFiles:
+        # Defines NEWSPACK_EVENT_LOGGER_NODES_DIR / _URL / _VERSION via
+        # define(). Loading it lets PHPStan see those constants inside includes/.
+        - newspack-event-logger-nodes.php
+    scanFiles:
+        # WP-CLI is loaded only when WP-CLI itself runs (defined('WP_CLI')).
+        # szepeviktor/phpstan-wordpress doesn't ship WP-CLI stubs; supply them
+        # via php-stubs/wp-cli-stubs.
+        - vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
+    scanDirectories:
+        # Substrate plugin (newspack-nodes). Loaded at runtime by WordPress
+        # via the deferred-loader pattern in newspack-event-logger-nodes.php
+        # — its classes are NOT in this plugin's autoloader, but every
+        # Node subclass / static call here references them. Point PHPStan
+        # at the substrate sources so it can discover those symbols.
+        - ../newspack-nodes/includes
+    treatPhpDocTypesAsCertain: false
+    reportUnmatchedIgnoredErrors: false

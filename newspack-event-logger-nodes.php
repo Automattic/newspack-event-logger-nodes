@@ -493,9 +493,6 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 			return;
 		}
 		$tree = $page_to_tree[ $page ];
-		if ( null === $tree ) {
-			return;
-		}
 
 		$asset_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.js";
 		$asset_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}/index.js";

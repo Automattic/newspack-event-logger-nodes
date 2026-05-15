@@ -311,7 +311,7 @@ class RemoteSource extends Node {
 		}
 
 		$ch = \curl_init();
-		if ( false === $ch || ! ( $ch instanceof \CurlHandle ) ) {
+		if ( false === $ch ) {
 			$this->last_error = 'curl_init failed';
 			$this->increase_backoff();
 			return false;
