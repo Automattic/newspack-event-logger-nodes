@@ -114,6 +114,18 @@ class StreamMergerTest extends TestCase {
 		$ref->setValue( $sm, \array_merge( \is_array( $existing ) ? $existing : [], $nodes ) );
 	}
 
+	/**
+	 * Build an SSE wire frame for one `entry` event that the production
+	 * forward_entry() will accept (needs `k` + numeric `ts`). Tests of the
+	 * parser mechanics (multiline, comment, partial chunks, etc.) wrap
+	 * payloads with this so the sink actually receives a TM_STRUCT.
+	 */
+	private function entry_frame( array $data ): string {
+		$data['k']  = $data['k'] ?? 'render';
+		$data['ts'] = $data['ts'] ?? 1700000000;
+		return "event: entry\ndata: " . \json_encode( $data ) . "\n\n";
+	}
+
 	// =========================================================================
 	// Legacy/back-compat: process_sse_chunk + ingest filter shape.
 	// =========================================================================
@@ -123,13 +135,17 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		// Each event is `data: ...\n\n`. process_sse_chunk drives the synthetic
-		// `__test__` remote; the test queue forwards raw payloads as TM_BYTESTREAM.
-		$sm->process_sse_chunk( "data: {\"k\":\"start\"}\n\ndata: {\"k\":\"complete\"}\n\n" );
+		// Two back-to-back `entry` events should produce two TM_STRUCT
+		// messages with the parsed `k` field. Production no longer queues —
+		// dispatch_event -> forward_entry sinks immediately.
+		$sm->process_sse_chunk(
+			$this->entry_frame( [ 'k' => 'start' ] )
+			. $this->entry_frame( [ 'k' => 'complete' ] )
+		);
 
 		$this->assertCount( 2, $capture->captured );
-		$this->assertSame( '{"k":"start"}', $capture->captured[0][ Message::VALUE ] );
-		$this->assertSame( '{"k":"complete"}', $capture->captured[1][ Message::VALUE ] );
+		$this->assertSame( 'start',    $capture->captured[0][ Message::VALUE ]['k'] );
+		$this->assertSame( 'complete', $capture->captured[1][ Message::VALUE ]['k'] );
 	}
 
 	public function test_skips_non_data_lines(): void {
@@ -137,13 +153,16 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		// `event:` field captured but only `data:` payload reaches the sink in
-		// the test-feed path. Extra fields like `id:` are ignored per spec.
-		$sm->process_sse_chunk( "event: heartbeat\ndata: alive\n\nid: 123\ndata: payload\n\n" );
+		// `heartbeat` event isn't an `entry`, so it never reaches the sink;
+		// extra fields like `id:` are ignored per spec. Only the entry frame
+		// produces a sinkable message.
+		$sm->process_sse_chunk(
+			"event: heartbeat\ndata: " . \json_encode( [ 'ts' => 1700000000 ] ) . "\n\n"
+			. "id: 123\n" . $this->entry_frame( [ 'k' => 'payload' ] )
+		);
 
-		$this->assertCount( 2, $capture->captured );
-		$this->assertSame( 'alive', $capture->captured[0][ Message::VALUE ] );
-		$this->assertSame( 'payload', $capture->captured[1][ Message::VALUE ] );
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame( 'payload', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_handles_partial_chunk_across_calls(): void {
@@ -151,14 +170,17 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		// First chunk: incomplete (no trailing blank line).
-		$sm->process_sse_chunk( "data: part" );
+		$frame = $this->entry_frame( [ 'k' => 'split' ] );
+		$cut   = (int) ( \strlen( $frame ) / 2 );
+
+		// First chunk: incomplete — sink unchanged.
+		$sm->process_sse_chunk( \substr( $frame, 0, $cut ) );
 		$this->assertCount( 0, $capture->captured );
 
 		// Second chunk completes it.
-		$sm->process_sse_chunk( "ial\n\n" );
+		$sm->process_sse_chunk( \substr( $frame, $cut ) );
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'partial', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'split', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_remote_job_rewrite_filter_applied(): void {
@@ -179,10 +201,9 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		$sm->process_sse_chunk( 'data: {"k":"job","handler":"x"}' . "\n\n" );
+		$sm->process_sse_chunk( $this->entry_frame( [ 'k' => 'job', 'handler' => 'x' ] ) );
 
-		$out = json_decode( $capture->captured[0][ Message::VALUE ], true );
-		$this->assertSame( 'remote_job', $out['k'] );
+		$this->assertSame( 'remote_job', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_static_register_remote_job_rewrite_filter_does_rewrite(): void {
@@ -272,10 +293,14 @@ class StreamMergerTest extends TestCase {
 		$sm->sink( $capture );
 
 		// Two `data:` lines under one event must concatenate with "\n".
-		$sm->process_sse_chunk( "data: line1\ndata: line2\n\n" );
+		// JSON tolerates whitespace between tokens so the parser's
+		// "\n"-join produces a still-decodable payload.
+		$sm->process_sse_chunk(
+			"event: entry\ndata: {\"k\":\"render\",\ndata: \"ts\":1700000000}\n\n"
+		);
 
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( "line1\nline2", $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_event_field_type_distinguished_for_entry(): void {
@@ -934,9 +959,9 @@ class StreamMergerTest extends TestCase {
 		$sm->sink( $capture );
 
 		// Lines starting with `:` are SSE comments — must be ignored entirely.
-		$sm->process_sse_chunk( ": keepalive\n: heartbeat-comment\ndata: actual\n\n" );
+		$sm->process_sse_chunk( ": keepalive\n: heartbeat-comment\n" . $this->entry_frame( [ 'k' => 'after-comments' ] ) );
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'actual', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'after-comments', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_sse_lines_without_colon_ignored(): void {
@@ -945,9 +970,9 @@ class StreamMergerTest extends TestCase {
 		$sm->sink( $capture );
 
 		// Lines without a colon are skipped (they aren't valid SSE field lines).
-		$sm->process_sse_chunk( "no_colon_here\ndata: ok\n\n" );
+		$sm->process_sse_chunk( "no_colon_here\n" . $this->entry_frame( [ 'k' => 'ok' ] ) );
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'ok', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'ok', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_sse_field_value_without_leading_space_works(): void {
@@ -957,9 +982,10 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		$sm->process_sse_chunk( "data:nospace\n\n" );
+		$payload = \json_encode( [ 'k' => 'nospace', 'ts' => 1700000000 ] );
+		$sm->process_sse_chunk( "event:entry\ndata:{$payload}\n\n" );
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'nospace', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'nospace', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_unknown_sse_field_ignored(): void {
@@ -969,9 +995,9 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		$sm->process_sse_chunk( "id: 123\nretry: 5000\ndata: surfaced\n\n" );
+		$sm->process_sse_chunk( "id: 123\nretry: 5000\n" . $this->entry_frame( [ 'k' => 'surfaced' ] ) );
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'surfaced', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'surfaced', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_sse_carriage_return_stripped_before_newline(): void {
@@ -980,9 +1006,10 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		$sm->process_sse_chunk( "data: hello\r\n\r\n" );
+		$payload = \json_encode( [ 'k' => 'crlf', 'ts' => 1700000000 ] );
+		$sm->process_sse_chunk( "event: entry\r\ndata: {$payload}\r\n\r\n" );
 		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'hello', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'crlf', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_empty_data_block_dropped_at_test_path(): void {
@@ -1053,39 +1080,6 @@ class StreamMergerTest extends TestCase {
 		$ok = $this->invoke_remote( $sm, 'siteOversize', 'parse_sse_line', [ 'data: X' ] );
 		$this->assertFalse( $ok, 'parse_sse_line must return false on event-data overflow' );
 		$this->assertStringContainsString( 'Event data overflow', (string) $sm->get_last_error( 'siteOversize' ) );
-	}
-
-	public function test_max_queue_size_overflow_at_test_path(): void {
-		// Synthetic remote test-path enforces MAX_QUEUE_SIZE. Reach into the
-		// __test__ RemoteSource's queue + current_event via reflection,
-		// inflate the queue above the cap, then drive ONE more dispatch_event
-		// to trigger the overflow path. We invoke dispatch_event directly
-		// (rather than process_sse_chunk) so the post-failure drain doesn't
-		// replay all our padded events.
-		$sm = $this->make_merger();
-		$sm->process_sse_chunk( "data: priming\n\n" );
-
-		$this->poke_remote(
-			$sm,
-			'__test__',
-			'event_queue',
-			\array_fill( 0, RemoteSource::MAX_QUEUE_SIZE, [ 'type' => 'x', 'data' => null, 'raw_data' => 'x' ] )
-		);
-		$this->poke_remote(
-			$sm,
-			'__test__',
-			'current_event',
-			[ 'event' => 'x', 'data' => 'overflow-trigger' ]
-		);
-		$this->poke_remote( $sm, '__test__', 'connected', true );
-
-		$result = $this->invoke_remote( $sm, '__test__', 'dispatch_event' );
-		$this->assertFalse( $result, 'dispatch_event must return false on queue overflow' );
-		$this->assertFalse( $this->peek_remote( $sm, '__test__', 'connected' ) );
-		$this->assertStringContainsString(
-			'Event queue overflow',
-			(string) $this->peek_remote( $sm, '__test__', 'last_error' )
-		);
 	}
 
 	// =========================================================================

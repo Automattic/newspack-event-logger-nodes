@@ -87,7 +87,6 @@ class RemoteSource extends Node {
 
 	private string $buffer        = '';
 	private array  $current_event = [ 'event' => '', 'data' => '' ];
-	private array  $event_queue   = [];
 	private ?int   $slot          = null;
 	private array  $position      = [ 'segment_id' => 0, 'offset' => 0 ];
 	private float  $last_event_time = 0.0;
@@ -129,8 +128,8 @@ class RemoteSource extends Node {
 			$server_id,
 			$this->url,
 			$auth_username,
-			$auth_password,
-			$auth_token,
+			'[REDACTED]',
+			'[REDACTED]',
 			(string) $this->partition,
 		] );
 	}
@@ -142,6 +141,24 @@ class RemoteSource extends Node {
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
+	}
+
+	/**
+	 * Override Node::dump_node to redact application-password and bearer-token
+	 * fields before they hit the REPL. Default reflection-based dump would
+	 * print the raw secrets — `dump_node my_remote` from the topology console
+	 * was a credential-disclosure vector.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function dump_node(): array {
+		$snapshot = parent::dump_node();
+		foreach ( [ 'auth_password', 'auth_token' ] as $k ) {
+			if ( isset( $snapshot[ $k ] ) && '' !== $snapshot[ $k ] ) {
+				$snapshot[ $k ] = '[REDACTED]';
+			}
+		}
+		return $snapshot;
 	}
 
 	// =========================================================================
@@ -321,7 +338,6 @@ class RemoteSource extends Node {
 		// Reset per-connection state.
 		$this->buffer          = '';
 		$this->current_event   = [ 'event' => '', 'data' => '' ];
-		$this->event_queue     = [];
 		$this->last_event_time = $now;
 		$this->connected       = true;
 		$this->last_error      = null;
@@ -477,27 +493,6 @@ class RemoteSource extends Node {
 		return true;
 	}
 
-	/**
-	 * Drain queued events to the sink. Test path only — production-side
-	 * `dispatch_event` performs side effects (forward_entry) inline.
-	 */
-	public function drain_test_queue(): void {
-		while ( ! empty( $this->event_queue ) ) {
-			$event   = \array_shift( $this->event_queue );
-			$payload = $event['raw_data'] ?? '';
-			$filtered = \apply_filters( 'newspack_nodes/aggregator_ingest_line', $payload, $this->server_id, $this->partition );
-			if ( ! \is_string( $filtered ) || '' === $filtered ) {
-				continue;
-			}
-			$msg                       = Message::new_message();
-			$msg[ Message::TYPE ]      = Message::TM_BYTESTREAM;
-			$msg[ Message::TIMESTAMP ] = Core::$now;
-			$msg[ Message::FROM ]      = $this->name;
-			$msg[ Message::VALUE ]     = $filtered;
-			$this->sink?->fill( $msg );
-		}
-	}
-
 	private function parse_sse_line( string $line ): bool {
 		if ( '' === $line ) {
 			return $this->dispatch_event();
@@ -545,13 +540,6 @@ class RemoteSource extends Node {
 			return true;
 		}
 
-		// Backpressure: too many events queued -> disconnect.
-		if ( \count( $this->event_queue ) >= self::MAX_QUEUE_SIZE ) {
-			$this->last_error = 'Event queue overflow (' . self::MAX_QUEUE_SIZE . ' events)';
-			$this->connected  = false;
-			return false;
-		}
-
 		// Any successful event receipt resets backoff and refreshes liveness.
 		$this->current_backoff = self::INITIAL_BACKOFF;
 		$this->last_event_time = (float) ( Core::$now ?: \microtime( true ) );
@@ -587,14 +575,6 @@ class RemoteSource extends Node {
 		if ( 'entry' === $type && \is_array( $decoded ) ) {
 			$this->forward_entry( $decoded );
 		}
-
-		// Test-path queue retains everything so legacy fixture-driven tests can
-		// drain it via drain_test_queue() and inspect what landed.
-		$this->event_queue[] = [
-			'type'     => $type,
-			'data'     => $decoded,
-			'raw_data' => $raw_data,
-		];
 
 		return true;
 	}
