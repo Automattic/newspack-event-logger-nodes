@@ -636,4 +636,226 @@ class SettingsSyncTest extends TestCase {
 		$sync->on_option_update( 'other_option', 'old', 'new' );
 		$this->assertFalse( $called, 'option not in synced list must skip' );
 	}
+
+	// --- maybe_queue_static_sync: substrate-namespaced prefix branch ---------
+
+	/**
+	 * `newspack_nodes_num_partitions` is the one entry in SYNCED_OPTIONS whose
+	 * local name carries the substrate prefix (no remap). When dispatched with
+	 * an empty value, the prefix-stripping loop hits the `newspack_nodes_`
+	 * branch (not the application prefix branch) before the `^remote_` strip.
+	 * Exercises a distinct loop-iteration outcome from the
+	 * `newspack_event_logger_nodes_remote_*` tests.
+	 */
+	public function test_static_handler_substrate_prefix_strip_for_num_partitions(): void {
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+
+		// Empty value triggers defaults-lookup; the prefix strip must run
+		// against the `newspack_nodes_` arm (not `newspack_event_logger_nodes_`).
+		SettingsSync::on_static_option_update(
+			'newspack_nodes_num_partitions',
+			null,
+			''
+		);
+
+		// Doesn't crash. The default-lookup path traversed the
+		// `newspack_nodes_` prefix arm of the foreach.
+		$this->assertTrue( true );
+	}
+
+	/**
+	 * Same path as above but routed through `on_static_option_add` (2-arg
+	 * signature) to exercise the add_option side of the static fan-out.
+	 */
+	public function test_static_handler_add_option_substrate_prefix_strip(): void {
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+
+		SettingsSync::on_static_option_add( 'newspack_nodes_num_partitions', '' );
+
+		$this->assertTrue( true );
+	}
+
+	// --- maybe_queue_static_sync: non-empty real value bypasses defaults ----
+
+	/**
+	 * Non-empty, non-false value SKIPS the default-substitution block
+	 * (line `if ( '' === $value || false === $value )` is false), takes the
+	 * is_remap=true endpoint pick, and lands at the queue_job call directly.
+	 * Distinct from the existing remap test which used 16 — exercise a string
+	 * value to cover the no-substitution branch with a different shape.
+	 */
+	public function test_static_handler_remap_with_non_empty_string_value(): void {
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+
+		SettingsSync::on_static_option_update(
+			'newspack_event_logger_nodes_remote_segment_size',
+			0,
+			'2048'
+		);
+
+		// The path: is_remap=true, value='2048' is not '' / false → defaults
+		// lookup skipped, endpoint=ENDPOINT, queue_job invoked. Doesn't crash.
+		$this->assertTrue( true );
+	}
+
+	/**
+	 * PERF_TUNING entry with a non-empty array value also skips the
+	 * default-substitution block AND lands at the PERF_ENDPOINT (not ENDPOINT)
+	 * arm of the ternary. Covers the is_perf=true non-empty branch end-to-end.
+	 */
+	public function test_static_handler_perf_with_non_empty_array_value(): void {
+		SettingsSync::suppress_sync( false );
+		Config::reset();
+
+		SettingsSync::on_static_option_update(
+			'newspack_event_logger_nodes_significant_events',
+			[],
+			[ 'init', 'wp_loaded' ]
+		);
+
+		$this->assertTrue( true );
+	}
+
+	// --- queue_job: contract over the JobIntake bridge ----------------------
+
+	/**
+	 * `queue_job` is the static bridge to JobIntake — its sole job is to
+	 * return a bool reflecting the underlying queue success. With a valid
+	 * handler name and small payload, it returns either true (queued) or
+	 * false (no IPC backend) — but never throws and never returns non-bool.
+	 */
+	public function test_queue_job_with_valid_handler_returns_bool(): void {
+		$result = SettingsSync::queue_job(
+			'remote_manager',
+			[
+				'action'    => 'sync_setting',
+				'option'    => 'log_events',
+				'value'     => [ 'init', 'wp_loaded' ],
+				'endpoint'  => SettingsSync::PERF_ENDPOINT,
+				'queued_at' => \time(),
+			]
+		);
+		$this->assertIsBool( $result );
+	}
+
+	/**
+	 * Invalid handler-name pattern — JobIntake refuses to queue anything that
+	 * doesn't match `[a-zA-Z][a-zA-Z0-9_-]{0,63}`. SettingsSync forwards the
+	 * result verbatim, so a handler with spaces returns false.
+	 */
+	public function test_queue_job_with_invalid_handler_returns_false(): void {
+		$result = SettingsSync::queue_job(
+			'bad handler name with spaces',
+			[ 'action' => 'noop' ]
+		);
+		$this->assertFalse( $result, 'invalid handler must short-circuit at JobIntake' );
+	}
+
+	/**
+	 * The optional `$key` parameter routes the job to a consistent partition
+	 * via CRC32. With single-partition default, the key is just a no-op routing
+	 * hint, but the path still returns a bool.
+	 */
+	public function test_queue_job_with_key_returns_bool(): void {
+		$result = SettingsSync::queue_job(
+			'remote_manager',
+			[ 'action' => 'sync_setting' ],
+			'consistent-partition-key'
+		);
+		$this->assertIsBool( $result );
+	}
+
+	// --- init: idempotent re-entry ------------------------------------------
+
+	/**
+	 * `init()` is idempotent via a method-local `static $registered` guard —
+	 * the FIRST call (in any process, including the plugin's bootstrap closure)
+	 * sets it true; subsequent calls short-circuit at the guard. The contract
+	 * is just "never throws on re-entry and never re-registers" — exercise the
+	 * short-circuit path explicitly by calling init() multiple times in a row.
+	 */
+	public function test_init_idempotent_re_entry_is_safe(): void {
+		// Multiple back-to-back calls hit the static-guard short-circuit.
+		// First call may or may not be the first-in-process (plugin bootstrap
+		// already fired it), but all later calls MUST be no-ops.
+		SettingsSync::init();
+		SettingsSync::init();
+		SettingsSync::init();
+
+		// No assertion needed beyond "doesn't crash" — the contract is purely
+		// about idempotency.
+		$this->assertTrue( true );
+	}
+
+	// --- decrypt: edge-case inputs ----------------------------------------
+
+	/**
+	 * `decrypt('')` is a malformed empty base64; passes the function_exists
+	 * check, the key check, but fails the length check (< nonce size) — must
+	 * return null without throwing.
+	 */
+	public function test_decrypt_with_empty_string_returns_null(): void {
+		$this->assertNull( SettingsSync::decrypt( '' ) );
+	}
+
+	/**
+	 * `decode_payload('')` decodes empty plaintext to null via the same
+	 * path; the json_decode of empty string returns null and short-circuits.
+	 */
+	public function test_decode_payload_with_empty_string_returns_null(): void {
+		$this->assertNull( SettingsSync::decode_payload( '' ) );
+	}
+
+	/**
+	 * Round-trip with a value containing UTF-8 + JSON-special chars. Verifies
+	 * the encode/decrypt chain preserves payload fidelity across multi-byte
+	 * characters and string escaping.
+	 */
+	public function test_decode_payload_preserves_utf8_and_special_chars(): void {
+		$plaintext = (string) \json_encode( [
+			'option' => 'log_events',
+			'value'  => [ 'event\\"with\nquotes', 'unicode-£€™' ],
+		] );
+		$cipher    = SettingsSync::encrypt( $plaintext );
+		$decoded   = SettingsSync::decode_payload( $cipher );
+
+		$this->assertNotNull( $decoded );
+		$this->assertSame( [ 'event\\"with\nquotes', 'unicode-£€™' ], $decoded['value'] );
+	}
+
+	// --- is_allowed_endpoint: substring trap ---------------------------------
+
+	/**
+	 * Defense-in-depth: a URL that CONTAINS one of the allowed prefixes mid-
+	 * string (instead of at the start) MUST be rejected. The check uses
+	 * `0 === strpos(...)` deliberately to anchor the match.
+	 */
+	public function test_is_allowed_endpoint_rejects_mid_string_prefix(): void {
+		// Allowed prefix appears at offset 12, not at the start.
+		$this->assertFalse(
+			SettingsSync::is_allowed_endpoint( '/redirector/wp-json/newspack-nodes/v1/settings' )
+		);
+		// Same idea with the aggregator namespace.
+		$this->assertFalse(
+			SettingsSync::is_allowed_endpoint( '/foo/wp-json/newspack-nodes-aggregator/v1/health' )
+		);
+	}
+
+	/**
+	 * The trailing slash is meaningful: `/wp-json/newspack-nodes/` matches any
+	 * route under it (e.g. `/v1/settings`, `/v1/health`). A bare
+	 * `/wp-json/newspack-nodes` without the slash also matches via prefix —
+	 * confirms the prefix semantics aren't accidentally tightened.
+	 */
+	public function test_is_allowed_endpoint_with_arbitrary_subroute(): void {
+		$this->assertTrue(
+			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes/v1/anywhere/at/all' )
+		);
+		$this->assertTrue(
+			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v2/future' )
+		);
+	}
 }

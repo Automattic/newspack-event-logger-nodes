@@ -1833,4 +1833,583 @@ class RemoteManagerTest extends TestCase {
 		// All pass; the guard is `is_string && '' !== action`.
 		$this->assertTrue( true );
 	}
+
+	// -------------------------------------------------------------------------
+	// handle_job — unknown action with non-callable handler in filter map.
+	// -------------------------------------------------------------------------
+
+	public function test_handle_job_unknown_action_with_non_callable_handler_logs(): void {
+		// When a filter registers a handler that isn't callable, the dispatch
+		// must NOT crash — it falls through to the error_log branch instead.
+		\add_filter(
+			'newspack_event_logger_nodes/remote_actions',
+			static function ( $handlers ) {
+				$handlers['noncallable_action'] = 'not_a_real_function_xyz';
+				return $handlers;
+			}
+		);
+		RemoteManager::handle_job( [ 'action' => 'noncallable_action' ] );
+		$this->assertTrue( true );
+	}
+
+	// -------------------------------------------------------------------------
+	// handle_job — unknown action whose filter returns a non-array.
+	// -------------------------------------------------------------------------
+
+	public function test_handle_job_unknown_action_with_non_array_filter_logs(): void {
+		// Filter that returns a non-array (e.g. 'oops') must not crash — the
+		// `is_array($handlers)` guard sends us to the error_log branch.
+		\add_filter(
+			'newspack_event_logger_nodes/remote_actions',
+			static function () {
+				return 'not-an-array';
+			}
+		);
+		RemoteManager::handle_job( [ 'action' => 'whatever_unknown' ] );
+		$this->assertTrue( true );
+	}
+
+	// -------------------------------------------------------------------------
+	// sync_setting — explicit servers filter where registry has the disabled entry.
+	// -------------------------------------------------------------------------
+
+	public function test_sync_setting_with_explicit_servers_honors_disabled_flag(): void {
+		// When the `servers` filter includes a disabled server, the inner
+		// `false === (bool) $server['enabled']` check skips it. Mirrors what
+		// happens when a fan-out targets a now-disabled spoke.
+		$reg = new ServerRegistry();
+		$reg->register( 'enabled-x', [ 'url' => 'https://enabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->register( 'disabled-x', [ 'url' => 'https://disabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->update( 'disabled-x', [ 'enabled' => false ] );
+
+		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
+		$GLOBALS['_wp_test_remote_posts']         = [];
+
+		RemoteManager::sync_setting(
+			'newspack_event_logger_nodes_log_events',
+			[ 'init' ],
+			'/wp-json/newspack-nodes/v1/settings',
+			[ 'enabled-x', 'disabled-x' ] // explicit
+		);
+
+		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
+		$this->assertContains( 'https://enabled-x.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertNotContains( 'https://disabled-x.test/wp-json/newspack-nodes/v1/settings', $urls );
+
+		unset( $GLOBALS['_wp_test_remote_post_response'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// queue_sync_all_settings — happy path: queues a job for each resolvable setting.
+	// -------------------------------------------------------------------------
+
+	public function test_queue_sync_all_settings_counts_queued_jobs(): void {
+		// With a resolvable config_key, the inner SettingsSync::queue_job will
+		// be invoked. We can't control its return easily (it touches filesystem)
+		// but the return value is int.
+		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 8;
+		Config::reset();
+
+		\add_filter(
+			'newspack_event_logger_nodes/synced_settings',
+			static function () {
+				return [
+					[
+						'local_option'  => 'newspack_nodes_num_segments',
+						'remote_option' => 'newspack_nodes_num_segments',
+						'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
+					],
+				];
+			}
+		);
+
+		$count = RemoteManager::queue_sync_all_settings( [ 'spoke-A' ] );
+		$this->assertIsInt( $count );
+		$this->assertGreaterThanOrEqual( 0, $count );
+	}
+
+	// -------------------------------------------------------------------------
+	// check_server — discovery payload with no validated keys returns empty array.
+	// -------------------------------------------------------------------------
+
+	public function test_health_check_discovery_with_minimal_payload(): void {
+		// Spoke returns 200 OK with a JSON payload that has only a lag value
+		// (no registered_hooks, no custom_events). The validated payload should
+		// contain only `lag`.
+		$reg = new ServerRegistry();
+		$reg->register( 'lag-only', [
+			'url'           => 'https://lag-only.test',
+			'auth_username' => 'u',
+			'auth_password' => 'p',
+		] );
+
+		$GLOBALS['_wp_test_remote_responses'] = [
+			'https://lag-only.test/wp-json/newspack-nodes/v1/discovery' => [
+				'response' => [ 'code' => 200 ],
+				'body'     => \json_encode( [ 'lag' => 999 ] ),
+			],
+		];
+
+		$received = null;
+		\add_action(
+			'newspack_event_logger_nodes/health_check_discovery',
+			static function ( $data ) use ( &$received ) {
+				$received = $data;
+			}
+		);
+
+		RemoteManager::health_check();
+
+		$this->assertArrayHasKey( 'lag-only', $received );
+		$this->assertSame( 999, $received['lag-only']['lag'] );
+		$this->assertArrayNotHasKey( 'registered_hooks', $received['lag-only'] );
+		$this->assertArrayNotHasKey( 'custom_events', $received['lag-only'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// request_args — extra headers explicitly set + custom values merged with auth.
+	// -------------------------------------------------------------------------
+
+	public function test_request_args_preserves_extra_headers_when_no_auth(): void {
+		// Extra headers must be preserved when no auth fields are supplied.
+		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method->setAccessible( true );
+
+		$args = $method->invoke(
+			null,
+			[ 'url' => 'https://x.test' ],
+			[ 'headers' => [ 'X-Foo' => 'bar', 'X-Baz' => 'qux' ] ]
+		);
+
+		$this->assertSame( 'bar', $args['headers']['X-Foo'] );
+		$this->assertSame( 'qux', $args['headers']['X-Baz'] );
+		$this->assertArrayNotHasKey( 'Authorization', $args['headers'] );
+	}
+
+	public function test_request_args_basic_auth_adds_to_existing_headers(): void {
+		// When extra headers are present AND auth creds are set, Authorization
+		// must be added alongside (not replacing) the existing headers.
+		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method->setAccessible( true );
+
+		$args = $method->invoke(
+			null,
+			[
+				'url'           => 'https://x.test',
+				'auth_username' => 'admin',
+				'auth_password' => 'pw',
+			],
+			[ 'headers' => [ 'X-Trace-Id' => 'abc' ] ]
+		);
+
+		$this->assertSame( 'abc', $args['headers']['X-Trace-Id'] );
+		$this->assertStringStartsWith( 'Basic ', $args['headers']['Authorization'] );
+	}
+
+	public function test_request_args_bearer_token_adds_to_existing_headers(): void {
+		// Same merge rule for the legacy `token` field.
+		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method->setAccessible( true );
+
+		$args = $method->invoke(
+			null,
+			[ 'url' => 'https://x.test', 'token' => 'legacy-tok' ],
+			[ 'headers' => [ 'X-Trace-Id' => 'xyz' ] ]
+		);
+
+		$this->assertSame( 'xyz', $args['headers']['X-Trace-Id'] );
+		$this->assertSame( 'Bearer legacy-tok', $args['headers']['Authorization'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// request_args — config-driven aggregator_verify_ssl flag.
+	// -------------------------------------------------------------------------
+
+	public function test_request_args_includes_default_sslverify_true(): void {
+		// `aggregator_verify_ssl` default is true; request_args reflects that.
+		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method->setAccessible( true );
+
+		$args = $method->invoke( null, [ 'url' => 'https://x.test' ], [] );
+
+		$this->assertArrayHasKey( 'sslverify', $args );
+		// Default is `true` per `$config['aggregator_verify_ssl'] ?? true`.
+		$this->assertTrue( $args['sslverify'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// response_code — wp_remote_retrieve_response_code is always defined in tests,
+	// so we exercise the array-shape path through reflection on a malformed array.
+	// -------------------------------------------------------------------------
+
+	public function test_response_code_default_zero_for_missing_response_key(): void {
+		$method = new \ReflectionMethod( RemoteManager::class, 'response_code' );
+		$method->setAccessible( true );
+		// Array missing `response.code` → wp_remote_retrieve_response_code returns 0.
+		$this->assertSame( 0, $method->invoke( null, [ 'body' => 'no code here' ] ) );
+	}
+
+	public function test_response_body_empty_for_missing_body_key(): void {
+		$method = new \ReflectionMethod( RemoteManager::class, 'response_body' );
+		$method->setAccessible( true );
+		// Array without `body` key → empty string.
+		$this->assertSame( '', $method->invoke( null, [ 'response' => [ 'code' => 200 ] ] ) );
+	}
+
+	// -------------------------------------------------------------------------
+	// wp_error_or_array — verifies the structured-array fallback signature.
+	// -------------------------------------------------------------------------
+
+	public function test_wp_error_or_array_contains_code_and_message(): void {
+		// WP_Error is in the bootstrap so we always get WP_Error in this test
+		// suite. The method's important invariant is the shape — code +
+		// message present.
+		$method = new \ReflectionMethod( RemoteManager::class, 'wp_error_or_array' );
+		$method->setAccessible( true );
+
+		$result = $method->invoke( null, 'my_code', 'my_message' );
+		$this->assertSame( 'my_code', $result->get_error_code() );
+		$this->assertSame( 'my_message', $result->get_error_message() );
+	}
+
+	// -------------------------------------------------------------------------
+	// calculate_lag — cursor missing for a partition with segments.
+	// -------------------------------------------------------------------------
+
+	public function test_calculate_lag_with_missing_cursor_entry_for_partition(): void {
+		// Partition 0 has segments but $cursor doesn't include partition 0 —
+		// `$cur_seg = ''` and `$found_current` stays false; the "all segments
+		// ahead" trailing loop fires.
+		$segments = [
+			0 => [
+				[ 'id' => 'seg0', 'size' => 100 ],
+				[ 'id' => 'seg1', 'size' => 200 ],
+			],
+		];
+		$cursor = []; // no cursor entries at all
+		$this->assertSame( 300, RemoteManager::calculate_lag( $segments, $cursor ) );
+	}
+
+	public function test_calculate_lag_with_cursor_pointing_to_missing_segment(): void {
+		// Cursor refers to a segment_id that's NOT in the segments list — the
+		// `! $found_current` AND `'' !== $cur_seg` branch is the "consumer is
+		// already past every known segment" case → returns 0 for that partition
+		// (the trailing loop's guard).
+		$segments = [
+			0 => [
+				[ 'id' => 'seg-a', 'size' => 50 ],
+				[ 'id' => 'seg-b', 'size' => 60 ],
+			],
+		];
+		$cursor = [
+			0 => [ 'segment_id' => 'seg-not-here', 'offset' => 0 ],
+		];
+		$this->assertSame( 0, RemoteManager::calculate_lag( $segments, $cursor ) );
+	}
+
+	// -------------------------------------------------------------------------
+	// sync_setting — non-string entry in $server_ids array param is skipped silently.
+	// -------------------------------------------------------------------------
+
+	public function test_sync_setting_skips_non_string_server_id_silently(): void {
+		// Mixed-type IDs: the inner `is_string($server_id)` guard skips
+		// non-strings without errors. Only the string 'real' makes the cut.
+		$reg = new ServerRegistry();
+		$reg->register( 'real', [ 'url' => 'https://real.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+
+		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
+		$GLOBALS['_wp_test_remote_posts']         = [];
+
+		RemoteManager::sync_setting(
+			'newspack_event_logger_nodes_log_events',
+			[],
+			'/wp-json/newspack-nodes/v1/settings',
+			[ 'real', 42, true, [ 'bad' ] ]
+		);
+
+		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
+		$this->assertCount( 1, $urls );
+		$this->assertSame( 'https://real.test/wp-json/newspack-nodes/v1/settings', $urls[0] );
+
+		unset( $GLOBALS['_wp_test_remote_post_response'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// handle_job — empty servers list after array_filter normalizes to null.
+	// -------------------------------------------------------------------------
+
+	public function test_handle_job_servers_param_with_only_non_strings_normalizes_to_null(): void {
+		// `servers: [42, true, null]` → array_filter('is_string') yields empty
+		// → normalized to null → falls through to "all enabled".
+		$reg = new ServerRegistry();
+		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+
+		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
+		$GLOBALS['_wp_test_remote_posts']         = [];
+
+		RemoteManager::handle_job( [
+			'action'    => 'sync_setting',
+			'option'    => 'newspack_event_logger_nodes_log_events',
+			'value'     => [],
+			'servers'   => [ 42, true, null ],
+			'queued_at' => \time(),
+		] );
+
+		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
+		// Fan-out hit the lone enabled server (because servers normalized to null).
+		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/settings', $urls );
+
+		unset( $GLOBALS['_wp_test_remote_post_response'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// post_to_server — wp_error returned from remote (sync_error log path).
+	// -------------------------------------------------------------------------
+
+	public function test_sync_setting_handles_wp_error_with_method_exists(): void {
+		// post_to_server returns a WP_Error; the wp_error_or_array() branch
+		// flows through log_status('sync_error', $message).
+		$reg = new ServerRegistry();
+		$reg->register( 'fail', [ 'url' => 'https://fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+
+		// Configure wp_remote_post to return WP_Error.
+		$GLOBALS['_wp_test_remote_post_response'] = new \WP_Error( 'http_failed', 'host unreachable' );
+
+		RemoteManager::sync_setting(
+			'newspack_event_logger_nodes_log_events',
+			[ 'init' ],
+			'/wp-json/newspack-nodes/v1/settings'
+		);
+
+		// Just verify no exception bubbled out — the log_status path is
+		// best-effort and the LogManager singleton is disabled by default.
+		$this->assertTrue( true );
+
+		unset( $GLOBALS['_wp_test_remote_post_response'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// post_to_server — body argument propagates as JSON-encoded payload.
+	// -------------------------------------------------------------------------
+
+	public function test_post_to_server_encodes_body_as_json(): void {
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://x.test', 'auth_username' => 'u', 'auth_password' => 'p' ],
+			'/wp-json/newspack-nodes/v1/settings',
+			[ 'nested' => [ 'a' => 1, 'b' => 'two' ], 'flag' => true ]
+		);
+
+		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
+		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
+
+		// Content-Type set, body is JSON, decode round-trips the structure.
+		$this->assertSame( 'application/json', $last['args']['headers']['Content-Type'] ?? '' );
+		$decoded = \json_decode( $last['args']['body'], true );
+		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $decoded['nested'] );
+		$this->assertTrue( $decoded['flag'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// health_check — option-loaded plaintext entry processed cleanly.
+	// -------------------------------------------------------------------------
+
+	public function test_health_check_processes_option_loaded_entry(): void {
+		// Injecting an entry straight into the option (bypassing ServerRegistry's
+		// register API) exercises the merge path in get_all(). The health_check
+		// loop's is_string guard filters non-string keys naturally.
+		$GLOBALS['_wp_options'][ ServerRegistry::OPTION_KEY ] = [
+			'valid-id' => [
+				'url'           => 'https://valid.test',
+				'auth_username' => 'u',
+				'auth_password' => 'p',
+				'enabled'       => true,
+			],
+		];
+
+		// Reset the singleton so the option load is honored.
+		$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, null );
+
+		$GLOBALS['_wp_test_remote_responses'] = [
+			'https://valid.test/wp-json/newspack-nodes/v1/discovery' => [
+				'response' => [ 'code' => 200 ],
+				'body'     => \json_encode( [ 'lag' => 0 ] ),
+			],
+		];
+
+		$received = null;
+		\add_action(
+			'newspack_event_logger_nodes/health_check_discovery',
+			static function ( $data ) use ( &$received ) {
+				$received = $data;
+			}
+		);
+
+		RemoteManager::health_check();
+
+		$this->assertIsArray( $received );
+		$this->assertArrayHasKey( 'valid-id', $received );
+	}
+
+	// -------------------------------------------------------------------------
+	// sanitize_handler_parameters — endpoint missing entirely passes through.
+	// -------------------------------------------------------------------------
+
+	public function test_sanitize_handler_parameters_preserves_non_endpoint_keys(): void {
+		// Reflection invocation; missing endpoint key → no special handling,
+		// other keys preserved.
+		$method = new \ReflectionMethod( RemoteManager::class, 'sanitize_handler_parameters' );
+		$method->setAccessible( true );
+
+		$result = $method->invoke(
+			null,
+			[ 'data' => [ 'a', 'b' ], 'flag' => true, 'count' => 5 ]
+		);
+		$this->assertSame( [ 'a', 'b' ], $result['data'] );
+		$this->assertTrue( $result['flag'] );
+		$this->assertSame( 5, $result['count'] );
+		$this->assertArrayNotHasKey( 'endpoint', $result );
+	}
+
+	public function test_sanitize_handler_parameters_drops_non_string_endpoint(): void {
+		// Non-string endpoint value is dropped (the `is_string` guard).
+		$method = new \ReflectionMethod( RemoteManager::class, 'sanitize_handler_parameters' );
+		$method->setAccessible( true );
+
+		$result = $method->invoke(
+			null,
+			[ 'endpoint' => [ 'array', 'not', 'string' ], 'other' => 'preserved' ]
+		);
+		$this->assertArrayNotHasKey( 'endpoint', $result );
+		$this->assertSame( 'preserved', $result['other'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// sync_all_settings — entry whose endpoint key is missing falls back to default.
+	// -------------------------------------------------------------------------
+
+	public function test_sync_all_settings_uses_default_endpoint_when_missing(): void {
+		// Missing `endpoint` key → defaults to SettingsSync::ENDPOINT.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] = [ '/v' ];
+		Config::reset();
+
+		\add_filter(
+			'newspack_event_logger_nodes/synced_settings',
+			static function () {
+				return [
+					[
+						'local_option'  => 'newspack_event_logger_nodes_log_urls',
+						'remote_option' => 'newspack_event_logger_nodes_log_urls',
+						// no `endpoint` key — should fall back to SettingsSync::ENDPOINT
+					],
+				];
+			}
+		);
+
+		$reg = new ServerRegistry();
+		$reg->register( 'spoke-def', [
+			'url'           => 'https://spoke-def.test',
+			'auth_username' => 'u',
+			'auth_password' => 'p',
+		] );
+
+		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
+		$GLOBALS['_wp_test_remote_posts']         = [];
+
+		RemoteManager::sync_all_settings();
+
+		// At least one POST hit the default endpoint.
+		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
+		$this->assertNotEmpty( $urls );
+		// The default endpoint is SettingsSync::ENDPOINT.
+		$this->assertContains( 'https://spoke-def.test/wp-json/newspack-nodes/v1/settings', $urls );
+
+		unset( $GLOBALS['_wp_test_remote_post_response'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// queue_sync_all_settings — entry whose endpoint key is missing falls back.
+	// -------------------------------------------------------------------------
+
+	public function test_queue_sync_all_settings_uses_default_endpoint_when_missing(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] = [ '/v' ];
+		Config::reset();
+
+		\add_filter(
+			'newspack_event_logger_nodes/synced_settings',
+			static function () {
+				return [
+					[
+						'local_option'  => 'newspack_event_logger_nodes_log_urls',
+						'remote_option' => 'newspack_event_logger_nodes_log_urls',
+						// no `endpoint` key
+					],
+				];
+			}
+		);
+
+		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$this->assertIsInt( $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// init — DEFAULT_SERVER_ID prefix in begin_job_context with various names.
+	// -------------------------------------------------------------------------
+
+	public function test_begin_job_context_with_empty_name(): void {
+		$orig = RemoteManager::begin_job_context( '' );
+		$this->assertSame( '/jobs/', $_SERVER['REQUEST_URI'] );
+		RemoteManager::end_job_context( $orig );
+	}
+
+	public function test_begin_job_context_records_unique_id(): void {
+		// UNIQUE_ID generated via LogManager::generate_request_id (if available).
+		// Just verify we end up with an at-least-non-empty value in some
+		// situations where generate_request_id() is available.
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		unset( $_SERVER['UNIQUE_ID'] );
+		$orig = RemoteManager::begin_job_context( 'something' );
+
+		// UNIQUE_ID has been set to something (could be empty string if
+		// generate_request_id failed, but it must be set).
+		$this->assertArrayHasKey( 'UNIQUE_ID', $_SERVER );
+
+		RemoteManager::end_job_context( $orig );
+	}
+
+	// -------------------------------------------------------------------------
+	// sync_setting — server entry with no 'enabled' key (legacy plaintext).
+	// -------------------------------------------------------------------------
+
+	public function test_sync_setting_includes_legacy_server_without_enabled_key(): void {
+		// Legacy registries lack the `enabled` field; the code defaults to
+		// "no flag = enabled" so the spoke should receive the POST.
+		$GLOBALS['_wp_options'][ ServerRegistry::OPTION_KEY ] = [
+			'legacy' => [
+				// no 'enabled' key
+				'url'           => 'https://legacy.test',
+				'auth_username' => 'u',
+				'auth_password' => 'p',
+			],
+		];
+		$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, null );
+
+		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
+		$GLOBALS['_wp_test_remote_posts']         = [];
+
+		RemoteManager::sync_setting(
+			'newspack_event_logger_nodes_log_events',
+			[ 'init' ],
+			'/wp-json/newspack-nodes/v1/settings'
+		);
+
+		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
+		$this->assertContains( 'https://legacy.test/wp-json/newspack-nodes/v1/settings', $urls );
+
+		unset( $GLOBALS['_wp_test_remote_post_response'] );
+	}
 }

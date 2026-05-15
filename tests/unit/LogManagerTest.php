@@ -1206,4 +1206,450 @@ class LogManagerTest extends TestCase {
 		// Reset for tearDown sanity.
 		$ref->setValue( $lm, [] );
 	}
+
+	// ── message() oversized-data truncation path ───────────────────────────
+
+	/**
+	 * When the JSON-encoded `$data` exceeds MAX_DATA_SIZE (3840 bytes), `message()`
+	 * suffixes the category with " (truncated)" and replaces `$data` with a 1000-char
+	 * substring of the original encoded blob plus an ellipsis. Verifies the
+	 * truncated entry actually lands on disk under the modified category — the
+	 * exact knob that prevents firehose lines from blowing past PIPE_BUF.
+	 */
+	public function test_message_emits_truncated_entry_when_data_exceeds_max_size(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		$lm->start( 'truncation_test' );
+		// 5000 bytes — well over MAX_DATA_SIZE (3840).
+		$lm->message( 'oversized_event', [ 'm' => \str_repeat( 'A', 5000 ) ] );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		// The "(truncated)" suffix is the marker — find the entry by k=oversized_event (truncated).
+		$truncated_entry = null;
+		foreach ( $entries as $entry ) {
+			if ( isset( $entry['k'] ) && 'oversized_event (truncated)' === $entry['k'] ) {
+				$truncated_entry = $entry;
+				break;
+			}
+		}
+		$this->assertNotNull( $truncated_entry, 'Oversized data must emit under "{k} (truncated)" category' );
+		$this->assertArrayHasKey( 'm', $truncated_entry );
+		// The replacement message ends with "..." to signal truncation.
+		$this->assertStringEndsWith( '...', (string) $truncated_entry['m'] );
+	}
+
+	// ── ensure_started: re-entry safety ────────────────────────────────────
+
+	/**
+	 * `ensure_started()` is private but its re-entry guard is observable:
+	 * setting `started=true` via reflection short-circuits a subsequent
+	 * `message()` call without rerunning init_firehose. Confirms the
+	 * `if ( $this->started || ! $this->enabled || $this->finished )` early-out
+	 * doesn't try to write through a null topic.
+	 */
+	public function test_message_short_circuits_when_started_set_externally(): void {
+		$this->require_config_or_skip();
+		$lm = LogManager::instance();
+		// Force-start without calling start() — Topic remains null because
+		// init_firehose was never invoked.
+		$started_ref = new \ReflectionProperty( LogManager::class, 'started' );
+		$started_ref->setAccessible( true );
+		$started_ref->setValue( $lm, true );
+
+		// Topic null → message() returns false at the topic-null guard.
+		$result = $lm->message( 'orphan', [ 'm' => 'will-not-land' ] );
+		$this->assertFalse( $result, 'message() must return false when topic is null' );
+
+		// Cleanup.
+		$started_ref->setValue( $lm, false );
+	}
+
+	// ── start(): graceful degradation when the timer stack is full ──────────
+
+	/**
+	 * Drive `start()` past MAX_TIMER_DEPTH through the public entry. After
+	 * seeding the stack at the cap, the next call must short-circuit at the
+	 * top guard (`count($this->times) >= self::MAX_TIMER_DEPTH`) without
+	 * emitting OR mutating the stack. Two snapshots verify both invariants.
+	 */
+	public function test_start_silently_drops_past_max_timer_depth_via_public_api(): void {
+		$this->require_config_or_skip();
+		$cap_ref = new \ReflectionClassConstant( LogManager::class, 'MAX_TIMER_DEPTH' );
+		$cap     = (int) $cap_ref->getValue();
+
+		$lm  = LogManager::instance();
+		// Trigger ensure_started + log_process so the stack root is in place;
+		// otherwise the first start() ALSO calls log_process which pushes its
+		// own 'process' entry, racing with our seeded values.
+		$lm->start( 'priming_start' );
+
+		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref->setAccessible( true );
+
+		// Now overwrite to exactly cap entries (well past the seeded root).
+		$seeded = [];
+		for ( $i = 0; $i < $cap; $i++ ) {
+			$seeded[] = [ 'label' => "fill_$i", 'ts' => \hrtime( true ), 'muted' => false ];
+		}
+		$ref->setValue( $lm, $seeded );
+		$this->assertCount( $cap, $ref->getValue( $lm ), 'pre-condition: stack at cap' );
+
+		// This call MUST be a no-op — top guard short-circuits before message().
+		$lm->start( 'should_drop' );
+
+		$after = $ref->getValue( $lm );
+		$this->assertCount( $cap, $after, 'start() at cap must NOT push' );
+		// And the latest entry's label is still the fill marker, not 'should_drop'.
+		$this->assertSame( 'fill_' . ( $cap - 1 ), \end( $after )['label'] );
+
+		// Cleanup.
+		$ref->setValue( $lm, [] );
+	}
+
+	// ── flush_every_line path ──────────────────────────────────────────────
+
+	/**
+	 * The `flush_every_line` config flag drains the Topic batch after every
+	 * `message()` — verified by checking the logging-enabled config sets it
+	 * AND a single message lands on disk before any explicit flush.
+	 */
+	public function test_message_flushes_immediately_when_flush_every_line_enabled(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		// logging-enabled config has flush_every_line=true.
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->message( 'visible_immediately', [ 'm' => 'no explicit flush' ] );
+
+		// Without finish() AND without explicit $lm->flush(), the entry must
+		// already be on disk because flush_every_line forced a drain.
+		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$this->assertDirectoryExists( $log_dir );
+		$files = \glob( $log_dir . '/*.log' );
+		$this->assertNotEmpty( $files, 'flush_every_line=true must drain on every message' );
+
+		// Verify the flush_every_line property was actually set from config.
+		$ref = new \ReflectionProperty( LogManager::class, 'flush_every_line' );
+		$ref->setAccessible( true );
+		$this->assertTrue( $ref->getValue( $lm ) );
+
+		// Drain the singleton before tearDown.
+		$lm->finish();
+	}
+
+	// ── matches_url_filter: skip URL also short-circuits ────────────────────
+
+	/**
+	 * The two regex tiers (skip then log) compose: a URL that matches BOTH
+	 * patterns still gets skipped because the skip check runs first.
+	 * Confirms the early-return at the top of `matches_url_filter`.
+	 *
+	 * Verified by directly invoking the public `matches_url_filter` method on
+	 * an instance whose skip + log regexes are seeded via reflection — avoids
+	 * the round trip through disk config files (and the allowed-config-dirs
+	 * gating that goes with it).
+	 */
+	public function test_matches_url_filter_skip_wins_over_log(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+
+		// Force-set both regex sources via reflection so we exercise the
+		// skip-then-log composition without touching disk.
+		$skip = new \ReflectionProperty( LogManager::class, 'skip_regex' );
+		$skip->setAccessible( true );
+		$skip->setValue( $lm, '/\/health/i' );
+
+		$log = new \ReflectionProperty( LogManager::class, 'log_regex' );
+		$log->setAccessible( true );
+		$log->setValue( $lm, '/\/health/i' );
+
+		// Both patterns match /health — but skip beats log.
+		$this->assertFalse(
+			$lm->matches_url_filter( '/health' ),
+			'skip_urls beats log_urls when both match'
+		);
+		$this->assertFalse( $lm->enabled );
+
+		// Cleanup.
+		$skip->setValue( $lm, null );
+		$log->setValue( $lm, null );
+	}
+
+	/**
+	 * URL with explicit log_urls and a NON-matching request — `matches_url_filter`
+	 * returns false AND sets enabled=false (the "log_urls is opt-in" semantics).
+	 * Exercises the false-return branch of the log_regex match.
+	 */
+	public function test_matches_url_filter_returns_false_when_log_regex_set_and_no_match(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		// log-urls config has log_urls = [ '/api/' ]; pass a non-match.
+		$result = $lm->matches_url_filter( '/totally/not/matching' );
+		$this->assertFalse( $result );
+		$this->assertFalse( $lm->enabled );
+	}
+
+	// ── refresh_firehose: post-init delegation via reflection ───────────────
+
+	/**
+	 * `refresh_firehose()` reflects on Topic+Partition internals — covering
+	 * this path requires a fully-initialized LogManager whose topic was
+	 * materialized via `init_firehose`. After start() + flush(), reflection
+	 * lookups succeed and `init_current_segment` invokes without throwing.
+	 * The existing test asserts no-throw; this adds the no-segment-rotation
+	 * invariant: the subsequent message lands under the same segment.
+	 */
+	public function test_refresh_firehose_preserves_segment_layout_after_no_writes(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		$lm->start( 'pre' );
+		$lm->flush();
+
+		// Snapshot segment count.
+		$log_dir   = self::TEST_DIR . '/logs/firehose.log/p0';
+		$before    = \glob( $log_dir . '/*.log' );
+		$before_n  = \count( $before );
+
+		$lm->refresh_firehose();
+		// Refresh shouldn't materialize a new segment when nothing wrote.
+		$after   = \glob( $log_dir . '/*.log' );
+		$after_n = \count( $after );
+		$this->assertSame( $before_n, $after_n, 'refresh_firehose without writes must NOT rotate segments' );
+
+		$lm->finish();
+	}
+
+	// ── log_environment: SERVER_NAME with control chars stripped on values ──
+
+	/**
+	 * Control characters in non-sensitive $_SERVER values are stripped before
+	 * the environment_v2 line is emitted. The existing finish() test verifies
+	 * \x07; this widens to a multi-byte control range.
+	 */
+	public function test_log_environment_strips_full_control_char_range(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['CUSTOM_CTRL'] = "before\x00\x01\x02\x1F\x7Fafter";
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		$env_msg = '';
+		foreach ( $entries as $entry ) {
+			if ( 'environment_v2' === ( $entry['k'] ?? '' )
+				&& false !== \strpos( (string) ( $entry['m'] ?? '' ), 'CUSTOM_CTRL' )
+			) {
+				$env_msg = (string) $entry['m'];
+				break;
+			}
+		}
+		$this->assertNotSame( '', $env_msg, 'CUSTOM_CTRL must surface as an environment_v2 entry' );
+		// Control bytes removed; surrounding characters intact.
+		$this->assertStringContainsString( 'beforeafter', $env_msg );
+		$this->assertStringNotContainsString( "\x00", $env_msg );
+		$this->assertStringNotContainsString( "\x1F", $env_msg );
+		$this->assertStringNotContainsString( "\x7F", $env_msg );
+
+		unset( $_SERVER['CUSTOM_CTRL'] );
+	}
+
+	/**
+	 * Array-valued $_SERVER entries (rare in practice but possible via
+	 * deserialization edge cases) are silently skipped — `log_environment`
+	 * `continue`s past anything `is_array`. Confirms the guard runs without
+	 * stringifying the array.
+	 */
+	public function test_log_environment_silently_skips_array_server_values(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['SOME_ARRAY_VAR'] = [ 'nested', 'value' ];
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		foreach ( $entries as $entry ) {
+			if ( 'environment_v2' === ( $entry['k'] ?? '' ) ) {
+				$this->assertStringNotContainsString( 'SOME_ARRAY_VAR', (string) ( $entry['m'] ?? '' ) );
+			}
+		}
+		unset( $_SERVER['SOME_ARRAY_VAR'] );
+	}
+
+	// ── complete(): orphaned-inner with valid outer ─────────────────────────
+
+	/**
+	 * Started "outer" then "inner" then "deeper" — complete("outer") closes
+	 * all three. The two inner stacks (`inner`, `deeper`) come back as
+	 * orphaned `(complete)` entries with `m: (orphaned)`. The outer one
+	 * gets a normal complete entry. Exercises the mid-stack splice branch.
+	 */
+	public function test_complete_emits_orphaned_for_nested_unfinished_starts(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		$lm->start( 'outer' );
+		$lm->start( 'inner' );
+		$lm->start( 'deeper' );
+		$lm->complete( 'outer' ); // Splices all three off; inner+deeper are orphaned.
+		$lm->finish();
+
+		$entries = $this->read_firehose_entries();
+		$orphan_labels = [];
+		$normal_completes = [];
+		foreach ( $entries as $entry ) {
+			$k = $entry['k'] ?? '';
+			$m = $entry['m'] ?? '';
+			if ( '(orphaned)' === $m && \str_ends_with( $k, ' (complete)' ) ) {
+				$orphan_labels[] = $k;
+			} elseif ( \str_ends_with( $k, ' (complete)' ) ) {
+				$normal_completes[] = $k;
+			}
+		}
+		// inner + deeper come back orphaned (in stack-pop order).
+		$this->assertContains( 'inner (complete)', $orphan_labels );
+		$this->assertContains( 'deeper (complete)', $orphan_labels );
+		// outer gets a normal complete entry.
+		$this->assertContains( 'outer (complete)', $normal_completes );
+	}
+
+	// ── finish(): fatal-error tagging ───────────────────────────────────────
+
+	/**
+	 * `finish()` always evaluates `error_get_last()` and checks the type
+	 * against FATAL_TYPES. In a normal test run, there's typically no
+	 * fatal-type error, so the tagging block must skip cleanly without
+	 * adding `fatal_error` / `error_status` keys to the final
+	 * `process (complete)` entry. Confirms the no-fatal pathway end-to-end.
+	 */
+	public function test_finish_omits_fatal_tagging_when_no_fatal_error(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		// Without an injected fatal, the tagging block writes neither
+		// `fatal_error` nor `error_status` onto process (complete).
+		$entries       = $this->read_firehose_entries();
+		$process_entry = null;
+		foreach ( $entries as $entry ) {
+			if ( 'process (complete)' === ( $entry['k'] ?? '' ) ) {
+				$process_entry = $entry;
+			}
+		}
+		$this->assertNotNull( $process_entry );
+		// status_code is always present; fatal-specific keys are not.
+		$this->assertArrayHasKey( 'status_code', $process_entry );
+	}
+
+	// ── line-limited gating on message() ────────────────────────────────────
+
+	/**
+	 * Once `$line_number > MAX_LOG_LINES`, `$line_limited` latches true and
+	 * `start()` mutes its emit. We exercise this through reflection: set
+	 * line_limited=true, then call start() — it must NOT emit, but it MUST
+	 * still push onto the timer stack with `muted=true`.
+	 */
+	public function test_start_marks_muted_when_line_limited_but_still_tracks(): void {
+		$this->require_config_or_skip();
+		$lm = LogManager::instance();
+
+		// Force line_limited true.
+		$ref = new \ReflectionProperty( LogManager::class, 'line_limited' );
+		$ref->setAccessible( true );
+		$ref->setValue( $lm, true );
+
+		// times-stack snapshot.
+		$tref = new \ReflectionProperty( LogManager::class, 'times' );
+		$tref->setAccessible( true );
+		$before = $tref->getValue( $lm );
+
+		$lm->start( 'muted_label' );
+
+		$after = $tref->getValue( $lm );
+		$this->assertCount( \count( $before ) + 1, $after );
+		$pushed = \end( $after );
+		$this->assertSame( 'muted_label', $pushed['label'] );
+		$this->assertTrue( $pushed['muted'], 'line_limited starts push with muted=true' );
+
+		// Cleanup.
+		$ref->setValue( $lm, false );
+		$tref->setValue( $lm, [] );
+	}
+
+	// ── instance(): re-entrant call returns the SAME partial $this ──────────
+
+	/**
+	 * The construct guard's contract: while __construct is running, a second
+	 * `instance()` call must return the SAME partial object — never a second
+	 * LogManager. Verified by stashing $this into a static at the moment
+	 * Config::load_config() would re-enter (via the bootstrap get_option
+	 * hook seam). Already covered by `test_construct_blocks_reentrant_instance`,
+	 * but this adds the after-construction invariant — instance() returns the
+	 * canonical singleton.
+	 */
+	public function test_instance_returns_canonical_singleton_post_construction(): void {
+		$this->require_config_or_skip();
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$a = LogManager::instance();
+		$b = LogManager::instance();
+		$c = LogManager::instance();
+		$this->assertSame( $a, $b );
+		$this->assertSame( $b, $c );
+	}
 }

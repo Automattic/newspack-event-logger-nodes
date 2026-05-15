@@ -86,7 +86,7 @@ class FirehoseStreamControllerTest extends TestCase {
 
 	private function write_firehose_segment( int $partition, int $segment_id, array $entries ): string {
 		$dir = "{$this->tmp_dir}/logs/firehose.log/p{$partition}";
-		\mkdir( $dir, 0755, true );
+		@\mkdir( $dir, 0755, true );
 		$path = "{$dir}/{$segment_id}.log";
 		$body = '';
 		foreach ( $entries as $e ) {
@@ -502,5 +502,209 @@ class FirehoseStreamControllerTest extends TestCase {
 		// Only the valid entry should produce output.
 		$this->assertStringContainsString( '"rid":"rok"', $out );
 		$this->assertStringNotContainsString( 'plain string, not an array', $out );
+	}
+
+	// =========================================================================
+	// stream(): public entry point WP_Error branch.
+	// =========================================================================
+
+	/**
+	 * `stream()` itself is the public entry point — it calls `stream_run` and,
+	 * on `WP_Error`, returns it without calling `exit`. Saturating the slot
+	 * pool exercises that early-return branch without ever entering the loop
+	 * or exiting the request, so the test process keeps running.
+	 */
+	public function test_stream_returns_wp_error_directly_when_rate_limited(): void {
+		$this->pin_log_base();
+		$cache = SSEControllerBase::cache();
+		// Saturate the global browser slot pool (-1).
+		$ip_hash = \substr( \md5( '127.0.0.1' ), 0, 8 );
+		for ( $i = 0; $i < SSEControllerBase::MAX_SSE_SLOTS; $i++ ) {
+			$cache->add( "evlog:sse:7:{$ip_hash}:{$i}", 'occupied', 60 );
+		}
+
+		$ctrl = new TestableFirehoseStreamController();
+		$ctrl->set_max_loops( 0 );
+		$req = new \WP_REST_Request();
+		$req->set_param( 'partition', 0 );
+		$req->set_param( 'aggregator', false );
+
+		\ob_start();
+		$result = $ctrl->stream( $req );
+		\ob_get_clean();
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$this->assertSame( 'too_many_connections', $result->get_error_code() );
+		$this->assertSame( 429, $result->data['status'] );
+	}
+
+	// =========================================================================
+	// stream_run: segment rotation path (next_segment branch).
+	// =========================================================================
+
+	/**
+	 * When `is_caught_up()` is false (the reader hasn't reached the newest
+	 * segment yet), the loop body calls `$reader->next_segment()` to roll
+	 * forward. Two segments with the older segment back-dated (so
+	 * `next_segment`'s mtime-freshness guard doesn't keep the reader pinned)
+	 * exercise the rotation branch — the second pass advances to segment 1.
+	 */
+	public function test_stream_run_advances_reader_to_next_segment(): void {
+		$this->pin_log_base();
+		// Two adjacent segments so next_segment() rolls forward.
+		$path_0 = $this->write_firehose_segment( 0, 0, [
+			[ 'k' => 'first', 'rid' => 'r0', 'ts' => 1700000000 ],
+		] );
+		$this->write_firehose_segment( 0, 1, [
+			[ 'k' => 'second', 'rid' => 'r1', 'ts' => 1700000001 ],
+		] );
+
+		// Age segment 0 past Partition_Reader::next_segment's 5-second mtime
+		// freshness window so rotation is permitted.
+		\touch( $path_0, \time() - 60 );
+
+		$ctrl = new TestableFirehoseStreamController();
+		$ctrl->set_max_loops( 6 );
+		$req = new \WP_REST_Request();
+		$req->set_param( 'partition', 0 );
+		// Start at segment 0 offset 0 — reader replays first, then rotates.
+		$req->set_param( 'segment_id', 0 );
+		$req->set_param( 'offset', 0 );
+		$req->set_param( 'aggregator', false );
+
+		\ob_start();
+		$ctrl->public_stream_run( $req );
+		$out = \ob_get_clean();
+
+		// Both entries surface as the reader traverses both segments.
+		$this->assertStringContainsString( '"rid":"r0"', $out );
+		$this->assertStringContainsString( '"rid":"r1"', $out );
+	}
+
+	// =========================================================================
+	// stream_run: aggregator mode with explicit partition uses per-partition pool.
+	// =========================================================================
+
+	/**
+	 * Aggregator mode with `partition=0` acquires a slot from the per-partition
+	 * pool, not the shared browser pool. Saturating only the shared pool must
+	 * NOT block the aggregator path — distinct cache namespaces.
+	 */
+	public function test_stream_run_aggregator_uses_partition_pool_when_browser_full(): void {
+		$this->pin_log_base();
+		$this->write_firehose_segment( 0, 0, [] );
+
+		// Saturate the GLOBAL browser pool only.
+		$cache   = SSEControllerBase::cache();
+		$ip_hash = \substr( \md5( '127.0.0.1' ), 0, 8 );
+		for ( $i = 0; $i < SSEControllerBase::MAX_SSE_SLOTS; $i++ ) {
+			$cache->add( "evlog:sse:7:{$ip_hash}:{$i}", 'occupied', 60 );
+		}
+
+		$ctrl = new TestableFirehoseStreamController();
+		$ctrl->set_max_loops( 1 );
+		$req  = new \WP_REST_Request();
+		$req->set_param( 'partition', 0 );
+		$req->set_param( 'aggregator', true );
+
+		\ob_start();
+		$result = $ctrl->public_stream_run( $req );
+		$out    = \ob_get_clean();
+
+		// Aggregator path acquires from p0 pool — browser saturation doesn't block it.
+		$this->assertNull( $result );
+		$this->assertStringContainsString( "event: connected\n", $out );
+	}
+
+	// =========================================================================
+	// stream_run: position metadata carried in every emitted entry.
+	// =========================================================================
+
+	/**
+	 * Every `entry` event must carry a `position` object that callers can
+	 * round-trip back via segment_id/offset on reconnect. Confirms the loop
+	 * back-fills it from `$reader->get_position()` before send_sse_event.
+	 */
+	public function test_stream_run_entry_position_carries_segment_and_offset(): void {
+		$this->pin_log_base();
+		$this->write_firehose_segment( 0, 0, [
+			[ 'k' => 'request', 'rid' => 'rpos', 'ts' => 1700000000 ],
+		] );
+
+		$ctrl = new TestableFirehoseStreamController();
+		$ctrl->set_max_loops( 3 );
+		$req  = new \WP_REST_Request();
+		$req->set_param( 'partition', 0 );
+		$req->set_param( 'segment_id', 0 );
+		$req->set_param( 'offset', 0 );
+		$req->set_param( 'aggregator', false );
+
+		\ob_start();
+		$ctrl->public_stream_run( $req );
+		$out = \ob_get_clean();
+
+		$this->assertStringContainsString( '"rid":"rpos"', $out );
+		$this->assertStringContainsString( '"position":{', $out );
+		$this->assertStringContainsString( '"segment_id":0', $out );
+		$this->assertStringContainsString( '"offset":', $out );
+	}
+
+	// =========================================================================
+	// stream_run: rid back-fill from Message::KEY.
+	// =========================================================================
+
+	/**
+	 * Producers stamp `rid` on `Message::KEY`. The controller back-fills
+	 * `entry['rid']` from KEY before emitting — even when the inner VALUE
+	 * array has no `rid` field of its own. Confirms the back-fill is
+	 * unconditional.
+	 */
+	public function test_stream_run_backfills_rid_from_message_key(): void {
+		$this->pin_log_base();
+		$dir = "{$this->tmp_dir}/logs/firehose.log/p0";
+		\mkdir( $dir, 0755, true );
+
+		// Build a Message where VALUE has NO rid; KEY supplies it.
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::KEY ]   = 'key-supplied-rid';
+		$msg[ Message::VALUE ] = [ 'k' => 'log', 'ts' => 1700000222 ];
+		\file_put_contents( "{$dir}/0.log", Message::packed( $msg ) . "\n" );
+
+		$ctrl = new TestableFirehoseStreamController();
+		$ctrl->set_max_loops( 3 );
+		$req  = new \WP_REST_Request();
+		$req->set_param( 'partition', 0 );
+		$req->set_param( 'segment_id', 0 );
+		$req->set_param( 'offset', 0 );
+		$req->set_param( 'aggregator', false );
+
+		\ob_start();
+		$ctrl->public_stream_run( $req );
+		$out = \ob_get_clean();
+
+		// rid sourced from KEY surfaces on the emitted entry.
+		$this->assertStringContainsString( '"rid":"key-supplied-rid"', $out );
+	}
+
+	// =========================================================================
+	// register_routes: aggregator validate_callback covers extra inputs.
+	// =========================================================================
+
+	/**
+	 * The `aggregator` arg's `sanitize_callback` uses FILTER_VALIDATE_BOOLEAN
+	 * — verified for `true`/`false`/`yes`/`no`. Also exercise the int 1/0
+	 * variants since those flow through query-string parsing.
+	 */
+	public function test_aggregator_sanitize_handles_int_inputs(): void {
+		( new FirehoseStreamController() )->register_routes();
+		$cb = $GLOBALS['_rest_routes']['newspack-nodes/v1/firehose/stream']['args']['aggregator']['sanitize_callback'];
+
+		$this->assertTrue( $cb( 1 ) );
+		$this->assertFalse( $cb( 0 ) );
+		$this->assertTrue( $cb( true ) );
+		$this->assertFalse( $cb( false ) );
+		// Garbage input falls through to false (FILTER_VALIDATE_BOOLEAN strict-ish behavior).
+		$this->assertFalse( $cb( 'garbage' ) );
 	}
 }
