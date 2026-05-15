@@ -18,6 +18,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\HookCategorizer;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class PerfHooksAvailableController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -94,7 +95,7 @@ class PerfHooksAvailableController extends PerformanceControllerBase {
 		}
 
 		// Filter out custom events — they're managed via the custom-events tab.
-		$cfg            = self::load_config();
+		$cfg            = RuntimeConfig::load_config();
 		$custom_events  = $cfg['custom_events'] ?? [];
 		if ( \is_array( $custom_events ) ) {
 			foreach ( $custom_events as $key => $value ) {

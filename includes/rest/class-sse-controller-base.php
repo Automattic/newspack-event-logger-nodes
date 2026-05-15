@@ -34,6 +34,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\Memcached_Cache;
 use Newspack_Event_Logger_Nodes\Partition_Reader;
+use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Partition;
 
 abstract class SSEControllerBase {
@@ -133,15 +134,9 @@ abstract class SSEControllerBase {
 	 * Memcached_Cache from filtered config.
 	 */
 	public static function cache(): Cache_Interface {
-		if ( null !== self::$sse_cache ) {
-			return self::$sse_cache;
+		if ( null === self::$sse_cache ) {
+			self::$sse_cache = Memcached_Cache::from_substrate_config();
 		}
-		$config  = PerformanceControllerBase::load_config();
-		$servers = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
-		if ( ! \is_array( $servers ) ) {
-			$servers = Memcached_Cache::DEFAULT_SERVERS;
-		}
-		self::$sse_cache = new Memcached_Cache( $servers );
 		return self::$sse_cache;
 	}
 
@@ -313,7 +308,7 @@ abstract class SSEControllerBase {
 
 		@\set_time_limit( 0 );
 
-		$config = PerformanceControllerBase::load_config();
+		$config = RuntimeConfig::load_config();
 
 		$connected_data['slot'] = $slot;
 		$this->send_sse_event( 'connected', $connected_data );

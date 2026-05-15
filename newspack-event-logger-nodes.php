@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.2.29
+ * Version: 0.2.30
  * Requires Plugins: newspack-nodes
  *
  * @package Newspack_Event_Logger_Nodes
@@ -11,7 +11,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.29' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.30' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -30,7 +30,6 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
  */
 $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\Newspack_Nodes\Node' ) ) {
-		// Runtime missing or deactivated; surface the error once.
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		\error_log(
 			'newspack-event-logger-nodes: \Newspack_Nodes\Node missing — newspack-nodes inactive?'
@@ -38,64 +37,43 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		return;
 	}
 
-	// Composer classmap autoloader. Class files inside includes/ are scanned
-	// at `composer install` / `composer dump-autoload` time and registered
-	// with a FQCN-to-path map; classes load on first reference so admin /
-	// REST / cli paths each only pay for the code they touch. vendor/
-	// ships with the release zip via build-release.sh.
+	// Composer classmap autoloader. One file include; classes still load
+	// lazily on first reference, so admin / REST / cli paths only pay for
+	// code they actually touch.
 	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\ReqgrepCommand' );
 	}
 
-	// Register application Node subclasses with the runtime's class_map so
-	// topology PHP can construct them via `$interpreter->make_node()`.
-	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\AutoTuner::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\FlameBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\HealthCheckTick::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\JobRouter::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\JobWorker::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\RemoteSource::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
+	// App Config invalidates on the substrate's reset broadcast. Must be
+	// registered before any substrate Config::reset() fires (supervisor
+	// ticks, admin saves, etc.) — cheap, so it stays at boot.
+	\add_action(
+		\Newspack_Nodes\Config::RESET_ACTION,
+		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
+	);
 
-	// A3 plumbing: register the stock topology dir so Topology_Loader
-	// can resolve names like 'firehose-workers+jobs' to .tsl paths;
-	// point the user-customizations dir at {base_dir}/topologies/ so
-	// operator-saved variants shadow stock by name.
+	// Stock-topology dir registration is a single array append with no
+	// config dependency, so it stays at boot — anyone calling
+	// `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor)
+	// finds the stock files. The matching `set_user_dir()` requires
+	// `Bootstrap::base_dir()` (which hits Config) and is deferred to
+	// `$_newspack_event_logger_nodes_register_user_topology_dir` below.
 	\Newspack_Nodes\Topology_Registry::register_stock_dir(
 		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 	);
-	$base_dir = \Newspack_Nodes\Bootstrap::base_dir();
-	\Newspack_Nodes\Topology_Registry::set_user_dir( $base_dir . '/topologies' );
 
-	// A3: register named formatters used by `with_index` verbs in the
-	// stock TSL files. Closures aren't expressible in TSL — formatters
-	// land here once at plugin load and TSL references them by name.
-	\Newspack_Nodes\Formatters::register(
-		'request-index',
-		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
-	);
-	\Newspack_Nodes\Formatters::register(
-		'flame-index',
-		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
-	);
-
-	// A3: hub-side `k:"job"` -> `k:"remote_job"` rewrite. Static side-
-	// effect; was previously called inline from aggregator.php each time
-	// the topology loaded. Idempotent (internal static guard).
-	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
-
-	// Wire one-shot static initializers for the static-mode classes.
+	// `SettingsSync::init` listens for `update_option` / `add_option` —
+	// which can fire from admin saves, REST settings endpoints, CLI,
+	// or programmatic callers. All of these should sync to remote
+	// spokes, so the hook stays registered at boot.
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
-	\Newspack_Event_Logger_Nodes\RemoteManager::init();
-	// HealthCheckExtensions has no init() — RemoteManager::health_check
-	// calls process_discovery() directly. AutoTuner is a Node, wired into
-	// the request-workers topology.
+
+	// Hook instrumentation — the whole reason this plugin exists. Runs
+	// on every request that gets logged.
 	new \Newspack_Event_Logger_Nodes\App\Core();
+
 	if ( \function_exists( 'is_admin' ) && \is_admin() ) {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();
 	}
@@ -107,6 +85,58 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 } else {
 	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
 }
+
+/**
+ * Operator-override topology dir. Reads `Bootstrap::base_dir()` (config
+ * lookup), so it's deferred to the entrypoints that actually need user
+ * overrides to shadow stock — the `newspack_nodes/topologies` filter
+ * callback and the `newspack_nodes/spawn_worker` action handler.
+ */
+$_newspack_event_logger_nodes_register_user_topology_dir = static function (): void {
+	static $registered = false;
+	if ( $registered ) {
+		return;
+	}
+	$registered = true;
+	\Newspack_Nodes\Topology_Registry::set_user_dir(
+		\Newspack_Nodes\Bootstrap::base_dir() . '/topologies'
+	);
+};
+
+/**
+ * Worker-execution prerequisites: Node-class registrations, named
+ * formatters, hub-side k:"job" → k:"remote_job" rewrite filter,
+ * RemoteManager's worker-internal hook registrations. Only needed
+ * inside the spawn_worker action handler before Topology_Loader parses
+ * the TSL. Every callee is independently idempotent
+ * (`register_class` / `Formatters::register` are last-write-wins,
+ * `register_remote_job_rewrite_filter` and `RemoteManager::init` carry
+ * their own static guards), so no outer guard is necessary.
+ */
+$_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
+	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\AutoTuner::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\FlameBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\HealthCheckTick::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\JobRouter::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\JobWorker::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\RemoteSource::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
+
+	\Newspack_Nodes\Formatters::register(
+		'request-index',
+		static fn ( $line, $position, &$data = null )
+			=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
+	);
+	\Newspack_Nodes\Formatters::register(
+		'flame-index',
+		static fn ( $line, $position, &$data = null )
+			=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
+	);
+
+	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
+	\Newspack_Event_Logger_Nodes\RemoteManager::init();
+};
 
 /**
  * Topology registration. Reads the substrate's flat `topologies`
@@ -121,7 +151,8 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
  */
 \add_filter(
 	'newspack_nodes/topologies',
-	static function ( array $topologies ): array {
+	static function ( array $topologies ) use ( $_newspack_event_logger_nodes_register_user_topology_dir ): array {
+		$_newspack_event_logger_nodes_register_user_topology_dir();
 		// Publish ONLY the application's file-default topologies. The
 		// substrate's Bootstrap layers `get_option(newspack_nodes_topologies)`
 		// on top to compute the active set — operator overrides live in
@@ -135,7 +166,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// option, but the catalog this filter publishes IS the
 		// authoritative "what topologies exist" list — and operators
 		// must always be able to override file defaults via WP options.
-		$config = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+		$config = \Newspack_Event_Logger_Nodes\Config::load_config();
 		$names  = $config['topologies'] ?? [];
 
 		// Partition count — substrate-owned option. Already merged via
@@ -223,10 +254,12 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
  */
 \add_action(
 	'newspack_nodes/spawn_worker',
-	static function ( string $type, int $partition ): void {
-		if ( ! \class_exists( '\Newspack_Nodes\Bootstrap' ) ) {
-			return;
-		}
+	static function ( string $type, int $partition ) use (
+		$_newspack_event_logger_nodes_register_user_topology_dir,
+		$_newspack_event_logger_nodes_register_worker_runtime
+	): void {
+		$_newspack_event_logger_nodes_register_user_topology_dir();
+		$_newspack_event_logger_nodes_register_worker_runtime();
 		$workers = \Newspack_Nodes\Bootstrap::expand_workers();
 		foreach ( $workers as $w ) {
 			if ( $w['type'] !== $type || $w['partition'] !== $partition ) {
@@ -250,7 +283,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 			// build one that invokes Topology_Loader against the worker's
 			// CommandInterpreter with the live merged config.
 			$topology_name = (string) $w['topology'];
-			$config        = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+			$config        = \Newspack_Event_Logger_Nodes\Config::load_config();
 			// Pre-derived `<config:logs_dir>` and `<config:offsets_dir>`
 			// since topologies use them frequently; let topology authors
 			// write the short form rather than
@@ -501,7 +534,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// `eventLoggerCustomColors` for custom-event color overrides.
 		$retention_seconds = 86400;
 		if ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
-			$substrate         = \Newspack_Nodes\Config::load_config( 'full' );
+			$substrate         = \Newspack_Nodes\Config::load_config();
 			$retention_seconds = (int) ( $substrate['max_lifespan'] ?? 86400 );
 		}
 		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
@@ -535,7 +568,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// config so any plugin-registered events (via filters) flow through
 		// without redeploying.
 		if ( 'performance-logger' === $tree ) {
-			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config();
 			$recommended         = $cfg['recommended_log_events'] ?? [];
 			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
 			$custom_colors       = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();

@@ -314,7 +314,7 @@ class RemoteManager {
 		}
 
 		// Single load of the full config; every entry just looks up its key.
-		$config = Config::load_config( 'full' );
+		$config = Config::load_config();
 
 		foreach ( $settings as $setting ) {
 			if ( ! \is_array( $setting ) ) {
@@ -379,7 +379,7 @@ class RemoteManager {
 			$settings = \array_slice( $settings, 0, self::MAX_SETTINGS );
 		}
 
-		$config = Config::load_config( 'full' );
+		$config = Config::load_config();
 		$queued = 0;
 		$now    = \time();
 
@@ -560,7 +560,7 @@ class RemoteManager {
 	 * @return array
 	 */
 	private static function request_args( array $server, array $extra ): array {
-		$config = Config::load_config( 'full' );
+		$config = Config::load_config();
 
 		$args = [
 			// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Remote server sync needs reasonable timeout.

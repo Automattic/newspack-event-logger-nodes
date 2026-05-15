@@ -14,6 +14,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Partition_Reader;
+use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Partition;
 
 class FirehoseStreamController extends SSEControllerBase {
@@ -34,7 +35,7 @@ class FirehoseStreamController extends SSEControllerBase {
 						'type'              => 'integer',
 						'sanitize_callback' => static fn ( $v ) => \max( 0, (int) $v ),
 						'validate_callback' => static function ( $v ) {
-							$config         = PerformanceControllerBase::load_config();
+							$config         = RuntimeConfig::load_config();
 							$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 							return $v >= 0 && $v < $num_partitions;
 						},

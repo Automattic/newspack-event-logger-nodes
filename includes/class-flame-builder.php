@@ -1688,7 +1688,7 @@ class FlameBuilder extends Node {
 					$partition = (int) $parts[0];
 
 					// Read current substrate config for memcache + retention.
-					$config           = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );
+					$config           = \Newspack_Event_Logger_Nodes\Config::load_config();
 					$max_lifespan     = (int) ( $config['max_lifespan'] ?? 86400 );
 					$memcache_servers = $config['memcache_servers'] ?? \Newspack_Event_Logger_Nodes\Memcached_Cache::DEFAULT_SERVERS;
 					if ( ! \is_array( $memcache_servers ) ) {

@@ -77,7 +77,7 @@ class JobIntake {
 	 * Constructor.
 	 *
 	 * Both `$base_dir` and `$num_partitions` default to the substrate config
-	 * (`\Newspack_Nodes\Config::load_config('full')`) — callers don't need to
+	 * (`\Newspack_Nodes\Config::load_config()`) — callers don't need to
 	 * thread them through unless they're targeting a non-default location
 	 * (e.g. tests with a tmp dir). Pass strings/ints explicitly to override.
 	 *
@@ -87,7 +87,7 @@ class JobIntake {
 	public function __construct( ?string $base_dir = null, ?int $num_partitions = null ) {
 		if ( null === $base_dir || null === $num_partitions ) {
 			$config         = \class_exists( '\Newspack_Nodes\Config' )
-				? \Newspack_Nodes\Config::load_config( 'full' )
+				? \Newspack_Nodes\Config::load_config()
 				: [];
 			$base_dir       = $base_dir       ?? (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 			$num_partitions = $num_partitions ?? (int) ( $config['num_partitions'] ?? 1 );

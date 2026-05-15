@@ -24,6 +24,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\RemoteManager;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class ServersController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -251,12 +252,12 @@ class ServersController extends PerformanceControllerBase {
 			return $this->not_found_error( "Server not found: {$id}" );
 		}
 
-		// Application Config — `self::load_config()` (PerformanceControllerBase)
+		// Application Config — `RuntimeConfig::load_config()` (PerformanceControllerBase)
 		// only sees substrate keys, so aggregator_verify_ssl / aggregator_require_https
 		// from the application config file would never reach this call. The
 		// settings UI's "Test" probe has to honour the same SSL policy as the
 		// running StreamMerger or operators get false negatives.
-		$config       = Config::load_config( 'full' );
+		$config       = Config::load_config();
 		$verify_ssl   = ! isset( $config['aggregator_verify_ssl'] ) || (bool) $config['aggregator_verify_ssl'];
 		$url          = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/discovery';
 		$request_args = [
@@ -446,7 +447,7 @@ class ServersController extends PerformanceControllerBase {
 	 */
 	private function request_supervisor_restart(): void {
 		try {
-			$config     = self::load_config();
+			$config     = RuntimeConfig::load_config();
 			$base_dir   = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 			$lock_dir   = $base_dir . '/locks/supervisor.lock.d';
 			if ( \is_dir( $lock_dir ) ) {

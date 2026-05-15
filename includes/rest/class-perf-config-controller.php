@@ -14,6 +14,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class PerfConfigController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -71,7 +72,7 @@ class PerfConfigController extends PerformanceControllerBase {
 			return $check;
 		}
 
-		$cfg = self::load_config();
+		$cfg = RuntimeConfig::load_config();
 
 		$response_config = [
 			'log_events'                  => $cfg['log_events'] ?? [],

@@ -16,7 +16,6 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\Memcached_Cache;
-use Newspack_Nodes\Config as RuntimeConfig;
 
 abstract class PerformanceControllerBase {
 	/**
@@ -60,63 +59,9 @@ abstract class PerformanceControllerBase {
 	 */
 	public static function cache(): Cache_Interface {
 		if ( null === self::$cache ) {
-			$config  = self::load_config();
-			$servers = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
-			if ( ! \is_array( $servers ) ) {
-				$servers = Memcached_Cache::DEFAULT_SERVERS;
-			}
-			self::$cache = new Memcached_Cache( $servers );
+			self::$cache = Memcached_Cache::from_substrate_config();
 		}
 		return self::$cache;
-	}
-
-	/**
-	 * Load runtime configuration: substrate-level keys from
-	 * `\Newspack_Nodes\Config::load_config('full')` layered over the
-	 * documented defaults below.
-	 *
-	 * Documented defaults:
-	 *  - `num_partitions`    (int)            firehose partition count, default 1
-	 *  - `num_segments`      (int)            segments per partition, default 8
-	 *  - `segment_size`      (int)            bytes per segment, default 16 MiB
-	 *  - `max_lifespan`      (int)            stats retention seconds, default 86400
-	 *  - `memcache_servers`  (array<string>)  host:port list, default 127.0.0.1:11211
-	 *  - `base_directory`    (string)         filesystem root for runtime state
-	 *  - `enable_workers`    (bool)           hub-only; default false
-	 *  - `aggregator_servers`(array<array>)   spoke list for hub-side ingest
-	 *
-	 * Substrate values (`base_directory`, partitioning, `memcache_servers`,
-	 * `enable_workers`, `aggregator_servers`) come from
-	 * `\Newspack_Nodes\Config::load_config('full')` so deployments that set
-	 * `newspack_nodes_*` WordPress options flow through. Documented defaults
-	 * here keep the controller-base shape stable when the substrate hasn't
-	 * loaded (e.g. early in test bootstrap, or when WordPress options are
-	 * unset).
-	 *
-	 * @return array<string,mixed>
-	 */
-	public static function load_config(): array {
-		$defaults = [
-			'num_partitions'     => 1,
-			'num_segments'       => 8,
-			'segment_size'       => 16 * 1024 * 1024,
-			'max_lifespan'       => 86400,
-			'memcache_servers'   => Memcached_Cache::DEFAULT_SERVERS,
-			'base_directory'     => '/tmp/newspack-nodes',
-			'topologies'         => [],
-			'aggregator_servers' => [],
-		];
-		// Layer in the substrate's runtime config so deployments that set
-		// `newspack_nodes_memcache_servers`, `newspack_nodes_base_directory`,
-		// etc. via WP option / config file flow through. The documented
-		// defaults above are the floor — substrate values override them.
-		if ( \class_exists( RuntimeConfig::class ) ) {
-			$substrate = RuntimeConfig::load_config( 'full' );
-			if ( \is_array( $substrate ) ) {
-				$defaults = \array_merge( $defaults, $substrate );
-			}
-		}
-		return $defaults;
 	}
 
 	public function read_permissions_check(): bool|\WP_Error {

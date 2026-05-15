@@ -21,6 +21,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class PerformanceController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -82,7 +83,7 @@ class PerformanceController extends PerformanceControllerBase {
 			return $check;
 		}
 
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
 		$cache          = $this->resolve_cache();

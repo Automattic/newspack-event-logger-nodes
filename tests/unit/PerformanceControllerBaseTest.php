@@ -96,18 +96,6 @@ class PerformanceControllerBaseTest extends TestCase {
 		$this->assertStringContainsString( 'request rid=missing', $err->get_error_message() );
 	}
 
-	public function test_load_config_returns_documented_defaults(): void {
-		$config = PerformanceControllerBase::load_config();
-		// Substrate config (baseline test config) overlays these; values
-		// here reflect the merged result rather than the static defaults.
-		$this->assertSame( 1, $config['num_partitions'] );
-		$this->assertIsInt( $config['max_lifespan'] );
-		$this->assertIsArray( $config['memcache_servers'] );
-		$this->assertIsString( $config['base_directory'] );
-		$this->assertIsArray( $config['aggregator_servers'] );
-		$this->assertIsArray( $config['topologies'] );
-	}
-
 }
 
 class TestableController extends PerformanceControllerBase {

@@ -19,6 +19,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 use Newspack_Event_Logger_Nodes\FlameBuilder;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class PerfRequestsController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes/v1';
@@ -69,7 +70,7 @@ class PerfRequestsController extends PerformanceControllerBase {
 		}
 
 		$rid            = (string) $request->get_param( 'rid' );
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$log_base       = $base_dir . '/logs';
@@ -96,7 +97,7 @@ class PerfRequestsController extends PerformanceControllerBase {
 
 		$rid            = (string) $request->get_param( 'rid' );
 		$partition      = (int) $request->get_param( 'partition' );
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 		$log_base       = $base_dir . '/logs';

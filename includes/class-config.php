@@ -35,13 +35,6 @@ class Config {
 	private static $config = null;
 
 	/**
-	 * Cached full config (includes extended options).
-	 *
-	 * @var array|null
-	 */
-	private static $config_full = null;
-
-	/**
 	 * Cached config defaults from files.
 	 *
 	 * @var array|null
@@ -49,9 +42,9 @@ class Config {
 	private static $config_defaults = null;
 
 	/**
-	 * Core options are needed for request logging and hook timing.
+	 * Option schema — every key loaded on every `load_config()` call.
 	 */
-	private static $option_schema_core = [
+	private static $option_schema = [
 		'enable_logging'              => 'bool',
 		'log_urls'                    => 'array_strings',
 		'skip_urls'                   => 'array_strings',
@@ -64,13 +57,7 @@ class Config {
 		'allowed_users'               => 'array_strings',
 		'auto_disable_threshold'      => 'int',
 		'auto_protect_time_threshold' => 'float',
-	];
-
-	/**
-	 * Extended options are only needed by workers (FlameBuilder) and admin settings.
-	 */
-	private static $option_schema_extended = [
-		'aggregator_servers' => 'aggregator_servers',
+		'aggregator_servers'          => 'aggregator_servers',
 	];
 
 	/**
@@ -87,64 +74,36 @@ class Config {
 	 *
 	 * Merges the substrate config (`Newspack_Nodes\Config::load_config`) so
 	 * callers that read substrate keys (`base_directory`, `num_partitions`,
-	 * `memcache_servers`, etc.) keep working without having to know about the
-	 * layering split.
+	 * `memcache_servers`, etc.) keep working without having to know about
+	 * the layering split.
 	 *
-	 * @param string $mode 'core' (default) loads only options needed for request logging.
-	 *                     'full' loads all options including worker/admin settings.
 	 * @return array Configuration array.
 	 */
-	public static function load_config( string $mode = 'core' ): array {
-		$is_full = 'full' === $mode;
-
-		// Return cached config if available.
-		if ( $is_full && null !== self::$config_full ) {
-			return self::$config_full;
-		}
-		if ( ! $is_full && null !== self::$config ) {
+	public static function load_config(): array {
+		if ( null !== self::$config ) {
 			return self::$config;
 		}
 
 		// Layer substrate config first; application values win on key
 		// collisions. Substrate `load_config()` already handles the
 		// substrate sample overlay.
-		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config( $mode ) : [];
+		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
+		$config    = \array_merge( $substrate, self::load_config_defaults() );
 
-		// Load application defaults from disk.
-		$config = \array_merge( $substrate, self::load_config_defaults() );
-
-		// Override with WordPress options (with sanitization).
 		if ( \defined( 'ABSPATH' ) && \function_exists( 'get_option' ) ) {
-			// Always load core options.
-			foreach ( self::$option_schema_core as $key => $type ) {
+			foreach ( self::$option_schema as $key => $type ) {
 				$value = \get_option( "newspack_event_logger_nodes_{$key}" );
-				if ( false !== $value && '' !== $value ) {
-					$sanitized = self::sanitize_option( $value, $type );
-					if ( null !== $sanitized ) {
-						$config[ $key ] = $sanitized;
-					}
+				if ( false === $value || '' === $value ) {
+					continue;
 				}
-			}
-
-			// Load extended options only for 'full' mode.
-			if ( $is_full ) {
-				foreach ( self::$option_schema_extended as $key => $type ) {
-					$value = \get_option( "newspack_event_logger_nodes_{$key}" );
-					if ( false !== $value && '' !== $value ) {
-						$sanitized = self::sanitize_option( $value, $type );
-						if ( null !== $sanitized ) {
-							$config[ $key ] = $sanitized;
-						}
-					}
+				$sanitized = self::sanitize_option( $value, $type );
+				if ( null !== $sanitized ) {
+					$config[ $key ] = $sanitized;
 				}
 			}
 		}
 
-		if ( $is_full ) {
-			self::$config_full = $config;
-		} else {
-			self::$config = $config;
-		}
+		self::$config = $config;
 
 		return $config;
 	}
@@ -267,15 +226,25 @@ class Config {
 	/**
 	 * Reset cached config - call before load_config() to get fresh values.
 	 *
-	 * Resets the substrate Config too so the layered view rebuilds from scratch.
+	 * Resets the substrate Config too so the layered view rebuilds from
+	 * scratch. The substrate fires `newspack_nodes/config_reset`, which our
+	 * listener (registered at plugin load) catches to invalidate THIS class
+	 * via `reset_local_cache()` — calling `reset()` directly from inside
+	 * that listener would loop back into the substrate.
 	 */
 	public static function reset(): void {
-		self::$config          = null;
-		self::$config_full     = null;
-		self::$config_defaults = null;
+		self::reset_local_cache();
 		if ( \class_exists( RuntimeConfig::class ) ) {
 			RuntimeConfig::reset();
 		}
+	}
+
+	/**
+	 * Clear this class's static cache only — no fan-out.
+	 */
+	public static function reset_local_cache(): void {
+		self::$config          = null;
+		self::$config_defaults = null;
 	}
 
 	/**

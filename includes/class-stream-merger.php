@@ -22,11 +22,11 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Config;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Partition;
-use Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -72,9 +72,6 @@ class StreamMerger extends Node {
 
 	/** @var bool Whether to verify SSL certs (default: true). */
 	private bool $verify_ssl = true;
-
-	/** @var string|null Logs base directory (controls offsetlog placement). null = lazy-load from config. */
-	private ?string $logs_dir = null;
 
 	/** @var HealthCheckTick|null Owned sibling — drives aggregator's periodic health-check sweep. */
 	private ?HealthCheckTick $health_check = null;
@@ -183,11 +180,6 @@ class StreamMerger extends Node {
 		foreach ( $this->remote_nodes as $remote ) {
 			$remote->set_cache( $cache );
 		}
-	}
-
-	public function set_logs_dir( string $logs_dir ): void {
-		$this->logs_dir  = \rtrim( $logs_dir, '/' );
-		$this->offsetlog = null;
 	}
 
 	public function set_require_https( bool $require ): void {
@@ -584,26 +576,21 @@ class StreamMerger extends Node {
 		if ( null !== $this->offsetlog ) {
 			return $this->offsetlog;
 		}
-		$logs_dir = $this->resolve_logs_dir();
+		$logs_dir = Config::get_offsets_directory();
 		if ( '' === $logs_dir ) {
 			return null;
 		}
-		$dir = "{$logs_dir}/remote_firehose.log";
+		$dir = "{$logs_dir}/aggregator.p{$this->partition}";
 		if ( ! \is_dir( $dir ) ) {
 			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
 			@\mkdir( $dir, 0755, true );
 		}
-		$this->offsetlog = new Partition( $dir, $this->partition );
+		// Offsetlog is a single-partition Partition: the merger's spoke
+		// partition is encoded in the dir name (`aggregator.p{N}`), so the
+		// inner Partition's own partition axis is always 0. Matches the
+		// pattern Consumer uses for its offsetlog.
+		$this->offsetlog = new Partition( $dir, 0 );
 		return $this->offsetlog;
-	}
-
-	private function resolve_logs_dir(): string {
-		if ( null !== $this->logs_dir ) {
-			return $this->logs_dir;
-		}
-		$config = PerformanceControllerBase::load_config();
-		$base   = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
-		return $base . '/logs';
 	}
 
 	// =========================================================================

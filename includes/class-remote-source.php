@@ -743,12 +743,7 @@ class RemoteSource extends Node {
 		if ( null !== $this->cache ) {
 			return $this->cache->is_available() ? $this->cache : null;
 		}
-		$config  = Rest\PerformanceControllerBase::load_config();
-		$servers = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
-		if ( ! \is_array( $servers ) ) {
-			$servers = Memcached_Cache::DEFAULT_SERVERS;
-		}
-		$this->cache = new Memcached_Cache( $servers );
+		$this->cache = Memcached_Cache::from_substrate_config();
 		return $this->cache->is_available() ? $this->cache : null;
 	}
 

@@ -23,8 +23,12 @@ WordPress VIP Go (enforced by `phpcs.xml.dist`):
 ## Build / Test
 
 ```bash
-# Tests (require newspack-nodes to also be installed/activated).
-cd tests && phpunit
+# Tests (require newspack-nodes to also be installed/activated). Always
+# pass `--enforce-time-limit` so a hung test (readline without a TTY,
+# infinite drain loop, etc.) aborts at the per-test budget instead of
+# stalling the whole suite. Tests that legitimately sleep through
+# production code mark their class `#[Medium]` to raise the limit.
+cd tests && phpunit --enforce-time-limit
 
 # Coverage HTML/Clover.
 tests/run-coverage.sh

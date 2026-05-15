@@ -20,6 +20,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class AggregatorStatusController extends PerformanceControllerBase {
 	public const NAMESPACE = 'newspack-nodes-aggregator/v1';
@@ -46,7 +47,7 @@ class AggregatorStatusController extends PerformanceControllerBase {
 		$registry->reset_cache();
 		$servers  = $registry->get_all();
 
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$num_partitions = \min( 16, \max( 1, (int) ( $config['num_partitions'] ?? 1 ) ) );
 
 		$cache  = $this->resolve_cache();

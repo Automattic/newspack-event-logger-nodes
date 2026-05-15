@@ -246,9 +246,9 @@ class ServerRegistryTest extends TestCase {
 				],
 			]
 		);
-		// Also seed both cached configs so load_config('full') returns the
-		// same shape — get_all() reads load_config('full').
-		$full_ref = new \ReflectionProperty( Config::class, 'config_full' );
+		// Also seed both cached configs so load_config() returns the
+		// same shape — get_all() reads load_config().
+		$full_ref = new \ReflectionProperty( Config::class, 'config' );
 		$full_ref->setAccessible( true );
 		$full_ref->setValue(
 			null,
@@ -289,7 +289,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_wp_option_overrides_config_default_on_collision(): void {
-		$full_ref = new \ReflectionProperty( Config::class, 'config_full' );
+		$full_ref = new \ReflectionProperty( Config::class, 'config' );
 		$full_ref->setAccessible( true );
 		$full_ref->setValue(
 			null,
@@ -336,7 +336,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 		// Also pre-populate 'full' so get_all() doesn't trigger a fresh load.
-		$full_ref = new \ReflectionProperty( Config::class, 'config_full' );
+		$full_ref = new \ReflectionProperty( Config::class, 'config' );
 		$full_ref->setAccessible( true );
 		$full_ref->setValue(
 			null,
@@ -383,7 +383,7 @@ class ServerRegistryTest extends TestCase {
 				],
 			]
 		);
-		$full_ref = new \ReflectionProperty( Config::class, 'config_full' );
+		$full_ref = new \ReflectionProperty( Config::class, 'config' );
 		$full_ref->setAccessible( true );
 		$full_ref->setValue(
 			null,
@@ -430,7 +430,7 @@ class ServerRegistryTest extends TestCase {
 				],
 			]
 		);
-		$full_ref = new \ReflectionProperty( Config::class, 'config_full' );
+		$full_ref = new \ReflectionProperty( Config::class, 'config' );
 		$full_ref->setAccessible( true );
 		$full_ref->setValue(
 			null,

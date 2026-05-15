@@ -19,6 +19,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Config as RuntimeConfig;
 
 class FirehoseController extends PerformanceControllerBase {
 
@@ -140,7 +141,7 @@ class FirehoseController extends PerformanceControllerBase {
 			return new \WP_Error( 'no_logs', 'No logs available', [ 'status' => 404 ] );
 		}
 
-		$config         = self::load_config();
+		$config         = RuntimeConfig::load_config();
 		$log_base       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' ) . '/logs';
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 		$log_key        = \str_replace( '.log', '', $log_file );
