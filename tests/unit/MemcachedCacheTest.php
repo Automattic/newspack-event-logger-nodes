@@ -5,7 +5,9 @@ use Newspack_Event_Logger_Nodes\Memcached_Cache;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Medium;
 
+#[Medium]
 #[CoversClass( Memcached_Cache::class )]
 class MemcachedCacheTest extends TestCase {
 
