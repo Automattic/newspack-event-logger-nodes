@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`Config::get_option_schema_core/extended()` filter hooks.** The `newspack_event_logger_nodes_option_schema_core` / `…_extended` filter hooks were extension points no plugin used. Replaced with inline `private static $option_schema_core/extended` arrays.
+- **`Config::invalidate_cache()` and `Config::register_cache_invalidation()`.** The substrate's `wp_cache_delete( 'alloptions', 'options' )` + `Config::reset()` pair (in `Supervisor::check_config` and the substrate's `Newspack_Nodes\Config`) handles option-snapshot staleness for the only consumer that needed the one-shot reset.
+- **`class_exists()` guards in the plugin loader for `Topology_Registry`, `Bootstrap`, `Formatters`, and the `newspack_nodes/topologies` filter callback.** With the deferred-loader pattern (the loader closure runs on `plugins_loaded` priority 11, after the substrate plugin has fully loaded), substrate classes are always present by the time these run; the guards were dead branches.
+
+### Changed
+
+- **Substrate-missing branch in the plugin loader reverts to bare `\error_log(...)`.** Calling `\Newspack_Nodes\Core::print_less_often` in this branch would fatal-error — the branch only fires when `\Newspack_Nodes\Node` doesn't exist, which means `\Newspack_Nodes\Core` doesn't exist either. PHP's `error_log` is the right last-resort for this exact failure mode.
+
 ## [0.2.28] - 2026-05-14
 
 ### Fixed

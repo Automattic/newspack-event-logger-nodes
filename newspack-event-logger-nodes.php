@@ -31,7 +31,8 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// Runtime missing or deactivated; surface the error once.
-		\Newspack_Nodes\Core::print_less_often(
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log(
 			'newspack-event-logger-nodes: \Newspack_Nodes\Node missing — newspack-nodes inactive?'
 		);
 		return;
@@ -63,31 +64,25 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// can resolve names like 'firehose-workers+jobs' to .tsl paths;
 	// point the user-customizations dir at {base_dir}/topologies/ so
 	// operator-saved variants shadow stock by name.
-	if ( \class_exists( '\Newspack_Nodes\Topology_Registry' ) ) {
-		\Newspack_Nodes\Topology_Registry::register_stock_dir(
-			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
-		);
-		$base_dir = \class_exists( '\Newspack_Nodes\Bootstrap' )
-			? \Newspack_Nodes\Bootstrap::base_dir()
-			: '/tmp/newspack-nodes';
-		\Newspack_Nodes\Topology_Registry::set_user_dir( $base_dir . '/topologies' );
-	}
+	\Newspack_Nodes\Topology_Registry::register_stock_dir(
+		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+	);
+	$base_dir = \Newspack_Nodes\Bootstrap::base_dir();
+	\Newspack_Nodes\Topology_Registry::set_user_dir( $base_dir . '/topologies' );
 
 	// A3: register named formatters used by `with_index` verbs in the
 	// stock TSL files. Closures aren't expressible in TSL — formatters
 	// land here once at plugin load and TSL references them by name.
-	if ( \class_exists( '\Newspack_Nodes\Formatters' ) ) {
-		\Newspack_Nodes\Formatters::register(
-			'request-index',
-			static fn ( $line, $position, &$data = null )
-				=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
-		);
-		\Newspack_Nodes\Formatters::register(
-			'flame-index',
-			static fn ( $line, $position, &$data = null )
-				=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
-		);
-	}
+	\Newspack_Nodes\Formatters::register(
+		'request-index',
+		static fn ( $line, $position, &$data = null )
+			=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
+	);
+	\Newspack_Nodes\Formatters::register(
+		'flame-index',
+		static fn ( $line, $position, &$data = null )
+			=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
+	);
 
 	// A3: hub-side `k:"job"` -> `k:"remote_job"` rewrite. Static side-
 	// effect; was previously called inline from aggregator.php each time
@@ -95,7 +90,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
 
 	// Wire one-shot static initializers for the static-mode classes.
-	\Newspack_Event_Logger_Nodes\Config::register_cache_invalidation();
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
 	\Newspack_Event_Logger_Nodes\RemoteManager::init();
 	// HealthCheckExtensions has no init() — RemoteManager::health_check
@@ -128,9 +122,6 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 \add_filter(
 	'newspack_nodes/topologies',
 	static function ( array $topologies ): array {
-		if ( ! \class_exists( '\Newspack_Nodes\Topology_Registry' ) ) {
-			return $topologies;
-		}
 		// Publish ONLY the application's file-default topologies. The
 		// substrate's Bootstrap layers `get_option(newspack_nodes_topologies)`
 		// on top to compute the active set — operator overrides live in
@@ -309,7 +300,6 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 		( new \Newspack_Event_Logger_Nodes\Rest\GyroscopeController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\LoggerController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\RequestLogController() )->register_routes();
-		// Newly-added: real-shape controllers replacing former stubs.
 		( new \Newspack_Event_Logger_Nodes\Rest\FirehoseController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\DiscoveryController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\SettingsController() )->register_routes();
