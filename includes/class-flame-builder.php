@@ -1751,25 +1751,31 @@ class FlameBuilder extends Node {
 				[
 					'name'        => 'set_is_hub',
 					'description' => 'Toggle hub mode (per-server tracking).',
-					'args'        => [ [ 'name' => 'is_hub', 'type' => 'bool', 'required' => true ] ],
+					'args'        => [
+						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<config:is_hub>' ],
+					],
 				],
 				[
 					'name'        => 'set_auto_tune',
 					'description' => 'Auto-disable / auto-protect thresholds.',
 					'args'        => [
-						[ 'name' => 'count_threshold', 'type' => 'int',   'required' => true ],
-						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true ],
+						[ 'name' => 'count_threshold', 'type' => 'int',   'required' => true, 'default' => '<config:auto_disable_threshold>' ],
+						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true, 'default' => '<config:auto_protect_time_threshold>' ],
 					],
 				],
 				[
 					'name'        => 'set_significant_events',
 					'description' => 'Comma-separated list of event names to always preserve.',
-					'args'        => [ [ 'name' => 'names', 'type' => 'string', 'required' => false ] ],
+					'args'        => [
+						[ 'name' => 'names', 'type' => 'string', 'required' => false, 'default' => '<config:significant_events_csv>' ],
+					],
 				],
 				[
 					'name'        => 'configure_stats',
 					'description' => 'Build the Stats_Store from substrate config (memcache + retention).',
-					'args'        => [ [ 'name' => 'partition', 'type' => 'int', 'required' => true ] ],
+					'args'        => [
+						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
+					],
 				],
 			],
 			'requests'    => [

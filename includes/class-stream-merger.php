@@ -645,12 +645,16 @@ class StreamMerger extends Node {
 				[
 					'name'        => 'set_verify_ssl',
 					'description' => 'Toggle SSL certificate verification on outbound SSE connections.',
-					'args'        => [ [ 'name' => 'verify', 'type' => 'bool', 'required' => true ] ],
+					'args'        => [
+						[ 'name' => 'verify', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_verify_ssl>' ],
+					],
 				],
 				[
 					'name'        => 'set_require_https',
 					'description' => 'Refuse to connect to non-HTTPS remote URLs.',
-					'args'        => [ [ 'name' => 'require', 'type' => 'bool', 'required' => true ] ],
+					'args'        => [
+						[ 'name' => 'require', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_require_https>' ],
+					],
 				],
 				[
 					'name'        => 'load_remotes_from_registry',
