@@ -1,6 +1,6 @@
 {
 	"name": "newspack-event-logger-nodes",
-	"version": "0.2.30",
+	"version": "0.2.31",
 	"private": true,
 	"description": "Event-logger application built on the newspack-nodes runtime.",
 	"author": "Automattic",

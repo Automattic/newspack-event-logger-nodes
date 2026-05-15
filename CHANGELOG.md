@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-05-15
+
+### Fixed
+
+- **`LogManager::__construct()` no longer infinite-loops via re-entrant `instance()`.** Production stack: `Core::hook_start` → `LogManager::instance()` → `__construct` → `Config::load_config` → `get_option` → `wpdb->get_results` → `apply_filters( 'query', ... )` → `Core::hook_start` (re-entry) → `LogManager::instance()` (sees null `$instance`) → new `__construct` → … 512 frames, killed by Xdebug. Triggered when an operator includes `query` in `log_events` (very reasonable for SQL profiling) and `alloptions` isn't cached yet so the first option fetch round-trips through `wpdb`. Fix mirrors the existing partial-instance pattern already in `ensure_started()`: assign `self::$instance = $this` at the top of `__construct`, before any code that can fire filters. The re-entrant `instance()` then returns the partial `$this`; `$enabled` defaults to `false` (only set true by `matches_url_filter` at the end of `__construct`), so `hook_start` short-circuits at its existing `! $lm->enabled` guard.
+
+### Tests
+
+- **Regression coverage for the re-entrancy bug.** `LogManagerTest::test_construct_blocks_reentrant_instance` uses a new `$_test_get_option_hook` seam in `tests/bootstrap.php`'s `get_option` stub to simulate the production wpdb→`query`-filter→`hook_start` chain deterministically. Verified failing without the fix ("two variables reference the same object"), passing with it.
+- **`MemcachedCacheTest` marked class-level `#[Medium]`.** `test_live_ttl_expires_value` legitimately sleeps 2s to verify a 1s TTL elapses; the default 1s per-test budget under `--enforce-time-limit` was aborting it as risky. With `Medium` raising the budget to 10s the suite now runs 1346/1346 clean with no risky, no skipped.
+
+### Pre-push
+
+- **`scripts/pre-push` is now installed at `.git/hooks/pre-push` in this clone.** Composer's cghooks install had never run here, so prior pushes weren't gated by lint + container deploy + phpunit. The script itself was already in the repo; this is local-clone hygiene.
+
 ## [0.2.30] - 2026-05-15
 
 **Requires:** [newspack-nodes ≥ v0.1.28](https://github.com/Automattic/newspack-nodes/releases/tag/v0.1.28) — for the `Config::RESET_ACTION` broadcast and the `Supervisor::$curl_exec` test seam.
