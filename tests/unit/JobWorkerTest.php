@@ -462,4 +462,362 @@ class JobWorkerTest extends TestCase {
 		$this->assertSame( 'Control', $schema['category'] );
 		$this->assertSame( [], $schema['verbs'] );
 	}
+
+	public function test_job_worker_node_schema_declares_get_health_request(): void {
+		// GET_HEALTH is the introspection request the topology console + SSE
+		// dashboards drive against a live JobWorker. The schema entry is what
+		// the editor uses to render the inspector panel — its presence is
+		// part of the public contract.
+		$schema = JobWorker::node_schema();
+		$this->assertArrayHasKey( 'requests', $schema );
+		$request_names = \array_column( $schema['requests'], 'name' );
+		$this->assertContains( 'GET_HEALTH', $request_names );
+	}
+
+	// --- Constructor clamping ----------------------------------------------
+
+	public function test_constructor_clamps_zero_or_negative_to_one(): void {
+		// max(1, ...) guards against pathological topology configuration that
+		// would otherwise produce a 0-jobs-cache-flush-interval (division-by-
+		// zero in some downstream codepath) or stale_timeout=0 (immediate
+		// staleness, supervisor would force-respawn on every spawn).
+		$jw = new JobWorker( cache_flush_interval: 0, stale_timeout: 0, max_runtime: -5 );
+		$this->assertSame( 1, $jw->get_stale_timeout() );
+		$this->assertSame( 1, $jw->get_max_runtime() );
+
+		// cache_flush_interval clamp observable: drive 2 jobs and confirm
+		// neither crashes (the modulo with interval=1 means every job triggers
+		// the would-be wp_cache_flush branch).
+		$jw->register_handler( 'noop', fn () => null );
+		$msg = $this->job_message( 'noop' );
+		$jw->fill( $msg );
+		$msg = $this->job_message( 'noop' );
+		$jw->fill( $msg );
+		$this->assertSame( 2, $jw->jobs_executed() );
+	}
+
+	// --- Handler-name validation throw path ---------------------------------
+
+	public function test_set_local_handler_rejects_invalid_name(): void {
+		$jw = new JobWorker();
+		$this->expectException( \InvalidArgumentException::class );
+		$jw->set_local_handler( '1bad-leading', fn () => null );
+	}
+
+	public function test_set_remote_handler_rejects_invalid_name(): void {
+		$jw = new JobWorker();
+		$this->expectException( \InvalidArgumentException::class );
+		$jw->set_remote_handler( 'bad name with spaces', fn () => null );
+	}
+
+	public function test_register_handler_rejects_invalid_name(): void {
+		// register_handler is the backward-compat alias for set_local_handler;
+		// validation must propagate through the alias unchanged.
+		$jw = new JobWorker();
+		$this->expectException( \InvalidArgumentException::class );
+		$jw->register_handler( '', fn () => null );
+	}
+
+	// --- fill(): malformed messages ----------------------------------------
+
+	public function test_fill_drops_non_struct_messages(): void {
+		// TM_BYTESTREAM (no TM_STRUCT bit) carries a string VALUE; the dispatch
+		// path requires TM_STRUCT because it reads VALUE as an array.
+		$jw = new JobWorker();
+		$called = false;
+		$jw->register_handler( 'noop', function () use ( &$called ) { $called = true; } );
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$msg[ Message::VALUE ] = 'not-a-struct';
+		$jw->fill( $msg );
+
+		$this->assertFalse( $called );
+		$this->assertSame( 0, $jw->jobs_executed() );
+	}
+
+	public function test_fill_drops_oversized_entries(): void {
+		// MAX_JOB_SIZE=10MB cap protects the dispatcher from runaway payloads.
+		// A blob that exceeds the cap once JSON-encoded must be silently
+		// dropped (rate-limited stderr, no handler invocation).
+		$jw = new JobWorker();
+		$called = false;
+		$jw->register_handler( 'big', function () use ( &$called ) { $called = true; } );
+
+		// 10MB + 1KB of 'x' is enough to clear MAX_JOB_SIZE even after JSON
+		// encoding (which adds wrapping braces + key strings of trivial size).
+		$huge_param = \str_repeat( 'x', JobWorker::MAX_JOB_SIZE + 1024 );
+		$msg = $this->job_message( 'big', [ 'blob' => $huge_param ] );
+		$jw->fill( $msg );
+
+		$this->assertFalse( $called );
+		$this->assertSame( 0, $jw->jobs_executed() );
+	}
+
+	public function test_fill_drops_entries_with_invalid_handler_name(): void {
+		// Even if the entry shape is valid (type/handler/parameters), an
+		// invalid HANDLER_NAME_PATTERN match must be rejected before any
+		// $handlers[] lookup that could mask a real registration.
+		$jw = new JobWorker();
+		$msg = $this->job_message( 'bad name with spaces' );
+		$jw->fill( $msg );
+		$this->assertSame( 0, $jw->jobs_executed() );
+	}
+
+	public function test_fill_drops_unregistered_handler_name(): void {
+		// Valid name format but never registered. Rate-limited stderr, no
+		// handler called.
+		$jw = new JobWorker();
+		$msg = $this->job_message( 'never_registered' );
+		$jw->fill( $msg );
+		$this->assertSame( 0, $jw->jobs_executed() );
+	}
+
+	// --- handle_request: GET_HEALTH + unknown verb ----------------------------
+
+	public function test_handle_request_get_health_returns_payload(): void {
+		// GET_HEALTH is the introspection contract used by topology console +
+		// SSE dashboards. Reply must be a TM_REQUEST|TM_RESPONSE|TM_STRUCT
+		// addressed back to FROM with a structured payload including memory
+		// metrics + handler counts.
+		$jw = new JobWorker();
+		$jw->set_local_handler( 'a', fn () => null );
+		$jw->set_local_handler( 'b', fn () => null );
+		$jw->set_remote_handler( 'c', fn () => null );
+
+		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$jw->sink( $sink );
+
+		$req                   = Message::new_message();
+		$req[ Message::TYPE ]  = Message::TM_REQUEST;
+		$req[ Message::FROM ]  = 'caller';
+		$req[ Message::ID ]    = 'corr-1';
+		$req[ Message::KEY ]   = 'app-key';
+		$req[ Message::VALUE ] = 'GET_HEALTH';
+		$jw->fill( $req );
+
+		$this->assertCount( 1, $sink->captured );
+		$reply = $sink->captured[0];
+		$this->assertSame(
+			Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT,
+			$reply[ Message::TYPE ]
+		);
+		$this->assertSame( 'caller', $reply[ Message::TO ] );
+		$this->assertSame( 'corr-1', $reply[ Message::ID ] );
+		$this->assertSame( 'app-key', $reply[ Message::KEY ] );
+
+		$value = $reply[ Message::VALUE ];
+		$this->assertIsArray( $value );
+		$this->assertSame( 'GET_HEALTH', $value['verb'] );
+
+		$payload = $value['data'];
+		$this->assertIsArray( $payload );
+		$this->assertArrayHasKey( 'memory_used_mb', $payload );
+		$this->assertArrayHasKey( 'memory_limit_mb', $payload );
+		$this->assertArrayHasKey( 'memory_pressure', $payload );
+		$this->assertArrayHasKey( 'jobs_since_cache_flush', $payload );
+		$this->assertArrayHasKey( 'cache_flush_interval', $payload );
+		$this->assertSame( 2, $payload['local_handler_count'] );
+		$this->assertSame( 1, $payload['remote_handler_count'] );
+		// counter ticks on every fill() entry, including this request itself.
+		$this->assertGreaterThanOrEqual( 1, $payload['counter'] );
+		$this->assertFalse( $payload['memory_pressure'] );
+	}
+
+	public function test_handle_request_unknown_verb_returns_error_payload(): void {
+		$jw = new JobWorker();
+		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$jw->sink( $sink );
+
+		$req                   = Message::new_message();
+		$req[ Message::TYPE ]  = Message::TM_REQUEST;
+		$req[ Message::FROM ]  = 'caller';
+		$req[ Message::ID ]    = 'corr-2';
+		$req[ Message::VALUE ] = 'BOGUS_VERB';
+		$jw->fill( $req );
+
+		$this->assertCount( 1, $sink->captured );
+		$value = $sink->captured[0][ Message::VALUE ];
+		$this->assertSame( 'BOGUS_VERB', $value['verb'] );
+		$this->assertArrayHasKey( 'error', $value['data'] );
+		$this->assertStringContainsString( 'BOGUS_VERB', $value['data']['error'] );
+	}
+
+	public function test_handle_request_uppercases_verb(): void {
+		// Verb normalisation: caller-supplied case must round-trip uppercased
+		// so the dispatch switch is case-insensitive at the entry point.
+		$jw = new JobWorker();
+		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$jw->sink( $sink );
+
+		$req                   = Message::new_message();
+		$req[ Message::TYPE ]  = Message::TM_REQUEST;
+		$req[ Message::FROM ]  = 'caller';
+		$req[ Message::ID ]    = 'corr-3';
+		$req[ Message::VALUE ] = 'get_health';
+		$jw->fill( $req );
+
+		$this->assertSame( 'GET_HEALTH', $sink->captured[0][ Message::VALUE ]['verb'] );
+	}
+
+	public function test_handle_request_ignores_response_messages(): void {
+		// fill() short-circuits on TM_REQUEST WITHOUT TM_RESPONSE only — an
+		// echoed reply (TM_REQUEST|TM_RESPONSE) must not re-trigger handle_request.
+		$jw = new JobWorker();
+		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$jw->sink( $sink );
+
+		$req                   = Message::new_message();
+		$req[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$req[ Message::FROM ]  = 'caller';
+		$req[ Message::VALUE ] = 'GET_HEALTH';
+		$jw->fill( $req );
+
+		// No reply emitted (would have been a double-bounce).
+		$this->assertCount( 0, $sink->captured );
+	}
+
+	// --- memory_limit_bytes: every unit suffix --------------------------------
+
+	public function test_memory_limit_bytes_parses_g_suffix(): void {
+		$prev = \ini_set( 'memory_limit', '2G' );
+		try {
+			$jw  = new JobWorker();
+			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$ref->setAccessible( true );
+			$this->assertSame( 2 * 1024 * 1024 * 1024, $ref->invoke( $jw ) );
+		} finally {
+			if ( false !== $prev ) {
+				\ini_set( 'memory_limit', $prev );
+			}
+		}
+	}
+
+	public function test_memory_limit_bytes_parses_m_suffix(): void {
+		$prev = \ini_set( 'memory_limit', '512M' );
+		try {
+			$jw  = new JobWorker();
+			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$ref->setAccessible( true );
+			$this->assertSame( 512 * 1024 * 1024, $ref->invoke( $jw ) );
+		} finally {
+			if ( false !== $prev ) {
+				\ini_set( 'memory_limit', $prev );
+			}
+		}
+	}
+
+	public function test_memory_limit_bytes_parses_k_suffix(): void {
+		// Use a 1GB-in-K value: large enough that PHP's allocator stays under
+		// the new limit even on memory-greedy test runners, yet still exercises
+		// the 'k' suffix branch in the parser.
+		$prev = \ini_set( 'memory_limit', '1048576K' );
+		try {
+			$jw  = new JobWorker();
+			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$ref->setAccessible( true );
+			$this->assertSame( 1048576 * 1024, $ref->invoke( $jw ) );
+		} finally {
+			if ( false !== $prev ) {
+				\ini_set( 'memory_limit', $prev );
+			}
+		}
+	}
+
+	public function test_memory_limit_bytes_unlimited_returns_negative_one(): void {
+		$prev = \ini_set( 'memory_limit', '-1' );
+		try {
+			$jw  = new JobWorker();
+			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$ref->setAccessible( true );
+			$this->assertSame( -1, $ref->invoke( $jw ) );
+		} finally {
+			if ( false !== $prev ) {
+				\ini_set( 'memory_limit', $prev );
+			}
+		}
+	}
+
+	// --- is_memory_high branches ----------------------------------------------
+
+	public function test_is_memory_high_returns_false_below_watermark(): void {
+		// 16GB-in-bytes upper bound — no test runner is using >12.8GB. The
+		// 80% watermark check returns false because usage is far below
+		// (16G * 0.80) = 12.8G.
+		$prev = \ini_set( 'memory_limit', '16G' );
+		try {
+			$jw = new JobWorker();
+			$this->assertFalse( $jw->is_memory_high() );
+		} finally {
+			if ( false !== $prev ) {
+				\ini_set( 'memory_limit', $prev );
+			}
+		}
+	}
+
+	public function test_memory_pressure_does_not_latch_when_below_watermark(): void {
+		// Symmetric to the above: a job running under a generous memory_limit
+		// must NOT latch memory_pressure(). Defends against an off-by-one /
+		// inverted comparison regression in the watermark check.
+		$prev = \ini_set( 'memory_limit', '16G' );
+		try {
+			$jw = new JobWorker();
+			$jw->register_handler( 'noop', fn () => null );
+			$this->assertFalse( $jw->memory_pressure() );
+
+			$msg = $this->job_message( 'noop' );
+			$jw->fill( $msg );
+			$msg = $this->job_message( 'noop' );
+			$jw->fill( $msg );
+
+			$this->assertFalse( $jw->memory_pressure() );
+		} finally {
+			if ( false !== $prev ) {
+				\ini_set( 'memory_limit', $prev );
+			}
+		}
+	}
+
+	// --- Cache flush state machine ------------------------------------------
+
+	public function test_cache_flush_state_machine_emits_set_state_event(): void {
+		// Every cache_flush_interval jobs, JobWorker calls set_state('CACHE_FLUSH').
+		// Register a closure listener via Node::register so we can observe the
+		// event without needing wp_cache_flush to exist.
+		$jw = new JobWorker( cache_flush_interval: 3 );
+		$jw->register_handler( 'noop', fn () => null );
+
+		// Inject a CACHE_FLUSH event into the registrations table via reflection
+		// — set_state notifies listeners registered on the event name, so we can
+		// observe the call.
+		$ref = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
+		$ref->setAccessible( true );
+		$registrations             = $ref->getValue( $jw );
+		$flush_observed            = [];
+		$registrations['CACHE_FLUSH'] = [ 'listener_id' => function ( $payload ) use ( &$flush_observed ) {
+			$flush_observed[] = $payload;
+			return true; // keep registered
+		} ];
+		$ref->setValue( $jw, $registrations );
+
+		// 3 jobs trigger the first CACHE_FLUSH; 2 more do not (counter resets).
+		for ( $i = 0; $i < 3; ++$i ) {
+			$msg = $this->job_message( 'noop' );
+			$jw->fill( $msg );
+		}
+		$this->assertCount( 1, $flush_observed, 'first flush fires at jobs == interval' );
+		$this->assertSame( 3, $flush_observed[0]['jobs'] );
+
+		// Next 2 jobs should NOT trigger another flush (counter is at 2, not 3).
+		for ( $i = 0; $i < 2; ++$i ) {
+			$msg = $this->job_message( 'noop' );
+			$jw->fill( $msg );
+		}
+		$this->assertCount( 1, $flush_observed );
+
+		// One more job (now at 3 again) should trigger the second flush.
+		$msg = $this->job_message( 'noop' );
+		$jw->fill( $msg );
+		$this->assertCount( 2, $flush_observed );
+	}
 }

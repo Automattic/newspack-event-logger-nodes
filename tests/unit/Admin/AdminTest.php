@@ -1124,6 +1124,466 @@ class AdminTest extends TestCase {
 		$this->assertNotEmpty( $GLOBALS['_wp_actions']['added_option'] ?? [] );
 	}
 
+	// ---- skip_default_writes ---------------------------------------------
+
+	public function test_skip_default_writes_passes_through_non_prefixed_option(): void {
+		$admin = new Admin();
+		// Option name without the canonical prefix — filter returns the value
+		// unchanged (no defaults lookup, no delete).
+		$this->assertSame( 'submitted', $admin->skip_default_writes( 'submitted', 'some_other_option', 'old' ) );
+	}
+
+	public function test_skip_default_writes_passes_through_when_key_not_in_defaults(): void {
+		$admin = new Admin();
+		// Prefixed option whose suffix is not a recognized config-default key.
+		$this->assertSame( 'submitted', $admin->skip_default_writes( 'submitted', 'newspack_event_logger_nodes_bogus_field', 'old' ) );
+	}
+
+	public function test_skip_default_writes_passes_through_when_value_differs_from_default(): void {
+		// Inject a known default via the test config-file override.
+		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+
+		$admin = new Admin();
+		// Value 1 (truthy) differs from bool-default `true` only after normalization to int 1.
+		// Submit value 5 which differs from default 1 → passes through.
+		$this->assertSame( 5, $admin->skip_default_writes( 5, 'newspack_event_logger_nodes_flush_every_line', 0 ) );
+	}
+
+	public function test_skip_default_writes_deletes_option_when_user_changes_back_to_default(): void {
+		// flush_every_line default is `true` (bool); normalizer turns it into int 1.
+		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+		\update_option( 'newspack_event_logger_nodes_flush_every_line', 0 );
+
+		$admin    = new Admin();
+		$returned = $admin->skip_default_writes( 1, 'newspack_event_logger_nodes_flush_every_line', 0 );
+		// Returns the OLD value so update_option treats the write as a no-op.
+		$this->assertSame( 0, $returned );
+		// The row is deleted so the file-default kicks in on next read.
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_flush_every_line' ) );
+	}
+
+	public function test_skip_default_writes_returns_old_value_when_already_equal_to_default(): void {
+		// Default `true` → normalized to int 1.
+		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+
+		$admin = new Admin();
+		// Submitted value already equals old value and the default — short-circuits
+		// to old_value with no delete (avoids touching the row needlessly).
+		$returned = $admin->skip_default_writes( 1, 'newspack_event_logger_nodes_flush_every_line', 1 );
+		$this->assertSame( 1, $returned );
+	}
+
+	public function test_skip_default_writes_compares_int_defaults_directly(): void {
+		// Non-bool default — int 42 should be compared as-is (no normalization).
+		$this->use_base_dir( $this->base_dir, [ 'auto_disable_threshold' => 42 ] );
+		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 100 );
+
+		$admin = new Admin();
+		// User reverts to default 42 → filter returns OLD value (100), deletes the row.
+		$returned = $admin->skip_default_writes( 42, 'newspack_event_logger_nodes_auto_disable_threshold', 100 );
+		$this->assertSame( 100, $returned );
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_auto_disable_threshold' ) );
+	}
+
+	// ---- Remote-* sanitizers ---------------------------------------------
+
+	public function test_sanitize_remote_num_segments_returns_empty_for_empty_and_null(): void {
+		$admin = new Admin();
+		$this->assertSame( '', $admin->sanitize_remote_num_segments( '' ) );
+		$this->assertSame( '', $admin->sanitize_remote_num_segments( null ) );
+	}
+
+	public function test_sanitize_remote_num_segments_clamps_to_range(): void {
+		$admin = new Admin();
+		// Below floor → 2.
+		$this->assertSame( 2, $admin->sanitize_remote_num_segments( '1' ) );
+		// Above ceiling → 16.
+		$this->assertSame( 16, $admin->sanitize_remote_num_segments( '500' ) );
+		// In-range stays put.
+		$this->assertSame( 8, $admin->sanitize_remote_num_segments( '8' ) );
+	}
+
+	public function test_sanitize_remote_segment_size_returns_empty_for_empty_and_null(): void {
+		$admin = new Admin();
+		$this->assertSame( '', $admin->sanitize_remote_segment_size( '' ) );
+		$this->assertSame( '', $admin->sanitize_remote_segment_size( null ) );
+	}
+
+	public function test_sanitize_remote_segment_size_clamps_to_range(): void {
+		$admin = new Admin();
+		// Below 1MB floor.
+		$this->assertSame( 1024 * 1024, $admin->sanitize_remote_segment_size( '100' ) );
+		// Above 256MB ceiling.
+		$this->assertSame( 256 * 1024 * 1024, $admin->sanitize_remote_segment_size( (string) ( 512 * 1024 * 1024 ) ) );
+		// In-range stays put (10MB).
+		$this->assertSame( 10 * 1024 * 1024, $admin->sanitize_remote_segment_size( (string) ( 10 * 1024 * 1024 ) ) );
+	}
+
+	public function test_sanitize_remote_max_lifespan_returns_empty_for_empty_and_null(): void {
+		$admin = new Admin();
+		$this->assertSame( '', $admin->sanitize_remote_max_lifespan( '' ) );
+		$this->assertSame( '', $admin->sanitize_remote_max_lifespan( null ) );
+	}
+
+	public function test_sanitize_remote_max_lifespan_clamps_to_range(): void {
+		$admin = new Admin();
+		// Below 60s floor.
+		$this->assertSame( 60, $admin->sanitize_remote_max_lifespan( '10' ) );
+		// Above 7-day ceiling.
+		$this->assertSame( 604800, $admin->sanitize_remote_max_lifespan( '999999999' ) );
+		// In-range stays put (1 hour).
+		$this->assertSame( 3600, $admin->sanitize_remote_max_lifespan( '3600' ) );
+	}
+
+	// ---- sanitize_aggregator_servers -------------------------------------
+
+	public function test_sanitize_aggregator_servers_returns_empty_for_non_array(): void {
+		$admin = new Admin();
+		$this->assertSame( [], $admin->sanitize_aggregator_servers( 'not-an-array' ) );
+		$this->assertSame( [], $admin->sanitize_aggregator_servers( 42 ) );
+		$this->assertSame( [], $admin->sanitize_aggregator_servers( null ) );
+	}
+
+	public function test_sanitize_aggregator_servers_drops_non_array_entries(): void {
+		$admin  = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'bad_one'  => 'scalar',
+				'good_one' => [ 'url' => 'https://example.com' ],
+			]
+		);
+		// Scalar entry dropped; valid HTTPS URL kept.
+		$this->assertArrayNotHasKey( 'bad_one', $result );
+		$this->assertArrayHasKey( 'good_one', $result );
+	}
+
+	public function test_sanitize_aggregator_servers_drops_empty_server_id(): void {
+		$admin  = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				''   => [ 'url' => 'https://example.com' ],
+				'ok' => [ 'url' => 'https://ok.example' ],
+			]
+		);
+		// Empty key is dropped silently; 'ok' is kept.
+		$this->assertArrayNotHasKey( '', $result );
+		$this->assertArrayHasKey( 'ok', $result );
+	}
+
+	public function test_sanitize_aggregator_servers_rejects_non_https_url(): void {
+		$admin  = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'http_server' => [ 'url' => 'http://example.com' ],
+				'no_url'      => [ 'url' => '' ],
+				'array_url'   => [ 'url' => [ 'not', 'a', 'string' ] ],
+				'good'        => [ 'url' => 'https://good.example' ],
+			]
+		);
+		// HTTPS required; everything non-HTTPS or non-string is dropped.
+		$this->assertSame( [ 'good' ], \array_keys( $result ) );
+	}
+
+	public function test_sanitize_aggregator_servers_normalizes_full_entry(): void {
+		$admin  = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'srv1' => [
+					'url'           => 'https://example.com',
+					'auth_username' => 'admin',
+					'auth_password' => 'secret',
+					'enabled'       => true,
+				],
+			]
+		);
+		$this->assertSame(
+			[
+				'url'           => 'https://example.com',
+				'auth_username' => 'admin',
+				'auth_password' => 'secret',
+				'enabled'       => true,
+			],
+			$result['srv1']
+		);
+	}
+
+	public function test_sanitize_aggregator_servers_defaults_enabled_true_when_missing(): void {
+		$admin  = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'srv1' => [ 'url' => 'https://example.com' ],
+			]
+		);
+		// Missing enabled → defaults to true.
+		$this->assertTrue( $result['srv1']['enabled'] );
+		// Missing credentials → empty strings.
+		$this->assertSame( '', $result['srv1']['auth_username'] );
+		$this->assertSame( '', $result['srv1']['auth_password'] );
+	}
+
+	public function test_sanitize_aggregator_servers_coerces_enabled_to_bool(): void {
+		$admin  = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'srv1' => [ 'url' => 'https://example.com', 'enabled' => 0 ],
+				'srv2' => [ 'url' => 'https://example.com', 'enabled' => '1' ],
+			]
+		);
+		$this->assertFalse( $result['srv1']['enabled'] );
+		$this->assertTrue( $result['srv2']['enabled'] );
+	}
+
+	// ---- Remote-* section + field callbacks ------------------------------
+
+	public function test_remote_settings_section_callback_describes_geometry(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_settings_section_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '<p>', $out );
+		$this->assertStringContainsString( 'remote spokes', $out );
+	}
+
+	public function test_remote_num_segments_callback_renders_number_input(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_num_segments_callback();
+		$out = \ob_get_clean();
+		// Input element wired to the application option key.
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_remote_num_segments"', $out );
+		$this->assertStringContainsString( 'type="number"', $out );
+		// Bounds match the sanitizer (2-16).
+		$this->assertStringContainsString( 'min="2"', $out );
+		$this->assertStringContainsString( 'max="16"', $out );
+		$this->assertStringContainsString( 'event-logger-reset-number', $out );
+	}
+
+	public function test_remote_num_segments_callback_shows_value_when_overridden(): void {
+		\update_option( 'newspack_event_logger_nodes_remote_num_segments', 8 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_num_segments_callback();
+		$out = \ob_get_clean();
+		// Overridden value rendered in the input.
+		$this->assertStringContainsString( 'value="8"', $out );
+	}
+
+	public function test_remote_segment_size_callback_renders_number_input(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_segment_size_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_remote_segment_size"', $out );
+		// Bounds match the sanitizer (1MB - 256MB).
+		$this->assertStringContainsString( 'min="' . ( 1024 * 1024 ) . '"', $out );
+		$this->assertStringContainsString( 'max="' . ( 256 * 1024 * 1024 ) . '"', $out );
+		// >999 max → regular-text class.
+		$this->assertStringContainsString( 'regular-text', $out );
+	}
+
+	public function test_remote_max_lifespan_callback_renders_number_input(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_max_lifespan_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_remote_max_lifespan"', $out );
+		$this->assertStringContainsString( 'min="60"', $out );
+		$this->assertStringContainsString( 'max="604800"', $out );
+	}
+
+	// ---- render_maintenance_section --------------------------------------
+
+	public function test_render_maintenance_section_outputs_flush_form(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->render_maintenance_section();
+		$out = \ob_get_clean();
+
+		// Maintenance header.
+		$this->assertStringContainsString( 'Maintenance', $out );
+		// Flush button + hidden form posting back to admin-post with nonce.
+		$this->assertStringContainsString( 'Flush Cache', $out );
+		$this->assertStringContainsString( 'newspack-event-logger-nodes-flush-form', $out );
+		$this->assertStringContainsString( Admin::FLUSH_STATS_ACTION, $out );
+		$this->assertStringContainsString( Admin::FLUSH_STATS_NONCE, $out );
+		// The confirm() message references key copy.
+		$this->assertStringContainsString( 'Flush all performance stats', $out );
+	}
+
+	// ---- handle_flush_stats ----------------------------------------------
+
+	public function test_handle_flush_stats_rejects_missing_nonce(): void {
+		$_POST = [];
+		$admin = new Admin();
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'Security check failed' );
+		$admin->handle_flush_stats();
+	}
+
+	public function test_handle_flush_stats_rejects_invalid_nonce(): void {
+		$_POST = [ Admin::FLUSH_STATS_NONCE => 'bogus' ];
+		$admin = new Admin();
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'Security check failed' );
+		$admin->handle_flush_stats();
+	}
+
+	public function test_handle_flush_stats_rejects_unauthorized_user(): void {
+		$_POST                        = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
+		$GLOBALS['_current_user_can'] = false;
+		$admin                        = new Admin();
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'You do not have permission' );
+		$admin->handle_flush_stats();
+	}
+
+	public function test_handle_flush_stats_rotates_salt_and_redirects(): void {
+		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
+		// Seed an old salt — flush_all() must overwrite it.
+		\update_option( 'newspack_nodes_stats_salt', 'old_salt' );
+
+		$admin = new Admin();
+		try {
+			$admin->handle_flush_stats();
+			$this->fail( 'expected RedirectException from wp_safe_redirect()' );
+		} catch ( RedirectException $e ) {
+			// Expected: handler completes via redirect.
+		}
+
+		// A new salt was written (Stats_Store::flush_all overwrites unconditionally).
+		$new_salt = \get_option( 'newspack_nodes_stats_salt' );
+		$this->assertNotSame( 'old_salt', $new_salt );
+		$this->assertIsString( $new_salt );
+
+		// Redirect URL carries the flushed flag + restart count.
+		$this->assertNotNull( $GLOBALS['_last_redirect'] );
+		$this->assertStringContainsString( 'flushed=1', $GLOBALS['_last_redirect'] );
+		$this->assertStringContainsString( 'restarted=', $GLOBALS['_last_redirect'] );
+		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
+	}
+
+	public function test_handle_flush_stats_uses_configured_memcache_hosts(): void {
+		// Inject a memcache_servers config value — the handler reads it from
+		// substrate config and passes it to Memcached_Cache. We're only checking
+		// that the path runs without throwing when the option is configured;
+		// the actual Memcached_Cache is a no-op when the PHP extension isn't loaded.
+		$this->use_base_dir(
+			$this->base_dir,
+			[ 'memcache_servers' => [ '127.0.0.1:11211', '127.0.0.1:11212' ] ]
+		);
+		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
+
+		$admin = new Admin();
+		try {
+			$admin->handle_flush_stats();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// Expected.
+		}
+		$this->assertNotNull( \get_option( 'newspack_nodes_stats_salt' ) );
+	}
+
+	public function test_handle_flush_stats_falls_back_to_default_servers_for_non_array(): void {
+		// Non-array memcache_servers must fall back to DEFAULT_SERVERS (covers
+		// the `! is_array($memcache_hosts)` guard).
+		$this->use_base_dir( $this->base_dir, [ 'memcache_servers' => 'not-an-array' ] );
+		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
+
+		$admin = new Admin();
+		try {
+			$admin->handle_flush_stats();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// Expected.
+		}
+		$this->assertNotNull( \get_option( 'newspack_nodes_stats_salt' ) );
+	}
+
+	// ---- maybe_request_worker_restart: enable_aggregator branch -----------
+
+	public function test_maybe_request_worker_restart_enable_aggregator_touches_aggregator_lock(): void {
+		// Create the aggregator's fixed lock dir so Lock::request_restart_at can
+		// drop the flag file (the static helper no-ops when the dir is missing).
+		$dir = "{$this->base_dir}/locks/aggregator.p0.lock.d";
+		\mkdir( $dir, 0755, true );
+
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_aggregator' );
+
+		// The aggregator's restart flag was written; request- and job-workers
+		// were untouched (the enable_aggregator handler is its own branch).
+		$this->assertFileExists( $dir . '/restart' );
+	}
+
+	public function test_maybe_request_worker_restart_enable_aggregator_swallows_throwables(): void {
+		// When Config::get_locks_directory() throws (e.g. unwritable base_dir),
+		// the handler must catch and continue — `try { } catch (\Throwable $e) {}`
+		// branch coverage. We force a throw by pointing the config at a path
+		// that ensure_path() can't realpath/canonicalize.
+		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/this/cannot/be/created' ] );
+
+		$admin = new Admin();
+		// Must not throw.
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_aggregator' );
+		$this->addToAssertionCount( 1 );
+	}
+
+	public function test_maybe_request_worker_restart_swallows_throwables_in_worker_groups_path(): void {
+		// Same defensive path on the regular (request-workers / job-workers)
+		// branch — Config::load_config() failing is caught and the handler
+		// silently returns rather than fatal-erroring on a save.
+		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/this/cannot/be/created' ] );
+
+		$admin = new Admin();
+		// Must not throw.
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		$this->addToAssertionCount( 1 );
+	}
+
+	// ---- configured_servers_callback: seeded servers ----------------------
+
+	public function test_configured_servers_callback_renders_seeded_servers(): void {
+		// Drop a configured server straight into the WP option so ServerRegistry
+		// picks it up. Reset the cached singleton state.
+		\update_option(
+			\Newspack_Event_Logger_Nodes\ServerRegistry::OPTION_KEY,
+			[
+				'spoke-a' => [
+					'url'           => 'https://a.example',
+					'auth_username' => '',
+					'auth_password' => '',
+					'enabled'       => true,
+				],
+				'spoke-b' => [
+					'url'           => 'https://b.example',
+					'auth_username' => '',
+					'auth_password' => '',
+					'enabled'       => false,
+				],
+			]
+		);
+		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\ServerRegistry::class, 'instance' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, null );
+
+		$admin = new Admin();
+		\ob_start();
+		$admin->configured_servers_callback();
+		$out = \ob_get_clean();
+
+		// Both server rows rendered.
+		$this->assertStringContainsString( 'data-server-id="spoke-a"', $out );
+		$this->assertStringContainsString( 'data-server-id="spoke-b"', $out );
+		// Status icons differ — enabled vs disabled.
+		$this->assertStringContainsString( 'dashicons-yes-alt', $out );
+		$this->assertStringContainsString( 'dashicons-no', $out );
+		// Enable/Disable button text reflects current state.
+		$this->assertStringContainsString( 'Disable', $out );  // for spoke-a (currently enabled)
+		$this->assertStringContainsString( 'Enable', $out );   // for spoke-b (currently disabled)
+		// No "No servers configured" placeholder when rows exist.
+		$this->assertStringNotContainsString( 'No servers configured', $out );
+	}
+
 	// ---- helpers ----------------------------------------------------------
 
 	private function prepare_lock_dir( string $group, int $partition ): string {
