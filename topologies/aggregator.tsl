@@ -8,17 +8,13 @@
 # timers register automatically on first name() — no explicit
 # `start_periodic_tick` verb is needed.
 #
-# Always single-partition (the StreamMerger is itself a fan-in; partition
-# count comes from the destination Topic). The k:"job" -> k:"remote_job"
-# rewrite filter is registered statically at plugin load
-# (StreamMerger::register_remote_job_rewrite_filter), not from TSL.
-
-# Frontmatter — supervisor reads these via Topology_Registry::frontmatter().
-var num_partitions = 1;
+# The k:"job" -> k:"remote_job" rewrite filter is registered statically
+# at plugin load (StreamMerger::register_remote_job_rewrite_filter), not
+# from TSL.
 
 make_node Topic firehose:topic <config:logs_dir>/firehose.log <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
 
-make_node StreamMerger stream-merger
+make_node StreamMerger stream-merger <partition>
 connect_node stream-merger firehose:topic
 cmd stream-merger:config set_verify_ssl <config:aggregator_verify_ssl>
 cmd stream-merger:config set_require_https <config:aggregator_require_https>

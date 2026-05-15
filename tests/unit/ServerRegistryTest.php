@@ -158,59 +158,6 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	// ---------------------------------------------------------------------
-	// Legacy plaintext fallback.
-	// ---------------------------------------------------------------------
-
-	public function test_legacy_plaintext_password_returned_as_is(): void {
-		// Emulate a pre-encryption row written by an older version.
-		\update_option(
-			ServerRegistry::OPTION_KEY,
-			[
-				'old-site' => [
-					'url'           => 'https://old.example.com',
-					'auth_username' => 'admin',
-					'auth_password' => 'plaintext-from-v1',
-					'enabled'       => true,
-					'logs'          => [ 'firehose.log' ],
-				],
-			]
-		);
-
-		$reg   = new ServerRegistry();
-		$entry = $reg->get( 'old-site' );
-		$this->assertSame( 'plaintext-from-v1', $entry['auth_password'] );
-	}
-
-	public function test_legacy_plaintext_logs_warning_once(): void {
-		\update_option(
-			ServerRegistry::OPTION_KEY,
-			[
-				'old-site' => [
-					'url'           => 'https://old.example.com',
-					'auth_password' => 'plaintext-from-v1',
-				],
-			]
-		);
-
-		// Force a fresh latch by reflection — the latch is process-static.
-		$ref = new \ReflectionProperty( ServerRegistry::class, 'legacy_warned' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, false );
-
-		( new ServerRegistry() )->get( 'old-site' );
-		$first = $this->read_error_log();
-		$this->assertStringContainsString( 'legacy plaintext credential', $first );
-
-		// Read again — log should not grow (one-shot warning).
-		( new ServerRegistry() )->reset_cache();
-		( new ServerRegistry() )->get( 'old-site' );
-		$second = $this->read_error_log();
-		$first_count  = \substr_count( $first, 'legacy plaintext credential' );
-		$second_count = \substr_count( $second, 'legacy plaintext credential' );
-		$this->assertSame( $first_count, $second_count );
-	}
-
-	// ---------------------------------------------------------------------
 	// Write verification (re-read after update_option).
 	// ---------------------------------------------------------------------
 

@@ -165,20 +165,19 @@ class WorkersControllerRealShapeTest extends TestCase {
 			$body['workers'],
 			static fn ( $w ) => 'firehose-workers-and-jobs' === ( $w['type'] ?? '' )
 		) );
-		// Handlers are processor class names — Tee fan-out expands so the
-		// firehose Consumer surfaces RequestBuilder + JobRouter; the
-		// jobintake Consumer adds another JobRouter row.
+		// Handler = the downstream node name (matches what the dashboard
+		// renders). Tee fan-out expands so the firehose Consumer surfaces
+		// request-builder + job-router; the jobintake Consumer adds
+		// another job-router row.
 		$handlers = \array_column( $rows, 'handler' );
-		$this->assertContains( 'RequestBuilder', $handlers );
-		$this->assertContains( 'JobRouter', $handlers );
-		// firehose.log row for RequestBuilder, jobintake.log row for the
-		// jobintake Consumer's JobRouter.
+		$this->assertContains( 'request-builder', $handlers );
+		$this->assertContains( 'job-router', $handlers );
 		$inputs_by_handler = [];
 		foreach ( $rows as $r ) {
 			$inputs_by_handler[ $r['handler'] ][] = $r['input_log'];
 		}
-		$this->assertContains( 'firehose.log', $inputs_by_handler['RequestBuilder'] );
-		$this->assertContains( 'jobintake.log', $inputs_by_handler['JobRouter'] );
+		$this->assertContains( 'firehose.log', $inputs_by_handler['request-builder'] );
+		$this->assertContains( 'jobintake.log', $inputs_by_handler['job-router'] );
 	}
 
 	private function seed_offsetlog_entry( string $offsetlog_dir, array $entry ): void {

@@ -313,11 +313,13 @@ class WorkersControllerTest extends TestCase {
 			$by_type[ $w['type'] ?? '' ][] = $w;
 		}
 
-		// firehose-workers fan-out: RequestBuilder + JobRouter from the
-		// firehose:consumer Tee, plus JobRouter again from jobintake:consumer.
+		// firehose-workers fan-out: request-builder + job-router from the
+		// firehose:consumer Tee, plus job-router again from jobintake:consumer.
+		// Handler is the downstream node name (matches what the dashboard
+		// renders) — not the PHP class.
 		$handlers = \array_column( $by_type['firehose-workers'], 'handler' );
-		$this->assertContains( 'RequestBuilder', $handlers );
-		$this->assertContains( 'JobRouter', $handlers );
+		$this->assertContains( 'request-builder', $handlers );
+		$this->assertContains( 'job-router', $handlers );
 
 		// request-workers and job-workers each have one consumer.
 		$this->assertCount( 1, $by_type['request-workers'] );

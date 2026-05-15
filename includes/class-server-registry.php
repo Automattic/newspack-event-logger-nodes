@@ -558,16 +558,6 @@ class ServerRegistry {
 	 * @return string Decrypted plaintext, original value if not encrypted, or empty on decrypt failure.
 	 */
 	private static function decrypt( string $stored ): string {
-		if ( 0 !== \strpos( $stored, self::ENCRYPTED_PREFIX ) ) {
-			// Legacy plaintext — return as-is. Log once per process so the
-			// migration shows up in error log without flooding.
-			if ( '' !== $stored && ! self::$legacy_warned ) {
-				self::$legacy_warned = true;
-				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-				\error_log( '[EventLogger] ServerRegistry: legacy plaintext credential detected — will be re-encrypted on next update.' );
-			}
-			return $stored;
-		}
 		if ( ! \function_exists( 'sodium_crypto_secretbox_open' ) ) {
 			return '';
 		}

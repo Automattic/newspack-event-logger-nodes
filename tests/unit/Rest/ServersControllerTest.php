@@ -80,7 +80,12 @@ class ServersControllerTest extends TestCase {
 		$this->assertSame( 'https://spoke1.example/', $body['spoke1']['url'] );
 		$this->assertTrue( $body['spoke1']['enabled'] );
 		$this->assertSame( [ 'firehose.log', 'jobs.log' ], $body['spoke1']['logs'] );
-		$this->assertTrue( $body['spoke1']['has_credentials'] );
+		// `has_credentials` requires the password to decrypt successfully.
+		// The fixture above stores plaintext (legacy migration path) which
+		// the encryption-only ServerRegistry::decrypt() now treats as
+		// undecryptable — so has_credentials is false until the operator
+		// re-saves the spoke through the admin form (which encrypts).
+		$this->assertFalse( $body['spoke1']['has_credentials'] );
 		// is_config flag is false for WP-option-only servers.
 		$this->assertFalse( $body['spoke1']['is_config'] );
 
