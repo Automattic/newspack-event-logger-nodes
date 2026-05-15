@@ -24,6 +24,7 @@
 		"lint:js": "wp-scripts lint-js 'src/**/*.{js,jsx}'",
 		"lint:php": "phpcs",
 		"lint:scss": "wp-scripts lint-style 'src/**/*.scss' --customSyntax postcss-scss",
+		"test:js": "wp-scripts test-unit-js --passWithNoTests",
 		"watch": "npm run clean && concurrently \"npm run watch:dashboards\" \"npm run watch:performance\" \"npm run watch:logger\" \"npm run watch:gyroscope\" \"npm run watch:request-log\" \"npm run watch:aggregator\" \"npm run watch:aggregator-settings\"",
 		"watch:aggregator": "wp-scripts start src/event-aggregator/index.js --output-path=build/event-aggregator",
 		"watch:aggregator-settings": "wp-scripts start src/event-aggregator/settings.js --output-path=build/event-aggregator-settings",
