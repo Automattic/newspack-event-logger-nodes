@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-05-14
+
 ### Removed
 
 - **`Config::get_option_schema_core/extended()` filter hooks.** The `newspack_event_logger_nodes_option_schema_core` / `…_extended` filter hooks were extension points no plugin used. Replaced with inline `private static $option_schema_core/extended` arrays.
