@@ -22,6 +22,7 @@ rm -rf /tmp/newspack-event-logger-nodes-test 2>/dev/null
 phpunit --configuration phpunit.xml \
     --coverage-clover /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/clover.xml \
     --coverage-html /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage \
+	--enforce-time-limit \
     "$@"
 
 echo ""
