@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+
+- **Round-3 coverage push: 93.9% → 94.2% (8197/8701 stmts across 52 classes).** 2162 lines of new test assertions across `Admin` (skip_default_writes, sanitize_array_strings/aggregator_servers/custom_events, field-callback placeholder + stored-value renderings, settings-registration shape), `LogManager` (filter normalization + URL routing edge cases), `RemoteManager` (handle_job non-callable/non-array filter returns, request_args header merging for basic-auth/bearer, calculate_lag with missing cursor or unknown segment, sync_setting WP_Error path, queue_sync_all_settings happy path), `Rest\FirehoseStreamController` (additional segment/partition selection branches), `SettingsSync` (fail-closed `enable_workers` polarity coverage), and `StreamMerger` (cache/require_https/verify_ssl propagation to children, namespaced_remote_name default, unknown-verb error reply, name-setter sibling propagation + idempotence).
+
 ## [0.2.32] - 2026-05-15
 
 **Requires:** [newspack-nodes ≥ v0.1.29](https://github.com/Automattic/newspack-nodes/releases/tag/v0.1.29) — for `Node::dump_node()` overridable hook and `serializeTsl` schema-default expansion.

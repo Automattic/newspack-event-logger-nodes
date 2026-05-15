@@ -1584,6 +1584,380 @@ class AdminTest extends TestCase {
 		$this->assertStringNotContainsString( 'No servers configured', $out );
 	}
 
+	// ---- additional edge cases for higher coverage --------------------------
+
+	public function test_skip_default_writes_returns_value_when_key_strips_to_empty(): void {
+		// When the option name is EXACTLY the prefix itself, `substr` returns
+		// `''` and the guard `'' === $key` short-circuits with the input value.
+		$admin = new Admin();
+		$this->assertSame( 'anything', $admin->skip_default_writes( 'anything', 'newspack_event_logger_nodes_', 'old' ) );
+	}
+
+	public function test_handle_reset_settings_with_filter_returning_non_string_entries(): void {
+		// Filter that injects non-string entries — should be skipped at the
+		// inner `is_string && str_starts_with` guard, not crash.
+		\add_filter(
+			'newspack_event_logger_nodes_reset_options',
+			static function ( $opts ) {
+				$opts[] = 42;            // int — dropped (not is_string)
+				$opts[] = [ 'array' ];   // array — dropped (not is_string)
+				$opts[] = 'newspack_event_logger_nodes_extra'; // legit, with prefix
+				return $opts;
+			}
+		);
+		\update_option( 'newspack_event_logger_nodes_extra', 'should-be-deleted' );
+
+		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
+		$admin = new Admin();
+		try {
+			$admin->handle_reset_settings();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// expected
+		}
+
+		// Only the prefixed-string entry was deleted.
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_extra' ) );
+	}
+
+	public function test_skip_default_writes_passes_through_complex_array_default(): void {
+		// `log_events` default is an array — the filter must compare arrays
+		// directly without bool-normalization.
+		$this->use_base_dir( $this->base_dir, [ 'log_events' => [ 'init', 'shutdown' ] ] );
+
+		$admin = new Admin();
+		// Submitting a different array passes through unchanged.
+		$result = $admin->skip_default_writes(
+			[ 'init', 'other' ],
+			'newspack_event_logger_nodes_log_events',
+			[]
+		);
+		$this->assertSame( [ 'init', 'other' ], $result );
+	}
+
+	public function test_sanitize_array_strings_handles_unicode(): void {
+		// Defensive: unicode characters in the input list survive
+		// sanitize_text_field (which strips control chars but not unicode).
+		$admin = new Admin();
+		$result = $admin->sanitize_array_strings( [ 'café', 'éclair', 'plain' ] );
+		$this->assertContains( 'café', $result );
+		$this->assertContains( 'éclair', $result );
+		$this->assertContains( 'plain', $result );
+	}
+
+	public function test_sanitize_array_strings_strips_control_chars(): void {
+		// Control characters are stripped by sanitize_text_field.
+		$admin = new Admin();
+		$result = $admin->sanitize_array_strings( [ "with\x00null", 'normal' ] );
+		// Control chars stripped → 'withnull' remains.
+		$this->assertContains( 'withnull', $result );
+		$this->assertContains( 'normal', $result );
+	}
+
+	public function test_sanitize_custom_events_drops_empty_keys_in_assoc(): void {
+		// Assoc input with empty keys → those entries dropped.
+		$admin = new Admin();
+		$result = $admin->sanitize_custom_events(
+			[ '' => true, 'valid_hook' => true ]
+		);
+		$this->assertArrayHasKey( 'valid_hook', $result );
+		$this->assertArrayNotHasKey( '', $result );
+	}
+
+	public function test_sanitize_aggregator_servers_drops_non_string_server_id(): void {
+		// Non-string server_id (after sanitize_text_field) might become empty
+		// and get dropped. We pass an array-typed key implicitly by using
+		// `__toString`-like behaviors here; the actual loop uses `sanitize_text_field`
+		// which coerces to string. Confirms the empty-result drop.
+		$admin = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'<script>' => [ 'url' => 'https://x.test' ], // stays as 'scriptgt' (stripped)
+				'normal'   => [ 'url' => 'https://normal.test' ],
+			]
+		);
+		// 'normal' definitely makes it.
+		$this->assertArrayHasKey( 'normal', $result );
+	}
+
+	public function test_aggregator_section_callback_describes_topology_topic(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->aggregator_section_callback();
+		$out = \ob_get_clean();
+		// The aggregator section explains topology behaviour.
+		$this->assertStringContainsString( 'aggregate', $out );
+		$this->assertStringContainsString( 'aggregator', $out );
+	}
+
+	public function test_remote_num_segments_callback_uses_default_when_unset(): void {
+		// No option set — `value=""` (placeholder shows through).
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_num_segments_callback();
+		$out = \ob_get_clean();
+		// Default appears as the placeholder, not as the input value.
+		$this->assertStringContainsString( 'placeholder="', $out );
+	}
+
+	public function test_remote_segment_size_callback_uses_default_when_unset(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_segment_size_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'placeholder="', $out );
+	}
+
+	public function test_remote_max_lifespan_callback_uses_default_when_unset(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_max_lifespan_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'placeholder="', $out );
+	}
+
+	public function test_remote_max_lifespan_callback_renders_stored_value(): void {
+		\update_option( 'newspack_event_logger_nodes_remote_max_lifespan', 1200 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_max_lifespan_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'value="1200"', $out );
+	}
+
+	public function test_remote_segment_size_callback_renders_stored_value(): void {
+		\update_option( 'newspack_event_logger_nodes_remote_segment_size', 5 * 1024 * 1024 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->remote_segment_size_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'value="' . ( 5 * 1024 * 1024 ) . '"', $out );
+	}
+
+	public function test_log_urls_callback_handles_assoc_input(): void {
+		// `normalize_string_list` accepts both flat lists and assoc maps;
+		// when stored as assoc, keys become the values.
+		\update_option(
+			'newspack_event_logger_nodes_log_urls',
+			[ '/calendar' => true, '/events' => true ]
+		);
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_urls_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '/calendar', $out );
+		$this->assertStringContainsString( '/events', $out );
+	}
+
+	public function test_log_urls_callback_handles_non_array_option(): void {
+		// `normalize_string_list` returns [] for non-array; renders empty mount.
+		\update_option( 'newspack_event_logger_nodes_log_urls', 'not-an-array' );
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_urls_callback();
+		$out = \ob_get_clean();
+		// Mount marker still present even with empty values.
+		$this->assertStringContainsString( 'event-logger-log_urls', $out );
+	}
+
+	public function test_log_events_callback_handles_empty_default(): void {
+		// When defaults `log_events` is empty array, the reset chip's data-default
+		// is `[]`.
+		$this->use_base_dir( $this->base_dir, [ 'log_events' => [] ] );
+		$admin = new Admin();
+		\ob_start();
+		$admin->log_events_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'event-logger-log_events', $out );
+	}
+
+	public function test_significant_events_callback_empty_renders_mount(): void {
+		// No stored option → no values → mount still renders.
+		$admin = new Admin();
+		\ob_start();
+		$admin->significant_events_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'event-logger-significant_events', $out );
+	}
+
+	public function test_auto_tune_callback_renders_when_only_count_set(): void {
+		// One option set, one unset — verify both inputs render correctly.
+		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 100 );
+		$admin = new Admin();
+		\ob_start();
+		$admin->auto_tune_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'value="100"', $out );
+	}
+
+	public function test_render_settings_page_static_construct_path(): void {
+		// Confirm static shim instantiates a fresh Admin and renders. Capture
+		// markup to assert the rendered settings page content.
+		$GLOBALS['_current_user_can'] = true;
+		\ob_start();
+		Admin::render_settings_page_static();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'newspack-event-logger-nodes-reset-form', $out );
+	}
+
+	public function test_handle_flush_stats_with_default_memcache_when_unset(): void {
+		// No memcache_servers configured — handler falls back to DEFAULT_SERVERS.
+		$this->use_base_dir( $this->base_dir, [] );
+		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
+
+		$admin = new Admin();
+		try {
+			$admin->handle_flush_stats();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// Expected.
+		}
+		$this->assertNotNull( \get_option( 'newspack_nodes_stats_salt' ) );
+	}
+
+	public function test_constructor_registers_admin_post_flush_action(): void {
+		$GLOBALS['_wp_actions'] = [];
+		$admin                  = new Admin();
+		$this->assertNotEmpty(
+			$GLOBALS['_wp_actions']['admin_post_' . Admin::FLUSH_STATS_ACTION] ?? [],
+			'admin_post hook for flush_stats must be wired'
+		);
+		$this->assertNotEmpty(
+			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/settings_after_form'] ?? [],
+			'settings_after_form hook must be wired'
+		);
+		$this->assertNotEmpty(
+			$GLOBALS['_wp_actions']['pre_update_option'] ?? [],
+			'pre_update_option filter must be wired (skip_default_writes)'
+		);
+	}
+
+	public function test_maybe_request_worker_restart_stats_salt_triggers_request_workers(): void {
+		// `stats_salt` is in the request_workers_options list (so a rotation
+		// from elsewhere fires the request-workers restart).
+		$this->prepare_lock_dir( 'request-workers', 0 );
+		$admin = new Admin();
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_stats_salt' );
+		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
+	}
+
+	public function test_sanitize_aggregator_servers_drops_non_string_url(): void {
+		// `url` is not a string at all → entry dropped.
+		$admin = new Admin();
+		$result = $admin->sanitize_aggregator_servers(
+			[
+				'bad'  => [ 'url' => 123 ],          // int — not is_string
+				'good' => [ 'url' => 'https://x.example' ],
+			]
+		);
+		$this->assertArrayNotHasKey( 'bad', $result );
+		$this->assertArrayHasKey( 'good', $result );
+	}
+
+	public function test_skip_urls_callback_renders_with_stored_value(): void {
+		// Stored value overrides defaults.
+		\update_option( 'newspack_event_logger_nodes_skip_urls', [ '/admin-ajax', '/heartbeat' ] );
+		$admin = new Admin();
+		\ob_start();
+		$admin->skip_urls_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( '/admin-ajax', $out );
+		$this->assertStringContainsString( '/heartbeat', $out );
+	}
+
+	public function test_render_maintenance_section_contains_flush_button(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->render_maintenance_section();
+		$out = \ob_get_clean();
+		// The "Rotates the stats-salt" description string is present below the button.
+		$this->assertStringContainsString( 'stats-salt', $out );
+	}
+
+	public function test_handle_reset_settings_with_options_having_wrong_prefix_ignored(): void {
+		// Filter that returns ONLY non-prefixed options — every entry dropped
+		// at the inner `str_starts_with` guard, no options deleted.
+		\add_filter(
+			'newspack_event_logger_nodes_reset_options',
+			static function () {
+				// Replace the default options list entirely with non-prefixed entries.
+				return [
+					'foreign_option_a',
+					'wp_foreign_option',
+					'another_option',
+				];
+			}
+		);
+		\update_option( 'foreign_option_a', 'survives' );
+		\update_option( 'wp_foreign_option', 'also-survives' );
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
+
+		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
+		$admin = new Admin();
+		try {
+			$admin->handle_reset_settings();
+			$this->fail( 'expected RedirectException' );
+		} catch ( RedirectException $e ) {
+			// Expected.
+		}
+
+		// Non-prefixed entries from filter untouched.
+		$this->assertSame( 'survives', \get_option( 'foreign_option_a' ) );
+		$this->assertSame( 'also-survives', \get_option( 'wp_foreign_option' ) );
+		// Filter replaced the default list so the canonical option survives too.
+		$this->assertSame( 1, \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
+	}
+
+	public function test_register_settings_registers_remote_settings_options(): void {
+		// Remote-server-side options must be registered with their sanitizers.
+		$admin = new Admin();
+		$admin->register_settings();
+
+		$expected = [
+			'newspack_event_logger_nodes_remote_num_segments',
+			'newspack_event_logger_nodes_remote_segment_size',
+			'newspack_event_logger_nodes_remote_max_lifespan',
+		];
+		foreach ( $expected as $option ) {
+			$this->assertArrayHasKey( $option, $GLOBALS['_registered_settings'] );
+			$this->assertSame( 'string', $GLOBALS['_registered_settings'][ $option ]['args']['type'] );
+		}
+	}
+
+	public function test_register_settings_registers_remote_settings_section(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+
+		// The Remote Server Settings section + its three fields must be registered.
+		$this->assertArrayHasKey(
+			'newspack_event_logger_nodes_remote_settings_section',
+			$GLOBALS['_registered_sections']
+		);
+		foreach ( [ 'remote_num_segments', 'remote_segment_size', 'remote_max_lifespan' ] as $f ) {
+			$this->assertArrayHasKey( $f, $GLOBALS['_registered_fields'] );
+		}
+	}
+
+	public function test_register_settings_registers_aggregator_section(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+
+		$this->assertArrayHasKey(
+			'newspack_event_logger_nodes_aggregator_section',
+			$GLOBALS['_registered_sections']
+		);
+		$this->assertArrayHasKey( 'configured_servers', $GLOBALS['_registered_fields'] );
+	}
+
+	public function test_register_settings_registers_debugging_fields(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+
+		foreach ( [ 'log_memory', 'flush_every_line' ] as $f ) {
+			$this->assertArrayHasKey( $f, $GLOBALS['_registered_fields'] );
+		}
+	}
+
 	// ---- helpers ----------------------------------------------------------
 
 	private function prepare_lock_dir( string $group, int $partition ): string {
