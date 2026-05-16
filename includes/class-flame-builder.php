@@ -1526,7 +1526,7 @@ class FlameBuilder extends Node {
 			foreach ( $node['children'] as $child ) {
 				$children_sum += $child['value'] ?? 0;
 			}
-			if ( $children_sum > ( $node['value'] ?? 0 ) ) {
+			if ( $children_sum > $node['value'] ) {
 				$node['value'] = $children_sum;
 			}
 		}

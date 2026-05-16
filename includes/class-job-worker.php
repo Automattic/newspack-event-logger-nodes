@@ -376,7 +376,7 @@ class JobWorker extends Node {
 
 	private function memory_limit_bytes(): int {
 		$ini = \ini_get( 'memory_limit' );
-		if ( '-1' === $ini || false === $ini ) {
+		if ( '-1' === $ini ) {
 			return -1;
 		}
 		$num = (int) $ini;

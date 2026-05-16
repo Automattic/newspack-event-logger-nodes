@@ -520,8 +520,8 @@ class StreamMerger extends Node {
 			}
 			$pos = $remote->position();
 			$entry[ $server_id ] = [
-				'seg' => (int) ( $pos['segment_id'] ?? 0 ),
-				'off' => (int) ( $pos['offset'] ?? 0 ),
+				'seg' => $pos['segment_id'],
+				'off' => $pos['offset'],
 			];
 		}
 		if ( empty( $entry ) ) {

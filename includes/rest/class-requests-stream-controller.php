@@ -51,7 +51,7 @@ class RequestsStreamController extends SSEControllerBase {
 		if ( ! \is_array( $req ) || empty( $req['url'] ) ) {
 			return null;
 		}
-		$url = (string) ( $req['url'] ?? '' );
+		$url = (string) $req['url'];
 		$ua  = (string) ( $req['user_agent'] ?? '' );
 		$ts  = $req['timestamp'] ?? 0;
 		$dur = $req['duration_ms'] ?? 0;

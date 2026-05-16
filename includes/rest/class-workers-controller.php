@@ -177,7 +177,7 @@ class WorkersController extends PerformanceControllerBase {
 				// the Consumer plumbing.
 				$targets = ! empty( $row['targets'] )
 					? $row['targets']
-					: [ [ 'name' => $row['target'] ?? '' ] ];
+					: [ [ 'name' => $row['target'] ] ];
 				foreach ( $targets as $t ) {
 					$handler = (string) ( $t['name'] ?? '' );
 					$worker = $this->build_worker_status(

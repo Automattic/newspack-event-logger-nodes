@@ -447,7 +447,7 @@ class ServerRegistry {
 		$url = \function_exists( 'esc_url_raw' )
 			? \esc_url_raw( $config['url'] )
 			: $config['url'];
-		if ( empty( $url ) || ! \is_string( $url ) ) {
+		if ( '' === $url ) {
 			return null;
 		}
 		if ( 0 !== \strpos( $url, 'https://' ) ) {
