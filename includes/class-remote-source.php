@@ -592,7 +592,7 @@ class RemoteSource extends Node {
 		$data['_source'] = $this->server_id;
 
 		$line = \wp_json_encode( $data );
-		if ( false === $line || '' === $line ) {
+		if ( false === $line ) {
 			return;
 		}
 

@@ -52,8 +52,9 @@ class Partition_Reader {
 	/**
 	 * Set the next read position.
 	 *
-	 * @param string|array{segment_id:int,offset:int} $position 'start' / 'recent' /
-	 *                                                          'end' / explicit position.
+	 * @param string|array{segment_id?:int,offset?:int} $position 'start' / 'recent' /
+	 *                                                            'end' / explicit position.
+	 *                                                            Missing array keys default to 0.
 	 */
 	public function next_offset( string|array $position ): void {
 		$this->close();
@@ -62,8 +63,8 @@ class Partition_Reader {
 		$this->at_eof          = false;
 
 		if ( \is_array( $position ) ) {
-			$this->segment_id = (int) ( $position['segment_id'] ?? 0 );
-			$this->offset     = (int) ( $position['offset'] ?? 0 );
+			$this->segment_id = $position['segment_id'] ?? 0;
+			$this->offset     = $position['offset'] ?? 0;
 			if ( $this->offset < -1 ) {
 				$this->offset = -1;
 			}

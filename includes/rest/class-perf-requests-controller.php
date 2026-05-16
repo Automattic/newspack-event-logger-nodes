@@ -206,13 +206,13 @@ class PerfRequestsController extends PerformanceControllerBase {
 						return false;
 					}
 					$entry = FlameBuilder::parse_flame_index( $line );
-					if ( ! \is_array( $entry ) || \trim( (string) ( $entry['rid'] ?? '' ) ) !== $rid ) {
+					if ( ! \is_array( $entry ) || \trim( $entry['rid'] ) !== $rid ) {
 						return null;
 					}
 					$data = $flames->read_at(
-						(int) ( $entry['segment_id'] ?? 0 ),
-						(int) ( $entry['offset'] ?? 0 ),
-						(int) ( $entry['length'] ?? 0 )
+						$entry['segment_id'],
+						$entry['offset'],
+						$entry['length']
 					);
 					if ( '' === $data ) {
 						return false;

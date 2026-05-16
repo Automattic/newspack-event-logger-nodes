@@ -93,7 +93,7 @@ class Memcached_Cache implements Cache_Interface {
 		foreach ( $servers as $server ) {
 			$parts    = \explode( ':', $server );
 			$parsed[] = [
-				'host' => $parts[0] ?? '127.0.0.1',
+				'host' => $parts[0],
 				'port' => (int) ( $parts[1] ?? 11211 ),
 			];
 		}

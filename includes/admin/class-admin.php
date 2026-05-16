@@ -149,7 +149,7 @@ class Admin {
 			return true; // CLI / no user context — don't lock out admins running CLI tools.
 		}
 		$current_user = \wp_get_current_user();
-		return $current_user && \in_array( $current_user->user_login, $allowed_users, true );
+		return \in_array( $current_user->user_login, $allowed_users, true );
 	}
 
 	public function __construct() {

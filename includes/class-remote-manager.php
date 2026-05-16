@@ -66,7 +66,9 @@ class RemoteManager {
 	/**
 	 * Register the `remote_manager` JobIntake handler.
 	 *
-	 * @param array $handlers Existing handlers.
+	 * @param mixed $handlers Existing handlers (filter boundary — defensively
+	 *                        coerced to array if a misbehaving caller passes
+	 *                        anything else).
 	 * @return array Modified handlers.
 	 */
 	public static function register_handler( $handlers ): array {

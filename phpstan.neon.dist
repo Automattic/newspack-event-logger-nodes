@@ -30,5 +30,8 @@ parameters:
         # Node subclass / static call here references them. Point PHPStan
         # at the substrate sources so it can discover those symbols.
         - ../newspack-nodes/includes
-    treatPhpDocTypesAsCertain: false
-    reportUnmatchedIgnoredErrors: false
+    # treatPhpDocTypesAsCertain + reportUnmatchedIgnoredErrors left at PHPStan
+    # defaults (both `true`). First makes PHPDoc types behave like real types
+    # for always-true/always-false detection. Second fails the build on any
+    # stale `@phpstan-ignore` comment — we don't use any, but enforcing the
+    # absence keeps it that way.

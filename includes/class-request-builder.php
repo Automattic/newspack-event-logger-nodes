@@ -353,7 +353,7 @@ class RequestBuilder extends Node {
 				$request->url = \explode( '?', $m[1], 2 )[0];
 			}
 			$parts                   = \explode( ' ', $message, 2 );
-			$request->request_method = $parts[0] ?? '';
+			$request->request_method = $parts[0];
 		};
 
 		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
@@ -535,10 +535,12 @@ class RequestBuilder extends Node {
 	 * Handle a single evicted request from LRU bucket rotation.
 	 *
 	 * Incomplete requests get written with error_status=T.
-	 * Called by the LruCache eviction callback.
+	 * Called by the LruCache eviction callback — LruCache stores mixed
+	 * values, so the runtime type isn't guaranteed by the signature; the
+	 * instanceof gate is the real validation.
 	 *
-	 * @param string    $rid     Request ID.
-	 * @param \stdClass $request Request object.
+	 * @param string $rid     Request ID.
+	 * @param mixed  $request Request object (expected \stdClass).
 	 */
 	private function evict_request( string $rid, $request ): void {
 		if ( ! ( $request instanceof \stdClass ) || empty( $request->url ) ) {
