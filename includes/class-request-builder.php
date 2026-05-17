@@ -64,6 +64,12 @@ class RequestBuilder extends Node {
 	/** @var string Named target for error/warning lines (empty = disabled). */
 	private $errors_target = '';
 
+	/** @var string Named target for compact-summary completed lines (empty = disabled). */
+	private string $completed_target = '';
+
+	/** @var RequestFlight|null Hidden sibling — periodic in-flight snapshots. */
+	private ?RequestFlight $flight = null;
+
 	/** @var int Process line counter (for tests/debug). */
 	private $line_counter = 0;
 
@@ -84,6 +90,57 @@ class RequestBuilder extends Node {
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
+
+		// Hidden Flight sibling — patron filter hides it from the canvas.
+		// Naming happens in the overridden name() setter so the sibling
+		// adopts `{patron}:flight` when the patron is named (mirroring the
+		// CI sibling's `{patron}:config` propagation in Node::name).
+		// Sink wiring also propagates from the overridden sink() setter.
+		$this->flight = new RequestFlight();
+		$this->flight->patron( $this );
+	}
+
+	public function flight(): RequestFlight {
+		return $this->flight;
+	}
+
+	/**
+	 * Override Node::name() so the Flight sibling tracks the patron name.
+	 * The CI sibling is handled by the parent (it owns $this->interpreter);
+	 * Flight is application-specific and lives outside that mechanism.
+	 */
+	public function name( ?string $name = null ): string {
+		if ( null !== $name ) {
+			$result = parent::name( $name );
+			if ( null !== $this->flight ) {
+				$this->flight->name( $name . ':flight' );
+			}
+			return $result;
+		}
+		return parent::name();
+	}
+
+	/**
+	 * Override Node::sink() so the auto-sink wiring make_node performs on
+	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
+	 * Flight's $this->sink stays null and its in-flight emits drop on the
+	 * floor.
+	 */
+	public function sink( ?Node $node = null ): ?Node {
+		if ( \func_num_args() > 0 ) {
+			if ( null !== $this->flight ) {
+				$this->flight->sink( $node );
+			}
+			return parent::sink( $node );
+		}
+		return parent::sink();
+	}
+
+	/**
+	 * Set the named target for compact-summary completed-request lines.
+	 */
+	public function set_completed_target( string $target ): void {
+		$this->completed_target = $target;
 	}
 
 	/**
@@ -98,18 +155,25 @@ class RequestBuilder extends Node {
 	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
 	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
 	 * (which Node::target stores in $this->target) plus the
-	 * conditional errors_target the topology may have wired.
+	 * conditional errors_target / completed_target the topology may have
+	 * wired.
 	 *
-	 * Without this override `errors:partition` would orphan on the
-	 * topology console (a node with `0` count, no inbound edges) even
-	 * though RequestBuilder writes to it under error conditions.
+	 * Without this override `errors:partition` and `completed:tee` would
+	 * orphan on the topology console (nodes with `0` count, no inbound
+	 * edges) even though RequestBuilder writes to them.
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
 			return parent::target( $value );
 		}
 		$primary = parent::target();
-		$extras  = '' !== $this->errors_target ? [ $this->errors_target ] : [];
+		$extras  = [];
+		if ( '' !== $this->errors_target ) {
+			$extras[] = $this->errors_target;
+		}
+		if ( '' !== $this->completed_target ) {
+			$extras[] = $this->completed_target;
+		}
 		if ( ! $extras ) {
 			return $primary;
 		}
@@ -564,6 +628,10 @@ class RequestBuilder extends Node {
 	 * KEY = rid so downstream readers / aggregator forwarders can identify
 	 * the request without decoding VALUE. RequestBuilder still stamps
 	 * `rid` into the request struct itself; KEY is the wire-level breadcrumb.
+	 *
+	 * Also fires the secondary compact-summary emit (no-op when
+	 * completed_target is unset) so a topology that wires both the full
+	 * doc and the one-line summary gets both with one source call.
 	 */
 	private function emit_request( \stdClass $request ): void {
 		$msg                       = Message::new_message();
@@ -573,6 +641,113 @@ class RequestBuilder extends Node {
 		$msg[ Message::KEY ]       = (string) ( $request->rid ?? '' );
 		$msg[ Message::VALUE ]     = (array) $request;
 		parent::fill( $msg );
+		$this->emit_compact_summary( $request );
+	}
+
+	/**
+	 * Build an HTTP-access-log-style compact summary from a completed
+	 * request envelope. Schema mirrors legacy
+	 * requests-stream-controller::transform_line so the schema-parity
+	 * audit passes. URL clipped to 2000 chars + "..." suffix; UA to 500.
+	 *
+	 * @param \stdClass|array $request Completed request envelope.
+	 * @return array<string,mixed>
+	 */
+	public function build_compact_summary( $request ): array {
+		$r   = (array) $request;
+		$url = (string) ( $r['url'] ?? '' );
+		$ua  = (string) ( $r['user_agent'] ?? '' );
+		$ts  = (float) ( $r['timestamp'] ?? 0 );
+		$dur = (float) ( $r['duration_ms'] ?? 0 );
+		return [
+			'rid'          => (string) ( $r['rid'] ?? '' ),
+			'method'       => (string) ( $r['request_method'] ?? 'GET' ),
+			'url'          => \strlen( $url ) > 2000 ? \substr( $url, 0, 2000 ) . '...' : $url,
+			'start_time'   => $ts,
+			'end_time'     => $ts + ( $dur / 1000 ),
+			'duration_ms'  => $dur,
+			'status_code'  => (int) ( $r['status_code'] ?? 0 ),
+			'state'        => 'complete',
+			'error_status' => (string) ( $r['error_status'] ?? '-' ),
+			'remote_addr'  => (string) ( $r['remote_addr'] ?? '' ),
+			'user_agent'   => \strlen( $ua ) > 500 ? \substr( $ua, 0, 500 ) . '...' : $ua,
+		];
+	}
+
+	/**
+	 * Fire the secondary compact-summary emit. Silent no-op when the
+	 * topology hasn't wired completed_target or a sink isn't attached.
+	 *
+	 * @param \stdClass|array $request Completed request envelope.
+	 */
+	private function emit_compact_summary( $request ): void {
+		if ( '' === $this->completed_target || null === $this->sink ) {
+			return;
+		}
+		$summary                   = $this->build_compact_summary( $request );
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::TO ]        = $this->completed_target;
+		$msg[ Message::KEY ]       = $summary['rid'];
+		$msg[ Message::VALUE ]     = $summary;
+		$this->sink->fill( $msg );
+	}
+
+	/**
+	 * Snapshot the in-flight request map as a list of compact-summary-shaped
+	 * rows tagged `state: 'active'`. Consumed by RequestFlight's periodic
+	 * fire — emitted to the gyroscope partition for cross-spoke aggregation.
+	 *
+	 * Reads the live LruCache (the canonical in-flight map); tests use
+	 * prime_inflight_for_testing() to seed the cache without driving the
+	 * fill() pipeline.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function inflight_snapshot(): array {
+		$out = [];
+		foreach ( $this->cache->iterate() as $rid => $request ) {
+			$r     = (array) $request;
+			$out[] = [
+				'rid'        => (string) $rid,
+				'method'     => (string) ( $r['request_method'] ?? 'GET' ),
+				'url'        => (string) ( $r['url'] ?? '' ),
+				'start_time' => (float) ( $r['timestamp'] ?? 0 ),
+				'state'      => 'active',
+			];
+		}
+		return $out;
+	}
+
+	/**
+	 * Test seam: seed the in-flight cache with a map of rid → request fields.
+	 * Mirrors what process_(start) + state callbacks would set after a real
+	 * firehose lead-in, letting tests assert on inflight_snapshot() / the
+	 * compact-summary helpers without driving the full fill() pipeline.
+	 *
+	 * @internal Test-only.
+	 * @param array<string,array<string,mixed>|\stdClass> $map Rid → request fields.
+	 */
+	public function prime_inflight_for_testing( array $map ): void {
+		foreach ( $map as $rid => $entry ) {
+			$obj      = (object) $entry;
+			$obj->rid = (string) $rid;
+			$this->cache->set( (string) $rid, $obj );
+		}
+	}
+
+	/**
+	 * Test seam: invoke the full completed-request emit path (primary +
+	 * compact summary) directly, bypassing the firehose-line assembly the
+	 * `fill()` pipeline normally requires.
+	 *
+	 * @internal Test-only.
+	 * @param \stdClass|array $request Completed request envelope.
+	 */
+	public function emit_completed_for_testing( $request ): void {
+		$this->emit_request( (object) $request );
 	}
 
 	/**
@@ -765,6 +940,17 @@ class RequestBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_errors_target', $args );
 					return 'ok';
 				},
+				'set_completed_target' => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \trim( $args );
+					if ( '' === $args ) {
+						return 'usage: set_completed_target <node_name>';
+					}
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->set_completed_target( $args );
+					$patron->mark_verb_invoked( 'set_completed_target', $args );
+					return 'ok';
+				},
 			];
 		}
 		return $verbs;
@@ -828,6 +1014,13 @@ class RequestBuilder extends Node {
 				[
 					'name'        => 'set_errors_target',
 					'description' => 'Forward error/warning keywords to a named partition.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+				],
+				[
+					'name'        => 'set_completed_target',
+					'description' => 'Emit a compact one-line summary of each completed request to a named partition (in addition to the primary full-doc emit).',
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],

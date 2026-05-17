@@ -46,25 +46,50 @@ class RequestFlightTest extends TestCase {
 	}
 
 	public function test_fire_emits_inflight_batch_through_sink_chain(): void {
-		// The full integration test requires RequestBuilder::inflight_snapshot()
-		// + prime_inflight_for_testing(), both added in Task 22. Until then
-		// the RequestFlight unit covers configuration; Task 22 will remove
-		// this skip and re-enable the end-to-end assertion below.
-		$this->markTestIncomplete( 'requires Task 22 patron methods (inflight_snapshot + prime_inflight_for_testing)' );
+		// End-to-end: RequestBuilder auto-attaches Flight in its ctor (Task 22),
+		// the overridden sink() setter propagates the sink down, and Flight's
+		// fire_cb() calls patron->inflight_snapshot() and emits the batch.
+		$rb = new RequestBuilder();
+		$rb->name( 'rb-flight-e2e' );
+
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+
+		$rb->prime_inflight_for_testing( [
+			'rid-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
+			'rid-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ],
+		] );
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+
+		$this->assertCount( 1, $got );
+		$this->assertSame( Message::TM_STRUCT, $got[0][ Message::TYPE ] );
+		$this->assertSame( 'gyroscope_partition', $got[0][ Message::TO ] );
+		$this->assertSame( 'inflight', $got[0][ Message::KEY ] );
+		$this->assertSame( 'rb-flight-e2e:flight', $got[0][ Message::FROM ] );
+		$batch = $got[0][ Message::VALUE ];
+		$this->assertCount( 2, $batch );
+		$this->assertSame( 'rid-1', $batch[0]['rid'] );
+		$this->assertSame( 'active', $batch[0]['state'] );
+		$this->assertSame( '/a', $batch[0]['url'] );
+		$this->assertSame( 'rid-2', $batch[1]['rid'] );
 	}
 
 	public function test_patron_pointer_round_trips(): void {
 		// The patron pointer is what the substrate's dump_metadata reads
 		// to hide RequestFlight from the topology canvas — round-tripping
-		// it is the test for "hidden via patron".
+		// it is the test for "hidden via patron". Task 22 wires this
+		// automatically inside RequestBuilder's ctor; assert against the
+		// auto-attached sibling rather than constructing a parallel one
+		// (which would collide on the `:flight` registered node name).
 		$patron = new RequestBuilder();
-		$patron->name( 'rb' );
+		$patron->name( 'rb-patron' );
 
-		$flight = new RequestFlight();
-		$flight->patron( $patron );
-		$flight->name( 'rb:flight' );
-
+		$flight = $patron->flight();
 		$this->assertSame( $patron, $flight->patron() );
+		$this->assertSame( 'rb-patron:flight', $flight->name() );
 	}
 
 	public function test_set_interval_reschedules(): void {
