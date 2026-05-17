@@ -716,9 +716,32 @@ class RequestBuilder extends Node {
 				'url'        => (string) ( $r['url'] ?? '' ),
 				'start_time' => (float) ( $r['timestamp'] ?? 0 ),
 				'state'      => 'active',
+				'current'    => self::extract_current_hook( $r ),
 			];
 		}
 		return $out;
+	}
+
+	/**
+	 * Extract the "current activity" string for an in-flight request — the
+	 * legacy InflightTracker `state`/`what` pair condensed into one field.
+	 * Prefers an explicit `current_hook` (set by the test seam and future
+	 * runtime tagging), otherwise reads the top of the request's hook stack.
+	 *
+	 * @param array<string,mixed> $request Request envelope as an array.
+	 */
+	private static function extract_current_hook( array $request ): string {
+		if ( isset( $request['current_hook'] ) && \is_string( $request['current_hook'] ) ) {
+			return $request['current_hook'];
+		}
+		$stack = $request['stack'] ?? null;
+		if ( \is_array( $stack ) && [] !== $stack ) {
+			$top = $stack[ \array_key_last( $stack ) ];
+			if ( \is_array( $top ) && isset( $top[0] ) && \is_string( $top[0] ) ) {
+				return $top[0];
+			}
+		}
+		return '';
 	}
 
 	/**
