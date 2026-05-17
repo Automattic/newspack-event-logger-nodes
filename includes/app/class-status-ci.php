@@ -1,0 +1,69 @@
+<?php
+/**
+ * Status_CI: command-dispatch for the health/version probe surface.
+ *
+ * Replaces legacy class-status-controller.php with a CommandInterpreter
+ * that mounts at priority 11 alongside the rest of the M2 service CIs.
+ *
+ * Verbs:
+ *   get — return plugin version, runtime version, partition count, configured
+ *         topology list, cache reachability, and a wall-clock timestamp.
+ *         Enough for an admin dashboard to render a "is this thing alive?"
+ *         surface without making a dozen separate calls.
+ *
+ * Cache is the only injectable dependency — the substrate Config is a
+ * global accessed directly, matching the legacy controller. The cache
+ * probe is wrapped in a Throwable catch so the status endpoint never
+ * fails: a cache outage reports `cache_available=false`, not 500.
+ *
+ * @package Newspack_Event_Logger_Nodes
+ */
+
+namespace Newspack_Event_Logger_Nodes\App;
+
+use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Config as RuntimeConfig;
+
+\defined( 'ABSPATH' ) || exit;
+
+class Status_CI extends CommandInterpreter {
+
+	/**
+	 * Build a Status_CI bound to the supplied cache.
+	 *
+	 * @param object|null $cache Anything exposing `is_available(): bool`.
+	 *                            Production passes \Newspack_Event_Logger_Nodes\Memcached_Cache;
+	 *                            tests pass FakeMemcached or an anon stub. Null
+	 *                            reports cache_available=false without invoking
+	 *                            anything.
+	 */
+	public function __construct( ?object $cache = null ) {
+		// Node + CommandInterpreter have no explicit __construct, so the
+		// inherited no-op is implicit. Mirrors Workers_CI / Discovery_CI,
+		// which extend CommandInterpreter and also skip the parent call.
+		$this->commands( [
+			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+				$config = RuntimeConfig::load_config();
+
+				$cache_available = false;
+				if ( null !== $cache ) {
+					try {
+						$cache_available = (bool) $cache->is_available();
+					} catch ( \Throwable $e ) {
+						// Leave cache_available=false; status endpoint never fails.
+					}
+				}
+
+				return (string) \wp_json_encode( [
+					'status'          => 'ok',
+					'version'         => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
+					'runtime_version' => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
+					'num_partitions'  => (int) ( $config['num_partitions'] ?? 1 ),
+					'topologies'      => \is_array( $config['topologies'] ?? null ) ? \array_values( $config['topologies'] ) : [],
+					'cache_available' => $cache_available,
+					'timestamp'       => \time(),
+				] );
+			},
+		] );
+	}
+}
