@@ -24,13 +24,16 @@ Thumbs.db
 
 # Dev tooling / configs
 .distignore
+.eslintrc.js
 build-release.sh
 cghooks.lock
 commitlint.config.js
+jest.config.js
 package-lock.json
 package.json
 phpcs.xml.dist
 phpstan.neon.dist
+webpack.config.js
 
 # Dev infrastructure — not part of the installable plugin
 /coverage
