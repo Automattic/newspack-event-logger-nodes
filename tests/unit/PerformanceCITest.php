@@ -590,4 +590,95 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
+
+	// -------------------------------------------------------------------------
+	// timing verb
+	// -------------------------------------------------------------------------
+
+	public function test_timing_verb_returns_empty_time_series_when_no_data(): void {
+		// No hourly buckets seeded — canonical empty envelope.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'timing' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'time_series', $result );
+		$this->assertSame( [], $result['time_series'] );
+	}
+
+	public function test_timing_verb_returns_merged_hourly_buckets(): void {
+		// Two hourly buckets — verb returns them sorted by hour key.
+		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store->set_hourly( [
+			'2026-05-17-09' => [ 'count' => 3, 'sum_ms' => 600.0, 'sum_peak_mb' => 30.0 ],
+			'2026-05-17-10' => [ 'count' => 5, 'sum_ms' => 2500.0, 'sum_peak_mb' => 50.0 ],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'timing' );
+
+		$this->assertCount( 2, $result['time_series'] );
+		$this->assertSame( '2026-05-17-09', $result['time_series'][0]['hour'] );
+		$this->assertSame( 3, $result['time_series'][0]['count'] );
+		$this->assertSame( '2026-05-17-10', $result['time_series'][1]['hour'] );
+		$this->assertSame( 5, $result['time_series'][1]['count'] );
+	}
+
+	public function test_timing_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'timing' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// dashboard verb
+	// -------------------------------------------------------------------------
+
+	public function test_dashboard_verb_returns_overview_and_urls_envelope(): void {
+		// No data seeded — verb still returns the canonical nested shape with
+		// an overview block plus an empty urls array. Lifted from legacy
+		// PerformanceController::get_dashboard, minus the REST data+meta wrapper.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'dashboard' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'overview', $result );
+		$this->assertArrayHasKey( 'urls', $result );
+		$this->assertIsArray( $result['overview'] );
+		$this->assertSame( [], $result['urls'] );
+		$this->assertSame( 0, $result['overview']['total_urls'] );
+		$this->assertSame( 0, $result['overview']['total_requests'] );
+	}
+
+	public function test_dashboard_verb_includes_seeded_urls(): void {
+		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$bucket = $store->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'dashboardhash' => [
+				'url'       => '/dashboard-url',
+				'count'     => 11,
+				'sum_ms'    => 550.0,
+				'last_seen' => 1700002000,
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'dashboard' );
+
+		$this->assertSame( 1, $result['overview']['total_urls'] );
+		$this->assertCount( 1, $result['urls'] );
+		$this->assertSame( '/dashboard-url', $result['urls'][0]['url'] );
+		$this->assertSame( 11, $result['urls'][0]['count'] );
+	}
+
+	public function test_dashboard_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'dashboard' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
 }
