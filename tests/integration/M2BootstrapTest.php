@@ -73,4 +73,23 @@ class M2BootstrapTest extends TestCase {
 			);
 		}
 	}
+
+	/**
+	 * M4 cutover #1 deletion: the legacy AggregatorStatusController is
+	 * replaced by the `Aggregator_CI.status` verb on the unified
+	 * `/newspack-nodes/v1/command` endpoint. The dashboard cutover landed
+	 * in commit 1350303 and the schema-parity audit confirmed zero gaps,
+	 * so the class itself must be gone — not just unreferenced.
+	 *
+	 * Asserting class non-existence (rather than route non-existence) is
+	 * the strongest gate: a stale `register_routes()` call would crash
+	 * before the route map could be inspected, and autoloader caching can
+	 * resurrect a forgotten file across deploys.
+	 */
+	public function test_legacy_aggregator_status_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\AggregatorStatusController' ),
+			'Legacy AggregatorStatusController class must be deleted; Aggregator_CI.status verb replaces it.'
+		);
+	}
 }

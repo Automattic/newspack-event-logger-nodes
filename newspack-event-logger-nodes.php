@@ -417,7 +417,6 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 	static function (): void {
 		( new \Newspack_Event_Logger_Nodes\Rest\StatusController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\AggregatorController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\AggregatorStatusController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\EventsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerformanceController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\GyroscopeController() )->register_routes();

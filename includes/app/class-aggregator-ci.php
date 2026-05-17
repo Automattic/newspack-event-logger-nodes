@@ -2,16 +2,16 @@
 /**
  * Aggregator_CI: command-dispatch for the hub-side aggregator dashboards.
  *
- * Collapses two legacy controllers that both registered under the same
- * `newspack-nodes-aggregator/v1` namespace:
- *   - AggregatorStatusController (purpose-built /status body — per-server
- *     partition snapshot from memcache).
- *   - AggregatorController (stub /status delegating to the above, plus
- *     /servers and /health).
- *
- * `AggregatorStatusController` is the canonical /status implementation;
- * the stub in `AggregatorController::get_status()` was a thin delegator.
- * Mounts at priority 11 alongside the rest of the M2 service CIs.
+ * Canonical implementation of the three hub-side aggregator endpoints
+ * that the legacy `newspack-nodes-aggregator/v1` namespace exposed:
+ * `status`, `servers`, `health`. The dashboard cutover (commit 1350303)
+ * migrated `AggregatorStatus.js` from `apiFetch('.../v1/status')` to
+ * `commandClient.send('aggregator', 'status')`. The legacy
+ * `AggregatorController` REST shim is preserved for any non-dashboard
+ * caller and holds its `/status` body in parity with the `status` verb
+ * here; the dedicated `AggregatorStatusController` (which the shim used
+ * to delegate to) was deleted in the M4 cutover. Mounts at priority 11
+ * alongside the rest of the M2 service CIs.
  *
  * Verbs:
  *   status  — per-server partition snapshot keyed by server id. For each
