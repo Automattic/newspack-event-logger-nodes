@@ -328,6 +328,12 @@ class RequestBuilder extends Node {
 			$this->pop_stack( $request, \substr( $keyword, 0, -11 ), $entry['duration_ms'] ?? 0, $entry['ts'] ?? 0 );
 		}
 
+		// Track per-line activity timestamps for the inflight snapshot's
+		// time_ms / est_ms / lag_ms derivation (matches legacy
+		// InflightTracker::process lines 88-90).
+		$request->last_log_ts = (float) ( $entry['ts'] ?? 0 );
+		$request->tracker_ts  = \microtime( true );
+
 		// Evict runaway requests immediately.
 		if ( $request->is_runaway ?? false ) {
 			$this->cache->delete( $rid );
@@ -696,9 +702,13 @@ class RequestBuilder extends Node {
 	}
 
 	/**
-	 * Snapshot the in-flight request map as a list of compact-summary-shaped
-	 * rows tagged `state: 'active'`. Consumed by RequestFlight's periodic
-	 * fire — emitted to the gyroscope partition for cross-spoke aggregation.
+	 * Snapshot the in-flight request map as a list of compact rows tagged
+	 * `state: 'active'`. Consumed by RequestFlight's periodic fire — emitted
+	 * to the gyroscope partition for cross-spoke aggregation.
+	 *
+	 * Schema is the 12-field shape from legacy InflightTracker::get_active,
+	 * preserved verbatim so the M5 deletion gate (SchemaParityAuditTest) can
+	 * verify byte-for-byte parity before the legacy tracker is removed.
 	 *
 	 * Reads the live LruCache (the canonical in-flight map); tests use
 	 * prime_inflight_for_testing() to seed the cache without driving the
@@ -708,15 +718,27 @@ class RequestBuilder extends Node {
 	 */
 	public function inflight_snapshot(): array {
 		$out = [];
+		$now = (float) ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $this->cache->iterate() as $rid => $request ) {
-			$r     = (array) $request;
-			$out[] = [
-				'rid'        => (string) $rid,
-				'method'     => (string) ( $r['request_method'] ?? 'GET' ),
-				'url'        => (string) ( $r['url'] ?? '' ),
-				'start_time' => (float) ( $r['timestamp'] ?? 0 ),
-				'state'      => 'active',
-				'current'    => self::extract_current_hook( $r ),
+			$r           = (array) $request;
+			$start_time  = (float) ( $r['timestamp'] ?? 0 );
+			$last_log_ts = (float) ( $r['last_log_ts'] ?? $start_time );
+			$tracker_ts  = (float) ( $r['tracker_ts'] ?? $now );
+			$time_ms     = ( $last_log_ts - $start_time ) * 1000;
+			$age_ms      = ( $now - $tracker_ts ) * 1000;
+			$out[]       = [
+				'rid'         => (string) $rid,
+				'method'      => (string) ( $r['request_method'] ?? 'GET' ),
+				'url'         => (string) ( $r['url'] ?? '' ),
+				'state'       => 'active',
+				'what'        => self::extract_what( $r ),
+				'time_ms'     => \round( $time_ms, 1 ),
+				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
+				'start_time'  => $start_time,
+				'last_log_ts' => $last_log_ts,
+				'lag_ms'      => \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ),
+				'remote_addr' => (string) ( $r['remote_addr'] ?? '' ),
+				'user_agent'  => (string) ( $r['user_agent'] ?? '' ),
 			];
 		}
 		return $out;
@@ -724,15 +746,15 @@ class RequestBuilder extends Node {
 
 	/**
 	 * Extract the "current activity" string for an in-flight request — the
-	 * legacy InflightTracker `state`/`what` pair condensed into one field.
-	 * Prefers an explicit `current_hook` (set by the test seam and future
-	 * runtime tagging), otherwise reads the top of the request's hook stack.
+	 * legacy InflightTracker `what` slot. Prefers an explicit `what` (set by
+	 * the test seam and future runtime tagging), otherwise reads the top of
+	 * the request's hook stack.
 	 *
 	 * @param array<string,mixed> $request Request envelope as an array.
 	 */
-	private static function extract_current_hook( array $request ): string {
-		if ( isset( $request['current_hook'] ) && \is_string( $request['current_hook'] ) ) {
-			return $request['current_hook'];
+	private static function extract_what( array $request ): string {
+		if ( isset( $request['what'] ) && \is_string( $request['what'] ) ) {
+			return $request['what'];
 		}
 		$stack = $request['stack'] ?? null;
 		if ( \is_array( $stack ) && [] !== $stack ) {
