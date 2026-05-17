@@ -27,6 +27,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Performance_CI;
 use Newspack_Event_Logger_Nodes\FlameBuilder;
+use Newspack_Event_Logger_Nodes\HookCategorizer;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
@@ -50,12 +51,25 @@ class PerformanceCITest extends TestCase {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
+		// Reset the hook-categorizer static caches and the WP hook globals
+		// so each hooks_* verb test sees a clean room. Mirrors the legacy
+		// PerfHooksControllerTest / PerfHooksAvailableControllerTest setUp.
+		HookCategorizer::clear_cache();
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [];
+		$wp_filter  = [];
 	}
 
 	protected function tearDown(): void {
 		VerbHarness::reset();
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
+		HookCategorizer::clear_cache();
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [];
+		$wp_filter  = [];
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
@@ -680,5 +694,288 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// hooks_registered verb — replaces PerfHooksController::get_registered_hooks.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Seed $wp_filter with three known hooks so HookCategorizer has something
+	 * to walk. Shared across the hooks_registered cluster — the categorizer
+	 * cares about the hook NAMES, not the callback shapes, so a minimal stub
+	 * object with a non-empty `callbacks` array is enough.
+	 */
+	private function seed_wp_filter_with_known_hooks(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_filter;
+		$wp_filter = [
+			'init'       => new class { public array $callbacks = [ 0 => [ 'cb' => 'do_init' ] ]; },
+			'wp_loaded'  => new class { public array $callbacks = [ 0 => [ 'cb' => 'do_wp_loaded' ] ]; },
+			'admin_menu' => new class { public array $callbacks = [ 0 => [ 'cb' => 'do_admin_menu' ] ]; },
+		];
+	}
+
+	public function test_hooks_registered_verb_returns_canonical_shape(): void {
+		$this->seed_wp_filter_with_known_hooks();
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'total_hooks', $result );
+		$this->assertArrayHasKey( 'categories', $result );
+		$this->assertArrayHasKey( 'hooks_by_category', $result );
+	}
+
+	public function test_hooks_registered_verb_total_matches_summed_buckets(): void {
+		$this->seed_wp_filter_with_known_hooks();
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
+
+		$summed = 0;
+		foreach ( $result['hooks_by_category'] as $bucket ) {
+			$summed += \count( $bucket );
+		}
+		$this->assertSame( $result['total_hooks'], $summed );
+	}
+
+	public function test_hooks_registered_verb_includes_seeded_hooks(): void {
+		$this->seed_wp_filter_with_known_hooks();
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
+
+		$all = [];
+		foreach ( $result['hooks_by_category'] as $bucket ) {
+			$all = \array_merge( $all, $bucket );
+		}
+		$this->assertContains( 'init', $all );
+		$this->assertContains( 'wp_loaded', $all );
+		$this->assertContains( 'admin_menu', $all );
+	}
+
+	public function test_hooks_registered_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// hooks_categories verb — replaces PerfHooksController::get_hook_categories.
+	// -------------------------------------------------------------------------
+
+	public function test_hooks_categories_verb_returns_categories_and_config(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_categories' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'categories', $result );
+		$this->assertArrayHasKey( 'config', $result );
+		$this->assertIsArray( $result['categories'] );
+		$this->assertIsArray( $result['config'] );
+	}
+
+	public function test_hooks_categories_verb_config_includes_patterns_and_colors(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_categories' );
+
+		$this->assertArrayHasKey( 'colors', $result['config'] );
+		$this->assertArrayHasKey( 'patterns', $result['config'] );
+	}
+
+	public function test_hooks_categories_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_categories' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// hooks_available verb — replaces PerfHooksAvailableController::get_available_hooks.
+	// -------------------------------------------------------------------------
+
+	public function test_hooks_available_verb_reads_wp_actions(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [ 'init' => 1, 'wp_loaded' => 2 ];
+		$wp_filter  = [];
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'hooks', $result );
+		$names = \array_column( $result['hooks'], 'name' );
+		$this->assertContains( 'init', $names );
+		$this->assertContains( 'wp_loaded', $names );
+
+		foreach ( $result['hooks'] as $hook ) {
+			$this->assertArrayHasKey( 'name', $hook );
+			$this->assertArrayHasKey( 'category', $hook );
+			$this->assertArrayHasKey( 'count', $hook );
+		}
+	}
+
+	public function test_hooks_available_verb_reads_wp_filter_for_unfired_hooks(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [];
+		$wp_filter  = [
+			'never_fired_filter' => new class { public array $callbacks = [ [ 'cb' => 'x' ] ]; },
+		];
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
+
+		$names = \array_column( $result['hooks'], 'name' );
+		$this->assertContains( 'never_fired_filter', $names );
+		foreach ( $result['hooks'] as $hook ) {
+			if ( 'never_fired_filter' === $hook['name'] ) {
+				$this->assertSame( 0, $hook['count'] );
+			}
+		}
+	}
+
+	public function test_hooks_available_verb_excludes_internal_prefixes(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [
+			'newspack_nodes/spawn_worker'             => 3,
+			'newspack_event_logger_nodes/log_readers' => 1,
+			'init'                                    => 1,
+		];
+		$wp_filter  = [];
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
+
+		$names = \array_column( $result['hooks'], 'name' );
+		$this->assertNotContains( 'newspack_nodes/spawn_worker', $names );
+		$this->assertNotContains( 'newspack_event_logger_nodes/log_readers', $names );
+		$this->assertContains( 'init', $names );
+	}
+
+	public function test_hooks_available_verb_returns_sorted_by_name(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [ 'zeta' => 1, 'alpha' => 1, 'mu' => 1 ];
+		$wp_filter  = [];
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
+
+		$names = \array_column( $result['hooks'], 'name' );
+		$this->assertSame( [ 'alpha', 'mu', 'zeta' ], $names );
+	}
+
+	public function test_hooks_available_verb_handles_no_hooks_at_all(): void {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+		$wp_actions = [];
+		$wp_filter  = [];
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
+
+		$this->assertSame( [], $result['hooks'] );
+	}
+
+	public function test_hooks_available_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// hooks_configure verb — replaces PerfHooksAvailableController::configure_hooks.
+	// -------------------------------------------------------------------------
+
+	public function test_hooks_configure_verb_writes_log_events_and_custom_events(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'hooks_configure',
+			(string) \wp_json_encode( [
+				'hooks'         => [ 'init', 'wp_loaded' ],
+				'custom_events' => [ 'my_event' ],
+			] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( 3, $result['hooks_configured'] );
+		$this->assertSame( [ 'init', 'wp_loaded' ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] );
+		$this->assertSame( [ 'my_event' => true ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] );
+	}
+
+	public function test_hooks_configure_verb_sanitizes_strings_skips_empty_and_non_strings(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'hooks_configure',
+			(string) \wp_json_encode( [
+				'hooks'         => [ 'init', '', 12345, '<b>raw</b>' ],
+				'custom_events' => null,
+			] )
+		);
+
+		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
+		$this->assertSame( [ 'init', 'raw' ], $saved );
+		$this->assertSame( 2, $result['hooks_configured'] );
+	}
+
+	public function test_hooks_configure_verb_accepts_only_custom_events(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'hooks_configure',
+			(string) \wp_json_encode( [
+				'custom_events' => [ 'event_one', 'event_two' ],
+			] )
+		);
+
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( 2, $result['hooks_configured'] );
+		$this->assertSame(
+			[ 'event_one' => true, 'event_two' => true ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
+		);
+	}
+
+	public function test_hooks_configure_verb_with_no_data(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'hooks_configure' );
+
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( 0, $result['hooks_configured'] );
+	}
+
+	public function test_hooks_configure_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'hooks_configure',
+			(string) \wp_json_encode( [ 'hooks' => [ 'init' ] ] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+		// Confirm no write happened on the rejected path.
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
 	}
 }
