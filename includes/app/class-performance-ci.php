@@ -2,7 +2,7 @@
 /**
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
- * 14 of 19 planned verbs. Replaces:
+ * All 19 planned verbs. Replaces:
  *   - class-perf-overview-controller.php       (overview)
  *   - class-perf-urls-controller.php            (urls, url_detail)
  *   - class-perf-requests-controller.php        (request_search, request_detail)
@@ -11,11 +11,15 @@
  *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
  *   - class-perf-config-controller.php          (config_get, config_update)
  *   - class-perf-settings-controller.php        (settings_update)
+ *   - class-firehose-controller.php             (firehose_logs, firehose_status)
+ *                                               (heartbeat method lives in Workers_CI)
+ *   - class-gyroscope-controller.php            (gyroscope_timeline)
+ *                                               (SSE method stays as REST controller)
+ *   - class-request-log-controller.php          (request_log_list, request_log_detail)
  *
- * Task 12 grows this CI with the remaining 5 verbs (firehose_logs,
- * firehose_status, gyroscope_timeline, request_log_list, request_log_detail).
- * Verb table is structured per-verb in `verb_table()` so each follow-up task
- * adds a sibling closure without touching the existing surface.
+ * SSE-style stream controllers (firehose-stream, gyroscope-stream,
+ * errors-stream, requests-stream) stay as REST controllers — the
+ * CommandInterpreter dispatch path doesn't stream.
  *
  * Cross-cutting design choices:
  *  - Auth: every verb requires `manage_options`. Legacy parity — every
@@ -123,6 +127,36 @@ class Performance_CI extends CommandInterpreter {
 	 */
 	private const SETTINGS_ARRAY_MAX   = 10000;
 	private const SETTINGS_ARRAY_DEPTH = 5;
+
+	/**
+	 * Firehose log catalog — key (no `.log`) → filename. The topology fleet is
+	 * the source of truth for which logs actually exist; this list mirrors
+	 * FirehoseController::get_available_logs (the SSE controller is unchanged
+	 * since SSE streams stay REST). Used by the `firehose_logs` +
+	 * `firehose_status` verbs.
+	 *
+	 * @var array<string,string>
+	 */
+	private const AVAILABLE_LOGS = [
+		'firehose'  => 'firehose.log',
+		'jobs'      => 'jobs.log',
+		'jobintake' => 'jobintake.log',
+		'requests'  => 'requests.log',
+		'errors'    => 'errors.log',
+		'flames'    => 'flames.log',
+	];
+
+	/**
+	 * Default page size for `request_log_list`. Mirrors the legacy
+	 * RequestLogController `limit` sanitize default.
+	 */
+	private const REQUEST_LIST_DEFAULT_LIMIT = 100;
+
+	/**
+	 * Upper bound on `request_log_list` page size. Mirrors the legacy
+	 * RequestLogController sanitize_callback `min(1000, max(1, (int)$v))`.
+	 */
+	private const REQUEST_LIST_MAX_LIMIT = 1000;
 
 	/**
 	 * Build a Performance_CI bound to the supplied cache.
@@ -502,6 +536,155 @@ class Performance_CI extends CommandInterpreter {
 				return (string) \wp_json_encode( [
 					'option'  => $option,
 					'updated' => (bool) $ok,
+				] );
+			},
+			'firehose_logs'      => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy FirehoseController::get_logs — flat list
+				// of `{key, label}` pairs the dashboard renders into a log
+				// picker. Static catalog; SSE streams stay REST so this is
+				// also what the live-stream picker reads.
+				$result = [];
+				foreach ( self::AVAILABLE_LOGS as $key => $filename ) {
+					$result[] = [
+						'key'   => $key,
+						'label' => $filename,
+					];
+				}
+				return (string) \wp_json_encode( $result );
+			},
+			'firehose_status'    => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy FirehoseController::get_status — segment
+				// metadata per partition for one log file. Unknown / missing
+				// log keys fall back to the default (first) log, matching
+				// FirehoseController::sanitize_log_param.
+				$decoded = self::decoded_args( $args );
+				$log_key = self::resolve_log_key( $decoded['log'] ?? '' );
+
+				$config         = RuntimeConfig::load_config();
+				$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+				$log_file       = self::AVAILABLE_LOGS[ $log_key ];
+				$log_base       = $base_dir . '/logs';
+
+				$partitions     = [];
+				$total_size     = 0;
+				$total_segments = 0;
+				for ( $p = 0; $p < $num_partitions; $p++ ) {
+					$partition        = new Partition( "{$log_base}/{$log_file}", $p );
+					$segments         = $partition->get_segments( true );
+					$size             = (int) \array_sum( \array_column( $segments, 'size' ) );
+					$partitions[ $p ] = [
+						'segments'      => $segments,
+						'segment_count' => \count( $segments ),
+						'size'          => $size,
+					];
+					$total_size      += $size;
+					$total_segments  += \count( $segments );
+				}
+
+				return (string) \wp_json_encode( [
+					'log_id'         => $log_key,
+					'log_file'       => $log_file,
+					'num_partitions' => $num_partitions,
+					'partitions'     => $partitions,
+					'total_segments' => $total_segments,
+					'total_size'     => $total_size,
+				] );
+			},
+			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy GyroscopeController::get_timeline.
+				// Empty rid → canonical initial-state shape (matches the
+				// legacy stub so the React tree mounts cleanly before a
+				// request is selected). Otherwise: walk requests.log,
+				// fan out across partitions, return `events[]` from the
+				// matched envelope (or wrap the whole body as a single
+				// event when no `events` key is present).
+				$decoded = self::decoded_args( $args );
+				$rid     = (string) ( $decoded['request_id'] ?? '' );
+				if ( '' === $rid ) {
+					return (string) \wp_json_encode( [
+						'data' => [ 'events' => [] ],
+						'meta' => [],
+					] );
+				}
+
+				[ $events, $scanned ] = self::scan_requests_for_events( $rid );
+
+				return (string) \wp_json_encode( [
+					'data' => [
+						'request_id' => $rid,
+						'events'     => $events,
+					],
+					'meta' => [ 'scanned' => $scanned ],
+				] );
+			},
+			'request_log_list'   => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy RequestLogController::get_list.
+				// Limit clamped 1..1000 (default 100); fan out across
+				// partitions; sort by timestamp DESC; slice to limit.
+				$decoded = self::decoded_args( $args );
+				$limit   = isset( $decoded['limit'] )
+					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $decoded['limit'] ) )
+					: self::REQUEST_LIST_DEFAULT_LIMIT;
+
+				[ $entries, $scanned ] = self::collect_request_list( $limit );
+
+				\usort( $entries, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
+				$entries = \array_slice( $entries, 0, $limit );
+
+				return (string) \wp_json_encode( [
+					'data' => $entries,
+					'meta' => [
+						'limit'   => $limit,
+						'scanned' => $scanned,
+					],
+				] );
+			},
+			'request_log_detail' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy RequestLogController::get_detail.
+				// Empty id is a real usage error → throw so the central
+				// catch surfaces TM_COMMAND|TM_ERROR. Unknown-but-non-empty
+				// id returns the legacy stub-compatible empty-entries shape
+				// (NOT 404 — the React tree polls these and `expected to
+				// exist soon` is a normal state).
+				$decoded = self::decoded_args( $args );
+				$rid     = (string) ( $decoded['id'] ?? '' );
+				if ( '' === $rid ) {
+					throw new \RuntimeException( 'id required' );
+				}
+
+				[ $result, $scanned ] = self::find_request_envelope( $rid );
+
+				if ( null === $result ) {
+					return (string) \wp_json_encode( [
+						'data' => [
+							'request_id' => $rid,
+							'entries'    => [],
+						],
+						'meta' => [ 'scanned' => $scanned ],
+					] );
+				}
+
+				// Normalize the entries shape — React tree expects `entries[]`.
+				// Body with no `events` key is wrapped as a single entry; the
+				// _partition marker lets the tree key on partition.
+				$entries = $result['events'] ?? [ $result ];
+				return (string) \wp_json_encode( [
+					'data' => [
+						'request_id' => $rid,
+						'entries'    => $entries,
+					],
+					'meta' => [ 'scanned' => $scanned ],
 				] );
 			},
 		];
@@ -1102,6 +1285,191 @@ class Performance_CI extends CommandInterpreter {
 			$result['flame_data'] = $flame;
 		}
 		return $result;
+	}
+
+	/**
+	 * Map an inbound log argument to a known catalog key, with `.log` suffix
+	 * stripped and a fall-through to the default (first) key. Mirrors
+	 * FirehoseController::sanitize_log_param.
+	 */
+	private static function resolve_log_key( mixed $log ): string {
+		$default = (string) \array_key_first( self::AVAILABLE_LOGS );
+		if ( '' === $log || ! \is_string( $log ) ) {
+			return $default;
+		}
+		$key = \str_replace( '.log', '', $log );
+		return isset( self::AVAILABLE_LOGS[ $key ] ) ? $key : $default;
+	}
+
+	/**
+	 * Walk every requests.log partition looking for the given rid; on hit,
+	 * return its `events[]` (or the body itself wrapped as one event when no
+	 * `events` key exists). Mirrors GyroscopeController::get_timeline.
+	 *
+	 * @param string $rid Request id to look up.
+	 * @return array{0:array<int,mixed>,1:int} Tuple of events array + entries scanned.
+	 */
+	private static function scan_requests_for_events( string $rid ): array {
+		$config         = RuntimeConfig::load_config();
+		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$log_base       = $base_dir . '/logs';
+
+		$events  = [];
+		$scanned = 0;
+
+		for ( $p = 0; $p < $num_partitions; $p++ ) {
+			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			);
+			$found     = false;
+			$partition->scan_index(
+				static function ( string $line ) use ( &$events, &$scanned, &$found, $partition, $rid ): ?bool {
+					++$scanned;
+					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
+						return false;
+					}
+					$entry = RequestBuilder::parse_request_index( $line );
+					if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
+						return null;
+					}
+					$bytes = $partition->read_at(
+						(int) ( $entry['segment_id'] ?? 0 ),
+						(int) ( $entry['offset'] ?? 0 ),
+						(int) ( $entry['length'] ?? 0 )
+					);
+					if ( '' === $bytes ) {
+						return false;
+					}
+					// Bytes are a packed Message; body lives at VALUE.
+					$decoded = \json_decode( \trim( $bytes ), true, 64 );
+					$body    = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $body ) ) {
+						if ( isset( $body['events'] ) && \is_array( $body['events'] ) ) {
+							$events = $body['events'];
+						} else {
+							// Treat request as a single envelope.
+							$events[] = $body;
+						}
+					}
+					$found = true;
+					return false;
+				},
+				true
+			);
+			if ( $found || $scanned > self::MAX_INDEX_ENTRIES ) {
+				break;
+			}
+		}
+
+		return [ $events, $scanned ];
+	}
+
+	/**
+	 * Collect index entries across all requests.log partitions up to the
+	 * supplied limit, capped at MAX_INDEX_ENTRIES per partition. Mirrors
+	 * RequestLogController::get_list.
+	 *
+	 * @param int $limit Soft cap; the caller sorts + slices after.
+	 * @return array{0:array<int,array<string,mixed>>,1:int} Tuple of entries + scanned.
+	 */
+	private static function collect_request_list( int $limit ): array {
+		$config         = RuntimeConfig::load_config();
+		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$log_base       = $base_dir . '/logs';
+
+		$entries = [];
+		$scanned = 0;
+
+		for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
+			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			);
+			$partition->scan_index(
+				static function ( string $line ) use ( &$entries, &$scanned, $limit, $p ): ?bool {
+					++$scanned;
+					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
+						return false;
+					}
+					if ( \count( $entries ) >= $limit ) {
+						return false;
+					}
+					$parsed = RequestBuilder::parse_request_index( $line );
+					if ( ! \is_array( $parsed ) ) {
+						return null;
+					}
+					$entries[] = [
+						'rid'          => \trim( (string) ( $parsed['rid'] ?? '' ) ),
+						'url_hash'     => \trim( (string) ( $parsed['url_hash'] ?? '' ) ),
+						'timestamp'    => $parsed['timestamp']    ?? 0,
+						'duration_ms'  => $parsed['duration_ms']  ?? 0,
+						'status_code'  => $parsed['status_code']  ?? 0,
+						'peak_mb'      => $parsed['peak_mb']      ?? 0,
+						'method'       => $parsed['method']       ?? '',
+						'error_status' => $parsed['error_status'] ?? null,
+						'partition'    => $p,
+					];
+					return null;
+				},
+				true
+			);
+		}
+
+		return [ $entries, $scanned ];
+	}
+
+	/**
+	 * Fan out across every requests.log partition looking for one rid; the
+	 * first hit wins. Returns the decoded request body (with `_partition`
+	 * stamped on it). Mirrors RequestLogController::get_detail's scan.
+	 *
+	 * @return array{0:?array<string,mixed>,1:int} Tuple of result + scanned.
+	 */
+	private static function find_request_envelope( string $rid ): array {
+		$config         = RuntimeConfig::load_config();
+		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$log_base       = $base_dir . '/logs';
+
+		$result  = null;
+		$scanned = 0;
+
+		for ( $p = 0; $p < $num_partitions && null === $result; $p++ ) {
+			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			);
+			$partition->scan_index(
+				static function ( string $line ) use ( &$result, &$scanned, $partition, $rid, $p ): ?bool {
+					++$scanned;
+					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
+						return false;
+					}
+					$entry = RequestBuilder::parse_request_index( $line );
+					if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
+						return null;
+					}
+					$bytes = $partition->read_at(
+						(int) ( $entry['segment_id'] ?? 0 ),
+						(int) ( $entry['offset'] ?? 0 ),
+						(int) ( $entry['length'] ?? 0 )
+					);
+					if ( '' === $bytes ) {
+						return false;
+					}
+					$decoded = \json_decode( \trim( $bytes ), true, 64 );
+					$req     = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $req ) ) {
+						$req['_partition'] = $p;
+						$result            = $req;
+					}
+					return false;
+				},
+				true
+			);
+		}
+
+		return [ $result, $scanned ];
 	}
 
 	/**
