@@ -47,10 +47,11 @@ use Newspack_Event_Logger_Nodes\RemoteManager;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Service_CI;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Servers_CI extends CommandInterpreter {
+class Servers_CI extends Service_CI {
 
 	/**
 	 * `wp_remote_get` seam used by the `test` verb. Lazily-defaulted to a
@@ -99,7 +100,7 @@ class Servers_CI extends CommandInterpreter {
 			},
 			'add'    => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
 				self::require_manage_options();
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$id      = (string) ( $decoded['id'] ?? '' );
 				// Empty + format check together: legacy controller maps both to
 				// HTTP 400 with the same kind of "invalid id" message.
@@ -124,7 +125,7 @@ class Servers_CI extends CommandInterpreter {
 			},
 			'update' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
 				self::require_manage_options();
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$id      = self::require_id( $decoded );
 				$registry->reset_cache();
 				$existing = $registry->get( $id );
@@ -196,28 +197,13 @@ class Servers_CI extends CommandInterpreter {
 	}
 
 	/**
-	 * Decode a verb's JSON args; tolerates empty/malformed input by returning
-	 * an empty array (matches the rest of the M2 CIs).
-	 *
-	 * @param string $args Raw JSON argument blob from the wire.
-	 * @return array Decoded arguments.
-	 */
-	private static function decoded_args( string $args ): array {
-		if ( '' === $args ) {
-			return [];
-		}
-		$decoded = \json_decode( $args, true );
-		return \is_array( $decoded ) ? $decoded : [];
-	}
-
-	/**
 	 * Pull the `id` field out of a verb's args, throwing if missing.
 	 *
 	 * @param string $args Raw JSON argument blob from the wire.
 	 * @return string Server id.
 	 */
 	private static function decoded_id( string $args ): string {
-		return self::require_id( self::decoded_args( $args ) );
+		return self::require_id( self::decode_args( $args ) );
 	}
 
 	/**
@@ -251,17 +237,6 @@ class Servers_CI extends CommandInterpreter {
 			'enabled'       => $decoded['enabled'] ?? true,
 			'logs'          => $decoded['logs']    ?? [ 'firehose.log' ],
 		];
-	}
-
-	/**
-	 * Authorisation gate for the four mutating verbs. Matches the legacy
-	 * controller's `admin_permissions_check`. Thrown errors are caught by
-	 * `CommandInterpreter::interpret()` and turned into TM_COMMAND|TM_ERROR.
-	 */
-	private static function require_manage_options(): void {
-		if ( \function_exists( 'current_user_can' ) && ! \current_user_can( 'manage_options' ) ) {
-			throw new \RuntimeException( 'permission denied: manage_options required' );
-		}
 	}
 
 	/**

@@ -49,10 +49,11 @@ use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Service_CI;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Performance_CI extends CommandInterpreter {
+class Performance_CI extends Service_CI {
 
 	/**
 	 * Hard cap on .idx entries scanned per disk-walking verb. Matches the
@@ -189,7 +190,7 @@ class Performance_CI extends CommandInterpreter {
 			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
 				self::require_manage_options();
 
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$sort    = (string) ( $decoded['sort']   ?? 'count' );
 				$order   = (string) ( $decoded['order']  ?? 'desc' );
 				$limit   = \min( 1000, \max( 1, (int) ( $decoded['limit']  ?? 50 ) ) );
@@ -240,7 +241,7 @@ class Performance_CI extends CommandInterpreter {
 			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
 				self::require_manage_options();
 
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$hash    = (string) ( $decoded['hash'] ?? '' );
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
@@ -286,7 +287,7 @@ class Performance_CI extends CommandInterpreter {
 			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
 				self::require_manage_options();
 
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$rid     = (string) ( $decoded['rid'] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
@@ -313,7 +314,7 @@ class Performance_CI extends CommandInterpreter {
 			'request_detail' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
 				self::require_manage_options();
 
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$rid     = (string) ( $decoded['rid'] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
@@ -403,7 +404,7 @@ class Performance_CI extends CommandInterpreter {
 			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
 				self::require_manage_options();
 
-				$decoded       = self::decoded_args( $args );
+				$decoded       = self::decode_args( $args );
 				$hooks         = $decoded['hooks']         ?? null;
 				$custom_events = $decoded['custom_events'] ?? null;
 				$configured    = 0;
@@ -472,7 +473,7 @@ class Performance_CI extends CommandInterpreter {
 				// bulk write path for the nine perf-tuning options. Keys absent
 				// from the request body are untouched (partial update). Unknown
 				// keys are silently ignored to match the legacy whitelist sweep.
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$updated = [];
 				foreach ( self::CONFIG_MAP as $param => $cfg ) {
 					// Skip missing keys AND explicit-null values (legacy parity:
@@ -503,7 +504,7 @@ class Performance_CI extends CommandInterpreter {
 				// single-option write path with the suppress_sync guard so a
 				// remotely-synced setting applied on a spoke doesn't bounce
 				// back as a re-sync (mirrors the inbound REST polarity).
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$option  = (string) ( $decoded['option'] ?? '' );
 				if ( '' === $option ) {
 					throw new \RuntimeException( 'option required' );
@@ -561,7 +562,7 @@ class Performance_CI extends CommandInterpreter {
 				// metadata per partition for one log file. Unknown / missing
 				// log keys fall back to the default (first) log, matching
 				// FirehoseController::sanitize_log_param.
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$log_key = self::resolve_log_key( $decoded['log'] ?? '' );
 
 				$config         = RuntimeConfig::load_config();
@@ -605,7 +606,7 @@ class Performance_CI extends CommandInterpreter {
 				// fan out across partitions, return `events[]` from the
 				// matched envelope (or wrap the whole body as a single
 				// event when no `events` key is present).
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$rid     = (string) ( $decoded['request_id'] ?? '' );
 				if ( '' === $rid ) {
 					return (string) \wp_json_encode( [
@@ -630,7 +631,7 @@ class Performance_CI extends CommandInterpreter {
 				// Lifted from legacy RequestLogController::get_list.
 				// Limit clamped 1..1000 (default 100); fan out across
 				// partitions; sort by timestamp DESC; slice to limit.
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$limit   = isset( $decoded['limit'] )
 					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $decoded['limit'] ) )
 					: self::REQUEST_LIST_DEFAULT_LIMIT;
@@ -657,7 +658,7 @@ class Performance_CI extends CommandInterpreter {
 				// id returns the legacy stub-compatible empty-entries shape
 				// (NOT 404 — the React tree polls these and `expected to
 				// exist soon` is a normal state).
-				$decoded = self::decoded_args( $args );
+				$decoded = self::decode_args( $args );
 				$rid     = (string) ( $decoded['id'] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'id required' );
@@ -688,33 +689,6 @@ class Performance_CI extends CommandInterpreter {
 				] );
 			},
 		];
-	}
-
-	// -------------------------------------------------------------------------
-	// Shared helpers — auth + arg decoding (mirror Servers_CI's helpers).
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Authorisation gate for every verb. Matches the legacy controllers'
-	 * `read_permissions_check`. Thrown errors are caught by
-	 * `CommandInterpreter::interpret()` and turned into TM_COMMAND|TM_ERROR.
-	 */
-	private static function require_manage_options(): void {
-		if ( \function_exists( 'current_user_can' ) && ! \current_user_can( 'manage_options' ) ) {
-			throw new \RuntimeException( 'permission denied: manage_options required' );
-		}
-	}
-
-	/**
-	 * Decode a verb's JSON args; tolerates empty/malformed input by returning
-	 * an empty array. Matches Servers_CI / Settings_CI.
-	 */
-	private static function decoded_args( string $args ): array {
-		if ( '' === $args ) {
-			return [];
-		}
-		$decoded = \json_decode( $args, true );
-		return \is_array( $decoded ) ? $decoded : [];
 	}
 
 	// -------------------------------------------------------------------------
