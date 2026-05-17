@@ -558,12 +558,18 @@ class RequestBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'cmd req_builder:config set_errors_target errors:partition', $dump );
 	}
 
-	public function test_request_builder_set_errors_target_verb_requires_target(): void {
+	public function test_request_builder_set_errors_target_verb_empty_clears_target(): void {
 		$rb = new RequestBuilder();
 		$rb->name( 'req_builder' );
 
+		// Seed.
+		$this->assertSame( 'ok', $rb->interpreter()->execute( 'set_errors_target errors:partition' ) );
+		// Empty arg now clears the target instead of rejecting (live reconfiguration).
 		$result = $rb->interpreter()->execute( 'set_errors_target' );
-		$this->assertStringContainsString( 'usage', $result );
+		$this->assertSame( 'ok', $result );
+		$p = ( new \ReflectionObject( $rb ) )->getProperty( 'errors_target' );
+		$p->setAccessible( true );
+		$this->assertSame( '', $p->getValue( $rb ) );
 	}
 
 	public function test_request_builder_node_schema_declares_verb(): void {

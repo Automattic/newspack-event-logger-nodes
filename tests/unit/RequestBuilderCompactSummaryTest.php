@@ -136,4 +136,76 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$this->assertSame( 'r-2', $snap[1]['rid'] );
 		$this->assertSame( 'POST', $snap[1]['method'] );
 	}
+
+	public function test_set_completed_target_via_verb_enables_compact_summary_on_next_completion(): void {
+		$rb = new RequestBuilder();
+		$rb->name( 'rb' );
+		$captured = [];
+		$rb->sink( $this->capture_sink( $captured ) );
+
+		// Invoke set_completed_target via the CI verb (not the direct setter).
+		$ci    = $rb->interpreter();
+		$verbs = $ci->commands();
+		$verbs['set_completed_target']( $ci, 'completed:tee' );
+
+		$request = (object) [
+			'rid'            => 'r-1',
+			'url'            => '/path',
+			'request_method' => 'GET',
+			'timestamp'      => 1000.0,
+			'duration_ms'    => 25,
+			'status_code'    => 200,
+		];
+		$rb->emit_completed_for_testing( $request );
+
+		$compact = \array_values( \array_filter(
+			$captured,
+			static fn( $m ): bool => 'completed:tee' === $m[ Message::TO ]
+		) );
+		$this->assertCount( 1, $compact );
+	}
+
+	public function test_set_completed_target_empty_via_verb_clears_and_subsequent_emit_is_silent(): void {
+		$rb = new RequestBuilder();
+		$rb->name( 'rb' );
+		$captured = [];
+		$rb->sink( $this->capture_sink( $captured ) );
+
+		$ci    = $rb->interpreter();
+		$verbs = $ci->commands();
+		$verbs['set_completed_target']( $ci, 'completed:tee' );
+		$verbs['set_completed_target']( $ci, '' );  // clear
+
+		$request = (object) [
+			'rid'            => 'r-1',
+			'url'            => '/path',
+			'request_method' => 'GET',
+			'timestamp'      => 1000.0,
+			'duration_ms'    => 25,
+			'status_code'    => 200,
+		];
+		$rb->emit_completed_for_testing( $request );
+
+		$compact = \array_values( \array_filter(
+			$captured,
+			static fn( $m ): bool => 'completed:tee' === $m[ Message::TO ]
+		) );
+		$this->assertCount( 0, $compact );
+	}
+
+	public function test_dump_config_round_trips_new_verb_invocations(): void {
+		$rb = new RequestBuilder();
+		$rb->name( 'rb' );
+		$ci    = $rb->interpreter();
+		$verbs = $ci->commands();
+		$verbs['set_completed_target']( $ci, 'completed:tee' );
+		$verbs['set_inflight_target']( $ci, 'gyroscope:partition' );
+		$verbs['set_inflight_interval']( $ci, '1500' );
+
+		$dump = $rb->dump_config();
+
+		$this->assertStringContainsString( 'cmd rb:config set_completed_target completed:tee', $dump );
+		$this->assertStringContainsString( 'cmd rb:config set_inflight_target gyroscope:partition', $dump );
+		$this->assertStringContainsString( 'cmd rb:config set_inflight_interval 1500', $dump );
+	}
 }
