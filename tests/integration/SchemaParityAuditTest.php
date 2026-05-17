@@ -64,8 +64,12 @@ class SchemaParityAuditTest extends TestCase {
 				'rid-1' => [
 					'url'            => '/x',
 					'request_method' => 'GET',
-					'timestamp'      => 0,
-					'current_hook'   => 'init',
+					'timestamp'      => 1747401200.0,
+					'what'           => 'init',
+					'last_log_ts'    => 1747401201.5,
+					'tracker_ts'     => 1747401202.0,
+					'remote_addr'    => '10.0.0.1',
+					'user_agent'     => 'UA/1.0',
 				],
 			]
 		);
@@ -73,8 +77,14 @@ class SchemaParityAuditTest extends TestCase {
 		$this->assertNotEmpty( $snap );
 		$row = $snap[0];
 
-		// Legacy InflightTracker::get_active fields used by gyroscope-stream:
-		$expected_fields = [ 'rid', 'method', 'url', 'start_time', 'state', 'current' ];
+		// Inline copy of the full 12-field legacy InflightTracker::get_active
+		// shape (preserved here as the authority; the tracker + gyroscope-stream
+		// controller will be deleted in M5).
+		$expected_fields = [
+			'rid', 'method', 'url', 'state', 'what',
+			'time_ms', 'est_ms', 'start_time', 'last_log_ts', 'lag_ms',
+			'remote_addr', 'user_agent',
+		];
 		foreach ( $expected_fields as $field ) {
 			$this->assertArrayHasKey(
 				$field,
