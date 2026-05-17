@@ -13,7 +13,9 @@ import {
 	CheckboxControl,
 	Spinner,
 } from '@wordpress/components';
-import apiFetch from '@wordpress/api-fetch';
+
+import { getCommandClient } from '../../shared/utils/commandClient';
+import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
 import '../styles/hook-selector.scss';
 
 /**
@@ -79,12 +81,11 @@ export default function HookSelectorModal( {
 	useEffect( () => {
 		if ( isOpen ) {
 			setLoading( true );
-			apiFetch( {
-				path: '/newspack-nodes/v1/performance/registered-hooks',
-			} )
-				.then( ( data ) => {
-					// API returns { hooks_by_category: { Category: [hook1, hook2, ...] } }
-					setHookCategories( data.hooks_by_category || {} );
+			getCommandClient()
+				.send( { to: 'performance', verb: 'hooks_registered' } )
+				.then( ( message ) => {
+					const data = unwrapCommandResponse( message );
+					setHookCategories( data?.hooks_by_category || {} );
 				} )
 				.catch( () => setHookCategories( {} ) )
 				.finally( () => setLoading( false ) );
