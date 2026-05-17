@@ -37,10 +37,11 @@ use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
+use Newspack_Nodes\Service_CI;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Events_CI extends CommandInterpreter {
+class Events_CI extends Service_CI {
 
 	/**
 	 * Hard cap on index entries scanned per recent() call. Matches the
@@ -65,7 +66,7 @@ class Events_CI extends CommandInterpreter {
 		// Status_CI / Discovery_CI / Logger_CI.
 		$this->commands( [
 			'recent' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
-				$decoded        = '' === $args ? [] : ( \json_decode( $args, true ) ?? [] );
+				$decoded        = self::decode_args( $args );
 				$limit          = \max( 1, \min( 1000, (int) ( $decoded['limit'] ?? 100 ) ) );
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );

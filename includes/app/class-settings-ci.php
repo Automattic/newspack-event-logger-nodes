@@ -35,10 +35,11 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Service_CI;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Settings_CI extends CommandInterpreter {
+class Settings_CI extends Service_CI {
 
 	/**
 	 * Upper bound for all four integer settings (2^30 = 1 GiB). Matches
@@ -72,13 +73,8 @@ class Settings_CI extends CommandInterpreter {
 				return (string) \wp_json_encode( self::snapshot() );
 			},
 			'update' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
-				if ( \function_exists( 'current_user_can' ) && ! \current_user_can( 'manage_options' ) ) {
-					throw new \RuntimeException( 'permission denied: manage_options required' );
-				}
-				$decoded = '' === $args ? [] : ( \json_decode( $args, true ) ?? [] );
-				if ( ! \is_array( $decoded ) ) {
-					throw new \RuntimeException( 'invalid arguments: expected object' );
-				}
+				self::require_manage_options();
+				$decoded = self::decode_args( $args );
 
 				foreach ( $decoded as $key => $value ) {
 					if ( ! isset( self::ALLOWED_KEYS[ $key ] ) ) {

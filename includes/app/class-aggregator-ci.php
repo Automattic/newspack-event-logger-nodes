@@ -46,10 +46,11 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Service_CI;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Aggregator_CI extends CommandInterpreter {
+class Aggregator_CI extends Service_CI {
 
 	/**
 	 * Build an Aggregator_CI bound to the supplied registry and cache.
@@ -135,16 +136,5 @@ class Aggregator_CI extends CommandInterpreter {
 				return (string) \wp_json_encode( $out );
 			},
 		];
-	}
-
-	/**
-	 * Authorisation gate for all verbs. Matches the legacy controllers'
-	 * `read_permissions_check`. Thrown errors are caught by
-	 * `CommandInterpreter::interpret()` and turned into TM_COMMAND|TM_ERROR.
-	 */
-	private static function require_manage_options(): void {
-		if ( \function_exists( 'current_user_can' ) && ! \current_user_can( 'manage_options' ) ) {
-			throw new \RuntimeException( 'permission denied: manage_options required' );
-		}
 	}
 }
