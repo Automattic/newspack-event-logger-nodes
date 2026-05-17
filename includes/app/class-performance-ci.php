@@ -2,23 +2,26 @@
 /**
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
- * 11 of 19 planned verbs. Replaces:
+ * 14 of 19 planned verbs. Replaces:
  *   - class-perf-overview-controller.php       (overview)
  *   - class-perf-urls-controller.php            (urls, url_detail)
  *   - class-perf-requests-controller.php        (request_search, request_detail)
  *   - class-performance-controller.php          (timing, dashboard)
  *   - class-perf-hooks-controller.php           (hooks_registered, hooks_categories)
  *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
+ *   - class-perf-config-controller.php          (config_get, config_update)
+ *   - class-perf-settings-controller.php        (settings_update)
  *
- * Tasks 11-12 grow this CI with the remaining 8 verbs (config, settings,
- * status sub-surfaces). Verb table is structured per-verb in `verb_table()`
- * so each follow-up task adds a sibling closure without touching the
- * existing surface.
+ * Task 12 grows this CI with the remaining 5 verbs (firehose_logs,
+ * firehose_status, gyroscope_timeline, request_log_list, request_log_detail).
+ * Verb table is structured per-verb in `verb_table()` so each follow-up task
+ * adds a sibling closure without touching the existing surface.
  *
  * Cross-cutting design choices:
- *  - Auth: every verb requires `manage_options`. Legacy parity — all five
- *    legacy controllers gated through `PerformanceControllerBase::read_permissions_check`,
- *    which enforces the capability.
+ *  - Auth: every verb requires `manage_options`. Legacy parity — every
+ *    replaced controller gated through `PerformanceControllerBase::read_permissions_check`
+ *    (or its `admin_permissions_check` cousin on the writers), which
+ *    enforces the capability.
  *  - Rate limit: dropped. The legacy rate-limit was an artifact of REST
  *    polling; CI dispatch fires verbs once-per-request through the worker,
  *    not from a fan-out of polling tabs.
@@ -36,6 +39,7 @@ use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\FlameBuilder;
 use Newspack_Event_Logger_Nodes\HookCategorizer;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
+use Newspack_Event_Logger_Nodes\SettingsSync;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
@@ -58,6 +62,67 @@ class Performance_CI extends CommandInterpreter {
 	 * PerfUrlsController whitelist; anything outside falls back to `count`.
 	 */
 	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'p95_ms', 'avg_peak_mb', 'last_updated' ];
+
+	/**
+	 * `config_get` / `config_update` map: response-key → {option, type}.
+	 * Mirrors PerfConfigController::CONFIG_MAP. Each `type` selects a
+	 * coercion branch in the `config_update` verb (array_assoc flattens
+	 * `{val:''}` into `[val]`; array_bool turns indexed lists into
+	 * `{val:true}` maps; int/float/bool hard-cast).
+	 *
+	 * @var array<string,array{option:string,type:string}>
+	 */
+	private const CONFIG_MAP = [
+		'log_events'                  => [ 'option' => 'newspack_event_logger_nodes_log_events',                  'type' => 'array_assoc' ],
+		'custom_events'               => [ 'option' => 'newspack_event_logger_nodes_custom_events',               'type' => 'array_bool' ],
+		'log_urls'                    => [ 'option' => 'newspack_event_logger_nodes_log_urls',                    'type' => 'array_assoc' ],
+		'skip_urls'                   => [ 'option' => 'newspack_event_logger_nodes_skip_urls',                   'type' => 'array_assoc' ],
+		'auto_disable_threshold'      => [ 'option' => 'newspack_event_logger_nodes_auto_disable_threshold',      'type' => 'int' ],
+		'auto_protect_time_threshold' => [ 'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold', 'type' => 'float' ],
+		'significant_events'          => [ 'option' => 'newspack_event_logger_nodes_significant_events',          'type' => 'array_assoc' ],
+		'log_memory'                  => [ 'option' => 'newspack_event_logger_nodes_log_memory',                  'type' => 'bool' ],
+		'flush_every_line'            => [ 'option' => 'newspack_event_logger_nodes_flush_every_line',            'type' => 'bool' ],
+	];
+
+	/**
+	 * `settings_update` whitelist: WP option name → sanitization type.
+	 * Mirrors PerfSettingsController::ALLOWED_OPTIONS. The same nine
+	 * perf-tuning options as CONFIG_MAP, keyed by the on-disk option name
+	 * rather than the response shape — the settings verb takes a single
+	 * {option, value} pair while config_update takes the response shape.
+	 *
+	 * @var array<string,string>
+	 */
+	private const SETTINGS_OPTIONS = [
+		'newspack_event_logger_nodes_log_urls'                    => 'array',
+		'newspack_event_logger_nodes_skip_urls'                   => 'array',
+		'newspack_event_logger_nodes_log_events'                  => 'array',
+		'newspack_event_logger_nodes_custom_events'               => 'array',
+		'newspack_event_logger_nodes_auto_disable_threshold'      => 'int',
+		'newspack_event_logger_nodes_auto_protect_time_threshold' => 'float',
+		'newspack_event_logger_nodes_significant_events'          => 'array',
+		'newspack_event_logger_nodes_log_memory'                  => 'bool',
+		'newspack_event_logger_nodes_flush_every_line'            => 'bool',
+	];
+
+	/**
+	 * Upper bound on settings_update integer values (2^30). Mirrors
+	 * PerfSettingsController::sanitize_value `$int < 0 || $int > 1073741824`.
+	 */
+	private const SETTINGS_INT_MAX = 1073741824;
+
+	/**
+	 * Upper bound on settings_update float values (24h in seconds). Mirrors
+	 * PerfSettingsController::sanitize_value `$f < 0 || $f > 86400`.
+	 */
+	private const SETTINGS_FLOAT_MAX = 86400;
+
+	/**
+	 * Maximum array element count + nesting depth for settings_update.
+	 * Mirrors PerfSettingsController::MAX_EVENTS / sanitize_array depth cap.
+	 */
+	private const SETTINGS_ARRAY_MAX   = 10000;
+	private const SETTINGS_ARRAY_DEPTH = 5;
 
 	/**
 	 * Build a Performance_CI bound to the supplied cache.
@@ -341,6 +406,104 @@ class Performance_CI extends CommandInterpreter {
 					'hooks_configured' => $configured,
 				] );
 			},
+			'config_get'     => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfConfigController::get_config, with one
+				// fix: the legacy controller called `RuntimeConfig::load_config()`
+				// which reads `newspack_nodes_` options — but the perf-tuning
+				// keys live under the `newspack_event_logger_nodes_` prefix on
+				// the application Config. AppConfig::load_config() is the right
+				// source. The legacy bug was masked because the legacy test
+				// asserted on key presence only, never on the actual values.
+				$cfg = AppConfig::load_config();
+				return (string) \wp_json_encode( [
+					'config' => [
+						'log_events'                  => $cfg['log_events']    ?? [],
+						'custom_events'               => $cfg['custom_events'] ?? [],
+						'log_urls'                    => $cfg['log_urls']      ?? [],
+						'skip_urls'                   => $cfg['skip_urls']     ?? [],
+						'auto_disable_threshold'      => (int) ( $cfg['auto_disable_threshold']      ?? 0 ),
+						'auto_protect_time_threshold' => (float) ( $cfg['auto_protect_time_threshold'] ?? 0.0 ),
+						'significant_events'          => $cfg['significant_events'] ?? [],
+						'log_memory'                  => ! empty( $cfg['log_memory'] ),
+						'flush_every_line'            => ! empty( $cfg['flush_every_line'] ),
+					],
+				] );
+			},
+			'config_update'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfConfigController::update_config — the
+				// bulk write path for the nine perf-tuning options. Keys absent
+				// from the request body are untouched (partial update). Unknown
+				// keys are silently ignored to match the legacy whitelist sweep.
+				$decoded = self::decoded_args( $args );
+				$updated = [];
+				foreach ( self::CONFIG_MAP as $param => $cfg ) {
+					// Skip missing keys AND explicit-null values (legacy parity:
+					// PerfConfigController::update_config uses `$request->get_param()`
+					// which returns null for both). `??` collapses both cases into
+					// the same continue.
+					$value = $decoded[ $param ] ?? null;
+					if ( null === $value ) {
+						continue;
+					}
+					\update_option( $cfg['option'], self::coerce_config_value( $value, $cfg['type'] ) );
+					$updated[] = $param;
+				}
+
+				if ( ! empty( $updated ) ) {
+					AppConfig::reset();
+				}
+
+				return (string) \wp_json_encode( [
+					'success' => true,
+					'updated' => $updated,
+				] );
+			},
+			'settings_update' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfSettingsController::update_setting —
+				// single-option write path with the suppress_sync guard so a
+				// remotely-synced setting applied on a spoke doesn't bounce
+				// back as a re-sync (mirrors the inbound REST polarity).
+				$decoded = self::decoded_args( $args );
+				$option  = (string) ( $decoded['option'] ?? '' );
+				if ( '' === $option ) {
+					throw new \RuntimeException( 'option required' );
+				}
+				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
+					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
+				}
+				if ( ! \array_key_exists( 'value', $decoded ) ) {
+					throw new \RuntimeException( 'value required' );
+				}
+
+				$sanitized = self::sanitize_settings_value( $decoded['value'], self::SETTINGS_OPTIONS[ $option ] );
+				if ( null === $sanitized ) {
+					throw new \RuntimeException( 'invalid value for option' );
+				}
+
+				// suppress_sync guard + try/finally so the flag is restored on
+				// update_option failure. Non-autoload (third arg false) matches
+				// legacy — keeps log_events / significant_events out of the
+				// per-request alloptions blob.
+				SettingsSync::suppress_sync( true );
+				try {
+					$ok = \update_option( $option, $sanitized, false );
+				} finally {
+					SettingsSync::suppress_sync( false );
+				}
+
+				AppConfig::reset();
+
+				return (string) \wp_json_encode( [
+					'option'  => $option,
+					'updated' => (bool) $ok,
+				] );
+			},
 		];
 	}
 
@@ -369,6 +532,135 @@ class Performance_CI extends CommandInterpreter {
 		}
 		$decoded = \json_decode( $args, true );
 		return \is_array( $decoded ) ? $decoded : [];
+	}
+
+	// -------------------------------------------------------------------------
+	// Config + settings value coercion — shared by config_update + settings_update.
+	// Lifted from legacy PerfConfigController + PerfSettingsController.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Coerce a CONFIG_MAP value to the on-disk shape. Used by `config_update`.
+	 * Branch logic mirrors PerfConfigController::update_config:
+	 *  - array_assoc: flatten `{val:''}` / indexed string list → unique value list
+	 *  - array_bool:  indexed string list → `{val:true}` map; assoc → cast bools
+	 *  - int / float / bool: hard cast
+	 *
+	 * @param mixed  $value Raw input.
+	 * @param string $type  CONFIG_MAP type tag.
+	 * @return mixed Coerced value.
+	 */
+	private static function coerce_config_value( mixed $value, string $type ): mixed {
+		switch ( $type ) {
+			case 'array_assoc':
+				if ( ! \is_array( $value ) ) {
+					return $value;
+				}
+				$flat = [];
+				foreach ( $value as $k => $v ) {
+					if ( \is_string( $v ) && '' !== $v ) {
+						$flat[] = $v;
+					} elseif ( \is_string( $k ) && '' !== $k ) {
+						$flat[] = $k;
+					}
+				}
+				return \array_values( \array_unique( $flat ) );
+
+			case 'array_bool':
+				if ( ! \is_array( $value ) ) {
+					return $value;
+				}
+				$assoc = [];
+				foreach ( $value as $k => $v ) {
+					if ( \is_int( $k ) && \is_string( $v ) ) {
+						$assoc[ $v ] = true;
+					} elseif ( \is_string( $k ) && '' !== $k ) {
+						$assoc[ $k ] = (bool) $v;
+					}
+				}
+				return $assoc;
+
+			case 'int':
+				return (int) $value;
+			case 'float':
+				return (float) $value;
+			case 'bool':
+				return (bool) $value;
+		}
+		return $value;
+	}
+
+	/**
+	 * Type-coerce + bounds-check a single value for `settings_update`. Mirrors
+	 * PerfSettingsController::sanitize_value — returns null when rejected.
+	 *
+	 * @param mixed  $value Raw input.
+	 * @param string $type  One of int|float|bool|array.
+	 * @return mixed|null Sanitized value, or null to reject.
+	 */
+	private static function sanitize_settings_value( mixed $value, string $type ): mixed {
+		switch ( $type ) {
+			case 'int':
+				if ( ! \is_numeric( $value ) ) {
+					return null;
+				}
+				$int = (int) $value;
+				if ( $int < 0 || $int > self::SETTINGS_INT_MAX ) {
+					return null;
+				}
+				return $int;
+			case 'float':
+				if ( ! \is_numeric( $value ) ) {
+					return null;
+				}
+				$f = (float) $value;
+				if ( $f < 0 || $f > self::SETTINGS_FLOAT_MAX ) {
+					return null;
+				}
+				return $f;
+			case 'bool':
+				return (bool) $value;
+			case 'array':
+				if ( ! \is_array( $value ) ) {
+					return null;
+				}
+				return self::sanitize_settings_array( $value );
+		}
+		return null;
+	}
+
+	/**
+	 * Bounded-recursion array sanitizer for `settings_update`. Mirrors
+	 * PerfSettingsController::sanitize_array — depth cap SETTINGS_ARRAY_DEPTH,
+	 * size cap SETTINGS_ARRAY_MAX, text fields run through sanitize_text_field.
+	 *
+	 * @param array<mixed,mixed> $arr   Input array.
+	 * @param int                $depth Current recursion depth.
+	 * @return array<mixed,mixed>|null Sanitized array, or null if too deep/large.
+	 */
+	private static function sanitize_settings_array( array $arr, int $depth = 0 ): ?array {
+		if ( $depth > self::SETTINGS_ARRAY_DEPTH ) {
+			return null;
+		}
+		if ( \count( $arr ) > self::SETTINGS_ARRAY_MAX ) {
+			return null;
+		}
+		$out = [];
+		foreach ( $arr as $key => $value ) {
+			$safe_key = \is_int( $key ) ? $key : \sanitize_text_field( (string) $key );
+			if ( \is_string( $value ) ) {
+				$out[ $safe_key ] = \sanitize_text_field( $value );
+			} elseif ( \is_bool( $value ) || \is_int( $value ) || \is_float( $value ) ) {
+				$out[ $safe_key ] = $value;
+			} elseif ( \is_array( $value ) ) {
+				$nested = self::sanitize_settings_array( $value, $depth + 1 );
+				if ( null === $nested ) {
+					return null;
+				}
+				$out[ $safe_key ] = $nested;
+			}
+		}
+		return $out;
 	}
 
 	// -------------------------------------------------------------------------
