@@ -10,6 +10,18 @@ WordPress loads plugins alphabetically. `newspack-event-logger-nodes` sorts BEFO
 
 Workaround: `newspack-event-logger-nodes.php` defers the `require_once` block via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
 
+## Workflow discipline (mandatory)
+
+Every code-writing turn — main Claude AND every subagent dispatched via the Agent tool — MUST:
+
+1. **Invoke `superpowers:test-driven-development` BEFORE writing any code.** No production code without a failing test first.
+2. **Invoke `superpowers:simplify` BEFORE every commit.** Review changed code for reuse, quality, efficiency; fix issues before committing.
+
+Subagent prompts MUST include the literal phrase:
+> "Invoke `superpowers:test-driven-development` via the Skill tool BEFORE writing any code. Invoke `superpowers:simplify` via the Skill tool BEFORE every commit. Both are mandatory; do not skip."
+
+Subagents have no memory of conversation conventions; omission is a workflow violation. See `~/.claude/rules/workflow-discipline.md`.
+
 ## Code Style
 
 WordPress VIP Go (enforced by `phpcs.xml.dist`):
