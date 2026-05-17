@@ -116,14 +116,6 @@ class WorkersController extends PerformanceControllerBase {
 		// render one row per (worker_type, consumer_name, partition)
 		// without hardcoding a per-type inputs/outputs map.
 		$offsetlog_rows = $this->enumerate_offsetlog_rows( $base_dir );
-		// Track which sources are consumed (have an offsetlog row) — any
-		// log directory that isn't represented is a terminal output that
-		// should still appear in the response so the dashboard can render
-		// it as a producer-only step.
-		$consumed_basenames = [];
-		foreach ( $offsetlog_rows as $row ) {
-			$consumed_basenames[ $row['source_basename'] ] = true;
-		}
 		// Index rows by (worker_type, partition).
 		$rows_by_worker = [];
 		foreach ( $offsetlog_rows as $row ) {
@@ -233,13 +225,15 @@ class WorkersController extends PerformanceControllerBase {
 			}
 		}
 
-		// Terminal logs: filesystem-discovered `{logs_dir}/*.log/` directories
-		// that no Consumer reads (e.g. errors.log, flames.log, plus jobs.log
-		// when no job-workers Consumer is active). These are Partitions
-		// written by some node in a topology but never tailed — the
-		// dashboard renders them as producer-only output cards. Sources
-		// that ARE consumed already render under their Consumer row.
-		$logs = $this->enumerate_terminal_logs( $log_base, $consumed_basenames );
+		// Per-log per-partition slot list — one entry per `{logs_dir}/*.log/`
+		// directory, each with `partitions[]` covering every slot from 0 to
+		// `max( num_partitions, max-p-index-on-disk + 1 )`. That lets the
+		// dashboard show (a) configured-but-empty slots when the producer
+		// hasn't written yet and (b) stale slots left over when num_partitions
+		// shrinks (orphan data the producer no longer touches). Consumed and
+		// unconsumed logs use the same shape; the frontend overlays cursor
+		// data from `workers[]` per matching partition.
+		$logs = $this->enumerate_logs( $log_base, $num_partitions );
 
 		return new \WP_REST_Response(
 			[
@@ -256,13 +250,16 @@ class WorkersController extends PerformanceControllerBase {
 	}
 
 	/**
-	 * Walk `{logs_dir}/*.log/` and return one entry per log whose basename
-	 * isn't in `$consumed_basenames`. Each entry's `partitions[]` lists
-	 * segment data per partition (no cursor — these are producer-only).
+	 * Walk `{logs_dir}/*.log/` and return one entry per log. Each entry's
+	 * `partitions[]` covers slots `0..max( num_partitions, max-on-disk + 1 )`,
+	 * which is the union of "configured" (so freshly-bumped partitions show
+	 * up before they're written) and "on disk" (so orphan partitions left
+	 * over when num_partitions shrinks remain visible). Cursor fields are
+	 * omitted here; the frontend overlays them from `workers[]`.
 	 *
 	 * @return array<int,array{name:string,partitions:array}>
 	 */
-	private function enumerate_terminal_logs( string $log_base, array $consumed_basenames ): array {
+	private function enumerate_logs( string $log_base, int $num_partitions ): array {
 		if ( ! \is_dir( $log_base ) ) {
 			return [];
 		}
@@ -278,37 +275,43 @@ class WorkersController extends PerformanceControllerBase {
 			if ( ! \preg_match( '/^(.+)\.log$/', $entry, $m ) ) {
 				continue;
 			}
-			$basename = $m[1];
-			if ( isset( $consumed_basenames[ $basename ] ) ) {
-				continue;
-			}
-			$log_dir     = "{$log_base}/{$entry}";
-			$partitions  = [];
+			$log_dir      = "{$log_base}/{$entry}";
 			$part_entries = @\scandir( $log_dir );
 			if ( false === $part_entries ) {
 				continue;
 			}
+			$on_disk = [];
 			foreach ( $part_entries as $pe ) {
-				if ( ! \preg_match( '/^p(\d+)$/', $pe, $pm ) ) {
-					continue;
+				if ( \preg_match( '/^p(\d+)$/', $pe, $pm ) ) {
+					$on_disk[ (int) $pm[1] ] = true;
 				}
-				$partition_idx = (int) $pm[1];
-				$status        = $this->build_log_status_entry(
-					$entry,
-					$partition_idx,
-					null,
-					null,
-					$log_base
-				);
-				$partitions[] = [
-					'partition'  => $partition_idx,
-					'segments'   => $status['segments'] ?? [],
-					'total_size' => $status['total_size'] ?? 0,
-				];
 			}
-			if ( ! empty( $partitions ) ) {
-				$logs[] = [ 'name' => $entry, 'partitions' => $partitions ];
+			$max_disk   = empty( $on_disk ) ? -1 : \max( \array_keys( $on_disk ) );
+			$slot_count = \max( $num_partitions, $max_disk + 1 );
+			if ( $slot_count < 1 ) {
+				continue;
 			}
+			$partitions = [];
+			for ( $p = 0; $p < $slot_count; $p++ ) {
+				if ( isset( $on_disk[ $p ] ) ) {
+					$status = $this->build_log_status_entry( $entry, $p, null, null, $log_base );
+					$partitions[] = [
+						'partition'  => $p,
+						'segments'   => $status['segments'] ?? [],
+						'total_size' => $status['total_size'] ?? 0,
+					];
+				} else {
+					// Padded slot — configured partition with no on-disk
+					// dir yet. Skip the scandir + filesize loop and emit
+					// an empty entry inline.
+					$partitions[] = [
+						'partition'  => $p,
+						'segments'   => [],
+						'total_size' => 0,
+					];
+				}
+			}
+			$logs[] = [ 'name' => $entry, 'partitions' => $partitions ];
 		}
 		return $logs;
 	}

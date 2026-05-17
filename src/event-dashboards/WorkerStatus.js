@@ -616,16 +616,19 @@ const StandaloneWorkers = memo( function StandaloneWorkers( {
  *  - `{ kind: 'log', ... }` — a LogSection to draw.
  *  - `{ kind: 'worker', ... }` — a WorkerConnector to draw.
  *
- * @param {Array} workers      Worker descriptors from the REST endpoint.
- * @param {Array} terminalLogs Top-level `logs` array — producer-only outputs.
+ * @param {Array} workers     Worker descriptors from the REST endpoint.
+ * @param {Array} logsCatalog Top-level `logs` array — canonical per-log
+ *                            per-partition slot list (every `*.log/` on disk
+ *                            padded to `max(num_partitions, max-on-disk+1)`).
+ *                            Consumer cursor data is overlaid from `workers`.
  * @return {Array} Render plan items.
  */
-function buildRenderPlan( workers, terminalLogs = [] ) {
+function buildRenderPlan( workers, logsCatalog = [] ) {
 	if ( ! workers || workers.length === 0 ) {
-		if ( terminalLogs.length === 0 ) {
+		if ( logsCatalog.length === 0 ) {
 			return [];
 		}
-		return terminalLogs.map( ( log ) => ( {
+		return logsCatalog.map( ( log ) => ( {
 			kind: 'log',
 			name: log.name,
 			partitions: log.partitions || [],
@@ -748,14 +751,54 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 		}
 	} );
 
-	// Walk steps and build the flat render plan. For each log that needs
-	// rendering, gather the partition data from the consumer's inputs_status
-	// (if any), falling back to a producer's outputs_status.
+	// Build a map of log name → canonical slot list from logsCatalog. The
+	// backend's enumerate_logs() pads to max(num_partitions, max-on-disk+1)
+	// per log, so this is the single source of truth for how many partition
+	// rows to render under each log header. Cursor data is overlaid from
+	// the matching worker per partition where available.
+	const logSlotsByName = new Map();
+	logsCatalog.forEach( ( log ) => {
+		logSlotsByName.set( log.name, log.partitions || [] );
+	} );
+
 	const collectLogPartitions = ( logName ) => {
 		const consumerKeys = consumers.get( logName ) || [];
-		const producerKeys = producers.get( logName ) || [];
 
-		// Prefer consumer side (has cursor data).
+		// Cursor data, keyed by partition, from any worker that reads this log.
+		const cursorByPartition = new Map();
+		let hasCursor = false;
+		for ( const ckey of consumerKeys ) {
+			const step = steps[ stepIndex.get( ckey ) ];
+			if ( ! step ) {
+				continue;
+			}
+			step.workers.forEach( ( w ) => {
+				const entry = ( w.inputs_status || [] ).find(
+					( s ) => s && s.name === logName
+				);
+				if ( entry && entry.cursor_seg !== undefined ) {
+					cursorByPartition.set( w.partition, {
+						cursor_seg: entry.cursor_seg,
+						cursor_offset: entry.cursor_offset,
+					} );
+					hasCursor = true;
+				}
+			} );
+		}
+
+		const canonical = logSlotsByName.get( logName );
+		if ( canonical && canonical.length > 0 ) {
+			const partitions = canonical.map( ( slot ) => {
+				const cursor = cursorByPartition.get( slot.partition );
+				return cursor ? { ...slot, ...cursor } : slot;
+			} );
+			return { partitions, hasCursor };
+		}
+
+		// No canonical entry — the log directory hasn't been created yet
+		// (fresh deploy, no writes), or it lives outside `logs/`. Fall back
+		// to whatever the workers tell us so the dashboard still renders.
+		const producerKeys = producers.get( logName ) || [];
 		for ( const ckey of consumerKeys ) {
 			const step = steps[ stepIndex.get( ckey ) ];
 			if ( ! step ) {
@@ -780,8 +823,6 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 				return { partitions, hasCursor: true };
 			}
 		}
-
-		// Fall back to producer side.
 		for ( const pkey of producerKeys ) {
 			const step = steps[ stepIndex.get( pkey ) ];
 			if ( ! step ) {
@@ -836,10 +877,12 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 		( afterStep.get( step.key ) || [] ).forEach( renderLog );
 	} );
 
-	// Append terminal logs (filesystem-discovered producer-only outputs that
-	// no Consumer reads, e.g. errors.log / flames.log). The controller emits
-	// these in `body.logs[]` already filtered against `consumed_basenames`.
-	terminalLogs.forEach( ( log ) => {
+	// Append any logs from the catalog that the step-walking pass didn't
+	// reach. Dashboard `steps` are keyed off Consumer offsetlog rows, so a
+	// log that's written by a producer but never tailed by a Consumer (e.g.
+	// errors.log, flames.log, or jobs.log when no job-workers Consumer is
+	// active) won't appear under any step above and drops through to here.
+	logsCatalog.forEach( ( log ) => {
 		if ( rendered.has( log.name ) ) {
 			return;
 		}
@@ -866,7 +909,7 @@ function buildRenderPlan( workers, terminalLogs = [] ) {
 export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	const [ workers, setWorkers ] = useState( [] );
 	const [ standalone, setStandalone ] = useState( [] ); // Standalone workers.
-	const [ terminalLogs, setTerminalLogs ] = useState( [] ); // Top-level `logs` array.
+	const [ logsCatalog, setLogsCatalog ] = useState( [] ); // Top-level `logs` array — full per-log slot list.
 	const [ loading, setLoading ] = useState( true );
 	const [ error, setError ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
@@ -1057,9 +1100,23 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 				}
 			} );
 
-			setWorkers( data.workers || [] );
-			setStandalone( data.standalone || [] );
-			setTerminalLogs( data.logs || [] );
+			// Skip the state update (and the cascading buildRenderPlan
+			// re-run) when the new payload is structurally identical to
+			// what we already have — common in steady state, where the
+			// 2s refresh just re-reads the same set of workers + logs.
+			// JSON.stringify on ~5KB of REST data is sub-ms; cheaper
+			// than the render plan rebuild it gates.
+			const replaceIfChanged = ( prev, next ) =>
+				JSON.stringify( prev ) === JSON.stringify( next ) ? prev : next;
+			setWorkers( ( prev ) =>
+				replaceIfChanged( prev, data.workers || [] )
+			);
+			setStandalone( ( prev ) =>
+				replaceIfChanged( prev, data.standalone || [] )
+			);
+			setLogsCatalog( ( prev ) =>
+				replaceIfChanged( prev, data.logs || [] )
+			);
 			setByteRates( newByteRates );
 			setWriteRates( newWriteRates );
 			if ( data.segment_size ) {
@@ -1124,8 +1181,8 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 
 	// Build the linear render plan from the current worker list.
 	const renderPlan = useMemo(
-		() => buildRenderPlan( workers, terminalLogs ),
-		[ workers, terminalLogs ]
+		() => buildRenderPlan( workers, logsCatalog ),
+		[ workers, logsCatalog ]
 	);
 
 	// Helper to format worker type as display name.
