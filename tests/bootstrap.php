@@ -394,6 +394,18 @@ if ( ! function_exists( 'current_filter' ) ) {
 	}
 }
 
+if ( ! function_exists( 'status_header' ) ) {
+	// Track every status_header() emission so tests can assert on the
+	// IPC-202 / lazy-built HTTP_Out paths of Command_Controller.
+	// Mirrors the substrate's bootstrap; needed since
+	// Command_Controller::ensure_request_graph() now installs a
+	// production HTTP_Out that calls \status_header() directly.
+	$GLOBALS['_wp_test_status_headers'] = [];
+	function status_header( int $code ): void {
+		$GLOBALS['_wp_test_status_headers'][] = $code;
+	}
+}
+
 if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
 	define( 'WP_PLUGIN_DIR', '/tmp/test-wp-plugins' );
 }

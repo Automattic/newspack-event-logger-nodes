@@ -81,6 +81,18 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\RemoteSource::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
+	// Service CIs — discoverable to `$base_ci->make_node(...)`, which
+	// constructs + names + sinks each in one step from the
+	// `newspack_nodes/request_graph_ready` hook below.
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Workers_CI',      \Newspack_Event_Logger_Nodes\App\Workers_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Discovery_CI',    \Newspack_Event_Logger_Nodes\App\Discovery_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Status_CI',       \Newspack_Event_Logger_Nodes\App\Status_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Settings_CI',     \Newspack_Event_Logger_Nodes\App\Settings_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Logger_CI',       \Newspack_Event_Logger_Nodes\App\Logger_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Events_CI',       \Newspack_Event_Logger_Nodes\App\Events_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Servers_CI',      \Newspack_Event_Logger_Nodes\App\Servers_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Aggregator_CI',   \Newspack_Event_Logger_Nodes\App\Aggregator_CI::class );
+	\Newspack_Nodes\CommandInterpreter::register_class( 'Performance_CI',  \Newspack_Event_Logger_Nodes\App\Performance_CI::class );
 
 	// Named formatters are similarly cheap (one map insert each) and the
 	// captured closures don't autoload until invoked. `request-index`
@@ -434,13 +446,13 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 /**
  * Service-CommandInterpreter (CI) mounting.
  *
- * The substrate's `Newspack_Nodes\Bootstrap::register_rest_routes` runs at
- * `rest_api_init` priority 10 — that's where `_router` /
- * `_command_interpreter` / `_http` and the per-worker Partitions land in
- * Core's registry. This priority-11 hook fires AFTER that, so each service
- * CI's `->name( '...' )` call can register through a live Core graph and
- * become reachable via `POST /newspack-nodes/v1/command` (handled by
- * Command_Controller, which the substrate also wires at priority 10).
+ * The substrate's `Command_Controller::dispatch` lazy-builds the
+ * request-scope graph (`_router` / `_command_interpreter` / `_http`)
+ * then fires `newspack_nodes/request_graph_ready` so applications can
+ * mount their CIs through the base CI's `make_node()` — which
+ * constructs, names, and sinks each node in one atomic step. Without
+ * the sink, verb responses (which walk back via TO=FROM) would have no
+ * path to the HTTP_Out and silently drop.
  *
  * Each CI is a service-shaped CommandInterpreter — verbs are JSON-in,
  * JSON-out. Dependencies (Cli, ServerRegistry, Memcached_Cache) are
@@ -450,22 +462,22 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
  * Named function (not a closure) so tests that wipe
  * `$GLOBALS['_wp_actions']` for isolation can re-attach the same callback.
  */
-function newspack_event_logger_nodes_mount_service_cis(): void {
+function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandInterpreter $base_ci ): void {
 	$cli      = new \Newspack_Nodes\Cli( \Newspack_Nodes\Bootstrap::base_dir() );
 	$registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
 	$cache    = \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
 
-	( new \Newspack_Event_Logger_Nodes\App\Workers_CI( $cli, $cache ) )->name( 'workers' );
-	( new \Newspack_Event_Logger_Nodes\App\Discovery_CI() )->name( 'discovery' );
-	( new \Newspack_Event_Logger_Nodes\App\Status_CI( $cache ) )->name( 'status' );
-	( new \Newspack_Event_Logger_Nodes\App\Settings_CI() )->name( 'settings' );
-	( new \Newspack_Event_Logger_Nodes\App\Logger_CI() )->name( 'logger' );
-	( new \Newspack_Event_Logger_Nodes\App\Events_CI( $cache ) )->name( 'events' );
-	( new \Newspack_Event_Logger_Nodes\App\Servers_CI( $registry ) )->name( 'servers' );
-	( new \Newspack_Event_Logger_Nodes\App\Aggregator_CI( $registry, $cache ) )->name( 'aggregator' );
-	( new \Newspack_Event_Logger_Nodes\App\Performance_CI( $cache ) )->name( 'performance' );
+	$base_ci->make_node( 'Workers_CI',     'workers',     $cli, $cache );
+	$base_ci->make_node( 'Discovery_CI',   'discovery' );
+	$base_ci->make_node( 'Status_CI',      'status',      $cache );
+	$base_ci->make_node( 'Settings_CI',    'settings' );
+	$base_ci->make_node( 'Logger_CI',      'logger' );
+	$base_ci->make_node( 'Events_CI',      'events',      $cache );
+	$base_ci->make_node( 'Servers_CI',     'servers',     $registry );
+	$base_ci->make_node( 'Aggregator_CI',  'aggregator',  $registry, $cache );
+	$base_ci->make_node( 'Performance_CI', 'performance', $cache );
 }
-\add_action( 'rest_api_init', 'newspack_event_logger_nodes_mount_service_cis', 11 );
+\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 
 /**
  * Top-level "Event Logger" admin menu and dashboard submenus.

@@ -27,50 +27,31 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\CommandInterpreter;
-use Newspack_Nodes\Core;
-use Newspack_Nodes\HTTP_Out;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Rest\Command_Controller;
-use Newspack_Nodes\Router;
 
 class M2CommandDispatchE2ETest extends TestCase {
-
-	/** @var list<string> Short names the M2 mount hook registers; kept here so the test owns its own contract. */
-	private const SERVICE_CI_NAMES = [ 'workers', 'discovery', 'status', 'settings', 'logger', 'events', 'servers', 'aggregator', 'performance' ];
 
 	protected function setUp(): void {
 		parent::setUp();
 		// Auth-gated CIs (aggregator, performance) check manage_options.
 		$GLOBALS['_current_user_can'] = true;
-		// Wipe action store so dataProvider iterations don't re-attach the
-		// mount hook 9× — that would double-register and collide on names.
+		// Wipe the hook store and re-attach exactly one mount callback so
+		// dataProvider iterations don't double-register the same hook (which
+		// would collide on names on the second tick).
 		$GLOBALS['_wp_actions'] = [];
-		\add_action( 'rest_api_init', 'newspack_event_logger_nodes_mount_service_cis', 11 );
+		\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 	}
 
 	/**
 	 * @dataProvider verb_provider
 	 */
 	public function test_each_ci_responds_to_a_representative_verb( string $to, string $verb, string $args ): void {
-		// Build the request-scope graph (`_router` / `_command_interpreter` /
-		// `_http`) the way a real Bootstrap would before any Command_Controller
-		// dispatch runs. Same pattern as VerbHarness / CommandControllerTest.
-		( new Router() )->name( '_router' );
-		$base = new CommandInterpreter();
-		$base->name( '_command_interpreter' );
-		$base->sink( Core::node( '_router' ) );
-		( new HTTP_Out( static fn ( int $code ): null => null ) )->name( '_http' );
-
-		// Fire the M2 priority-11 hook, then wire each registered CI's sink so
-		// verb responses (TO=FROM) walk back through Router → HTTP_Out.
-		\do_action( 'rest_api_init' );
-		foreach ( self::SERVICE_CI_NAMES as $name ) {
-			$ci = Core::node( $name );
-			if ( $ci instanceof CommandInterpreter ) {
-				$ci->sink( Core::node( '_command_interpreter' ) );
-			}
-		}
+		// Command_Controller::dispatch lazy-builds the request-scope graph
+		// (`_router` / `_command_interpreter` / `_http`) and fires
+		// `newspack_nodes/request_graph_ready`, which the mount hook in
+		// setUp uses to construct and sink each service CI via the
+		// base CI's make_node() — same path production runs.
 
 		$ctrl = new Command_Controller();
 		$ctrl->set_test_mode( true );
