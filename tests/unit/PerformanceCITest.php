@@ -978,4 +978,468 @@ class PerformanceCITest extends TestCase {
 		// Confirm no write happened on the rejected path.
 		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
 	}
+
+	// -------------------------------------------------------------------------
+	// config_get verb — replaces PerfConfigController::get_config.
+	// -------------------------------------------------------------------------
+
+	public function test_config_get_verb_returns_all_nine_perf_keys(): void {
+		// Legacy controller surfaces these nine keys regardless of which are
+		// set in WP options — the unset ones come back as zero / empty / false.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'config', $result );
+		foreach ( [
+			'log_events',
+			'custom_events',
+			'log_urls',
+			'skip_urls',
+			'auto_disable_threshold',
+			'auto_protect_time_threshold',
+			'significant_events',
+			'log_memory',
+			'flush_every_line',
+		] as $key ) {
+			$this->assertArrayHasKey( $key, $result['config'] );
+		}
+	}
+
+	public function test_config_get_verb_reflects_set_options(): void {
+		// Seed a handful of options across all four legacy types
+		// (array, int, float, bool) — verb returns them coerced.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']                  = [ 'init', 'wp_loaded' ];
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold']      = 1500;
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'] = 2.5;
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory']                  = true;
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
+
+		$this->assertSame( [ 'init', 'wp_loaded' ], $result['config']['log_events'] );
+		$this->assertSame( 1500, $result['config']['auto_disable_threshold'] );
+		$this->assertEqualsWithDelta( 2.5, $result['config']['auto_protect_time_threshold'], 0.001 );
+		$this->assertTrue( $result['config']['log_memory'] );
+	}
+
+	public function test_config_get_verb_coerces_types_when_options_empty(): void {
+		// Legacy controller defaults: int → 0, float → 0.0, bool → false,
+		// arrays → []. Confirm the verb honours each default branch.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
+
+		$this->assertSame( 0, $result['config']['auto_disable_threshold'] );
+		$this->assertEquals( 0.0, $result['config']['auto_protect_time_threshold'] );
+		$this->assertFalse( $result['config']['log_memory'] );
+		$this->assertFalse( $result['config']['flush_every_line'] );
+		$this->assertSame( [], $result['config']['log_events'] );
+		$this->assertSame( [], $result['config']['custom_events'] );
+	}
+
+	public function test_config_get_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// config_update verb — replaces PerfConfigController::update_config.
+	// -------------------------------------------------------------------------
+
+	public function test_config_update_verb_writes_supplied_keys_only(): void {
+		// Legacy contract: only keys present in the request body are updated;
+		// the rest are untouched. Response `updated` lists the keys that were
+		// applied.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			(string) \wp_json_encode( [
+				'log_events'             => [ 'init', 'shutdown' ],
+				'auto_disable_threshold' => 1500,
+				'log_memory'             => true,
+			] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertTrue( $result['success'] );
+		$this->assertContains( 'log_events', $result['updated'] );
+		$this->assertContains( 'auto_disable_threshold', $result['updated'] );
+		$this->assertContains( 'log_memory', $result['updated'] );
+		$this->assertSame( [ 'init', 'shutdown' ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] );
+		$this->assertSame( 1500, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
+		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+		// Unspecified keys must NOT be written.
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_urls', $GLOBALS['_wp_options'] );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_significant_events', $GLOBALS['_wp_options'] );
+	}
+
+	public function test_config_update_verb_flattens_array_assoc_shape(): void {
+		// Legacy `array_assoc` branch: the React tree sends URL lists as
+		// `{url: ''}` objects to play nicely with controlled inputs. The
+		// controller flattens that into a deduped value array.
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			(string) \wp_json_encode( [
+				'log_urls' => [
+					'/articles'      => '',
+					'/home'          => '',
+					'duplicate-key'  => 'duplicate-key',
+				],
+			] )
+		);
+
+		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'];
+		$this->assertContains( '/articles', $saved );
+		$this->assertContains( '/home', $saved );
+		// Duplicates collapsed via array_unique.
+		$this->assertSame( \count( $saved ), \count( \array_unique( $saved ) ) );
+	}
+
+	public function test_config_update_verb_converts_array_bool_indexed_list(): void {
+		// Legacy `array_bool` branch: indexed list of strings becomes
+		// `{name: true}` map for the custom_events option.
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			(string) \wp_json_encode( [
+				'custom_events' => [ 'event_one', 'event_two' ],
+			] )
+		);
+
+		$this->assertSame(
+			[ 'event_one' => true, 'event_two' => true ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
+		);
+	}
+
+	public function test_config_update_verb_coerces_int_float_bool_types(): void {
+		// Each scalar key gets a hard cast to int/float/bool — legacy
+		// PerfConfigController::update_config does the same on the way to
+		// update_option.
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			(string) \wp_json_encode( [
+				'auto_disable_threshold'      => '750',
+				'auto_protect_time_threshold' => '1.25',
+				'log_memory'                  => 1,
+				'flush_every_line'            => 0,
+			] )
+		);
+
+		$this->assertSame( 750, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
+		$this->assertEqualsWithDelta( 1.25, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'], 0.001 );
+		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] );
+	}
+
+	public function test_config_update_verb_no_op_when_no_known_keys(): void {
+		// Unknown keys are silently ignored (legacy parity — the loop only
+		// considers keys present in CONFIG_MAP). Response should reflect zero
+		// updates and no options should be written.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			(string) \wp_json_encode( [ 'not_a_real_setting' => 'whatever' ] )
+		);
+
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( [], $result['updated'] );
+		$this->assertSame( [], $GLOBALS['_wp_options'] );
+	}
+
+	public function test_config_update_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			(string) \wp_json_encode( [ 'log_events' => [ 'init' ] ] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+		// Confirm no write happened on the rejected path.
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// settings_update verb — replaces PerfSettingsController::update_setting.
+	// Distinct from Settings_CI's `update`: that handles the four substrate
+	// integer settings (newspack_nodes_*); this handles the nine perf-tuning
+	// options (newspack_event_logger_nodes_*), with the array/int/float/bool
+	// type-coerced sanitization regime + suppress_sync guard inherited from
+	// the legacy PerfSettingsController.
+	// -------------------------------------------------------------------------
+
+	public function test_settings_update_verb_writes_bool_option(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_memory',
+				'value'  => true,
+			] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'newspack_event_logger_nodes_log_memory', $result['option'] );
+		$this->assertTrue( $result['updated'] );
+		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
+	public function test_settings_update_verb_writes_int_option(): void {
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
+				'value'  => 50,
+			] )
+		);
+
+		$this->assertSame( 50, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
+	}
+
+	public function test_settings_update_verb_writes_float_option(): void {
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold',
+				'value'  => 1.5,
+			] )
+		);
+
+		$this->assertEqualsWithDelta(
+			1.5,
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'],
+			0.001
+		);
+	}
+
+	public function test_settings_update_verb_writes_array_option(): void {
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_events',
+				'value'  => [ 'init', 'shutdown' ],
+			] )
+		);
+
+		$this->assertSame(
+			[ 'init', 'shutdown' ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']
+		);
+	}
+
+	public function test_settings_update_verb_array_sanitizes_text_values(): void {
+		$ci     = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_events',
+				'value'  => [ '<b>init</b>', "  trim_me\t" ],
+			] )
+		);
+
+		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
+		$this->assertSame( 'init', $saved[0] );
+		$this->assertSame( 'trim_me', $saved[1] );
+	}
+
+	public function test_settings_update_verb_rejects_unknown_option(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'arbitrary_option',
+				'value'  => 'x',
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'unknown', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_int_overflow(): void {
+		// MAX_INT_VALUE in legacy PerfSettingsController is 1073741824 (2^30).
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
+				'value'  => 2 ** 31,
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_negative_int(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
+				'value'  => -5,
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_non_numeric_int(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
+				'value'  => 'banana',
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_float_overflow(): void {
+		// Float upper bound in legacy controller is 86400 (24h in seconds).
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold',
+				'value'  => 99999.0,
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_non_array_for_array_option(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_events',
+				'value'  => 'not-an-array',
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_excessive_array_count(): void {
+		// MAX_EVENTS in legacy is 10000.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_events',
+				'value'  => \array_fill( 0, 10001, 'x' ),
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_array_too_deep(): void {
+		// Legacy sanitize_array depth cap is 5; 7 levels of nesting trips it.
+		$deep = 'value';
+		for ( $i = 0; $i < 7; $i++ ) {
+			$deep = [ 'nest' => $deep ];
+		}
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_events',
+				'value'  => $deep,
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_requires_option_param(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [ 'value' => true ] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'option', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'settings_update',
+			(string) \wp_json_encode( [
+				'option' => 'newspack_event_logger_nodes_log_memory',
+				'value'  => true,
+			] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_memory', $GLOBALS['_wp_options'] );
+	}
 }
