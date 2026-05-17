@@ -2,15 +2,16 @@
 /**
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
- * First 5 of 19 planned verbs (the dashboard cluster). Replaces:
+ * 7 of 19 planned verbs. Replaces:
  *   - class-perf-overview-controller.php     (overview)
  *   - class-perf-urls-controller.php          (urls, url_detail)
  *   - class-perf-requests-controller.php      (request_search, request_detail)
+ *   - class-performance-controller.php        (timing, dashboard)
  *
- * Tasks 9-12 grow this CI with the remaining 14 verbs (timing, dashboard
- * polish, hooks, config, settings). Verb table is structured per-verb in
- * `verb_table()` so each follow-up task adds a sibling closure without
- * touching the existing surface.
+ * Tasks 10-12 grow this CI with the remaining 12 verbs (hooks, config,
+ * settings). Verb table is structured per-verb in `verb_table()` so each
+ * follow-up task adds a sibling closure without touching the existing
+ * surface.
  *
  * Cross-cutting design choices:
  *  - Auth: every verb requires `manage_options`. Legacy parity — all five
@@ -74,36 +75,13 @@ class Performance_CI extends CommandInterpreter {
 
 	/**
 	 * Verb-to-closure map. Each verb is a self-contained closure so
-	 * Tasks 9-12 can add siblings without disturbing existing entries.
+	 * Tasks 10-12 can add siblings without disturbing existing entries.
 	 */
 	private function verb_table( ?Cache_Interface $cache ): array {
 		return [
 			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
 				self::require_manage_options();
-
-				$index             = self::load_index( $cache );
-				$time_series       = self::merge_hourly_across_partitions( $cache );
-				$total_requests    = 0;
-				$total_sum_ms      = 0.0;
-				$total_sum_peak_mb = 0.0;
-				foreach ( $time_series as $row ) {
-					$total_requests    += (int) ( $row['count'] ?? 0 );
-					$total_sum_ms      += (float) ( $row['sum_ms'] ?? 0 );
-					$total_sum_peak_mb += (float) ( $row['sum_peak_mb'] ?? 0 );
-				}
-
-				$slowest = $index;
-				\usort( $slowest, static fn ( $a, $b ) => ( $b['p95_ms'] ?? 0 ) <=> ( $a['p95_ms'] ?? 0 ) );
-
-				return (string) \wp_json_encode( [
-					'total_urls'            => \count( $index ),
-					'total_requests'        => $total_requests,
-					'global_avg_ms'         => $total_requests > 0 ? $total_sum_ms / $total_requests : 0.0,
-					'global_avg_peak_mb'    => $total_requests > 0 ? $total_sum_peak_mb / $total_requests : 0.0,
-					'slowest_urls'          => \array_slice( $slowest, 0, 10 ),
-					'most_requested'        => \array_slice( $index, 0, 10 ),
-					'aggregate_time_series' => $time_series,
-				] );
+				return (string) \wp_json_encode( self::build_overview_payload( self::load_index( $cache ), $cache ) );
 			},
 			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
 				self::require_manage_options();
@@ -253,6 +231,30 @@ class Performance_CI extends CommandInterpreter {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}
 				return (string) \wp_json_encode( $result );
+			},
+			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerformanceController::get_timing — merged
+				// hourly buckets across partitions. The legacy "data + meta"
+				// wrapper is dropped (REST artifact); CI returns the inner
+				// payload directly.
+				return (string) \wp_json_encode( [
+					'time_series' => self::merge_hourly_across_partitions( $cache ),
+				] );
+			},
+			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerformanceController::get_dashboard:
+				// nest the overview payload alongside the full URL index so
+				// the dashboard tree fans in with one round-trip. `load_index`
+				// is the heavy memcache fan-out — share it across both keys.
+				$index = self::load_index( $cache );
+				return (string) \wp_json_encode( [
+					'overview' => self::build_overview_payload( $index, $cache ),
+					'urls'     => $index,
+				] );
 			},
 		];
 	}
@@ -454,6 +456,38 @@ class Performance_CI extends CommandInterpreter {
 		}
 		\ksort( $merged );
 		return \array_values( $merged );
+	}
+
+	/**
+	 * Compose the overview payload shape from a pre-loaded URL index.
+	 * Shared by the `overview` and `dashboard` verbs — `dashboard` wraps
+	 * this alongside the same `$index` to avoid a second memcache fan-out.
+	 *
+	 * @param array<int,array<string,mixed>> $index Output of self::load_index().
+	 */
+	private static function build_overview_payload( array $index, ?Cache_Interface $cache ): array {
+		$time_series       = self::merge_hourly_across_partitions( $cache );
+		$total_requests    = 0;
+		$total_sum_ms      = 0.0;
+		$total_sum_peak_mb = 0.0;
+		foreach ( $time_series as $row ) {
+			$total_requests    += (int) ( $row['count'] ?? 0 );
+			$total_sum_ms      += (float) ( $row['sum_ms'] ?? 0 );
+			$total_sum_peak_mb += (float) ( $row['sum_peak_mb'] ?? 0 );
+		}
+
+		$slowest = $index;
+		\usort( $slowest, static fn ( $a, $b ) => ( $b['p95_ms'] ?? 0 ) <=> ( $a['p95_ms'] ?? 0 ) );
+
+		return [
+			'total_urls'            => \count( $index ),
+			'total_requests'        => $total_requests,
+			'global_avg_ms'         => $total_requests > 0 ? $total_sum_ms / $total_requests : 0.0,
+			'global_avg_peak_mb'    => $total_requests > 0 ? $total_sum_peak_mb / $total_requests : 0.0,
+			'slowest_urls'          => \array_slice( $slowest, 0, 10 ),
+			'most_requested'        => \array_slice( $index, 0, 10 ),
+			'aggregate_time_series' => $time_series,
+		];
 	}
 
 	/**
