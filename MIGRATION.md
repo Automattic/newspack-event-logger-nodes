@@ -350,6 +350,7 @@ Each row records a dashboard cutover from per-resource REST to the unified `/com
 | # | Dashboard | Rewrite commit | Deletion commit | Legacy controller removed |
 |---|-----------|----------------|-----------------|---------------------------|
 | 1 | `event-aggregator` | `1350303` | `244eb7c` | `class-aggregator-status-controller.php` |
+| 2 | `performance-logger` | `08e7a34` | `0df15ca` | `class-logger-controller.php`, `class-perf-hooks-controller.php` |
 
 Helpers introduced along the way and reused by subsequent cutovers:
 - `src/shared/utils/commandClient.js` — `getCommandClient()` singleton factory.
