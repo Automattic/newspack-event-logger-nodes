@@ -1442,4 +1442,482 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'permission denied', $result );
 		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_memory', $GLOBALS['_wp_options'] );
 	}
+
+	// -------------------------------------------------------------------------
+	// firehose_logs verb — replaces FirehoseController::get_logs.
+	// -------------------------------------------------------------------------
+
+	public function test_firehose_logs_verb_returns_keyed_pairs(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'firehose_logs' );
+
+		$this->assertIsArray( $result );
+		$this->assertNotEmpty( $result );
+		foreach ( $result as $entry ) {
+			$this->assertArrayHasKey( 'key', $entry );
+			$this->assertArrayHasKey( 'label', $entry );
+			$this->assertStringEndsWith( '.log', $entry['label'] );
+		}
+	}
+
+	public function test_firehose_logs_verb_includes_known_log_keys(): void {
+		// Verb must surface the canonical Event Logger log catalog —
+		// firehose, jobs, jobintake, requests, errors, flames.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'firehose_logs' );
+
+		$keys = \array_column( $result, 'key' );
+		foreach ( [ 'firehose', 'jobs', 'jobintake', 'requests', 'errors', 'flames' ] as $expected ) {
+			$this->assertContains( $expected, $keys );
+		}
+	}
+
+	public function test_firehose_logs_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'firehose_logs' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// firehose_status verb — replaces FirehoseController::get_status.
+	// -------------------------------------------------------------------------
+
+	public function test_firehose_status_verb_returns_partition_summary(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'firehose_status',
+			(string) \wp_json_encode( [ 'log' => 'firehose' ] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'firehose', $result['log_id'] );
+		$this->assertSame( 'firehose.log', $result['log_file'] );
+		$this->assertArrayHasKey( 'partitions', $result );
+		$this->assertArrayHasKey( 'num_partitions', $result );
+		$this->assertArrayHasKey( 'total_segments', $result );
+		$this->assertArrayHasKey( 'total_size', $result );
+		$this->assertSame( 1, $result['num_partitions'] );
+	}
+
+	public function test_firehose_status_verb_accepts_log_with_dot_log_suffix(): void {
+		// Legacy FirehoseController::sanitize_log_param strips the `.log` suffix
+		// for lookups; the verb must do the same so dashboards passing either
+		// `firehose` or `firehose.log` get the same answer.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'firehose_status',
+			(string) \wp_json_encode( [ 'log' => 'firehose.log' ] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'firehose', $result['log_id'] );
+	}
+
+	public function test_firehose_status_verb_rejects_unknown_log(): void {
+		// Legacy controller falls back to the default log on unknown keys via
+		// sanitize_log_param; the CI verb mirrors that fallback rather than
+		// erroring — a bogus key gets the default log's status.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'firehose_status',
+			(string) \wp_json_encode( [ 'log' => 'bogus-log-name' ] )
+		);
+
+		$this->assertIsArray( $result );
+		// Falls back to default (first) log.
+		$this->assertSame( 'firehose', $result['log_id'] );
+	}
+
+	public function test_firehose_status_verb_reflects_seeded_segments(): void {
+		// Seed a segment on disk so the verb reports a non-zero total_size.
+		$seg_dir = $this->tmp . '/logs/firehose.log/p0';
+		\mkdir( $seg_dir, 0755, true );
+		\file_put_contents( "{$seg_dir}/0.log", \str_repeat( 'x', 128 ) );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'firehose_status',
+			(string) \wp_json_encode( [ 'log' => 'firehose' ] )
+		);
+
+		$this->assertSame( 128, $result['total_size'] );
+		$this->assertSame( 1, $result['total_segments'] );
+		$this->assertArrayHasKey( 0, $result['partitions'] );
+		$this->assertSame( 128, $result['partitions'][0]['size'] );
+		$this->assertSame( 1, $result['partitions'][0]['segment_count'] );
+	}
+
+	public function test_firehose_status_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'firehose_status',
+			(string) \wp_json_encode( [ 'log' => 'firehose' ] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// gyroscope_timeline verb — replaces GyroscopeController::get_timeline.
+	// -------------------------------------------------------------------------
+
+	public function test_gyroscope_timeline_verb_returns_empty_when_no_rid(): void {
+		// Empty rid yields the canonical initial-state shape — same as the
+		// legacy stub so the React tree mounts cleanly before a request is
+		// selected.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'gyroscope_timeline' );
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'data', $result );
+		$this->assertArrayHasKey( 'meta', $result );
+		$this->assertSame( [ 'events' => [] ], $result['data'] );
+		$this->assertSame( [], $result['meta'] );
+	}
+
+	public function test_gyroscope_timeline_verb_with_unknown_rid_returns_no_events(): void {
+		// Create the requests.log dir but no actual entries — scan finds nothing.
+		\mkdir( $this->tmp . '/logs/requests.log/p0', 0755, true );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'gyroscope_timeline',
+			(string) \wp_json_encode( [ 'request_id' => 'no-such-rid' ] )
+		);
+
+		$this->assertSame( 'no-such-rid', $result['data']['request_id'] );
+		$this->assertSame( [], $result['data']['events'] );
+		$this->assertSame( 0, $result['meta']['scanned'] );
+	}
+
+	public function test_gyroscope_timeline_verb_returns_events_when_request_found(): void {
+		// 32-char rid so the fixed-width index round-trip preserves it exactly.
+		$rid    = 'rid-found-123456789012345678901';
+		$events = [
+			[ 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.01, 'n' => 1 ],
+			[ 'k' => 'init', 'm' => 'middle', 'ts' => 1700000000.05, 'n' => 2 ],
+			[ 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1, 'n' => 3 ],
+		];
+		$this->write_request( [
+			'rid'            => $rid,
+			'url'            => '/test',
+			'timestamp'      => 1700000000,
+			'duration_ms'    => 100,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'events'         => $events,
+			'request_method' => 'GET',
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'gyroscope_timeline',
+			(string) \wp_json_encode( [ 'request_id' => $rid ] )
+		);
+
+		$this->assertSame( $rid, $result['data']['request_id'] );
+		$this->assertSame( $events, $result['data']['events'] );
+		$this->assertGreaterThanOrEqual( 1, $result['meta']['scanned'] );
+	}
+
+	public function test_gyroscope_timeline_verb_treats_request_without_events_as_envelope(): void {
+		// Body has no 'events' key — verb should wrap the body itself as a
+		// single event entry (mirrors GyroscopeController behavior).
+		$rid  = 'rid-noevents-1234567890123456789';
+		$body = [
+			'rid'            => $rid,
+			'url'            => '/no-events',
+			'timestamp'      => 1700000000,
+			'duration_ms'    => 50,
+			'status_code'    => 200,
+			'request_method' => 'GET',
+		];
+		$this->write_request( $body );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'gyroscope_timeline',
+			(string) \wp_json_encode( [ 'request_id' => $rid ] )
+		);
+
+		$this->assertSame( $rid, $result['data']['request_id'] );
+		$this->assertCount( 1, $result['data']['events'] );
+		$this->assertSame( $body, $result['data']['events'][0] );
+	}
+
+	public function test_gyroscope_timeline_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'gyroscope_timeline',
+			(string) \wp_json_encode( [ 'request_id' => 'rid-anything' ] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// request_log_list verb — replaces RequestLogController::get_list.
+	// -------------------------------------------------------------------------
+
+	public function test_request_log_list_verb_returns_data_meta_envelope(): void {
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_list',
+			(string) \wp_json_encode( [ 'limit' => 10 ] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'data', $result );
+		$this->assertArrayHasKey( 'meta', $result );
+		$this->assertArrayHasKey( 'limit', $result['meta'] );
+		$this->assertArrayHasKey( 'scanned', $result['meta'] );
+		$this->assertSame( 10, $result['meta']['limit'] );
+	}
+
+	public function test_request_log_list_verb_default_limit_is_100(): void {
+		// Legacy RequestLogController default — `limit=100`.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'request_log_list' );
+
+		$this->assertSame( 100, $result['meta']['limit'] );
+	}
+
+	public function test_request_log_list_verb_clamps_limit_high(): void {
+		// Mirrors `min(1000, max(1, (int)$v))` from legacy sanitize_callback.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_list',
+			(string) \wp_json_encode( [ 'limit' => 5000 ] )
+		);
+
+		$this->assertSame( 1000, $result['meta']['limit'] );
+	}
+
+	public function test_request_log_list_verb_clamps_limit_low(): void {
+		// Floor of 1 for limit values <= 0.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_list',
+			(string) \wp_json_encode( [ 'limit' => 0 ] )
+		);
+
+		$this->assertSame( 1, $result['meta']['limit'] );
+	}
+
+	public function test_request_log_list_verb_returns_indexed_entries(): void {
+		// Rids ≤32 chars round-trip through the fixed-width .idx field.
+		$rid1 = $this->write_request( [
+			'rid'            => 'rid-aa-1234567890123456789012345',
+			'url'            => '/page-1',
+			'timestamp'      => 1700000100,
+			'duration_ms'    => 42,
+			'status_code'    => 200,
+			'peak_mb'        => 5,
+			'request_method' => 'GET',
+		] );
+		$rid2 = $this->write_request( [
+			'rid'            => 'rid-bb-1234567890123456789012345',
+			'url'            => '/page-2',
+			'timestamp'      => 1700000200,
+			'duration_ms'    => 100,
+			'status_code'    => 500,
+			'peak_mb'        => 10,
+			'request_method' => 'POST',
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_list',
+			(string) \wp_json_encode( [ 'limit' => 10 ] )
+		);
+
+		$this->assertCount( 2, $result['data'] );
+		// Sorted by timestamp DESC — rid2 (1700000200) first.
+		$this->assertSame( $rid2, $result['data'][0]['rid'] );
+		$this->assertSame( $rid1, $result['data'][1]['rid'] );
+
+		// Verify the documented entry shape.
+		$first = $result['data'][0];
+		foreach ( [ 'rid', 'url_hash', 'timestamp', 'duration_ms', 'status_code', 'peak_mb', 'method', 'partition' ] as $key ) {
+			$this->assertArrayHasKey( $key, $first );
+		}
+		$this->assertSame( 1700000200, $first['timestamp'] );
+		$this->assertSame( 100, $first['duration_ms'] );
+		$this->assertSame( 500, $first['status_code'] );
+		$this->assertSame( 'POST', $first['method'] );
+		$this->assertSame( 0, $first['partition'] );
+	}
+
+	public function test_request_log_list_verb_respects_limit(): void {
+		// Write 3 requests; ask for 2.
+		for ( $i = 0; $i < 3; $i++ ) {
+			$this->write_request( [
+				'rid'            => "rid-{$i}-123456789012345678901234",
+				'url'            => "/page-{$i}",
+				'timestamp'      => 1700000000 + $i,
+				'duration_ms'    => 1,
+				'status_code'    => 200,
+				'peak_mb'        => 1,
+				'request_method' => 'GET',
+			] );
+		}
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_list',
+			(string) \wp_json_encode( [ 'limit' => 2 ] )
+		);
+
+		$this->assertCount( 2, $result['data'] );
+		$this->assertSame( 1700000002, $result['data'][0]['timestamp'] );
+		$this->assertSame( 1700000001, $result['data'][1]['timestamp'] );
+	}
+
+	public function test_request_log_list_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'request_log_list' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// request_log_detail verb — replaces RequestLogController::get_detail.
+	// -------------------------------------------------------------------------
+
+	public function test_request_log_detail_verb_with_unknown_id_returns_empty_entries(): void {
+		// Legacy stub-compatible behavior: missing-but-not-empty rid returns
+		// the data envelope with empty `entries` rather than throwing.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_detail',
+			(string) \wp_json_encode( [ 'id' => 'rid-xyz' ] )
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'rid-xyz', $result['data']['request_id'] );
+		$this->assertArrayHasKey( 'entries', $result['data'] );
+		$this->assertSame( [], $result['data']['entries'] );
+		$this->assertArrayHasKey( 'scanned', $result['meta'] );
+	}
+
+	public function test_request_log_detail_verb_without_id_errors(): void {
+		// Empty id is a genuine usage error — legacy controller surfaces 404
+		// via not_found_error(). CI verb throws so the central catch turns
+		// it into TM_COMMAND|TM_ERROR.
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'request_log_detail' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'id required', \strtolower( $result ) );
+	}
+
+	public function test_request_log_detail_verb_with_known_id_returns_envelope(): void {
+		// Rid ≤32 chars so fixed-width .idx field preserves it exactly.
+		$rid = $this->write_request( [
+			'rid'            => 'rid-detail-123456789012345678901',
+			'url'            => '/found',
+			'timestamp'      => 1700000300,
+			'duration_ms'    => 25,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+			'events'         => [
+				[ 'k' => 'process (start)', 'm' => '/found', 'ts' => 1700000300.0 ],
+				[ 'k' => 'process (complete)', 'm' => '/found', 'ts' => 1700000300.025 ],
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_detail',
+			(string) \wp_json_encode( [ 'id' => $rid ] )
+		);
+
+		$this->assertSame( $rid, $result['data']['request_id'] );
+		$this->assertCount( 2, $result['data']['entries'] );
+		$this->assertSame( 'process (start)', $result['data']['entries'][0]['k'] );
+		$this->assertSame( 'process (complete)', $result['data']['entries'][1]['k'] );
+	}
+
+	public function test_request_log_detail_verb_without_events_wraps_envelope(): void {
+		// When body has no 'events' key, the body itself is wrapped as a single
+		// entry (mirrors legacy RequestLogController::get_detail behavior).
+		$rid = $this->write_request( [
+			'rid'            => 'rid-noevt-1234567890123456789012',
+			'url'            => '/no-events',
+			'timestamp'      => 1700000400,
+			'duration_ms'    => 5,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'request_method' => 'GET',
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_detail',
+			(string) \wp_json_encode( [ 'id' => $rid ] )
+		);
+
+		$this->assertCount( 1, $result['data']['entries'] );
+		$this->assertSame( $rid, $result['data']['entries'][0]['rid'] );
+		// Legacy controller marks the synthesized entry with _partition.
+		$this->assertSame( 0, $result['data']['entries'][0]['_partition'] );
+	}
+
+	public function test_request_log_detail_verb_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'request_log_detail',
+			(string) \wp_json_encode( [ 'id' => 'rid-anything' ] )
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
 }
