@@ -2,16 +2,18 @@
 /**
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
- * 7 of 19 planned verbs. Replaces:
- *   - class-perf-overview-controller.php     (overview)
- *   - class-perf-urls-controller.php          (urls, url_detail)
- *   - class-perf-requests-controller.php      (request_search, request_detail)
- *   - class-performance-controller.php        (timing, dashboard)
+ * 11 of 19 planned verbs. Replaces:
+ *   - class-perf-overview-controller.php       (overview)
+ *   - class-perf-urls-controller.php            (urls, url_detail)
+ *   - class-perf-requests-controller.php        (request_search, request_detail)
+ *   - class-performance-controller.php          (timing, dashboard)
+ *   - class-perf-hooks-controller.php           (hooks_registered, hooks_categories)
+ *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
  *
- * Tasks 10-12 grow this CI with the remaining 12 verbs (hooks, config,
- * settings). Verb table is structured per-verb in `verb_table()` so each
- * follow-up task adds a sibling closure without touching the existing
- * surface.
+ * Tasks 11-12 grow this CI with the remaining 8 verbs (config, settings,
+ * status sub-surfaces). Verb table is structured per-verb in `verb_table()`
+ * so each follow-up task adds a sibling closure without touching the
+ * existing surface.
  *
  * Cross-cutting design choices:
  *  - Auth: every verb requires `manage_options`. Legacy parity — all five
@@ -30,7 +32,9 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Cache_Interface;
+use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\FlameBuilder;
+use Newspack_Event_Logger_Nodes\HookCategorizer;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\CommandInterpreter;
@@ -256,6 +260,87 @@ class Performance_CI extends CommandInterpreter {
 					'urls'     => $index,
 				] );
 			},
+			'hooks_registered' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfHooksController::get_registered_hooks.
+				// The legacy controller also returned `total_hooks` as the sum
+				// of all category buckets; recomputing here keeps the contract
+				// identical without trusting the categorizer to sum for us.
+				$by_category = HookCategorizer::get_registered_hooks_by_category();
+				$total       = 0;
+				foreach ( $by_category as $list ) {
+					$total += \is_array( $list ) ? \count( $list ) : 0;
+				}
+				return (string) \wp_json_encode( [
+					'total_hooks'       => $total,
+					'categories'        => HookCategorizer::get_categories(),
+					'hooks_by_category' => $by_category,
+				] );
+			},
+			'hooks_categories' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfHooksController::get_hook_categories
+				// — same shape the React tree consumes.
+				return (string) \wp_json_encode( [
+					'categories' => HookCategorizer::get_categories(),
+					'config'     => HookCategorizer::get_merged_config(),
+				] );
+			},
+			'hooks_available' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
+				// Walks $wp_actions (fired hooks) and $wp_filter (registered
+				// but never-fired hooks), excludes Event Logger's own internal
+				// hooks (instrumenting them loops via Config::load_config),
+				// and removes anything the operator has marked as a custom
+				// event so the picker doesn't double-list it.
+				return (string) \wp_json_encode( [
+					'hooks' => self::collect_available_hooks(),
+				] );
+			},
+			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+				self::require_manage_options();
+
+				$decoded       = self::decoded_args( $args );
+				$hooks         = $decoded['hooks']         ?? null;
+				$custom_events = $decoded['custom_events'] ?? null;
+				$configured    = 0;
+
+				if ( \is_array( $hooks ) && [] !== $hooks ) {
+					$flat = [];
+					foreach ( $hooks as $h ) {
+						if ( \is_string( $h ) && '' !== $h ) {
+							$flat[] = \sanitize_text_field( $h );
+						}
+					}
+					\update_option( 'newspack_event_logger_nodes_log_events', $flat );
+					$configured += \count( $flat );
+				}
+
+				if ( \is_array( $custom_events ) && [] !== $custom_events ) {
+					$assoc = [];
+					foreach ( $custom_events as $event ) {
+						if ( \is_string( $event ) && '' !== $event ) {
+							$assoc[ \sanitize_text_field( $event ) ] = true;
+						}
+					}
+					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc );
+					$configured += \count( $assoc );
+				}
+
+				// Application Config caches the merged custom_events / log_events;
+				// reset so the very next verb call (e.g. hooks_available) re-reads
+				// the freshly-written WP options.
+				AppConfig::reset();
+
+				return (string) \wp_json_encode( [
+					'success'          => true,
+					'hooks_configured' => $configured,
+				] );
+			},
 		];
 	}
 
@@ -284,6 +369,75 @@ class Performance_CI extends CommandInterpreter {
 		}
 		$decoded = \json_decode( $args, true );
 		return \is_array( $decoded ) ? $decoded : [];
+	}
+
+	// -------------------------------------------------------------------------
+	// Hook discovery — walk $wp_actions + $wp_filter for the picker UI.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Collect every WordPress hook known to the runtime, categorize it, and
+	 * strip out (a) Event Logger's own internal hooks and (b) anything the
+	 * operator has flagged as a custom event (so the custom-events tab owns
+	 * those). Sorted by name. Mirror of
+	 * PerfHooksAvailableController::get_available_hooks.
+	 *
+	 * @return array<int,array{name:string,category:string,count:int}>
+	 */
+	private static function collect_available_hooks(): array {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_actions, $wp_filter;
+
+		$hooks = [];
+
+		if ( isset( $wp_actions ) && \is_array( $wp_actions ) ) {
+			foreach ( $wp_actions as $hook_name => $count ) {
+				$name = (string) $hook_name;
+				if ( HookCategorizer::is_internal( $name ) ) {
+					continue;
+				}
+				$hooks[ $name ] = [
+					'name'     => $name,
+					'category' => HookCategorizer::categorize( $name ),
+					'count'    => (int) $count,
+				];
+			}
+		}
+
+		if ( isset( $wp_filter ) && ( \is_array( $wp_filter ) || $wp_filter instanceof \Traversable ) ) {
+			foreach ( $wp_filter as $hook_name => $callbacks ) {
+				$name = (string) $hook_name;
+				if ( HookCategorizer::is_internal( $name ) ) {
+					continue;
+				}
+				// $wp_actions count takes precedence — only add if missing.
+				if ( ! isset( $hooks[ $name ] ) ) {
+					$hooks[ $name ] = [
+						'name'     => $name,
+						'category' => HookCategorizer::categorize( $name ),
+						'count'    => 0,
+					];
+				}
+			}
+		}
+
+		// Filter out custom events — they're managed via the custom-events tab.
+		$cfg           = RuntimeConfig::load_config();
+		$custom_events = $cfg['custom_events'] ?? [];
+		if ( \is_array( $custom_events ) ) {
+			foreach ( $custom_events as $key => $value ) {
+				// Indexed array form (`['event_a', 'event_b']`) puts the name
+				// in the value; associative form (`['event_a' => true]`) puts
+				// it in the key. Match both — same as the legacy controller.
+				$name = ( \is_string( $key ) && '' !== $key && ! \is_numeric( $key ) ) ? $key : $value;
+				if ( \is_string( $name ) ) {
+					unset( $hooks[ $name ] );
+				}
+			}
+		}
+
+		\ksort( $hooks );
+		return \array_values( $hooks );
 	}
 
 	// -------------------------------------------------------------------------
