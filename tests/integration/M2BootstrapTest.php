@@ -92,4 +92,18 @@ class M2BootstrapTest extends TestCase {
 			'Legacy AggregatorStatusController class must be deleted; Aggregator_CI.status verb replaces it.'
 		);
 	}
+
+	public function test_legacy_logger_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\LoggerController' ),
+			'Legacy LoggerController class must be deleted; Logger_CI verbs replace it.'
+		);
+	}
+
+	public function test_legacy_perf_hooks_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfHooksController' ),
+			'Legacy PerfHooksController class must be deleted; Performance_CI.hooks_registered + .hooks_categories verbs replace it.'
+		);
+	}
 }
