@@ -2,21 +2,23 @@
 /**
  * M2CommandDispatchE2ETest: M2 acceptance test for the whole stack.
  *
- * Proves that every service CI mounted at `rest_api_init` priority 11 actually
- * responds end-to-end to a representative verb when driven through the
- * substrate's production `Command_Controller` endpoint. The path under test:
+ * Proves that every service CI mounted by the plugin's
+ * `newspack_nodes/request_graph_ready` listener actually responds
+ * end-to-end to a representative verb when driven through the
+ * substrate's production `Command_Controller` endpoint. The path under
+ * test:
  *
  *   POST /newspack-nodes/v1/command  →  Command_Controller::dispatch
+ *                                    →  ensure_request_graph (lazy-builds
+ *                                       _router / _command_interpreter / _http)
+ *                                    →  do_action newspack_nodes/request_graph_ready
+ *                                       (mount hook installs every service CI
+ *                                       via $base_ci->make_node())
  *                                    →  Router (peels TO head)
  *                                    →  Service CI (interpret + run verb)
  *                                    →  CI sink → base CI → Router
  *                                    →  HTTP_Out (writes packed Message)
  *                                    →  ob_get_clean captures the body
- *
- * The substrate request-scope graph (`_router` / `_command_interpreter` /
- * `_http`) is built in setUp the same way `Bootstrap` would build it in a real
- * worker / cli / HTTP request. The plugin's `rest_api_init` priority-11 hook
- * fires the service-CI mount so the dispatch can address each by short name.
  *
  * Auth-gated CIs (aggregator, performance) get `_current_user_can = true` in
  * setUp so their `manage_options` check passes.

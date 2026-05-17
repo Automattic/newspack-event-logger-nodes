@@ -1,14 +1,15 @@
 <?php
 /**
- * M2BootstrapTest: integration test for the rest_api_init priority-11 hook
- * that wires the nine M2 service CIs into the substrate's node registry.
+ * M2BootstrapTest: integration test for the
+ * `newspack_nodes/request_graph_ready` hook that wires the nine M2
+ * service CIs into the substrate's node registry.
  *
- * The substrate registers `_router`, `_command_interpreter`, `_http`, and
- * per-worker Partitions at `rest_api_init` priority 10. Application service
- * CIs mount at priority 11 (after `_command_interpreter` exists so they can
- * be sinked through it via Router lookups, and after the substrate's own
- * registrations have completed) so that a single `POST /newspack-nodes/v1/command`
- * round-trip can address any of them by name.
+ * `Command_Controller::dispatch` lazy-builds the request-scope graph
+ * (`_router` / `_command_interpreter` / `_http`) then fires
+ * `newspack_nodes/request_graph_ready` so applications can mount their
+ * service CIs through the base CI's `make_node()` — construct, name,
+ * and sink in one atomic step. A single `POST /newspack-nodes/v1/command`
+ * round-trip can then address each by short name.
  *
  * @package Newspack_Event_Logger_Nodes
  */
