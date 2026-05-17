@@ -342,3 +342,15 @@ const { data, error } = useRest( 'performance/overview' );
 SSE remains separate (`useEventSource('firehose-stream')` etc.) since the command path doesn't stream. The 5 streaming endpoints above are M4-noops.
 
 `CommandClient` (shared) handles the envelope assembly, nonce, and Promise correlation by `id`. Dashboards do not assemble the TM_COMMAND envelope themselves — the example in the "Browser dispatch shape" section above is the wire shape, not the dashboard-facing API.
+
+### M4 dashboard cutovers — running log
+
+Each row records a dashboard cutover from per-resource REST to the unified `/command` endpoint. A cutover lands in three commits (rewrite → verify → delete) so any one can be reverted independently. Schema-parity audit must confirm zero gaps before the deletion commit lands.
+
+| # | Dashboard | Rewrite commit | Deletion commit | Legacy controller removed |
+|---|-----------|----------------|-----------------|---------------------------|
+| 1 | `event-aggregator` | `1350303` | `244eb7c` | `class-aggregator-status-controller.php` |
+
+Helpers introduced along the way and reused by subsequent cutovers:
+- `src/shared/utils/commandClient.js` — `getCommandClient()` singleton factory.
+- `src/shared/utils/unwrapCommandResponse.js` — peels the substrate's 7-field Message tuple to the verb's payload, throws on TM_ERROR.
