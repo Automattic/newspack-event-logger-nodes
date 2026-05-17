@@ -106,4 +106,11 @@ class M2BootstrapTest extends TestCase {
 			'Legacy PerfHooksController class must be deleted; Performance_CI.hooks_registered + .hooks_categories verbs replace it.'
 		);
 	}
+
+	public function test_legacy_gyroscope_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\GyroscopeController' ),
+			'Legacy GyroscopeController (non-streaming /gyroscope/timeline) must be deleted; Performance_CI.gyroscope_timeline replaces it. GyroscopeStreamController stays for SSE.'
+		);
+	}
 }
