@@ -420,7 +420,6 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 		( new \Newspack_Event_Logger_Nodes\Rest\EventsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerformanceController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\GyroscopeController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\LoggerController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\RequestLogController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\FirehoseController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\DiscoveryController() )->register_routes();
@@ -428,7 +427,6 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfSettingsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfConfigController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfHooksAvailableController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\PerfHooksController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfOverviewController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfUrlsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfRequestsController() )->register_routes();
