@@ -976,9 +976,7 @@ class RequestBuilder extends Node {
 			$verbs = [
 				'set_errors_target' => static function ( CommandInterpreter $ci, string $args ): string {
 					$args = \trim( $args );
-					if ( '' === $args ) {
-						return 'usage: set_errors_target <node_name>';
-					}
+					// Empty arg clears the target (disables the secondary emit).
 					/** @var self $patron */
 					$patron = $ci->patron();
 					$patron->set_errors_target( $args );
@@ -987,9 +985,7 @@ class RequestBuilder extends Node {
 				},
 				'set_completed_target' => static function ( CommandInterpreter $ci, string $args ): string {
 					$args = \trim( $args );
-					if ( '' === $args ) {
-						return 'usage: set_completed_target <node_name>';
-					}
+					// Empty arg clears the target (disables the secondary emit).
 					/** @var self $patron */
 					$patron = $ci->patron();
 					$patron->set_completed_target( $args );
@@ -998,9 +994,8 @@ class RequestBuilder extends Node {
 				},
 				'set_inflight_target' => static function ( CommandInterpreter $ci, string $args ): string {
 					$args = \trim( $args );
-					if ( '' === $args ) {
-						return 'usage: set_inflight_target <node_name>';
-					}
+					// Empty arg clears Flight's target — its fire_cb early-returns
+					// on the target check, disabling the periodic snapshot emit.
 					/** @var self $patron */
 					$patron = $ci->patron();
 					$patron->flight()->target( $args );
