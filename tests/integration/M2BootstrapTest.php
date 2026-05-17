@@ -113,4 +113,11 @@ class M2BootstrapTest extends TestCase {
 			'Legacy GyroscopeController (non-streaming /gyroscope/timeline) must be deleted; Performance_CI.gyroscope_timeline replaces it. GyroscopeStreamController stays for SSE.'
 		);
 	}
+
+	public function test_legacy_request_log_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\RequestLogController' ),
+			'Legacy RequestLogController must be deleted; Performance_CI.request_log_list + .request_log_detail replace it. SSE side is in RequestsStreamController which stays.'
+		);
+	}
 }
