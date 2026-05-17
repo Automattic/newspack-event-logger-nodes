@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Workers dashboard unifies per-log slot rendering across consumed and unconsumed logs.** `WorkersController::enumerate_logs()` (previously `enumerate_terminal_logs`) walks every `{base}/logs/*.log/` directory and emits per-partition slot entries covering `max(num_partitions, max-p-index-on-disk + 1)` slots per log. The frontend (`WorkerStatus.js`) uses this single source of truth for partition rows under every log header, with cursor data overlaid from `workers[]` per partition where the log has a Consumer. Result: a log with a partition slot beyond `num_partitions` (orphan from a config shrink) renders alongside the live slot until cleaned; a log with N configured partitions but no on-disk dirs renders N empty slots so operators see the configured shape. Skips `build_log_status_entry()` for padded (no-disk) slots to avoid an unnecessary `is_dir()` on every refresh. `setWorkers` / `setStandalone` / `setLogsCatalog` now guard with a `JSON.stringify` change-detection compare so steady-state fetches don't trigger a `buildRenderPlan` re-render.
+
 ### Tests
 
 - **Round-3 coverage push: 93.9% → 94.2% (8197/8701 stmts across 52 classes).** 2162 lines of new test assertions across `Admin` (skip_default_writes, sanitize_array_strings/aggregator_servers/custom_events, field-callback placeholder + stored-value renderings, settings-registration shape), `LogManager` (filter normalization + URL routing edge cases), `RemoteManager` (handle_job non-callable/non-array filter returns, request_args header merging for basic-auth/bearer, calculate_lag with missing cursor or unknown segment, sync_setting WP_Error path, queue_sync_all_settings happy path), `Rest\FirehoseStreamController` (additional segment/partition selection branches), `SettingsSync` (fail-closed `enable_workers` polarity coverage), and `StreamMerger` (cache/require_https/verify_ssl propagation to children, namespaced_remote_name default, unknown-verb error reply, name-setter sibling propagation + idempotence).

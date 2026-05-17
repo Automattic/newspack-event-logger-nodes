@@ -571,4 +571,92 @@ class WorkersControllerTest extends TestCase {
 		$result = ( new WorkersController() )->read_permissions_check();
 		$this->assertInstanceOf( \WP_Error::class, $result );
 	}
+
+	/**
+	 * Helper for partition-slot tests: pulls the entry for `$log_name`
+	 * out of $body['logs'] and returns its `partitions` array (or [] if
+	 * the log isn't present).
+	 *
+	 * @return array<int,array{partition:int,segments:array,total_size:int}>
+	 */
+	private function logs_partitions( array $body, string $log_name ): array {
+		foreach ( $body['logs'] ?? [] as $entry ) {
+			if ( ( $entry['name'] ?? '' ) === $log_name ) {
+				return $entry['partitions'] ?? [];
+			}
+		}
+		return [];
+	}
+
+	public function test_logs_entry_pads_to_num_partitions_when_disk_under(): void {
+		// num_partitions=2, only p0 exists on disk → expect 2 slots (P1 empty).
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2 ] );
+		$dir = "{$this->tmp}/logs/errors.log/p0";
+		\mkdir( $dir, 0755, true );
+		\file_put_contents( "{$dir}/0.log", \str_repeat( 'E', 123 ) );
+
+		$resp = ( new WorkersController() )->get_workers( new \WP_REST_Request() );
+		$body = $resp->get_data();
+
+		$partitions = $this->logs_partitions( $body, 'errors.log' );
+		$indexes    = \array_column( $partitions, 'partition' );
+		\sort( $indexes );
+		$this->assertSame( [ 0, 1 ], $indexes, 'errors.log should emit a slot per configured partition' );
+
+		$p1 = null;
+		foreach ( $partitions as $p ) {
+			if ( 1 === ( $p['partition'] ?? -1 ) ) {
+				$p1 = $p;
+			}
+		}
+		$this->assertNotNull( $p1 );
+		$this->assertSame( [], $p1['segments'] );
+		$this->assertSame( 0, $p1['total_size'] );
+	}
+
+	public function test_logs_entry_includes_extra_on_disk_partitions_above_num_partitions(): void {
+		// num_partitions=1, but a stale p1/ dir exists → expect 2 slots so the
+		// operator can see the orphan data left from a previous partition count.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1 ] );
+		\mkdir( "{$this->tmp}/logs/flames.log/p0", 0755, true );
+		\file_put_contents( "{$this->tmp}/logs/flames.log/p0/0.log", \str_repeat( 'A', 50 ) );
+		\mkdir( "{$this->tmp}/logs/flames.log/p1", 0755, true );
+		\file_put_contents( "{$this->tmp}/logs/flames.log/p1/0.log", \str_repeat( 'B', 70 ) );
+
+		$resp = ( new WorkersController() )->get_workers( new \WP_REST_Request() );
+		$body = $resp->get_data();
+
+		$partitions = $this->logs_partitions( $body, 'flames.log' );
+		$indexes    = \array_column( $partitions, 'partition' );
+		\sort( $indexes );
+		$this->assertSame( [ 0, 1 ], $indexes, 'flames.log should expose every partition that exists on disk' );
+
+		$by_idx = [];
+		foreach ( $partitions as $p ) {
+			$by_idx[ (int) $p['partition'] ] = $p;
+		}
+		$this->assertSame( 50, $by_idx[0]['total_size'] );
+		$this->assertSame( 70, $by_idx[1]['total_size'] );
+	}
+
+	public function test_logs_entry_present_for_consumed_log_too(): void {
+		// A log that DOES have a consumer (firehose, with seeded offsetlog)
+		// must still appear in body['logs'] so the dashboard can read a single
+		// canonical per-log slot list — not derive partition counts from the
+		// consumer worker descriptors.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1 ] );
+		\mkdir( "{$this->tmp}/logs/firehose.log/p0", 0755, true );
+		\file_put_contents( "{$this->tmp}/logs/firehose.log/p0/0.log", \str_repeat( 'F', 200 ) );
+		\mkdir( "{$this->tmp}/logs/firehose.log/p1", 0755, true );
+		\file_put_contents( "{$this->tmp}/logs/firehose.log/p1/0.log", \str_repeat( 'G', 300 ) );
+		$this->seed_offsetlog( 'firehose', 0, [ 'worker_type' => 'firehose-workers' ] );
+
+		$resp = ( new WorkersController() )->get_workers( new \WP_REST_Request() );
+		$body = $resp->get_data();
+
+		$partitions = $this->logs_partitions( $body, 'firehose.log' );
+		$indexes    = \array_column( $partitions, 'partition' );
+		\sort( $indexes );
+		$this->assertSame( [ 0, 1 ], $indexes, 'consumed log must also appear in body.logs[] with all on-disk slots' );
+	}
 }
