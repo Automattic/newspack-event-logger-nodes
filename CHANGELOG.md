@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **9 service `CommandInterpreter` subclasses replace ~20 legacy WP REST controllers.** `Workers_CI`, `Discovery_CI`, `Status_CI`, `Settings_CI`, `Logger_CI`, `Events_CI`, `Servers_CI`, `Aggregator_CI`, `Performance_CI` — all reachable via `POST /wp-json/newspack-nodes/v1/command` with a TM_COMMAND envelope (`{type, to, from, id, value: json_encode({name, arguments, payload})}`). Performance_CI carries the heavy lift: 19 verbs replacing the entire `perf-*` controller family plus the non-streaming methods on firehose/gyroscope/request-log controllers. SSE controllers stay as REST endpoints — the command path doesn't stream. See `MIGRATION.md` for the per-CI verb reference and the M5 deletion list.
+- **`VerbHarness` test fixture for unit-testing CI verbs in isolation.** Wraps `CommandInterpreter::interpret()` so each verb test reads as `harness->call('verb', $args)` instead of hand-assembling Message envelopes. Used by every M2 CI unit test.
+- **M2 integration tests: `M2BootstrapTest` (substrate-hook registration) and `M2CommandDispatchE2ETest` (end-to-end `/command` dispatch).** The bootstrap test fires `newspack_nodes/request_graph_ready` and asserts all 9 CIs register under their short names. The E2E test drives an HTTP request through `Command_Controller::dispatch` for every CI's read-only smoke verb and asserts the response shape.
+- **9 service CI classes registered via `CommandInterpreter::register_class()`** so `make_node()` can construct them by shell-name from the `newspack_nodes/request_graph_ready` hook.
+
+### Fixed
+
+- **Service CIs now mount via `$base_ci->make_node(...)` on the substrate's new `newspack_nodes/request_graph_ready` hook.** The previous `rest_api_init` priority-11 path registered CIs by name but didn't wire sinks — verb responses (which route back via `TO=FROM`) had no path to `HTTP_Out` and silently dropped on the floor. `make_node()` atomically instantiates + names + sinks each CI in one step. Requires `newspack-nodes` substrate commit `24921f5`.
+
+### Notes
+
+- Legacy WP REST controllers remain alive in `includes/rest/` through M2. M4 dashboard rebuilds cut over to `/command`; once a dashboard migrates, its legacy controller becomes deletable in M5. See `MIGRATION.md` for the full deletion list.
+- SSE controllers (`firehose-stream`, `gyroscope-stream`, `errors-stream`, `requests-stream`, `rawlogs`) stay as REST endpoints. CommandInterpreter dispatch is request/response only.
+- Requires `newspack-nodes` substrate with the `newspack_nodes/request_graph_ready` hook (substrate commit `24921f5`).
+
+### Added
+
 - New `completed.log` Partition (compact one-line summary per completed request, 11 fields matching legacy `requests-stream-controller::transform_line` per the M1 schema-parity audit).
 - New `gyroscope.log` Partition (compact summaries via Tee fan-out from `completed:tee` + periodic inflight snapshots from the hidden `RequestFlight` sibling, 12 fields per inflight row matching legacy `InflightTracker::get_active`).
 - `RequestFlight` sibling Node attached to `RequestBuilder` (Timer-based, hidden via patron filter; mirrors Perl `InstrumentalityFlight.pm`). Default 1000ms interval; `set_interval( $ms )` reschedules. Sink propagates from RequestBuilder via the patron pattern. Fail-safe when sink/target/patron aren't wired yet.
