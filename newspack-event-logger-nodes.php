@@ -432,6 +432,42 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 );
 
 /**
+ * Service-CommandInterpreter (CI) mounting.
+ *
+ * The substrate's `Newspack_Nodes\Bootstrap::register_rest_routes` runs at
+ * `rest_api_init` priority 10 — that's where `_router` /
+ * `_command_interpreter` / `_http` and the per-worker Partitions land in
+ * Core's registry. This priority-11 hook fires AFTER that, so each service
+ * CI's `->name( '...' )` call can register through a live Core graph and
+ * become reachable via `POST /newspack-nodes/v1/command` (handled by
+ * Command_Controller, which the substrate also wires at priority 10).
+ *
+ * Each CI is a service-shaped CommandInterpreter — verbs are JSON-in,
+ * JSON-out. Dependencies (Cli, ServerRegistry, Memcached_Cache) are
+ * injected via the constructor so tests can stub them; production wires
+ * the live `Bootstrap::base_dir()` + substrate-derived cache here.
+ *
+ * Named function (not a closure) so tests that wipe
+ * `$GLOBALS['_wp_actions']` for isolation can re-attach the same callback.
+ */
+function newspack_event_logger_nodes_mount_service_cis(): void {
+	$cli      = new \Newspack_Nodes\Cli( \Newspack_Nodes\Bootstrap::base_dir() );
+	$registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
+	$cache    = \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
+
+	( new \Newspack_Event_Logger_Nodes\App\Workers_CI( $cli, $cache ) )->name( 'workers' );
+	( new \Newspack_Event_Logger_Nodes\App\Discovery_CI() )->name( 'discovery' );
+	( new \Newspack_Event_Logger_Nodes\App\Status_CI( $cache ) )->name( 'status' );
+	( new \Newspack_Event_Logger_Nodes\App\Settings_CI() )->name( 'settings' );
+	( new \Newspack_Event_Logger_Nodes\App\Logger_CI() )->name( 'logger' );
+	( new \Newspack_Event_Logger_Nodes\App\Events_CI( $cache ) )->name( 'events' );
+	( new \Newspack_Event_Logger_Nodes\App\Servers_CI( $registry ) )->name( 'servers' );
+	( new \Newspack_Event_Logger_Nodes\App\Aggregator_CI( $registry, $cache ) )->name( 'aggregator' );
+	( new \Newspack_Event_Logger_Nodes\App\Performance_CI( $cache ) )->name( 'performance' );
+}
+\add_action( 'rest_api_init', 'newspack_event_logger_nodes_mount_service_cis', 11 );
+
+/**
  * Top-level "Event Logger" admin menu and dashboard submenus.
  *
  * Top-level link goes DIRECTLY to the Performance dashboard — no landing
