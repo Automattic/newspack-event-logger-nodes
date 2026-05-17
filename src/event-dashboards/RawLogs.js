@@ -15,8 +15,8 @@ import {
 	useMemo,
 } from '@wordpress/element';
 
-import apiFetch from '@wordpress/api-fetch';
-
+import { getCommandClient } from '../shared/utils/commandClient';
+import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
 import usePageVisibility from '../shared/hooks/usePageVisibility';
 import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
 import './styles/raw-logs.scss';
@@ -49,10 +49,14 @@ export default function RawLogs() {
 
 	const isPageVisible = usePageVisibility();
 
-	// Fetch available logs on mount.
+	// Fetch available logs on mount via CommandClient — performance.firehose_logs
+	// returns the same `[{key, label}]` shape the legacy /firehose/logs REST
+	// route did (see Performance_CI::firehose_logs verb).
 	useEffect( () => {
-		apiFetch( { path: '/newspack-nodes/v1/firehose/logs' } )
-			.then( ( logs ) => {
+		getCommandClient()
+			.send( { to: 'performance', verb: 'firehose_logs' } )
+			.then( ( message ) => {
+				const logs = unwrapCommandResponse( message ) || [];
 				setAvailableLogs( logs );
 				// Select first available log by default.
 				if ( logs.length > 0 && ! selectedLog ) {
