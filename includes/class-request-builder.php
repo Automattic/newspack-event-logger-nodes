@@ -951,6 +951,28 @@ class RequestBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_completed_target', $args );
 					return 'ok';
 				},
+				'set_inflight_target' => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \trim( $args );
+					if ( '' === $args ) {
+						return 'usage: set_inflight_target <node_name>';
+					}
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->flight()->target( $args );
+					$patron->mark_verb_invoked( 'set_inflight_target', $args );
+					return 'ok';
+				},
+				'set_inflight_interval' => static function ( CommandInterpreter $ci, string $args ): string {
+					$args = \trim( $args );
+					if ( ! \ctype_digit( $args ) ) {
+						return 'usage: set_inflight_interval <ms>';
+					}
+					/** @var self $patron */
+					$patron = $ci->patron();
+					$patron->flight()->set_interval( (int) $args );
+					$patron->mark_verb_invoked( 'set_inflight_interval', $args );
+					return 'ok';
+				},
 			];
 		}
 		return $verbs;
@@ -1023,6 +1045,20 @@ class RequestBuilder extends Node {
 					'description' => 'Emit a compact one-line summary of each completed request to a named partition (in addition to the primary full-doc emit).',
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+				],
+				[
+					'name'        => 'set_inflight_target',
+					'description' => 'Periodically emit an in-flight request snapshot to a named partition (typically the gyroscope) via the hidden Flight sibling.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+				],
+				[
+					'name'        => 'set_inflight_interval',
+					'description' => 'Set the Flight sibling timer interval (milliseconds) between in-flight snapshot emissions.',
+					'args'        => [
+						[ 'name' => 'ms', 'type' => 'int', 'required' => true ],
 					],
 				],
 			],
