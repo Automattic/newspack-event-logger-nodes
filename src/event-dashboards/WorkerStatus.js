@@ -24,7 +24,8 @@ import {
 	useMemo,
 	memo,
 } from '@wordpress/element';
-import apiFetch from '@wordpress/api-fetch';
+import { getCommandClient } from '../shared/utils/commandClient';
+import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
 import usePageVisibility from '../shared/hooks/usePageVisibility';
 import './styles/worker-status.scss';
 
@@ -941,19 +942,27 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	/**
 	 * Request restart for workers of a given type.
 	 *
+	 * Dispatches `workers.restart` through `/command`. Arg shape differs from
+	 * the legacy REST endpoint: the verb takes `{types: string[], partition:
+	 * int}` (plural types, integer partition where -1 means "all"), whereas
+	 * the legacy route took `{type: string, all_partitions: bool, nonce}`. The
+	 * `/command` route is `manage_options`-guarded and CommandClient supplies
+	 * the WP nonce in its `X-WP-Nonce` header, so we no longer thread a
+	 * per-action nonce through the body.
+	 *
 	 * @param {string} workerType Worker group name (e.g., 'firehose-workers').
 	 */
 	const handleRestart = useCallback( async ( workerType ) => {
 		try {
-			await apiFetch( {
-				path: '/newspack-nodes/v1/performance/workers/restart',
-				method: 'POST',
-				data: {
-					type: workerType,
-					all_partitions: true,
-					nonce: window.NewspackNodesData?.restartNonce || '',
+			const message = await getCommandClient().send( {
+				to: 'workers',
+				verb: 'restart',
+				args: {
+					types: [ workerType ],
+					partition: -1,
 				},
 			} );
+			unwrapCommandResponse( message );
 		} catch ( err ) {
 			setError( `Failed to request restart: ${ err.message }` );
 		}
@@ -970,9 +979,18 @@ export default function WorkerStatus( { refreshMs = 2000, fullPage = false } ) {
 	const fetchWorkers = useCallback( async () => {
 		try {
 			const now = Date.now();
-			const data = await apiFetch( {
-				path: '/newspack-nodes/v1/performance/workers',
+			// workers.dump_metadata returns the full 7-field operator-grade
+			// envelope (workers[], standalone[], logs[], num_partitions,
+			// num_segments, segment_size, timestamp) — same shape the legacy
+			// WorkersController::get_workers() route produced. The minimal
+			// workers.list projection is for CLI / topology callers; the
+			// dashboard needs the rich per-worker descriptors that
+			// dump_metadata supplies.
+			const message = await getCommandClient().send( {
+				to: 'workers',
+				verb: 'dump_metadata',
 			} );
+			const data = unwrapCommandResponse( message ) || {};
 
 			// Track segment changes for animation.
 			const newPrevSegments = {};

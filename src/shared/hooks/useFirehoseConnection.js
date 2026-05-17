@@ -7,7 +7,9 @@
  */
 
 import { useState, useRef, useCallback } from '@wordpress/element';
-import apiFetch from '@wordpress/api-fetch';
+
+import { getCommandClient } from '../utils/commandClient';
+import unwrapCommandResponse from '../utils/unwrapCommandResponse';
 
 /**
  * Calculate exponential backoff delay with hysteresis.
@@ -208,17 +210,25 @@ export default function useFirehoseConnection( {
 
 		eventSourceRef.current = source;
 
-		// Start heartbeat to keep slot alive.
+		// Start heartbeat to keep slot alive. Dispatches `workers.heartbeat`
+		// through `/command` — the verb refreshes the SSE slot's memcache TTL
+		// for the current user (same {slot} arg shape as the legacy REST
+		// endpoint). unwrapCommandResponse throws on TM_ERROR so the
+		// surrounding .catch swallows any failure and lets the SSE
+		// connection's own reconnect path take over.
 		slotRef.current = null;
 		heartbeatIntervalRef.current = setInterval( () => {
 			if ( slotRef.current !== null ) {
-				apiFetch( {
-					path: '/newspack-nodes/v1/firehose/heartbeat',
-					method: 'POST',
-					data: { slot: slotRef.current },
-				} ).catch( () => {
-					// Ignore heartbeat errors - SSE will reconnect if needed.
-				} );
+				getCommandClient()
+					.send( {
+						to: 'workers',
+						verb: 'heartbeat',
+						args: { slot: slotRef.current },
+					} )
+					.then( unwrapCommandResponse )
+					.catch( () => {
+						// Ignore heartbeat errors - SSE will reconnect if needed.
+					} );
 			}
 		}, HEARTBEAT_INTERVAL_MS );
 
