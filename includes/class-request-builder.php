@@ -334,9 +334,14 @@ class RequestBuilder extends Node {
 		$request->last_log_ts = (float) ( $entry['ts'] ?? 0 );
 		$request->tracker_ts  = \microtime( true );
 
-		// Evict runaway requests immediately.
+		// Runaway requests stay visible in the cache so inflight_snapshot
+		// surfaces them — matches the Perl gyroscope, which displays
+		// over-depth requests reliably. Memory is still bounded: push_stack
+		// stops growing the stack at MAX_STACK_DEPTH (see the guard at
+		// push_stack line 504-506), and the LRU bucket rotation will
+		// eventually evict the runaway via evict_request (which stamps
+		// error_status=T and emits to the completed pipeline).
 		if ( $request->is_runaway ?? false ) {
-			$this->cache->delete( $rid );
 			return;
 		}
 
@@ -424,6 +429,12 @@ class RequestBuilder extends Node {
 			}
 			$parts                   = \explode( ' ', $message, 2 );
 			$request->request_method = $parts[0];
+			// Stamp the URL-bind ts as the canonical "request start" — matches
+			// legacy InflightTracker (lines 70-71) which seeds start_time from
+			// the `request` keyword's ts, not from `process (start)`. Keeping
+			// `$request->timestamp` set to the process-start ts (line 399) so
+			// downstream consumers that need the PHP-init ts still get it.
+			$request->request_start_ts = (float) ( $entry['ts'] ?? 0 );
 		};
 
 		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
@@ -486,6 +497,17 @@ class RequestBuilder extends Node {
 			$request->profiles = [];
 		}
 
+		// Stop appending once we've hit the stack-depth cap — keeps memory
+		// bounded for runaway requests we deliberately keep visible in the
+		// inflight snapshot (see fill() line 338). Mirrors legacy
+		// InflightTracker::process line 127, which caps via the same
+		// < MAX_STACK_DEPTH guard. We still flag is_runaway below so the
+		// short-circuit in fill() stops doing per-entry work.
+		if ( \count( $request->stack ) >= self::MAX_STACK_DEPTH ) {
+			$request->is_runaway = true;
+			return;
+		}
+
 		if ( ! isset( $request->profiles[ $state ] ) ) {
 			$request->profiles[ $state ] = [
 				'entries' => [],
@@ -502,7 +524,7 @@ class RequestBuilder extends Node {
 			$profile['entries'][ $label ] = [ 0, 0 ];
 		}
 
-		if ( \count( $request->stack ) > self::MAX_STACK_DEPTH ) {
+		if ( \count( $request->stack ) >= self::MAX_STACK_DEPTH ) {
 			$request->is_runaway = true;
 		}
 	}
@@ -663,8 +685,13 @@ class RequestBuilder extends Node {
 		$r   = (array) $request;
 		$url = (string) ( $r['url'] ?? '' );
 		$ua  = (string) ( $r['user_agent'] ?? '' );
-		$ts  = (float) ( $r['timestamp'] ?? 0 );
-		$dur = (float) ( $r['duration_ms'] ?? 0 );
+		// Preserve native numeric type for ts and dur so the wire format is
+		// byte-for-byte equivalent to legacy transform_line (which never
+		// cast). json_encode strips trailing `.0`, so an int-valued float
+		// round-trips as int through the wire — the SchemaParityAudit asserts
+		// that on the unpacked side.
+		$ts  = $r['timestamp'] ?? 0;
+		$dur = $r['duration_ms'] ?? 0;
 		return [
 			'rid'          => (string) ( $r['rid'] ?? '' ),
 			'method'       => (string) ( $r['request_method'] ?? 'GET' ),
@@ -672,9 +699,9 @@ class RequestBuilder extends Node {
 			'start_time'   => $ts,
 			'end_time'     => $ts + ( $dur / 1000 ),
 			'duration_ms'  => $dur,
-			'status_code'  => (int) ( $r['status_code'] ?? 0 ),
+			'status_code'  => $r['status_code'] ?? 0,
 			'state'        => 'complete',
-			'error_status' => (string) ( $r['error_status'] ?? '-' ),
+			'error_status' => $r['error_status'] ?? '-',
 			'remote_addr'  => (string) ( $r['remote_addr'] ?? '' ),
 			'user_agent'   => \strlen( $ua ) > 500 ? \substr( $ua, 0, 500 ) . '...' : $ua,
 		];
@@ -702,9 +729,12 @@ class RequestBuilder extends Node {
 	}
 
 	/**
-	 * Snapshot the in-flight request map as a list of compact rows tagged
-	 * `state: 'active'`. Consumed by RequestFlight's periodic fire — emitted
-	 * to the gyroscope partition for cross-spoke aggregation.
+	 * Snapshot the in-flight request map as a list of compact rows. Each row's
+	 * `state` field carries the top-of-stack hook name (matching legacy
+	 * InflightTracker::get_active semantics — e.g. `render`, `wp_head hook`,
+	 * or `process` for an unwound stack). Consumed by RequestFlight's
+	 * periodic fire — emitted to the gyroscope partition for cross-spoke
+	 * aggregation.
 	 *
 	 * Schema is the 12-field shape from legacy InflightTracker::get_active,
 	 * preserved verbatim so the M5 deletion gate (SchemaParityAuditTest) can
@@ -720,8 +750,13 @@ class RequestBuilder extends Node {
 		$out = [];
 		$now = (float) ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $this->cache->iterate() as $rid => $request ) {
-			$r           = (array) $request;
-			$start_time  = (float) ( $r['timestamp'] ?? 0 );
+			$r = (array) $request;
+			// Prefer the URL-bind ts (the `request` keyword's ts) over the
+			// process-init ts (line 399) so start_time matches legacy
+			// InflightTracker::get_active. Falls back to `timestamp` when
+			// request_start_ts isn't set yet (e.g. test seams that prime
+			// the cache without driving the `request` keyword callback).
+			$start_time  = (float) ( $r['request_start_ts'] ?? $r['timestamp'] ?? 0 );
 			$last_log_ts = (float) ( $r['last_log_ts'] ?? $start_time );
 			$tracker_ts  = (float) ( $r['tracker_ts'] ?? $now );
 			$time_ms     = ( $last_log_ts - $start_time ) * 1000;
@@ -730,7 +765,7 @@ class RequestBuilder extends Node {
 				'rid'         => (string) $rid,
 				'method'      => (string) ( $r['request_method'] ?? 'GET' ),
 				'url'         => (string) ( $r['url'] ?? '' ),
-				'state'       => 'active',
+				'state'       => self::extract_state( $r ),
 				'what'        => self::extract_what( $r ),
 				'time_ms'     => \round( $time_ms, 1 ),
 				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
@@ -744,26 +779,40 @@ class RequestBuilder extends Node {
 		return $out;
 	}
 
-	/**
-	 * Extract the "current activity" string for an in-flight request — the
-	 * legacy InflightTracker `what` slot. Prefers an explicit `what` (set by
-	 * the test seam and future runtime tagging), otherwise reads the top of
-	 * the request's hook stack.
-	 *
-	 * @param array<string,mixed> $request Request envelope as an array.
-	 */
 	private static function extract_what( array $request ): string {
-		if ( isset( $request['what'] ) && \is_string( $request['what'] ) ) {
-			return $request['what'];
-		}
+		return self::extract_stack_top_slot( $request, 1, 'what', '' );
+	}
+
+	private static function extract_state( array $request ): string {
+		return self::extract_stack_top_slot( $request, 0, 'state', 'process' );
+	}
+
+	/**
+	 * Read the stack-top frame slot for an in-flight request — mirrors
+	 * legacy `InflightTracker::get_active` lines 141-143 which derive both
+	 * `state` (slot 0) and `what` (slot 1) from the top of the request's
+	 * hook stack, defaulting to `[ 'process', '' ]` when the stack is empty.
+	 *
+	 * The fallback chain: stack-top slot → explicit named field (for test
+	 * seams that prime fields without driving the stack) → static default.
+	 *
+	 * @param array<string,mixed> $request   Request envelope as an array.
+	 * @param int                 $slot      Frame slot (0 = state, 1 = what).
+	 * @param string              $fallback_field Explicit field name to fall back on.
+	 * @param string              $default   Static default if neither source has a value.
+	 */
+	private static function extract_stack_top_slot( array $request, int $slot, string $fallback_field, string $default ): string {
 		$stack = $request['stack'] ?? null;
 		if ( \is_array( $stack ) && [] !== $stack ) {
 			$top = $stack[ \array_key_last( $stack ) ];
-			if ( \is_array( $top ) && isset( $top[0] ) && \is_string( $top[0] ) ) {
-				return $top[0];
+			if ( \is_array( $top ) && isset( $top[ $slot ] ) && \is_string( $top[ $slot ] ) ) {
+				return $top[ $slot ];
 			}
 		}
-		return '';
+		if ( isset( $request[ $fallback_field ] ) && \is_string( $request[ $fallback_field ] ) ) {
+			return $request[ $fallback_field ];
+		}
+		return $default;
 	}
 
 	/**

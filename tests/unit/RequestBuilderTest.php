@@ -315,7 +315,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 10.0, $req['profiles']['outer']['time'], 1e-9 );
 	}
 
-	public function test_runaway_stack_evicts_request(): void {
+	public function test_runaway_stack_keeps_request_visible(): void {
 		$rb      = new RequestBuilder();
 		$capture = new CaptureSink();
 		$rb->sink( $capture );
@@ -327,8 +327,12 @@ class RequestBuilderTest extends TestCase {
 			$this->fill( $rb, $i + 3, 'r1', "deep_$i (start)", [ 'l' => '' ] );
 		}
 
-		// Once is_runaway flips true, the request gets evicted from cache.
-		$this->assertSame( 0, $rb->cache_size() );
+		// Runaway requests stay visible in the cache (matches legacy
+		// InflightTracker + the Perl gyroscope) — the SchemaParityAudit
+		// test_inflight_snapshot_surfaces_runaway_requests_like_legacy
+		// is the contract for this. push_stack caps the stack depth, so
+		// memory stays bounded even with the runaway request retained.
+		$this->assertSame( 1, $rb->cache_size() );
 	}
 
 	public function test_truncation_when_entries_exceed_max(): void {

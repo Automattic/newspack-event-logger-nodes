@@ -72,7 +72,9 @@ class RequestFlightTest extends TestCase {
 		$batch = $got[0][ Message::VALUE ];
 		$this->assertCount( 2, $batch );
 		$this->assertSame( 'rid-1', $batch[0]['rid'] );
-		$this->assertSame( 'active', $batch[0]['state'] );
+		// Default state for a primed request with no stack frames matches
+		// legacy InflightTracker (lines 141-143): the unwound-stack default.
+		$this->assertSame( 'process', $batch[0]['state'] );
 		$this->assertSame( '/a', $batch[0]['url'] );
 		$this->assertSame( 'rid-2', $batch[1]['rid'] );
 	}

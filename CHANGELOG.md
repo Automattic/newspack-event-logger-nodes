@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`RequestBuilder::build_compact_summary` and `inflight_snapshot` now produce byte-for-byte equivalent output to the legacy emitters.** Two real divergences caught by the M1 parity audit:
+  - `build_compact_summary` was force-casting `timestamp` / `duration_ms` / `status_code` / `error_status` to `(float)`/`(int)`/`(string)`, but the legacy `requests-stream-controller::transform_line` never cast — it passed through whatever JSON-decoded type the wire delivered. With `wp_json_encode` stripping trailing `.0` from int-valued floats, the legacy emit shows `start_time: 1747401234` while the new emit was showing `1747401234.0`. Removed the casts.
+  - `inflight_snapshot` was reading `start_time` from `$request->timestamp` (the `process (start)` ts), but legacy `InflightTracker::get_active` seeds `start_time` from the `request` keyword's ts (the URL-bind ts). Added a `request_start_ts` field stamped by the `request` state-callback; `inflight_snapshot` prefers it over `timestamp`. Process-start ts stays on `$request->timestamp` for the format_index_entry / evict_request paths that still need it.
+- **`RequestBuilder::inflight_snapshot` now surfaces runaway requests** (previously dropped by `fill()` evicting `is_runaway` entries from the cache). Legacy InflightTracker keeps over-depth requests visible by capping the stack at `MAX_STACK_DEPTH` and continuing to track the request — the Perl gyroscope dashboard relies on this. Replaced the eviction with a per-entry short-circuit return; memory stays bounded because `push_stack` now caps the stack at `MAX_STACK_DEPTH` (early return when at cap) instead of overshooting by one frame before flagging.
+- **`RequestBuilder::inflight_snapshot`'s `state` field now carries the top-of-stack hook name** (e.g. `render`, `wp_head hook`, or `process` when the stack is unwound) instead of the hardcoded `'active'` literal. Matches legacy `InflightTracker::get_active` semantics and restores the gyroscope dashboard's "what is this request doing right now" column for the new feed.
+
+### Tests
+
+- **`SchemaParityAuditTest` — M1 acceptance gate, expanded from schema-only to value-equivalence.** The audit now drives BOTH legacy and new emitters through the same input and asserts byte-for-byte field-by-field parity, not just field presence. New tests: `test_compact_summary_value_equivalence_against_legacy_transform_line` (wire-roundtripped envelope → both emitters; every field `assertSame`), `test_inflight_snapshot_value_equivalence_against_legacy_get_active` (same firehose lifecycle through `InflightTracker::process` and `RequestBuilder::fill`; every field `assertSame` except `time_ms` / `est_ms` / `lag_ms` within 50ms tolerance for wall-clock skew), `test_inflight_snapshot_surfaces_runaway_requests_like_legacy` (60-frame stack overflow; both emitters must still expose the request).
+
 ### Added
 
 - **`RequestFlight` Timer-sibling Node.** Mirrors Perl Tachikoma's `InstrumentalityFlight.pm`: periodically snapshots its patron's (RequestBuilder's) in-progress request map via `inflight_snapshot()` and emits a `TM_STRUCT` batch (`KEY='inflight'`) to a configured target — typically a gyroscope partition. Default 1000ms interval; `set_interval( $ms )` reschedules. Sink propagates from RequestBuilder via the patron pattern (Task 22 wires it). Hidden from the topology canvas via the substrate's `patron()` filter. Fail-safe when sink/target/patron aren't wired yet (early returns, no emission). Rejects array-form `target` rather than silently stringifying to `"Array"`.
