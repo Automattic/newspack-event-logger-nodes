@@ -129,7 +129,9 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$snap = $rb->inflight_snapshot();
 		$this->assertCount( 2, $snap );
 		$this->assertSame( 'r-1', $snap[0]['rid'] );
-		$this->assertSame( 'active', $snap[0]['state'] );
+		// Default state for a primed request with no stack frames matches
+		// legacy InflightTracker (lines 141-143): the unwound-stack default.
+		$this->assertSame( 'process', $snap[0]['state'] );
 		$this->assertSame( '/a', $snap[0]['url'] );
 		$this->assertSame( 'GET', $snap[0]['method'] );
 		$this->assertEqualsWithDelta( 1.0, $snap[0]['start_time'], 1e-9 );
