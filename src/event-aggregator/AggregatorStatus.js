@@ -6,8 +6,9 @@
  */
 
 import { useState, useEffect, useCallback } from '@wordpress/element';
-import apiFetch from '@wordpress/api-fetch';
 
+import { getCommandClient } from '../shared/utils/commandClient';
+import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
 import './styles/aggregator-status.scss';
 
 /**
@@ -271,7 +272,13 @@ export default function AggregatorStatus() {
 	}, [ refreshInterval ] );
 
 	/**
-	 * Fetch server status from REST API.
+	 * Fetch server status via the substrate's CommandClient.
+	 *
+	 * Dispatches `aggregator.status` through `/newspack-nodes/v1/command`.
+	 * The response is a raw 7-field Message tuple; `unwrapCommandResponse`
+	 * peels it down to the verb's payload (a `{ server_id: {...} }` map,
+	 * same shape the legacy `/newspack-nodes-aggregator/v1/status` REST
+	 * route returned — confirmed by the M3 schema-parity audit).
 	 */
 	const fetchStatus = useCallback( async ( isInitial = false ) => {
 		if ( ! isInitial ) {
@@ -279,9 +286,12 @@ export default function AggregatorStatus() {
 		}
 
 		try {
-			const data = await apiFetch( {
-				path: '/newspack-nodes-aggregator/v1/status',
+			const client = getCommandClient();
+			const message = await client.send( {
+				to: 'aggregator',
+				verb: 'status',
 			} );
+			const data = unwrapCommandResponse( message );
 
 			// Convert object to array for easier rendering.
 			const serverList = Object.values( data || {} );
