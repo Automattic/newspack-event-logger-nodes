@@ -242,6 +242,56 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 );
 
 /**
+ * Per-topology log basenames. Matches what each TSL file references.
+ * Update when topologies are added or their inputs/outputs change —
+ * substrate's Log_Cleaner uses the union of active entries to decide
+ * which `{base}/logs/*.log/` directories are orphan.
+ */
+const NEWSPACK_EVENT_LOGGER_NODES_TOPOLOGY_BASENAMES = [
+	'aggregator'                => [],
+	'firehose-jobs-only'        => [ 'firehose', 'jobintake', 'jobs' ],
+	'firehose-workers-and-jobs' => [ 'errors', 'firehose', 'jobintake', 'jobs', 'requests' ],
+	'firehose-workers-only'     => [ 'errors', 'firehose', 'requests' ],
+	'job-workers'               => [ 'jobs' ],
+	'request-workers'           => [ 'flames', 'requests' ],
+];
+
+/**
+ * Named function (not a closure) so tests that wipe `$GLOBALS['_wp_actions']`
+ * for isolation can re-attach the same callback without duplicating the
+ * topology map.
+ */
+function newspack_event_logger_nodes_expected_log_basenames( array $basenames ): array {
+	$config     = \Newspack_Event_Logger_Nodes\Config::load_config();
+	$configured = \is_array( $config['topologies'] ?? null ) ? $config['topologies'] : [];
+	$active_set = \array_flip( $configured );
+
+	// Workers still on disk pin their topology's basenames as expected,
+	// even if the operator just removed the topology from config — they
+	// might be writing to those logs as the change settles. Cli::ls_workers
+	// filters out stale lock dirs (worker died without cleanup), so a
+	// failed worker doesn't keep its basenames expected forever.
+	$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+	foreach ( ( new \Newspack_Nodes\Cli( $base_dir ) )->ls_workers() as $worker ) {
+		if ( ! $worker['stale'] ) {
+			$active_set[ $worker['type'] ] = true;
+		}
+	}
+
+	$union = $basenames;
+	foreach ( \array_keys( $active_set ) as $name ) {
+		foreach ( NEWSPACK_EVENT_LOGGER_NODES_TOPOLOGY_BASENAMES[ $name ] ?? [] as $basename ) {
+			$union[] = $basename;
+		}
+	}
+	return \array_values( \array_unique( $union ) );
+}
+\add_filter(
+	'newspack_nodes/expected_log_basenames',
+	'newspack_event_logger_nodes_expected_log_basenames'
+);
+
+/**
  * Wrap the substrate's cron-backstop supervisor run with a fresh LogManager
  * job context so the 595s tick logs as `/jobs/newspack-nodes/supervisor`
  * (tagged `worker_type='supervisor'`) instead of as an untagged
@@ -453,7 +503,8 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 				$menu_title,
 				'manage_options',
 				$slug,
-				static fn () => print( $mount_html )
+				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $mount_html is a hardcoded constant string from $dashboards above, not user input.
+			static fn () => print( $mount_html )
 			);
 		}
 	}
@@ -478,6 +529,7 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 		// hookname format depends on the parent menu slug + admin-side context
 		// and gets brittle when the parent renames. The `page` arg is the
 		// stable contract.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
 		$page    = isset( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
 		$page_to_tree = [
 			'newspack-nodes-performance'             => 'performance-dashboards',
@@ -565,6 +617,7 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
 		$hook_categories_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'hook_categories.json';
 		if ( \file_exists( $hook_categories_path ) ) {
+			// phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- local plugin-bundled file, not a remote URL.
 			$decoded = \json_decode( (string) \file_get_contents( $hook_categories_path ), true );
 			if ( \is_array( $decoded ) ) {
 				$hook_categories = $decoded;
