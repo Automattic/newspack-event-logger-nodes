@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Topology console live view now shows the `request-builder → gyroscope:partition` edge.** The override of `RequestBuilder::target()` walked the conditional `errors_target` / `completed_target` but missed the flight sibling's target — the `gyroscope:partition` destination the `set_inflight_target` verb stores on the hidden `RequestFlight` sibling. Live view rendered `gyroscope:partition` with a non-zero rate but no inbound edge from request-builder; edit view (which reads the topology source rather than the live graph) showed the edge correctly. Union the flight sibling's target into the extras list alongside the existing two, with the same dedup gate.
+
 ### Changed
 
 - **Default `skip_urls` updated for M6 endpoint shape.** Drops `/wp-json/newspack-nodes/v1/firehose` (no live routes under that prefix after M6) and `/wp-json/newspack-nodes/v1/topology` (the topology console route was renamed in M4). Adds `/wp-json/newspack-nodes/v1/command` (the unified `/command` dispatch endpoint — every dashboard verb call lands there) and `/wp-json/newspack-nodes/v1/messages/stream` (the unified SSE endpoint). Without these entries the request-builder would log every dashboard click + every SSE connection as a regular request, polluting global timing stats with admin-only traffic. `workers/spawn` stays.

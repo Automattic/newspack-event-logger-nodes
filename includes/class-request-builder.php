@@ -156,11 +156,13 @@ class RequestBuilder extends Node {
 	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
 	 * (which Node::target stores in $this->target) plus the
 	 * conditional errors_target / completed_target the topology may have
-	 * wired.
+	 * wired, plus the flight sibling's own target (the periodic in-flight
+	 * snapshot stream, typically wired to `gyroscope:partition`).
 	 *
-	 * Without this override `errors:partition` and `completed:tee` would
-	 * orphan on the topology console (nodes with `0` count, no inbound
-	 * edges) even though RequestBuilder writes to them.
+	 * Without this override `errors:partition`, `completed:tee`, and the
+	 * flight sibling's target would orphan on the topology console (nodes
+	 * with `0` count, no inbound edges) even though RequestBuilder /
+	 * RequestFlight writes to them.
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
@@ -173,6 +175,12 @@ class RequestBuilder extends Node {
 		}
 		if ( '' !== $this->completed_target ) {
 			$extras[] = $this->completed_target;
+		}
+		if ( null !== $this->flight ) {
+			$flight_target = $this->flight->target();
+			if ( \is_string( $flight_target ) && '' !== $flight_target ) {
+				$extras[] = $flight_target;
+			}
 		}
 		if ( ! $extras ) {
 			return $primary;
