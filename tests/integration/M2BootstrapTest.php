@@ -25,16 +25,17 @@ use Newspack_Nodes\Router;
 class M2BootstrapTest extends TestCase {
 
 	/**
-	 * Wipe and re-attach exactly one mount callback against the
+	 * Wipe and re-attach both mount callbacks (substrate + app) against the
 	 * `newspack_nodes/request_graph_ready` hook so this integration test
 	 * exercises the production registration path with no duplicates —
-	 * the plugin file's own `add_action` is still in `$GLOBALS['_wp_actions']`
+	 * each plugin's own `add_action` is still in `$GLOBALS['_wp_actions']`
 	 * from bootstrap, and a second `do_action` would name-collide on
 	 * the second mount.
 	 */
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_actions']['newspack_nodes/request_graph_ready'] = [];
+		\add_action( 'newspack_nodes/request_graph_ready', 'newspack_nodes_mount_substrate_cis' );
 		\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 	}
 
@@ -42,7 +43,10 @@ class M2BootstrapTest extends TestCase {
 	 * Build the request-scope graph (`_router` / `_command_interpreter` /
 	 * `_http`) the way `Command_Controller::dispatch` does in production,
 	 * then fire `newspack_nodes/request_graph_ready` and confirm each
-	 * service CI was registered under its canonical short name.
+	 * service CI was registered under its canonical short name. The
+	 * Workers fleet is a substrate concern (mounted under 'workers' by
+	 * substrate); the rest are app CIs.
+	 *
 	 * `Core::node()` returns null for unknown names, so a non-null lookup
 	 * is the contract.
 	 */
@@ -124,14 +128,14 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_workers_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\WorkersController' ),
-			'Legacy WorkersController must be deleted; Workers_CI.dump_metadata + .restart replace it.'
+			'Legacy WorkersController must be deleted; substrate Workers_CI.dump_metadata + .restart replace it.'
 		);
 	}
 
 	public function test_legacy_firehose_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\FirehoseController' ),
-			'Legacy FirehoseController must be deleted; /logs → Performance_CI.firehose_logs; /heartbeat → Workers_CI.heartbeat; /status → Performance_CI.firehose_status. FirehoseStreamController is gone too (M6.9b) — RemoteSource consumes the substrate /messages/stream endpoint directly.'
+			'Legacy FirehoseController must be deleted; /logs → substrate Raw_Logs_CI.firehose_logs; /heartbeat → substrate Workers_CI.heartbeat; /status → substrate Raw_Logs_CI.firehose_status. FirehoseStreamController is gone too (M6.9b) — RemoteSource consumes the substrate /messages/stream endpoint directly.'
 		);
 	}
 

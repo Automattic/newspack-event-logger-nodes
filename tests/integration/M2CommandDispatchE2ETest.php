@@ -38,10 +38,11 @@ class M2CommandDispatchE2ETest extends TestCase {
 		parent::setUp();
 		// Auth-gated CIs (aggregator, performance) check manage_options.
 		$GLOBALS['_current_user_can'] = true;
-		// Wipe the hook store and re-attach exactly one mount callback so
-		// dataProvider iterations don't double-register the same hook (which
-		// would collide on names on the second tick).
+		// Wipe the hook store and re-attach both mount callbacks (substrate
+		// + app) so dataProvider iterations don't double-register the same
+		// hook (which would collide on names on the second tick).
 		$GLOBALS['_wp_actions'] = [];
+		\add_action( 'newspack_nodes/request_graph_ready', 'newspack_nodes_mount_substrate_cis' );
 		\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 	}
 

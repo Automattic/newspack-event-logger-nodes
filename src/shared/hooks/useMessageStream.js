@@ -1,3 +1,4 @@
+// Synced from src/shared/ by sync-shared.sh — edit the canonical source, not this copy.
 /* global EventSource */
 /**
  * Message-Stream SSE Connection Hook

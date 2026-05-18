@@ -1,3 +1,4 @@
+// Synced from src/shared/ by sync-shared.sh — edit the canonical source, not this copy.
 /**
  * Custom hook to track WordPress admin menu width.
  *

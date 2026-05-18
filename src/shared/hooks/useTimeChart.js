@@ -1,3 +1,4 @@
+// Synced from src/shared/ by sync-shared.sh — edit the canonical source, not this copy.
 /* global requestAnimationFrame, cancelAnimationFrame */
 /**
  * Shared hook for time-series chart rendering (resize, scroll, tooltip).

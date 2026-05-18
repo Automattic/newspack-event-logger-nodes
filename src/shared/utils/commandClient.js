@@ -1,3 +1,4 @@
+// Synced from src/shared/ by sync-shared.sh — edit the canonical source, not this copy.
 /**
  * Shared CommandClient singleton for M4 dashboards.
  *

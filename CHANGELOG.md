@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Workers + Raw Logs dashboards moved to `newspack-nodes`.** Both surface substrate state — worker fleets, raw on-disk log segments — so they belong in the substrate, not the application layer. Deleted `includes/app/class-workers-ci.php`, `src/event-dashboards/`, `tests/unit/WorkersCITest.php`. Stripped `firehose_logs` + `firehose_status` verbs (and their `discover_logs` / `resolve_log_key` helpers + `DEFAULT_LOG_KEY` const) out of `Performance_CI`. Dropped the Workers + Raw Logs entries from the top-level "Event Logger" admin menu + page-to-bundle mapping; they now live as submenus under the substrate's "Nodes" top-level menu, served by substrate's own event-dashboards bundle. Added a `newspack_nodes/workers_cache` filter that supplies the substrate Workers_CI mount with this plugin's `Memcached_Cache` (for live-position lookups + the SSE-slot heartbeat verb).
+- **`src/shared/` is now a synced copy from the substrate's `src/shared/`.** Canonical source lives in `newspack-nodes/src/shared/`; the substrate's `sync-shared.sh` copies hooks + utils here on every `npm run build` (via the substrate's `npm run sync`). Each file in `src/shared/` here gets a `// Synced from src/shared/` header that the PreToolUse hook uses to block accidental hand-edits — edit the substrate canonical, not the local copy.
+
 ### Removed
 
 - **`RemoteSource::update_sse_heartbeat()` and its two callers' tests.** Method was unreferenced; SSE heartbeat tracking lives elsewhere now. PHPStan caught it.
