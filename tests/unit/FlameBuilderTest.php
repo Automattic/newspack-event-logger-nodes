@@ -548,7 +548,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flame_builder_set_is_hub_verb_round_trips(): void {
 		$fb = new FlameBuilder();
 		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $fb->interpreter()->execute( 'set_is_hub true' ) );
+		$this->assertSame( 'ok', $fb->interpreter()->dispatch( 'set_is_hub', 'true' ) );
 		$dump = $fb->dump_config();
 		$this->assertStringContainsString( 'cmd fb:config set_is_hub true', $dump );
 	}
@@ -556,7 +556,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flame_builder_set_auto_tune_verb_round_trips(): void {
 		$fb = new FlameBuilder();
 		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $fb->interpreter()->execute( 'set_auto_tune 100 0.5' ) );
+		$this->assertSame( 'ok', $fb->interpreter()->dispatch( 'set_auto_tune', '100 0.5' ) );
 		$dump = $fb->dump_config();
 		$this->assertStringContainsString( 'cmd fb:config set_auto_tune 100 0.5', $dump );
 	}
@@ -564,7 +564,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flame_builder_set_significant_events_verb_round_trips(): void {
 		$fb = new FlameBuilder();
 		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $fb->interpreter()->execute( 'set_significant_events init,wp_loaded,shutdown' ) );
+		$this->assertSame( 'ok', $fb->interpreter()->dispatch( 'set_significant_events', 'init,wp_loaded,shutdown' ) );
 		$dump = $fb->dump_config();
 		$this->assertStringContainsString( 'cmd fb:config set_significant_events init,wp_loaded,shutdown', $dump );
 	}

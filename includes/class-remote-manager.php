@@ -638,12 +638,15 @@ class RemoteManager {
 	 * @return string JSON-encoded TM_COMMAND envelope ready for `wp_remote_post` `body`.
 	 */
 	private static function build_command_envelope( string $endpoint, array $body ): string {
-		[ $to, $verb, $args ] = self::resolve_command_target( $endpoint, $body );
+		[ $to, $verb, $payload ] = self::resolve_command_target( $endpoint, $body );
 
+		// arguments is the literal CLI-shaped tail; for settings-sync verbs
+		// the structured update map lives in `payload` (matches Tachikoma's
+		// contract — arguments is a string, payload is for structured data).
 		$value = (string) \wp_json_encode( [
 			'name'      => $verb,
-			'arguments' => (string) \wp_json_encode( $args ),
-			'payload'   => '',
+			'arguments' => '',
+			'payload'   => $payload,
 		] );
 
 		return (string) \wp_json_encode( [
@@ -656,11 +659,11 @@ class RemoteManager {
 	}
 
 	/**
-	 * Resolve a category-tag endpoint to its `(to, verb, args)` triple.
+	 * Resolve a category-tag endpoint to its `(to, verb, payload)` triple.
 	 *
 	 * @param string $endpoint One of SettingsSync::ENDPOINT or PERF_ENDPOINT.
 	 * @param array  $body     `{option, value}` pair.
-	 * @return array{0:string,1:string,2:array} `[to, verb, args]`.
+	 * @return array{0:string,1:string,2:array} `[to, verb, payload]`.
 	 */
 	private static function resolve_command_target( string $endpoint, array $body ): array {
 		if ( SettingsSync::PERF_ENDPOINT === $endpoint ) {

@@ -81,7 +81,7 @@ class Servers_CI extends Service_CI {
 
 	private function verb_table( ServerRegistry $registry ): array {
 		return [
-			'list'   => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
+			'list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
 				$registry->reset_cache();
 				$out = [];
 				foreach ( $registry->get_all() as $id => $config ) {
@@ -89,8 +89,8 @@ class Servers_CI extends Service_CI {
 				}
 				return (string) \wp_json_encode( $out );
 			},
-			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
-				$id = self::decoded_id( $args );
+			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
 				$server = $registry->get( $id );
 				if ( null === $server ) {
@@ -98,9 +98,9 @@ class Servers_CI extends Service_CI {
 				}
 				return (string) \wp_json_encode( self::public_shape( $id, $server, $registry ) );
 			},
-			'add'    => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
+			'add'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
 				self::require_manage_options();
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$id      = (string) ( $decoded['id'] ?? '' );
 				// Empty + format check together: legacy controller maps both to
 				// HTTP 400 with the same kind of "invalid id" message.
@@ -123,9 +123,9 @@ class Servers_CI extends Service_CI {
 				self::request_supervisor_restart();
 				return (string) \wp_json_encode( [ 'id' => $id ] );
 			},
-			'update' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
+			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
 				self::require_manage_options();
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$id      = self::require_id( $decoded );
 				$registry->reset_cache();
 				$existing = $registry->get( $id );
@@ -148,9 +148,9 @@ class Servers_CI extends Service_CI {
 				self::request_supervisor_restart();
 				return (string) \wp_json_encode( [ 'id' => $id ] );
 			},
-			'delete' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
+			'delete' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
 				self::require_manage_options();
-				$id = self::decoded_id( $args );
+				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
 				if ( null === $registry->get( $id ) ) {
 					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
@@ -162,9 +162,9 @@ class Servers_CI extends Service_CI {
 				self::request_supervisor_restart();
 				return (string) \wp_json_encode( [ 'id' => $id ] );
 			},
-			'test'   => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
+			'test'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
 				self::require_manage_options();
-				$id = self::decoded_id( $args );
+				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
 				$server = $registry->get( $id );
 				if ( null === $server ) {
@@ -197,13 +197,14 @@ class Servers_CI extends Service_CI {
 	}
 
 	/**
-	 * Pull the `id` field out of a verb's args, throwing if missing.
+	 * Pull the `id` field out of a verb's payload, throwing if missing.
 	 *
-	 * @param string $args Raw JSON argument blob from the wire.
+	 * @param mixed $payload Verb's structured-data slot (the `payload` field
+	 *                       of the TM_COMMAND VALUE struct).
 	 * @return string Server id.
 	 */
-	private static function decoded_id( string $args ): string {
-		return self::require_id( self::decode_args( $args ) );
+	private static function decoded_id( mixed $payload ): string {
+		return self::require_id( \is_array( $payload ) ? $payload : [] );
 	}
 
 	/**

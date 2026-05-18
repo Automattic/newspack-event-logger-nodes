@@ -65,8 +65,8 @@ class Events_CI extends Service_CI {
 		// inherited no-op is implicit. Mirrors Workers_CI / Settings_CI /
 		// Status_CI / Discovery_CI / Logger_CI.
 		$this->commands( [
-			'recent' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
-				$decoded        = self::decode_args( $args );
+			'recent' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+				$decoded        = \is_array( $payload ) ? $payload : [];
 				$limit          = \max( 1, \min( 1000, (int) ( $decoded['limit'] ?? 100 ) ) );
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
@@ -129,7 +129,7 @@ class Events_CI extends Service_CI {
 					],
 				] );
 			},
-			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 				$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );

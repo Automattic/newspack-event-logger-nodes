@@ -69,12 +69,12 @@ class Settings_CI extends Service_CI {
 		// Workers_CI, which extend CommandInterpreter and also skip the
 		// parent call.
 		$this->commands( [
-			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				return (string) \wp_json_encode( self::snapshot() );
 			},
-			'update' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 
 				foreach ( $decoded as $key => $value ) {
 					if ( ! isset( self::ALLOWED_KEYS[ $key ] ) ) {

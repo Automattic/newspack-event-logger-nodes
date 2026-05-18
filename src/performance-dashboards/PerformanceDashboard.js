@@ -124,7 +124,7 @@ export default function PerformanceDashboard( { onError } ) {
 			const message = await getCommandClient().send( {
 				to: 'performance',
 				verb: 'request_search',
-				args: { rid },
+				payload: { rid },
 			} );
 			const data = unwrapCommandResponse( message );
 			if ( ! data || ! data.url_hash || data.partition === undefined ) {
@@ -258,7 +258,7 @@ export default function PerformanceDashboard( { onError } ) {
 				const message = await getCommandClient().send( {
 					to: 'performance',
 					verb: 'request_search',
-					args: { rid: rid.trim() },
+					payload: { rid: rid.trim() },
 				} );
 				const data = unwrapCommandResponse( message );
 
