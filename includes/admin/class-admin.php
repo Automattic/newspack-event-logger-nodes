@@ -827,9 +827,10 @@ class Admin {
 	/**
 	 * Configured Servers field — table of registered remote spokes plus an
 	 * inline "Add New Server" form. Test/Toggle/Remove/Add buttons are wired
-	 * by `assets/aggregator-admin.js` against the REST endpoints exposed by
-	 * `\Newspack_Event_Logger_Nodes\Rest\ServersController` under the
-	 * `newspack-nodes/v1` namespace. Ported from the legacy
+	 * by `src/aggregator-admin/index.js` (built to
+	 * `build/aggregator-admin/`), which dispatches the 4 CRUD verbs through
+	 * the shared CommandClient against the `servers` service CI on the
+	 * unified `/command` endpoint. Ported from the legacy
 	 * newspack-event-aggregator plugin (assets/admin.js +
 	 * servers_field_callback).
 	 */
