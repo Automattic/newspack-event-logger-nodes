@@ -422,11 +422,14 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 \add_action(
 	'rest_api_init',
 	static function (): void {
+		// FirehoseStreamController stays alive until the StreamMerger / RemoteSource
+		// cross-server SSE consumer migrates to the substrate's `/messages/stream`
+		// endpoint (see MIGRATION.md M6.7 — deferred follow-up). The four legacy
+		// per-feed browser controllers (Rawlogs / Errors / Requests / Gyroscope) +
+		// the `InflightTracker` they shared are gone — the four React dashboards
+		// now consume `/messages/stream` directly with client-side transforms
+		// (M6.3–M6.6).
 		( new \Newspack_Event_Logger_Nodes\Rest\FirehoseStreamController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\RawlogsController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\ErrorsStreamController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\GyroscopeStreamController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\RequestsStreamController() )->register_routes();
 	}
 );
 

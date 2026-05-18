@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **M6.8 / M6.9 — InflightTracker + 4 legacy SSE controllers + their test suites.** ~2150 LOC of code removed: `includes/class-inflight-tracker.php` (240 LOC), `RawlogsController` (122), `ErrorsStreamController` (84), `RequestsStreamController` (85), `GyroscopeStreamController` (171), plus their PHPUnit suites and the M5-acceptance-gate `SchemaParityAuditTest` (278). Bootstrap registration of the four browser controllers removed from `newspack-event-logger-nodes.php`. The legacy `useFirehoseConnection` JS hook (no remaining consumers after M6.3–M6.6) is also gone. `FirehoseStreamController` stays alive until M6.7 (StreamMerger cross-server migration) — see MIGRATION.md.
+
+### Deferred
+
+- **M6.7 — StreamMerger / RemoteSource migration to `/messages/stream`** — deferred to a focused follow-up milestone. Out of scope for the current branch: 918 LOC of cross-server SSE consumer, wire-format change cascading through `forward_entry` → sink → `JobRouter`, 21 existing tests on the `event: entry` wire shape, and smoke-testing properly requires a multi-spoke topology not available in this dev environment. `FirehoseStreamController` + `SSEControllerBase` + `Partition_Reader` therefore remain alive in the codebase.
+
 ### Changed
 
 - **M6.6 — Gyroscope dashboard migrated to the unified `/messages/stream` endpoint, source `gyroscope.log`.** Subscribes via `useMessageStream({subscriptions:['gyroscope']})`; dispatches the two record types client-side via `src/performance-gyroscope/transformGyroscopeLine.js` — `KEY='inflight'` + array VALUE → inflight snapshot (upsert by rid, skip completed); object VALUE with rid → completion (merge + mark `state:complete`). This client-side dispatch is exactly what the legacy `GyroscopeStreamController` did server-side via `InflightTracker`, so M6.8 (next) deletes both. Browser-verified rendering live in-flight requests with state pills (lifecycle / query & posts / content rendering / theme / scripts & styles / rest api / process / complete). `GyroscopeStreamController` stays alive until M6.9.

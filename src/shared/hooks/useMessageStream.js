@@ -3,11 +3,9 @@
  * Message-Stream SSE Connection Hook
  *
  * Subscribes to one-or-more named logs / worker IPC partitions on the
- * substrate's unified `/messages/stream` endpoint. Replaces the legacy
- * per-feed `useFirehoseConnection` (which hardcoded one of four
- * endpoint slugs and four different event types) — the unified
- * endpoint emits a single `msg` event per Message envelope, and the
- * caller's `onMessage` callback decides what to do with each one.
+ * substrate's unified `/messages/stream` endpoint. The endpoint emits
+ * a single `msg` event per Message envelope, and the caller's
+ * `onMessage` callback decides what to do with each one.
  *
  * Positions are tracked client-side by reading each envelope's
  * `ID = "seg:off"` field and keying by `FROM = "{sub}.pN"`. On
