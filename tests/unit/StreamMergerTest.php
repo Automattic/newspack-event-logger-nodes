@@ -5,6 +5,7 @@ use Newspack_Event_Logger_Nodes\RemoteSource;
 use Newspack_Event_Logger_Nodes\StreamMerger;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\SseFrameFactory;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
 use Newspack_Nodes\Message;
@@ -31,6 +32,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
  */
 #[CoversClass( StreamMerger::class )]
 class StreamMergerTest extends TestCase {
+
+	use SseFrameFactory;
 
 	private string $tmp_dir = '';
 
@@ -114,69 +117,8 @@ class StreamMergerTest extends TestCase {
 		$ref->setValue( $sm, \array_merge( \is_array( $existing ) ? $existing : [], $nodes ) );
 	}
 
-	/**
-	 * Build an SSE wire frame for one entry that the production
-	 * `dispatch_msg_envelope()` will forward to the sink (needs `k` + numeric
-	 * `ts` inside the envelope's VALUE). Tests of the parser mechanics
-	 * (multiline, comment, partial chunks, etc.) wrap payloads with this so
-	 * the sink actually receives a TM_STRUCT.
-	 *
-	 * Post-M6.7 wire format: `event: msg\ndata: <7-field envelope JSON>\n\n`.
-	 */
-	private function entry_frame( array $data ): string {
-		$data['k']  = $data['k'] ?? 'render';
-		$data['ts'] = $data['ts'] ?? 1700000000;
-		$envelope   = [
-			Message::TM_STRUCT,
-			(float) $data['ts'],
-			'firehose.p0',
-			'',
-			'0:0',
-			(string) ( $data['rid'] ?? '' ),
-			$data,
-		];
-		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
-	}
-
-	/**
-	 * Build an SSE wire frame for the substrate's `connected` envelope.
-	 * Post-M6.7 wire format: `event: msg\ndata: <envelope with KEY=connected>\n\n`.
-	 */
-	private function connected_frame( int $slot ): string {
-		$envelope = [
-			Message::TM_INFO,
-			0.0,
-			'_stream',
-			'',
-			'',
-			'connected',
-			[ 'pid' => 12345, 'slot' => $slot, 'subscriptions' => [ 'firehose.p0' ], 'interval' => 500 ],
-		];
-		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
-	}
-
-	/**
-	 * Build a wire frame that updates RemoteSource's `position` to {seg, off}.
-	 * Post-M6.7 the position field rides each envelope's `ID = "seg:off"`
-	 * (no separate `position` payload), so any envelope with the matching ID
-	 * advances the cursor.
-	 */
-	private function position_frame( int $seg, int $off, array $extra_value = [] ): string {
-		$value = $extra_value + [ 'k' => 'render', 'ts' => 1700000000 ];
-		$envelope = [
-			Message::TM_STRUCT,
-			(float) $value['ts'],
-			'firehose.p0',
-			'',
-			"{$seg}:{$off}",
-			'',
-			$value,
-		];
-		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
-	}
-
 	// =========================================================================
-	// Legacy/back-compat: process_sse_chunk + ingest filter shape.
+	// process_sse_chunk + ingest filter shape.
 	// =========================================================================
 
 	public function test_processes_sse_data_lines(): void {

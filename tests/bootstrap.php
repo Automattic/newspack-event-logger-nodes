@@ -419,6 +419,7 @@ require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/FakeMemcached.php';
+require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
 
 // Widen the substrate Config's allowed_config_dirs so tests using
