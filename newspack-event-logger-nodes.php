@@ -417,8 +417,6 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 	static function (): void {
 		( new \Newspack_Event_Logger_Nodes\Rest\SettingsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfSettingsController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\PerfConfigController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\PerfHooksAvailableController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\ServersController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\FirehoseStreamController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\RawlogsController() )->register_routes();
