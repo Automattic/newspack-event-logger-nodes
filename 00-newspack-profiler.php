@@ -97,13 +97,16 @@ $newspack_profiler_state = [
 // Flush deferred plugin load events BEFORE hook_start's callback wrapping.
 // App\Core registers at start_priority (default 1, configurable down to e.g.
 // -10000); we flush at -10001 so plugin load events appear in the log before
-// any plugins_loaded callbacks, matching reality.
+// any plugins_loaded callbacks, matching reality. Requires that
+// newspack-event-logger-nodes register its composer autoloader at plugin-file
+// load time (not deferred to plugins_loaded 11), so LogManager is
+// autoload-resolvable here.
 \add_action(
 	'plugins_loaded',
 	function () {
 		global $newspack_profiler;
 
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\LogManager', false ) ) {
+		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\LogManager' ) ) {
 			return;
 		}
 
