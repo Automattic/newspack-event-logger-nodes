@@ -288,7 +288,12 @@ class Servers_CI extends Service_CI {
 		$app_config = AppConfig::load_config();
 		$verify_ssl = ! isset( $app_config['aggregator_verify_ssl'] ) || (bool) $app_config['aggregator_verify_ssl'];
 
-		$url  = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/discovery';
+		// M5 deleted the legacy `/discovery` REST route; the discovery
+		// surface is now a CommandInterpreter verb dispatched via
+		// `/command`. Build the wrap server-side, unwrap server-side —
+		// matches what `RemoteManager::discover_from_server()` does for
+		// the periodic health check.
+		$url  = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/command';
 		$args = [
 			// 5s bound on a synchronous Test-button probe — admin UI blocks on
 			// it. Default 1s misses real spokes on slow links (legacy parity).
@@ -297,6 +302,18 @@ class Servers_CI extends Service_CI {
 			'sslverify'           => $verify_ssl,
 			'redirection'         => 0,
 			'limit_response_size' => 1048576,
+			'headers'             => [ 'Content-Type' => 'application/json' ],
+			'body'                => (string) \wp_json_encode( [
+				'type'  => \Newspack_Nodes\Message::TM_COMMAND,
+				'to'    => 'discovery',
+				'from'  => '_http',
+				'key'   => '',
+				'value' => (string) \wp_json_encode( [
+					'name'      => 'get',
+					'arguments' => '',
+					'payload'   => '',
+				] ),
+			] ),
 		];
 
 		$username = (string) ( $server['auth_username'] ?? '' );
@@ -307,8 +324,7 @@ class Servers_CI extends Service_CI {
 		}
 
 		$call     = self::$http_call ?? static fn( string $u, array $a ): mixed =>
-			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.wp_remote_get_wp_remote_get -- Hub legitimately probes internal endpoints (legacy parity).
-			\wp_remote_get( $u, $a );
+			\wp_remote_post( $u, $a );
 		$response = $call( $url, $args );
 
 		if ( $response instanceof \WP_Error ) {
@@ -320,9 +336,22 @@ class Servers_CI extends Service_CI {
 			throw new \RuntimeException( \esc_html( "HTTP {$code} response from server" ) );
 		}
 
-		$body = \json_decode( \wp_remote_retrieve_body( $response ), true, 16 );
+		$envelope = \json_decode( \wp_remote_retrieve_body( $response ), true, 16 );
+		if ( ! \is_array( $envelope ) || ! \array_key_exists( \Newspack_Nodes\Message::VALUE, $envelope ) ) {
+			throw new \RuntimeException( 'server returned malformed command envelope' );
+		}
+		if ( (int) ( $envelope[ \Newspack_Nodes\Message::TYPE ] ?? 0 ) & \Newspack_Nodes\Message::TM_ERROR ) {
+			throw new \RuntimeException( 'server returned TM_ERROR for discovery probe' );
+		}
+		$inner = \json_decode( (string) $envelope[ \Newspack_Nodes\Message::VALUE ], true, 16 );
+		if ( ! \is_array( $inner ) || ! isset( $inner['payload'] ) ) {
+			throw new \RuntimeException( 'server returned malformed command response' );
+		}
+		$body = '' === $inner['payload']
+			? []
+			: \json_decode( (string) $inner['payload'], true, 16 );
 		if ( ! \is_array( $body ) ) {
-			throw new \RuntimeException( 'server returned non-JSON response' );
+			throw new \RuntimeException( 'server returned non-JSON discovery payload' );
 		}
 
 		// Whitelist what we surface so we never proxy arbitrary remote JSON.

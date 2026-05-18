@@ -467,22 +467,8 @@ class RemoteManager {
 	 * @return array|null Discovery data or null on error.
 	 */
 	private static function check_server( string $server_id, array $server ): ?array {
-		$response = self::get_from_server( $server, '/wp-json/newspack-nodes/v1/discovery' );
-
-		if ( \function_exists( 'is_wp_error' ) && \is_wp_error( $response ) ) {
-			self::log_status( $server_id, 'error', (string) $response->get_error_message() );
-			return null;
-		}
-		$code = self::response_code( $response );
-		if ( 200 !== $code ) {
-			self::log_status( $server_id, 'error', "HTTP {$code}" );
-			return null;
-		}
-
-		$body = self::response_body( $response );
-		$data = \json_decode( $body, true, 16 );
-		if ( ! \is_array( $data ) ) {
-			self::log_status( $server_id, 'error', 'Invalid JSON response' );
+		$data = self::discover_from_server( $server, $server_id );
+		if ( null === $data ) {
 			return null;
 		}
 
@@ -501,6 +487,90 @@ class RemoteManager {
 		}
 
 		return $validated;
+	}
+
+	/**
+	 * Probe a single server for its discovery payload (registered_hooks +
+	 * custom_events). Dispatches the request as a `discovery.get` command
+	 * via `/wp-json/newspack-nodes/v1/command` — the legacy `/discovery`
+	 * REST route was deleted in M5 in favor of the unified command path.
+	 *
+	 * Returns the unwrapped discovery payload (associative array), or null
+	 * on any error path (network, HTTP, malformed envelope, TM_ERROR
+	 * response). Logs an error status with `log_status()` so the dashboard's
+	 * test-button surface can surface the failure to the operator.
+	 *
+	 * Exposed as `public` so `Servers_CI::probe_remote` (admin "test"
+	 * button) reuses the same dispatch + parse logic the periodic health
+	 * check uses — keeps the two surfaces in lock-step.
+	 *
+	 * @param array  $server    Server config (url, auth_username, auth_password).
+	 * @param string $server_id Server ID, used only for log_status calls.
+	 * @return array|null Decoded discovery payload, or null on error.
+	 */
+	public static function discover_from_server( array $server, string $server_id ): ?array {
+		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
+		$body = (string) \wp_json_encode( [
+			'type'  => \Newspack_Nodes\Message::TM_COMMAND,
+			'to'    => 'discovery',
+			'from'  => '_http',
+			'key'   => '',
+			'value' => (string) \wp_json_encode( [
+				'name'      => 'get',
+				'arguments' => '',
+				'payload'   => '',
+			] ),
+		] );
+		$args = self::request_args( $server, [
+			'headers' => [ 'Content-Type' => 'application/json' ],
+			'body'    => $body,
+		] );
+
+		$response = \function_exists( 'wp_remote_post' )
+			? \wp_remote_post( $url, $args )
+			: self::wp_error_or_array( 'no_http', 'wp_remote_post unavailable' );
+
+		if ( \function_exists( 'is_wp_error' ) && \is_wp_error( $response ) ) {
+			self::log_status( $server_id, 'error', (string) $response->get_error_message() );
+			return null;
+		}
+		$code = self::response_code( $response );
+		if ( 200 !== $code ) {
+			self::log_status( $server_id, 'error', "HTTP {$code}" );
+			return null;
+		}
+
+		// Outer envelope: 7-field Message tuple with VALUE = JSON of
+		// `{name, payload}`. The verb's return string (which is itself a
+		// JSON-encoded `{registered_hooks, custom_events}` object) lives
+		// in `payload`. The wrap mirrors what CommandInterpreter::interpret
+		// emits substrate-side; the unwrap matches CommandClient's JS-side
+		// `unwrapCommandResponse` helper.
+		$envelope = \json_decode( self::response_body( $response ), true, 16 );
+		if ( ! \is_array( $envelope ) || ! \array_key_exists( \Newspack_Nodes\Message::VALUE, $envelope ) ) {
+			self::log_status( $server_id, 'error', 'Invalid command envelope' );
+			return null;
+		}
+		$type = (int) ( $envelope[ \Newspack_Nodes\Message::TYPE ] ?? 0 );
+		if ( $type & \Newspack_Nodes\Message::TM_ERROR ) {
+			self::log_status( $server_id, 'error', 'Spoke returned TM_ERROR' );
+			return null;
+		}
+		$inner = \json_decode( (string) $envelope[ \Newspack_Nodes\Message::VALUE ], true, 16 );
+		if ( ! \is_array( $inner ) || ! isset( $inner['payload'] ) ) {
+			self::log_status( $server_id, 'error', 'Invalid command inner envelope' );
+			return null;
+		}
+		$payload = $inner['payload'];
+		if ( '' === $payload ) {
+			return [];
+		}
+		$data = \json_decode( (string) $payload, true, 16 );
+		if ( ! \is_array( $data ) ) {
+			self::log_status( $server_id, 'error', 'Invalid discovery payload' );
+			return null;
+		}
+		return $data;
 	}
 
 	/**

@@ -792,6 +792,36 @@ class AdminTest extends TestCase {
 		$this->assertStringNotContainsString( 'checked="checked"', $out );
 	}
 
+	public function test_enable_aggregator_callback_respects_file_default_when_option_missing(): void {
+		// Reproduces a real bug: docker-admin's config sets enable_aggregator=true.
+		// User has never saved the option, so the WP options row is absent.
+		// skip_default_writes also actively deletes the option whenever the user
+		// saves a value that matches the file default — so the option-missing
+		// state is the steady state for any site running with the default.
+		// The form callback must fall back to the file default, not the
+		// get_option() hard-coded fallback of 0 (which would render unchecked).
+		\delete_option( 'newspack_event_logger_nodes_enable_aggregator' );
+		Config::reset();
+		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, [ 'enable_aggregator' => true ] );
+
+		try {
+			$admin = new Admin();
+			\ob_start();
+			$admin->enable_aggregator_callback();
+			$out = \ob_get_clean();
+			$this->assertStringContainsString( 'type="checkbox"', $out );
+			$this->assertStringContainsString(
+				'checked="checked"',
+				$out,
+				'when the WP option is missing and the file default is true, the checkbox should render checked'
+			);
+		} finally {
+			Config::reset();
+		}
+	}
+
 	// ---- Field callbacks: array fields (log_urls, skip_urls, etc.) -------
 
 	public function test_log_urls_callback_renders_tag_input_field_markup(): void {
