@@ -11,8 +11,6 @@
  *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
  *   - class-perf-config-controller.php          (config_get, config_update)
  *   - class-perf-settings-controller.php        (settings_update)
- *   - class-firehose-controller.php             (firehose_logs, firehose_status)
- *                                               (heartbeat method lives in Workers_CI)
  *   - class-gyroscope-controller.php            (gyroscope_timeline)
  *                                               (SSE method stays as REST controller)
  *   - class-request-log-controller.php          (request_log_list, request_log_detail)
@@ -135,13 +133,6 @@ class Performance_CI extends Service_CI {
 	 */
 	private const SETTINGS_ARRAY_MAX   = 10000;
 	private const SETTINGS_ARRAY_DEPTH = 5;
-
-	/**
-	 * Default log shown by the firehose picker when the operator's `log` arg
-	 * is missing or doesn't match any directory on disk. Matches the
-	 * head of the legacy `AVAILABLE_LOGS` constant.
-	 */
-	private const DEFAULT_LOG_KEY = 'firehose';
 
 	/**
 	 * Default page size for `request_log_list`. Mirrors the legacy
@@ -588,63 +579,6 @@ class Performance_CI extends Service_CI {
 				return (string) \wp_json_encode( [
 					'option'  => $option,
 					'updated' => (bool) $ok,
-				] );
-			},
-			'firehose_logs'      => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
-				self::require_manage_options();
-
-				// Discover from disk — every `{base}/logs/*.log/` directory IS a
-				// log the dashboard can subscribe to. Replaces the previous
-				// hardcoded catalog, which silently omitted `completed.log` and
-				// `gyroscope.log` after M6 added them to the topology.
-				$result = [];
-				foreach ( self::discover_logs() as $key => $filename ) {
-					$result[] = [
-						'key'   => $key,
-						'label' => $filename,
-					];
-				}
-				return (string) \wp_json_encode( $result );
-			},
-			'firehose_status'    => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
-				self::require_manage_options();
-
-				// Lifted from legacy FirehoseController::get_status — segment
-				// metadata per partition for one log file. Unknown / missing
-				// log keys fall back to the default (first) log, matching
-				// FirehoseController::sanitize_log_param.
-				$decoded = self::decode_args( $args );
-				$log_key = self::resolve_log_key( $decoded['log'] ?? '' );
-
-				$config         = RuntimeConfig::load_config();
-				$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
-				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-				$log_file       = self::discover_logs()[ $log_key ];
-				$log_base       = $base_dir . '/logs';
-
-				$partitions     = [];
-				$total_size     = 0;
-				$total_segments = 0;
-				for ( $p = 0; $p < $num_partitions; $p++ ) {
-					$partition        = new Partition( "{$log_base}/{$log_file}", $p );
-					$segments         = $partition->get_segments( true );
-					$size             = (int) \array_sum( \array_column( $segments, 'size' ) );
-					$partitions[ $p ] = [
-						'segments'      => $segments,
-						'segment_count' => \count( $segments ),
-						'size'          => $size,
-					];
-					$total_size      += $size;
-					$total_segments  += \count( $segments );
-				}
-
-				return (string) \wp_json_encode( [
-					'log_id'         => $log_key,
-					'log_file'       => $log_file,
-					'num_partitions' => $num_partitions,
-					'partitions'     => $partitions,
-					'total_segments' => $total_segments,
-					'total_size'     => $total_size,
 				] );
 			},
 			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
@@ -1520,49 +1454,6 @@ class Performance_CI extends Service_CI {
 			$result['flame_data'] = $flame;
 		}
 		return $result;
-	}
-
-	/**
-	 * Map an inbound log argument to a known catalog key, with `.log` suffix
-	 * stripped and a fall-through to `DEFAULT_LOG_KEY` (or the first
-	 * discovered log if `firehose.log` doesn't exist for any reason).
-	 */
-	private static function resolve_log_key( mixed $log ): string {
-		$discovered = self::discover_logs();
-		$default    = isset( $discovered[ self::DEFAULT_LOG_KEY ] )
-			? self::DEFAULT_LOG_KEY
-			: (string) \array_key_first( $discovered );
-		if ( '' === $log || ! \is_string( $log ) ) {
-			return $default;
-		}
-		$key = \str_replace( '.log', '', $log );
-		return isset( $discovered[ $key ] ) ? $key : $default;
-	}
-
-	/**
-	 * Discover firehose-log catalog by scanning `{base}/logs/*.log/`. Each
-	 * partitioned log lives at `{base}/logs/{name}.log/p{N}/`, so the
-	 * directory names with a `.log` suffix ARE the catalog. Sorted so the
-	 * dashboard picker has a stable order across requests.
-	 *
-	 * @return array<string,string> Map of key (no `.log`) → filename.
-	 */
-	private static function discover_logs(): array {
-		$config   = RuntimeConfig::load_config();
-		$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
-		$pattern  = "{$base_dir}/logs/*.log";
-		$matches  = \glob( $pattern, \GLOB_ONLYDIR );
-		if ( false === $matches || empty( $matches ) ) {
-			return [];
-		}
-		\sort( $matches );
-		$out = [];
-		foreach ( $matches as $path ) {
-			$filename       = \basename( $path );
-			$key            = \str_replace( '.log', '', $filename );
-			$out[ $key ]    = $filename;
-		}
-		return $out;
 	}
 
 	/**

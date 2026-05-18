@@ -87,7 +87,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// Service CIs — discoverable to `$base_ci->make_node(...)`, which
 	// constructs + names + sinks each in one step from the
 	// `newspack_nodes/request_graph_ready` hook below.
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Workers_CI',      \Newspack_Event_Logger_Nodes\App\Workers_CI::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'Discovery_CI',    \Newspack_Event_Logger_Nodes\App\Discovery_CI::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'Status_CI',       \Newspack_Event_Logger_Nodes\App\Status_CI::class );
 	\Newspack_Nodes\CommandInterpreter::register_class( 'Settings_CI',     \Newspack_Event_Logger_Nodes\App\Settings_CI::class );
@@ -429,11 +428,9 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
  * `$GLOBALS['_wp_actions']` for isolation can re-attach the same callback.
  */
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandInterpreter $base_ci ): void {
-	$cli      = new \Newspack_Nodes\Cli( \Newspack_Nodes\Bootstrap::base_dir() );
 	$registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
 	$cache    = \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
 
-	$base_ci->make_node( 'Workers_CI',     'workers',     $cli, $cache );
 	$base_ci->make_node( 'Discovery_CI',   'discovery' );
 	$base_ci->make_node( 'Status_CI',      'status',      $cache );
 	$base_ci->make_node( 'Settings_CI',    'settings' );
@@ -444,6 +441,20 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 	$base_ci->make_node( 'Performance_CI', 'performance', $cache );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
+
+/**
+ * Supply the Memcached_Cache for the substrate's Workers_CI mount. The
+ * substrate ships Workers_CI but can't depend on the application's
+ * Cache_Interface implementation directly; it asks via this filter and
+ * uses null (offsetlog fallback for live-position lookups, no
+ * SSE-slot heartbeat verb) when nothing answers.
+ */
+\add_filter(
+	'newspack_nodes/workers_cache',
+	static function ( $cache ) {
+		return $cache ?? \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
+	}
+);
 
 /**
  * Top-level "Event Logger" admin menu and dashboard submenus.
@@ -465,10 +476,12 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
  *
  * Dashboard mount IDs (from src/<tree>/index.js):
  *   event-aggregator        → #event-aggregator-status
- *   event-dashboards        → #event-logger-workers, #event-logger-rawlogs
  *   performance-dashboards  → #event-logger-admin, #event-logger-errors
  *   performance-gyroscope   → #event-logger-gyroscope
  *   performance-request-log → #event-logger-stream
+ *
+ * Workers + Raw Logs mount under the substrate's "Nodes" top-level menu;
+ * their React bundle is owned by newspack-nodes/src/event-dashboards.
  */
 \add_action(
 	'admin_menu',
@@ -496,10 +509,11 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 			'newspack-nodes-performance',
 			$performance_callback
 		);
+		// Workers + Raw Logs are substrate dashboards now — they register
+		// their own submenu pages under the "Nodes" top-level via
+		// newspack-nodes/includes/admin/class-admin.php::register_event_dashboard_pages.
 		$dashboards = [
 			'newspack-nodes-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
-			'newspack-nodes-workers'     => [ 'Workers', 'Workers', '<div id="event-logger-workers" class="event-logger-workers-page"></div>' ],
-			'newspack-nodes-rawlogs'     => [ 'Raw Logs', 'Raw Logs', '<div id="event-logger-rawlogs" class="event-logger-rawlogs-page"></div>' ],
 			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
 			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
 		];
@@ -549,8 +563,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 		$page_to_tree = [
 			'newspack-nodes-performance'             => 'performance-dashboards',
 			'newspack-nodes-errors'                  => 'performance-dashboards',
-			'newspack-nodes-workers'                 => 'event-dashboards',
-			'newspack-nodes-rawlogs'                 => 'event-dashboards',
 			'newspack-nodes-gyroscope'               => 'performance-gyroscope',
 			'newspack-nodes-stream'                  => 'performance-request-log',
 			'newspack-nodes-aggregator'              => 'event-aggregator',
