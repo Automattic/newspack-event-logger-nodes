@@ -517,11 +517,12 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
 			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
 		];
-		// Aggregator submenu is gated on the same option that gates the
-		// topology — when the aggregator is disabled there's nothing
-		// meaningful to show under it, and a menu entry pointing at a
-		// dashboard for a topology that isn't running is misleading.
-		if ( (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
+		// Aggregator submenu is gated on the `Enable Aggregator` checkbox
+		// in the Event Logger Settings → Remote Servers section. Default
+		// OFF — fresh installs aren't hubs. When unchecked, the dashboard
+		// would just show "No spokes configured" so hiding the menu entry
+		// is the right UX.
+		if ( (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 0 ) ) {
 			$dashboards['newspack-nodes-aggregator'] = [ 'Aggregator', 'Aggregator', '<div id="event-aggregator-status"></div>' ];
 		}
 		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {

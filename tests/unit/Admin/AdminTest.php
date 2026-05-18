@@ -268,6 +268,7 @@ class AdminTest extends TestCase {
 		// live on `\Newspack_Nodes\Admin\Admin`.
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
+			'newspack_event_logger_nodes_enable_aggregator',
 			'newspack_event_logger_nodes_log_urls',
 			'newspack_event_logger_nodes_skip_urls',
 			'newspack_event_logger_nodes_log_events',
