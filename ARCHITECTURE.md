@@ -268,13 +268,12 @@ return [
             'topology'       => 'topologies/aggregator.php',
             'num_partitions' => 1,
             'stale_timeout'  => 60,
-            'gated_by'       => 'newspack_event_logger_nodes_enable_aggregator',
         ],
     ],
 ];
 ```
 
-The plugin's `newspack_nodes/topologies` filter reads these entries, resolves the path (relative → plugin-rooted, absolute → as-is so a site override can ship its own file), applies `num_partitions` defaults from the substrate config (so one setting drives both LogManager — write side — and the worker fleet — read side; hardcoding diverges them), and honors `gated_by` so an operator-facing WP option keeps the supervisor from spawning a topology's workers at all when the toggle is off. Aggregator uses this to mean "Enable Aggregator unchecked → don't spawn the worker, don't render the admin submenu."
+The plugin's `newspack_nodes/topologies` filter reads these entries, resolves the path (relative → plugin-rooted, absolute → as-is so a site override can ship its own file), and applies `num_partitions` defaults from the substrate config (so one setting drives both LogManager — write side — and the worker fleet — read side; hardcoding diverges them). Which topologies actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — the catalog this filter publishes is the "what topologies exist" list; the substrate filters it by what the operator has checked.
 
 Cost on regular WP requests is one hash insert per `add_filter` — the closure body, the config file's array, and the topology PHP files aren't loaded yet. Actual filter resolution happens in three places, none on the page-render hot path: supervisor's `check_config()` tick (every 15s), worker bootstrap (once per spawn), REST workers/dashboard reads.
 
@@ -557,7 +556,7 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               +-----------------------------+
 ```
 
-**Hub identification**: a site is acting as a hub when `enable_aggregator` is strictly `=== true` AND it has at least one spoke registered. The toggle is a single operator switch — strict polarity, default OFF (fresh installs are not hubs). On the pull side it gates the `aggregator` topology via the config's `gated_by` mechanism; on the push side `SettingsSync` and `AutoTuner` short-circuit when it's off.
+**Hub identification**: a site is acting as a hub when `enable_aggregator` is strictly `=== true` AND it has at least one spoke registered. The toggle is a single operator switch — strict polarity, default OFF (fresh installs are not hubs). It gates the Aggregator admin submenu visibility and the push-side fan-out paths (`SettingsSync` and `AutoTuner` short-circuit when off). Pull-side activation (whether the StreamMerger worker actually spawns) is decoupled — that's driven by whether `aggregator` is in the substrate's Topologies multi-select.
 
 **`k:"job"` vs `k:"remote_job"`**:
 
@@ -578,12 +577,12 @@ Three static-mode classes own the hub's outbound side. They don't run in the wor
 
 ### Remote activity gate: `enable_aggregator`
 
-A single config flag, `enable_aggregator` (strict `=== true`, default OFF), gates all remote-server activity:
+A single config flag, `enable_aggregator` (default OFF), gates the operator-visible side of hub-mode:
 
-- **Pull side** — the `aggregator` topology entry carries `gated_by => 'newspack_event_logger_nodes_enable_aggregator'`, so the supervisor only spawns the StreamMerger worker when the toggle is on.
+- **Admin submenu** — the `Aggregator` submenu under Performance is hidden when off. The "Enable Aggregator" checkbox in Event Logger Settings → Remote Servers is the operator-facing toggle.
 - **Push side** — `SettingsSync::maybe_queue_static_sync` and `AutoTuner::persist` short-circuit when the option is off, so option changes and auto-tune decisions don't queue `remote_manager` fan-out jobs.
 
-One operator switch. No `Hub::is_active()` helper, no strict-polarity dance — `enable_workers` is purely the request-workers topology gate (FlameBuilder spawn).
+Pull-side worker activation is independent: the StreamMerger spawns whenever `aggregator` is in the substrate's Topologies multi-select. Two operator choices, two surfaces — checking "Enable Aggregator" without also checking the `aggregator` topology gives you a visible dashboard with no live data; checking the topology without the checkbox gives you a running worker but no UI to see it. The intentional design is that operators do both when standing up a hub; either alone is a partial state.
 
 ### `ServerRegistry`
 
