@@ -292,7 +292,10 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
-	public function test_event_field_type_distinguished_for_entry(): void {
+	public function test_streammerger_processes_envelope_stream_end_to_end(): void {
+		// Integration check: connected → entry sequence through the merger.
+		// Connected captures slot and doesn't sink; entries sink with
+		// `_source` stamped; envelope IDs advance the resume cursor.
 		$sm      = $this->make_merger();
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
@@ -301,68 +304,16 @@ class StreamMergerTest extends TestCase {
 		$handle = $sm->test_get_handle( 'siteA' );
 		$this->assertNotNull( $handle );
 
-		// Connect envelope sets slot, doesn't sink the payload.
 		$sm->on_curl_data( $handle, $this->connected_frame( 7 ) );
 		$this->assertSame( 7, $sm->get_slot( 'siteA' ) );
 
-		// Position-only envelope (VALUE has no `k`, so dispatch_msg_envelope's
-		// entry-shape gate drops it before forward_entry runs) advances the
-		// cursor via envelope ID without sinking.
-		$position_only_envelope = [
-			Message::TM_STRUCT,
-			1700000000.0,
-			'firehose.p0',
-			'',
-			'3:100',
-			'',
-			[],
-		];
-		$sm->on_curl_data( $handle, "event: msg\ndata: " . \json_encode( $position_only_envelope ) . "\n\n" );
+		$sm->on_curl_data( $handle, $this->position_frame( 3, 100, [ 'k' => 'render', 'url' => '/a' ] ) );
 		$this->assertSame( [ 'segment_id' => 3, 'offset' => 100 ], $sm->get_position( 'siteA' ) );
-
-		// Entry sinks with _source stamped.
-		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000001, 'url' => '/a' ] ) );
-
-		// Capture should have exactly one entry (`entry`) — the connected/
-		// position-only envelopes don't get forwarded.
 		$this->assertCount( 1, $capture->captured );
 		$out = $capture->captured[0][ Message::VALUE ];
 		$this->assertIsArray( $out );
 		$this->assertSame( 'render', $out['k'] );
-		$this->assertSame( 'siteA', $out['_source'], '_source must be injected for entry events' );
-	}
-
-	public function test_entry_event_dropped_without_required_fields(): void {
-		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
-		$sm->sink( $capture );
-		$sm->add_remote( 'siteA', 'http://siteA.test/', 'tok' );
-		$handle = $sm->test_get_handle( 'siteA' );
-
-		// Construct envelopes inline so we can omit `k` / `ts` (entry_frame
-		// defaults both). Missing `k` is dropped by dispatch_msg_envelope's
-		// entry-shape gate; missing `ts`, non-string `k`, and non-numeric `ts`
-		// are dropped by forward_entry's validation.
-		$malformed_entries = [
-			[ 'ts' => 1700000001 ],           // Missing `k`.
-			[ 'k' => 'x' ],                   // Missing `ts`.
-			[ 'k' => 5, 'ts' => 1 ],          // Non-string `k`.
-			[ 'k' => 'r', 'ts' => 'now' ],    // Non-numeric `ts`.
-		];
-		foreach ( $malformed_entries as $value ) {
-			$envelope = [
-				Message::TM_STRUCT,
-				1700000000.0,
-				'firehose.p0',
-				'',
-				'0:0',
-				'',
-				$value,
-			];
-			$sm->on_curl_data( $handle, "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
-		}
-
-		$this->assertCount( 0, $capture->captured );
+		$this->assertSame( 'siteA', $out['_source'], 'hub-side attribution stamped on the entry' );
 	}
 
 	// =========================================================================

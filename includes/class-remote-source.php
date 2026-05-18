@@ -573,15 +573,15 @@ class RemoteSource extends Node {
 	/**
 	 * Dispatch a parsed `msg`-event Message envelope (7-field array).
 	 *
-	 * Handles three envelope shapes:
-	 *   * `connected` (KEY = 'connected', VALUE = `{pid, slot, ...}`) —
-	 *     capture slot, mark connected, do NOT forward to sink.
-	 *   * Firehose entry (KEY = rid, VALUE = `{k, ts, ...}`) — back-fill
-	 *     rid from KEY when entry doesn't carry it, then forward.
-	 *   * Anything else — drop silently.
+	 * RemoteSource is generic transport — it pulls whatever a spoke publishes
+	 * on the subscribed log and hands every envelope to the sink. The only
+	 * envelope it inspects is the substrate's bookkeeping `connected` frame
+	 * (KEY = 'connected', VALUE = `{slot, ...}`), which feeds the local
+	 * slot/heartbeat state and is NOT forwarded. Everything else flows
+	 * through unchanged; payload-shape decisions belong to downstream nodes
+	 * (StreamMerger, application JobRouter, etc.).
 	 *
-	 * Per-envelope position from `ID = "seg:off"` (Consumer stamps at emit
-	 * time). Substrate guarantees this on every line of a log subscription.
+	 * Per-envelope position rides `ID = "seg:off"` (Consumer stamps at emit).
 	 *
 	 * @param array<int,mixed> $envelope 7-field Message array.
 	 */
@@ -609,9 +609,8 @@ class RemoteSource extends Node {
 			}
 		}
 
-		// `connected` envelope — substrate's first emission per stream. Mirrors
-		// the legacy `connected`-event handler (slot capture + heartbeat-status
-		// recording) but does NOT forward to the sink.
+		// `connected` envelope is the substrate's bookkeeping handshake —
+		// capture slot, mark connected, do NOT forward.
 		if ( 'connected' === $key && \is_array( $value ) && isset( $value['slot'] ) ) {
 			$this->slot = (int) $value['slot'];
 			$this->record_successful_heartbeat();
@@ -620,74 +619,70 @@ class RemoteSource extends Node {
 			return true;
 		}
 
-		// Anything else with an entry-shaped VALUE → forward. The legacy
-		// transform_line shape (`{k, ts, ...}`) is what RequestBuilder writes
-		// at storage time, so envelope[VALUE] IS the entry dict.
-		if ( \is_array( $value ) && isset( $value['k'] ) ) {
-			// Back-fill rid from KEY when the entry doesn't carry it. Matches
-			// the producer convention RequestBuilder uses (KEY=rid for the
-			// completed:tee fan-out into firehose.log).
-			if ( ! isset( $value['rid'] ) && '' !== $key ) {
-				$value['rid'] = $key;
-			}
-			$this->forward_entry( $value );
-		}
+		// Pass-through. Forward the whole envelope unchanged so downstream
+		// gets exactly what the spoke published — no shape assumptions, no
+		// VALUE rewriting.
+		$this->forward_envelope( $envelope );
 		return true;
 	}
 
 	/**
-	 * Validate, stamp, encode, filter, PIPE_BUF-guard, and sink an `entry`.
+	 * Pass an incoming Message envelope to the sink — preserving TYPE,
+	 * KEY, and VALUE from the spoke verbatim. RemoteSource is generic
+	 * cross-server transport, so it does NOT validate, rewrite, or peek
+	 * inside VALUE for any shape-specific fields. Three side-effects of
+	 * being a hub-side aggregator are layered on top:
+	 *
+	 *   * `_source` attribution stamped into VALUE (when VALUE is a dict
+	 *     — the legacy aggregator convention).
+	 *   * `newspack_nodes/aggregator_ingest_line` filter chain (the hub's
+	 *     opportunity to rewrite or drop; e.g. StreamMerger's
+	 *     `k:"job"` → `k:"remote_job"` rewrite). String-line input for
+	 *     backward compat with the legacy filter contract; bypassed when
+	 *     VALUE isn't a dict.
+	 *   * `MAX_LINE_BYTES` guard so an oversized post-filter line can't
+	 *     blow PIPE_BUF when the sink hands off to a Partition write.
+	 *
+	 * @param array<int,mixed> $envelope 7-field Message array.
 	 */
-	private function forward_entry( array $data ): void {
-		if ( ! isset( $data['k'] ) || ! \is_string( $data['k'] ) ) {
-			return;
-		}
-		if ( ! isset( $data['ts'] ) || ! \is_numeric( $data['ts'] ) ) {
-			return;
-		}
-		$data['_source'] = $this->server_id;
+	private function forward_envelope( array $envelope ): void {
+		$value = $envelope[ Message::VALUE ];
 
-		$line = \wp_json_encode( $data );
-		if ( false === $line ) {
-			return;
-		}
-
-		if ( \strlen( $line ) > self::MAX_LINE_BYTES ) {
-			Core::print_less_often( "RemoteSource[{$this->server_id}]: dropping entry > " . self::MAX_LINE_BYTES . ' bytes' );
-			$this->set_state(
-				'DROPPED',
-				[ 'server' => $this->server_id, 'reason' => 'oversize', 'size' => \strlen( $line ) ]
-			);
-			return;
-		}
-
-		// 3-arg ingest filter (line, server_id, partition). Filters can return
-		// null/false to drop. The k:"job" -> k:"remote_job" rewrite registered
-		// statically by StreamMerger::register_remote_job_rewrite_filter() fires
-		// here — same callsite as before the refactor, just nested one node down.
-		$line = \apply_filters( 'newspack_nodes/aggregator_ingest_line', $line, $this->server_id, $this->partition );
-		if ( null === $line || false === $line || '' === $line ) {
-			return;
-		}
-		if ( ! \is_string( $line ) ) {
-			return;
-		}
-		if ( \strlen( $line ) > self::MAX_LINE_BYTES ) {
-			Core::print_less_often( "RemoteSource[{$this->server_id}]: post-filter entry > " . self::MAX_LINE_BYTES . ' bytes' );
-			return;
+		if ( \is_array( $value ) ) {
+			$value['_source'] = $this->server_id;
+			$line             = \wp_json_encode( $value );
+			if ( false === $line ) {
+				return;
+			}
+			if ( \strlen( $line ) > self::MAX_LINE_BYTES ) {
+				Core::print_less_often( "RemoteSource[{$this->server_id}]: dropping entry > " . self::MAX_LINE_BYTES . ' bytes' );
+				$this->set_state(
+					'DROPPED',
+					[ 'server' => $this->server_id, 'reason' => 'oversize', 'size' => \strlen( $line ) ]
+				);
+				return;
+			}
+			$line = \apply_filters( 'newspack_nodes/aggregator_ingest_line', $line, $this->server_id, $this->partition );
+			if ( null === $line || false === $line || '' === $line || ! \is_string( $line ) ) {
+				return;
+			}
+			if ( \strlen( $line ) > self::MAX_LINE_BYTES ) {
+				Core::print_less_often( "RemoteSource[{$this->server_id}]: post-filter entry > " . self::MAX_LINE_BYTES . ' bytes' );
+				return;
+			}
+			$value = \json_decode( $line, true, 64 );
+			if ( ! \is_array( $value ) ) {
+				return;
+			}
 		}
 
-		$decoded = \json_decode( $line, true, 64 );
-		if ( ! \is_array( $decoded ) ) {
-			return;
-		}
 		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TYPE ]      = $envelope[ Message::TYPE ];
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
-		$msg[ Message::KEY ]       = (string) ( $data['rid'] ?? '' );
-		$msg[ Message::VALUE ]     = $decoded;
+		$msg[ Message::KEY ]       = (string) $envelope[ Message::KEY ];
+		$msg[ Message::VALUE ]     = $value;
 		$this->sink?->fill( $msg );
 	}
 

@@ -682,52 +682,27 @@ class RemoteSourceTest extends TestCase {
 	// assertion lives in `test_msg_envelope_with_entry_value_forwards_to_sink`.
 	// =========================================================================
 
-	public function test_forward_entry_drops_when_k_missing(): void {
-		// Construct the envelope inline so we can deliberately omit `k` —
-		// `entry_frame` defaults it so callers can pass `[]`.
+	public function test_forward_envelope_passes_through_arbitrary_dict_shape(): void {
+		// RemoteSource is generic cross-server transport: it forwards
+		// whatever the spoke publishes. No firehose-shape validation
+		// (`k` / `ts` required), no rid back-fill — those concerns live
+		// in downstream nodes. A spoke could publish gyroscope.log or
+		// completed.log payloads and they should pass through identically.
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
 		$envelope = [
-			Message::TM_STRUCT, 1700000000.0, 'firehose.p0', '', '0:0', '',
-			[ 'ts' => 1700000000 ],
+			Message::TM_STRUCT, 1700000000.0, 'firehose.p0', '', '0:0', 'rid-1',
+			// Deliberately NOT firehose-shape — no `k`, no `ts`.
+			[ 'arbitrary' => 'payload', 'state' => 'whatever' ],
 		];
 		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
-		$this->assertCount( 0, $capture->captured );
-	}
 
-	public function test_forward_entry_drops_when_k_non_string(): void {
-		// Entry with non-string k: dispatch_msg_envelope's `isset(value['k'])`
-		// check passes (the integer is set), but forward_entry's `is_string()`
-		// guard drops the message. Same net behavior as the legacy path.
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 42, 'ts' => 1700000000 ] ) );
-		$this->assertCount( 0, $capture->captured );
-	}
-
-	public function test_forward_entry_drops_when_ts_missing(): void {
-		// Inline envelope so `ts` can be omitted — `entry_frame` defaults it.
-		// `dispatch_msg_envelope` requires `value['k']` set to reach
-		// forward_entry; forward_entry then drops on missing `ts`.
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-		$envelope = [
-			Message::TM_STRUCT, 1700000000.0, 'firehose.p0', '', '0:0', '',
-			[ 'k' => 'render' ],
-		];
-		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
-		$this->assertCount( 0, $capture->captured );
-	}
-
-	public function test_forward_entry_drops_when_ts_non_numeric(): void {
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 'today' ] ) );
-		$this->assertCount( 0, $capture->captured );
+		$this->assertCount( 1, $capture->captured );
+		$msg = $capture->captured[0];
+		$this->assertSame( 'rid-1', $msg[ Message::KEY ], 'KEY preserved from envelope verbatim' );
+		$this->assertSame( 'payload', $msg[ Message::VALUE ]['arbitrary'] );
+		$this->assertSame( 'siteA', $msg[ Message::VALUE ]['_source'], 'hub-side attribution stamped onto dict VALUE' );
 	}
 
 	public function test_forward_entry_drops_oversized_line(): void {
@@ -1500,9 +1475,12 @@ class RemoteSourceTest extends TestCase {
 		$this->assertSame( 512, $pos['offset'] );
 	}
 
-	public function test_msg_envelope_invalid_entry_shape_drops_silently(): void {
-		// VALUE is not a dict (e.g. a bare string snuck through) — drop without
-		// crashing, no sink emission.
+	public function test_msg_envelope_scalar_value_passes_through(): void {
+		// VALUE is a bare string (e.g. a TM_BYTESTREAM log line). RemoteSource
+		// is transport — it forwards whatever the spoke publishes, without
+		// peeking inside VALUE. The aggregator-ingest filter + `_source`
+		// stamping only fire when VALUE is a dict; scalar payloads bypass
+		// the firehose-shape rewrites and reach the sink unchanged.
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
@@ -1513,11 +1491,13 @@ class RemoteSourceTest extends TestCase {
 			'firehose.p0',
 			'',
 			'0:0',
-			'',
+			'rid-2',
 			'just a string',
 		];
 		$ok = $remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
 		$this->assertTrue( $ok );
-		$this->assertCount( 0, $capture->captured );
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame( 'just a string', $capture->captured[0][ Message::VALUE ] );
+		$this->assertSame( 'rid-2', $capture->captured[0][ Message::KEY ] );
 	}
 }
