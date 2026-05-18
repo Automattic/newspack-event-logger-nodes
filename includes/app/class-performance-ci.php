@@ -137,22 +137,11 @@ class Performance_CI extends Service_CI {
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
 	/**
-	 * Firehose log catalog — key (no `.log`) → filename. The topology fleet is
-	 * the source of truth for which logs actually exist; this list mirrors
-	 * FirehoseController::get_available_logs (the SSE controller is unchanged
-	 * since SSE streams stay REST). Used by the `firehose_logs` +
-	 * `firehose_status` verbs.
-	 *
-	 * @var array<string,string>
+	 * Default log shown by the firehose picker when the operator's `log` arg
+	 * is missing or doesn't match any directory on disk. Matches the
+	 * head of the legacy `AVAILABLE_LOGS` constant.
 	 */
-	private const AVAILABLE_LOGS = [
-		'firehose'  => 'firehose.log',
-		'jobs'      => 'jobs.log',
-		'jobintake' => 'jobintake.log',
-		'requests'  => 'requests.log',
-		'errors'    => 'errors.log',
-		'flames'    => 'flames.log',
-	];
+	private const DEFAULT_LOG_KEY = 'firehose';
 
 	/**
 	 * Default page size for `request_log_list`. Mirrors the legacy
@@ -604,12 +593,12 @@ class Performance_CI extends Service_CI {
 			'firehose_logs'      => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
 				self::require_manage_options();
 
-				// Lifted from legacy FirehoseController::get_logs — flat list
-				// of `{key, label}` pairs the dashboard renders into a log
-				// picker. Static catalog; SSE streams stay REST so this is
-				// also what the live-stream picker reads.
+				// Discover from disk — every `{base}/logs/*.log/` directory IS a
+				// log the dashboard can subscribe to. Replaces the previous
+				// hardcoded catalog, which silently omitted `completed.log` and
+				// `gyroscope.log` after M6 added them to the topology.
 				$result = [];
-				foreach ( self::AVAILABLE_LOGS as $key => $filename ) {
+				foreach ( self::discover_logs() as $key => $filename ) {
 					$result[] = [
 						'key'   => $key,
 						'label' => $filename,
@@ -630,7 +619,7 @@ class Performance_CI extends Service_CI {
 				$config         = RuntimeConfig::load_config();
 				$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-				$log_file       = self::AVAILABLE_LOGS[ $log_key ];
+				$log_file       = self::discover_logs()[ $log_key ];
 				$log_base       = $base_dir . '/logs';
 
 				$partitions     = [];
@@ -1529,16 +1518,45 @@ class Performance_CI extends Service_CI {
 
 	/**
 	 * Map an inbound log argument to a known catalog key, with `.log` suffix
-	 * stripped and a fall-through to the default (first) key. Mirrors
-	 * FirehoseController::sanitize_log_param.
+	 * stripped and a fall-through to `DEFAULT_LOG_KEY` (or the first
+	 * discovered log if `firehose.log` doesn't exist for any reason).
 	 */
 	private static function resolve_log_key( mixed $log ): string {
-		$default = (string) \array_key_first( self::AVAILABLE_LOGS );
+		$discovered = self::discover_logs();
+		$default    = isset( $discovered[ self::DEFAULT_LOG_KEY ] )
+			? self::DEFAULT_LOG_KEY
+			: (string) \array_key_first( $discovered );
 		if ( '' === $log || ! \is_string( $log ) ) {
 			return $default;
 		}
 		$key = \str_replace( '.log', '', $log );
-		return isset( self::AVAILABLE_LOGS[ $key ] ) ? $key : $default;
+		return isset( $discovered[ $key ] ) ? $key : $default;
+	}
+
+	/**
+	 * Discover firehose-log catalog by scanning `{base}/logs/*.log/`. Each
+	 * partitioned log lives at `{base}/logs/{name}.log/p{N}/`, so the
+	 * directory names with a `.log` suffix ARE the catalog. Sorted so the
+	 * dashboard picker has a stable order across requests.
+	 *
+	 * @return array<string,string> Map of key (no `.log`) → filename.
+	 */
+	private static function discover_logs(): array {
+		$config   = RuntimeConfig::load_config();
+		$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$pattern  = "{$base_dir}/logs/*.log";
+		$matches  = \glob( $pattern, \GLOB_ONLYDIR );
+		if ( false === $matches || empty( $matches ) ) {
+			return [];
+		}
+		\sort( $matches );
+		$out = [];
+		foreach ( $matches as $path ) {
+			$filename       = \basename( $path );
+			$key            = \str_replace( '.log', '', $filename );
+			$out[ $key ]    = $filename;
+		}
+		return $out;
 	}
 
 	/**
