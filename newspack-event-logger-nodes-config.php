@@ -29,12 +29,14 @@ return [
 	// list). Each entry is a TSL topology name resolvable by
 	// Newspack_Nodes\Topology_Registry. Comment a line out to
 	// disable that fleet.
+	// phpcs:disable Squiz.PHP.CommentedOutCode.Found -- The commented entries are documented alternative topologies; toggle a leading slash-slash to enable.
 	'topologies'                  => [
 		'firehose-workers-only',  // alt: 'firehose-workers-and-jobs', 'firehose-jobs-only'
 		'request-workers',
 		// 'job-workers',
 		// 'aggregator',
 	],
+	// phpcs:enable Squiz.PHP.CommentedOutCode.Found
 
 	// Aggregator spoke list (hubs only; spokes leave empty).
 	'aggregator_servers'          => [],
@@ -47,9 +49,9 @@ return [
 	// URL filtering — skip_urls always wins over log_urls.
 	'log_urls'                    => [],
 	'skip_urls'                   => [
-		'/wp-json/newspack-nodes/v1/firehose',
+		'/wp-json/newspack-nodes/v1/command',
+		'/wp-json/newspack-nodes/v1/messages/stream',
 		'/wp-json/newspack-nodes/v1/workers/spawn',
-		'/wp-json/newspack-nodes/v1/topology',
 	],
 
 	// Hooks instrumentation.
