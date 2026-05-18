@@ -42,15 +42,19 @@ const isValidPartition = ( partition ) =>
 /**
  * Send a Performance_CI verb call and unwrap the response.
  *
- * @param {string} verb Performance_CI verb name.
- * @param {Object} args JSON-decoded args the verb closure receives.
+ * @param {string} verb    Performance_CI verb name.
+ * @param {Object} payload Structured args the verb closure consumes via
+ *                         its `$payload` parameter. Performance_CI verbs
+ *                         (overview, urls, url_detail, request_detail …)
+ *                         all read their fields from $payload after the
+ *                         M5.3 wire cleanup.
  * @return {Promise<*>} Parsed payload.
  */
-const sendPerformance = async ( verb, args = {} ) => {
+const sendPerformance = async ( verb, payload = {} ) => {
 	const message = await getCommandClient().send( {
 		to: 'performance',
 		verb,
-		args,
+		payload,
 	} );
 	return unwrapCommandResponse( message );
 };
