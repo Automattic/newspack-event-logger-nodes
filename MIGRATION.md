@@ -369,3 +369,16 @@ Helpers introduced along the way and reused by subsequent cutovers:
 - `src/shared/hooks/useFirehoseHeartbeat.js` — cut over in M4 #5's rewrite (`a4ca852`) to dispatch `workers.heartbeat` via `getCommandClient().send()` instead of `apiFetch('/firehose/heartbeat')`. This retroactively completes the SSE-side cutover for dashboards #3 (`performance-gyroscope`), #4 (`performance-request-log`), and #6 (Errors Stream) — all three drive their slot heartbeats through this shared hook, and the JS-rewrite step that would otherwise have landed in each of those cutovers happened here instead. Their SSE controllers themselves stay as REST endpoints.
 
 `Workers_CI.dump_metadata` (commit `739ac13`) is the heavy lift behind M4 #5 — a single fat verb that replaces `WorkersController::get_workers()` field-for-field including the `logs[]` enumeration and the per-Consumer `inputs_status` / `outputs_status` arrays. The WorkersController's restart POST route maps to `Workers_CI.restart`, and `FirehoseController`'s three routes split across the two CIs (`/logs` → `Performance_CI.firehose_logs`; `/heartbeat` → `Workers_CI.heartbeat`; `/status` → `Performance_CI.firehose_status`). `RawlogsController` previously called `FirehoseController::get_available_logs/get_default_log` statically for `sanitize_log_param`; inlined the 6-entry catalog as a `private const` so the SSE controller doesn't depend on a deleted sibling.
+
+### M5 controller-cleanup — running log
+
+M5 is the post-M4 sweep that deletes legacy controllers no longer needed by any caller (JS or PHP). The work splits into two passes: M5.1 = pure-orphan deletions (zero callers anywhere); M5.2 = controllers whose remaining callers need a transport migration before deletion. Every M5 deletion is gated by a `class_exists` assertion in `M2BootstrapTest` so autoloader caching can't resurrect a deleted file across deploys.
+
+| # | Pass | Controller(s) | Replacement | Notes |
+|---|------|---------------|-------------|-------|
+| 1 | M5.1 | `class-aggregator-controller.php` | `Aggregator_CI.status` + `.health` + `.servers` | 3-route stub `/status` + `/servers` + `/health`. M4 #1 cut over the dashboard caller; orphan since. |
+| 1 | M5.1 | `class-discovery-controller.php` | `Discovery_CI.get` | Zero JS callers in any `src/` tree pre-deletion. |
+| 1 | M5.1 | `class-events-controller.php` | `Events_CI.recent` + `.stats` | Zero JS callers in any `src/` tree pre-deletion. |
+| 1 | M5.1 | `class-status-controller.php` | `Status_CI.get` | Zero JS callers in any `src/` tree pre-deletion. |
+
+**`ServersController` deferred to M5.2.** Originally batched into M5.1 — the JS-orphan grep used `apiFetch`/`fetch` only and reported zero callers, so the plan flagged it for the mechanical-delete pass. The actual blocker: `assets/aggregator-admin.js` (enqueued by `Admin::configured_servers_callback` and localized with `eventAggregatorAdmin.restUrl = newspack-nodes/v1/`) POST/PUT/DELETEs to `/servers` + `/servers/{id}/test` via jQuery `$.ajax`. The admin-side Test/Toggle/Remove/Add buttons would 404 if the routes vanished. Migration belongs with M5.2 (SettingsSync transport cutover) — the admin JS rewrite to `/command` lands there alongside the option-fanout migration. `class-settings-controller.php` + `class-perf-settings-controller.php` likewise stay alive until SettingsSync moves off them.
