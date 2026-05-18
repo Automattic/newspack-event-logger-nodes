@@ -1399,4 +1399,174 @@ class RemoteSourceTest extends TestCase {
 		$this->invoke( $remote, 'maybe_connect' );
 		$this->assertTrue( $remote->is_connected() );
 	}
+
+	// =========================================================================
+	// M6.7 — /messages/stream migration
+	// =========================================================================
+
+	public function test_maybe_connect_targets_messages_stream_endpoint(): void {
+		Core::$now = 1000.0;
+		$remote    = $this->make_remote();
+		$this->invoke( $remote, 'maybe_connect' );
+		$handle = $remote->test_get_handle();
+		$this->assertNotNull( $handle );
+		$url = \curl_getinfo( $handle, \CURLINFO_EFFECTIVE_URL );
+		$this->assertStringContainsString(
+			'/wp-json/newspack-nodes/v1/messages/stream',
+			$url,
+			'M6.7 endpoint contract — RemoteSource must consume the unified SSE controller'
+		);
+		$this->assertStringNotContainsString(
+			'/firehose/stream',
+			$url,
+			'M6.7 endpoint contract — legacy per-feed controller URL must not appear'
+		);
+	}
+
+	public function test_maybe_connect_uses_subscribe_query_for_partition(): void {
+		Core::$now = 1000.0;
+		$remote    = $this->make_remote( 'siteA', 'http://siteA.test', 3 );
+		$this->invoke( $remote, 'maybe_connect' );
+		$handle = $remote->test_get_handle();
+		$url    = \curl_getinfo( $handle, \CURLINFO_EFFECTIVE_URL );
+		// `subscribe=firehose.p3` is the substrate's IPC-style shape — partition
+		// number flows through Sse_Slot_Pool's partition arg so the per-partition
+		// aggregator slot pool (60s TTL) is what we hit, not the shared browser
+		// pool (30s TTL).
+		$this->assertStringContainsString( 'subscribe=firehose.p3', $url );
+		$this->assertStringNotContainsString( 'partition=', $url );
+		$this->assertStringNotContainsString( 'aggregator=', $url );
+	}
+
+	public function test_maybe_connect_emits_positions_json_when_position_nonzero(): void {
+		Core::$now = 1000.0;
+		$remote    = $this->make_remote( 'siteA', 'http://siteA.test', 2 );
+		$this->poke(
+			$remote,
+			'position',
+			[ 'segment_id' => 42, 'offset' => 1024 ]
+		);
+		$this->invoke( $remote, 'maybe_connect' );
+		$handle = $remote->test_get_handle();
+		$url    = \curl_getinfo( $handle, \CURLINFO_EFFECTIVE_URL );
+		// `positions` is JSON-encoded then URL-encoded by http_build_query.
+		// The substrate's `parse_positions` JSON-decodes to a `{sub: {N: ...}}` shape.
+		$this->assertStringContainsString( 'positions=', $url );
+		// Round-trip: decode the positions param and verify shape.
+		\preg_match( '/positions=([^&]+)/', $url, $m );
+		$decoded = \json_decode( \urldecode( $m[1] ?? '' ), true );
+		$this->assertIsArray( $decoded );
+		$this->assertArrayHasKey( 'firehose', $decoded );
+		$this->assertSame( 42, $decoded['firehose'][2]['seg'] ?? null );
+		$this->assertSame( 1024, $decoded['firehose'][2]['off'] ?? null );
+	}
+
+	public function test_msg_envelope_with_entry_value_forwards_to_sink(): void {
+		// New wire shape: `event: msg\ndata: <7-field envelope JSON>\n\n`.
+		// The application entry lives at envelope[VALUE] (= index 6); the
+		// substrate-side Consumer stamps FROM=`firehose.pN` and packs the
+		// firehose-entry dict into VALUE.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+
+		$envelope = [
+			Message::TM_STRUCT,           // TYPE
+			1700000000.5,                 // TIMESTAMP
+			'firehose.p0',                // FROM
+			'',                           // TO
+			'42:1024',                    // ID (seg:off)
+			'abc-rid',                    // KEY (rid)
+			[ 'k' => 'render', 'ts' => 1700000000, 'rid' => 'abc-rid' ], // VALUE
+		];
+		$wire = "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
+		$ok   = $remote->process_sse_chunk( $wire );
+		$this->assertTrue( $ok );
+		$this->assertCount( 1, $capture->captured );
+		$this->assertSame(
+			'render',
+			$capture->captured[0][ Message::VALUE ]['k'],
+			'envelope[VALUE] should land at the sink as the firehose entry'
+		);
+	}
+
+	public function test_msg_envelope_connected_records_slot(): void {
+		// The substrate's `connected` envelope arrives as a `msg` event with
+		// KEY=`connected` and VALUE=`{pid, slot, subscriptions, interval}`.
+		// RemoteSource must capture the slot for the heartbeat POST loop.
+		$remote = $this->make_remote();
+		$envelope = [
+			Message::TM_INFO,
+			1700000000.0,
+			'_stream',
+			'',
+			'',
+			'connected',
+			[ 'pid' => 12345, 'slot' => 4, 'subscriptions' => [ 'firehose.p0' ], 'interval' => 500 ],
+		];
+		$wire = "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
+		$remote->process_sse_chunk( $wire );
+		$this->assertSame( 4, $remote->get_slot() );
+	}
+
+	public function test_msg_envelope_does_not_forward_connected_to_sink(): void {
+		// `connected` is bookkeeping — must not land at the sink as a fake
+		// firehose entry.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+
+		$envelope = [
+			Message::TM_INFO,
+			1700000000.0,
+			'_stream',
+			'',
+			'',
+			'connected',
+			[ 'pid' => 1, 'slot' => 0, 'subscriptions' => [ 'firehose.p0' ], 'interval' => 500 ],
+		];
+		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
+		$this->assertCount( 0, $capture->captured );
+	}
+
+	public function test_msg_envelope_updates_position_from_envelope_id(): void {
+		// Each entry's ID = "seg:off" (set by Consumer at emit time). RemoteSource
+		// must parse + store so the next reconnect rides the same position.
+		$remote = $this->make_remote();
+		$envelope = [
+			Message::TM_STRUCT,
+			1700000000.0,
+			'firehose.p0',
+			'',
+			'7:512',
+			'rid',
+			[ 'k' => 'render', 'ts' => 1700000000 ],
+		];
+		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
+
+		$pos = $this->peek( $remote, 'position' );
+		$this->assertSame( 7, $pos['segment_id'] );
+		$this->assertSame( 512, $pos['offset'] );
+	}
+
+	public function test_msg_envelope_invalid_entry_shape_drops_silently(): void {
+		// VALUE is not a dict (e.g. a bare string snuck through) — drop without
+		// crashing, no sink emission.
+		$remote  = $this->make_remote();
+		$capture = new CaptureSink();
+		$remote->sink( $capture );
+
+		$envelope = [
+			Message::TM_BYTESTREAM,
+			1700000000.0,
+			'firehose.p0',
+			'',
+			'0:0',
+			'',
+			'just a string',
+		];
+		$ok = $remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
+		$this->assertTrue( $ok );
+		$this->assertCount( 0, $capture->captured );
+	}
 }
