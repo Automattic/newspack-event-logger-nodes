@@ -421,3 +421,39 @@ Shared helpers also stay alive: `SSEControllerBase` (605 LOC parent of all five)
 Treat this as **M6** work — separate brainstorm + plan + execution cycle. M5 ends here with the cutover work substantively complete (14 controllers deleted across M4 + M5, ~30 apiFetch calls migrated to `/command`, SettingsSync transport migrated to `/command` too).
 
 **M5 final tally**: 6 orphan controllers deleted in M5.1 (4 + 2 follow-up); 3 server-held controllers deleted in M5.2 after the SettingsSync + admin-JS transport migrations; 0 SSE controllers deleted in M5.3 (audit only). 9 total M5 deletions; ~24 total deletions across M4 + M5.
+
+### M6 — SSE consolidation onto `Messages_Stream_Controller`
+
+The M5.3 audit's five blockers turned into the M6 work plan. Done in this branch:
+
+**Substrate (newspack-nodes)**
+| Sub | What | Commit |
+|-----|------|--------|
+| M6.1 | Docstring on `Messages_Stream_Controller`'s permission_callback pinning the capability-only gate (cookie+nonce AND Application Password Basic Auth via WordPress's `determine_current_user` filter). | `5fb0d90` |
+| M6.2 | Slot-pool seams — three static `\Closure` properties (`$acquire_slot`, `$release_slot`, `$check_slot`). `stream()` acquires before `init_sse_headers` so 429s render as JSON. `run_stream_loop` calls `$check_slot` per drain iteration and `$release_slot` in `finally`. Six new unit tests in `MessagesStreamSlotPoolTest`. | `835c822` |
+| M6.3a | `open_subscription` stamps log-partition Consumers `{sub}.p{N}` (matching the existing IPC shape) so JS parsers can read partition out of `FROM`. | `027de08` |
+
+**App side (newspack-event-logger-nodes)**
+| Sub | What | Source log | Commit |
+|-----|------|------------|--------|
+| M6.2 | `Sse_Slot_Pool::wire()` installs closures on the substrate seams, refresh-on-check via `touch_sse_slot` so long-lived streams don't cycle every 30s. Six unit tests in `SseSlotPoolTest`. | — | `aa6c909`, `eeebaa2` |
+| M6.3 | RawLogs dashboard migrated. New `useMessageStream` hook + `transformLogLine` (per-line JSON-render + KEY prefix + 1000-char clip). | `firehose.log` (configurable) | `eeebaa2` |
+| M6.4 | Errors dashboard migrated. `transformErrorLine` enforces rid-required + clips `m` to 1000 chars. | `errors.log` | `d2c40c3` |
+| M6.5 | Requests dashboard migrated. **Source-log change vs legacy**: legacy tailed `requests.log` (live + completed mixed); the new path consumes `completed.log` (pre-filtered upstream by the topology's `completed:tee` node) so `transformCompletedLine` stays a pure shape mapper with no completion guard. | `completed.log` | `59b87f3` |
+| M6.6 | Gyroscope (in-flight) dashboard migrated. Two interleaved record shapes in `gyroscope.log` (pre-aggregated upstream by RequestFlight + `completed:tee`) dispatched client-side via `transformGyroscopeLine` — KEY=`inflight` + array VALUE → snapshot; object VALUE with `rid` → completion. | `gyroscope.log` | `5d4b096` |
+| M6.8 + M6.9a | Deleted ~2150 LOC: `InflightTracker`, four legacy SSE controllers (Rawlogs / Errors / Requests / Gyroscope), the M5-acceptance-gate `SchemaParityAuditTest`, their PHPUnit suites, and the legacy `useFirehoseConnection` JS hook (zero consumers). | — | `99a8a1b` |
+
+**Browser-verified end-to-end**: RawLogs (~80 lines/s sustained 40s+), ErrorLog (305 entries with full TIME / REQUEST ID / KEYWORD / MESSAGE columns), Request Log (267 requests at 6.3 req/s), Gyroscope (in-flight requests with state pills). Substrate suite 1389 tests + app suite 1837 tests stay green.
+
+#### Deferred — M6.7 + M6.9b + M6.10
+
+The `RemoteSource` / `StreamMerger` cross-server SSE consumer is bigger than the four dashboard cutovers combined (918 LOC controller + 149 existing tests on the legacy `event: entry` wire format, cascading through `forward_entry` → sink → `JobRouter`). Proper smoke-test requires a multi-spoke topology not available in this dev environment. Defer to a focused follow-up milestone.
+
+Surviving until that follow-up lands:
+- `includes/rest/class-firehose-stream-controller.php`
+- `includes/rest/class-sse-controller-base.php`
+- `includes/class-partition-reader.php`
+- The route registration in `newspack-event-logger-nodes.php` (single `FirehoseStreamController` registration only)
+- `tests/unit/Rest/FirehoseStreamControllerTest.php`
+
+**M6 tally (this branch)**: 5 SSE-related classes deleted (InflightTracker + 4 stream controllers) + 5 test files deleted + 1 dead JS hook deleted. ~2400 LOC net removed. Substrate gained slot-pool seams (60 LOC) + partition-aware FROM stamp (1 LOC change). App gained `Sse_Slot_Pool` (90 LOC) + 4 per-dashboard transform modules + `useMessageStream` hook.
