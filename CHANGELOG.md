@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Default `skip_urls` updated for M6 endpoint shape.** Drops `/wp-json/newspack-nodes/v1/firehose` (no live routes under that prefix after M6) and `/wp-json/newspack-nodes/v1/topology` (the topology console route was renamed in M4). Adds `/wp-json/newspack-nodes/v1/command` (the unified `/command` dispatch endpoint — every dashboard verb call lands there) and `/wp-json/newspack-nodes/v1/messages/stream` (the unified SSE endpoint). Without these entries the request-builder would log every dashboard click + every SSE connection as a regular request, polluting global timing stats with admin-only traffic. `workers/spawn` stays.
+
 ### Removed
 
 - **`NEWSPACK_EVENT_LOGGER_NODES_TOPOLOGY_BASENAMES` const + the `newspack_nodes/num_logs` filter callback.** Both were hand-maintained catalogs that drifted every time a topology added a Partition — pre-M6 they silently omitted `completed.log` and `gyroscope.log` for months. Replaced by substrate primitives: `Topology_Registry::basenames_for()` (parses each TSL's `make_node Partition` lines) for per-topology basenames, and `Log_Discovery::on_disk()` (readdir `{base}/logs/*.log/`) for the storage-widget count. The `expected_log_basenames` callback now derives its per-topology data from the substrate; the TSL is the single source of truth. App still declares two always-on basenames (`firehose`, `jobintake`) for runtime code that writes outside any topology — LogManager + JobIntake use `Partition::fill()` directly from request code.
