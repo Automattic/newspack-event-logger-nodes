@@ -17,8 +17,9 @@ import {
 } from '@wordpress/element';
 
 import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
+import useMessageStream from '../shared/hooks/useMessageStream';
 import useVirtualization from '../shared/hooks/useVirtualization';
+import transformErrorLine from './transformErrorLine';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -179,29 +180,29 @@ export default function ErrorLog() {
 
 	const visibleColumns = DEFAULT_COLUMNS;
 
-	// Handle 'errors' events from SSE.
-	const handleSource = useCallback( ( source ) => {
-		source.addEventListener( 'errors', ( e ) => {
-			try {
-				const batch = JSON.parse( e.data );
-				for ( const item of batch ) {
-					entryCounterRef.current += 1;
-					entriesBufferRef.current.unshift( {
-						id: entryCounterRef.current,
-						rid: item.rid,
-						ts: item.ts,
-						k: item.k,
-						m: item.m,
-						isEven: entryCounterRef.current % 2 === 0,
-					} );
-				}
-				if ( entriesBufferRef.current.length > MAX_ENTRIES ) {
-					entriesBufferRef.current.length = MAX_ENTRIES;
-				}
-			} catch ( err ) {
-				// Ignore parse errors.
-			}
+	// Per-Message transform: each envelope on /messages/stream?subscribe=errors
+	// becomes one row in the buffer. Drops envelopes without rid (matches the
+	// legacy server-side filter) and the substrate's `connected` envelope.
+	const handleMessage = useCallback( ( envelope ) => {
+		if ( envelope[ 5 ] === 'connected' ) {
+			return;
+		}
+		const row = transformErrorLine( envelope );
+		if ( ! row ) {
+			return;
+		}
+		entryCounterRef.current += 1;
+		entriesBufferRef.current.unshift( {
+			id: entryCounterRef.current,
+			rid: row.rid,
+			ts: row.ts,
+			k: row.k,
+			m: row.m,
+			isEven: entryCounterRef.current % 2 === 0,
 		} );
+		if ( entriesBufferRef.current.length > MAX_ENTRIES ) {
+			entriesBufferRef.current.length = MAX_ENTRIES;
+		}
 	}, [] );
 
 	const {
@@ -209,10 +210,10 @@ export default function ErrorLog() {
 		connect,
 		close: closeSource,
 		lastEventTime,
-	} = useFirehoseConnection( {
-		endpoint: 'errors',
+	} = useMessageStream( {
+		subscriptions: [ 'errors' ],
 		intervalMs: 1000,
-		onSource: handleSource,
+		onMessage: handleMessage,
 	} );
 
 	// Ticking "Xs ago" display.

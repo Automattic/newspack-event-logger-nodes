@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **M6.4 — Errors dashboard migrated to the unified `/messages/stream` endpoint.** Subscribes via `useMessageStream({subscriptions:['errors']})`; runs the rid-required + 1000-char `m`-clip filter client-side via `src/performance-dashboards/transformErrorLine.js`. Browser-verified rendering 305 live entries with TIME / REQUEST ID / KEYWORD / MESSAGE columns intact. `ErrorsStreamController` stays alive until M6.9.
+
 - **M6.3 — RawLogs dashboard migrated to the unified `/messages/stream` endpoint.** First of the four dashboard cutovers in M6. The dashboard now subscribes via the new `useMessageStream` hook (in `src/shared/hooks/`) and runs the per-line transform client-side via `src/event-dashboards/transformLogLine.js` — mirrors the legacy `RawlogsController::transform_line()` (KEY prefix, JSON-render of array VALUE, 1000-char clip). Partition number comes from the Message FROM field (`{sub}.pN`), matching the new substrate stamp.
 - **`Sse_Slot_Pool` `check_slot` closure now refreshes TTL via `touch_sse_slot`.** Without this, the slot expires every `$ttl_browser` seconds (30s default) and the dashboard cycles disconnect → reacquire — visible as a "Reconnecting in 2s..." banner every 30 seconds even on a healthy stream. Refresh-on-check matches the legacy `SSEControllerBase` heartbeat semantic but without a separate client-side ping.
 
