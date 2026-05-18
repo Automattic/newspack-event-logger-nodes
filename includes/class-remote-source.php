@@ -288,11 +288,9 @@ class RemoteSource extends Node {
 
 		$this->ensure_multi();
 
-		// M6.7 — consume the substrate's unified SSE endpoint. The subscription
-		// shape `firehose.pN` flows through Messages_Stream_Controller's
-		// subscription_partition() helper and lands in Sse_Slot_Pool's
-		// per-partition aggregator pool (60s TTL) — same effective behavior as
-		// the legacy `aggregator=true` flag carried.
+		// Subscription shape `firehose.pN` lands in Sse_Slot_Pool's per-partition
+		// aggregator pool (60s TTL) via Messages_Stream_Controller's
+		// `subscription_partition()` helper — no `aggregator=1` flag needed.
 		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/messages/stream';
 		$params   = [
 			'subscribe' => "firehose.p{$this->partition}",
@@ -573,8 +571,7 @@ class RemoteSource extends Node {
 	}
 
 	/**
-	 * Dispatch a parsed `msg`-event Message envelope (7-field array). M6.7
-	 * entry point for the unified `/messages/stream` wire format.
+	 * Dispatch a parsed `msg`-event Message envelope (7-field array).
 	 *
 	 * Handles three envelope shapes:
 	 *   * `connected` (KEY = 'connected', VALUE = `{pid, slot, ...}`) —
@@ -595,14 +592,19 @@ class RemoteSource extends Node {
 
 		// Position from envelope ID — `{segment_id}:{offset}` shape. Empty ID
 		// (e.g. the connected envelope, which fires BEFORE Consumer stamps
-		// anything) is a no-op.
+		// anything) is a no-op. The numeric-check is defensive: `(int)` on a
+		// non-numeric string silently returns 0, which would reset our cursor
+		// to the start of the segment.
 		if ( '' !== $id ) {
 			$colon = \strpos( $id, ':' );
 			if ( false !== $colon ) {
-				$seg = (int) \substr( $id, 0, $colon );
-				$off = (int) \substr( $id, $colon + 1 );
-				if ( $seg >= 0 && $off >= 0 ) {
-					$this->position = [ 'segment_id' => $seg, 'offset' => $off ];
+				$seg_str = \substr( $id, 0, $colon );
+				$off_str = \substr( $id, $colon + 1 );
+				if ( \ctype_digit( $seg_str ) && \ctype_digit( $off_str ) ) {
+					$this->position = [
+						'segment_id' => (int) $seg_str,
+						'offset'     => (int) $off_str,
+					];
 				}
 			}
 		}
