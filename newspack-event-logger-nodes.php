@@ -415,10 +415,6 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 \add_action(
 	'rest_api_init',
 	static function (): void {
-		( new \Newspack_Event_Logger_Nodes\Rest\StatusController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\AggregatorController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\EventsController() )->register_routes();
-		( new \Newspack_Event_Logger_Nodes\Rest\DiscoveryController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\SettingsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfSettingsController() )->register_routes();
 		( new \Newspack_Event_Logger_Nodes\Rest\PerfConfigController() )->register_routes();
