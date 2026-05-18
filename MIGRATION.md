@@ -395,3 +395,29 @@ M5 is the post-M4 sweep that deletes legacy controllers no longer needed by any 
 | 3 | M5.2c | Three controllers + their tests deleted; three route registrations removed; three new gate tests in `M2BootstrapTest`. | `c052022` |
 
 **Final tally for M5.2.** 1894 → 1831 PHP tests (63 dedicated controller tests deleted, 5 new envelope-shape tests in `RemoteManagerTest`, 3 new gate tests in `M2BootstrapTest`). JS suite: 14 tests (5 new in `src/aggregator-admin/__tests__/api.test.js`). Three controller files + four test files removed (~1760 LOC).
+
+### M5.3 — SSE controller audit (no deletions)
+
+The five surviving SSE controllers all have live consumers; none are deletable in M5. The full consolidation onto the substrate's `Messages_Stream_Controller` (the M5 spec's stated goal) is a milestone of its own — call it M6 — because it requires moving per-line transforms from server PHP to browser JS across four dashboards + migrating a hub-side server-to-server consumer (`RemoteSource`).
+
+| Controller | Route | Consumer | Transform shape |
+|------------|-------|----------|-----------------|
+| `FirehoseStreamController` | `GET /firehose/stream` | `RemoteSource` (hub-side, server-to-server) | Single-partition tail; emits raw `entry` events with `aggregator=true` mode for the longer slot-pool TTL. |
+| `GyroscopeStreamController` | `GET /firehose/gyroscope` | `Inflight.js` (browser) | Emits TWO event types (`complete_batch` + per-tick inflight). |
+| `RequestsStreamController` | `GET /firehose/requests` | `RequestStream.js` (browser) | Per-line transform: filter complete-only, emit batched. |
+| `RawlogsController` | `GET /firehose/rawlogs` | `RawLogs.js` (browser) | Per-line transform: unwrap Message envelope, emit raw JSON. |
+| `ErrorsStreamController` | `GET /firehose/errors` | `ErrorLog.js` (browser) | Per-line transform: drop rid-less, clip messages to 1000 chars. |
+
+Shared helpers also stay alive: `SSEControllerBase` (605 LOC parent of all five), `Partition_Reader` (used by Firehose + Gyroscope + the base), the substrate-side `SSE_Stream_Trait` (used by `TopologyStreamController`, which itself stays).
+
+**Why not consolidate now.** A full consolidation pass would need:
+
+1. **JS-side transforms** — `unwrapCommandResponse` is the prototype; need per-dashboard "unwrap Message → derive event" logic for errors / requests / rawlogs / gyroscope. Gyroscope is the tricky one because it emits two event types from one stream; would need to split into two subscriptions or derive both from raw messages client-side.
+2. **`RemoteSource` cross-server SSE migration** — the hub's StreamMerger connects via cURL with Basic Auth; `Messages_Stream_Controller`'s `manage_options` permission check assumes browser auth (cookie + nonce). Either add Basic Auth acceptance to `Messages_Stream_Controller` or keep `/firehose/stream` purely for the server-to-server path while migrating the four browser SSEs.
+3. **Slot-pool semantics** — `FirehoseStreamController`'s `aggregator=true` engages a longer slot TTL for the hub-side pull. `Messages_Stream_Controller` doesn't have a slot-pool concept; the unified endpoint would need to either inherit `SSEControllerBase`'s slot machinery or replace it with a different rate-limit primitive.
+4. **Per-partition vs multi-partition subscriptions** — `Messages_Stream_Controller` fans out across all partitions of a named log; `FirehoseStreamController` is single-partition (the `partition=N` query arg is load-bearing for the hub-side per-partition pull). Need a partition-scoped subscription shape.
+5. **Browser smoke-test scope** — four dashboards (gyroscope, request-log, rawlogs, errors) + the hub-side cross-server fan-in.
+
+Treat this as **M6** work — separate brainstorm + plan + execution cycle. M5 ends here with the cutover work substantively complete (14 controllers deleted across M4 + M5, ~30 apiFetch calls migrated to `/command`, SettingsSync transport migrated to `/command` too).
+
+**M5 final tally**: 6 orphan controllers deleted in M5.1 (4 + 2 follow-up); 3 server-held controllers deleted in M5.2 after the SettingsSync + admin-JS transport migrations; 0 SSE controllers deleted in M5.3 (audit only). 9 total M5 deletions; ~24 total deletions across M4 + M5.
