@@ -120,4 +120,18 @@ class M2BootstrapTest extends TestCase {
 			'Legacy RequestLogController must be deleted; Performance_CI.request_log_list + .request_log_detail replace it. SSE side is in RequestsStreamController which stays.'
 		);
 	}
+
+	public function test_legacy_workers_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\WorkersController' ),
+			'Legacy WorkersController must be deleted; Workers_CI.dump_metadata + .restart replace it.'
+		);
+	}
+
+	public function test_legacy_firehose_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\FirehoseController' ),
+			'Legacy FirehoseController must be deleted; /logs → Performance_CI.firehose_logs; /heartbeat → Workers_CI.heartbeat; /status → Performance_CI.firehose_status. FirehoseStreamController (SSE) stays.'
+		);
+	}
 }
