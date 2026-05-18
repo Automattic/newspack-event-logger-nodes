@@ -15,13 +15,14 @@ import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
 /**
  * Dispatch a verb against the `servers` CI and return the unwrapped payload.
  *
- * @param {Object} client CommandClient instance with a `send()` method.
- * @param {string} verb   `servers` verb name (add / update / delete / test).
- * @param {Object} args   Verb arguments.
+ * @param {Object} client  CommandClient instance with a `send()` method.
+ * @param {string} verb    `servers` verb name (add / update / delete / test).
+ * @param {Object} payload Verb's structured-data slot — Servers_CI verbs
+ *                         all read their fields from $payload.
  * @return {Promise<*>} Parsed verb payload.
  */
-async function dispatchServers( client, verb, args ) {
-	const message = await client.send( { to: 'servers', verb, args } );
+async function dispatchServers( client, verb, payload ) {
+	const message = await client.send( { to: 'servers', verb, payload } );
 	return unwrapCommandResponse( message );
 }
 
