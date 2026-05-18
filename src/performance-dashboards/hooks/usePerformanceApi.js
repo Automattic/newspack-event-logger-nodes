@@ -1,11 +1,16 @@
 /**
  * Performance API Hook
  *
- * Custom hook for fetching performance data from the Event Logger REST API.
+ * Custom hook for fetching performance data from the Performance_CI verbs
+ * via the substrate CommandClient. Routes every call through the
+ * `performance` node — same return shapes as the legacy REST controllers
+ * so component consumers are unchanged; only the transport differs.
  */
 
 import { useCallback } from '@wordpress/element';
-import apiFetch from '@wordpress/api-fetch';
+
+import { getCommandClient } from '../../shared/utils/commandClient';
+import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
 
 /**
  * Validate URL hash format (lowercase hex).
@@ -35,6 +40,22 @@ const isValidPartition = ( partition ) =>
 	Number.isInteger( partition ) && partition >= 0;
 
 /**
+ * Send a Performance_CI verb call and unwrap the response.
+ *
+ * @param {string} verb Performance_CI verb name.
+ * @param {Object} args JSON-decoded args the verb closure receives.
+ * @return {Promise<*>} Parsed payload.
+ */
+const sendPerformance = async ( verb, args = {} ) => {
+	const message = await getCommandClient().send( {
+		to: 'performance',
+		verb,
+		args,
+	} );
+	return unwrapCommandResponse( message );
+};
+
+/**
  * Hook providing API fetch functions for performance data.
  *
  * @param {Function} onError Error handler callback.
@@ -44,24 +65,21 @@ const usePerformanceApi = ( onError ) => {
 	/**
 	 * Fetch performance overview data (always includes category time series).
 	 *
-	 * @param {string} server Optional server name for per-server leaderboard.
+	 * @param {string}   server     Optional server name for per-server leaderboard.
+	 * @param {string[]} breakdowns Optional breakdown dimensions to include.
 	 * @return {Promise<Object|null>} Overview data or null on error.
 	 */
 	const fetchOverview = useCallback(
 		async ( server = '', breakdowns = [] ) => {
 			try {
-				let path =
-					'/newspack-nodes/v1/performance/overview?categories=1';
+				const args = { categories: true };
 				if ( server ) {
-					path += `&server=${ encodeURIComponent( server ) }`;
+					args.server = server;
 				}
 				if ( Array.isArray( breakdowns ) && breakdowns.length > 0 ) {
-					path += `&breakdown=${ encodeURIComponent(
-						breakdowns.join( ',' )
-					) }`;
+					args.breakdown = breakdowns.join( ',' );
 				}
-				const data = await apiFetch( { path } );
-				return data;
+				return await sendPerformance( 'overview', args );
 			} catch ( err ) {
 				onError( err );
 				return null;
@@ -78,31 +96,25 @@ const usePerformanceApi = ( onError ) => {
 	 * @param {string} params.sort   Sort field (count, url, avg_ms, etc).
 	 * @param {string} params.order  Sort order (asc, desc).
 	 * @param {number} params.offset Pagination offset.
+	 * @param {string} params.server Server filter (URL substring match).
 	 * @return {Promise<Object|null>} Response with data, total, limit, offset — or null on error.
 	 */
 	const fetchUrls = useCallback(
 		async ( params = {} ) => {
 			try {
-				const query = new URLSearchParams( { limit: '100' } );
-				if ( params.search ) {
-					query.set( 'search', params.search );
+				const args = { limit: 100 };
+				for ( const key of [
+					'search',
+					'sort',
+					'order',
+					'offset',
+					'server',
+				] ) {
+					if ( params[ key ] ) {
+						args[ key ] = params[ key ];
+					}
 				}
-				if ( params.sort ) {
-					query.set( 'sort', params.sort );
-				}
-				if ( params.order ) {
-					query.set( 'order', params.order );
-				}
-				if ( params.offset ) {
-					query.set( 'offset', String( params.offset ) );
-				}
-				if ( params.server ) {
-					query.set( 'server', params.server );
-				}
-				const data = await apiFetch( {
-					path: `/newspack-nodes/v1/performance/urls?${ query.toString() }`,
-				} );
-				return data;
+				return await sendPerformance( 'urls', args );
 			} catch ( err ) {
 				onError( err );
 				return null;
@@ -124,10 +136,10 @@ const usePerformanceApi = ( onError ) => {
 				return null;
 			}
 			try {
-				const data = await apiFetch( {
-					path: `/newspack-nodes/v1/performance/urls/${ hash }?categories=1`,
+				return await sendPerformance( 'url_detail', {
+					hash,
+					categories: true,
 				} );
-				return data;
 			} catch ( err ) {
 				onError( err );
 				return null;
@@ -154,10 +166,10 @@ const usePerformanceApi = ( onError ) => {
 				return null;
 			}
 			try {
-				const data = await apiFetch( {
-					path: `/newspack-nodes/v1/performance/requests/${ rid }?partition=${ partition }`,
+				return await sendPerformance( 'request_detail', {
+					rid,
+					partition,
 				} );
-				return data;
 			} catch ( err ) {
 				onError( err );
 				return null;
@@ -176,14 +188,12 @@ const usePerformanceApi = ( onError ) => {
 	const fetchBreakdown = useCallback(
 		async ( breakdown, server = '' ) => {
 			try {
-				let path = `/newspack-nodes/v1/performance/overview?breakdown=${ encodeURIComponent(
-					breakdown
-				) }`;
+				const args = { breakdown };
 				if ( server ) {
-					path += `&server=${ encodeURIComponent( server ) }`;
+					args.server = server;
 				}
-				const data = await apiFetch( { path } );
-				return data.breakdown_time_series || null;
+				const data = await sendPerformance( 'overview', args );
+				return data?.breakdown_time_series || null;
 			} catch ( err ) {
 				onError( err );
 				return null;
@@ -205,12 +215,11 @@ const usePerformanceApi = ( onError ) => {
 				return null;
 			}
 			try {
-				const data = await apiFetch( {
-					path: `/newspack-nodes/v1/performance/urls/${ hash }?breakdown=${ encodeURIComponent(
-						breakdown
-					) }`,
+				const data = await sendPerformance( 'url_detail', {
+					hash,
+					breakdown,
 				} );
-				return data.breakdown_time_series || null;
+				return data?.breakdown_time_series || null;
 			} catch ( err ) {
 				onError( err );
 				return null;
@@ -231,10 +240,11 @@ const usePerformanceApi = ( onError ) => {
 				return null;
 			}
 			try {
-				const data = await apiFetch( {
-					path: `/newspack-nodes/v1/performance/urls/${ hash }?categories=1`,
+				const data = await sendPerformance( 'url_detail', {
+					hash,
+					categories: true,
 				} );
-				return data.category_time_series || null;
+				return data?.category_time_series || null;
 			} catch ( err ) {
 				onError( err );
 				return null;
