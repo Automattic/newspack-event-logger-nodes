@@ -1011,25 +1011,26 @@ class Performance_CI extends Service_CI {
 						$url  = (string) $hash_or_url;
 						$hash = \substr( \hash( 'sha256', $url ), 0, 12 );
 					}
-					$result[ $hash ] ??= [
-						'hash'        => $hash,
-						'url'         => $url,
-						'count'       => 0,
-						'count_2xx'   => 0,
-						'count_3xx'   => 0,
-						'count_4xx'   => 0,
-						'count_5xx'   => 0,
-						'sum_ms'      => 0.0,
-						'min_ms'      => 0.0,
-						'max_ms'      => 0.0,
-						'p50_ms'      => 0.0,
-						'p95_ms'      => 0.0,
-						'p99_ms'      => 0.0,
-						'sum_peak_mb' => 0.0,
-						'max_peak_mb' => 0.0,
-						'last_seen'   => 0,
-					];
-					$entry           = &$result[ $hash ];
+					if ( ! isset( $result[ $hash ] ) ) {
+						$result[ $hash ] = [
+							'hash'        => $hash,
+							'url'         => $url,
+							'count'       => 0,
+							'count_2xx'   => 0,
+							'count_3xx'   => 0,
+							'count_4xx'   => 0,
+							'count_5xx'   => 0,
+							'sum_ms'      => 0.0,
+							'max_ms'      => 0.0,
+							'p50_ms'      => 0.0,
+							'p95_ms'      => 0.0,
+							'p99_ms'      => 0.0,
+							'sum_peak_mb' => 0.0,
+							'max_peak_mb' => 0.0,
+							'last_seen'   => 0,
+						];
+					}
+					$entry              = $result[ $hash ];
 					$entry['count']     += (int) ( $stats['count']     ?? 0 );
 					$entry['count_2xx'] += (int) ( $stats['count_2xx'] ?? 0 );
 					$entry['count_3xx'] += (int) ( $stats['count_3xx'] ?? 0 );
@@ -1041,10 +1042,14 @@ class Performance_CI extends Service_CI {
 						? (float) $stats['sum_ms']
 						: (float) ( $stats['sum_req_time'] ?? 0 ) * 1000.0;
 					$entry['sum_peak_mb'] += (float) ( $stats['sum_peak_mb'] ?? 0 );
+					// `min_ms` is optional on the entry — only seeded once a
+					// stat-with-min_ms arrives, so the missing-key path stays
+					// distinguishable from a legitimate 0.0 min.
 					if ( isset( $stats['min_ms'] ) ) {
-						$entry['min_ms'] = 0.0 === $entry['min_ms']
-							? (float) $stats['min_ms']
-							: \min( $entry['min_ms'], (float) $stats['min_ms'] );
+						$stat_min        = (float) $stats['min_ms'];
+						$entry['min_ms'] = isset( $entry['min_ms'] )
+							? \min( (float) $entry['min_ms'], $stat_min )
+							: $stat_min;
 					}
 					$entry['max_ms']      = \max( (float) $entry['max_ms'],      (float) ( $stats['max_ms']      ?? 0 ) );
 					$entry['max_peak_mb'] = \max( (float) $entry['max_peak_mb'], (float) ( $stats['max_peak_mb'] ?? 0 ) );
@@ -1057,7 +1062,7 @@ class Performance_CI extends Service_CI {
 						(int) $entry['last_seen'],
 						(int) ( $stats['last_seen'] ?? 0 )
 					);
-					unset( $entry );
+					$result[ $hash ] = $entry;
 				}
 			}
 		}
@@ -1066,6 +1071,7 @@ class Performance_CI extends Service_CI {
 		$out = [];
 		foreach ( $result as $entry ) {
 			$count = (int) $entry['count'];
+			$denom = \max( 1, $count );
 			$out[] = [
 				'hash'         => $entry['hash'],
 				'url'          => $entry['url'],
@@ -1074,13 +1080,13 @@ class Performance_CI extends Service_CI {
 				'count_3xx'    => (int) $entry['count_3xx'],
 				'count_4xx'    => (int) $entry['count_4xx'],
 				'count_5xx'    => (int) $entry['count_5xx'],
-				'avg_ms'       => $count > 0 ? $entry['sum_ms'] / $count : 0.0,
-				'min_ms'       => $entry['min_ms'],
+				'avg_ms'       => $entry['sum_ms'] / $denom,
+				'min_ms'       => (float) ( $entry['min_ms'] ?? 0 ),
 				'max_ms'       => $entry['max_ms'],
 				'p50_ms'       => $entry['p50_ms'],
 				'p95_ms'       => $entry['p95_ms'],
 				'p99_ms'       => $entry['p99_ms'],
-				'avg_peak_mb'  => $count > 0 ? $entry['sum_peak_mb'] / $count : 0.0,
+				'avg_peak_mb'  => $entry['sum_peak_mb'] / $denom,
 				'max_peak_mb'  => $entry['max_peak_mb'],
 				'last_updated' => (int) $entry['last_seen'],
 			];

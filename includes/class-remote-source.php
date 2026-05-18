@@ -825,19 +825,6 @@ class RemoteSource extends Node {
 		$cache->set( $key, \array_merge( $existing, $data ), self::STATUS_TTL );
 	}
 
-	private function update_sse_heartbeat( int $timestamp ): void {
-		$cache = $this->cache();
-		if ( null === $cache ) {
-			return;
-		}
-		$key      = $this->status_key();
-		$existing = $cache->get( $key );
-		if ( ! \is_array( $existing ) ) {
-			$existing = [];
-		}
-		$cache->set( $key, \array_merge( $existing, [ 'last_sse_heartbeat' => $timestamp ] ), self::STATUS_TTL );
-	}
-
 	private function clear_heartbeat_status(): void {
 		$cache = $this->cache();
 		if ( null === $cache ) {

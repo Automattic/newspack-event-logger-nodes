@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`RemoteSource::update_sse_heartbeat()` and its two callers' tests.** Method was unreferenced; SSE heartbeat tracking lives elsewhere now. PHPStan caught it.
+
+### Fixed
+
+- **`Performance_CI` URL-bucket aggregator: PHPStan dead-branch warnings on `min_ms` sentinel and `$count > 0` divides.** The `??=`-initialized array uses literal types (PHPStan sees `min_ms` as `0.0` and `count` as `0` regardless of accumulation through the reference variable). Switched the `min_ms` sentinel from `0.0` to `null` (cleaner anyway — distinguishes "no data" from "0ms min"), and replaced `$count > 0 ? sum/count : 0.0` with `sum / max(1, count)` for the two avg fields. Behavior unchanged: when no data accumulated, count is 0 and sum is 0, so 0/1 = 0.
+
 ### Changed
 
 - **`reqgrep` chunk-size constant moved to `Consumer::MAX_POLL_BYTES`.** Was referencing `Partition::MAX_READ_SIZE`, which the substrate just deleted (the constant was conflating a buffer-cap-that-broke-large-offsetlog-reads with a per-record DoS guard). The 10MB chunk size itself is unchanged — just sourced from `Newspack_Nodes\Consumer::MAX_POLL_BYTES` where it belongs (it's the same poll-budget Consumer's main read loop applies).
