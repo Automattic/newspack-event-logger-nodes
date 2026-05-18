@@ -42,6 +42,17 @@ class RemoteManager {
 	public const MAX_SETTINGS = 50;
 
 	/**
+	 * REST path for the substrate's unified TM_COMMAND dispatch endpoint.
+	 * Mirrors `Newspack_Nodes\Rest\Command_Controller::REST_NAMESPACE` +
+	 * `Command_Controller::ROUTE`. M5.2 cutover: all settings-sync POSTs
+	 * land here rather than at the legacy /settings + /performance/settings
+	 * routes (deleted).
+	 *
+	 * @var string
+	 */
+	private const COMMAND_PATH = '/wp-json/newspack-nodes/v1/command';
+
+	/**
 	 * Wire RemoteManager listeners into the WP/runtime hook surface. Idempotent
 	 * — safe to call multiple times.
 	 */
@@ -493,15 +504,26 @@ class RemoteManager {
 	}
 
 	/**
-	 * POST a JSON payload to a remote server's REST endpoint.
+	 * POST a settings-sync payload to a remote spoke.
+	 *
+	 * M5.2: the legacy `/settings` and `/performance/settings` REST routes
+	 * are deleted. SettingsSync still passes its endpoint constants as
+	 * category tags (substrate-keys vs perf-tuning), and this method maps
+	 * each tag to the equivalent service-CI verb (`Settings_CI.update`
+	 * or `Performance_CI.settings_update`) and POSTs the TM_COMMAND
+	 * envelope to `/wp-json/newspack-nodes/v1/command`. Basic Auth (the
+	 * spoke-side authentication mechanism) is independent of the dispatch
+	 * path and is preserved unchanged.
 	 *
 	 * Accepts both Application-Password Basic Auth (preferred) and a legacy
 	 * `token` field for compatibility with the simpler ServerRegistry that
 	 * stored `{url, token}` pairs.
 	 *
 	 * @param array  $server   Server config.
-	 * @param string $endpoint API endpoint.
-	 * @param array  $body     Request body.
+	 * @param string $endpoint Category tag — one of SettingsSync::ENDPOINT,
+	 *                          SettingsSync::PERF_ENDPOINT. Validated against
+	 *                          ALLOWED_ENDPOINT_PREFIXES before dispatch.
+	 * @param array  $body     {option, value} settings-update payload.
 	 * @return array|\WP_Error Response or error.
 	 */
 	public static function post_to_server( array $server, string $endpoint, array $body ) {
@@ -509,10 +531,10 @@ class RemoteManager {
 			return self::wp_error_or_array( 'disallowed_endpoint', 'Endpoint not in allowed prefixes' );
 		}
 
-		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . $endpoint;
+		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
 		$args = self::request_args( $server, [
 			'headers' => [ 'Content-Type' => 'application/json' ],
-			'body'    => \wp_json_encode( $body ),
+			'body'    => self::build_command_envelope( $endpoint, $body ),
 		] );
 
 		if ( \function_exists( 'wp_remote_post' ) ) {
@@ -520,6 +542,73 @@ class RemoteManager {
 			return \wp_remote_post( $url, $args );
 		}
 		return self::wp_error_or_array( 'no_http', 'wp_remote_post unavailable' );
+	}
+
+	/**
+	 * Build the TM_COMMAND wire envelope for a settings sync POST.
+	 *
+	 * Wire format (mirrors the JS CommandClient in src/shared/utils/commandClient.js):
+	 *   { type, to, from, key, value }
+	 *   value = JSON({ name, arguments, payload })
+	 *   arguments = JSON of the verb args object
+	 *
+	 * The double-JSON looks redundant but matches the substrate's
+	 * CommandInterpreter expectations on the receiver — each verb's
+	 * `decode_args()` parses the inner JSON string back to an array.
+	 *
+	 * Substrate-keys (`ENDPOINT`) flow to `settings.update` with arguments
+	 * stripped of the `newspack_nodes_` prefix (the verb's whitelist is
+	 * short-name-keyed: num_partitions, num_segments, segment_size,
+	 * max_lifespan). Perf-keys (`PERF_ENDPOINT`) flow to
+	 * `performance.settings_update` which takes the `{option, value}` pair
+	 * as-is.
+	 *
+	 * @param string $endpoint Tag selecting the verb target.
+	 * @param array  $body     Settings payload `{option, value}` from sync_setting.
+	 * @return string JSON-encoded TM_COMMAND envelope ready for `wp_remote_post` `body`.
+	 */
+	private static function build_command_envelope( string $endpoint, array $body ): string {
+		[ $to, $verb, $args ] = self::resolve_command_target( $endpoint, $body );
+
+		$value = (string) \wp_json_encode( [
+			'name'      => $verb,
+			'arguments' => (string) \wp_json_encode( $args ),
+			'payload'   => '',
+		] );
+
+		return (string) \wp_json_encode( [
+			'type'  => \Newspack_Nodes\Message::TM_COMMAND,
+			'to'    => $to,
+			'from'  => '_http',
+			'key'   => '',
+			'value' => $value,
+		] );
+	}
+
+	/**
+	 * Resolve a category-tag endpoint to its `(to, verb, args)` triple.
+	 *
+	 * @param string $endpoint One of SettingsSync::ENDPOINT or PERF_ENDPOINT.
+	 * @param array  $body     `{option, value}` pair.
+	 * @return array{0:string,1:string,2:array} `[to, verb, args]`.
+	 */
+	private static function resolve_command_target( string $endpoint, array $body ): array {
+		if ( SettingsSync::PERF_ENDPOINT === $endpoint ) {
+			// Performance_CI.settings_update keeps the full WP option name —
+			// its whitelist matches PerfSettingsController::ALLOWED_OPTIONS
+			// 1:1 (newspack_event_logger_nodes_log_events etc.).
+			return [ 'performance', 'settings_update', $body ];
+		}
+
+		// Substrate-keys (Settings_CI.update). The verb whitelist is
+		// short-name-keyed, so strip the `newspack_nodes_` prefix here on the
+		// wire — keeps the verb stable for callers that don't know that
+		// prefix history (legacy /settings did the same strip server-side).
+		$option = (string) ( $body['option'] ?? '' );
+		$short  = 0 === \strpos( $option, 'newspack_nodes_' )
+			? \substr( $option, \strlen( 'newspack_nodes_' ) )
+			: $option;
+		return [ 'settings', 'update', [ $short => $body['value'] ?? null ] ];
 	}
 
 	/**

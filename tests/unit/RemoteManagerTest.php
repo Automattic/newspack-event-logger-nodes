@@ -4,6 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\RemoteManager;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
+use Newspack_Event_Logger_Nodes\SettingsSync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -363,36 +364,37 @@ class RemoteManagerTest extends TestCase {
 	// --- post_to_server / get_from_server with allowed endpoint -------------
 
 	public function test_post_to_server_with_allowed_endpoint_uses_wp_remote_post(): void {
-		// With an allowed endpoint and Application Password creds, the request
-		// must include Basic Auth headers and POST to the rtrim'd URL.
+		// M5.2: POST always lands on /command; body wraps in a TM_COMMAND
+		// envelope. Defaults (redirection, timeout) and Basic Auth headers
+		// are preserved across the migration.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		$server = [
 			'url'           => 'https://example.test/',
 			'auth_username' => 'admin',
 			'auth_password' => 'app-pass',
 		];
-		$body = [ 'option' => 'log_urls', 'value' => [ '/x' ] ];
 
 		RemoteManager::post_to_server(
 			$server,
-			'/wp-json/newspack-nodes/v1/settings',
-			$body
+			SettingsSync::PERF_ENDPOINT,
+			[ 'option' => 'newspack_event_logger_nodes_log_urls', 'value' => [ '/x' ] ]
 		);
 
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
 
-		// URL: rtrim trailing slash from server url + endpoint.
-		$this->assertSame( 'https://example.test/wp-json/newspack-nodes/v1/settings', $last['url'] );
+		// URL: rtrim trailing slash from server url + the unified /command path.
+		$this->assertSame( 'https://example.test/wp-json/newspack-nodes/v1/command', $last['url'] );
 		// Basic Auth header present.
 		$auth = $last['args']['headers']['Authorization'] ?? '';
 		$this->assertStringStartsWith( 'Basic ', $auth );
 		// Decode and verify the credentials.
 		$decoded = \base64_decode( \substr( $auth, 6 ), true );
 		$this->assertSame( 'admin:app-pass', $decoded );
-		// Body present + JSON-encoded.
-		$body_decoded = \json_decode( $last['args']['body'], true );
-		$this->assertSame( $body, $body_decoded );
+		// Body is the TM_COMMAND envelope, not the raw {option, value} pair.
+		$envelope = \json_decode( $last['args']['body'], true );
+		$this->assertSame( \Newspack_Nodes\Message::TM_COMMAND, $envelope['type'] );
+		$this->assertSame( 'performance', $envelope['to'] );
 		// Defaults: no follow, response-size cap, timeout.
 		$this->assertSame( 0, $last['args']['redirection'] );
 		$this->assertSame( RemoteManager::REQUEST_TIMEOUT, $last['args']['timeout'] );
@@ -629,8 +631,8 @@ class RemoteManagerTest extends TestCase {
 
 		// Both spokes were POSTed.
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/settings', $urls );
-		$this->assertContains( 'https://b.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/command', $urls );
+		$this->assertContains( 'https://b.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -651,8 +653,8 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://en.test/wp-json/newspack-nodes/v1/settings', $urls );
-		$this->assertNotContains( 'https://dis.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://en.test/wp-json/newspack-nodes/v1/command', $urls );
+		$this->assertNotContains( 'https://dis.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -712,7 +714,7 @@ class RemoteManagerTest extends TestCase {
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		// Only 'a' was registered; 'nonexistent-server' was silently skipped.
-		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -738,8 +740,8 @@ class RemoteManagerTest extends TestCase {
 		] );
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/settings', $urls );
-		$this->assertNotContains( 'https://b.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/command', $urls );
+		$this->assertNotContains( 'https://b.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -763,7 +765,7 @@ class RemoteManagerTest extends TestCase {
 
 		// Falls back to default endpoint.
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -886,7 +888,7 @@ class RemoteManagerTest extends TestCase {
 		// Fan-out to 'a' only.
 		$this->assertCount( 1, $GLOBALS['_wp_test_remote_posts'] );
 		$this->assertSame(
-			'https://a.test/wp-json/newspack-nodes/v1/settings',
+			'https://a.test/wp-json/newspack-nodes/v1/command',
 			$GLOBALS['_wp_test_remote_posts'][0]['url']
 		);
 
@@ -1143,7 +1145,9 @@ class RemoteManagerTest extends TestCase {
 					[
 						'local_option'  => 'newspack_event_logger_nodes_log_urls',
 						'remote_option' => 'newspack_event_logger_nodes_log_urls',
-						'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
+						// log_urls is a perf-tuning option; the matching endpoint
+						// tag routes through Performance_CI.settings_update.
+						'endpoint'      => '/wp-json/newspack-nodes/v1/performance/settings',
 					],
 				];
 			}
@@ -1155,12 +1159,15 @@ class RemoteManagerTest extends TestCase {
 		RemoteManager::sync_all_settings();
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $urls );
 
-		// Body contains the resolved value.
-		$body = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
-		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $body['option'] );
-		$this->assertSame( [ '/foo' ], $body['value'] );
+		// Body is the TM_COMMAND envelope; verb args carry the resolved
+		// {option, value} pair (perf-tuning key → Performance_CI.settings_update).
+		$envelope = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
+		$value    = \json_decode( $envelope['value'], true );
+		$args     = \json_decode( $value['arguments'], true );
+		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $args['option'] );
+		$this->assertSame( [ '/foo' ], $args['value'] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -1561,7 +1568,7 @@ class RemoteManagerTest extends TestCase {
 		// Only 'a' was POSTed.
 		$this->assertCount( 1, $GLOBALS['_wp_test_remote_posts'] );
 		$this->assertSame(
-			'https://a.test/wp-json/newspack-nodes/v1/settings',
+			'https://a.test/wp-json/newspack-nodes/v1/command',
 			$GLOBALS['_wp_test_remote_posts'][0]['url']
 		);
 
@@ -1606,10 +1613,17 @@ class RemoteManagerTest extends TestCase {
 
 		RemoteManager::sync_all_settings();
 
-		// At least one POST happened to the remapped remote_option key.
+		// At least one POST happened. The substrate-key endpoint maps to
+		// Settings_CI.update, which expects short-name args (no `newspack_nodes_`
+		// prefix). The remap from remote_num_segments → num_segments is the
+		// load-bearing assertion here — both the prefix-strip + the local→remote
+		// option name remap have to land for the spoke to apply the change.
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
-		$body = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
-		$this->assertSame( 'newspack_nodes_num_segments', $body['option'] );
+		$envelope = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
+		$value    = \json_decode( $envelope['value'], true );
+		$args     = \json_decode( $value['arguments'], true );
+		$this->assertArrayHasKey( 'num_segments', $args );
+		$this->assertSame( 42, $args['num_segments'] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -1744,7 +1758,7 @@ class RemoteManagerTest extends TestCase {
 		);
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$this->assertSame(
-			'https://x.test/wp-json/newspack-nodes/v1/settings',
+			'https://x.test/wp-json/newspack-nodes/v1/command',
 			$GLOBALS['_wp_test_remote_posts'][0]['url']
 		);
 	}
@@ -1893,8 +1907,8 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://enabled-x.test/wp-json/newspack-nodes/v1/settings', $urls );
-		$this->assertNotContains( 'https://disabled-x.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://enabled-x.test/wp-json/newspack-nodes/v1/command', $urls );
+		$this->assertNotContains( 'https://disabled-x.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2129,7 +2143,7 @@ class RemoteManagerTest extends TestCase {
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		$this->assertCount( 1, $urls );
-		$this->assertSame( 'https://real.test/wp-json/newspack-nodes/v1/settings', $urls[0] );
+		$this->assertSame( 'https://real.test/wp-json/newspack-nodes/v1/command', $urls[0] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2157,7 +2171,7 @@ class RemoteManagerTest extends TestCase {
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		// Fan-out hit the lone enabled server (because servers normalized to null).
-		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://a.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2193,21 +2207,26 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_post_to_server_encodes_body_as_json(): void {
+		// Content-Type stays application/json across the M5.2 migration; the
+		// outer body is the TM_COMMAND envelope JSON, with the verb args
+		// nested two levels deep (envelope.value → JSON({name, arguments}) →
+		// arguments=JSON of the args). Round-tripping the structured value
+		// through that nesting confirms the encoding is lossless.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		RemoteManager::post_to_server(
 			[ 'url' => 'https://x.test', 'auth_username' => 'u', 'auth_password' => 'p' ],
-			'/wp-json/newspack-nodes/v1/settings',
-			[ 'nested' => [ 'a' => 1, 'b' => 'two' ], 'flag' => true ]
+			SettingsSync::PERF_ENDPOINT,
+			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'a' => 1, 'b' => 'two' ] ]
 		);
 
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
 
-		// Content-Type set, body is JSON, decode round-trips the structure.
 		$this->assertSame( 'application/json', $last['args']['headers']['Content-Type'] ?? '' );
-		$decoded = \json_decode( $last['args']['body'], true );
-		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $decoded['nested'] );
-		$this->assertTrue( $decoded['flag'] );
+		$envelope = \json_decode( $last['args']['body'], true );
+		$value    = \json_decode( $envelope['value'], true );
+		$args     = \json_decode( $value['arguments'], true );
+		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $args['value'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -2324,7 +2343,7 @@ class RemoteManagerTest extends TestCase {
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		$this->assertNotEmpty( $urls );
 		// The default endpoint is SettingsSync::ENDPOINT.
-		$this->assertContains( 'https://spoke-def.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://spoke-def.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2383,6 +2402,116 @@ class RemoteManagerTest extends TestCase {
 	// sync_setting — server entry with no 'enabled' key (legacy plaintext).
 	// -------------------------------------------------------------------------
 
+	// --- M5.2b: TM_COMMAND envelope transport ---------------------------------
+
+	public function test_post_to_server_posts_to_command_endpoint_not_legacy_settings_url(): void {
+		// M5.2 cutover: the legacy /settings + /performance/settings endpoints
+		// are deleted. SettingsSync continues to pass the legacy endpoint
+		// strings (still useful as category tags), but the actual POST must
+		// land on /wp-json/newspack-nodes/v1/command.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
+			SettingsSync::ENDPOINT,
+			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
+		);
+
+		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
+		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$this->assertSame( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $last['url'] );
+	}
+
+	public function test_post_to_server_wraps_substrate_body_in_tm_command_envelope_for_settings_update(): void {
+		// Substrate-key endpoint maps to {to: settings, verb: update}. The body
+		// must be a TM_COMMAND wire envelope: type=8 (TM_COMMAND), to/from set,
+		// value=JSON({name, arguments, payload}), arguments=JSON of the args.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
+			SettingsSync::ENDPOINT,
+			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
+		);
+
+		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$envelope = \json_decode( $last['args']['body'], true );
+
+		$this->assertIsArray( $envelope );
+		$this->assertSame( \Newspack_Nodes\Message::TM_COMMAND, $envelope['type'] );
+		$this->assertSame( 'settings', $envelope['to'] );
+		$this->assertSame( '_http', $envelope['from'] );
+
+		$value = \json_decode( $envelope['value'], true );
+		$this->assertSame( 'update', $value['name'] );
+		$args = \json_decode( $value['arguments'], true );
+		$this->assertSame(
+			[ 'num_partitions' => 4 ],
+			$args,
+			'Settings_CI.update accepts a partial-update keyed by short-name (no `newspack_nodes_` prefix).'
+		);
+	}
+
+	public function test_post_to_server_wraps_perf_body_in_tm_command_envelope_for_settings_update(): void {
+		// Perf-tuning endpoint maps to {to: performance, verb: settings_update}.
+		// Performance_CI.settings_update expects a single {option, value} pair —
+		// not a partial-keyed map like Settings_CI.update.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
+			SettingsSync::PERF_ENDPOINT,
+			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ]
+		);
+
+		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$envelope = \json_decode( $last['args']['body'], true );
+
+		$this->assertSame( 'performance', $envelope['to'] );
+
+		$value = \json_decode( $envelope['value'], true );
+		$this->assertSame( 'settings_update', $value['name'] );
+		$args = \json_decode( $value['arguments'], true );
+		$this->assertSame(
+			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ],
+			$args
+		);
+	}
+
+	public function test_post_to_server_preserves_basic_auth_header_through_envelope_migration(): void {
+		// Basic Auth is a SPOKE authentication concern, independent of the
+		// envelope; migrating the body shape must not strip the header.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'admin', 'auth_password' => 'app-pw' ],
+			SettingsSync::ENDPOINT,
+			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
+		);
+
+		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$auth = $last['args']['headers']['Authorization'] ?? '';
+		$this->assertStringStartsWith( 'Basic ', $auth );
+		$this->assertSame( 'admin:app-pw', \base64_decode( \substr( $auth, 6 ), true ) );
+	}
+
+	public function test_post_to_server_strips_substrate_prefix_when_building_settings_update_args(): void {
+		// Settings_CI.update's whitelist is keyed by the short-name
+		// (num_partitions, num_segments, segment_size, max_lifespan) — not the
+		// `newspack_nodes_` prefix. The legacy /settings controller did the
+		// same strip server-side; here we do it on the wire so the receiver
+		// doesn't have to know that history.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
+			SettingsSync::ENDPOINT,
+			[ 'option' => 'newspack_nodes_segment_size', 'value' => 1048576 ]
+		);
+		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$envelope = \json_decode( $last['args']['body'], true );
+		$value    = \json_decode( $envelope['value'], true );
+		$args     = \json_decode( $value['arguments'], true );
+		$this->assertArrayHasKey( 'segment_size', $args );
+		$this->assertArrayNotHasKey( 'newspack_nodes_segment_size', $args );
+		$this->assertSame( 1048576, $args['segment_size'] );
+	}
+
 	public function test_sync_setting_includes_legacy_server_without_enabled_key(): void {
 		// Legacy registries lack the `enabled` field; the code defaults to
 		// "no flag = enabled" so the spoke should receive the POST.
@@ -2408,7 +2537,7 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://legacy.test/wp-json/newspack-nodes/v1/settings', $urls );
+		$this->assertContains( 'https://legacy.test/wp-json/newspack-nodes/v1/command', $urls );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
