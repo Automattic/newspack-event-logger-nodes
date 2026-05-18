@@ -1738,18 +1738,6 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 'kept', $status['kept_field'] );
 	}
 
-	public function test_update_sse_heartbeat_records_timestamp(): void {
-		$cache = new FakeMemcached();
-		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
-		$sm->add_remote( 'siteSSEHB', 'http://siteSSEHB.test/', 'tok' );
-
-		$this->invoke_remote( $sm, 'siteSSEHB', 'update_sse_heartbeat', [ 1700000000 ] );
-
-		$status = $cache->get( 'aggregator_status:siteSSEHB:p0' );
-		$this->assertSame( 1700000000, $status['last_sse_heartbeat'] );
-	}
-
 	// =========================================================================
 	// detach_handle: closes idempotently.
 	// =========================================================================

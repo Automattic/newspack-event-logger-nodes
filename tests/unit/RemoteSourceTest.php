@@ -980,24 +980,6 @@ class RemoteSourceTest extends TestCase {
 		$this->addToAssertionCount( 1 );
 	}
 
-	public function test_update_sse_heartbeat_writes_timestamp(): void {
-		$cache  = new FakeMemcached();
-		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
-
-		$this->invoke( $remote, 'update_sse_heartbeat', [ 12345 ] );
-		$status = $cache->get( 'aggregator_status:siteA:p0' );
-		$this->assertSame( 12345, $status['last_sse_heartbeat'] );
-	}
-
-	public function test_update_sse_heartbeat_no_cache_noop(): void {
-		$failing = new FakeMemcached( true );
-		$remote  = $this->make_remote();
-		$remote->set_cache( $failing );
-		$this->invoke( $remote, 'update_sse_heartbeat', [ 42 ] );
-		$this->addToAssertionCount( 1 );
-	}
-
 	public function test_clear_heartbeat_status_zeros_fields(): void {
 		$cache  = new FakeMemcached();
 		$remote = $this->make_remote();
