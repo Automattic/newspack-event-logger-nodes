@@ -65,7 +65,7 @@ describe( 'aggregator-admin/api', () => {
 				to: 'servers',
 				verb: 'add',
 			} );
-			expect( client.sent[ 0 ].args ).toEqual( {
+			expect( client.sent[ 0 ].payload ).toEqual( {
 				id: 'spoke-01',
 				url: 'https://spoke.example/',
 				auth_username: 'admin',
@@ -106,7 +106,7 @@ describe( 'aggregator-admin/api', () => {
 				to: 'servers',
 				verb: 'update',
 			} );
-			expect( client.sent[ 0 ].args ).toEqual( {
+			expect( client.sent[ 0 ].payload ).toEqual( {
 				id: 'spoke-01',
 				enabled: false,
 			} );
@@ -125,7 +125,7 @@ describe( 'aggregator-admin/api', () => {
 				to: 'servers',
 				verb: 'delete',
 			} );
-			expect( client.sent[ 0 ].args ).toEqual( { id: 'spoke-01' } );
+			expect( client.sent[ 0 ].payload ).toEqual( { id: 'spoke-01' } );
 		} );
 	} );
 
@@ -143,7 +143,7 @@ describe( 'aggregator-admin/api', () => {
 			expect( client.sent[ 0 ] ).toMatchObject( {
 				to: 'servers',
 				verb: 'test',
-				args: { id: 'spoke-01' },
+				payload: { id: 'spoke-01' },
 			} );
 			expect( result ).toEqual( probe );
 		} );
