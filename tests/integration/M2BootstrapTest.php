@@ -162,4 +162,32 @@ class M2BootstrapTest extends TestCase {
 			'Legacy PerformanceController must be deleted; its /performance/dashboard + /performance/timing routes had no JS callers and it delegated to PerfOverviewController + PerfUrlsController (deleted in the same batch). PerformanceControllerBase (the abstract base) stays.'
 		);
 	}
+
+	public function test_legacy_aggregator_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\AggregatorController' ),
+			'Legacy AggregatorController (3-route stub: /status + /servers + /health) must be deleted; Aggregator_CI verbs (status/health/servers) replace it. The Aggregator dashboard cut over in M4.1.'
+		);
+	}
+
+	public function test_legacy_discovery_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\DiscoveryController' ),
+			'Legacy DiscoveryController must be deleted; Discovery_CI.get replaces it (M2 Task 2).'
+		);
+	}
+
+	public function test_legacy_events_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\EventsController' ),
+			'Legacy EventsController must be deleted; Events_CI.recent + .stats verbs replace it (M2 Task 5).'
+		);
+	}
+
+	public function test_legacy_status_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\StatusController' ),
+			'Legacy StatusController must be deleted; Status_CI.get replaces it (M2 Task 2b).'
+		);
+	}
 }
