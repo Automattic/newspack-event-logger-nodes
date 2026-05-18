@@ -35,28 +35,50 @@ class ExpectedLogBasenamesTest extends TestCase {
 		return $set;
 	}
 
-	public function test_firehose_workers_only_publishes_firehose_errors_requests(): void {
+	public function test_runtime_basenames_always_in_set(): void {
+		// LogManager (firehose) + JobIntake (jobintake) write directly from
+		// request code without any topology Partition node. They MUST stay
+		// expected whenever the plugin is loaded — otherwise Log_Cleaner
+		// would orphan the very logs the plugin always writes to.
+		$this->activate_topologies( [] );
+		$set = $this->basenames();
+		$this->assertContains( 'firehose', $set );
+		$this->assertContains( 'jobintake', $set );
+	}
+
+	public function test_firehose_workers_only_adds_topology_outputs(): void {
+		// firehose-workers-only TSL declares: completed, errors, gyroscope, requests.
+		// Plus the always-on runtime basenames: firehose + jobintake.
 		$this->activate_topologies( [ 'firehose-workers-only' ] );
 		$this->assertSame(
-			[ 'errors', 'firehose', 'requests' ],
+			[ 'completed', 'errors', 'firehose', 'gyroscope', 'jobintake', 'requests' ],
 			$this->basenames()
 		);
 	}
 
-	public function test_request_workers_alone_publishes_flames_and_requests(): void {
+	public function test_request_workers_alone_adds_flames(): void {
+		// request-workers TSL declares: flames. (Requests partition is owned
+		// by firehose-workers-only; not in this topology's TSL.)
 		$this->activate_topologies( [ 'request-workers' ] );
 		$this->assertSame(
-			[ 'flames', 'requests' ],
+			[ 'firehose', 'flames', 'jobintake' ],
 			$this->basenames()
 		);
 	}
 
-	public function test_job_workers_alone_publishes_jobs(): void {
+	public function test_job_workers_topology_declares_no_partitions(): void {
+		// job-workers TSL has no `make_node Partition` lines — jobs.log is
+		// produced by firehose-workers-and-jobs (or firehose-jobs-only),
+		// not by the job-workers topology that consumes it.
 		$this->activate_topologies( [ 'job-workers' ] );
-		$this->assertSame( [ 'jobs' ], $this->basenames() );
+		$this->assertSame(
+			[ 'firehose', 'jobintake' ],
+			$this->basenames()
+		);
 	}
 
-	public function test_firehose_jobs_only_publishes_firehose_jobintake_jobs(): void {
+	public function test_firehose_jobs_only_adds_jobs(): void {
+		// firehose-jobs-only TSL declares: jobs.
 		$this->activate_topologies( [ 'firehose-jobs-only' ] );
 		$this->assertSame(
 			[ 'firehose', 'jobintake', 'jobs' ],
@@ -64,11 +86,13 @@ class ExpectedLogBasenamesTest extends TestCase {
 		);
 	}
 
-	public function test_aggregator_alone_publishes_nothing(): void {
-		// Aggregator only consumes REMOTE firehoses (not a local log
-		// basename), so it contributes nothing to the local-log set.
+	public function test_aggregator_topology_declares_no_partitions(): void {
+		// Aggregator only consumes REMOTE firehoses; no local Partition.
 		$this->activate_topologies( [ 'aggregator' ] );
-		$this->assertSame( [], $this->basenames() );
+		$this->assertSame(
+			[ 'firehose', 'jobintake' ],
+			$this->basenames()
+		);
 	}
 
 	public function test_combined_topologies_publish_union(): void {
@@ -77,7 +101,7 @@ class ExpectedLogBasenamesTest extends TestCase {
 			'request-workers',
 		] );
 		$this->assertSame(
-			[ 'errors', 'firehose', 'flames', 'requests' ],
+			[ 'completed', 'errors', 'firehose', 'flames', 'gyroscope', 'jobintake', 'requests' ],
 			$this->basenames()
 		);
 	}

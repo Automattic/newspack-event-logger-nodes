@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`NEWSPACK_EVENT_LOGGER_NODES_TOPOLOGY_BASENAMES` const + the `newspack_nodes/num_logs` filter callback.** Both were hand-maintained catalogs that drifted every time a topology added a Partition — pre-M6 they silently omitted `completed.log` and `gyroscope.log` for months. Replaced by substrate primitives: `Topology_Registry::basenames_for()` (parses each TSL's `make_node Partition` lines) for per-topology basenames, and `Log_Discovery::on_disk()` (readdir `{base}/logs/*.log/`) for the storage-widget count. The `expected_log_basenames` callback now derives its per-topology data from the substrate; the TSL is the single source of truth. App still declares two always-on basenames (`firehose`, `jobintake`) for runtime code that writes outside any topology — LogManager + JobIntake use `Partition::fill()` directly from request code.
+
 ### Changed
 
 - **`RemoteSource` is generic cross-server transport — no more peeking inside Message VALUE.** Earlier M6.7 work added an `isset($value['k'])` gate in `dispatch_msg_envelope` and back-filled `$value['rid']` from envelope KEY, baking firehose-shape assumptions into what's meant to be a transport node (the hub uses it to pull any log a spoke publishes — firehose today, could be gyroscope.pN or completed.pN tomorrow). Replaced `forward_entry(array $data)` with `forward_envelope(array $envelope)`: forwards every non-`connected` envelope verbatim, preserving TYPE / KEY / VALUE from the spoke. Shape-aware behavior survives only inside the array-VALUE branch (the `_source` hub-attribution stamp + the `aggregator_ingest_line` filter chain that StreamMerger uses for `k:"job"` → `k:"remote_job"` rewrites); scalar payloads bypass that path and reach the sink unchanged. `forward_entry`'s old `k`/`ts` validation gates removed — those drops belong downstream where shape decisions live, not in the transport layer.
