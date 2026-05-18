@@ -131,7 +131,66 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_firehose_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\FirehoseController' ),
-			'Legacy FirehoseController must be deleted; /logs → Performance_CI.firehose_logs; /heartbeat → Workers_CI.heartbeat; /status → Performance_CI.firehose_status. FirehoseStreamController (SSE) stays.'
+			'Legacy FirehoseController must be deleted; /logs → Performance_CI.firehose_logs; /heartbeat → Workers_CI.heartbeat; /status → Performance_CI.firehose_status. FirehoseStreamController is gone too (M6.9b) — RemoteSource consumes the substrate /messages/stream endpoint directly.'
+		);
+	}
+
+	// M6 — SSE consolidation onto `/messages/stream`. Gate every deleted
+	// class so accidental re-registration (autoloader regression, partial
+	// revert) trips here instead of silently double-handling SSE traffic.
+	public function test_legacy_rawlogs_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\RawlogsController' ),
+			'RawlogsController deleted in M6.9 — RawLogs.js subscribes to /messages/stream directly.'
+		);
+	}
+
+	public function test_legacy_errors_stream_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\ErrorsStreamController' ),
+			'ErrorsStreamController deleted in M6.9 — ErrorLog.js subscribes to /messages/stream directly.'
+		);
+	}
+
+	public function test_legacy_requests_stream_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\RequestsStreamController' ),
+			'RequestsStreamController deleted in M6.9 — RequestStream.js subscribes to /messages/stream against completed.log directly.'
+		);
+	}
+
+	public function test_legacy_gyroscope_stream_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\GyroscopeStreamController' ),
+			'GyroscopeStreamController deleted in M6.9 — Inflight.js subscribes to /messages/stream against gyroscope.log directly.'
+		);
+	}
+
+	public function test_legacy_firehose_stream_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\FirehoseStreamController' ),
+			'FirehoseStreamController deleted in M6.9b — RemoteSource consumes the substrate /messages/stream endpoint with subscribe=firehose.pN.'
+		);
+	}
+
+	public function test_legacy_sse_controller_base_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\SSEControllerBase' ),
+			'SSEControllerBase deleted in M6.10 — all 5 subclasses are gone; substrate Messages_Stream_Controller owns the SSE wire-format helpers via SSE_Helpers_Trait.'
+		);
+	}
+
+	public function test_legacy_partition_reader_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Partition_Reader' ),
+			'Partition_Reader deleted in M6.10 — substrate Consumer is the replacement primitive for log-feed tailing.'
+		);
+	}
+
+	public function test_legacy_inflight_tracker_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\InflightTracker' ),
+			'InflightTracker deleted in M6.8 — gyroscope.log carries both inflight + completion record shapes pre-aggregated upstream by RequestFlight + completed:tee; Inflight.js dispatches client-side.'
 		);
 	}
 

@@ -562,17 +562,22 @@ class RemoteSource extends Node {
 
 		$decoded = \json_decode( $raw_data, true, 16 );
 
-		// M6.7 — unified `/messages/stream` wire format: every line is a
-		// `msg` event carrying a 7-field Message envelope. Branch off here
-		// and return early; the legacy `entry`/`heartbeat`/`connected`
-		// branches below stay alive only for the not-yet-deleted
-		// FirehoseStreamController's tests until M6.9b lands.
+		// Unified `/messages/stream` wire format (production path): every line
+		// is a `msg` event carrying a 7-field Message envelope. Early return so
+		// the legacy `entry`/`heartbeat`/`connected` branches below don't also
+		// fire.
 		if ( 'msg' === $type && \is_array( $decoded ) && \count( $decoded ) === 7 ) {
 			return $this->dispatch_msg_envelope( $decoded );
 		}
 
+		// Legacy SSE wire format (dead in production after M6.7 but kept for
+		// the existing 33 unit tests in RemoteSourceTest + StreamMergerTest
+		// that drive the parser via `event: entry` / `event: heartbeat` /
+		// `event: connected`). The legacy SSE controllers that emitted these
+		// shapes are deleted; nothing in production reaches this code. Safe
+		// to delete the branches once the tests are migrated to the
+		// `make_msg_wire` shape.
 		if ( 'entry' === $type && null === $decoded ) {
-			// Drop malformed entries silently.
 			return true;
 		}
 
