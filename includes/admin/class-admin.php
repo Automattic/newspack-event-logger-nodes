@@ -788,12 +788,36 @@ class Admin {
 	// -- Field callbacks ----------------------------------------------------
 
 	public function enable_logging_callback(): void {
-		$enabled = \get_option( 'newspack_event_logger_nodes_enable_logging', 1 );
+		$enabled = $this->bool_option_with_file_default( 'enable_logging', 1 );
 		?>
 		<input type="hidden" name="newspack_event_logger_nodes_enable_logging" value="0" />
 		<input type="checkbox" id="enable_logging" name="newspack_event_logger_nodes_enable_logging" value="1" <?php \checked( 1, $enabled ); ?> />
 		<label for="enable_logging"><?php \esc_html_e( 'Enable event logging', 'newspack-event-logger-nodes' ); ?></label>
 		<?php
+	}
+
+	/**
+	 * Resolve a boolean toggle's display value, preferring the WP options row
+	 * but falling back to the file-config default (not `get_option`'s hard-coded
+	 * fallback) when the row is missing. Required because `skip_default_writes`
+	 * deletes the WP option whenever the user saves a value that matches the
+	 * file default — without this fallback, every box that mirrors a file
+	 * default would render unchecked despite the file saying otherwise.
+	 *
+	 * @param string $short_key    Option key without the `newspack_event_logger_nodes_` prefix.
+	 * @param int    $hard_default 0 or 1 — used only if both the WP option AND the file
+	 *                              default are absent (e.g., on a brand-new install
+	 *                              with no config-file override for this key).
+	 */
+	private function bool_option_with_file_default( string $short_key, int $hard_default = 0 ): int {
+		$defaults     = Config::load_config_defaults();
+		$file_default = \array_key_exists( $short_key, $defaults )
+			? (int) (bool) $defaults[ $short_key ]
+			: $hard_default;
+		return (int) \get_option(
+			"newspack_event_logger_nodes_{$short_key}",
+			$file_default
+		);
 	}
 
 	// ---- Aggregator field callbacks --------------------------------------
@@ -803,7 +827,7 @@ class Admin {
 	}
 
 	public function enable_aggregator_callback(): void {
-		$enabled = (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 0 );
+		$enabled = $this->bool_option_with_file_default( 'enable_aggregator' );
 		?>
 		<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
 		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
@@ -1084,7 +1108,7 @@ class Admin {
 	// ---- Debugging field callbacks ---------------------------------------
 
 	public function log_memory_callback(): void {
-		$enabled = \get_option( 'newspack_event_logger_nodes_log_memory', 0 );
+		$enabled = $this->bool_option_with_file_default( 'log_memory' );
 		?>
 		<input type="hidden" name="newspack_event_logger_nodes_log_memory" value="0" />
 		<label>
@@ -1095,7 +1119,7 @@ class Admin {
 	}
 
 	public function flush_every_line_callback(): void {
-		$enabled = \get_option( 'newspack_event_logger_nodes_flush_every_line', 0 );
+		$enabled = $this->bool_option_with_file_default( 'flush_every_line' );
 		?>
 		<input type="hidden" name="newspack_event_logger_nodes_flush_every_line" value="0" />
 		<label>

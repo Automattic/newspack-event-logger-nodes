@@ -33,6 +33,27 @@ class RemoteManagerTest extends TestCase {
 		// keeps the singleton fresh.
 	}
 
+	/**
+	 * Wrap a discovery payload (registered_hooks / custom_events / lag) in
+	 * the Message envelope a real spoke's `discovery.get` verb would emit.
+	 * Used by every test that mocks a spoke's response now that the probe
+	 * goes through `/command` instead of the legacy `/discovery` route.
+	 */
+	private static function wrap_discovery_response( array $payload ): string {
+		return (string) \json_encode( [
+			\Newspack_Nodes\Message::TM_COMMAND,
+			0.0,
+			'discovery',
+			'_http',
+			'',
+			'',
+			(string) \json_encode( [
+				'name'    => 'get',
+				'payload' => (string) \json_encode( $payload ),
+			] ),
+		] );
+	}
+
 	public function test_constants(): void {
 		$this->assertSame( 100, RemoteManager::MAX_SERVERS );
 		$this->assertSame( 50, RemoteManager::MAX_SETTINGS );
@@ -477,9 +498,9 @@ class RemoteManagerTest extends TestCase {
 			'lag'              => 12345,
 		];
 		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://spoke-a.test/wp-json/newspack-nodes/v1/discovery' => [
+			'https://spoke-a.test/wp-json/newspack-nodes/v1/command' => [
 				'response' => [ 'code' => 200 ],
-				'body'     => \json_encode( $discovery_payload ),
+				'body'     => self::wrap_discovery_response( $discovery_payload ),
 			],
 		];
 
@@ -539,7 +560,7 @@ class RemoteManagerTest extends TestCase {
 		] );
 
 		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://spoke-err.test/wp-json/newspack-nodes/v1/discovery' => [
+			'https://spoke-err.test/wp-json/newspack-nodes/v1/command' => [
 				'response' => [ 'code' => 500 ],
 				'body'     => '',
 			],
@@ -568,7 +589,7 @@ class RemoteManagerTest extends TestCase {
 		] );
 
 		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://spoke-junk.test/wp-json/newspack-nodes/v1/discovery' => [
+			'https://spoke-junk.test/wp-json/newspack-nodes/v1/command' => [
 				'response' => [ 'code' => 200 ],
 				'body'     => 'not json at all',
 			],
@@ -1474,9 +1495,9 @@ class RemoteManagerTest extends TestCase {
 		// Mock discovery to 200 OK for all.
 		$GLOBALS['_wp_test_remote_responses'] = [];
 		for ( $i = 0; $i < 105; $i++ ) {
-			$GLOBALS['_wp_test_remote_responses'][ "https://hsite{$i}.test/wp-json/newspack-nodes/v1/discovery" ] = [
+			$GLOBALS['_wp_test_remote_responses'][ "https://hsite{$i}.test/wp-json/newspack-nodes/v1/command" ] = [
 				'response' => [ 'code' => 200 ],
-				'body'     => \json_encode( [ 'lag' => 0 ] ),
+				'body'     => self::wrap_discovery_response( [ 'lag' => 0 ] ),
 			];
 		}
 
@@ -1496,6 +1517,77 @@ class RemoteManagerTest extends TestCase {
 			\count( (array) $received ),
 			'health_check must respect MAX_SERVERS cap'
 		);
+	}
+
+	public function test_check_server_dispatches_via_command_endpoint_not_legacy_discovery(): void {
+		// Regression: M5 deleted the legacy GET /discovery REST route in favor
+		// of POST /command with `{to: 'discovery', verb: 'get'}`. Health-check
+		// sweeps were still hitting the dead URL and getting 404s on every
+		// tick. The discovery payload now arrives wrapped in a Message
+		// envelope's VALUE; check_server must unwrap and validate the same
+		// keys it always did.
+		$reg = new ServerRegistry();
+		$reg->register( 'cmd-spoke', [
+			'url'           => 'https://cmd-spoke.test',
+			'auth_username' => 'u',
+			'auth_password' => 'p',
+		] );
+
+		$verb_response = (string) \json_encode( [
+			'registered_hooks' => [ 'init', 'shutdown' ],
+			'custom_events'    => [ 'custom_thing' ],
+		] );
+		$envelope_value = (string) \json_encode( [
+			'name'    => 'get',
+			'payload' => $verb_response,
+		] );
+		// 7-field Message tuple: [TYPE, TIMESTAMP, FROM, TO, ID, KEY, VALUE].
+		$response_body = (string) \json_encode( [
+			\Newspack_Nodes\Message::TM_COMMAND,
+			0.0,
+			'discovery',
+			'_http',
+			'',
+			'',
+			$envelope_value,
+		] );
+
+		$GLOBALS['_wp_test_remote_responses'] = [
+			'https://cmd-spoke.test/wp-json/newspack-nodes/v1/command' => [
+				'response' => [ 'code' => 200 ],
+				'body'     => $response_body,
+			],
+		];
+
+		$received = null;
+		\add_action(
+			'newspack_event_logger_nodes/health_check_discovery',
+			static function ( $data ) use ( &$received ) {
+				$received = $data;
+			}
+		);
+
+		RemoteManager::health_check();
+
+		// Should have dispatched a POST to /command, NOT a GET to /discovery.
+		$post_urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
+		$get_urls  = \array_column( $GLOBALS['_wp_test_remote_gets'] ?? [], 'url' );
+		$this->assertContains(
+			'https://cmd-spoke.test/wp-json/newspack-nodes/v1/command',
+			$post_urls,
+			'check_server must POST to /command'
+		);
+		$this->assertNotContains(
+			'https://cmd-spoke.test/wp-json/newspack-nodes/v1/discovery',
+			$get_urls,
+			'check_server must not GET the deleted /discovery route'
+		);
+
+		// The discovery payload must surface intact through the action.
+		$this->assertIsArray( $received );
+		$this->assertArrayHasKey( 'cmd-spoke', $received );
+		$this->assertSame( [ 'init', 'shutdown' ], $received['cmd-spoke']['registered_hooks'] );
+		$this->assertSame( [ 'custom_thing' ], $received['cmd-spoke']['custom_events'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -1520,9 +1612,9 @@ class RemoteManagerTest extends TestCase {
 		}
 
 		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://fat-spoke.test/wp-json/newspack-nodes/v1/discovery' => [
+			'https://fat-spoke.test/wp-json/newspack-nodes/v1/command' => [
 				'response' => [ 'code' => 200 ],
-				'body'     => \json_encode( [
+				'body'     => self::wrap_discovery_response( [
 					'registered_hooks' => $hooks,
 					'custom_events'    => $events,
 					'lag'              => 7,
@@ -1958,9 +2050,9 @@ class RemoteManagerTest extends TestCase {
 		] );
 
 		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://lag-only.test/wp-json/newspack-nodes/v1/discovery' => [
+			'https://lag-only.test/wp-json/newspack-nodes/v1/command' => [
 				'response' => [ 'code' => 200 ],
-				'body'     => \json_encode( [ 'lag' => 999 ] ),
+				'body'     => self::wrap_discovery_response( [ 'lag' => 999 ] ),
 			],
 		];
 
@@ -2252,9 +2344,9 @@ class RemoteManagerTest extends TestCase {
 		$ref->setValue( null, null );
 
 		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://valid.test/wp-json/newspack-nodes/v1/discovery' => [
+			'https://valid.test/wp-json/newspack-nodes/v1/command' => [
 				'response' => [ 'code' => 200 ],
-				'body'     => \json_encode( [ 'lag' => 0 ] ),
+				'body'     => self::wrap_discovery_response( [ 'lag' => 0 ] ),
 			],
 		];
 

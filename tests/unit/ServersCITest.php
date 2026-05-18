@@ -289,6 +289,28 @@ class ServersCITest extends TestCase {
 	// test verb
 	// ---------------------------------------------------------------------
 
+	/**
+	 * Wrap a verb-response payload (associative array) in the same Message
+	 * envelope a real CommandInterpreter would produce on a TM_COMMAND
+	 * dispatch — used by the test_test_verb_* tests so the closure seam can
+	 * return realistic spoke responses now that probe_remote() goes through
+	 * `/command` instead of the legacy `/discovery` route.
+	 */
+	private static function wrap_discovery_response( array $payload ): string {
+		return (string) \json_encode( [
+			\Newspack_Nodes\Message::TM_COMMAND,
+			0.0,
+			'discovery',
+			'_http',
+			'',
+			'',
+			(string) \json_encode( [
+				'name'    => 'get',
+				'payload' => (string) \json_encode( $payload ),
+			] ),
+		] );
+	}
+
 	public function test_test_verb_returns_connected_on_200_discovery_response(): void {
 		$registry = new ServerRegistry();
 		$registry->add( 'site-a', [
@@ -297,13 +319,14 @@ class ServersCITest extends TestCase {
 			'auth_password' => 'pw',
 		] );
 
-		// Closure seam: capture outbound args + return a 200 discovery body.
+		// Closure seam: capture outbound args + return a 200 discovery body
+		// wrapped in the same command envelope a real spoke would emit.
 		$captured = null;
 		Servers_CI::$http_call = static function ( string $url, array $args ) use ( &$captured ): array {
 			$captured = [ 'url' => $url, 'args' => $args ];
 			return [
 				'response' => [ 'code' => 200 ],
-				'body'     => \json_encode( [
+				'body'     => self::wrap_discovery_response( [
 					'registered_hooks' => [ 'init', 'wp_loaded' ],
 					'custom_events'    => [ 'my_event' ],
 					'lag'              => 42,
@@ -321,8 +344,9 @@ class ServersCITest extends TestCase {
 		$this->assertSame( [ 'my_event' ], $result['response']['custom_events'] );
 		$this->assertSame( 42, $result['response']['lag'] );
 
-		// URL composition: stored URL + /wp-json/newspack-nodes/v1/discovery.
-		$this->assertSame( 'https://a.example.com/wp-json/newspack-nodes/v1/discovery', $captured['url'] );
+		// URL composition: stored URL + /wp-json/newspack-nodes/v1/command
+		// (legacy /discovery was deleted in M5).
+		$this->assertSame( 'https://a.example.com/wp-json/newspack-nodes/v1/command', $captured['url'] );
 		// Basic-Auth header populated when credentials are present.
 		$this->assertArrayHasKey( 'headers', $captured['args'] );
 		$this->assertStringStartsWith( 'Basic ', $captured['args']['headers']['Authorization'] );
