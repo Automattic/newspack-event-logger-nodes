@@ -288,14 +288,30 @@ class RemoteSource extends Node {
 
 		$this->ensure_multi();
 
-		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/firehose/stream';
+		// M6.7 — consume the substrate's unified SSE endpoint. The subscription
+		// shape `firehose.pN` flows through Messages_Stream_Controller's
+		// subscription_partition() helper and lands in Sse_Slot_Pool's
+		// per-partition aggregator pool (60s TTL) — same effective behavior as
+		// the legacy `aggregator=true` flag carried.
+		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/messages/stream';
 		$params   = [
-			'partition'  => $this->partition,
-			'aggregator' => 1,
+			'subscribe' => "firehose.p{$this->partition}",
 		];
 		if ( $this->position['segment_id'] > 0 || $this->position['offset'] > 0 ) {
-			$params['segment_id'] = $this->position['segment_id'];
-			$params['offset']     = $this->position['offset'];
+			// Substrate's parse_positions expects a JSON-encoded object keyed
+			// by subscription name → partition index → `{seg, off}`. The same
+			// shape the dashboards use; only one entry here because RemoteSource
+			// runs one connection per partition.
+			$params['positions'] = (string) \wp_json_encode(
+				[
+					'firehose' => [
+						$this->partition => [
+							'seg' => $this->position['segment_id'],
+							'off' => $this->position['offset'],
+						],
+					],
+				]
+			);
 		}
 		$endpoint .= ( false === \strpos( $endpoint, '?' ) ? '?' : '&' ) . \http_build_query( $params );
 
@@ -546,6 +562,15 @@ class RemoteSource extends Node {
 
 		$decoded = \json_decode( $raw_data, true, 16 );
 
+		// M6.7 — unified `/messages/stream` wire format: every line is a
+		// `msg` event carrying a 7-field Message envelope. Branch off here
+		// and return early; the legacy `entry`/`heartbeat`/`connected`
+		// branches below stay alive only for the not-yet-deleted
+		// FirehoseStreamController's tests until M6.9b lands.
+		if ( 'msg' === $type && \is_array( $decoded ) && \count( $decoded ) === 7 ) {
+			return $this->dispatch_msg_envelope( $decoded );
+		}
+
 		if ( 'entry' === $type && null === $decoded ) {
 			// Drop malformed entries silently.
 			return true;
@@ -576,6 +601,67 @@ class RemoteSource extends Node {
 			$this->forward_entry( $decoded );
 		}
 
+		return true;
+	}
+
+	/**
+	 * Dispatch a parsed `msg`-event Message envelope (7-field array). M6.7
+	 * entry point for the unified `/messages/stream` wire format.
+	 *
+	 * Handles three envelope shapes:
+	 *   * `connected` (KEY = 'connected', VALUE = `{pid, slot, ...}`) —
+	 *     capture slot, mark connected, do NOT forward to sink.
+	 *   * Firehose entry (KEY = rid, VALUE = `{k, ts, ...}`) — back-fill
+	 *     rid from KEY when entry doesn't carry it, then forward.
+	 *   * Anything else — drop silently.
+	 *
+	 * Per-envelope position from `ID = "seg:off"` (Consumer stamps at emit
+	 * time). Substrate guarantees this on every line of a log subscription.
+	 *
+	 * @param array<int,mixed> $envelope 7-field Message array.
+	 */
+	private function dispatch_msg_envelope( array $envelope ): bool {
+		$id    = (string) $envelope[ Message::ID ];
+		$key   = (string) $envelope[ Message::KEY ];
+		$value = $envelope[ Message::VALUE ];
+
+		// Position from envelope ID — `{segment_id}:{offset}` shape. Empty ID
+		// (e.g. the connected envelope, which fires BEFORE Consumer stamps
+		// anything) is a no-op.
+		if ( '' !== $id ) {
+			$colon = \strpos( $id, ':' );
+			if ( false !== $colon ) {
+				$seg = (int) \substr( $id, 0, $colon );
+				$off = (int) \substr( $id, $colon + 1 );
+				if ( $seg >= 0 && $off >= 0 ) {
+					$this->position = [ 'segment_id' => $seg, 'offset' => $off ];
+				}
+			}
+		}
+
+		// `connected` envelope — substrate's first emission per stream. Mirrors
+		// the legacy `connected`-event handler (slot capture + heartbeat-status
+		// recording) but does NOT forward to the sink.
+		if ( 'connected' === $key && \is_array( $value ) && isset( $value['slot'] ) ) {
+			$this->slot = (int) $value['slot'];
+			$this->record_successful_heartbeat();
+			$this->last_heartbeat = (int) Core::$now;
+			$this->update_connection_status( 'connected', $this->last_http_code, '' );
+			return true;
+		}
+
+		// Anything else with an entry-shaped VALUE → forward. The legacy
+		// transform_line shape (`{k, ts, ...}`) is what RequestBuilder writes
+		// at storage time, so envelope[VALUE] IS the entry dict.
+		if ( \is_array( $value ) && isset( $value['k'] ) ) {
+			// Back-fill rid from KEY when the entry doesn't carry it. Matches
+			// the producer convention RequestBuilder uses (KEY=rid for the
+			// completed:tee fan-out into firehose.log).
+			if ( ! isset( $value['rid'] ) && '' !== $key ) {
+				$value['rid'] = $key;
+			}
+			$this->forward_entry( $value );
+		}
 		return true;
 	}
 
