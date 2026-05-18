@@ -946,6 +946,46 @@ class LogManagerTest extends TestCase {
 		unset( $_SERVER['HTTP_REFERER'], $_SERVER['DB_PASSWORD'], $_SERVER['SOME_API_KEY'], $_SERVER['CUSTOM_NICE_VAR'] );
 	}
 
+	public function test_log_process_uses_mu_profiler_request_ts_for_process_start(): void {
+		// With 00-newspack-profiler.php installed, $newspack_profiler carries
+		// `request_ts` — a wall-clock microtime captured at mu-plugin load,
+		// before any regular plugin runs. LogManager must stamp the firehose
+		// `process (start)` entry with that ts (not the LogManager-emit-time
+		// microtime, which lands deep in WP bootstrap) so RequestBuilder's
+		// inflight_snapshot.start_time reflects the real PHP-request start.
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		LogManager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$early_ts                            = 1700000000.5;
+		$GLOBALS['newspack_profiler']        = [
+			'request_time' => \hrtime( true ),
+			'request_ts'   => $early_ts,
+			'plugins'      => [],
+		];
+
+		$lm = LogManager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries       = $this->read_firehose_entries();
+		$process_start = null;
+		foreach ( $entries as $entry ) {
+			if ( 'process (start)' === ( $entry['k'] ?? '' ) ) {
+				$process_start = $entry;
+				break;
+			}
+		}
+
+		unset( $GLOBALS['newspack_profiler'] );
+
+		$this->assertNotNull( $process_start, 'expected a process (start) firehose entry' );
+		$this->assertSame( $early_ts, $process_start['ts'] );
+	}
+
 	public function test_log_process_records_method_and_full_url(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );

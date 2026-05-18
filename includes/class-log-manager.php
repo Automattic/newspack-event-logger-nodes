@@ -33,6 +33,7 @@ class LogManager {
 	private $line_number     = 1;
 	private $times           = [];
 	private $request_time    = null;
+	private $request_ts      = null;
 	private $request_id      = '';
 	private $request_url     = '';
 	private static ?self $instance = null;
@@ -163,7 +164,8 @@ class LogManager {
 		global $newspack_profiler;
 		if ( null !== $newspack_profiler ) {
 			$this->request_time = $newspack_profiler['request_time'] ?? null;
-			unset( $newspack_profiler['request_time'] );
+			$this->request_ts   = $newspack_profiler['request_ts']   ?? null;
+			unset( $newspack_profiler['request_time'], $newspack_profiler['request_ts'] );
 		}
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
@@ -330,6 +332,15 @@ class LogManager {
 		$worker_type = \sanitize_text_field( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' );
 		if ( '' !== $worker_type ) {
 			$process_data['worker_type'] = $worker_type;
+		}
+
+		// Stamp the firehose entry with the mu-profiler's wall-clock ts when
+		// available — that's the real request-start, captured before any
+		// plugin runs. Without it, the entry ts defaults to microtime(true)
+		// at emit time (deep inside WP bootstrap), which inflates
+		// RequestBuilder's "in flight since" by hundreds of ms.
+		if ( null !== $this->request_ts ) {
+			$process_data['ts'] = $this->request_ts;
 		}
 
 		$this->message( 'process (start)', $process_data );
