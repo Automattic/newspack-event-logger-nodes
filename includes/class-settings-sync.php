@@ -63,22 +63,25 @@ class SettingsSync {
 	];
 
 	/**
-	 * REST endpoint for syncing the four core substrate options
-	 * (`newspack_nodes_num_partitions` etc.) handled by SettingsController.
-	 * Validated against ALLOWED_ENDPOINT_PREFIXES on every dispatch
-	 * (including filter-supplied endpoints) so plugins can't smuggle a
-	 * non-newspack-nodes target through the synced-settings filter.
+	 * Category tag for syncing the four core substrate options
+	 * (`newspack_nodes_num_partitions` etc.). M5.2: RemoteManager maps this
+	 * tag to the `settings.update` verb and POSTs the TM_COMMAND envelope
+	 * to `/wp-json/newspack-nodes/v1/command`. The string remains valid as
+	 * an allowed-prefix path so existing filter-supplied entries
+	 * continue to match `is_allowed_endpoint`.
 	 *
 	 * @var string
 	 */
 	public const ENDPOINT = '/wp-json/newspack-nodes/v1/settings';
 
 	/**
-	 * REST endpoint for syncing the nine performance-tuning options
-	 * (`log_events`, `significant_events`, `auto_*_threshold`, ...) handled
-	 * by PerfSettingsController. Distinct from ENDPOINT because the two
-	 * controllers have different ALLOWED_OPTIONS whitelists — POSTing a
-	 * perf-tuning key to /settings (or vice versa) returns HTTP 400.
+	 * Category tag for syncing the nine performance-tuning options
+	 * (`log_events`, `significant_events`, `auto_*_threshold`, ...). M5.2:
+	 * RemoteManager maps this tag to the `performance.settings_update` verb
+	 * and POSTs the TM_COMMAND envelope to
+	 * `/wp-json/newspack-nodes/v1/command`. Distinct from ENDPOINT because
+	 * the two verbs have different allowed-keys whitelists; using the wrong
+	 * tag still misroutes to the wrong verb on the spoke.
 	 *
 	 * @var string
 	 */
