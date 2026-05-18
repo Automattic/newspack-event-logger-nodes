@@ -521,8 +521,14 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 		// in the Event Logger Settings → Remote Servers section. Default
 		// OFF — fresh installs aren't hubs. When unchecked, the dashboard
 		// would just show "No spokes configured" so hiding the menu entry
-		// is the right UX.
-		if ( (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 0 ) ) {
+		// is the right UX. Resolve via Config::load_config() (file + WP
+		// option merged) so docker-admin's `enable_aggregator => true` in
+		// the deployed config-file overrides the absent WP option row
+		// (skip_default_writes deletes the row whenever the user-saved
+		// value matches the file default, so missing-option IS the steady
+		// state on every aggregator-by-default site).
+		$cfg = \Newspack_Event_Logger_Nodes\Config::load_config();
+		if ( ! empty( $cfg['enable_aggregator'] ) ) {
 			$dashboards['newspack-nodes-aggregator'] = [ 'Aggregator', 'Aggregator', '<div id="event-aggregator-status"></div>' ];
 		}
 		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {

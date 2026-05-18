@@ -551,6 +551,16 @@ class ServerRegistry {
 	 * @return string Decrypted plaintext, original value if not encrypted, or empty on decrypt failure.
 	 */
 	private static function decrypt( string $stored ): string {
+		// Plaintext path: anything that doesn't carry the ENCRYPTED_PREFIX
+		// (e.g. a config-file Application Password the operator typed in
+		// directly) flows through unchanged. Mirrors the docstring's
+		// "original value if not encrypted" contract — without this guard
+		// the prefix-strip + base64_decode below silently nukes any plaintext
+		// password that contains non-base64 characters (such as the spaces
+		// WordPress Application Passwords come formatted with).
+		if ( 0 !== \strpos( $stored, self::ENCRYPTED_PREFIX ) ) {
+			return $stored;
+		}
 		if ( ! \function_exists( 'sodium_crypto_secretbox_open' ) ) {
 			return '';
 		}
