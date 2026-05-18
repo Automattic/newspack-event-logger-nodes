@@ -1,21 +1,24 @@
-/**
- * Jest config — extends the wp-scripts default and mirrors the webpack alias
- * so unit tests can `import { CommandClient } from '@newspack-nodes/runtime'`
- * the same way dashboard bundles do.
- */
+// Jest config — standalone (no @wordpress/scripts dependency).
+//
+// Transforms JS/JSX via babel-jest (see babel.config.js), uses jsdom for
+// tests that touch document/window/renderHook, and mirrors the build's
+// `@newspack-nodes/runtime` alias (cross-plugin to the sibling
+// newspack-nodes checkout) so `import { CommandClient } from
+// '@newspack-nodes/runtime'` resolves identically in tests and bundles.
 
 const path = require( 'path' );
-const wpJestConfig = require( '@wordpress/scripts/config/jest-unit.config' );
-
-const SUBSTRATE_RUNTIME = path.resolve(
-	__dirname,
-	'../newspack-nodes/src/runtime'
-);
 
 module.exports = {
-	...wpJestConfig,
+	testEnvironment: 'jsdom',
+	testMatch: [ '**/__tests__/**/*.test.[jt]s?(x)' ],
 	moduleNameMapper: {
-		...( wpJestConfig.moduleNameMapper || {} ),
-		'^@newspack-nodes/runtime$': SUBSTRATE_RUNTIME,
+		'^@newspack-nodes/runtime$': path.resolve(
+			__dirname,
+			'../newspack-nodes/src/runtime'
+		),
+		'\\.(css|scss)$': '<rootDir>/jest.style-mock.js',
+	},
+	transform: {
+		'\\.[jt]sx?$': 'babel-jest',
 	},
 };
