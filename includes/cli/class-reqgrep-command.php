@@ -45,6 +45,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LruCache;
+use Newspack_Nodes\Consumer;
 use Newspack_Nodes\Partition;
 
 class ReqgrepCommand {
@@ -457,10 +458,12 @@ class ReqgrepCommand {
 		if ( $length <= 0 ) {
 			return 0;
 		}
-		// read_at caps at MAX_READ_SIZE (10MB) internally; chunk if length exceeds.
+		// Chunk large ranges to keep memory peak bounded — `read_at` itself
+		// is uncapped, but a single fread of an entire multi-GB segment
+		// would balloon the CLI process.
 		$consumed = 0;
 		$pending  = '';
-		$max      = Partition::MAX_READ_SIZE;
+		$max      = Consumer::MAX_POLL_BYTES;
 		while ( $consumed < $length ) {
 			$want  = \min( $max, $length - $consumed );
 			$bytes = $partition->read_at( $seg, $offset + $consumed, $want );
