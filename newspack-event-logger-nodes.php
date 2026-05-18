@@ -116,6 +116,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// spokes, so the hook stays registered at boot.
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
 
+	// Install slot-pool closures on the substrate's `Messages_Stream_Controller`
+	// seams. Once dashboards migrate onto the unified SSE endpoint (M6.3+),
+	// connections inherit the same Memcached_Cache-backed concurrency cap
+	// the legacy per-feed controllers used. Wiring is a 3-Closure assign;
+	// no autoload pressure beyond `class-sse-slot-pool.php` itself.
+	\Newspack_Event_Logger_Nodes\Sse_Slot_Pool::wire();
+
 	// Hook instrumentation — the whole reason this plugin exists. Runs
 	// on every request that gets logged.
 	new \Newspack_Event_Logger_Nodes\App\Core();
