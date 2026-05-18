@@ -17,6 +17,25 @@ class RawlogsController extends SSEControllerBase {
 
 	public const NAMESPACE = 'newspack-nodes/v1';
 
+	/**
+	 * Log catalog mirrored from the (deleted) FirehoseController. The non-SSE
+	 * `/firehose/logs` + `/firehose/status` endpoints moved to
+	 * Performance_CI.firehose_logs + .firehose_status (which keeps its own
+	 * private const for the same purpose); this SSE controller keeps the
+	 * catalog inline so the `log` param can be validated without depending on
+	 * a sibling controller.
+	 *
+	 * @var array<string,string> log key (no `.log`) → filename (with `.log`)
+	 */
+	private const AVAILABLE_LOGS = [
+		'firehose'  => 'firehose.log',
+		'jobs'      => 'jobs.log',
+		'jobintake' => 'jobintake.log',
+		'requests'  => 'requests.log',
+		'errors'    => 'errors.log',
+		'flames'    => 'flames.log',
+	];
+
 	public function register_routes(): void {
 		\register_rest_route(
 			self::NAMESPACE,
@@ -47,12 +66,13 @@ class RawlogsController extends SSEControllerBase {
 	}
 
 	public function sanitize_log_param( mixed $v ): string {
-		$allowed = FirehoseController::get_available_logs();
-		if ( empty( $v ) || empty( $allowed ) ) {
-			return FirehoseController::get_default_log();
+		$default_key = (string) \array_key_first( self::AVAILABLE_LOGS );
+		$default     = self::AVAILABLE_LOGS[ $default_key ] ?? '';
+		if ( empty( $v ) ) {
+			return $default;
 		}
 		$key = \str_replace( '.log', '', (string) $v );
-		return $allowed[ $key ] ?? FirehoseController::get_default_log();
+		return self::AVAILABLE_LOGS[ $key ] ?? $default;
 	}
 
 	/**

@@ -3,7 +3,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Rest;
 
 require_once \dirname( __DIR__, 3 ) . '/includes/class-partition-reader.php';
 require_once \dirname( __DIR__, 3 ) . '/includes/rest/class-sse-controller-base.php';
-require_once \dirname( __DIR__, 3 ) . '/includes/rest/class-firehose-controller.php';
 require_once \dirname( __DIR__, 3 ) . '/includes/rest/class-rawlogs-controller.php';
 
 use Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase;
