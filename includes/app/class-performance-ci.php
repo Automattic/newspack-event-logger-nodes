@@ -170,7 +170,7 @@ class Performance_CI extends Service_CI {
 	 */
 	private function verb_table( ?Cache_Interface $cache ): array {
 		return [
-			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
 				self::require_manage_options();
 
 				// Optional args mirror the legacy PerfOverviewController query
@@ -179,7 +179,7 @@ class Performance_CI extends Service_CI {
 				// (single-dim → flat `breakdown_time_series`; multi-dim →
 				// nested `breakdowns: {dim => series}`); `categories=true`
 				// adds `category_time_series` (global or per-server).
-				$decoded    = self::decode_args( $args );
+				$decoded    = \is_array( $payload ) ? $payload : [];
 				$server     = (string) ( $decoded['server'] ?? '' );
 				$breakdown  = (string) ( $decoded['breakdown'] ?? '' );
 				$categories = ! empty( $decoded['categories'] );
@@ -214,10 +214,10 @@ class Performance_CI extends Service_CI {
 
 				return (string) \wp_json_encode( $payload );
 			},
-			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
 				self::require_manage_options();
 
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$sort    = (string) ( $decoded['sort']   ?? 'count' );
 				$order   = (string) ( $decoded['order']  ?? 'desc' );
 				$limit   = \min( 1000, \max( 1, (int) ( $decoded['limit']  ?? 50 ) ) );
@@ -265,10 +265,10 @@ class Performance_CI extends Service_CI {
 					'offset' => $offset,
 				] );
 			},
-			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
 				self::require_manage_options();
 
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$hash    = (string) ( $decoded['hash'] ?? '' );
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
@@ -326,10 +326,10 @@ class Performance_CI extends Service_CI {
 
 				return (string) \wp_json_encode( $payload );
 			},
-			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$rid     = (string) ( $decoded['rid'] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
@@ -353,10 +353,10 @@ class Performance_CI extends Service_CI {
 
 				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 			},
-			'request_detail' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'request_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$rid     = (string) ( $decoded['rid'] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
@@ -378,7 +378,7 @@ class Performance_CI extends Service_CI {
 				}
 				return (string) \wp_json_encode( $result );
 			},
-			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_timing — merged
@@ -389,7 +389,7 @@ class Performance_CI extends Service_CI {
 					'time_series' => self::merge_hourly_across_partitions( $cache ),
 				] );
 			},
-			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_dashboard:
@@ -402,7 +402,7 @@ class Performance_CI extends Service_CI {
 					'urls'     => $index,
 				] );
 			},
-			'hooks_registered' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'hooks_registered' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_registered_hooks.
@@ -420,7 +420,7 @@ class Performance_CI extends Service_CI {
 					'hooks_by_category' => $by_category,
 				] );
 			},
-			'hooks_categories' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'hooks_categories' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_hook_categories
@@ -430,7 +430,7 @@ class Performance_CI extends Service_CI {
 					'config'     => HookCategorizer::get_merged_config(),
 				] );
 			},
-			'hooks_available' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'hooks_available' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
@@ -443,10 +443,10 @@ class Performance_CI extends Service_CI {
 					'hooks' => self::collect_available_hooks(),
 				] );
 			},
-			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
-				$decoded       = self::decode_args( $args );
+				$decoded       = \is_array( $payload ) ? $payload : [];
 				$hooks         = $decoded['hooks']         ?? null;
 				$custom_events = $decoded['custom_events'] ?? null;
 				$configured    = 0;
@@ -483,7 +483,7 @@ class Performance_CI extends Service_CI {
 					'hooks_configured' => $configured,
 				] );
 			},
-			'config_get'     => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'config_get'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::get_config, with one
@@ -508,14 +508,14 @@ class Performance_CI extends Service_CI {
 					],
 				] );
 			},
-			'config_update'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'config_update'  => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::update_config — the
 				// bulk write path for the nine perf-tuning options. Keys absent
 				// from the request body are untouched (partial update). Unknown
 				// keys are silently ignored to match the legacy whitelist sweep.
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$updated = [];
 				foreach ( self::CONFIG_MAP as $param => $cfg ) {
 					// Skip missing keys AND explicit-null values (legacy parity:
@@ -539,14 +539,14 @@ class Performance_CI extends Service_CI {
 					'updated' => $updated,
 				] );
 			},
-			'settings_update' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'settings_update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfSettingsController::update_setting —
 				// single-option write path with the suppress_sync guard so a
 				// remotely-synced setting applied on a spoke doesn't bounce
 				// back as a re-sync (mirrors the inbound REST polarity).
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$option  = (string) ( $decoded['option'] ?? '' );
 				if ( '' === $option ) {
 					throw new \RuntimeException( 'option required' );
@@ -581,7 +581,7 @@ class Performance_CI extends Service_CI {
 					'updated' => (bool) $ok,
 				] );
 			},
-			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy GyroscopeController::get_timeline.
@@ -591,7 +591,7 @@ class Performance_CI extends Service_CI {
 				// fan out across partitions, return `events[]` from the
 				// matched envelope (or wrap the whole body as a single
 				// event when no `events` key is present).
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$rid     = (string) ( $decoded['request_id'] ?? '' );
 				if ( '' === $rid ) {
 					return (string) \wp_json_encode( [
@@ -610,13 +610,13 @@ class Performance_CI extends Service_CI {
 					'meta' => [ 'scanned' => $scanned ],
 				] );
 			},
-			'request_log_list'   => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'request_log_list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_list.
 				// Limit clamped 1..1000 (default 100); fan out across
 				// partitions; sort by timestamp DESC; slice to limit.
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$limit   = isset( $decoded['limit'] )
 					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $decoded['limit'] ) )
 					: self::REQUEST_LIST_DEFAULT_LIMIT;
@@ -634,7 +634,7 @@ class Performance_CI extends Service_CI {
 					],
 				] );
 			},
-			'request_log_detail' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'request_log_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_detail.
@@ -643,7 +643,7 @@ class Performance_CI extends Service_CI {
 				// id returns the legacy stub-compatible empty-entries shape
 				// (NOT 404 — the React tree polls these and `expected to
 				// exist soon` is a normal state).
-				$decoded = self::decode_args( $args );
+				$decoded = \is_array( $payload ) ? $payload : [];
 				$rid     = (string) ( $decoded['id'] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'id required' );

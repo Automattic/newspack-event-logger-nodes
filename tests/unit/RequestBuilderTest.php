@@ -555,7 +555,7 @@ class RequestBuilderTest extends TestCase {
 		$rb = new RequestBuilder();
 		$rb->name( 'req_builder' );
 
-		$result = $rb->interpreter()->execute( 'set_errors_target errors:partition' );
+		$result = $rb->interpreter()->dispatch( 'set_errors_target', 'errors:partition' );
 		$this->assertSame( 'ok', $result );
 
 		$dump = $rb->dump_config();
@@ -567,9 +567,9 @@ class RequestBuilderTest extends TestCase {
 		$rb->name( 'req_builder' );
 
 		// Seed.
-		$this->assertSame( 'ok', $rb->interpreter()->execute( 'set_errors_target errors:partition' ) );
+		$this->assertSame( 'ok', $rb->interpreter()->dispatch( 'set_errors_target', 'errors:partition' ) );
 		// Empty arg now clears the target instead of rejecting (live reconfiguration).
-		$result = $rb->interpreter()->execute( 'set_errors_target' );
+		$result = $rb->interpreter()->dispatch( 'set_errors_target' );
 		$this->assertSame( 'ok', $result );
 		$p = ( new \ReflectionObject( $rb ) )->getProperty( 'errors_target' );
 		$p->setAccessible( true );

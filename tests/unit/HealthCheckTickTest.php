@@ -88,7 +88,7 @@ class HealthCheckTickTest extends TestCase {
 	public function test_health_check_tick_start_periodic_tick_verb_round_trips(): void {
 		$h = new HealthCheckTick();
 		$h->name( 'h' );
-		$result = $h->interpreter()->execute( 'start_periodic_tick' );
+		$result = $h->interpreter()->dispatch( 'start_periodic_tick' );
 		$this->assertSame( 'ok', $result );
 
 		$dump = $h->dump_config();

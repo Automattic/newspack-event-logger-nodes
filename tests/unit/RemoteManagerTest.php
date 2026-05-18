@@ -1182,13 +1182,12 @@ class RemoteManagerTest extends TestCase {
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $urls );
 
-		// Body is the TM_COMMAND envelope; verb args carry the resolved
+		// Body is the TM_COMMAND envelope; verb payload carries the resolved
 		// {option, value} pair (perf-tuning key → Performance_CI.settings_update).
 		$envelope = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
 		$value    = \json_decode( $envelope['value'], true );
-		$args     = \json_decode( $value['arguments'], true );
-		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $args['option'] );
-		$this->assertSame( [ '/foo' ], $args['value'] );
+		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $value['payload']['option'] );
+		$this->assertSame( [ '/foo' ], $value['payload']['value'] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -1713,9 +1712,8 @@ class RemoteManagerTest extends TestCase {
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$envelope = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
 		$value    = \json_decode( $envelope['value'], true );
-		$args     = \json_decode( $value['arguments'], true );
-		$this->assertArrayHasKey( 'num_segments', $args );
-		$this->assertSame( 42, $args['num_segments'] );
+		$this->assertArrayHasKey( 'num_segments', $value['payload'] );
+		$this->assertSame( 42, $value['payload']['num_segments'] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2299,11 +2297,11 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_post_to_server_encodes_body_as_json(): void {
-		// Content-Type stays application/json across the M5.2 migration; the
-		// outer body is the TM_COMMAND envelope JSON, with the verb args
-		// nested two levels deep (envelope.value → JSON({name, arguments}) →
-		// arguments=JSON of the args). Round-tripping the structured value
-		// through that nesting confirms the encoding is lossless.
+		// Content-Type stays application/json. The outer body is the
+		// TM_COMMAND envelope JSON; `value` is JSON of `{name, arguments,
+		// payload}` with arguments empty (literal-string CLI tail) and the
+		// structured update map living in `payload`. Round-tripping the
+		// value confirms the encoding is lossless.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		RemoteManager::post_to_server(
 			[ 'url' => 'https://x.test', 'auth_username' => 'u', 'auth_password' => 'p' ],
@@ -2317,8 +2315,7 @@ class RemoteManagerTest extends TestCase {
 		$this->assertSame( 'application/json', $last['args']['headers']['Content-Type'] ?? '' );
 		$envelope = \json_decode( $last['args']['body'], true );
 		$value    = \json_decode( $envelope['value'], true );
-		$args     = \json_decode( $value['arguments'], true );
-		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $args['value'] );
+		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $value['payload']['value'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -2516,7 +2513,8 @@ class RemoteManagerTest extends TestCase {
 	public function test_post_to_server_wraps_substrate_body_in_tm_command_envelope_for_settings_update(): void {
 		// Substrate-key endpoint maps to {to: settings, verb: update}. The body
 		// must be a TM_COMMAND wire envelope: type=8 (TM_COMMAND), to/from set,
-		// value=JSON({name, arguments, payload}), arguments=JSON of the args.
+		// value=JSON({name, arguments, payload}), arguments empty (Tachikoma
+		// convention: literal-string args), structured update map in payload.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		RemoteManager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
@@ -2534,18 +2532,18 @@ class RemoteManagerTest extends TestCase {
 
 		$value = \json_decode( $envelope['value'], true );
 		$this->assertSame( 'update', $value['name'] );
-		$args = \json_decode( $value['arguments'], true );
+		$this->assertSame( '', $value['arguments'] );
 		$this->assertSame(
 			[ 'num_partitions' => 4 ],
-			$args,
+			$value['payload'],
 			'Settings_CI.update accepts a partial-update keyed by short-name (no `newspack_nodes_` prefix).'
 		);
 	}
 
 	public function test_post_to_server_wraps_perf_body_in_tm_command_envelope_for_settings_update(): void {
 		// Perf-tuning endpoint maps to {to: performance, verb: settings_update}.
-		// Performance_CI.settings_update expects a single {option, value} pair —
-		// not a partial-keyed map like Settings_CI.update.
+		// Performance_CI.settings_update expects a single {option, value} pair
+		// in `payload` — not a partial-keyed map like Settings_CI.update.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		RemoteManager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
@@ -2560,10 +2558,10 @@ class RemoteManagerTest extends TestCase {
 
 		$value = \json_decode( $envelope['value'], true );
 		$this->assertSame( 'settings_update', $value['name'] );
-		$args = \json_decode( $value['arguments'], true );
+		$this->assertSame( '', $value['arguments'] );
 		$this->assertSame(
 			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ],
-			$args
+			$value['payload']
 		);
 	}
 
@@ -2598,10 +2596,9 @@ class RemoteManagerTest extends TestCase {
 		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
 		$envelope = \json_decode( $last['args']['body'], true );
 		$value    = \json_decode( $envelope['value'], true );
-		$args     = \json_decode( $value['arguments'], true );
-		$this->assertArrayHasKey( 'segment_size', $args );
-		$this->assertArrayNotHasKey( 'newspack_nodes_segment_size', $args );
-		$this->assertSame( 1048576, $args['segment_size'] );
+		$this->assertArrayHasKey( 'segment_size', $value['payload'] );
+		$this->assertArrayNotHasKey( 'newspack_nodes_segment_size', $value['payload'] );
+		$this->assertSame( 1048576, $value['payload']['segment_size'] );
 	}
 
 	public function test_sync_setting_includes_legacy_server_without_enabled_key(): void {

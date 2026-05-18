@@ -276,7 +276,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'overview',
-			(string) \wp_json_encode( [ 'server' => 'web01' ] )
+			[ 'server' => 'web01' ]
 		);
 
 		// Only the server-scoped leaderboard was seeded — global is empty.
@@ -299,7 +299,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'overview',
-			(string) \wp_json_encode( [ 'categories' => true ] )
+			[ 'categories' => true ]
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
@@ -323,7 +323,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'overview',
-			(string) \wp_json_encode( [ 'breakdown' => 'server' ] )
+			[ 'breakdown' => 'server' ]
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
@@ -348,7 +348,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'overview',
-			(string) \wp_json_encode( [ 'breakdown' => 'server,status' ] )
+			[ 'breakdown' => 'server,status' ]
 		);
 
 		$this->assertArrayHasKey( 'breakdowns', $result );
@@ -366,7 +366,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'overview',
-			(string) \wp_json_encode( [ 'breakdown' => 'nosuchdim' ] )
+			[ 'breakdown' => 'nosuchdim' ]
 		);
 
 		// No valid dims → no breakdown_time_series, no breakdowns.
@@ -390,7 +390,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'overview',
-			(string) \wp_json_encode( [ 'server' => 'web01', 'categories' => true ] )
+			[ 'server' => 'web01', 'categories' => true ]
 		);
 
 		// Server-scoped data, not the global ones.
@@ -429,7 +429,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'urls',
-			(string) \wp_json_encode( [ 'limit' => 5000 ] )
+			[ 'limit' => 5000 ]
 		);
 		$this->assertSame( 1000, $result['limit'] );
 	}
@@ -448,7 +448,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'urls',
-			(string) \wp_json_encode( [ 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'offset' => 0 ] )
+			[ 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'offset' => 0 ]
 		);
 
 		$this->assertSame( 3, $result['total'] );
@@ -471,7 +471,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'urls',
-			(string) \wp_json_encode( [ 'search' => 'article' ] )
+			[ 'search' => 'article' ]
 		);
 
 		$this->assertSame( 1, $result['total'] );
@@ -499,7 +499,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'not-a-hash' ] )
+			[ 'hash' => 'not-a-hash' ]
 		);
 
 		$this->assertIsString( $result );
@@ -514,7 +514,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'deadbeefcafe' ] )
+			[ 'hash' => 'deadbeefcafe' ]
 		);
 
 		$this->assertIsString( $result );
@@ -539,7 +539,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'abc123def456' ] )
+			[ 'hash' => 'abc123def456' ]
 		);
 
 		$this->assertIsArray( $result );
@@ -577,7 +577,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'cafebabe1234' ] )
+			[ 'hash' => 'cafebabe1234' ]
 		);
 
 		$this->assertSame( 100, $result['aggregate_flame']['value'] );
@@ -591,7 +591,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'abc123def456' ] )
+			[ 'hash' => 'abc123def456' ]
 		);
 
 		$this->assertIsString( $result );
@@ -619,7 +619,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'abc123def456' ] )
+			[ 'hash' => 'abc123def456' ]
 		);
 
 		$this->assertArrayHasKey( 'time_series', $result['stats'] );
@@ -651,7 +651,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'abc123def456', 'breakdown' => 'method' ] )
+			[ 'hash' => 'abc123def456', 'breakdown' => 'method' ]
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
@@ -681,7 +681,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'abc123def456', 'categories' => true ] )
+			[ 'hash' => 'abc123def456', 'categories' => true ]
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
@@ -702,7 +702,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'url_detail',
-			(string) \wp_json_encode( [ 'hash' => 'abc123def456', 'breakdown' => 'nosuchdim' ] )
+			[ 'hash' => 'abc123def456', 'breakdown' => 'nosuchdim' ]
 		);
 
 		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
@@ -718,7 +718,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_search',
-			(string) \wp_json_encode( [ 'rid' => 'no-such-rid' ] )
+			[ 'rid' => 'no-such-rid' ]
 		);
 
 		$this->assertIsString( $result );
@@ -744,7 +744,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_search',
-			(string) \wp_json_encode( [ 'rid' => $rid ] )
+			[ 'rid' => $rid ]
 		);
 
 		$this->assertIsArray( $result );
@@ -768,7 +768,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_search',
-			(string) \wp_json_encode( [ 'rid' => 'whatever' ] )
+			[ 'rid' => 'whatever' ]
 		);
 
 		$this->assertIsString( $result );
@@ -785,7 +785,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_detail',
-			(string) \wp_json_encode( [ 'rid' => 'no-such-rid', 'partition' => 0 ] )
+			[ 'rid' => 'no-such-rid', 'partition' => 0 ]
 		);
 
 		$this->assertIsString( $result );
@@ -799,7 +799,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_detail',
-			(string) \wp_json_encode( [ 'rid' => 'whatever', 'partition' => 5 ] )
+			[ 'rid' => 'whatever', 'partition' => 5 ]
 		);
 
 		$this->assertIsString( $result );
@@ -827,7 +827,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_detail',
-			(string) \wp_json_encode( [ 'rid' => $rid, 'partition' => 0 ] )
+			[ 'rid' => $rid, 'partition' => 0 ]
 		);
 
 		$this->assertIsArray( $result );
@@ -864,7 +864,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_detail',
-			(string) \wp_json_encode( [ 'rid' => $rid, 'partition' => 0 ] )
+			[ 'rid' => $rid, 'partition' => 0 ]
 		);
 
 		$this->assertArrayHasKey( 'flame_data', $result );
@@ -876,7 +876,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_detail',
-			(string) \wp_json_encode( [ 'partition' => 0 ] )
+			[ 'partition' => 0 ]
 		);
 
 		$this->assertIsString( $result );
@@ -890,7 +890,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_detail',
-			(string) \wp_json_encode( [ 'rid' => 'whatever', 'partition' => 0 ] )
+			[ 'rid' => 'whatever', 'partition' => 0 ]
 		);
 
 		$this->assertIsString( $result );
@@ -1198,10 +1198,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'hooks_configure',
-			(string) \wp_json_encode( [
+			[
 				'hooks'         => [ 'init', 'wp_loaded' ],
 				'custom_events' => [ 'my_event' ],
-			] )
+			]
 		);
 
 		$this->assertIsArray( $result );
@@ -1217,10 +1217,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'hooks_configure',
-			(string) \wp_json_encode( [
+			[
 				'hooks'         => [ 'init', '', 12345, '<b>raw</b>' ],
 				'custom_events' => null,
-			] )
+			]
 		);
 
 		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
@@ -1234,9 +1234,9 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'hooks_configure',
-			(string) \wp_json_encode( [
+			[
 				'custom_events' => [ 'event_one', 'event_two' ],
-			] )
+			]
 		);
 
 		$this->assertTrue( $result['success'] );
@@ -1262,7 +1262,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'hooks_configure',
-			(string) \wp_json_encode( [ 'hooks' => [ 'init' ] ] )
+			[ 'hooks' => [ 'init' ] ]
 		);
 
 		$this->assertIsString( $result );
@@ -1351,11 +1351,11 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'config_update',
-			(string) \wp_json_encode( [
+			[
 				'log_events'             => [ 'init', 'shutdown' ],
 				'auto_disable_threshold' => 1500,
 				'log_memory'             => true,
-			] )
+			]
 		);
 
 		$this->assertIsArray( $result );
@@ -1380,13 +1380,13 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'config_update',
-			(string) \wp_json_encode( [
+			[
 				'log_urls' => [
 					'/articles'      => '',
 					'/home'          => '',
 					'duplicate-key'  => 'duplicate-key',
 				],
-			] )
+			]
 		);
 
 		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'];
@@ -1404,9 +1404,9 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'config_update',
-			(string) \wp_json_encode( [
+			[
 				'custom_events' => [ 'event_one', 'event_two' ],
-			] )
+			]
 		);
 
 		$this->assertSame(
@@ -1424,12 +1424,12 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'config_update',
-			(string) \wp_json_encode( [
+			[
 				'auto_disable_threshold'      => '750',
 				'auto_protect_time_threshold' => '1.25',
 				'log_memory'                  => 1,
 				'flush_every_line'            => 0,
-			] )
+			]
 		);
 
 		$this->assertSame( 750, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
@@ -1447,7 +1447,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'config_update',
-			(string) \wp_json_encode( [ 'not_a_real_setting' => 'whatever' ] )
+			[ 'not_a_real_setting' => 'whatever' ]
 		);
 
 		$this->assertTrue( $result['success'] );
@@ -1462,7 +1462,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'config_update',
-			(string) \wp_json_encode( [ 'log_events' => [ 'init' ] ] )
+			[ 'log_events' => [ 'init' ] ]
 		);
 
 		$this->assertIsString( $result );
@@ -1486,10 +1486,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_memory',
 				'value'  => true,
-			] )
+			]
 		);
 
 		$this->assertIsArray( $result );
@@ -1504,10 +1504,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
 				'value'  => 50,
-			] )
+			]
 		);
 
 		$this->assertSame( 50, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
@@ -1519,10 +1519,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold',
 				'value'  => 1.5,
-			] )
+			]
 		);
 
 		$this->assertEqualsWithDelta(
@@ -1538,10 +1538,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_events',
 				'value'  => [ 'init', 'shutdown' ],
-			] )
+			]
 		);
 
 		$this->assertSame(
@@ -1556,10 +1556,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_events',
 				'value'  => [ '<b>init</b>', "  trim_me\t" ],
-			] )
+			]
 		);
 
 		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
@@ -1573,10 +1573,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'arbitrary_option',
 				'value'  => 'x',
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1590,10 +1590,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
 				'value'  => 2 ** 31,
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1606,10 +1606,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
 				'value'  => -5,
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1622,10 +1622,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
 				'value'  => 'banana',
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1639,10 +1639,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold',
 				'value'  => 99999.0,
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1655,10 +1655,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_events',
 				'value'  => 'not-an-array',
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1672,10 +1672,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_events',
 				'value'  => \array_fill( 0, 10001, 'x' ),
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1694,10 +1694,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_events',
 				'value'  => $deep,
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1710,7 +1710,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [ 'value' => true ] )
+			[ 'value' => true ]
 		);
 
 		$this->assertIsString( $result );
@@ -1724,10 +1724,10 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'settings_update',
-			(string) \wp_json_encode( [
+			[
 				'option' => 'newspack_event_logger_nodes_log_memory',
 				'value'  => true,
-			] )
+			]
 		);
 
 		$this->assertIsString( $result );
@@ -1762,7 +1762,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'gyroscope_timeline',
-			(string) \wp_json_encode( [ 'request_id' => 'no-such-rid' ] )
+			[ 'request_id' => 'no-such-rid' ]
 		);
 
 		$this->assertSame( 'no-such-rid', $result['data']['request_id'] );
@@ -1794,7 +1794,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'gyroscope_timeline',
-			(string) \wp_json_encode( [ 'request_id' => $rid ] )
+			[ 'request_id' => $rid ]
 		);
 
 		$this->assertSame( $rid, $result['data']['request_id'] );
@@ -1821,7 +1821,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'gyroscope_timeline',
-			(string) \wp_json_encode( [ 'request_id' => $rid ] )
+			[ 'request_id' => $rid ]
 		);
 
 		$this->assertSame( $rid, $result['data']['request_id'] );
@@ -1836,7 +1836,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'gyroscope_timeline',
-			(string) \wp_json_encode( [ 'request_id' => 'rid-anything' ] )
+			[ 'request_id' => 'rid-anything' ]
 		);
 
 		$this->assertIsString( $result );
@@ -1853,7 +1853,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_list',
-			(string) \wp_json_encode( [ 'limit' => 10 ] )
+			[ 'limit' => 10 ]
 		);
 
 		$this->assertIsArray( $result );
@@ -1879,7 +1879,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_list',
-			(string) \wp_json_encode( [ 'limit' => 5000 ] )
+			[ 'limit' => 5000 ]
 		);
 
 		$this->assertSame( 1000, $result['meta']['limit'] );
@@ -1892,7 +1892,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_list',
-			(string) \wp_json_encode( [ 'limit' => 0 ] )
+			[ 'limit' => 0 ]
 		);
 
 		$this->assertSame( 1, $result['meta']['limit'] );
@@ -1924,7 +1924,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_list',
-			(string) \wp_json_encode( [ 'limit' => 10 ] )
+			[ 'limit' => 10 ]
 		);
 
 		$this->assertCount( 2, $result['data'] );
@@ -1963,7 +1963,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_list',
-			(string) \wp_json_encode( [ 'limit' => 2 ] )
+			[ 'limit' => 2 ]
 		);
 
 		$this->assertCount( 2, $result['data'] );
@@ -1992,7 +1992,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_detail',
-			(string) \wp_json_encode( [ 'id' => 'rid-xyz' ] )
+			[ 'id' => 'rid-xyz' ]
 		);
 
 		$this->assertIsArray( $result );
@@ -2034,7 +2034,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_detail',
-			(string) \wp_json_encode( [ 'id' => $rid ] )
+			[ 'id' => $rid ]
 		);
 
 		$this->assertSame( $rid, $result['data']['request_id'] );
@@ -2061,7 +2061,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_detail',
-			(string) \wp_json_encode( [ 'id' => $rid ] )
+			[ 'id' => $rid ]
 		);
 
 		$this->assertCount( 1, $result['data']['entries'] );
@@ -2077,7 +2077,7 @@ class PerformanceCITest extends TestCase {
 			$ci,
 			'performance',
 			'request_log_detail',
-			(string) \wp_json_encode( [ 'id' => 'rid-anything' ] )
+			[ 'id' => 'rid-anything' ]
 		);
 
 		$this->assertIsString( $result );

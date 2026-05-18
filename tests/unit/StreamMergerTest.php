@@ -1843,7 +1843,7 @@ class StreamMergerTest extends TestCase {
 	public function test_stream_merger_set_verify_ssl_verb_round_trips(): void {
 		$sm = new StreamMerger();
 		$sm->name( 'sm' );
-		$this->assertSame( 'ok', $sm->interpreter()->execute( 'set_verify_ssl false' ) );
+		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_verify_ssl', 'false' ) );
 		$dump = $sm->dump_config();
 		$this->assertStringContainsString( 'cmd sm:config set_verify_ssl false', $dump );
 	}
@@ -1851,7 +1851,7 @@ class StreamMergerTest extends TestCase {
 	public function test_stream_merger_set_require_https_verb_round_trips(): void {
 		$sm = new StreamMerger();
 		$sm->name( 'sm' );
-		$this->assertSame( 'ok', $sm->interpreter()->execute( 'set_require_https true' ) );
+		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'true' ) );
 		$dump = $sm->dump_config();
 		$this->assertStringContainsString( 'cmd sm:config set_require_https true', $dump );
 	}
@@ -2051,7 +2051,7 @@ class StreamMergerTest extends TestCase {
 
 		$sm = $this->make_merger();
 		try {
-			$result = $sm->interpreter()->execute( 'load_remotes_from_registry' );
+			$result = $sm->interpreter()->dispatch( 'load_remotes_from_registry' );
 
 			$this->assertSame( 'ok', $result );
 			$this->assertSame( 2, $sm->remote_count(), 'only enabled entries must be loaded' );
@@ -2084,7 +2084,7 @@ class StreamMergerTest extends TestCase {
 
 		$sm     = $this->make_merger();
 		try {
-			$result = $sm->interpreter()->execute( 'load_remotes_from_registry' );
+			$result = $sm->interpreter()->dispatch( 'load_remotes_from_registry' );
 
 			$this->assertSame( 'ok', $result );
 			$this->assertSame( 0, $sm->remote_count() );

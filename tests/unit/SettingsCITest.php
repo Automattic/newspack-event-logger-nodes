@@ -87,7 +87,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'num_partitions' => 16 ] )
+			[ 'num_partitions' => 16 ]
 		);
 
 		$this->assertIsArray( $result );
@@ -106,12 +106,12 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [
+			[
 				'num_partitions' => 4,
 				'num_segments'   => 8,
 				'segment_size'   => 32768,
 				'max_lifespan'   => 7200,
-			] )
+			]
 		);
 
 		$this->assertSame( 4, $result['num_partitions'] );
@@ -133,7 +133,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'num_partitions' => -5 ] )
+			[ 'num_partitions' => -5 ]
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid value', $result );
@@ -150,7 +150,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'max_lifespan' => 0 ] )
+			[ 'max_lifespan' => 0 ]
 		);
 		$this->assertSame( 0, $result['max_lifespan'] );
 		$this->assertSame( 0, $GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] );
@@ -166,7 +166,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'num_partitions' => 0 ] )
+			[ 'num_partitions' => 0 ]
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid value', $result );
@@ -179,7 +179,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'not_in_allowlist' => 42 ] )
+			[ 'not_in_allowlist' => 42 ]
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'unknown setting', $result );
@@ -192,7 +192,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'num_partitions' => 'not-an-int' ] )
+			[ 'num_partitions' => 'not-an-int' ]
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid value', $result );
@@ -205,7 +205,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [ 'num_partitions' => 4 ] )
+			[ 'num_partitions' => 4 ]
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -223,7 +223,7 @@ class SettingsCITest extends TestCase {
 			$ci,
 			'settings',
 			'update',
-			(string) \wp_json_encode( [] )
+			[]
 		);
 		$this->assertSame( 2, $result['num_partitions'] );
 	}

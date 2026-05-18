@@ -96,7 +96,7 @@ class ServersCITest extends TestCase {
 		] );
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'get', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'get', [ 'id' => 'site-a' ] );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -106,7 +106,7 @@ class ServersCITest extends TestCase {
 
 	public function test_get_verb_returns_error_for_unknown_id(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'get', \wp_json_encode( [ 'id' => 'nope' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'get', [ 'id' => 'nope' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -114,7 +114,7 @@ class ServersCITest extends TestCase {
 
 	public function test_get_verb_requires_id(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'get', \wp_json_encode( [] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'get', [] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'id required', $result );
@@ -128,12 +128,12 @@ class ServersCITest extends TestCase {
 		$registry = new ServerRegistry();
 		$ci       = new Servers_CI( $registry );
 
-		$result = VerbHarness::fire( $ci, 'servers', 'add', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'            => 'new-site',
 			'url'           => 'https://new.example.com',
 			'auth_username' => 'admin',
 			'auth_password' => 'pw',
-		] ) );
+		] );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'new-site', $result['id'] );
@@ -150,10 +150,10 @@ class ServersCITest extends TestCase {
 		$registry = new ServerRegistry();
 		$ci       = new Servers_CI( $registry );
 
-		$result = VerbHarness::fire( $ci, 'servers', 'add', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'  => 'site-a',
 			'url' => 'https://a.example.com',
-		] ) );
+		] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -165,10 +165,10 @@ class ServersCITest extends TestCase {
 
 	public function test_add_verb_rejects_invalid_id(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'add', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'  => '!!bad-id!!',
 			'url' => 'https://a.example.com',
-		] ) );
+		] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid', $result );
@@ -176,10 +176,10 @@ class ServersCITest extends TestCase {
 
 	public function test_add_verb_rejects_http_url(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'add', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'  => 'plain',
 			'url' => 'http://insecure.example.com',
-		] ) );
+		] );
 
 		// Registry's validate_config rejects non-HTTPS URLs → add returns false → CI error.
 		$this->assertIsString( $result );
@@ -198,10 +198,10 @@ class ServersCITest extends TestCase {
 		] );
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'update', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'update', [
 			'id'      => 'site-a',
 			'enabled' => true,
-		] ) );
+		] );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -220,10 +220,10 @@ class ServersCITest extends TestCase {
 		$GLOBALS['_current_user_can'] = false;
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'update', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'update', [
 			'id'      => 'site-a',
 			'enabled' => true,
-		] ) );
+		] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -235,10 +235,10 @@ class ServersCITest extends TestCase {
 
 	public function test_update_verb_returns_error_for_unknown_id(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'update', \wp_json_encode( [
+		$result = VerbHarness::fire( $ci, 'servers', 'update', [
 			'id'      => 'never-existed',
 			'enabled' => true,
-		] ) );
+		] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -253,7 +253,7 @@ class ServersCITest extends TestCase {
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'delete', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'delete', [ 'id' => 'site-a' ] );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -268,7 +268,7 @@ class ServersCITest extends TestCase {
 		$GLOBALS['_current_user_can'] = false;
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'delete', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'delete', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -279,7 +279,7 @@ class ServersCITest extends TestCase {
 
 	public function test_delete_verb_returns_error_for_unknown_id(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'delete', \wp_json_encode( [ 'id' => 'never-existed' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'delete', [ 'id' => 'never-existed' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -335,7 +335,7 @@ class ServersCITest extends TestCase {
 		};
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'test', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -360,7 +360,7 @@ class ServersCITest extends TestCase {
 			[ 'response' => [ 'code' => 503 ], 'body' => '' ];
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'test', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( '503', $result );
@@ -374,7 +374,7 @@ class ServersCITest extends TestCase {
 			new \WP_Error( 'http_timeout', 'request timed out' );
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'test', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'connect', $result );
@@ -386,7 +386,7 @@ class ServersCITest extends TestCase {
 		$GLOBALS['_current_user_can'] = false;
 
 		$ci     = new Servers_CI( $registry );
-		$result = VerbHarness::fire( $ci, 'servers', 'test', \wp_json_encode( [ 'id' => 'site-a' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -394,7 +394,7 @@ class ServersCITest extends TestCase {
 
 	public function test_test_verb_returns_error_for_unknown_id(): void {
 		$ci     = new Servers_CI( new ServerRegistry() );
-		$result = VerbHarness::fire( $ci, 'servers', 'test', \wp_json_encode( [ 'id' => 'never-existed' ] ) );
+		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'never-existed' ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );

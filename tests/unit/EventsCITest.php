@@ -55,7 +55,7 @@ class EventsCITest extends TestCase {
 		// No firehose logs on disk — verb still returns the canonical
 		// `{ data, meta }` envelope.
 		$ci     = new Events_CI( $this->cache );
-		$result = VerbHarness::fire( $ci, 'events', 'recent', (string) \wp_json_encode( [ 'limit' => 50 ] ) );
+		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 50 ] );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'data', $result );
@@ -78,14 +78,14 @@ class EventsCITest extends TestCase {
 		// Mirror the legacy sanitize_callback: `max(1, min(1000, (int)$v))`.
 		// Negative input clamped to 1.
 		$ci     = new Events_CI( $this->cache );
-		$result = VerbHarness::fire( $ci, 'events', 'recent', (string) \wp_json_encode( [ 'limit' => -5 ] ) );
+		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => -5 ] );
 		$this->assertSame( 1, $result['meta']['limit'] );
 	}
 
 	public function test_recent_verb_clamps_limit_high(): void {
 		// Mirror the legacy sanitize_callback upper bound: 1000.
 		$ci     = new Events_CI( $this->cache );
-		$result = VerbHarness::fire( $ci, 'events', 'recent', (string) \wp_json_encode( [ 'limit' => 5000 ] ) );
+		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 5000 ] );
 		$this->assertSame( 1000, $result['meta']['limit'] );
 	}
 
@@ -111,7 +111,7 @@ class EventsCITest extends TestCase {
 		\file_put_contents( "{$segment_dir}/0.idx", $index );
 
 		$ci     = new Events_CI( $this->cache );
-		$result = VerbHarness::fire( $ci, 'events', 'recent', (string) \wp_json_encode( [ 'limit' => 10 ] ) );
+		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 10 ] );
 
 		$this->assertCount( 1, $result['data'] );
 		$this->assertSame( 'init', $result['data'][0]['k'] );
