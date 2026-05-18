@@ -241,44 +241,24 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 );
 
 /**
- * Declare the log streams this application owns so the substrate's
- * "Total Log Storage" estimate can multiply them in. Each log lays out as
- * `{base}/logs/{name}.log/p{N}/{segment_id}.log` and obeys the same
- * segment_size × num_segments × num_partitions geometry, so the count alone
- * is enough — the substrate handles the arithmetic.
+ * Always-expected basenames written by app runtime code (not by any
+ * topology Partition node). These exist whenever the plugin is loaded:
  *
- * Streams:
- *   firehose.log   — LogManager input
- *   jobintake.log  — JobIntake input (large jobs)
- *   requests.log   — RequestBuilder output
- *   errors.log     — RequestBuilder error output
- *   jobs.log       — JobRouter output
- *   flames.log     — FlameBuilder output
+ *   firehose.log   — LogManager writes via Partition::fill() from regular
+ *                    request code. No topology declares it; it just appears.
+ *   jobintake.log  — JobIntake::queue() writes large jobs the same way.
+ *
+ * Topology-declared outputs come from `Topology_Registry::basenames_for()`
+ * which parses each TSL's `make_node Partition` lines.
  */
-\add_filter(
-	'newspack_nodes/num_logs',
-	static fn ( int $count ): int => $count + 6
-);
-
-/**
- * Per-topology log basenames. Matches what each TSL file references.
- * Update when topologies are added or their inputs/outputs change —
- * substrate's Log_Cleaner uses the union of active entries to decide
- * which `{base}/logs/*.log/` directories are orphan.
- */
-const NEWSPACK_EVENT_LOGGER_NODES_TOPOLOGY_BASENAMES = [
-	'aggregator'                => [],
-	'firehose-jobs-only'        => [ 'firehose', 'jobintake', 'jobs' ],
-	'firehose-workers-and-jobs' => [ 'errors', 'firehose', 'jobintake', 'jobs', 'requests' ],
-	'firehose-workers-only'     => [ 'errors', 'firehose', 'requests' ],
-	'job-workers'               => [ 'jobs' ],
-	'request-workers'           => [ 'flames', 'requests' ],
-];
+const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
 
 /**
  * Named function (not a closure) so tests that wipe `$GLOBALS['_wp_actions']`
- * for isolation can re-attach the same callback without duplicating the
- * topology map.
+ * for isolation can re-attach the same callback by name. Builds the union of
+ * (app runtime basenames) + (every active topology's Partition basenames) +
+ * (every active worker's topology basenames). The substrate's `Log_Cleaner`
+ * orphans every `{base}/logs/*.log/` directory NOT in the result.
  */
 function newspack_event_logger_nodes_expected_log_basenames( array $basenames ): array {
 	$config     = \Newspack_Event_Logger_Nodes\Config::load_config();
@@ -297,9 +277,9 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 		}
 	}
 
-	$union = $basenames;
+	$union = \array_merge( $basenames, NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES );
 	foreach ( \array_keys( $active_set ) as $name ) {
-		foreach ( NEWSPACK_EVENT_LOGGER_NODES_TOPOLOGY_BASENAMES[ $name ] ?? [] as $basename ) {
+		foreach ( \Newspack_Nodes\Topology_Registry::basenames_for( $name ) as $basename ) {
 			$union[] = $basename;
 		}
 	}
