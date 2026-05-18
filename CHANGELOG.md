@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Raw Logs dashboard now discovers logs from disk instead of a hardcoded catalog.** `Performance_CI::firehose_logs` verb scans `{base}/logs/*.log/` directories every call and returns the sorted result. Replaces the static `AVAILABLE_LOGS` constant, which silently omitted `completed.log` and `gyroscope.log` after the M6 topology added them — so the Raw Logs picker is now complete (8 entries: completed, errors, firehose, flames, gyroscope, jobintake, jobs, requests). `firehose_status` + `resolve_log_key` switched to the same discovery; `DEFAULT_LOG_KEY = 'firehose'` is the only constant left, used as the fallback when the operator's `log` arg is missing or unknown.
+
 ### Removed
 
 - **M6 cleanup — legacy SSE wire-format dispatch in `RemoteSource::dispatch_event`.** The `event: entry` / `event: heartbeat` / `event: connected` branches that handled the now-deleted `FirehoseStreamController`'s wire format are gone; everything routes through `dispatch_msg_envelope` for the unified `msg`-envelope shape. Migrated ~26 test sites across `StreamMergerTest` (and ~15 in `RemoteSourceTest`) to the new wire via three helpers (`entry_frame`, `connected_frame`, `position_frame`); deleted `test_skips_non_data_lines` (its `event: heartbeat` assertion is meaningless under the new wire and the `id:` field assertion is already covered by `test_unknown_sse_field_ignored`). Substrate's `Messages_Stream_Controller` is now the ONLY SSE wire format any production code consumes or any test exercises.

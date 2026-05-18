@@ -1740,6 +1740,10 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_firehose_logs_verb_returns_keyed_pairs(): void {
+		// Verb discovers logs from `{base}/logs/*.log/` directories; seed
+		// one so the catalog isn't empty.
+		\mkdir( $this->tmp . '/logs/firehose.log', 0755, true );
+
 		$ci     = new Performance_CI( $this->cache );
 		$result = VerbHarness::fire( $ci, 'performance', 'firehose_logs' );
 
@@ -1753,13 +1757,18 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_firehose_logs_verb_includes_known_log_keys(): void {
-		// Verb must surface the canonical Event Logger log catalog —
-		// firehose, jobs, jobintake, requests, errors, flames.
+		// Verb discovers logs from disk; seed every canonical log so the
+		// catalog mirrors a healthy production topology (firehose, jobs,
+		// jobintake, requests, errors, flames, completed, gyroscope).
+		foreach ( [ 'firehose', 'jobs', 'jobintake', 'requests', 'errors', 'flames', 'completed', 'gyroscope' ] as $log ) {
+			\mkdir( "{$this->tmp}/logs/{$log}.log", 0755, true );
+		}
+
 		$ci     = new Performance_CI( $this->cache );
 		$result = VerbHarness::fire( $ci, 'performance', 'firehose_logs' );
 
 		$keys = \array_column( $result, 'key' );
-		foreach ( [ 'firehose', 'jobs', 'jobintake', 'requests', 'errors', 'flames' ] as $expected ) {
+		foreach ( [ 'firehose', 'jobs', 'jobintake', 'requests', 'errors', 'flames', 'completed', 'gyroscope' ] as $expected ) {
 			$this->assertContains( $expected, $keys );
 		}
 	}
@@ -1778,6 +1787,9 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_firehose_status_verb_returns_partition_summary(): void {
+		// Discovery requires `{base}/logs/firehose.log/` to exist.
+		\mkdir( $this->tmp . '/logs/firehose.log', 0755, true );
+
 		$ci     = new Performance_CI( $this->cache );
 		$result = VerbHarness::fire(
 			$ci,
@@ -1800,6 +1812,8 @@ class PerformanceCITest extends TestCase {
 		// Legacy FirehoseController::sanitize_log_param strips the `.log` suffix
 		// for lookups; the verb must do the same so dashboards passing either
 		// `firehose` or `firehose.log` get the same answer.
+		\mkdir( $this->tmp . '/logs/firehose.log', 0755, true );
+
 		$ci     = new Performance_CI( $this->cache );
 		$result = VerbHarness::fire(
 			$ci,
@@ -1816,6 +1830,8 @@ class PerformanceCITest extends TestCase {
 		// Legacy controller falls back to the default log on unknown keys via
 		// sanitize_log_param; the CI verb mirrors that fallback rather than
 		// erroring — a bogus key gets the default log's status.
+		\mkdir( $this->tmp . '/logs/firehose.log', 0755, true );
+
 		$ci     = new Performance_CI( $this->cache );
 		$result = VerbHarness::fire(
 			$ci,
