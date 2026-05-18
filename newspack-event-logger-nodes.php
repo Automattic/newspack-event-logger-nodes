@@ -689,28 +689,46 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 			);
 
 			// Aggregator admin JS: powers the Test/Toggle/Remove/Add buttons
-			// on the Remote Servers section. Ported verbatim from the legacy
-			// newspack-event-aggregator/assets/admin.js — jQuery-based, no
-			// build step. REST namespace base injected as `restUrl`; the JS
-			// appends `servers/...` per call.
-			$aggregator_js_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'assets/aggregator-admin.js';
-			$aggregator_js_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'assets/aggregator-admin.js';
+			// on the Remote Servers section. M5.2 cutover — was a raw jQuery
+			// script under `assets/`; now a wp-scripts build entry so the
+			// `@newspack-nodes/runtime` alias resolves and the 4 CRUD verbs
+			// dispatch through the shared CommandClient against the unified
+			// `/command` endpoint (M2 Servers_CI add/update/delete/test).
+			// jQuery stays for DOM glue but the actual transport runs through
+			// the same singleton dashboards use.
+			$aggregator_js_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/aggregator-admin/index.js';
+			$aggregator_js_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/aggregator-admin/index.js';
+			$aggregator_asset_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/aggregator-admin/index.asset.php';
 			if ( \file_exists( $aggregator_js_path ) ) {
 				$agg_handle = 'newspack-event-logger-nodes-aggregator-admin';
+				// Merge wp-scripts auto-detected deps (wp-element etc.) with
+				// the jQuery global the DOM-event handlers use — jQuery is
+				// global-injected, not import-detected.
+				$asset_meta = \file_exists( $aggregator_asset_path )
+					? include $aggregator_asset_path
+					: [ 'dependencies' => [], 'version' => NEWSPACK_EVENT_LOGGER_NODES_VERSION ];
+				$deps = \array_values( \array_unique( \array_merge(
+					[ 'jquery' ],
+					\is_array( $asset_meta['dependencies'] ?? null ) ? $asset_meta['dependencies'] : []
+				) ) );
+				$version = (string) ( $asset_meta['version'] ?? ( \filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION ) );
 				\wp_enqueue_script(
 					$agg_handle,
 					$aggregator_js_url,
-					[ 'jquery' ],
-					\filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+					$deps,
+					$version,
 					true
 				);
+				// The shared CommandClient reads `window.NewspackNodesData` for
+				// REST root + nonce; localize it on this handle too so the
+				// aggregator-admin bundle has it when there's no parallel
+				// React dashboard bundle on the page.
+				\wp_localize_script( $agg_handle, 'NewspackNodesData', $localized );
 				\wp_localize_script(
 					$agg_handle,
 					'eventAggregatorAdmin',
 					[
-						'restUrl' => \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes/v1/' ) : '/wp-json/newspack-nodes/v1/',
-						'nonce'   => $nonce,
-						'i18n'    => [
+						'i18n' => [
 							'testing'       => \__( 'Testing...', 'newspack-event-logger-nodes' ),
 							'success'       => \__( 'Connected!', 'newspack-event-logger-nodes' ),
 							'failed'        => \__( 'Failed', 'newspack-event-logger-nodes' ),
