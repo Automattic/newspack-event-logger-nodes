@@ -623,6 +623,25 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( [ 'main:target', 'errors:target' ], $result );
 	}
 
+	public function test_inflight_snapshot_start_time_uses_process_start_not_request_bind(): void {
+		// With the 00-newspack-profiler mu-plugin live, LogManager stamps the
+		// `process (start)` keyword with the real mu-plugin-load wall-clock ts
+		// (microtime captured before any plugins load). The `request` keyword
+		// fires later, once the URL is known.
+		//
+		// inflight_snapshot.start_time must reflect the EARLIEST point the PHP
+		// process began handling this request (the process-start ts), not the
+		// later URL-bind ts — that's what "how long has this been in flight?"
+		// means to the operator.
+		$rb = new RequestBuilder();
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1700000000.000 ] );
+		$this->fill( $rb, 2, 'r1', 'request',         [ 'ts' => 1700000001.500, 'm' => 'GET /x' ] );
+
+		$snap = $rb->inflight_snapshot();
+		$this->assertCount( 1, $snap );
+		$this->assertSame( 1700000000.000, $snap[0]['start_time'] );
+	}
+
 	public function test_target_appends_flight_inflight_target(): void {
 		// `set_inflight_target` stores the target on the hidden RequestFlight
 		// sibling (`$patron->flight()->target($args)`), not on RequestBuilder

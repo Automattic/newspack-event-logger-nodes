@@ -15,7 +15,13 @@
 
 global $newspack_profiler;
 $newspack_profiler = [
+	// hrtime: nanosecond counter, monotonic, used downstream for delta math.
 	'request_time' => \hrtime( true ),
+	// microtime: wall-clock equivalent of the same moment. Consumed by
+	// LogManager to stamp the firehose `process (start)` ts (so
+	// RequestBuilder's inflight_snapshot.start_time reflects the real
+	// PHP-request start, not the LogManager-emit time deep in WP bootstrap).
+	'request_ts'   => \microtime( true ),
 	'plugins'      => [],
 ];
 

@@ -437,12 +437,6 @@ class RequestBuilder extends Node {
 			}
 			$parts                   = \explode( ' ', $message, 2 );
 			$request->request_method = $parts[0];
-			// Stamp the URL-bind ts as the canonical "request start" — matches
-			// legacy InflightTracker (lines 70-71) which seeds start_time from
-			// the `request` keyword's ts, not from `process (start)`. Keeping
-			// `$request->timestamp` set to the process-start ts (line 399) so
-			// downstream consumers that need the PHP-init ts still get it.
-			$request->request_start_ts = (float) ( $entry['ts'] ?? 0 );
 		};
 
 		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
@@ -759,12 +753,12 @@ class RequestBuilder extends Node {
 		$now = (float) ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $this->cache->iterate() as $rid => $request ) {
 			$r = (array) $request;
-			// Prefer the URL-bind ts (the `request` keyword's ts) over the
-			// process-init ts (line 399) so start_time matches legacy
-			// InflightTracker::get_active. Falls back to `timestamp` when
-			// request_start_ts isn't set yet (e.g. test seams that prime
-			// the cache without driving the `request` keyword callback).
-			$start_time  = (float) ( $r['request_start_ts'] ?? $r['timestamp'] ?? 0 );
+			// Process-start ts — the EARLIEST point PHP began handling this
+			// request. LogManager stamps `process (start)` with the
+			// mu-profiler's wall-clock load ts (captured before any plugins
+			// load), so this is the real request-start time the operator
+			// cares about.
+			$start_time  = (float) ( $r['timestamp'] ?? 0 );
 			$last_log_ts = (float) ( $r['last_log_ts'] ?? $start_time );
 			$tracker_ts  = (float) ( $r['tracker_ts'] ?? $now );
 			$time_ms     = ( $last_log_ts - $start_time ) * 1000;
