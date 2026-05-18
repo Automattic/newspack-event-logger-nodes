@@ -58,6 +58,9 @@ class StreamMerger extends Node {
 	/** @var Partition|null Per-partition offsetlog (one Partition for the whole merger). */
 	private ?Partition $offsetlog = null;
 
+	/** @var string Topic name to pull from + heartbeat URL params. */
+	private string $remote_topic;
+
 	/** @var int Partition number for the offsetlog directory + heartbeat URL params. */
 	private int $partition;
 
@@ -76,9 +79,13 @@ class StreamMerger extends Node {
 	/** @var HealthCheckTick|null Owned sibling — drives aggregator's periodic health-check sweep. */
 	private ?HealthCheckTick $health_check = null;
 
-	public function __construct( int $partition = 0 ) {
-		$this->partition = \max( 0, $partition );
-		$this->arguments = (string) $this->partition;
+	public function __construct( string $remote_topic, int $partition = 0 ) {
+		$this->remote_topic = $remote_topic;
+		$this->partition    = \max( 0, $partition );
+		$this->arguments    = \implode( ' ', [
+			$remote_topic,
+			(string) $this->partition,
+		] );
 
 		// Sibling CommandInterpreter — TSL aggregator topology configures
 		// StreamMerger via verbs (set_verify_ssl, set_require_https,
@@ -314,7 +321,7 @@ class StreamMerger extends Node {
 			unset( $this->remote_nodes[ $server_id ] );
 		}
 
-		$remote = new RemoteSource( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->partition );
+		$remote = new RemoteSource( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->remote_topic, $this->partition );
 		// Propagate global policy + cache injection so children inherit current
 		// hub config (operator toggles set_verify_ssl/set_require_https at
 		// runtime; new children must reflect those without needing a respawn).
@@ -459,7 +466,7 @@ class StreamMerger extends Node {
 	 */
 	public function process_sse_chunk( string $chunk ): void {
 		if ( ! isset( $this->remote_nodes['__test__'] ) ) {
-			$remote = new RemoteSource( '__test__', 'https://__test__/', '', '', '', $this->partition );
+			$remote = new RemoteSource( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
 			$remote->set_verify_ssl( $this->verify_ssl );
 			$remote->set_require_https( $this->require_https );
 			if ( null !== $this->cache ) {
@@ -575,11 +582,11 @@ class StreamMerger extends Node {
 		if ( null !== $this->offsetlog ) {
 			return $this->offsetlog;
 		}
-		$logs_dir = Config::get_offsets_directory();
-		if ( '' === $logs_dir ) {
+		$offsets_dir = Config::get_offsets_directory();
+		if ( '' === $offsets_dir ) {
 			return null;
 		}
-		$dir = "{$logs_dir}/aggregator.p{$this->partition}";
+		$dir = "{$offsets_dir}/aggregator.p{$this->partition}";
 		if ( ! \is_dir( $dir ) ) {
 			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
 			@\mkdir( $dir, 0755, true );
@@ -636,12 +643,13 @@ class StreamMerger extends Node {
 
 	public static function node_schema(): array {
 		return [
-			'category'    => 'I/O',
-			'description' => 'Owns and supervises RemoteSource children — one per enabled spoke in ServerRegistry.',
-			'ctor'        => [
+			'category'     => 'I/O',
+			'description'  => 'Owns and supervises RemoteSource children — one per enabled spoke in ServerRegistry.',
+			'ctor'         => [
+				[ 'name' => 'remote_topic', 'type' => 'string', 'default' => '' ],
 				[ 'name' => 'partition', 'type' => 'int', 'default' => 0 ],
 			],
-			'verbs'       => [
+			'verbs'        => [
 				[
 					'name'        => 'set_verify_ssl',
 					'description' => 'Toggle SSL certificate verification on outbound SSE connections.',
@@ -662,13 +670,14 @@ class StreamMerger extends Node {
 					'args'        => [],
 				],
 			],
-			'requests'    => [
+			'requests'     => [
 				[
 					'name'        => 'GET_REMOTES',
 					'description' => 'Per-remote connection state for every active RemoteSource child.',
 					'reply_shape' => '{ count, remotes: { server_id: { connected, last_error, last_http_code, position, last_event_age_s, current_backoff, slot } } }',
 				],
 			],
+			'accepts_fill' => false,
 		];
 	}
 }

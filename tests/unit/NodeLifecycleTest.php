@@ -45,7 +45,7 @@ class NodeLifecycleTest extends TestCase {
 			'JobWorker'       => [ static fn () => new JobWorker() ],
 			'RequestBuilder'  => [ static fn () => new RequestBuilder() ],
 			'RemoteSource'    => [ static fn () => new RemoteSource( 'site', 'https://example.test' ) ],
-			'StreamMerger'    => [ static fn () => new StreamMerger() ],
+			'StreamMerger'    => [ static fn () => new StreamMerger( "firehose" ) ],
 		];
 	}
 

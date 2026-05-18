@@ -2,14 +2,14 @@
 /**
  * RemoteSource
  *
- * One SSE-pulled spoke firehose, modeled as a first-class graph node.
+ * One SSE-pulled spoke topic, modeled as a first-class graph node.
  *
  * Each RemoteSource owns exactly one cURL multi handle (registered with the
  * substrate's EventFramework), one cURL easy handle (the SSE GET), one
  * in-memory cursor `{segment_id, offset}`, and one SSE connection's worth of
  * parser state. The class is a *source*: `fill()` is a no-op (it doesn't
  * receive messages); it generates Messages from the SSE feed it parses and
- * forwards them to its sink (typically the hub's `firehose:topic`).
+ * forwards them to its sink (typically a Topic node on a hub).
  *
  * StreamMerger instantiates one of these per `ServerRegistry::get_enabled()`
  * entry and keeps a reference to each. The shared offsetlog (one file for
@@ -72,6 +72,7 @@ class RemoteSource extends Node {
 	private string $auth_username;
 	private string $auth_password;
 	private string $auth_token;
+	private string $remote_topic;
 	private int    $partition;
 
 	private bool $verify_ssl    = true;
@@ -108,21 +109,24 @@ class RemoteSource extends Node {
 	 * @param string $auth_username Application-Password user (Basic auth).
 	 * @param string $auth_password Application-Password secret.
 	 * @param string $auth_token    Optional Bearer token fallback.
-	 * @param int    $partition     Partition for the heartbeat URL params.
+	 * @param string $remote_topic  Topic for the subscribe / heartbeat URL params.
+	 * @param int    $partition     Partition for the subscribe / heartbeat URL params.
 	 */
 	public function __construct(
 		string $server_id,
 		string $url,
 		string $auth_username = '',
 		string $auth_password = '',
-		string $auth_token = '',
-		int $partition = 0
+		string $auth_token    = '',
+		string $remote_topic  = '',
+		int $partition        = 0
 	) {
 		$this->server_id     = $server_id;
 		$this->url           = \rtrim( $url, '/' );
 		$this->auth_username = $auth_username;
 		$this->auth_password = $auth_password;
 		$this->auth_token    = $auth_token;
+		$this->remote_topic  = $remote_topic;
 		$this->partition     = \max( 0, $partition );
 		$this->arguments     = \implode( ' ', [
 			$server_id,
@@ -130,6 +134,7 @@ class RemoteSource extends Node {
 			$auth_username,
 			'[REDACTED]',
 			'[REDACTED]',
+			$this->remote_topic,
 			(string) $this->partition,
 		] );
 	}
@@ -288,12 +293,12 @@ class RemoteSource extends Node {
 
 		$this->ensure_multi();
 
-		// Subscription shape `firehose.pN` lands in Sse_Slot_Pool's per-partition
+		// Subscription shape `topic.pN` lands in Sse_Slot_Pool's per-partition
 		// aggregator pool (60s TTL) via Messages_Stream_Controller's
 		// `subscription_partition()` helper — no `aggregator=1` flag needed.
 		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/messages/stream';
 		$params   = [
-			'subscribe' => "firehose.p{$this->partition}",
+			'subscribe' => "{$this->remote_topic}.p{$this->partition}",
 		];
 		if ( $this->position['segment_id'] > 0 || $this->position['offset'] > 0 ) {
 			// Substrate's parse_positions expects a JSON-encoded object keyed
@@ -302,7 +307,7 @@ class RemoteSource extends Node {
 			// runs one connection per partition.
 			$params['positions'] = (string) \wp_json_encode(
 				[
-					'firehose' => [
+					$this->remote_topic => [
 						$this->partition => [
 							'seg' => $this->position['segment_id'],
 							'off' => $this->position['offset'],
@@ -420,6 +425,14 @@ class RemoteSource extends Node {
 		if ( null === $this->last_http_code ) {
 			$code                 = (int) \curl_getinfo( $handle, CURLINFO_HTTP_CODE );
 			$this->last_http_code = $code > 0 ? $code : null;
+			// First bytes through with a 200 status means the connection
+			// is alive and serving data — any `last_error` from a prior
+			// failed attempt is stale and shouldn't keep haunting the
+			// dashboard. Clear it on the first successful chunk so the
+			// admin UI shows the current connection state, not history.
+			if ( 200 === $this->last_http_code ) {
+				$this->last_error = null;
+			}
 		}
 		return $this->process_sse_chunk( $bytes ) ? $len : 0;
 	}
@@ -683,6 +696,7 @@ class RemoteSource extends Node {
 		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
 		$msg[ Message::KEY ]       = (string) $envelope[ Message::KEY ];
 		$msg[ Message::VALUE ]     = $value;
+		++$this->counter;
 		$this->sink?->fill( $msg );
 	}
 
@@ -730,7 +744,11 @@ class RemoteSource extends Node {
 			$headers['Authorization'] = 'Bearer ' . $this->auth_token;
 		}
 
-		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/firehose/heartbeat';
+		// M6 deleted the legacy `/firehose/heartbeat` REST route in favor
+		// of the substrate's `workers.heartbeat` CommandInterpreter verb
+		// dispatched via `/command`. Same wire format the dashboard JS
+		// uses for its own slot keep-alive (see useMessageStream).
+		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/command';
 		if ( $this->require_https && \stripos( $endpoint, 'https://' ) !== 0 ) {
 			$this->last_error = 'heartbeat endpoint not HTTPS';
 			return;
@@ -740,16 +758,29 @@ class RemoteSource extends Node {
 			return;
 		}
 
+		$headers['Content-Type'] = 'application/json';
+		$body                    = (string) \wp_json_encode( [
+			'type'  => Message::TM_COMMAND,
+			'to'    => 'workers',
+			'from'  => '_http',
+			'key'   => '',
+			'value' => (string) \wp_json_encode( [
+				'name'      => 'heartbeat',
+				'arguments' => '',
+				'payload'   => [
+					'slot'      => $this->slot,
+					'ttl'       => 10,
+					'partition' => $this->partition,
+				],
+			] ),
+		] );
+
 		$start    = \microtime( true );
 		$response = @\wp_remote_post(
 			$endpoint,
 			[
 				'headers'             => $headers,
-				'body'                => [
-					'slot'       => $this->slot,
-					'aggregator' => true,
-					'partition'  => $this->partition,
-				],
+				'body'                => $body,
 				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Cross-server heartbeat.
 				'timeout'             => 10,
 				'sslverify'           => $this->verify_ssl,
@@ -939,18 +970,35 @@ class RemoteSource extends Node {
 
 	public static function node_schema(): array {
 		return [
-			'category'    => 'I/O',
-			'description' => 'One SSE-pulled spoke firehose. Instantiated by StreamMerger from ServerRegistry.',
-			'ctor'        => [
+			'category'     => 'I/O',
+			'description'  => 'One SSE-pulled spoke topic. Instantiated by StreamMerger from ServerRegistry.',
+			'ctor'         => [
 				[ 'name' => 'server_id',     'type' => 'string', 'required' => true ],
 				[ 'name' => 'url',           'type' => 'string', 'required' => true ],
 				[ 'name' => 'auth_username', 'type' => 'string' ],
 				[ 'name' => 'auth_password', 'type' => 'string' ],
 				[ 'name' => 'auth_token',    'type' => 'string' ],
+				[ 'name' => 'remote_topic',  'type' => 'string' ],
 				[ 'name' => 'partition',     'type' => 'int',    'default' => 0 ],
 			],
-			'verbs'       => [],
-			'requests'    => [],
+			'verbs'        => [
+				[
+					'name'        => 'set_verify_ssl',
+					'description' => 'Toggle SSL certificate verification on outbound SSE connections.',
+					'args'        => [
+						[ 'name' => 'verify', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_verify_ssl>' ],
+					],
+				],
+				[
+					'name'        => 'set_require_https',
+					'description' => 'Refuse to connect to non-HTTPS remote URLs.',
+					'args'        => [
+						[ 'name' => 'require', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_require_https>' ],
+					],
+				],
+			],
+			'requests'     => [],
+			'accepts_fill' => false,
 		];
 	}
 }
