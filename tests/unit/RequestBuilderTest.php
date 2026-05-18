@@ -623,6 +623,43 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( [ 'main:target', 'errors:target' ], $result );
 	}
 
+	public function test_target_appends_flight_inflight_target(): void {
+		// `set_inflight_target` stores the target on the hidden RequestFlight
+		// sibling (`$patron->flight()->target($args)`), not on RequestBuilder
+		// directly. Without surfacing it through target(), the topology
+		// console's live view misses the request-builder → gyroscope:partition
+		// edge — even though edit view (which reads the TSL) shows it correctly.
+		$rb = new RequestBuilder();
+		$rb->connect_node( 'main:target' );
+		$rb->set_errors_target( 'errors:target' );
+		$rb->flight()->target( 'gyroscope:partition' );
+
+		$result = $rb->target();
+		$this->assertIsArray( $result );
+		$this->assertContains( 'main:target', $result );
+		$this->assertContains( 'errors:target', $result );
+		$this->assertContains( 'gyroscope:partition', $result );
+	}
+
+	public function test_target_does_not_duplicate_flight_target_already_in_array(): void {
+		// If the flight sibling's target is already in the primary array,
+		// don't duplicate it in the union.
+		$rb = new RequestBuilder();
+		$rb->target( [ 'main:target', 'gyroscope:partition' ] );
+		$rb->flight()->target( 'gyroscope:partition' );
+
+		$this->assertSame( [ 'main:target', 'gyroscope:partition' ], $rb->target() );
+	}
+
+	public function test_target_omits_flight_target_when_unset(): void {
+		// Empty flight target — no contribution to the union.
+		$rb = new RequestBuilder();
+		$rb->connect_node( 'main:target' );
+		$rb->flight()->target( '' );
+
+		$this->assertSame( 'main:target', $rb->target() );
+	}
+
 	public function test_target_setter_passes_through_to_parent(): void {
 		$rb     = new RequestBuilder();
 		$result = $rb->target( 'new:target' );
