@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`reqgrep` chunk-size constant moved to `Consumer::MAX_POLL_BYTES`.** Was referencing `Partition::MAX_READ_SIZE`, which the substrate just deleted (the constant was conflating a buffer-cap-that-broke-large-offsetlog-reads with a per-record DoS guard). The 10MB chunk size itself is unchanged — just sourced from `Newspack_Nodes\Consumer::MAX_POLL_BYTES` where it belongs (it's the same poll-budget Consumer's main read loop applies).
+
 ### Fixed
 
 - **Topology console live view now shows the `request-builder → gyroscope:partition` edge.** The override of `RequestBuilder::target()` walked the conditional `errors_target` / `completed_target` but missed the flight sibling's target — the `gyroscope:partition` destination the `set_inflight_target` verb stores on the hidden `RequestFlight` sibling. Live view rendered `gyroscope:partition` with a non-zero rate but no inbound edge from request-builder; edit view (which reads the topology source rather than the live graph) showed the edge correctly. Union the flight sibling's target into the extras list alongside the existing two, with the same dedup gate.
