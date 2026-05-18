@@ -190,4 +190,18 @@ class M2BootstrapTest extends TestCase {
 			'Legacy StatusController must be deleted; Status_CI.get replaces it (M2 Task 2b).'
 		);
 	}
+
+	public function test_legacy_perf_config_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfConfigController' ),
+			'Legacy PerfConfigController must be deleted; Performance_CI.config_get + .config_update replace it (M2 Task 11). No JS callers, no server-to-server callers.'
+		);
+	}
+
+	public function test_legacy_perf_hooks_available_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfHooksAvailableController' ),
+			'Legacy PerfHooksAvailableController must be deleted; Performance_CI.hooks_available + .hooks_configure replace it (M2 Task 10). No JS callers, no server-to-server callers.'
+		);
+	}
 }
