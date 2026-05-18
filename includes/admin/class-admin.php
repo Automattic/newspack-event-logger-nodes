@@ -458,11 +458,29 @@ class Admin {
 		// field. The aggregator fleet itself runs whenever 'aggregator' is
 		// in the substrate `topologies` list.
 
+		\register_setting(
+			self::OPTIONS_GROUP,
+			'newspack_event_logger_nodes_enable_aggregator',
+			[
+				'type'              => 'boolean',
+				'sanitize_callback' => static fn ( $v ): int => empty( $v ) ? 0 : 1,
+				'default'           => 0,
+				'autoload'          => true,
+			]
+		);
+
 		\add_settings_section(
 			'newspack_event_logger_nodes_aggregator_section',
 			\__( 'Remote Servers', 'newspack-event-logger-nodes' ),
 			[ $this, 'aggregator_section_callback' ],
 			self::SETTINGS_PAGE
+		);
+		\add_settings_field(
+			'enable_aggregator',
+			\__( 'Enable Aggregator', 'newspack-event-logger-nodes' ),
+			[ $this, 'enable_aggregator_callback' ],
+			self::SETTINGS_PAGE,
+			'newspack_event_logger_nodes_aggregator_section'
 		);
 		\add_settings_field(
 			'configured_servers',
@@ -782,6 +800,15 @@ class Admin {
 
 	public function aggregator_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	public function enable_aggregator_callback(): void {
+		$enabled = (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 0 );
+		?>
+		<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
+		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
+		<label for="enable_aggregator"><?php \esc_html_e( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' ); ?></label>
+		<?php
 	}
 
 	public function remote_settings_section_callback(): void {
