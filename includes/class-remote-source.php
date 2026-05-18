@@ -562,48 +562,11 @@ class RemoteSource extends Node {
 
 		$decoded = \json_decode( $raw_data, true, 16 );
 
-		// Unified `/messages/stream` wire format (production path): every line
-		// is a `msg` event carrying a 7-field Message envelope. Early return so
-		// the legacy `entry`/`heartbeat`/`connected` branches below don't also
-		// fire.
+		// Unified `/messages/stream` wire format: every line is a `msg` event
+		// carrying a 7-field Message envelope. The substrate emits no other
+		// event types, so anything else is silently ignored.
 		if ( 'msg' === $type && \is_array( $decoded ) && \count( $decoded ) === 7 ) {
 			return $this->dispatch_msg_envelope( $decoded );
-		}
-
-		// Legacy SSE wire format (dead in production after M6.7 but kept for
-		// the existing 33 unit tests in RemoteSourceTest + StreamMergerTest
-		// that drive the parser via `event: entry` / `event: heartbeat` /
-		// `event: connected`). The legacy SSE controllers that emitted these
-		// shapes are deleted; nothing in production reaches this code. Safe
-		// to delete the branches once the tests are migrated to the
-		// `make_msg_wire` shape.
-		if ( 'entry' === $type && null === $decoded ) {
-			return true;
-		}
-
-		if ( 'connected' === $type && \is_array( $decoded ) && isset( $decoded['slot'] ) ) {
-			$this->slot = (int) $decoded['slot'];
-			$this->record_successful_heartbeat();
-			$this->last_heartbeat = (int) Core::$now;
-			$this->update_connection_status( 'connected', $this->last_http_code, '' );
-		}
-
-		if ( ( 'heartbeat' === $type || 'entry' === $type )
-			&& \is_array( $decoded ) && isset( $decoded['position'] ) ) {
-			$this->position = [
-				'segment_id' => \max( 0, (int) ( $decoded['position']['segment_id'] ?? $this->position['segment_id'] ) ),
-				'offset'     => \max( 0, (int) ( $decoded['position']['offset'] ?? $this->position['offset'] ) ),
-			];
-			unset( $decoded['position'] );
-		}
-
-		if ( 'heartbeat' === $type && \is_array( $decoded ) ) {
-			$ts = $decoded['ts'] ?? null;
-			$this->update_sse_heartbeat( \is_numeric( $ts ) ? (int) $ts : (int) Core::$now );
-		}
-
-		if ( 'entry' === $type && \is_array( $decoded ) ) {
-			$this->forward_entry( $decoded );
 		}
 
 		return true;

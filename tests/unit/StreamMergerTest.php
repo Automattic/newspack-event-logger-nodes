@@ -115,15 +115,64 @@ class StreamMergerTest extends TestCase {
 	}
 
 	/**
-	 * Build an SSE wire frame for one `entry` event that the production
-	 * forward_entry() will accept (needs `k` + numeric `ts`). Tests of the
-	 * parser mechanics (multiline, comment, partial chunks, etc.) wrap
-	 * payloads with this so the sink actually receives a TM_STRUCT.
+	 * Build an SSE wire frame for one entry that the production
+	 * `dispatch_msg_envelope()` will forward to the sink (needs `k` + numeric
+	 * `ts` inside the envelope's VALUE). Tests of the parser mechanics
+	 * (multiline, comment, partial chunks, etc.) wrap payloads with this so
+	 * the sink actually receives a TM_STRUCT.
+	 *
+	 * Post-M6.7 wire format: `event: msg\ndata: <7-field envelope JSON>\n\n`.
 	 */
 	private function entry_frame( array $data ): string {
 		$data['k']  = $data['k'] ?? 'render';
 		$data['ts'] = $data['ts'] ?? 1700000000;
-		return "event: entry\ndata: " . \json_encode( $data ) . "\n\n";
+		$envelope   = [
+			Message::TM_STRUCT,
+			(float) $data['ts'],
+			'firehose.p0',
+			'',
+			'0:0',
+			(string) ( $data['rid'] ?? '' ),
+			$data,
+		];
+		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
+	}
+
+	/**
+	 * Build an SSE wire frame for the substrate's `connected` envelope.
+	 * Post-M6.7 wire format: `event: msg\ndata: <envelope with KEY=connected>\n\n`.
+	 */
+	private function connected_frame( int $slot ): string {
+		$envelope = [
+			Message::TM_INFO,
+			0.0,
+			'_stream',
+			'',
+			'',
+			'connected',
+			[ 'pid' => 12345, 'slot' => $slot, 'subscriptions' => [ 'firehose.p0' ], 'interval' => 500 ],
+		];
+		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
+	}
+
+	/**
+	 * Build a wire frame that updates RemoteSource's `position` to {seg, off}.
+	 * Post-M6.7 the position field rides each envelope's `ID = "seg:off"`
+	 * (no separate `position` payload), so any envelope with the matching ID
+	 * advances the cursor.
+	 */
+	private function position_frame( int $seg, int $off, array $extra_value = [] ): string {
+		$value = $extra_value + [ 'k' => 'render', 'ts' => 1700000000 ];
+		$envelope = [
+			Message::TM_STRUCT,
+			(float) $value['ts'],
+			'firehose.p0',
+			'',
+			"{$seg}:{$off}",
+			'',
+			$value,
+		];
+		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
 	}
 
 	// =========================================================================
@@ -146,23 +195,6 @@ class StreamMergerTest extends TestCase {
 		$this->assertCount( 2, $capture->captured );
 		$this->assertSame( 'start',    $capture->captured[0][ Message::VALUE ]['k'] );
 		$this->assertSame( 'complete', $capture->captured[1][ Message::VALUE ]['k'] );
-	}
-
-	public function test_skips_non_data_lines(): void {
-		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
-		$sm->sink( $capture );
-
-		// `heartbeat` event isn't an `entry`, so it never reaches the sink;
-		// extra fields like `id:` are ignored per spec. Only the entry frame
-		// produces a sinkable message.
-		$sm->process_sse_chunk(
-			"event: heartbeat\ndata: " . \json_encode( [ 'ts' => 1700000000 ] ) . "\n\n"
-			. "id: 123\n" . $this->entry_frame( [ 'k' => 'payload' ] )
-		);
-
-		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'payload', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_handles_partial_chunk_across_calls(): void {
@@ -241,8 +273,7 @@ class StreamMergerTest extends TestCase {
 		$handle = $sm->test_get_handle( 'siteR' );
 
 		// Production path: forward_entry encodes the entry, applies filter, sinks.
-		$payload = json_encode( [ 'k' => 'job', 'ts' => 1700000007, 'url' => '/r', 'handler' => 'x' ] );
-		$sm->on_curl_data( $handle, "event: entry\ndata: {$payload}\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'job', 'ts' => 1700000007, 'url' => '/r', 'handler' => 'x' ] ) );
 
 		$this->assertCount( 1, $capture->captured );
 		$out = $capture->captured[0][ Message::VALUE ];
@@ -274,8 +305,7 @@ class StreamMergerTest extends TestCase {
 		// buffer through the cURL data callback hook.
 		$handle = $sm->test_get_handle( 'siteX' );
 		$this->assertNotNull( $handle, 'add_remote must open a cURL handle' );
-		$payload = json_encode( [ 'k' => 'request', 'ts' => 1700000000, 'url' => '/x' ] );
-		$sm->on_curl_data( $handle, "event: entry\ndata: {$payload}\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'request', 'ts' => 1700000000, 'url' => '/x' ] ) );
 
 		$this->assertCount( 3, $captured_args );
 		$this->assertIsString( $captured_args[0] );
@@ -294,10 +324,27 @@ class StreamMergerTest extends TestCase {
 
 		// Two `data:` lines under one event must concatenate with "\n".
 		// JSON tolerates whitespace between tokens so the parser's
-		// "\n"-join produces a still-decodable payload.
-		$sm->process_sse_chunk(
-			"event: entry\ndata: {\"k\":\"render\",\ndata: \"ts\":1700000000}\n\n"
+		// "\n"-join produces a still-decodable payload. Pretty-print the
+		// envelope JSON and emit each line as its own `data:` field — the
+		// parser must rejoin them and decode the same envelope.
+		$envelope = \json_encode(
+			[
+				Message::TM_STRUCT,
+				1700000000.0,
+				'firehose.p0',
+				'',
+				'0:0',
+				'',
+				[ 'k' => 'render', 'ts' => 1700000000 ],
+			],
+			\JSON_PRETTY_PRINT
 		);
+		$wire = "event: msg\n";
+		foreach ( \explode( "\n", $envelope ) as $line ) {
+			$wire .= "data: {$line}\n";
+		}
+		$wire .= "\n";
+		$sm->process_sse_chunk( $wire );
 
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
@@ -312,20 +359,30 @@ class StreamMergerTest extends TestCase {
 		$handle = $sm->test_get_handle( 'siteA' );
 		$this->assertNotNull( $handle );
 
-		// Connect event sets slot, doesn't sink the payload.
-		$sm->on_curl_data( $handle, "event: connected\ndata: " . json_encode( [ 'slot' => 7 ] ) . "\n\n" );
+		// Connect envelope sets slot, doesn't sink the payload.
+		$sm->on_curl_data( $handle, $this->connected_frame( 7 ) );
 		$this->assertSame( 7, $sm->get_slot( 'siteA' ) );
 
-		// Heartbeat advances position; doesn't sink.
-		$sm->on_curl_data( $handle, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 3, 'offset' => 100 ] ] ) . "\n\n" );
+		// Position-only envelope (VALUE has no `k`, so dispatch_msg_envelope's
+		// entry-shape gate drops it before forward_entry runs) advances the
+		// cursor via envelope ID without sinking.
+		$position_only_envelope = [
+			Message::TM_STRUCT,
+			1700000000.0,
+			'firehose.p0',
+			'',
+			'3:100',
+			'',
+			[],
+		];
+		$sm->on_curl_data( $handle, "event: msg\ndata: " . \json_encode( $position_only_envelope ) . "\n\n" );
 		$this->assertSame( [ 'segment_id' => 3, 'offset' => 100 ], $sm->get_position( 'siteA' ) );
 
 		// Entry sinks with _source stamped.
-		$entry = json_encode( [ 'k' => 'render', 'ts' => 1700000001, 'url' => '/a' ] );
-		$sm->on_curl_data( $handle, "event: entry\ndata: {$entry}\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000001, 'url' => '/a' ] ) );
 
 		// Capture should have exactly one entry (`entry`) — the connected/
-		// heartbeat events don't get forwarded.
+		// position-only envelopes don't get forwarded.
 		$this->assertCount( 1, $capture->captured );
 		$out = $capture->captured[0][ Message::VALUE ];
 		$this->assertIsArray( $out );
@@ -340,14 +397,28 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteA', 'http://siteA.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteA' );
 
-		// Missing `k`.
-		$sm->on_curl_data( $handle, "event: entry\ndata: " . json_encode( [ 'ts' => 1700000001 ] ) . "\n\n" );
-		// Missing `ts`.
-		$sm->on_curl_data( $handle, "event: entry\ndata: " . json_encode( [ 'k' => 'x' ] ) . "\n\n" );
-		// Non-string `k`.
-		$sm->on_curl_data( $handle, "event: entry\ndata: " . json_encode( [ 'k' => 5, 'ts' => 1 ] ) . "\n\n" );
-		// Non-numeric `ts`.
-		$sm->on_curl_data( $handle, "event: entry\ndata: " . json_encode( [ 'k' => 'r', 'ts' => 'now' ] ) . "\n\n" );
+		// Construct envelopes inline so we can omit `k` / `ts` (entry_frame
+		// defaults both). Missing `k` is dropped by dispatch_msg_envelope's
+		// entry-shape gate; missing `ts`, non-string `k`, and non-numeric `ts`
+		// are dropped by forward_entry's validation.
+		$malformed_entries = [
+			[ 'ts' => 1700000001 ],           // Missing `k`.
+			[ 'k' => 'x' ],                   // Missing `ts`.
+			[ 'k' => 5, 'ts' => 1 ],          // Non-string `k`.
+			[ 'k' => 'r', 'ts' => 'now' ],    // Non-numeric `ts`.
+		];
+		foreach ( $malformed_entries as $value ) {
+			$envelope = [
+				Message::TM_STRUCT,
+				1700000000.0,
+				'firehose.p0',
+				'',
+				'0:0',
+				'',
+				$value,
+			];
+			$sm->on_curl_data( $handle, "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
+		}
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -410,7 +481,7 @@ class StreamMergerTest extends TestCase {
 		$this->assertNotNull( $handle );
 
 		// Receive any event — backoff resets.
-		$sm->on_curl_data( $handle, "event: connected\ndata: " . json_encode( [ 'slot' => 1 ] ) . "\n\n" );
+		$sm->on_curl_data( $handle, $this->connected_frame( 1 ) );
 		$this->assertSame( StreamMerger::INITIAL_BACKOFF, $sm->get_backoff( 'siteC' ) );
 	}
 
@@ -426,7 +497,7 @@ class StreamMergerTest extends TestCase {
 		$this->assertNotNull( $first_handle );
 
 		// Receive a connected event so last_event_time anchors at now.
-		$sm->on_curl_data( $first_handle, "event: connected\ndata: " . json_encode( [ 'slot' => 0 ] ) . "\n\n" );
+		$sm->on_curl_data( $first_handle, $this->connected_frame( 0 ) );
 
 		// Just under timeout — connection survives.
 		Core::$now = 1000.0 + StreamMerger::HEARTBEAT_TIMEOUT - 1;
@@ -527,9 +598,10 @@ class StreamMergerTest extends TestCase {
 		Core::$now = 1234567890.0;
 		$sm->add_remote( 'siteF', 'http://siteF.test/', 'tok' );
 
-		// Mutate position via heartbeat dispatch.
+		// Mutate position via envelope ID — post-M6.7 position rides each
+		// envelope, not a separate heartbeat field.
 		$handle = $sm->test_get_handle( 'siteF' );
-		$sm->on_curl_data( $handle, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 7, 'offset' => 999 ] ] ) . "\n\n" );
+		$sm->on_curl_data( $handle, $this->position_frame( 7, 999 ) );
 
 		$sm->commit_all();
 
@@ -597,7 +669,7 @@ class StreamMergerTest extends TestCase {
 			'url' => '/h',
 			'big' => str_repeat( 'A', StreamMerger::MAX_LINE_BYTES + 100 ),
 		];
-		$sm->on_curl_data( $handle, "event: entry\ndata: " . json_encode( $entry ) . "\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( $entry ) );
 
 		$this->assertCount( 0, $capture->captured, 'oversized entry must be dropped' );
 	}
@@ -615,8 +687,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteI', 'http://siteI.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteI' );
 
-		$payload = json_encode( [ 'k' => 'render', 'ts' => 1700000003, 'url' => '/i' ] );
-		$sm->on_curl_data( $handle, "event: entry\ndata: {$payload}\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000003, 'url' => '/i' ] ) );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -640,8 +711,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteJ', 'http://siteJ.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteJ' );
 
-		$payload = json_encode( [ 'k' => 'render', 'ts' => 1700000004, 'url' => '/j' ] );
-		$sm->on_curl_data( $handle, "event: entry\ndata: {$payload}\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000004, 'url' => '/j' ] ) );
 
 		$this->assertSame( 'siteJ', $seen_source );
 	}
@@ -662,8 +732,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteK', 'http://siteK.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteK' );
 
-		$payload = json_encode( [ 'k' => 'render', 'ts' => 1700000005, 'url' => '/k' ] );
-		$sm->on_curl_data( $handle, "event: entry\ndata: {$payload}\n\n" );
+		$sm->on_curl_data( $handle, $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000005, 'url' => '/k' ] ) );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -760,9 +829,9 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 'connecting', $status['last_connection_status'] );
 		$this->assertSame( StreamMerger::INITIAL_BACKOFF, $status['current_backoff'] );
 
-		// On `connected` event, status flips to connected + records heartbeat.
+		// On `connected` envelope, status flips to connected + records heartbeat.
 		$handle = $sm->test_get_handle( 'siteM' );
-		$sm->on_curl_data( $handle, "event: connected\ndata: " . json_encode( [ 'slot' => 3 ] ) . "\n\n" );
+		$sm->on_curl_data( $handle, $this->connected_frame( 3 ) );
 
 		$status = $cache->get( 'aggregator_status:siteM:p0' );
 		$this->assertSame( 'connected', $status['last_connection_status'] );
@@ -977,13 +1046,16 @@ class StreamMergerTest extends TestCase {
 
 	public function test_sse_field_value_without_leading_space_works(): void {
 		// Per spec, `data:value` (no space after colon) is equivalent to `data: value`
-		// — the spec strips ONE leading space, not all whitespace.
+		// — the spec strips ONE leading space, not all whitespace. Build the
+		// canonical `event: msg\ndata: ...\n\n` frame and then strip the spaces
+		// so this test stays focused on the SSE field-without-space parse path.
 		$sm      = $this->make_merger();
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		$payload = \json_encode( [ 'k' => 'nospace', 'ts' => 1700000000 ] );
-		$sm->process_sse_chunk( "event:entry\ndata:{$payload}\n\n" );
+		$wire = $this->entry_frame( [ 'k' => 'nospace', 'ts' => 1700000000 ] );
+		$wire = \str_replace( [ 'event: ', 'data: ' ], [ 'event:', 'data:' ], $wire );
+		$sm->process_sse_chunk( $wire );
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( 'nospace', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
@@ -1006,8 +1078,9 @@ class StreamMergerTest extends TestCase {
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
-		$payload = \json_encode( [ 'k' => 'crlf', 'ts' => 1700000000 ] );
-		$sm->process_sse_chunk( "event: entry\r\ndata: {$payload}\r\n\r\n" );
+		$wire = $this->entry_frame( [ 'k' => 'crlf', 'ts' => 1700000000 ] );
+		$wire = \str_replace( "\n", "\r\n", $wire );
+		$sm->process_sse_chunk( $wire );
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( 'crlf', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
@@ -1267,8 +1340,20 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteNeg', 'http://siteNeg.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteNeg' );
 
-		// Heartbeat with negative segment_id should clamp to 0.
-		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => -5, 'offset' => -100 ] ] ) . "\n\n" );
+		// Envelope ID with negative seg/off should NOT update the cursor —
+		// dispatch_msg_envelope guards on `$seg >= 0 && $off >= 0` and leaves
+		// the position at its initial {0,0}. Observable outcome matches the
+		// legacy clamp-to-zero behavior.
+		$envelope = [
+			Message::TM_STRUCT,
+			1700000000.0,
+			'firehose.p0',
+			'',
+			'-5:-100',
+			'',
+			[],
+		];
+		$sm->on_curl_data( $h, "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
 
 		$pos = $sm->get_position( 'siteNeg' );
 		$this->assertSame( 0, $pos['segment_id'] );
@@ -1280,12 +1365,9 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'sitePartial', 'http://sitePartial.test/', 'tok' );
 		$h = $sm->test_get_handle( 'sitePartial' );
 
-		// First heartbeat: full position.
-		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 5, 'offset' => 100 ] ] ) . "\n\n" );
+		// Envelope ID `5:100` advances the cursor to {seg=5, off=100}.
+		$sm->on_curl_data( $h, $this->position_frame( 5, 100 ) );
 
-		// Second heartbeat: only segment_id present → offset stays 0 because
-		// the merge takes whatever's in $decoded['position']; missing offset = 0.
-		// (This is the actual behavior — the merger doesn't preserve old offset.)
 		$pos1 = $sm->get_position( 'sitePartial' );
 		$this->assertSame( 5, $pos1['segment_id'] );
 		$this->assertSame( 100, $pos1['offset'] );
@@ -1307,8 +1389,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteKey', 'http://siteKey.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteKey' );
 
-		$entry   = json_encode( [ 'k' => 'render', 'ts' => 1700000010, 'rid' => 'abc123def456' ] );
-		$sm->on_curl_data( $h, "event: entry\ndata: {$entry}\n\n" );
+		$sm->on_curl_data( $h, $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000010, 'rid' => 'abc123def456' ] ) );
 
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( 'abc123def456', $capture->captured[0][ Message::KEY ] );
@@ -1326,8 +1407,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteNoRid', 'http://siteNoRid.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteNoRid' );
 
-		$entry = json_encode( [ 'k' => 'request', 'ts' => 1700000020 ] );
-		$sm->on_curl_data( $h, "event: entry\ndata: {$entry}\n\n" );
+		$sm->on_curl_data( $h, $this->entry_frame( [ 'k' => 'request', 'ts' => 1700000020 ] ) );
 
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( '', $capture->captured[0][ Message::KEY ] );
@@ -1340,7 +1420,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteFrom', 'http://siteFrom.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteFrom' );
 
-		$sm->on_curl_data( $h, "event: entry\ndata: " . json_encode( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) . "\n\n" );
+		$sm->on_curl_data( $h, $this->entry_frame( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) );
 
 		// Each entry now exits via RemoteSource (the per-spoke child node),
 		// whose name is namespaced under the merger as `{merger}:remote:{id}`.
@@ -1463,7 +1543,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteNonString', 'http://siteNonString.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteNonString' );
 
-		$sm->on_curl_data( $h, "event: entry\ndata: " . json_encode( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) . "\n\n" );
+		$sm->on_curl_data( $h, $this->entry_frame( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -1480,7 +1560,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteFalse', 'http://siteFalse.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteFalse' );
 
-		$sm->on_curl_data( $h, "event: entry\ndata: " . json_encode( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) . "\n\n" );
+		$sm->on_curl_data( $h, $this->entry_frame( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -1497,7 +1577,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteEmpty', 'http://siteEmpty.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteEmpty' );
 
-		$sm->on_curl_data( $h, "event: entry\ndata: " . json_encode( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) . "\n\n" );
+		$sm->on_curl_data( $h, $this->entry_frame( [ 'k' => 'r', 'ts' => 1, 'url' => '/x' ] ) );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -1676,7 +1756,7 @@ class StreamMergerTest extends TestCase {
 
 		// Force a position update so commit_all has something to write.
 		$h = $sm->test_get_handle( 'siteCommit' );
-		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 2, 'offset' => 50 ] ] ) . "\n\n" );
+		$sm->on_curl_data( $h, $this->position_frame( 2, 50 ) );
 
 		$sm->tick();
 		// First tick committed; verify offsetlog file exists.
@@ -2016,7 +2096,7 @@ class StreamMergerTest extends TestCase {
 
 		// Update position so commit_all() has something to write.
 		$h = $sm->test_get_handle( 'siteTimerFill' );
-		$sm->on_curl_data( $h, "event: heartbeat\ndata: " . json_encode( [ 'position' => [ 'segment_id' => 1, 'offset' => 25 ] ] ) . "\n\n" );
+		$sm->on_curl_data( $h, $this->position_frame( 1, 25 ) );
 
 		// Build the TIMER fan-out message identical to Router::notify('TIMER', ...).
 		$tick                  = Message::new_message();
@@ -2212,7 +2292,7 @@ class StreamMergerTest extends TestCase {
 		// Verify children received the cache by triggering a status update
 		// that writes to memcache.
 		$h1 = $sm->test_get_handle( 'siteSC1' );
-		$sm->on_curl_data( $h1, "event: connected\ndata: " . json_encode( [ 'slot' => 1 ] ) . "\n\n" );
+		$sm->on_curl_data( $h1, $this->connected_frame( 1 ) );
 
 		// Status key should exist for siteSC1 — proves cache was injected.
 		$this->assertIsArray( $cache->get( 'aggregator_status:siteSC1:p0' ) );
