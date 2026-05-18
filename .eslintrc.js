@@ -1,11 +1,16 @@
-/**
- * Eslint config — extends wp-scripts defaults and tells eslint-plugin-import
- * to treat `@newspack-nodes/runtime` as a known module so it doesn't flag the
- * webpack alias as unresolvable. Resolution at runtime is handled by
- * webpack.config.js (build time) and jest.config.js (test time).
- */
+// ESLint config — standalone (no @wordpress/scripts dependency).
+//
+// `import/core-modules` tells eslint-plugin-import that `@newspack-nodes/runtime`
+// resolves at runtime (build alias + jest moduleNameMapper handle resolution).
 module.exports = {
-	extends: [ require.resolve( '@wordpress/scripts/config/.eslintrc.js' ) ],
+	root: true,
+	extends: [ 'plugin:@wordpress/eslint-plugin/recommended' ],
+	overrides: [
+		{
+			files: [ '**/@(test|__tests__)/**/*.js', '**/?(*.)test.js' ],
+			extends: [ 'plugin:@wordpress/eslint-plugin/test-unit' ],
+		},
+	],
 	settings: {
 		'import/core-modules': [ '@newspack-nodes/runtime' ],
 	},
