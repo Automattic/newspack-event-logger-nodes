@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **M6.3 — RawLogs dashboard migrated to the unified `/messages/stream` endpoint.** First of the four dashboard cutovers in M6. The dashboard now subscribes via the new `useMessageStream` hook (in `src/shared/hooks/`) and runs the per-line transform client-side via `src/event-dashboards/transformLogLine.js` — mirrors the legacy `RawlogsController::transform_line()` (KEY prefix, JSON-render of array VALUE, 1000-char clip). Partition number comes from the Message FROM field (`{sub}.pN`), matching the new substrate stamp.
+- **`Sse_Slot_Pool` `check_slot` closure now refreshes TTL via `touch_sse_slot`.** Without this, the slot expires every `$ttl_browser` seconds (30s default) and the dashboard cycles disconnect → reacquire — visible as a "Reconnecting in 2s..." banner every 30 seconds even on a healthy stream. Refresh-on-check matches the legacy `SSEControllerBase` heartbeat semantic but without a separate client-side ping.
+
 ### Added
 
 - **M6.2 — `Sse_Slot_Pool::wire()` installs the substrate's slot-pool seams.** Three closures bound at plugin boot to `\Newspack_Nodes\Rest\Messages_Stream_Controller`'s static `$acquire_slot` / `$release_slot` / `$check_slot` properties, each delegating to a shared `Memcached_Cache` via `Cache_Interface`. Same `MAX_SSE_SLOTS = 8` cap the legacy `SSEControllerBase` used; TTL is 30s for the shared browser pool (partition `-1`) and 60s for per-partition aggregator pools. The substrate computes the partition number from the subscription shape, so dashboards subscribing to `firehose` (multi-partition log) land in the browser pool and a future `firehose.p3` aggregator subscription (M6.7) lands in a per-partition pool. Cache instance is overridable via `Sse_Slot_Pool::$cache` for tests; five new unit tests in `tests/unit/SseSlotPoolTest.php` pin the contract. Ready for M6.3+ dashboard migrations onto `/messages/stream` without losing the rate-limiting the per-feed SSE controllers had.

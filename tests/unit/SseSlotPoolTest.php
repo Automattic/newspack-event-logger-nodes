@@ -96,6 +96,42 @@ class SseSlotPoolTest extends TestCase {
 		$this->assertTrue( $check( $slot, -1 ) );
 	}
 
+	public function test_check_calls_touch_to_refresh_ttl(): void {
+		// The substrate calls `$check_slot` once per drain iteration. Without
+		// a TTL refresh, the slot expires after `$ttl_browser` seconds
+		// mid-stream and the dashboard cycles reconnect → reacquire → repeat.
+		// Refresh-on-check matches the legacy SSEControllerBase heartbeat
+		// pattern but without a separate client-side ping. Verify the closure
+		// invokes touch_sse_slot by counting calls on a recording cache.
+		$recorder = new class extends FakeMemcached {
+			public int $touch_calls = 0;
+			public int $check_calls = 0;
+			public function touch_sse_slot( int $user_id, string $ip_hash, int $slot, int $ttl = 10, int $partition = -1 ): bool {
+				$this->touch_calls++;
+				return parent::touch_sse_slot( $user_id, $ip_hash, $slot, $ttl, $partition );
+			}
+			public function check_sse_slot( int $user_id, string $ip_hash, int $slot, int $partition = -1 ): bool {
+				$this->check_calls++;
+				return parent::check_sse_slot( $user_id, $ip_hash, $slot, $partition );
+			}
+		};
+		Sse_Slot_Pool::$cache = $recorder;
+		Sse_Slot_Pool::wire();
+
+		$acquire = Messages_Stream_Controller::$acquire_slot;
+		$check   = Messages_Stream_Controller::$check_slot;
+
+		$slot = $acquire( -1 );
+		$this->assertNotFalse( $slot );
+
+		$this->assertTrue( $check( $slot, -1 ) );
+		$this->assertSame(
+			1,
+			$recorder->touch_calls,
+			'check_slot must call touch_sse_slot to refresh TTL'
+		);
+	}
+
 	public function test_acquire_returns_false_when_pool_exhausted(): void {
 		Sse_Slot_Pool::$cache     = new FakeMemcached();
 		Sse_Slot_Pool::$max_slots = 2;

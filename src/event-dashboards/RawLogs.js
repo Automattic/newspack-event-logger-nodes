@@ -18,7 +18,8 @@ import {
 import { getCommandClient } from '../shared/utils/commandClient';
 import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
 import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
+import useMessageStream from '../shared/hooks/useMessageStream';
+import transformLogLine from './transformLogLine';
 import './styles/raw-logs.scss';
 
 const ROW_HEIGHT = 18;
@@ -106,49 +107,45 @@ export default function RawLogs() {
 		setLinesPerSecond( smoothedLPS.current );
 	}, [] );
 
-	// Handle SSE 'lines' events.
-	const handleSource = useCallback(
-		( source ) => {
-			source.addEventListener( 'lines', ( e ) => {
-				try {
-					const batch = JSON.parse( e.data );
-					for ( const item of batch ) {
-						lineCounterRef.current += 1;
-						linesBufferRef.current.unshift( {
-							id: lineCounterRef.current,
-							partition: item.p,
-							content: item.line,
-							isEven: lineCounterRef.current % 2 === 0,
-						} );
-					}
-
-					if ( linesBufferRef.current.length > MAX_LINES ) {
-						linesBufferRef.current.length = MAX_LINES;
-					}
-				} catch ( err ) {
-					// Ignore parse errors.
-				}
-			} );
-		},
-		[] // eslint-disable-line react-hooks/exhaustive-deps
-	);
+	// Per-Message transform: each Message envelope on the unified
+	// /messages/stream endpoint becomes one row in the buffer. Skips the
+	// substrate's `connected` envelope (KEY=='connected') so the
+	// dashboard doesn't render the slot/pid metadata as a log line.
+	const handleMessage = useCallback( ( envelope ) => {
+		if ( envelope[ 5 ] === 'connected' ) {
+			return;
+		}
+		const row = transformLogLine( envelope );
+		if ( ! row ) {
+			return;
+		}
+		lineCounterRef.current += 1;
+		linesBufferRef.current.unshift( {
+			id: lineCounterRef.current,
+			partition: row.p,
+			content: row.line,
+			isEven: lineCounterRef.current % 2 === 0,
+		} );
+		if ( linesBufferRef.current.length > MAX_LINES ) {
+			linesBufferRef.current.length = MAX_LINES;
+		}
+	}, [] );
 
 	// Reset state on reconnect.
 	const handleBeforeConnect = useCallback( () => {
 		lineHistoryRef.current = [];
 	}, [] );
 
-	// Use shared firehose connection hook.
+	// Use unified message-stream connection hook.
 	const {
 		error,
 		connect,
 		close: closeSource,
 		lastEventTime,
-	} = useFirehoseConnection( {
-		endpoint: 'rawlogs',
+	} = useMessageStream( {
+		subscriptions: selectedLog ? [ selectedLog ] : [],
 		intervalMs: 100,
-		params: { log: selectedLog },
-		onSource: handleSource,
+		onMessage: handleMessage,
 		onBeforeConnect: handleBeforeConnect,
 	} );
 
