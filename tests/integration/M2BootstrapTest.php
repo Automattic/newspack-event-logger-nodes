@@ -134,4 +134,32 @@ class M2BootstrapTest extends TestCase {
 			'Legacy FirehoseController must be deleted; /logs → Performance_CI.firehose_logs; /heartbeat → Workers_CI.heartbeat; /status → Performance_CI.firehose_status. FirehoseStreamController (SSE) stays.'
 		);
 	}
+
+	public function test_legacy_perf_overview_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfOverviewController' ),
+			'Legacy PerfOverviewController must be deleted; Performance_CI.overview replaces it.'
+		);
+	}
+
+	public function test_legacy_perf_urls_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfUrlsController' ),
+			'Legacy PerfUrlsController must be deleted; Performance_CI.urls + .url_detail replace it.'
+		);
+	}
+
+	public function test_legacy_perf_requests_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfRequestsController' ),
+			'Legacy PerfRequestsController must be deleted; Performance_CI.request_search + .request_detail replace it.'
+		);
+	}
+
+	public function test_legacy_performance_controller_class_is_gone(): void {
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerformanceController' ),
+			'Legacy PerformanceController must be deleted; its /performance/dashboard + /performance/timing routes had no JS callers and it delegated to PerfOverviewController + PerfUrlsController (deleted in the same batch). PerformanceControllerBase (the abstract base) stays.'
+		);
+	}
 }
