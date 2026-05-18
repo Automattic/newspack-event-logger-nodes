@@ -72,12 +72,21 @@ class Sse_Slot_Pool {
 			);
 		};
 		Messages_Stream_Controller::$check_slot = static function ( int $slot, int $partition ): bool {
-			return self::cache()->check_sse_slot(
-				self::user_id(),
-				self::ip_hash(),
-				$slot,
-				$partition
-			);
+			// Refresh-on-check: every drain-loop iteration (controller polls
+			// this) touches the slot's TTL so a long-lived SSE connection
+			// doesn't get torn down at the `$ttl_browser`-second boundary.
+			// Matches the legacy SSEControllerBase touch_sse_slot heartbeat
+			// pattern but without a separate client-side ping. Falls back to
+			// check_sse_slot when touch fails — the latter is the
+			// authoritative "is the slot still ours?" signal.
+			$cache   = self::cache();
+			$user_id = self::user_id();
+			$ip_hash = self::ip_hash();
+			$ttl     = $partition >= 0 ? self::$ttl_aggregator : self::$ttl_browser;
+			if ( $cache->touch_sse_slot( $user_id, $ip_hash, $slot, $ttl, $partition ) ) {
+				return true;
+			}
+			return $cache->check_sse_slot( $user_id, $ip_hash, $slot, $partition );
 		};
 	}
 
