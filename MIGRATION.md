@@ -380,5 +380,18 @@ M5 is the post-M4 sweep that deletes legacy controllers no longer needed by any 
 | 1 | M5.1 | `class-discovery-controller.php` | `Discovery_CI.get` | Zero JS callers in any `src/` tree pre-deletion. |
 | 1 | M5.1 | `class-events-controller.php` | `Events_CI.recent` + `.stats` | Zero JS callers in any `src/` tree pre-deletion. |
 | 1 | M5.1 | `class-status-controller.php` | `Status_CI.get` | Zero JS callers in any `src/` tree pre-deletion. |
+| 2 | M5.1 | `class-perf-config-controller.php` | `Performance_CI.config_get` + `.config_update` | Orphan follow-up. Zero JS + zero server-to-server callers. |
+| 2 | M5.1 | `class-perf-hooks-available-controller.php` | `Performance_CI.hooks_available` + `.hooks_configure` | Orphan follow-up. Zero JS + zero server-to-server callers. |
+| 3 | M5.2 | `class-servers-controller.php` | `Servers_CI.add` + `.update` + `.delete` + `.test` (+ `.list` + `.get`) | M5.2a admin-JS cutover (jQuery → CommandClient via wp-scripts entry) precedes deletion. |
+| 3 | M5.2 | `class-settings-controller.php` | `Settings_CI.update` | M5.2b SettingsSync transport migration (RemoteManager wraps in TM_COMMAND envelope, POSTs to `/command`) precedes deletion. |
+| 3 | M5.2 | `class-perf-settings-controller.php` | `Performance_CI.settings_update` | M5.2b SettingsSync transport migration precedes deletion. |
 
-**`ServersController` deferred to M5.2.** Originally batched into M5.1 — the JS-orphan grep used `apiFetch`/`fetch` only and reported zero callers, so the plan flagged it for the mechanical-delete pass. The actual blocker: `assets/aggregator-admin.js` (enqueued by `Admin::configured_servers_callback` and localized with `eventAggregatorAdmin.restUrl = newspack-nodes/v1/`) POST/PUT/DELETEs to `/servers` + `/servers/{id}/test` via jQuery `$.ajax`. The admin-side Test/Toggle/Remove/Add buttons would 404 if the routes vanished. Migration belongs with M5.2 (SettingsSync transport cutover) — the admin JS rewrite to `/command` lands there alongside the option-fanout migration. `class-settings-controller.php` + `class-perf-settings-controller.php` likewise stay alive until SettingsSync moves off them.
+**M5.2 — running log.**
+
+| # | Sub-task | What landed | Commit |
+|---|----------|-------------|--------|
+| 1 | M5.2a | `assets/aggregator-admin.js` → `src/aggregator-admin/{index,api}.js`. New wp-scripts entry so the WP admin "Configured Servers" UI dispatches its 4 CRUD verbs through `getCommandClient()` against the `servers` service CI on `/command`. jQuery stays for DOM glue; the transport path is jQuery-free + Jest-tested (5 cases). PHP enqueue updated to load `build/aggregator-admin/index.js`; legacy file deleted. | `3645293` |
+| 2 | M5.2b | `RemoteManager::post_to_server()` rewires the dispatch path: URL becomes `/wp-json/newspack-nodes/v1/command`; body wraps the verb args in a TM_COMMAND envelope routed to `Settings_CI.update` (substrate keys) or `Performance_CI.settings_update` (perf-tuning keys). The `SettingsSync::ENDPOINT` / `PERF_ENDPOINT` constants stay as category tags selecting the verb. Basic Auth preserved unchanged; substrate-key path strips the `newspack_nodes_` prefix on the wire to match the verb's short-name whitelist. 5 new tests; 17 existing tests updated. | `f17bd69` |
+| 3 | M5.2c | Three controllers + their tests deleted; three route registrations removed; three new gate tests in `M2BootstrapTest`. | `c052022` |
+
+**Final tally for M5.2.** 1894 → 1831 PHP tests (63 dedicated controller tests deleted, 5 new envelope-shape tests in `RemoteManagerTest`, 3 new gate tests in `M2BootstrapTest`). JS suite: 14 tests (5 new in `src/aggregator-admin/__tests__/api.test.js`). Three controller files + four test files removed (~1760 LOC).
