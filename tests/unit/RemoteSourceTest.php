@@ -77,6 +77,29 @@ class RemoteSourceTest extends TestCase {
 		return $m->invoke( $remote, ...$args );
 	}
 
+	/**
+	 * Wrap a firehose entry dict (the legacy on-disk `{k, ts, ...}` shape)
+	 * into the unified `/messages/stream` SSE wire frame. Post-M6.7 every
+	 * line arrives as `event: msg\ndata: <7-field envelope JSON>\n\n`; the
+	 * entry lives at envelope[VALUE].
+	 *
+	 * Tests of structural SSE behavior (multi-line `data:`, partial chunks,
+	 * CR handling, comments, field-without-space) wrap their payload with
+	 * this so the sink receives a real TM_STRUCT.
+	 */
+	private function make_msg_wire( array $entry, string $id = '0:0', string $key = '' ): string {
+		$envelope = [
+			Message::TM_STRUCT,
+			(float) ( $entry['ts'] ?? 1.0 ),
+			'firehose.p0',
+			'',
+			$id,
+			'' !== $key ? $key : (string) ( $entry['rid'] ?? '' ),
+			$entry,
+		];
+		return "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n";
+	}
+
 	// =========================================================================
 	// Constants
 	// =========================================================================
@@ -517,31 +540,34 @@ class RemoteSourceTest extends TestCase {
 	// SSE parser — process_sse_chunk
 	// =========================================================================
 
-	public function test_process_sse_chunk_parses_data_line(): void {
-		// Drive the parser via a real `entry` event so dispatch_event lands
-		// in forward_entry → sink. Previous incarnation peeked at an
-		// internal `event_queue` that production no longer keeps — the
-		// queue collected forever with no consumer.
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$ok      = $remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-		$this->assertTrue( $ok );
-		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
-	}
-
 	public function test_process_sse_chunk_concatenates_multiline_data(): void {
 		// Multi-line `data:` fields are joined with "\n" inside the parser;
 		// JSON tolerates whitespace between tokens, so a JSON object split
-		// across two lines parses back identically.
+		// across multiple lines (at pretty-print boundaries — whitespace is
+		// legal inside the envelope array) parses back identically.
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$remote->process_sse_chunk(
-			"event: entry\ndata: {\"k\":\"render\",\ndata: \"ts\":1700000000}\n\n"
+		$envelope = \json_encode(
+			[
+				Message::TM_STRUCT,
+				1700000000.0,
+				'firehose.p0',
+				'',
+				'0:0',
+				'',
+				[ 'k' => 'render', 'ts' => 1700000000 ],
+			],
+			\JSON_PRETTY_PRINT
 		);
+		// Prefix each line with `data: ` so the parser sees them as
+		// continuation fields, then terminate with a blank line.
+		$wire = "event: msg\n";
+		foreach ( \explode( "\n", $envelope ) as $line ) {
+			$wire .= "data: {$line}\n";
+		}
+		$wire .= "\n";
+		$remote->process_sse_chunk( $wire );
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( 'render', $capture->captured[0][ Message::VALUE ]['k'] );
 	}
@@ -550,8 +576,7 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$wire    = "event: entry\ndata: {$payload}\n\n";
+		$wire    = $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] );
 		$cut     = (int) ( \strlen( $wire ) / 2 );
 		// First half: no terminator yet — sink still empty.
 		$remote->process_sse_chunk( \substr( $wire, 0, $cut ) );
@@ -565,8 +590,10 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\r\ndata: {$payload}\r\n\r\n" );
+		$wire = $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		// Inject CRs in the SSE framing — the parser must rtrim them per spec.
+		$wire = \str_replace( "\n", "\r\n", $wire );
+		$remote->process_sse_chunk( $wire );
 		$this->assertCount( 1, $capture->captured );
 	}
 
@@ -574,9 +601,9 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
 		$remote->process_sse_chunk(
-			": keepalive\n: another comment\nevent: entry\ndata: {$payload}\n\n"
+			": keepalive\n: another comment\n"
+			. $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] )
 		);
 		$this->assertCount( 1, $capture->captured );
 	}
@@ -585,8 +612,10 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event:entry\ndata:{$payload}\n\n" );
+		// Drop the spaces after `event:` and `data:` (legal per SSE spec).
+		$wire = $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] );
+		$wire = \str_replace( [ 'event: ', 'data: ' ], [ 'event:', 'data:' ], $wire );
+		$remote->process_sse_chunk( $wire );
 		$this->assertCount( 1, $capture->captured );
 	}
 
@@ -594,9 +623,9 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
 		$remote->process_sse_chunk(
-			"id: 123\nretry: 5000\nevent: entry\ndata: {$payload}\n\n"
+			"id: 123\nretry: 5000\n"
+			. $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] )
 		);
 		$this->assertCount( 1, $capture->captured );
 	}
@@ -643,106 +672,70 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 	// dispatch_event paths
 	// =========================================================================
-
-	public function test_connected_event_captures_slot(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk( "event: connected\ndata: " . \json_encode( [ 'slot' => 7 ] ) . "\n\n" );
-		$this->assertSame( 7, $remote->get_slot() );
-	}
+	//
+	// Note: `connected`-envelope slot capture, position-from-ID parsing, and
+	// entry-shape forwarding live in the M6.7 test block below
+	// (`test_msg_envelope_*`). These tests previously covered the same
+	// behaviors via the legacy `event: connected` / `event: heartbeat` /
+	// `event: entry` wire formats; the post-M6.7 substrate emits everything
+	// as `event: msg`, so the legacy duplicates are gone.
 
 	public function test_connected_event_resets_backoff(): void {
+		// Set backoff above default; verify a connected envelope drops it
+		// back to INITIAL_BACKOFF via record_successful_heartbeat().
 		$remote = $this->make_remote();
-		// Set backoff above default.
 		$this->poke( $remote, 'current_backoff', 16 );
-		$remote->process_sse_chunk( "event: connected\ndata: " . \json_encode( [ 'slot' => 0 ] ) . "\n\n" );
+		$envelope = [
+			Message::TM_INFO, 0.0, '_stream', '', '', 'connected',
+			[ 'pid' => 1, 'slot' => 0, 'subscriptions' => [ 'firehose.p0' ], 'interval' => 500 ],
+		];
+		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
 		$this->assertSame( RemoteSource::INITIAL_BACKOFF, $remote->get_backoff() );
 	}
 
-	public function test_heartbeat_event_advances_position(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk(
-			"event: heartbeat\ndata: " . \json_encode( [ 'position' => [ 'segment_id' => 5, 'offset' => 200 ] ] ) . "\n\n"
-		);
-		$this->assertSame( [ 'segment_id' => 5, 'offset' => 200 ], $remote->position() );
-	}
-
-	public function test_heartbeat_position_clamps_negative_to_zero(): void {
-		$remote = $this->make_remote();
-		$remote->process_sse_chunk(
-			"event: heartbeat\ndata: " . \json_encode( [ 'position' => [ 'segment_id' => -3, 'offset' => -50 ] ] ) . "\n\n"
-		);
-		$this->assertSame( [ 'segment_id' => 0, 'offset' => 0 ], $remote->position() );
-	}
-
-	public function test_entry_event_advances_position_too(): void {
-		$remote = $this->make_remote();
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000, 'url' => '/x', 'position' => [ 'segment_id' => 4, 'offset' => 99 ] ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-		$this->assertSame( 4, $remote->position()['segment_id'] );
-		$this->assertSame( 99, $remote->position()['offset'] );
-	}
-
-	public function test_malformed_entry_data_dropped_silently(): void {
+	public function test_malformed_msg_envelope_dropped_silently(): void {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		// Invalid JSON in an `entry` event — dispatch_event drops it; sink unchanged.
-		$remote->process_sse_chunk( "event: entry\ndata: not-json-at-all\n\n" );
+		// Invalid JSON in a `msg` event — dispatch_event drops it; sink unchanged.
+		$remote->process_sse_chunk( "event: msg\ndata: not-json-at-all\n\n" );
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	// =========================================================================
 	// forward_entry — sink path
 	// =========================================================================
-
-	public function test_forward_entry_sinks_valid_entry(): void {
-		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
-		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000, 'url' => '/x', 'rid' => 'abc' ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
-		$this->assertCount( 1, $capture->captured );
-		$msg = $capture->captured[0];
-		$this->assertSame( Message::TM_STRUCT, $msg[ Message::TYPE ] );
-		$this->assertSame( 'abc', $msg[ Message::KEY ] );
-		$this->assertIsArray( $msg[ Message::VALUE ] );
-		$this->assertSame( 'render', $msg[ Message::VALUE ]['k'] );
-		// _source stamped by forward_entry.
-		$this->assertSame( 'siteA', $msg[ Message::VALUE ]['_source'] );
-	}
+	//
+	// The "sink a valid entry" coverage moved into the M6.7 block as
+	// test_msg_envelope_with_entry_value_forwards_to_sink; tests below cover
+	// the orthogonal drop / clip / filter paths against the new wire format.
 
 	public function test_forward_entry_drops_when_k_missing(): void {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_forward_entry_drops_when_k_non_string(): void {
+		// Entry with non-string k: dispatch_msg_envelope's `isset(value['k'])`
+		// check passes (the integer is set), but forward_entry's `is_string()`
+		// guard drops the message. Same net behavior as the legacy path.
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 42, 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 42, 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_forward_entry_drops_when_ts_missing(): void {
+		// `dispatch_msg_envelope` requires `value['k']` set to reach
+		// forward_entry; forward_entry then drops on missing `ts`.
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render' ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render' ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
@@ -750,10 +743,7 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 'today' ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 'today' ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
@@ -761,64 +751,47 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
 		$big_field = \str_repeat( 'A', RemoteSource::MAX_LINE_BYTES + 100 );
-		$payload   = \json_encode( [ 'k' => 'render', 'ts' => 1700000000, 'big' => $big_field ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk(
+			$this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000, 'big' => $big_field ] )
+		);
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_forward_entry_filter_drop_with_null_return(): void {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => null );
-
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_forward_entry_filter_drop_with_false_return(): void {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => false );
-
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_forward_entry_filter_drop_with_empty_string_return(): void {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => '' );
-
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_forward_entry_filter_drop_with_non_string_return(): void {
 		// Filter returns an array — silent drop (forward_entry only accepts strings).
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => [ 'not', 'a', 'string' ] );
-
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
 	}
 
@@ -828,14 +801,12 @@ class RemoteSourceTest extends TestCase {
 			'newspack_nodes/aggregator_ingest_line',
 			static fn ( $line ) => $line . \str_repeat( 'B', RemoteSource::MAX_LINE_BYTES )
 		);
-
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000, 'url' => '/x' ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
-
+		$remote->process_sse_chunk(
+			$this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000, 'url' => '/x' ] )
+		);
 		$this->assertCount( 0, $capture->captured );
 	}
 
@@ -854,9 +825,7 @@ class RemoteSourceTest extends TestCase {
 		$remote->set_require_https( false );
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 
 		$this->assertCount( 3, $captured_args );
 		$this->assertIsString( $captured_args[0] );
@@ -872,8 +841,7 @@ class RemoteSourceTest extends TestCase {
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
 
-		$payload = \json_encode( [ 'k' => 'render', 'ts' => 1700000000 ] );
-		$remote->process_sse_chunk( "event: entry\ndata: {$payload}\n\n" );
+		$remote->process_sse_chunk( $this->make_msg_wire( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 
 		$this->assertCount( 0, $capture->captured );
 	}
