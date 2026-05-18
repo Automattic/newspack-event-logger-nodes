@@ -16,7 +16,8 @@ import {
 } from '@wordpress/element';
 
 import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
+import useMessageStream from '../shared/hooks/useMessageStream';
+import transformGyroscopeLine from './transformGyroscopeLine';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
 	formatDuration,
@@ -234,44 +235,35 @@ export default function Inflight( { maxRows = 20 } ) {
 		setRequests( sorted );
 	}, [ maxRows, updateRequestsPerSecond ] );
 
-	// Handle SSE events from firehose (single multiplexed stream).
-	const handleSource = useCallback( ( source ) => {
-		// Server sends pre-processed in-flight requests at interval.
-		source.addEventListener( 'inflight', ( e ) => {
-			try {
-				const data = JSON.parse( e.data );
-				const inflight = data.requests || [];
-
-				// Upsert each request by rid, but don't overwrite completed requests.
-				for ( const req of inflight ) {
-					const existing = requestsRef.current.get( req.rid );
-					if ( ! existing || existing.state !== 'complete' ) {
-						requestsRef.current.set( req.rid, req );
-					}
+	// Per-Message handler: gyroscope.log carries two record shapes,
+	// dispatched client-side via transformGyroscopeLine.
+	//   * inflight snapshot → upsert each request by rid; never overwrite
+	//     a request already marked complete (the inflight snapshot was
+	//     produced BEFORE the completion that may already be in our map).
+	//   * completion → merge into the existing entry, mark state=complete.
+	const handleMessage = useCallback( ( envelope ) => {
+		const out = transformGyroscopeLine( envelope );
+		if ( ! out ) {
+			return;
+		}
+		if ( out.type === 'inflight' ) {
+			for ( const req of out.requests ) {
+				const existing = requestsRef.current.get( req.rid );
+				if ( ! existing || existing.state !== 'complete' ) {
+					requestsRef.current.set( req.rid, req );
 				}
-			} catch ( err ) {
-				// Ignore parse errors.
 			}
-		} );
-
-		// Server sends completed requests in batches.
-		source.addEventListener( 'complete_batch', ( e ) => {
-			try {
-				const batch = JSON.parse( e.data );
-				for ( const req of batch ) {
-					const existing = requestsRef.current.get( req.rid );
-					// Update the request - complete is just another state.
-					requestsRef.current.set( req.rid, {
-						...existing,
-						...req,
-						state: 'complete',
-						time_ms: req.duration_ms || 0,
-						est_ms: req.duration_ms || 0,
-					} );
-				}
-			} catch ( err ) {
-				// Ignore parse errors.
-			}
+			return;
+		}
+		// type === 'complete'
+		const req = out.request;
+		const existing = requestsRef.current.get( req.rid );
+		requestsRef.current.set( req.rid, {
+			...existing,
+			...req,
+			state: 'complete',
+			time_ms: req.duration_ms || 0,
+			est_ms: req.duration_ms || 0,
 		} );
 	}, [] );
 
@@ -281,16 +273,19 @@ export default function Inflight( { maxRows = 20 } ) {
 		requestsRef.current.clear();
 	}, [] );
 
-	// Use shared firehose connection hook.
-	// Fixed 100ms SSE batches - display refresh is independent.
+	// Unified message-stream subscription over `gyroscope.log` — the
+	// topology pre-merges inflight snapshots (RequestFlight) and
+	// completion events (`completed:tee`) into one log, so the dashboard
+	// drains a single stream and dispatches by Message KEY shape.
 	const {
 		error,
 		connect,
 		close: closeSource,
 		lastEventTime,
-	} = useFirehoseConnection( {
+	} = useMessageStream( {
+		subscriptions: [ 'gyroscope' ],
 		intervalMs: 100,
-		onSource: handleSource,
+		onMessage: handleMessage,
 		onBeforeConnect: handleBeforeConnect,
 	} );
 
