@@ -456,6 +456,7 @@ class JobWorker extends Node {
 					'reply_shape' => '{ memory_used_mb, memory_limit_mb, memory_pressure, jobs_since_cache_flush, cache_flush_interval, local_handler_count, remote_handler_count, counter }',
 				],
 			],
+			'has_target'  => false,
 		];
 	}
 }
