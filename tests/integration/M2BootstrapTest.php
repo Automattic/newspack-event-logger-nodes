@@ -204,4 +204,38 @@ class M2BootstrapTest extends TestCase {
 			'Legacy PerfHooksAvailableController must be deleted; Performance_CI.hooks_available + .hooks_configure replace it (M2 Task 10). No JS callers, no server-to-server callers.'
 		);
 	}
+
+	public function test_legacy_servers_controller_class_is_gone(): void {
+		// M5.2a cut the only JS caller (aggregator-admin.js) over to the
+		// CommandClient → `servers` CI; M5.2c deletes the route. The verb
+		// table on Servers_CI is value-equivalent (same {id, url, enabled,
+		// logs, has_credentials, is_config} shape, same auth gate, same
+		// HTTPS-only URL validation).
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\ServersController' ),
+			'Legacy ServersController must be deleted; Servers_CI.list + .get + .add + .update + .delete + .test verbs replace it (M2 Task 6).'
+		);
+	}
+
+	public function test_legacy_settings_controller_class_is_gone(): void {
+		// M5.2b cut RemoteManager off /settings; the legacy route now has
+		// zero callers. Settings_CI.update takes the same four substrate
+		// integer settings (num_partitions, num_segments, segment_size,
+		// max_lifespan) with the same bounds + manage_options gate.
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\SettingsController' ),
+			'Legacy SettingsController must be deleted; Settings_CI.update replaces it (M2 Task 3).'
+		);
+	}
+
+	public function test_legacy_perf_settings_controller_class_is_gone(): void {
+		// M5.2b cut RemoteManager off /performance/settings; the legacy
+		// route now has zero callers. Performance_CI.settings_update takes
+		// the same nine perf-tuning options with the same per-type
+		// sanitization (int/float/bool/array depth caps).
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfSettingsController' ),
+			'Legacy PerfSettingsController must be deleted; Performance_CI.settings_update replaces it (M2 Task 11).'
+		);
+	}
 }
