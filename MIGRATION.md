@@ -354,8 +354,11 @@ Each row records a dashboard cutover from per-resource REST to the unified `/com
 | 3 | `performance-gyroscope` | — (audit-only) | `728063e` | `class-gyroscope-controller.php` |
 | 4 | `performance-request-log` | — (audit-only) | `5b8093d` | `class-request-log-controller.php` |
 | 5 | `event-dashboards` | `a4ca852` | `2a0f2f7` | `class-workers-controller.php`, `class-firehose-controller.php` |
+| 6 | `performance-dashboards` | `343ec01` | `b96c320` | `class-perf-overview-controller.php`, `class-perf-urls-controller.php`, `class-perf-requests-controller.php`, `class-performance-controller.php` |
 
 A `—` in the "Rewrite commit" column means the dashboard required no JS rewrite — its data path was already streaming-only (SSE via `useFirehoseConnection`), and the legacy JSON route was a fully orphan sibling whose deletion needed only the schema-parity audit + a gate test. The streaming controller (`class-gyroscope-stream-controller.php`) stays alive — CommandInterpreter dispatch is request/response only.
+
+Cutover #6 is the largest cutover so far: 9 `apiFetch` calls cut to 5 verbs (`overview`, `urls`, `url_detail`, `request_search`, `request_detail`) across `usePerformanceApi.js` and `PerformanceDashboard.js`, and 4 controllers deleted in one batch. The M2 schema-parity audit found real gaps in `Performance_CI.overview` (missing `categories`/`breakdown`/`server` args and the response fields `global_leaderboard` / `category_time_series` / `breakdown_time_series` / `breakdowns`) and `Performance_CI.url_detail` (missing `stats.time_series` / `breakdown_time_series` / `category_time_series`); 11 new tests in `PerformanceCITest.php` covered the gap before the rewrite. `PerformanceController` had zero JS callers but delegated to two of the deleted dimension-specific controllers, so it joined the batch — leaving it behind would have been a runtime fatal.
 
 Helpers introduced along the way and reused by subsequent cutovers:
 - `src/shared/utils/commandClient.js` — `getCommandClient()` singleton factory.
