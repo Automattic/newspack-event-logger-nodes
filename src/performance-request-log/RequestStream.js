@@ -18,7 +18,8 @@ import {
 } from '@wordpress/element';
 
 import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useFirehoseConnection from '../shared/hooks/useFirehoseConnection';
+import useMessageStream from '../shared/hooks/useMessageStream';
+import transformCompletedLine from './transformCompletedLine';
 import useVirtualization from '../shared/hooks/useVirtualization';
 import {
 	formatDuration,
@@ -263,45 +264,41 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		setRequestsPerSecond( totalInWindow / ( windowMs / 1000 ) );
 	}, [] );
 
-	// Handle 'complete_batch' events from SSE (single multiplexed stream).
-	const handleSource = useCallback(
-		( source ) => {
-			source.addEventListener( 'complete_batch', ( e ) => {
-				try {
-					const requests = JSON.parse( e.data );
-					for ( const req of requests ) {
-						entryCounterRef.current += 1;
-						const entry = {
-							// Monotonic per-mount counter — used as the React
-							// list key so two entries with the same rid (e.g.
-							// a worker's reset-then-rebuild within the same
-							// second, or a colliding rid from an aggregated
-							// spoke) get distinct DOM nodes. Without this
-							// the virtualized list reuses one node for both
-							// and scrolling jumps.
-							seq: entryCounterRef.current,
-							rid: req.rid,
-							url: req.url,
-							urlHash: urlHash( req.url ), // Pre-compute hash.
-							method: req.method,
-							duration_ms: req.duration_ms,
-							status_code: req.status_code,
-							timestamp: req.end_time,
-							remote_addr: req.remote_addr,
-							user_agent: req.user_agent,
-							isEven: entryCounterRef.current % 2 === 0,
-						};
+	// Per-Message handler: each envelope on /messages/stream?subscribe=completed
+	// becomes one row in the buffer. Drops the substrate's `connected` envelope.
+	const handleMessage = useCallback(
+		( envelope ) => {
+			if ( envelope[ 5 ] === 'connected' ) {
+				return;
+			}
+			const req = transformCompletedLine( envelope );
+			if ( ! req ) {
+				return;
+			}
+			entryCounterRef.current += 1;
+			const entry = {
+				// Monotonic per-mount counter — used as the React list key so
+				// two entries with the same rid (a worker's reset-then-rebuild
+				// in the same second, or a colliding rid from an aggregated
+				// spoke) get distinct DOM nodes. Without it the virtualized
+				// list reuses one node for both and scrolling jumps.
+				seq: entryCounterRef.current,
+				rid: req.rid,
+				url: req.url,
+				urlHash: urlHash( req.url ),
+				method: req.method,
+				duration_ms: req.duration_ms,
+				status_code: req.status_code,
+				timestamp: req.end_time,
+				remote_addr: req.remote_addr,
+				user_agent: req.user_agent,
+				isEven: entryCounterRef.current % 2 === 0,
+			};
+			entriesBufferRef.current.unshift( entry );
 
-						entriesBufferRef.current.unshift( entry );
-					}
-
-					if ( entriesBufferRef.current.length > maxEntries ) {
-						entriesBufferRef.current.length = maxEntries;
-					}
-				} catch ( err ) {
-					// Ignore parse errors.
-				}
-			} );
+			if ( entriesBufferRef.current.length > maxEntries ) {
+				entriesBufferRef.current.length = maxEntries;
+			}
 		},
 		[ maxEntries ]
 	);
@@ -311,16 +308,18 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		completedHistoryRef.current = [];
 	}, [] );
 
-	// Use shared firehose connection hook.
+	// Unified message-stream subscription. Source is `completed.log` (the
+	// topology's `completed:tee` already filters to completion events), so
+	// no extra `state === 'complete'` guard is needed in the transform.
 	const {
 		error,
 		connect,
 		close: closeSource,
 		lastEventTime,
-	} = useFirehoseConnection( {
-		endpoint: 'requests',
+	} = useMessageStream( {
+		subscriptions: [ 'completed' ],
 		intervalMs: 500,
-		onSource: handleSource,
+		onMessage: handleMessage,
 		onBeforeConnect: handleBeforeConnect,
 	} );
 
