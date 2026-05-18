@@ -69,6 +69,13 @@ class Performance_CI extends Service_CI {
 	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'p95_ms', 'avg_peak_mb', 'last_updated' ];
 
 	/**
+	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs.
+	 * Echoes the legacy PerfOverviewController::DIMENSIONS whitelist — typos
+	 * fall through without surfacing arbitrary memcache reads.
+	 */
+	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
+
+	/**
 	 * `config_get` / `config_update` map: response-key → {option, type}.
 	 * Mirrors PerfConfigController::CONFIG_MAP. Each `type` selects a
 	 * coercion branch in the `config_update` verb (array_assoc flattens
@@ -185,7 +192,47 @@ class Performance_CI extends Service_CI {
 		return [
 			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
 				self::require_manage_options();
-				return (string) \wp_json_encode( self::build_overview_payload( self::load_index( $cache ), $cache ) );
+
+				// Optional args mirror the legacy PerfOverviewController query
+				// params: `server` scopes the leaderboard / breakdown /
+				// categories; `breakdown` is a comma-separated dim list
+				// (single-dim → flat `breakdown_time_series`; multi-dim →
+				// nested `breakdowns: {dim => series}`); `categories=true`
+				// adds `category_time_series` (global or per-server).
+				$decoded    = self::decode_args( $args );
+				$server     = (string) ( $decoded['server'] ?? '' );
+				$breakdown  = (string) ( $decoded['breakdown'] ?? '' );
+				$categories = ! empty( $decoded['categories'] );
+
+				$payload                       = self::build_overview_payload( self::load_index( $cache ), $cache );
+				$payload['global_leaderboard'] = '' === $server
+					? self::build_global_leaderboard( $cache )
+					: self::build_server_leaderboard( $cache, $server );
+
+				if ( '' !== $breakdown ) {
+					$dims = \array_values(
+						\array_filter(
+							\array_map( 'trim', \explode( ',', $breakdown ) ),
+							static fn ( $d ) => \in_array( $d, self::DIMENSIONS, true )
+						)
+					);
+					if ( 1 === \count( $dims ) ) {
+						$payload['breakdown_time_series'] = self::merge_dim_across_partitions( $cache, $dims[0], $server );
+					} elseif ( ! empty( $dims ) ) {
+						$payload['breakdowns'] = [];
+						foreach ( $dims as $dim ) {
+							$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $cache, $dim, $server );
+						}
+					}
+				}
+
+				if ( $categories ) {
+					$payload['category_time_series'] = '' === $server
+						? self::merge_categories_across_partitions( $cache )
+						: self::merge_server_categories_across_partitions( $cache, $server );
+				}
+
+				return (string) \wp_json_encode( $payload );
 			},
 			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
 				self::require_manage_options();
@@ -264,6 +311,10 @@ class Performance_CI extends Service_CI {
 							'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
 							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
 							'last_updated' => $entry['last_updated'] ?? 0,
+							// Per-URL time series (consumed by UrlDetailView +
+							// urlRequestsPerSecond). Matches legacy
+							// PerfUrlsController::build_url_time_series.
+							'time_series'  => self::build_url_time_series( $cache, $hash ),
 						];
 						break;
 					}
@@ -276,13 +327,24 @@ class Performance_CI extends Service_CI {
 				$flame     = $aggregate['flame']
 					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
-				return (string) \wp_json_encode( [
+				$payload = [
 					'stats'              => $stats,
 					'requests'           => self::find_recent_requests_for_url( $hash ),
 					'aggregate_flame'    => $flame,
 					'aggregate_profiles' => $aggregate['profiles'] ?? null,
 					'last_modified'      => $aggregate['last_modified'] ?? 0,
-				] );
+				];
+
+				$breakdown = (string) ( $decoded['breakdown'] ?? '' );
+				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
+					$payload['breakdown_time_series'] = self::merge_url_dim( $cache, $hash, $breakdown );
+				}
+
+				if ( ! empty( $decoded['categories'] ) ) {
+					$payload['category_time_series'] = self::merge_url_categories( $cache, $hash );
+				}
+
+				return (string) \wp_json_encode( $payload );
 			},
 			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
 				self::require_manage_options();
@@ -1059,6 +1121,210 @@ class Performance_CI extends Service_CI {
 		}
 		\ksort( $merged );
 		return \array_values( $merged );
+	}
+
+	/**
+	 * Walk every recent URL bucket for the given hash and emit a per-bucket
+	 * `{count, sum_ms, sum_peak_mb}` time series. Mirrors
+	 * PerfUrlsController::build_url_time_series.
+	 */
+	private static function build_url_time_series( ?Cache_Interface $cache, string $hash ): array {
+		$buckets = self::recent_url_buckets();
+		$series  = [];
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			$rows = $store->get_url_buckets( $buckets );
+			foreach ( $rows as $bucket_key => $bucket_data ) {
+				if ( ! \is_array( $bucket_data ) || ! isset( $bucket_data[ $hash ] ) ) {
+					continue;
+				}
+				$stats = $bucket_data[ $hash ];
+				$count = (int) ( $stats['count'] ?? 0 );
+				if ( 0 === $count ) {
+					continue;
+				}
+				// FlameBuilder buckets carry `sum_ms` directly; StatsAggregator
+				// buckets carry `sum_req_time` in seconds — accept either.
+				$sum_ms = isset( $stats['sum_ms'] )
+					? (float) $stats['sum_ms']
+					: (float) ( $stats['sum_req_time'] ?? 0 ) * 1000.0;
+				$series[ $bucket_key ] ??= [ 'count' => 0, 'sum_ms' => 0.0, 'sum_peak_mb' => 0.0 ];
+				$series[ $bucket_key ]['count']       += $count;
+				$series[ $bucket_key ]['sum_ms']      += $sum_ms;
+				$series[ $bucket_key ]['sum_peak_mb'] += (float) ( $stats['sum_peak_mb'] ?? 0 );
+			}
+		}
+		\ksort( $series );
+		return $series;
+	}
+
+	/**
+	 * Build the merged global category leaderboard for the recent window.
+	 * Mirror of PerfOverviewController::build_global_leaderboard.
+	 */
+	private static function build_global_leaderboard( ?Cache_Interface $cache ): array {
+		$count        = 0;
+		$sum_req_time = 0.0;
+		$sums         = [];
+		$buckets      = self::recent_url_buckets();
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			foreach ( $buckets as $b ) {
+				$row = $store->get_leaderboard_bucket( $b );
+				if ( empty( $row ) ) {
+					continue;
+				}
+				$count        += (int) ( $row['count'] ?? 0 );
+				$sum_req_time += (float) ( $row['sum_req_time'] ?? 0 );
+				self::accumulate_leaderboard_categories( $sums, $row['categories'] ?? [] );
+			}
+		}
+		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
+	}
+
+	/**
+	 * Build the per-server category leaderboard for the recent window.
+	 * Mirror of PerfOverviewController::build_server_leaderboard.
+	 */
+	private static function build_server_leaderboard( ?Cache_Interface $cache, string $server ): array {
+		$count        = 0;
+		$sum_req_time = 0.0;
+		$sums         = [];
+		$buckets      = self::recent_url_buckets();
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			foreach ( $buckets as $b ) {
+				$row = $store->get_server_leaderboard_bucket( $server, $b );
+				if ( empty( $row ) ) {
+					continue;
+				}
+				$count        += (int) ( $row['count'] ?? 0 );
+				$sum_req_time += (float) ( $row['sum_req_time'] ?? 0 );
+				self::accumulate_leaderboard_categories( $sums, $row['categories'] ?? [] );
+			}
+		}
+		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
+	}
+
+	/**
+	 * Sum-merge a single leaderboard bucket's categories into the running totals.
+	 * Used by both global + server leaderboard builders.
+	 *
+	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array}> $sums       Running totals (mutated).
+	 * @param array<string,array<string,mixed>>                                              $categories Inbound categories.
+	 */
+	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
+		foreach ( $categories as $cat => $data ) {
+			$sums[ $cat ] ??= [
+				'samples'   => 0,
+				'sum_time'  => 0.0,
+				'sum_count' => 0.0,
+				'entries'   => [],
+			];
+			$sums[ $cat ]['samples']   += (int) ( $data['samples'] ?? 0 );
+			$sums[ $cat ]['sum_time']  += (float) ( $data['sum_time'] ?? 0 );
+			$sums[ $cat ]['sum_count'] += (float) ( $data['sum_count'] ?? 0 );
+		}
+	}
+
+	/**
+	 * Sum-merge dimensional buckets across all partitions for one dim/server.
+	 * Mirror of PerfOverviewController::merge_dim_across_partitions.
+	 */
+	private static function merge_dim_across_partitions( ?Cache_Interface $cache, string $dimension, string $server ): array {
+		$merged = [];
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			foreach ( $store->get_dimensional( $dimension, $server ) as $bucket => $values ) {
+				$merged[ $bucket ] ??= [];
+				foreach ( $values as $name => $entry ) {
+					$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
+					$merged[ $bucket ][ $name ]['c'] += (int) ( $entry['c'] ?? 0 );
+					$merged[ $bucket ][ $name ]['s'] += (float) ( $entry['s'] ?? 0 );
+					$merged[ $bucket ][ $name ]['m'] += (float) ( $entry['m'] ?? 0 );
+				}
+			}
+		}
+		\ksort( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Sum-merge category buckets across all partitions (global scope).
+	 * Mirror of PerfOverviewController::merge_categories_across_partitions.
+	 */
+	private static function merge_categories_across_partitions( ?Cache_Interface $cache ): array {
+		$merged = [];
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			self::merge_category_buckets_into( $merged, $store->get_categories() );
+		}
+		\ksort( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Sum-merge per-server category buckets across all partitions.
+	 * Mirror of PerfOverviewController::merge_server_categories_across_partitions.
+	 */
+	private static function merge_server_categories_across_partitions( ?Cache_Interface $cache, string $server ): array {
+		$merged = [];
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			self::merge_category_buckets_into( $merged, $store->get_server_categories( $server ) );
+		}
+		\ksort( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Sum-merge per-URL dimensional buckets for one dim/hash.
+	 * Mirror of PerfUrlsController::merge_url_dim.
+	 */
+	private static function merge_url_dim( ?Cache_Interface $cache, string $hash, string $dimension ): array {
+		$merged = [];
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			$rows = $store->get_url_dimensional( $hash );
+			$dim  = $rows[ $dimension ] ?? [];
+			foreach ( $dim as $bucket => $values ) {
+				$merged[ $bucket ] ??= [];
+				foreach ( $values as $name => $entry ) {
+					$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
+					$merged[ $bucket ][ $name ]['c'] += (int) ( $entry['c'] ?? 0 );
+					$merged[ $bucket ][ $name ]['s'] += (float) ( $entry['s'] ?? 0 );
+					$merged[ $bucket ][ $name ]['m'] += (float) ( $entry['m'] ?? 0 );
+				}
+			}
+		}
+		\ksort( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Sum-merge per-URL category buckets for one hash.
+	 * Mirror of PerfUrlsController::merge_url_categories.
+	 */
+	private static function merge_url_categories( ?Cache_Interface $cache, string $hash ): array {
+		$merged = [];
+		foreach ( self::stats_stores( $cache ) as $store ) {
+			self::merge_category_buckets_into( $merged, $store->get_url_categories( $hash ) );
+		}
+		\ksort( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Helper for the four category-merge variants (global / server / url + the
+	 * url_detail call). All four iterate `[bucket => [cat => {t,c,n}]]` shaped
+	 * blobs the exact same way.
+	 *
+	 * @param array<string,array<string,array{t:float,c:float,n:int}>> $merged Mutated.
+	 * @param array<string,array<string,array<string,mixed>>>           $rows   Inbound.
+	 */
+	private static function merge_category_buckets_into( array &$merged, array $rows ): void {
+		foreach ( $rows as $bucket => $values ) {
+			$merged[ $bucket ] ??= [];
+			foreach ( $values as $cat => $entry ) {
+				$merged[ $bucket ][ $cat ] ??= [ 't' => 0.0, 'c' => 0.0, 'n' => 0 ];
+				$merged[ $bucket ][ $cat ]['t'] += (float) ( $entry['t'] ?? 0 );
+				$merged[ $bucket ][ $cat ]['c'] += (float) ( $entry['c'] ?? 0 );
+				$merged[ $bucket ][ $cat ]['n'] += (int) ( $entry['n'] ?? 0 );
+			}
+		}
 	}
 
 	/**

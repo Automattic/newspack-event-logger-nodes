@@ -19,8 +19,9 @@ import {
 	CardHeader,
 	Modal,
 } from '@wordpress/components';
-import apiFetch from '@wordpress/api-fetch';
 
+import { getCommandClient } from '../shared/utils/commandClient';
+import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
 import { computeIndentedEntries } from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
 import usePerformanceApi from './hooks/usePerformanceApi';
@@ -116,15 +117,16 @@ export default function PerformanceDashboard( { onError } ) {
 	setRequestPartitionRef.current = setRequestPartition;
 
 	// Resolver used by useUrlNavigation when the page loads with `?request=`
-	// but no `?url=`: hits the same /search endpoint the search box uses,
+	// but no `?url=`: hits the same request_search verb the search box uses,
 	// then selects both URL + request so the modal opens.
 	const resolveRequestId = useCallback( async ( rid ) => {
 		try {
-			const data = await apiFetch( {
-				path: `/newspack-nodes/v1/performance/requests/search/${ encodeURIComponent(
-					rid
-				) }`,
+			const message = await getCommandClient().send( {
+				to: 'performance',
+				verb: 'request_search',
+				args: { rid },
 			} );
+			const data = unwrapCommandResponse( message );
 			if ( ! data || ! data.url_hash || data.partition === undefined ) {
 				return;
 			}
@@ -253,11 +255,12 @@ export default function PerformanceDashboard( { onError } ) {
 
 			try {
 				// Search for request to get partition and URL hash.
-				const data = await apiFetch( {
-					path: `/newspack-nodes/v1/performance/requests/search/${ encodeURIComponent(
-						rid.trim()
-					) }`,
+				const message = await getCommandClient().send( {
+					to: 'performance',
+					verb: 'request_search',
+					args: { rid: rid.trim() },
 				} );
+				const data = unwrapCommandResponse( message );
 
 				if ( data && data.url_hash && data.partition !== undefined ) {
 					// Find or create a URL object for this hash.

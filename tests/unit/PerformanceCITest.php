@@ -81,6 +81,24 @@ class PerformanceCITest extends TestCase {
 	// index layout so the verb's scan_index walk picks up our seeded data.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * Mirror of Performance_CI::recent_url_buckets so tests can seed the
+	 * leaderboard / dim / category buckets the verb's fan-out scans.
+	 *
+	 * @return array<int,string>
+	 */
+	private function recent_url_buckets(): array {
+		$now = \time();
+		$out = [];
+		for ( $i = 0; $i < 288; $i++ ) {
+			$ts         = $now - ( $i * 300 );
+			$min        = (int) \gmdate( 'i', $ts );
+			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
+			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
+		}
+		return \array_values( \array_unique( $out ) );
+	}
+
 	private function write_request( array $body, int $partition = 0 ): string {
 		$rid          = $body['rid'];
 		$logs_base    = $this->tmp . '/logs/requests.log';
@@ -213,6 +231,170 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	public function test_overview_verb_includes_global_leaderboard_by_default(): void {
+		// OverviewSection (React) renders `overview.global_leaderboard.{categories,total_time,count}`
+		// (see components/OverviewSection.js L330-358). Legacy PerfOverviewController::get_overview
+		// emits `global_leaderboard` unconditionally (L95-97). The CI verb must match.
+		$store   = new Stats_Store( $this->cache, 0, 86400 );
+		$buckets = $this->recent_url_buckets();
+		// Seed the most-recent bucket so the leaderboard fan-out picks it up.
+		$store->set_leaderboard_bucket( $buckets[0], [
+			'count'        => 4,
+			'sum_req_time' => 0.8,
+			'categories'   => [
+				'db' => [ 'samples' => 4, 'sum_time' => 0.4, 'sum_count' => 10 ],
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire( $ci, 'performance', 'overview' );
+
+		$this->assertArrayHasKey( 'global_leaderboard', $result );
+		$this->assertSame( 4, $result['global_leaderboard']['count'] );
+		$this->assertArrayHasKey( 'categories', $result['global_leaderboard'] );
+		$this->assertArrayHasKey( 'db', $result['global_leaderboard']['categories'] );
+		$this->assertArrayHasKey( 'total_time', $result['global_leaderboard'] );
+	}
+
+	public function test_overview_verb_uses_server_leaderboard_when_server_arg_set(): void {
+		// `server` arg scopes the leaderboard to that server (legacy L95-97
+		// switches to `build_server_leaderboard`). The CI verb must reroute.
+		$store   = new Stats_Store( $this->cache, 0, 86400 );
+		$buckets = $this->recent_url_buckets();
+		$store->set_server_leaderboard_bucket( 'web01', $buckets[0], [
+			'count'        => 2,
+			'sum_req_time' => 0.2,
+			'categories'   => [
+				'db' => [ 'samples' => 2, 'sum_time' => 0.1, 'sum_count' => 4 ],
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'overview',
+			(string) \wp_json_encode( [ 'server' => 'web01' ] )
+		);
+
+		// Only the server-scoped leaderboard was seeded — global is empty.
+		// `count` should reflect the server-scoped data.
+		$this->assertSame( 2, $result['global_leaderboard']['count'] );
+	}
+
+	public function test_overview_verb_includes_category_time_series_when_categories_arg_set(): void {
+		// Legacy `?categories=1` (L121-125) adds `category_time_series` to the
+		// response — global or server-scoped. The dashboard always passes
+		// `categories=1` (see usePerformanceApi.js L54) and reads
+		// `overviewData.category_time_series` (PerformanceDashboard.js L391).
+		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store->set_categories( [
+			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'overview',
+			(string) \wp_json_encode( [ 'categories' => true ] )
+		);
+
+		$this->assertArrayHasKey( 'category_time_series', $result );
+		$this->assertArrayHasKey( '2026-05-17-10-00', $result['category_time_series'] );
+		$this->assertSame( 0.5, $result['category_time_series']['2026-05-17-10-00']['db']['t'] );
+	}
+
+	public function test_overview_verb_includes_breakdown_time_series_for_single_dim(): void {
+		// `?breakdown=server` returns `breakdown_time_series` flat (legacy L111-112).
+		// Used by fetchBreakdown (usePerformanceApi.js L186 reads
+		// `data.breakdown_time_series`).
+		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store->set_dimensional( 'server', [
+			'2026-05-17-10-00' => [
+				'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ],
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'overview',
+			(string) \wp_json_encode( [ 'breakdown' => 'server' ] )
+		);
+
+		$this->assertArrayHasKey( 'breakdown_time_series', $result );
+		$this->assertSame( 5, $result['breakdown_time_series']['2026-05-17-10-00']['web01']['c'] );
+	}
+
+	public function test_overview_verb_includes_breakdowns_map_for_multi_dim(): void {
+		// Comma-separated dims return nested `breakdowns: { dim => series }`
+		// (legacy L113-118). Used by the dashboard's `breakdownsFor` deduper
+		// (PerformanceDashboard.js L342-374), which always sends ≥2 dims so it
+		// can rely on the nested shape.
+		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store->set_dimensional( 'server', [
+			'2026-05-17-10-00' => [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ],
+		] );
+		$store->set_dimensional( 'status', [
+			'2026-05-17-10-00' => [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'overview',
+			(string) \wp_json_encode( [ 'breakdown' => 'server,status' ] )
+		);
+
+		$this->assertArrayHasKey( 'breakdowns', $result );
+		$this->assertArrayHasKey( 'server', $result['breakdowns'] );
+		$this->assertArrayHasKey( 'status', $result['breakdowns'] );
+		$this->assertSame( 5, $result['breakdowns']['server']['2026-05-17-10-00']['web01']['c'] );
+		$this->assertSame( 4, $result['breakdowns']['status']['2026-05-17-10-00']['200']['c'] );
+	}
+
+	public function test_overview_verb_breakdown_filters_unknown_dims(): void {
+		// Unknown dim names are filtered out so a typo'd query param can't surface
+		// arbitrary memcache reads (legacy L107-108 `in_array(...,DIMENSIONS,true)`).
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'overview',
+			(string) \wp_json_encode( [ 'breakdown' => 'nosuchdim' ] )
+		);
+
+		// No valid dims → no breakdown_time_series, no breakdowns.
+		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
+		$this->assertArrayNotHasKey( 'breakdowns', $result );
+	}
+
+	public function test_overview_verb_server_scoped_categories_when_both_args(): void {
+		// `?server=X&categories=1` should use the per-server categories
+		// blob (legacy L122-124 `merge_server_categories_across_partitions`).
+		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store->set_server_categories( 'web01', [
+			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ],
+		] );
+		$store->set_categories( [
+			'2026-05-17-10-00' => [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'overview',
+			(string) \wp_json_encode( [ 'server' => 'web01', 'categories' => true ] )
+		);
+
+		// Server-scoped data, not the global ones.
+		$this->assertSame( 0.2, $result['category_time_series']['2026-05-17-10-00']['db']['t'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -414,6 +596,116 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	public function test_url_detail_verb_includes_stats_time_series(): void {
+		// `stats.time_series` is consumed by UrlDetailView L232/L273 +
+		// PerformanceDashboard.js L727-741 (urlRequestsPerSecond computation).
+		// Legacy PerfUrlsController::find_url_stats L228 calls `build_url_time_series`
+		// which walks the recent buckets keyed by hash. The CI verb must too.
+		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$bucket = $store->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'abc123def456' => [
+				'url'       => '/x',
+				'count'     => 3,
+				'sum_ms'    => 150.0,
+				'last_seen' => 1700001000,
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'url_detail',
+			(string) \wp_json_encode( [ 'hash' => 'abc123def456' ] )
+		);
+
+		$this->assertArrayHasKey( 'time_series', $result['stats'] );
+		$this->assertArrayHasKey( $bucket, $result['stats']['time_series'] );
+		$this->assertSame( 3, $result['stats']['time_series'][ $bucket ]['count'] );
+	}
+
+	public function test_url_detail_verb_includes_breakdown_time_series_when_arg_set(): void {
+		// `?breakdown=method` on /urls/{hash} emits `breakdown_time_series`
+		// (legacy L195, L177-181). Consumed by fetchUrlBreakdown L213.
+		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$bucket = $store->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'abc123def456' => [
+				'url'       => '/x',
+				'count'     => 1,
+				'sum_ms'    => 10.0,
+				'last_seen' => 1700001000,
+			],
+		] );
+		$store->set_url_dimensional( 'abc123def456', [
+			'method' => [
+				'2026-05-17-10-00' => [ 'GET' => [ 'c' => 3, 's' => 0.3, 'm' => 0.1 ] ],
+			],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'url_detail',
+			(string) \wp_json_encode( [ 'hash' => 'abc123def456', 'breakdown' => 'method' ] )
+		);
+
+		$this->assertArrayHasKey( 'breakdown_time_series', $result );
+		$this->assertSame( 3, $result['breakdown_time_series']['2026-05-17-10-00']['GET']['c'] );
+	}
+
+	public function test_url_detail_verb_includes_category_time_series_when_arg_set(): void {
+		// `?categories=1` on /urls/{hash} emits `category_time_series`
+		// (legacy L196, L184-186). Consumed by UrlDetailView L282-295 +
+		// fetchUrlCategories L237.
+		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$bucket = $store->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'abc123def456' => [
+				'url'       => '/x',
+				'count'     => 1,
+				'sum_ms'    => 10.0,
+				'last_seen' => 1700001000,
+			],
+		] );
+		$store->set_url_categories( 'abc123def456', [
+			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'url_detail',
+			(string) \wp_json_encode( [ 'hash' => 'abc123def456', 'categories' => true ] )
+		);
+
+		$this->assertArrayHasKey( 'category_time_series', $result );
+		$this->assertSame( 0.2, $result['category_time_series']['2026-05-17-10-00']['db']['t'] );
+	}
+
+	public function test_url_detail_verb_breakdown_filters_unknown_dims(): void {
+		// Unknown dim → no breakdown_time_series (matches legacy L179's
+		// `in_array(...,DIMENSIONS,true)` guard).
+		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$bucket = $store->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
+		] );
+
+		$ci     = new Performance_CI( $this->cache );
+		$result = VerbHarness::fire(
+			$ci,
+			'performance',
+			'url_detail',
+			(string) \wp_json_encode( [ 'hash' => 'abc123def456', 'breakdown' => 'nosuchdim' ] )
+		);
+
+		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
 	}
 
 	// -------------------------------------------------------------------------
