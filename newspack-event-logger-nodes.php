@@ -20,11 +20,19 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_URL', \function_exists( 'plugin_dir_url' ) ? \plugin_dir_url( __FILE__ ) : '' );
 }
 
+// Composer classmap autoloader. Registering it at plugin-file load time
+// (not deferred to plugins_loaded) lets the 00-newspack-profiler mu-plugin
+// resolve LogManager at priority -10001, where it flushes plugin-load
+// events before any plugins_loaded callbacks. The autoloader only
+// registers an spl callback — actual class loading stays lazy.
+require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
+
 /**
  * Application classes extend `Newspack_Nodes\Node` from the runtime plugin.
  * WordPress loads plugins alphabetically, and `newspack-event-logger-nodes`
  * sorts before `newspack-nodes` — so the runtime isn't available at our
- * plugin-file load time. Defer requires to plugins_loaded.
+ * plugin-file load time. Defer the runtime-dependent setup (CommandInterpreter
+ * registrations, Topology_Registry mounts, App\Core init) to plugins_loaded.
  *
  * (Tests bypass this — they require the runtime explicitly in bootstrap.php.)
  */
@@ -36,11 +44,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		);
 		return;
 	}
-
-	// Composer classmap autoloader. One file include; classes still load
-	// lazily on first reference, so admin / REST / cli paths only pay for
-	// code they actually touch.
-	require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\ReqgrepCommand' );

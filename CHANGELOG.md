@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Profiler MU-plugin: plugin-load events now actually flush into the firehose.** The flush hook fires at `plugins_loaded` priority `-10001` (deliberately, so plugin-load events appear before any `plugins_loaded` callbacks). Problem: this plugin's composer autoloader was being registered inside the deferred-init closure that runs at `plugins_loaded` priority 11 — so at -10001 `LogManager` wasn't autoload-resolvable and `class_exists( …, false )` returned false, exiting the flush early. Pulled the `require_once vendor/autoload.php` out to plugin-file load time (where it only registers the spl callback; actual class loading stays lazy). The runtime-dependent setup (`CommandInterpreter` registrations, `Topology_Registry` mounts, `App\Core` init) stays deferred to priority 11 since those depend on `\Newspack_Nodes\Node` being loaded. Also dropped the `false` second-arg on `class_exists` in the mu-plugin so autoload is allowed to run.
+
 - **Topology console live view now shows the `request-builder → gyroscope:partition` edge.** The override of `RequestBuilder::target()` walked the conditional `errors_target` / `completed_target` but missed the flight sibling's target — the `gyroscope:partition` destination the `set_inflight_target` verb stores on the hidden `RequestFlight` sibling. Live view rendered `gyroscope:partition` with a non-zero rate but no inbound edge from request-builder; edit view (which reads the topology source rather than the live graph) showed the edge correctly. Union the flight sibling's target into the extras list alongside the existing two, with the same dedup gate.
 
 ### Changed
