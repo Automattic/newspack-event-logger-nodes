@@ -54,14 +54,23 @@ describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 		await act( async () => {
 			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
 		} );
-		// Drain lazy import microtasks.
-		for ( let i = 0; i < 10; i++ ) {
+		// Poll-drain lazy import microtasks until the PerformanceDashboard
+		// mock fires (it captures props.onError into mockOnError). Fixed-
+		// length microtask + real-timer waits were race-prone under load;
+		// polling is deterministic — we proceed as soon as the lazy chunk
+		// has resolved, and bail (caller will assert and fail clearly) if
+		// it never does within the budget.
+		for ( let i = 0; i < 100; i++ ) {
+			if ( null !== mockOnError ) {
+				return admin;
+			}
 			// eslint-disable-next-line no-await-in-loop
 			await act( async () => {
 				await Promise.resolve();
 			} );
 		}
-		// Also wait for any setTimeout(0).
+		// Last-ditch real-timer flush for the unusual case where the lazy
+		// chunk's resolution piggybacks on a setTimeout(0).
 		await new Promise( ( r ) => setTimeout( r, 50 ) );
 		await act( async () => {
 			await Promise.resolve();
