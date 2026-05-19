@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.35] - 2026-05-19
+
+### Changed
+
+- **`expected_log_basenames` filter callback collapses to a one-line runtime-basename append.** Substrate v0.2.1 inverted the contract: `Log_Cleaner` now computes the topology-derived expected set itself and passes it to the filter as input. The app callback's job is just appending the runtime-pinned basenames it manages outside the topology graph (`firehose` from LogManager, `jobintake` from JobIntake). All the substrate-state introspection (`Bootstrap::get_topologies()`, `Cli::ls_workers()`, `Topology_Registry::basenames_for()`) that previously lived here is gone — substrate owns substrate facts. Requires `newspack-nodes >= 0.2.1`.
+
 ## [0.2.34] - 2026-05-19
 
 ### Fixed
