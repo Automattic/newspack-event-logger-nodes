@@ -10,6 +10,7 @@ import {
 	buildTimeSlots,
 	formatXTick,
 	drawLegend,
+	setupTooltip,
 	useTimeChart,
 	BUCKET_MINUTES,
 	NUM_BUCKETS,
@@ -97,6 +98,88 @@ describe( 'PALETTE / MARGIN constants', () => {
 			bottom: expect.any( Number ),
 			left: expect.any( Number ),
 		} );
+	} );
+} );
+
+describe( 'setupTooltip', () => {
+	let svg;
+	let g;
+	let tooltipEl;
+	let containerEl;
+
+	beforeEach( () => {
+		containerEl = document.createElement( 'div' );
+		Object.defineProperty( containerEl, 'parentElement', {
+			value: { clientHeight: 200 },
+		} );
+		document.body.appendChild( containerEl );
+
+		tooltipEl = document.createElement( 'div' );
+		containerEl.appendChild( tooltipEl );
+
+		svg = d3.select( document.body ).append( 'svg' );
+		g = svg.append( 'g' );
+	} );
+
+	afterEach( () => {
+		svg.remove();
+		containerEl.remove();
+	} );
+
+	function makeRefs() {
+		return {
+			tooltipRef: { current: tooltipEl },
+			containerRef: { current: containerEl },
+			lastMouseXRef: { current: null },
+		};
+	}
+
+	it( 'appends two rects (highlight + interaction) and registers no listener errors', () => {
+		const dates = [
+			new Date( 2026, 0, 1 ),
+			new Date( 2026, 0, 2 ),
+			new Date( 2026, 0, 3 ),
+		];
+		const x = d3
+			.scaleTime()
+			.domain( [ dates[ 0 ], dates[ 2 ] ] )
+			.range( [ 0, 300 ] );
+		setupTooltip( g, {
+			innerW: 300,
+			innerH: 100,
+			dates,
+			x,
+			formatEntry: ( idx ) => [ { label: 'count', value: idx } ],
+			...makeRefs(),
+		} );
+		// Two appended rects: the highlight box + the pointer-target.
+		expect( g.selectAll( 'rect' ).size() ).toBe( 2 );
+	} );
+
+	it( 'restores the tooltip immediately when lastMouseX is non-null at setup time', () => {
+		const dates = [
+			new Date( 2026, 0, 1 ),
+			new Date( 2026, 0, 2 ),
+			new Date( 2026, 0, 3 ),
+		];
+		const x = d3
+			.scaleTime()
+			.domain( [ dates[ 0 ], dates[ 2 ] ] )
+			.range( [ 0, 300 ] );
+		const refs = makeRefs();
+		refs.lastMouseXRef.current = 100; // mid-chart.
+		setupTooltip( g, {
+			innerW: 300,
+			innerH: 100,
+			dates,
+			x,
+			formatEntry: ( idx ) => [ { label: 'count', value: idx } ],
+			...refs,
+		} );
+		// After "restore", tooltip is visible.
+		expect( tooltipEl.style.display ).toBe( 'block' );
+		// And contains the entry label.
+		expect( tooltipEl.textContent ).toContain( 'count:' );
 	} );
 } );
 
