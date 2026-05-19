@@ -96,11 +96,81 @@ class PerformanceControllerBaseTest extends TestCase {
 		$this->assertStringContainsString( 'request rid=missing', $err->get_error_message() );
 	}
 
+	public function test_cache_lazy_factory_uses_substrate_config_when_uninjected(): void {
+		// With set_cache(null), the next cache() call must build a real
+		// Memcached_Cache from substrate config. The test config has
+		// `memcache_servers => []` so the resulting instance is unavailable,
+		// but it must be non-null and the right concrete type.
+		PerformanceControllerBase::set_cache( null );
+		$cache = PerformanceControllerBase::cache();
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Memcached_Cache::class, $cache );
+		$this->assertFalse( $cache->is_available(), 'empty memcache_servers means unavailable' );
+	}
+
+	public function test_cache_returns_injected_instance_on_subsequent_calls(): void {
+		// Once injected, cache() must return the same instance — no re-fetch.
+		$fake = new FakeMemcached();
+		PerformanceControllerBase::set_cache( $fake );
+		$this->assertSame( $fake, PerformanceControllerBase::cache() );
+		$this->assertSame( $fake, PerformanceControllerBase::cache() );
+	}
+
+	public function test_check_rate_limit_falls_back_to_window_when_ttl_underflows(): void {
+		// The defensive `if ( $ttl < 1 ) $ttl = $window_s;` branch is unreachable
+		// with sane inputs, but a negative window_s makes window_start land
+		// ahead of $now and produces a sub-1 ttl. Real callers never pass a
+		// negative window, but the defensive branch must still behave
+		// correctly: the call should be allowed (fail-open within a single
+		// window) and not blow up.
+		$ctrl = new TestableController();
+		$result = $ctrl->check_rate_limit( 'user_ttl', 5, -60 );
+		$this->assertTrue( $result );
+	}
+
+	public function test_rate_limit_key_uses_user_id_when_logged_in(): void {
+		$GLOBALS['_current_user_id'] = 99;
+		$ctrl = new TestableController();
+		$this->assertSame( 'user_99', $ctrl->wrap_rate_limit_key() );
+		unset( $GLOBALS['_current_user_id'] );
+	}
+
+	public function test_rate_limit_key_uses_hashed_ip_for_anonymous(): void {
+		// uid=0 means anonymous — must fall through to REMOTE_ADDR hash branch.
+		$GLOBALS['_current_user_id'] = 0;
+		$_SERVER['REMOTE_ADDR']      = '203.0.113.42';
+		$ctrl = new TestableController();
+
+		$key = $ctrl->wrap_rate_limit_key();
+		$this->assertStringStartsWith( 'ip_', $key );
+		// Hash prefix is deterministic — sha256('203.0.113.42')[:12].
+		$expected = 'ip_' . \substr( \hash( 'sha256', '203.0.113.42' ), 0, 12 );
+		$this->assertSame( $expected, $key );
+
+		unset( $GLOBALS['_current_user_id'], $_SERVER['REMOTE_ADDR'] );
+	}
+
+	public function test_rate_limit_key_falls_back_to_unknown_when_no_remote_addr(): void {
+		// Anonymous + REMOTE_ADDR unset — the `'unknown'` literal must be
+		// hashed, not the result of accessing an undefined index.
+		$GLOBALS['_current_user_id'] = 0;
+		unset( $_SERVER['REMOTE_ADDR'] );
+		$ctrl = new TestableController();
+
+		$key      = $ctrl->wrap_rate_limit_key();
+		$expected = 'ip_' . \substr( \hash( 'sha256', 'unknown' ), 0, 12 );
+		$this->assertSame( $expected, $key );
+
+		unset( $GLOBALS['_current_user_id'] );
+	}
+
 }
 
 class TestableController extends PerformanceControllerBase {
 	public function register_routes(): void {}
 	public function wrap_not_found( string $what ): \WP_Error {
 		return $this->not_found_error( $what );
+	}
+	public function wrap_rate_limit_key(): string {
+		return $this->rate_limit_key();
 	}
 }
