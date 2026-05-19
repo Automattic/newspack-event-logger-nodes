@@ -26,7 +26,13 @@ class ExpectedLogBasenamesTest extends TestCase {
 	private string $tmp;
 
 	private function activate_topologies( array $names ): void {
+		// Two layers: app's file-default `topologies` (its known catalog)
+		// and the substrate's operator-overlay option. The filter under test
+		// now reads the substrate's resolved active set via
+		// `Bootstrap::get_topologies()`, so the overlay is what actually
+		// drives expected_basenames.
 		$this->use_base_dir( $this->tmp, [ 'topologies' => $names ] );
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = $names;
 	}
 
 	private function basenames(): array {
@@ -136,6 +142,32 @@ class ExpectedLogBasenamesTest extends TestCase {
 		);
 
 		$this->assertContains( 'flames', $this->basenames() );
+	}
+
+	public function test_substrate_operator_overlay_overrides_app_file_default_topologies(): void {
+		// The app config file ships a default `topologies` list — those are
+		// the topologies the plugin KNOWS about. The operator's actual
+		// active subset lives in the substrate option `newspack_nodes_topologies`
+		// (admin-UI checkboxes). The filter MUST honor the substrate overlay,
+		// not the app's full known list — otherwise inactive topologies'
+		// basenames stay "expected" forever and Log_Cleaner never sees an
+		// orphan to delete.
+		//
+		// Datapoke staging hit this: app file defaults are firehose-workers-only
+		// + request-workers; operator selected firehose-jobs-only + job-workers.
+		// The filter unioned both and called every existing on-disk log
+		// expected, hiding the orphans the lifecycle-arm cleanup was supposed
+		// to delete.
+		$this->activate_topologies( [ 'firehose-workers-only', 'request-workers' ] );
+		// Substrate operator overlay names a DIFFERENT subset — only this set
+		// should drive expected basenames.
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'firehose-jobs-only' ];
+
+		$this->assertSame(
+			[ 'firehose', 'jobintake', 'jobs' ],
+			$this->basenames(),
+			'app file-default topologies must not bleed into expected basenames when operator overlay is set'
+		);
 	}
 
 	public function test_lock_dir_cleared_drops_basenames_on_next_tick(): void {
