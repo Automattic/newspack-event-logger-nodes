@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.33] - 2026-05-18
+
 ### Changed
 
 - **TM_COMMAND wire format follow-on to the substrate's cleanup.** Substrate now treats `arguments` as a literal CLI tail (Tachikoma contract) and `payload` as the structured-data slot — the previous `arguments: JSON.stringify(args)` triple-encoding is gone. Application side updates: `RemoteManager::build_command_envelope()` puts the settings-update map in `payload` (was JSON-encoded into `arguments`); `Servers_CI`, `Settings_CI`, `Performance_CI`, `Events_CI`, `Logger_CI`, `Aggregator_CI`, `Status_CI`, `Discovery_CI` all migrated to read structured data from `$payload` directly (verb closures gained `mixed $payload` as the 4th positional); JS dashboard callers (`PerformanceDashboard.request_search`) pass `payload: { ... }` where they used to pass `args: { ... }`. 1598 jest+phpunit tests pass; admin dashboards smoke clean on the new wire.
