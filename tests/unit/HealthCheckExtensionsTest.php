@@ -219,4 +219,119 @@ class HealthCheckExtensionsTest extends TestCase {
 		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
 		$this->assertSame( [ 'init', 'wp_loaded' ], $result, 'existing entries must not be duplicated' );
 	}
+
+	// =========================================================================
+	// Coverage: array_slice cap on custom_events, non-array option fallbacks,
+	// indexed-string custom_lookup entry, merge_events MAX cap.
+	// =========================================================================
+
+	public function test_process_discovery_caps_custom_events_at_max(): void {
+		// Existing test caps hooks; this one drives the parallel branch for
+		// custom_events. Push a payload larger than MAX_EVENTS through the
+		// custom_events path and assert the merged result is bounded.
+		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
+		$huge = [];
+		for ( $i = 0; $i < $max_events + 25; $i++ ) {
+			$huge[] = "evt_{$i}";
+		}
+
+		HealthCheckExtensions::process_discovery( [
+			'site-a' => [ 'custom_events' => $huge ],
+		] );
+
+		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
+		$this->assertLessThanOrEqual( $max_events, \count( $result ) );
+	}
+
+	public function test_merge_hooks_treats_non_array_log_events_as_empty(): void {
+		// Hostile option shape: log_events set to a scalar — must be treated
+		// as `[]` so the merge proceeds cleanly.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = 'not-an-array';
+
+		HealthCheckExtensions::process_discovery( [
+			'site-a' => [ 'registered_hooks' => [ 'init' ] ],
+		] );
+
+		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] ?? [];
+		$this->assertContains( 'init', $result, 'init must be added even when existing option was malformed' );
+		// No duplicate scalar contamination — every entry is a string.
+		foreach ( $result as $entry ) {
+			$this->assertIsString( $entry );
+		}
+	}
+
+	public function test_merge_hooks_treats_non_array_custom_events_as_empty(): void {
+		// Hostile option shape: custom_events set to a scalar — must coerce
+		// the lookup table to empty and the merge proceeds.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] = 42;
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']    = [];
+
+		HealthCheckExtensions::process_discovery( [
+			'site-a' => [ 'registered_hooks' => [ 'init', 'my_custom' ] ],
+		] );
+
+		// Without the custom_lookup, all hooks land in log_events.
+		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] ?? [];
+		$this->assertContains( 'init', $result );
+		$this->assertContains( 'my_custom', $result, 'no custom_lookup means my_custom is treated as a regular hook' );
+	}
+
+	public function test_merge_hooks_custom_lookup_handles_indexed_string_entries(): void {
+		// custom_events stored as indexed array of strings (alternative legal
+		// shape). The string-value branch of the custom_lookup loop must catch
+		// these.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] = [
+			'event_alpha',  // indexed key 0 → string value branch
+			'event_beta',   // indexed key 1 → string value branch
+		];
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']    = [];
+
+		HealthCheckExtensions::process_discovery( [
+			'site-a' => [
+				'registered_hooks' => [ 'init', 'event_alpha', 'event_beta', 'wp_footer' ],
+			],
+		] );
+
+		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] ?? [];
+		// alpha + beta are recognized as customs via the indexed-string branch
+		// → excluded from log_events.
+		$this->assertNotContains( 'event_alpha', $result );
+		$this->assertNotContains( 'event_beta', $result );
+		// The non-custom hooks pass through.
+		$this->assertContains( 'init', $result );
+		$this->assertContains( 'wp_footer', $result );
+	}
+
+	public function test_merge_events_treats_non_array_discovered_as_empty(): void {
+		// discovered_events option set to a scalar — must reset to [] before
+		// merging custom_events.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] = 'bogus';
+
+		HealthCheckExtensions::process_discovery( [
+			'site-a' => [ 'custom_events' => [ 'event_alpha' ] ],
+		] );
+
+		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'event_alpha', $result );
+	}
+
+	public function test_merge_events_breaks_when_existing_at_max_cap(): void {
+		// discovered already at MAX_EVENTS — adding more must hit the
+		// `break;` and leave the existing list at exactly MAX_EVENTS.
+		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
+		$existing = [];
+		for ( $i = 0; $i < $max_events; $i++ ) {
+			$existing[ "existing_{$i}" ] = true;
+		}
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] = $existing;
+
+		HealthCheckExtensions::process_discovery( [
+			'site-a' => [ 'custom_events' => [ 'overflow_one', 'overflow_two' ] ],
+		] );
+
+		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'];
+		$this->assertSame( $max_events, \count( $result ), 'cap must hold — break short-circuits the add' );
+		$this->assertArrayNotHasKey( 'overflow_one', $result );
+	}
 }
