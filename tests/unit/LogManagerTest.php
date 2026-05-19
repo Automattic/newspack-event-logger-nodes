@@ -1692,4 +1692,45 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( $a, $b );
 		$this->assertSame( $b, $c );
 	}
+
+	// =========================================================================
+	// extract_plugin_slug: private static helper invoked from the fatal-tagging
+	// path of finish(). Exercise its branches via reflection so we don't need
+	// to actually crash PHP to populate error_get_last().
+	// =========================================================================
+
+	private function invoke_extract_plugin_slug( string $file ): ?string {
+		$ref = new \ReflectionMethod( LogManager::class, 'extract_plugin_slug' );
+		$ref->setAccessible( true );
+		return $ref->invoke( null, $file );
+	}
+
+	public function test_extract_plugin_slug_returns_null_for_file_outside_plugins_dir(): void {
+		// File path that does not start with WP_PLUGIN_DIR returns null.
+		// (WP_PLUGIN_DIR defaults to /tmp/test-wp-plugins in the bootstrap.)
+		$this->assertNull( $this->invoke_extract_plugin_slug( '/var/www/wp-includes/wp-db.php' ) );
+		$this->assertNull( $this->invoke_extract_plugin_slug( '/etc/passwd' ) );
+		$this->assertNull( $this->invoke_extract_plugin_slug( '' ) );
+	}
+
+	public function test_extract_plugin_slug_returns_directory_slug_for_subdirectory_plugin(): void {
+		// File inside a plugin subdirectory — slug is the first path segment
+		// after WP_PLUGIN_DIR.
+		$path = \WP_PLUGIN_DIR . '/akismet/akismet.php';
+		$this->assertSame( 'akismet', $this->invoke_extract_plugin_slug( $path ) );
+
+		// Nested file under the same plugin returns the same slug.
+		$nested = \WP_PLUGIN_DIR . '/akismet/views/admin.php';
+		$this->assertSame( 'akismet', $this->invoke_extract_plugin_slug( $nested ) );
+	}
+
+	public function test_extract_plugin_slug_strips_php_suffix_for_single_file_plugin(): void {
+		// Single-file plugin directly under WP_PLUGIN_DIR — slug strips `.php`.
+		$path = \WP_PLUGIN_DIR . '/hello.php';
+		$this->assertSame( 'hello', $this->invoke_extract_plugin_slug( $path ) );
+
+		// A weird file with no .php extension at the top level returns it raw.
+		$path2 = \WP_PLUGIN_DIR . '/raw-segment';
+		$this->assertSame( 'raw-segment', $this->invoke_extract_plugin_slug( $path2 ) );
+	}
 }
