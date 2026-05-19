@@ -252,6 +252,25 @@ class AutoTunerTest extends TestCase {
 		);
 	}
 
+	public function test_add_significant_events_resets_when_option_is_scalar(): void {
+		// Hostile option: significant_events stored as a scalar instead of an
+		// array. The `! is_array( $existing )` branch resets to []; the merge
+		// then operates against an empty list. The existing null-option test
+		// hits the `?? default` short-circuit (null coalesces to the default
+		// `[]` in get_option) — to exercise the actual non-array fallback we
+		// need a non-null scalar.
+		$this->worker_context();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_significant_events'] = 'not-an-array';
+
+		$tuner = new AutoTuner();
+		$this->dispatch( $tuner, 'add_significant_events', [ 'new_one', 'new_two' ] );
+
+		$this->assertSame(
+			[ 'new_one', 'new_two' ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_significant_events']
+		);
+	}
+
 	// --- SettingsSync suppression ---------------------------------------------
 
 	public function test_suppresses_settings_sync_during_write(): void {
