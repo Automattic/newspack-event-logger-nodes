@@ -61,9 +61,14 @@ describe( 'dashboard mount-entry points', () => {
 		expect( () => require( '../performance-gyroscope' ) ).not.toThrow();
 	} );
 
-	it( 'performance-request-log/index.js mounts when #event-logger-request-stream exists', () => {
-		mountContainer( 'event-logger-request-stream' );
+	it( 'performance-request-log/index.js mounts when #event-logger-stream exists', () => {
+		// The mount container id is `event-logger-stream` (the prior
+		// version of this test used `event-logger-request-stream` which
+		// does not match the production lookup, so the if-block was
+		// never exercised — see src/performance-request-log/index.js).
+		const el = mountContainer( 'event-logger-stream' );
 		expect( () => require( '../performance-request-log' ) ).not.toThrow();
+		expect( el.parentNode ).toBe( document.body );
 	} );
 
 	it( 'performance-request-log/index.js is a no-op without the container', () => {
