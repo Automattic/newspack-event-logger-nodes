@@ -263,39 +263,16 @@ const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' 
  * orphans every `{base}/logs/*.log/` directory NOT in the result.
  */
 function newspack_event_logger_nodes_expected_log_basenames( array $basenames ): array {
-	// Authoritative active-set comes from the substrate (operator overlay
-	// option `newspack_nodes_topologies` applied over the published catalog).
-	// The app's own `$config['topologies']` is its full FILE-DEFAULT list —
-	// using that here makes inactive topologies' basenames stay "expected"
-	// forever, blocking Log_Cleaner from ever orphaning a `*.log/` dir.
-	$active_topologies = \class_exists( '\\Newspack_Nodes\\Bootstrap' )
-		? \Newspack_Nodes\Bootstrap::get_topologies()
-		: [];
-	$active_set = [];
-	foreach ( \array_keys( $active_topologies ) as $name ) {
-		$active_set[ $name ] = true;
-	}
-
-	// Workers still on disk pin their topology's basenames as expected,
-	// even if the operator just removed the topology from config — they
-	// might be writing to those logs as the change settles. Cli::ls_workers
-	// filters out stale lock dirs (worker died without cleanup), so a
-	// failed worker doesn't keep its basenames expected forever.
-	$config   = \Newspack_Event_Logger_Nodes\Config::load_config();
-	$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
-	foreach ( ( new \Newspack_Nodes\Cli( $base_dir ) )->ls_workers() as $worker ) {
-		if ( ! $worker['stale'] ) {
-			$active_set[ $worker['type'] ] = true;
-		}
-	}
-
-	$union = \array_merge( $basenames, NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES );
-	foreach ( \array_keys( $active_set ) as $name ) {
-		foreach ( \Newspack_Nodes\Topology_Registry::basenames_for( $name ) as $basename ) {
-			$union[] = $basename;
-		}
-	}
-	return \array_values( \array_unique( $union ) );
+	// Substrate's `Log_Cleaner::expected_basenames()` seeds $basenames with
+	// the topology-derived set (every active topology's Partition basenames
+	// + every still-running worker's topology's basenames). The app's only
+	// job here is appending the runtime-pinned basenames it manages outside
+	// the topology graph — `firehose` (LogManager) and `jobintake`
+	// (JobIntake) are written from request scope, not by a Partition node,
+	// so no topology TSL declares them.
+	return \array_values( \array_unique(
+		\array_merge( $basenames, NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES )
+	) );
 }
 \add_filter(
 	'newspack_nodes/expected_log_basenames',
