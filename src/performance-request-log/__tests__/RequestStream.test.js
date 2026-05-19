@@ -151,6 +151,22 @@ describe( 'RequestStream', () => {
 		expect( container.textContent ).not.toContain( 'r-foo' );
 	} );
 
+	it( 'toggles the column picker on Cols button click', () => {
+		const { container } = mount();
+		const colsBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Cols' );
+		expect( colsBtn ).toBeTruthy();
+		act( () => {
+			colsBtn.click();
+		} );
+		expect(
+			container.querySelector(
+				'.event-logger-request-stream-column-picker'
+			)
+		).toBeTruthy();
+	} );
+
 	it( 'forwards a completed-line envelope into rendered rows', () => {
 		const { container } = mount();
 		act( () => {

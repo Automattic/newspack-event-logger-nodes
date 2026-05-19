@@ -114,6 +114,47 @@ describe( 'Inflight', () => {
 		input.remove();
 	} );
 
+	it( 'toggles the column picker on Cols button click', () => {
+		const { container } = mount();
+		const colsBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Cols' );
+		expect( colsBtn ).toBeTruthy();
+		act( () => {
+			colsBtn.click();
+		} );
+		expect(
+			container.querySelector( '.event-logger-inflight-column-picker' )
+		).toBeTruthy();
+		act( () => {
+			colsBtn.click();
+		} );
+		expect(
+			container.querySelector( '.event-logger-inflight-column-picker' )
+		).toBeNull();
+	} );
+
+	it( 'toggles a column checkbox and persists to localStorage', () => {
+		const { container } = mount();
+		const colsBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Cols' );
+		act( () => {
+			colsBtn.click();
+		} );
+		// Toggle the 'age' column (not in default set) — should add it.
+		const ageCheckbox = document.querySelector( '#inflight-col-age' );
+		expect( ageCheckbox ).toBeTruthy();
+		expect( ageCheckbox.checked ).toBe( false );
+		act( () => {
+			ageCheckbox.click();
+		} );
+		const saved = window.localStorage.getItem( 'event-logger-columns' );
+		expect( JSON.parse( saved ) ).toEqual(
+			expect.arrayContaining( [ 'age' ] )
+		);
+	} );
+
 	it( 'renders rows after the onMessage handler delivers an inflight snapshot', () => {
 		const { container } = mount();
 		// Drive the registered onMessage handler with a synthesised
