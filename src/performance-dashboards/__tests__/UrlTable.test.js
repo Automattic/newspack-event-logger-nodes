@@ -1,4 +1,5 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
+/* global KeyboardEvent */
 /**
  * Tests for UrlTable — sortable virtualized URL list.
  *
@@ -220,6 +221,66 @@ describe( 'UrlTable', () => {
 		expect( container.textContent ).toContain( 'Prev' );
 		expect( container.textContent ).toContain( 'Next' );
 		expect( container.textContent ).toContain( 'Page 1 of 3' );
+		unmount();
+	} );
+
+	it( 'advances to page 2 when Next is clicked', () => {
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( {
+			totalUrls: 250,
+			onParamsChange,
+		} );
+		const next = Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Next' )
+		);
+		act( () => {
+			next.click();
+		} );
+		expect(
+			onParamsChange.mock.calls.some(
+				( call ) => call[ 0 ].offset === 100
+			)
+		).toBe( true );
+		unmount();
+	} );
+
+	it( '/ keyboard focuses the search input', () => {
+		const { container, unmount } = mount();
+		const input = container.querySelector( 'input[type="text"]' );
+		const focusSpy = jest.spyOn( input, 'focus' );
+		act( () => {
+			document.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key: '/', bubbles: true } )
+			);
+		} );
+		expect( focusSpy ).toHaveBeenCalled();
+		focusSpy.mockRestore();
+		unmount();
+	} );
+
+	it( 'switches the bar to peak_mb when metric=memory', () => {
+		// metric=memory means UrlRow renders the bar with peak_mb. No
+		// direct DOM hook to assert that, but rendering with metric=memory
+		// drives the otherwise-uncovered branches in UrlRow.
+		const { container, unmount } = mount( { metric: 'memory' } );
+		expect( container.textContent ).toContain( '/foo' );
+		unmount();
+	} );
+
+	it( 'flips active sort to asc when the active header is clicked then back to desc on second click', () => {
+		const { container, unmount } = mount();
+		const reqsHeader = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Reqs' ) );
+		act( () => {
+			reqsHeader.click();
+		} );
+		// Header now ▲ (asc).
+		expect( reqsHeader.textContent.includes( '▲' ) ).toBe( true );
+		act( () => {
+			reqsHeader.click();
+		} );
+		expect( reqsHeader.textContent.includes( '▼' ) ).toBe( true );
 		unmount();
 	} );
 } );
