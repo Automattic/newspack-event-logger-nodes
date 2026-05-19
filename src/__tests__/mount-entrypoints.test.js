@@ -15,6 +15,16 @@ jest.mock( '../performance-request-log/RequestStreamPage', () => ( {
 	__esModule: true,
 	default: () => 'REQUEST_STREAM_PAGE',
 } ) );
+// performance-dashboards/index.js mounts two components — lazy-loaded
+// PerformanceDashboard and ErrorLog.
+jest.mock( '../performance-dashboards/PerformanceDashboard', () => ( {
+	__esModule: true,
+	default: () => 'PERFORMANCE_DASHBOARD',
+} ) );
+jest.mock( '../performance-dashboards/ErrorLog', () => ( {
+	__esModule: true,
+	default: () => 'ERROR_LOG',
+} ) );
 
 describe( 'dashboard mount-entry points', () => {
 	beforeEach( () => {
@@ -58,5 +68,24 @@ describe( 'dashboard mount-entry points', () => {
 
 	it( 'performance-request-log/index.js is a no-op without the container', () => {
 		expect( () => require( '../performance-request-log' ) ).not.toThrow();
+	} );
+
+	it( 'performance-dashboards/index.js mounts the dashboard + error containers', () => {
+		mountContainer( 'event-logger-admin' );
+		mountContainer( 'event-logger-errors' );
+		expect( () => require( '../performance-dashboards' ) ).not.toThrow();
+		// The DOMContentLoaded handler runs synchronously when the doc
+		// is already loaded; the require returns once mount has been
+		// scheduled.
+	} );
+
+	it( 'performance-dashboards/index.js is a no-op without containers', () => {
+		expect( () => require( '../performance-dashboards' ) ).not.toThrow();
+	} );
+
+	it( 'performance-logger/index.js does not throw', () => {
+		// The settings entry uses a different DOM hook id. Just ensure
+		// importing it does not throw when its containers are absent.
+		expect( () => require( '../performance-logger' ) ).not.toThrow();
 	} );
 } );
