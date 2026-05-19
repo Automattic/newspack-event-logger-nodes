@@ -21,4 +21,10 @@ module.exports = {
 	transform: {
 		'\\.[jt]sx?$': 'babel-jest',
 	},
+	// d3 (and its many d3-* submodules) ships ESM-only — let babel-jest
+	// transform them as well. Same goes for internmap (a d3 dep) and
+	// delaunator / robust-predicates (d3-delaunay deps).
+	transformIgnorePatterns: [
+		'node_modules/(?!(d3|d3-.*|internmap|delaunator|robust-predicates)/)',
+	],
 };
