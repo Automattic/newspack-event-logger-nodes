@@ -649,6 +649,35 @@ class MemcachedCacheTest extends TestCase {
 		$this->assertTrue( $mc->delete( 'whatever' ) );
 		$this->assertSame( 'whatever', $stub->last_delete_key );
 	}
+
+	// =========================================================================
+	// from_substrate_config: non-array memcache_servers fallback.
+	// =========================================================================
+
+	public function test_from_substrate_config_falls_back_when_servers_not_array(): void {
+		// Stuff a non-array value into the substrate config cache so the
+		// `! is_array( $servers )` branch fires inside from_substrate_config().
+		// The Config sanitizer normally coerces invalid values to an array, but
+		// the FROM_SUBSTRATE_CONFIG path defends against a Config that returns
+		// any shape (e.g. a config file that does `'memcache_servers' => 'x'`).
+		$config_prop = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'config' );
+		$config_prop->setAccessible( true );
+		$original = $config_prop->getValue();
+		try {
+			$config_prop->setValue(
+				null,
+				[ 'memcache_servers' => 'definitely-not-an-array' ]
+			);
+
+			$cache = Memcached_Cache::from_substrate_config();
+			$this->assertInstanceOf( Memcached_Cache::class, $cache );
+			// Whatever the fallback produced, the constructor must not crash.
+			$this->assertIsBool( $cache->is_available() );
+		} finally {
+			$config_prop->setValue( null, $original );
+			\Newspack_Nodes\Config::reset();
+		}
+	}
 }
 
 /**
