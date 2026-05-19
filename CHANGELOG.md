@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.34] - 2026-05-19
+
+### Fixed
+
+- **`expected_log_basenames` filter now honors the substrate's operator-overlay active topology set.** Previously it read `$config['topologies']` from the app's merged Config, which is the app's full FILE-DEFAULT list (every topology the plugin knows about). The operator's actual active subset lives in the substrate option `newspack_nodes_topologies` (admin-UI checkboxes), exposed via `Bootstrap::get_topologies()`. The mismatch meant inactive topologies' basenames stayed "expected" forever — `Log_Cleaner` saw zero orphans and never cleaned the on-disk `*.log/` dirs the operator had toggled off. Datapoke staging hit this: app file defaults are `firehose-workers-only` + `request-workers`, operator selected `firehose-jobs-only` + `job-workers`. The filter unioned both lists, declared all 8 basenames expected, and 5 orphan log dirs (`completed`, `errors`, `flames`, `gyroscope`, `requests`) survived every supervisor cleanup tick. Filter now starts from `Bootstrap::get_topologies()` keys instead. The active-workers-on-disk overlay (which keeps a deactivated topology's basenames expected until its workers actually exit) is unchanged.
+
 ## [0.2.33] - 2026-05-18
 
 ### Changed

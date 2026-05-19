@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.2.33
+ * Version: 0.2.34
  * Requires Plugins: newspack-nodes
  *
  * @package Newspack_Event_Logger_Nodes
@@ -11,7 +11,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.33' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.2.34' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -263,15 +263,25 @@ const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' 
  * orphans every `{base}/logs/*.log/` directory NOT in the result.
  */
 function newspack_event_logger_nodes_expected_log_basenames( array $basenames ): array {
-	$config     = \Newspack_Event_Logger_Nodes\Config::load_config();
-	$configured = \is_array( $config['topologies'] ?? null ) ? $config['topologies'] : [];
-	$active_set = \array_flip( $configured );
+	// Authoritative active-set comes from the substrate (operator overlay
+	// option `newspack_nodes_topologies` applied over the published catalog).
+	// The app's own `$config['topologies']` is its full FILE-DEFAULT list —
+	// using that here makes inactive topologies' basenames stay "expected"
+	// forever, blocking Log_Cleaner from ever orphaning a `*.log/` dir.
+	$active_topologies = \class_exists( '\\Newspack_Nodes\\Bootstrap' )
+		? \Newspack_Nodes\Bootstrap::get_topologies()
+		: [];
+	$active_set = [];
+	foreach ( \array_keys( $active_topologies ) as $name ) {
+		$active_set[ $name ] = true;
+	}
 
 	// Workers still on disk pin their topology's basenames as expected,
 	// even if the operator just removed the topology from config — they
 	// might be writing to those logs as the change settles. Cli::ls_workers
 	// filters out stale lock dirs (worker died without cleanup), so a
 	// failed worker doesn't keep its basenames expected forever.
+	$config   = \Newspack_Event_Logger_Nodes\Config::load_config();
 	$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 	foreach ( ( new \Newspack_Nodes\Cli( $base_dir ) )->ls_workers() as $worker ) {
 		if ( ! $worker['stale'] ) {
