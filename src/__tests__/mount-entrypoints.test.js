@@ -71,21 +71,64 @@ describe( 'dashboard mount-entry points', () => {
 	} );
 
 	it( 'performance-dashboards/index.js mounts the dashboard + error containers', () => {
-		mountContainer( 'event-logger-admin' );
+		const admin = mountContainer( 'event-logger-admin' );
 		mountContainer( 'event-logger-errors' );
-		expect( () => require( '../performance-dashboards' ) ).not.toThrow();
-		// The DOMContentLoaded handler runs synchronously when the doc
-		// is already loaded; the require returns once mount has been
-		// scheduled.
+		require( '../performance-dashboards' );
+		// Dispatch DOMContentLoaded — required because the handler is
+		// registered at module-load time in jsdom (the document is
+		// already "interactive" by then, but DOMContentLoaded hasn't
+		// fired yet in this environment).
+		document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		expect( admin.parentNode ).toBe( document.body );
 	} );
 
 	it( 'performance-dashboards/index.js is a no-op without containers', () => {
-		expect( () => require( '../performance-dashboards' ) ).not.toThrow();
+		expect( () => {
+			require( '../performance-dashboards' );
+			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		} ).not.toThrow();
 	} );
 
-	it( 'performance-logger/index.js does not throw', () => {
-		// The settings entry uses a different DOM hook id. Just ensure
-		// importing it does not throw when its containers are absent.
-		expect( () => require( '../performance-logger' ) ).not.toThrow();
+	it( 'performance-logger/index.js registers a DOMContentLoaded handler that does not throw', () => {
+		expect( () => {
+			require( '../performance-logger' );
+			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		} ).not.toThrow();
+	} );
+
+	it( 'performance-logger/index.js binds the tag fields when their containers exist', () => {
+		const div = mountContainer( 'event-logger-log_urls' );
+		div.dataset.values = '[]';
+		div.dataset.default = '[]';
+		const hidden = document.createElement( 'input' );
+		hidden.id = 'log_urls_json';
+		hidden.type = 'hidden';
+		document.body.appendChild( hidden );
+		expect( () => {
+			require( '../performance-logger' );
+			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		} ).not.toThrow();
+	} );
+
+	it( 'performance-logger reset button dispatches event-logger-reset to its container', () => {
+		const div = mountContainer( 'event-logger-log_urls' );
+		div.dataset.values = '[]';
+		div.dataset.default = '[]';
+		const btn = document.createElement( 'button' );
+		btn.dataset.field = 'log_urls';
+		btn.dataset.default = '["default1"]';
+		btn.classList.add( 'event-logger-reset-field' );
+		document.body.appendChild( btn );
+		require( '../performance-logger' );
+		document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		let captured = null;
+		div.addEventListener( 'event-logger-reset', ( e ) => {
+			captured = e.detail;
+		} );
+		btn.click();
+		expect( captured ).toEqual( {
+			field: 'log_urls',
+			defaultValues: [ 'default1' ],
+		} );
 	} );
 } );
