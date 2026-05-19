@@ -173,6 +173,137 @@ describe( 'HookSelectorModal', () => {
 		);
 	} );
 
+	it( 'expands a category and toggles individual hook checkboxes', async () => {
+		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+		const onSelect = jest.fn();
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect,
+		} );
+		await flush();
+		// Click the Lifecycle category header to expand.
+		const categoryHeader = Array.from(
+			document.querySelectorAll( '.hook-selector-category-header' )
+		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
+		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		act( () => {
+			categoryHeader.click();
+		} );
+		// Inner hook checkboxes appear.
+		const initCheckbox = document.querySelector( '#hook-init' );
+		expect( initCheckbox ).toBeTruthy();
+		act( () => {
+			initCheckbox.click();
+		} );
+		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Apply' )
+		);
+		act( () => {
+			apply.click();
+		} );
+		expect( onSelect ).toHaveBeenCalledWith( [ 'init' ] );
+	} );
+
+	it( 'Select All adds visible hooks; Clear Matches removes filtered subset', async () => {
+		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+		const onSelect = jest.fn();
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect,
+		} );
+		await flush();
+		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		// Click "Select All" → selects every hook.
+		const selectAll = Array.from(
+			document.querySelectorAll( 'button' )
+		).find( ( b ) => /Select All|Select Matches/.test( b.textContent ) );
+		act( () => {
+			selectAll.click();
+		} );
+		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Apply' )
+		);
+		act( () => {
+			apply.click();
+		} );
+		// Order may differ; check membership.
+		const args = onSelect.mock.calls[ 0 ][ 0 ];
+		expect( args ).toEqual(
+			expect.arrayContaining( [
+				'init',
+				'shutdown',
+				'wp_loaded',
+				'rest_api_init',
+			] )
+		);
+	} );
+
+	it( 'unchecks a pre-selected hook on click; Clear All wipes everything', async () => {
+		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+		const onSelect = jest.fn();
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [ 'init', 'shutdown', 'wp_loaded' ],
+			onSelect,
+		} );
+		await flush();
+		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		// Expand Lifecycle.
+		const header = Array.from(
+			document.querySelectorAll( '.hook-selector-category-header' )
+		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
+		act( () => {
+			header.click();
+		} );
+		// Uncheck "init" by clicking its checkbox.
+		const initCheckbox = document.querySelector( '#hook-init' );
+		act( () => {
+			initCheckbox.click();
+		} );
+		// Click "Clear All" → empties selection.
+		const clearAll = Array.from(
+			document.querySelectorAll( 'button' )
+		).find( ( b ) => /Clear All|Clear Matches/.test( b.textContent ) );
+		act( () => {
+			clearAll.click();
+		} );
+		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Apply' )
+		);
+		act( () => {
+			apply.click();
+		} );
+		expect( onSelect ).toHaveBeenCalledWith( [] );
+	} );
+
+	it( 'collapses an expanded category when its header is clicked twice', async () => {
+		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect: jest.fn(),
+		} );
+		await flush();
+		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const header = Array.from(
+			document.querySelectorAll( '.hook-selector-category-header' )
+		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
+		act( () => {
+			header.click();
+		} );
+		expect( document.querySelector( '#hook-init' ) ).toBeTruthy();
+		act( () => {
+			header.click();
+		} );
+		expect( document.querySelector( '#hook-init' ) ).toBeNull();
+	} );
+
 	it( 'falls back to an empty category map when fetch rejects', async () => {
 		mockSend.mockRejectedValue( new Error( 'boom' ) );
 		mount( {
