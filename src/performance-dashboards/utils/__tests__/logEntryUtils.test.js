@@ -156,6 +156,52 @@ describe( 'computeVisibleEntries', () => {
 	} );
 } );
 
+describe( 'placeholder runs in computeVisibleEntries', () => {
+	it( 'collapses a placeholder gap into dot + timestamp rows', () => {
+		// 1.0s to 1.5s = 50 hundredths of placeholders. The
+		// collapser should emit some dot rows + timestamp rows.
+		const { entries } = computeIndentedEntries( [
+			{ k: 'a', ts: 1.0 },
+			{ k: 'b', ts: 1.5 },
+		] );
+		const visible = computeVisibleEntries( entries, new Set() );
+		const placeholders = visible.filter( ( e ) => e.isPlaceholder );
+		expect( placeholders.length ).toBeGreaterThan( 0 );
+		const dotRows = placeholders.filter( ( e ) =>
+			( e.displayTime || '' ).includes( '•' )
+		);
+		const tsRows = placeholders.filter( ( e ) =>
+			( e.displayTime || '' ).match( /\d+:\d+:\d+\.\d+/ )
+		);
+		expect( dotRows.length ).toBeGreaterThan( 0 );
+		expect( tsRows.length ).toBeGreaterThan( 0 );
+	} );
+
+	it( 'collapses a long placeholder gap into escalating timestamps (Phase 2)', () => {
+		// 1.0s to 100.0s = 9900 hundredths — Phase 1 emits 2
+		// timestamps, then Phase 2 takes over.
+		const { entries } = computeIndentedEntries( [
+			{ k: 'a', ts: 1.0 },
+			{ k: 'b', ts: 100.0 },
+		] );
+		const visible = computeVisibleEntries( entries, new Set() );
+		const placeholders = visible.filter( ( e ) => e.isPlaceholder );
+		expect( placeholders.length ).toBeGreaterThan( 0 );
+		expect( placeholders.length ).toBeLessThan( 1000 );
+	} );
+
+	it( 'ensures the last visible row carries a timestamp', () => {
+		const { entries } = computeIndentedEntries( [
+			{ k: 'a', ts: 1.0 },
+			{ k: 'b', ts: 1.05 },
+		] );
+		const visible = computeVisibleEntries( entries, new Set() );
+		const last = visible[ visible.length - 1 ];
+		expect( last.displayTime ).toBeTruthy();
+		expect( last.displayTime.startsWith( '•' ) ).toBe( false );
+	} );
+} );
+
 describe( 'getAncestorPairIds', () => {
 	it( 'returns an empty set for an out-of-bounds index', () => {
 		expect( getAncestorPairIds( 99, [] ).size ).toBe( 0 );
