@@ -36,7 +36,11 @@ class ExpectedLogBasenamesTest extends TestCase {
 	}
 
 	private function basenames(): array {
-		$set = \apply_filters( 'newspack_nodes/expected_log_basenames', [] );
+		// Drive the full pipeline as Log_Cleaner does: substrate computes
+		// the topology-derived set, then the app's filter callback appends
+		// runtime basenames. Direct `apply_filters` with an empty array
+		// would skip the substrate's computation.
+		$set = \Newspack_Nodes\Log_Cleaner::expected_basenames( $this->tmp );
 		\sort( $set );
 		return $set;
 	}
