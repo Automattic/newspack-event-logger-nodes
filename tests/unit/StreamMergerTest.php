@@ -2492,4 +2492,123 @@ class StreamMergerTest extends TestCase {
 		$this->addToAssertionCount( 1 );
 	}
 
+	// =========================================================================
+	// Coverage: config_verbs() body + each verb closure body.
+	// The static $verbs_cache is populated once per process; reset it here so
+	// the populate path runs during the coverage capture window and so each
+	// verb closure is invoked directly (the existing make_merger() path goes
+	// through the instance methods, leaving the closure-wrapper bodies dark).
+	// =========================================================================
+
+	private function reset_stream_merger_verbs_cache(): void {
+		$ref = new \ReflectionProperty( StreamMerger::class, 'verbs_cache' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, [] );
+	}
+
+	public function test_set_verify_ssl_verb_closure_dispatches_to_patron(): void {
+		$this->reset_stream_merger_verbs_cache();
+		$sm = $this->make_merger();
+		$ci = $sm->interpreter();
+		$verbs = $ci->commands();
+		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
+
+		// 'true' sets verify_ssl true.
+		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, 'true' ) );
+		$ref = new \ReflectionProperty( StreamMerger::class, 'verify_ssl' );
+		$ref->setAccessible( true );
+		$this->assertTrue( $ref->getValue( $sm ) );
+
+		// 'false' sets verify_ssl false.
+		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, 'false' ) );
+		$this->assertFalse( $ref->getValue( $sm ) );
+
+		// '1' is also truthy.
+		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, '1' ) );
+		$this->assertTrue( $ref->getValue( $sm ) );
+	}
+
+	public function test_set_require_https_verb_closure_dispatches_to_patron(): void {
+		$this->reset_stream_merger_verbs_cache();
+		$sm = new StreamMerger( 'firehose', 0 );
+		$sm->name( 'sm-require-https' );
+		$ci = $sm->interpreter();
+		$verbs = $ci->commands();
+		$this->assertArrayHasKey( 'set_require_https', $verbs );
+
+		// Toggle on via verb dispatch.
+		$this->assertSame( 'ok', $verbs['set_require_https']( $ci, 'true' ) );
+		$ref = new \ReflectionProperty( StreamMerger::class, 'require_https' );
+		$ref->setAccessible( true );
+		$this->assertTrue( $ref->getValue( $sm ) );
+
+		// Toggle off — note: instance starts with require_https=true (the
+		// constructor default), so the warn-on-downgrade branch fires here.
+		$this->assertSame( 'ok', $verbs['set_require_https']( $ci, 'false' ) );
+		$this->assertFalse( $ref->getValue( $sm ) );
+	}
+
+	public function test_load_remotes_from_registry_verb_closure_iterates_enabled_servers(): void {
+		$this->reset_stream_merger_verbs_cache();
+		// Seed two enabled servers + one disabled. ServerRegistry pulls from
+		// WP options; populate them directly so the verb iterates over our
+		// fixture set.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+			'site_alpha' => [
+				'id'      => 'site_alpha',
+				'url'     => 'https://alpha.test',
+				'enabled' => true,
+			],
+			'site_beta'  => [
+				'id'      => 'site_beta',
+				'url'     => 'https://beta.test',
+				'enabled' => true,
+			],
+			'site_off'   => [
+				'id'      => 'site_off',
+				'url'     => 'https://off.test',
+				'enabled' => false,
+			],
+		];
+
+		$sm = $this->make_merger();
+		// Force HTTPS for this test (the make_merger() helper turns it off);
+		// keep on so add_remote can actually proceed via the https URLs.
+		$sm->set_require_https( true );
+
+		$ci    = $sm->interpreter();
+		$verbs = $ci->commands();
+		$this->assertArrayHasKey( 'load_remotes_from_registry', $verbs );
+
+		$this->assertSame( 'ok', $verbs['load_remotes_from_registry']( $ci, '' ) );
+		// Only the two enabled servers — site_off skipped.
+		$this->assertSame( 2, $sm->remote_count() );
+		$this->assertArrayHasKey( 'site_alpha', $sm->remote_nodes() );
+		$this->assertArrayHasKey( 'site_beta', $sm->remote_nodes() );
+
+		// Cleanup so other tests don't see this fixture.
+		unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
+	}
+
+	public function test_config_verbs_populates_static_cache_on_first_call(): void {
+		// After resetting the cache, the very next StreamMerger construction
+		// populates it. Subsequent constructions reuse the cached array
+		// (the `if ( empty( $verbs_cache ) )` short-circuit).
+		$this->reset_stream_merger_verbs_cache();
+		$first  = new StreamMerger( 'firehose', 0 );
+		$ref    = new \ReflectionProperty( StreamMerger::class, 'verbs_cache' );
+		$ref->setAccessible( true );
+		$cache1 = $ref->getValue();
+
+		$this->assertNotEmpty( $cache1, 'first construction populates verbs_cache' );
+
+		$second = new StreamMerger( 'firehose', 1 );
+		$cache2 = $ref->getValue();
+		$this->assertSame(
+			$cache1,
+			$cache2,
+			'verbs_cache is shared across instances — same array, same closures'
+		);
+	}
+
 }
