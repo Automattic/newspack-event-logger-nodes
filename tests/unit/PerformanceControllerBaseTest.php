@@ -98,13 +98,29 @@ class PerformanceControllerBaseTest extends TestCase {
 
 	public function test_cache_lazy_factory_uses_substrate_config_when_uninjected(): void {
 		// With set_cache(null), the next cache() call must build a real
-		// Memcached_Cache from substrate config. The test config has
-		// `memcache_servers => []` so the resulting instance is unavailable,
-		// but it must be non-null and the right concrete type.
-		PerformanceControllerBase::set_cache( null );
-		$cache = PerformanceControllerBase::cache();
-		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Memcached_Cache::class, $cache );
-		$this->assertFalse( $cache->is_available(), 'empty memcache_servers means unavailable' );
+		// Memcached_Cache from substrate config. Stuff an empty
+		// `memcache_servers` directly into the substrate Config cache via
+		// reflection so the assertion sees the empty-servers fixture
+		// regardless of what env LogManagerTest tearDown or anyone else
+		// may have left in place. Setting LOCAL_NEWSPACK_NODES_CONF here
+		// would leak into later tests (RemoteManager picks up the test
+		// config's `num_segments=2` and the test fixture's WP option
+		// `=42` is overlaid by the app's load_config_defaults, breaking
+		// downstream assertions).
+		$config_prop = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'config' );
+		$config_prop->setAccessible( true );
+		$original = $config_prop->getValue();
+		try {
+			$config_prop->setValue( null, [ 'memcache_servers' => [] ] );
+
+			PerformanceControllerBase::set_cache( null );
+			$cache = PerformanceControllerBase::cache();
+			$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Memcached_Cache::class, $cache );
+			$this->assertFalse( $cache->is_available(), 'empty memcache_servers means unavailable' );
+		} finally {
+			$config_prop->setValue( null, $original );
+			\Newspack_Nodes\Config::reset();
+		}
 	}
 
 	public function test_cache_returns_injected_instance_on_subsequent_calls(): void {
