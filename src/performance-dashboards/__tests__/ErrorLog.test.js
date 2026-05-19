@@ -93,6 +93,50 @@ describe( 'ErrorLog', () => {
 		expect( container.querySelectorAll( '.entry-rid' ).length ).toBe( 0 );
 	} );
 
+	it( 'toggles pause/resume on button click', () => {
+		const { container } = mount();
+		const pauseBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === '⏸' );
+		expect( pauseBtn ).toBeTruthy();
+		act( () => {
+			pauseBtn.click();
+		} );
+		expect( pauseBtn.textContent ).toContain( '▶' );
+	} );
+
+	it( 'Clear button empties rendered errors', () => {
+		const { container } = mount();
+		act( () => {
+			lastUseMessageStreamArgs.onMessage(
+				[
+					1,
+					0,
+					'errors.p0',
+					'',
+					'1:0',
+					'rid_xyz',
+					{ ts: 1748960000, k: 'fatal', m: 'boom' },
+				],
+				{ type: 1 }
+			);
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 2000 );
+		} );
+		expect( container.textContent ).toContain( 'rid_xyz' );
+		const clearBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Clear' );
+		act( () => {
+			clearBtn.click();
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
+		expect( container.textContent ).not.toContain( 'rid_xyz' );
+	} );
+
 	it( 'forwards an errors envelope into rendered rows', () => {
 		const { container } = mount();
 		act( () => {

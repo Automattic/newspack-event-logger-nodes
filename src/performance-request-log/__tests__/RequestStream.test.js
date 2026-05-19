@@ -98,6 +98,59 @@ describe( 'RequestStream', () => {
 		);
 	} );
 
+	it( 'toggles pause/resume on button click', () => {
+		const { container } = mount();
+		const pauseBtn = container.querySelector(
+			'.event-logger-request-stream-btn'
+		);
+		expect( pauseBtn.textContent ).toContain( '⏸' );
+		act( () => {
+			pauseBtn.click();
+		} );
+		// After click, button now shows the resume glyph.
+		expect( pauseBtn.textContent ).toContain( '▶' );
+	} );
+
+	it( 'Clear button empties rendered entries', () => {
+		const { container } = mount();
+		act( () => {
+			lastUseMessageStreamArgs.onMessage(
+				[
+					1,
+					0,
+					'firehose.p0',
+					'',
+					'1:0',
+					'completed',
+					{
+						rid: 'r-foo',
+						url: '/foo',
+						method: 'GET',
+						status_code: 200,
+						duration_ms: 50,
+						end_time: 1,
+					},
+				],
+				{ type: 1 }
+			);
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
+		expect( container.textContent ).toContain( 'r-foo' );
+		// Click Clear.
+		const clearBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Clear' );
+		act( () => {
+			clearBtn.click();
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
+		expect( container.textContent ).not.toContain( 'r-foo' );
+	} );
+
 	it( 'forwards a completed-line envelope into rendered rows', () => {
 		const { container } = mount();
 		act( () => {
