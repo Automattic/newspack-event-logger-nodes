@@ -12,11 +12,58 @@
 // warning that fires from inside ReactDOMRoot.unmount otherwise.
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
+// jsdom doesn't ship matchMedia; @wordpress/components uses it for
+// responsive value selection. Stub a minimal MediaQueryList shim.
+if ( typeof window !== 'undefined' && ! window.matchMedia ) {
+	window.matchMedia = ( query ) => ( {
+		matches: false,
+		media: query,
+		onchange: null,
+		addListener: () => {},
+		removeListener: () => {},
+		addEventListener: () => {},
+		removeEventListener: () => {},
+		dispatchEvent: () => false,
+	} );
+}
+
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
 
 export { act };
+
+/**
+ * Mount a React element into a real DOM container under jsdom. Returns
+ * the container so callers can run queries directly (querySelector,
+ * textContent, dispatchEvent, etc.). No @testing-library is needed —
+ * assertions on rendered output use plain DOM APIs.
+ *
+ * @param {import('react').ReactElement} element React tree to mount.
+ * @return {{ container: HTMLDivElement, rerender: Function, unmount: Function }} Container plus rerender + unmount helpers.
+ */
+export function renderComponent( element ) {
+	const container = document.createElement( 'div' );
+	document.body.appendChild( container );
+	const root = createRoot( container );
+	act( () => {
+		root.render( element );
+	} );
+	return {
+		container,
+		rerender: ( next ) => {
+			act( () => {
+				root.render( next );
+			} );
+		},
+		unmount: () => {
+			act( () => {
+				root.unmount();
+			} );
+			container.remove();
+		},
+	};
+}
 
 export function renderHook( useHook, { initialProps = {} } = {} ) {
 	const result = { current: undefined };
