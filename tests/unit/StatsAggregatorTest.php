@@ -202,4 +202,121 @@ class StatsAggregatorTest extends TestCase {
 		$this->fill( $sa, [ 'url' => '/x', 'req_time' => 0.5, 'status' => 200 ] );
 		$this->assertSame( 1, $sa->counter() );
 	}
+
+	// =========================================================================
+	// Coverage: per-URL dimensional + per-URL category branches (the inner
+	// `if ( '' !== $url_hash )` paths inside the DIMENSIONS / categories loops).
+	// =========================================================================
+
+	public function test_fill_pushes_url_dimensional_when_url_hash_present(): void {
+		// The inner `bump_url_dimensional` call only fires when url_hash is
+		// non-empty. Existing tests pass dimensions but no url_hash, leaving
+		// that branch dark.
+		[ $store, $sa ] = $this->make_store_aggregator();
+
+		$this->fill(
+			$sa,
+			[
+				'url'      => '/article/foo',
+				'req_time' => 0.5,
+				'status'   => 200,
+				'method'   => 'GET',
+				'url_hash' => 'abc123',
+			]
+		);
+
+		// Per-URL dimensional should now contain entries for both 'status' and 'method'.
+		$by_dim = $store->get_url_dimensional( 'abc123' );
+		$this->assertArrayHasKey( 'status', $by_dim );
+		$this->assertArrayHasKey( 'method', $by_dim );
+
+		$bucket = $store->current_url_bucket();
+		$this->assertSame( 1, $by_dim['status'][ $bucket ]['200']['c'] );
+		$this->assertSame( 1, $by_dim['method'][ $bucket ]['GET']['c'] );
+	}
+
+	public function test_fill_skips_url_dimensional_when_url_hash_empty(): void {
+		// Empty url_hash must skip the per-URL fan-out (the explicit
+		// `if ( '' !== $url_hash )` gate). Confirms the empty-string branch
+		// also gets exercised cleanly.
+		[ $store, $sa ] = $this->make_store_aggregator();
+
+		$this->fill(
+			$sa,
+			[
+				'url'      => '/article/foo',
+				'req_time' => 0.5,
+				'status'   => 200,
+				'url_hash' => '',
+			]
+		);
+
+		$this->assertSame( [], $store->get_url_dimensional( 'abc123' ) );
+	}
+
+	public function test_fill_skips_empty_string_dimension_value(): void {
+		// `$value = (string) $entry[ $dim ]` followed by `if ( '' === $value ) continue;`
+		// — this exercises the empty-after-cast continue branch.
+		[ $store, $sa ] = $this->make_store_aggregator();
+
+		$this->fill(
+			$sa,
+			[
+				'url'      => '/x',
+				'req_time' => 0.5,
+				// status set to empty string — the cast keeps it empty.
+				'status'   => '',
+				'method'   => 'POST',
+			]
+		);
+
+		// No 'status' dimension recorded (empty); 'method' must still be recorded.
+		$dim_status = $store->get_dimensional( 'status' );
+		$dim_method = $store->get_dimensional( 'method' );
+		$bucket     = $store->current_url_bucket();
+		$this->assertArrayNotHasKey( $bucket, $dim_status, 'empty-string status should be skipped' );
+		$this->assertSame( 1, $dim_method[ $bucket ]['POST']['c'] );
+	}
+
+	public function test_fill_pushes_url_categories_when_url_hash_present(): void {
+		// Same dark branch as url_dimensional but inside the categories loop.
+		[ $store, $sa ] = $this->make_store_aggregator();
+
+		$this->fill(
+			$sa,
+			[
+				'url'        => '/article/foo',
+				'req_time'   => 1.0,
+				'url_hash'   => 'def456',
+				'categories' => [
+					'wpdb' => [ 'time' => 0.4, 'count' => 5 ],
+					'http' => [ 'time' => 0.2, 'count' => 2 ],
+				],
+			]
+		);
+
+		$by_cat = $store->get_url_categories( 'def456' );
+		$bucket = $store->current_url_bucket();
+		$this->assertArrayHasKey( 'wpdb', $by_cat[ $bucket ] );
+		$this->assertArrayHasKey( 'http', $by_cat[ $bucket ] );
+	}
+
+	public function test_fill_skips_url_categories_when_url_hash_empty(): void {
+		// Empty url_hash — per-URL categories must not be written.
+		[ $store, $sa ] = $this->make_store_aggregator();
+
+		$this->fill(
+			$sa,
+			[
+				'url'        => '/article/foo',
+				'req_time'   => 1.0,
+				'url_hash'   => '',
+				'categories' => [
+					'wpdb' => [ 'time' => 0.4, 'count' => 5 ],
+				],
+			]
+		);
+
+		$this->assertSame( [], $store->get_url_categories( 'def456' ) );
+	}
 }
