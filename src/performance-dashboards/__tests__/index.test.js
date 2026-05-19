@@ -34,6 +34,12 @@ import { act } from '../../shared/hooks/__tests__/renderHook';
 
 describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 	beforeEach( () => {
+		// Recover from any fake-timer state a previous test left active
+		// (e.g. the auto-clear test calls useFakeTimers() before its
+		// assertions; if any throw before useRealTimers() at the end, the
+		// next test's mountIndex would hang on its setTimeout(50) fallback
+		// because fake timers swallow it).
+		jest.useRealTimers();
 		jest.resetModules();
 		while ( document.body.firstChild ) {
 			document.body.removeChild( document.body.firstChild );
