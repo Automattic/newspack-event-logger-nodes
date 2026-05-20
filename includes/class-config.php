@@ -92,6 +92,33 @@ class Config {
 		return ! isset( self::$non_autoloaded_options[ $option ] );
 	}
 
+	/** One-time marker so `correct_option_autoload()` sweeps once per install. */
+	public const AUTOLOAD_FIXED_OPTION = 'newspack_event_logger_nodes_autoload_fixed';
+
+	/**
+	 * One-time autoload-correction sweep, applying `autoload_for()` to every
+	 * application option (schema keys + the explicitly-non-autoloaded set).
+	 * Fixes existing installs that persisted these with the wrong flag, once,
+	 * guarded by a marker. Hooked on `admin_init`; no-op on WP < 6.6. The
+	 * substrate runs its own sweep for the `newspack_nodes_*` keys.
+	 */
+	public static function correct_option_autoload(): void {
+		if ( ! \function_exists( 'wp_set_option_autoload' ) ) {
+			return;
+		}
+		if ( ! empty( \get_option( self::AUTOLOAD_FIXED_OPTION ) ) ) {
+			return;
+		}
+		$options = \array_keys( self::$non_autoloaded_options );
+		foreach ( \array_keys( self::$option_schema ) as $key ) {
+			$options[] = "newspack_event_logger_nodes_{$key}";
+		}
+		foreach ( \array_unique( $options ) as $option ) {
+			\wp_set_option_autoload( $option, self::autoload_for( $option ) );
+		}
+		\update_option( self::AUTOLOAD_FIXED_OPTION, '1', false );
+	}
+
 	/**
 	 * Allowed directories for local config override files.
 	 *

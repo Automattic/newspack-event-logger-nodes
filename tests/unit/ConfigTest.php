@@ -87,6 +87,28 @@ class ConfigTest extends TestCase {
 		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
 	}
 
+	public function test_correct_option_autoload_applies_policy(): void {
+		// One-time sweep flips existing installs to match autoload_for():
+		// hot-path scalars autoloaded; large lists (log_events/custom_events)
+		// and admin-only discovered_events kept off autoload.
+		$GLOBALS['_wp_set_option_autoload'] = [];
+		$GLOBALS['_wp_options']             = [];
+
+		Config::correct_option_autoload();
+
+		$this->assertTrue( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_enable_logging'] );
+		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_log_events'] );
+		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_discovered_events'] );
+	}
+
+	public function test_correct_option_autoload_runs_once(): void {
+		$GLOBALS['_wp_options'] = [];
+		Config::correct_option_autoload();
+		$GLOBALS['_wp_set_option_autoload'] = [];
+		Config::correct_option_autoload();
+		$this->assertSame( [], $GLOBALS['_wp_set_option_autoload'] );
+	}
+
 	public function test_load_config_does_not_overlay_aggregator_servers_wp_option(): void {
 		// aggregator_servers is admin/hub-only and read lazily by
 		// ServerRegistry — it must NOT ride the per-request load_config()
