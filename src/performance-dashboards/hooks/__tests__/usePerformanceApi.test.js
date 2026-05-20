@@ -23,9 +23,14 @@ jest.mock( '../../../shared/utils/unwrapCommandResponse', () => ( {
 } ) );
 
 import usePerformanceApi from '../usePerformanceApi';
-import { __send as mockSend } from '../../../shared/utils/commandClient';
 import unwrap from '../../../shared/utils/unwrapCommandResponse';
 import { renderHook } from '../../../shared/hooks/__tests__/renderHook';
+
+// `__send` is a spy the commandClient mock exposes (not a real export); pull it
+// via requireMock so eslint's import/named doesn't flag it against the real module.
+const { __send: mockSend } = jest.requireMock(
+	'../../../shared/utils/commandClient'
+);
 
 describe( 'usePerformanceApi', () => {
 	let onError;
