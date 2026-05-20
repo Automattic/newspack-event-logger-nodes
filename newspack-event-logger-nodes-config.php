@@ -18,6 +18,7 @@
 }, 10, 2 );
 
 return [
+	// Deployment override: restrict admin UI to these usernames.
 	'allowed_users'               => [],
 
 	// Logging on/off. Application-level — distinct from the
@@ -39,6 +40,7 @@ return [
 	// phpcs:enable Squiz.PHP.CommentedOutCode.Found
 
 	// Aggregator spoke list (hubs only; spokes leave empty).
+	'enable_aggregator'           => false,
 	'aggregator_servers'          => [],
 	'remote_num_segments'         => 2,
 	'remote_segment_size'         => 10 * 1024 * 1024,
@@ -105,28 +107,6 @@ return [
 		// Query & posts.
 		'found_posts',
 		'found_posts_query',
-		'posts_clauses',
-		'posts_clauses_request',
-		'posts_distinct',
-		'posts_distinct_request',
-		'posts_fields',
-		'posts_fields_request',
-		'posts_groupby',
-		'posts_groupby_request',
-		'posts_join',
-		'posts_join_paged',
-		'posts_join_request',
-		'posts_orderby',
-		'posts_orderby_request',
-		'posts_pre_query',
-		'posts_request',
-		'posts_request_ids',
-		'posts_results',
-		'posts_search',
-		'posts_selection',
-		'posts_where',
-		'posts_where_paged',
-		'posts_where_request',
 		'query',
 
 		// Taxonomies & terms.
@@ -148,8 +128,14 @@ return [
 		'after_password_reset',
 		'authenticate',
 		'cron_schedules',
+		'deactivate_jetpack-boost/jetpack-boost.php',
+		'deactivate_pwa/pwa.php',
+		'deactivate_woocommerce-memberships/woocommerce-memberships.php',
+		'deactivate_woocommerce/woocommerce.php',
+		'deactivate_wordpress-seo/wp-seo.php',
 		'deactivated_plugin',
 		'enqueue_block_editor_assets',
+		'googlesitekit_deactivation',
 		'load-plugins.php',
 		'load-themes.php',
 		'newspack_my_account_version',
@@ -161,8 +147,8 @@ return [
 		'wp_robots',
 		'wp_update_plugins',
 		'wp_version_check',
+		'wpseo_deactivate',
 		'wpseo_indexables_unindexed_calculated',
 		'wpseo_saved_indexable',
 	],
-
 ];
