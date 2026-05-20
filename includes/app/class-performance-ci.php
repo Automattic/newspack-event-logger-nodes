@@ -458,7 +458,7 @@ class Performance_CI extends Service_CI {
 							$flat[] = \sanitize_text_field( $h );
 						}
 					}
-					\update_option( 'newspack_event_logger_nodes_log_events', $flat );
+					\update_option( 'newspack_event_logger_nodes_log_events', $flat, AppConfig::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
 					$configured += \count( $flat );
 				}
 
@@ -469,7 +469,7 @@ class Performance_CI extends Service_CI {
 							$assoc[ \sanitize_text_field( $event ) ] = true;
 						}
 					}
-					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc );
+					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc, AppConfig::autoload_for( 'newspack_event_logger_nodes_custom_events' ) );
 					$configured += \count( $assoc );
 				}
 
@@ -526,7 +526,7 @@ class Performance_CI extends Service_CI {
 					if ( null === $value ) {
 						continue;
 					}
-					\update_option( $cfg['option'], self::coerce_config_value( $value, $cfg['type'] ) );
+					\update_option( $cfg['option'], self::coerce_config_value( $value, $cfg['type'] ), AppConfig::autoload_for( $cfg['option'] ) );
 					$updated[] = $param;
 				}
 
@@ -564,12 +564,13 @@ class Performance_CI extends Service_CI {
 				}
 
 				// suppress_sync guard + try/finally so the flag is restored on
-				// update_option failure. Non-autoload (third arg false) matches
-				// legacy — keeps log_events / significant_events out of the
+				// update_option failure. Autoload follows the central policy
+				// (Config::autoload_for): hot-path scalars autoloaded, large
+				// list options (log_events / custom_events) kept off the
 				// per-request alloptions blob.
 				SettingsSync::suppress_sync( true );
 				try {
-					$ok = \update_option( $option, $sanitized, false );
+					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				} finally {
 					SettingsSync::suppress_sync( false );
 				}

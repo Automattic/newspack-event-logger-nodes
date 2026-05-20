@@ -167,7 +167,7 @@ class AutoTuner extends Node {
 		}
 		SettingsSync::suppress_sync( true );
 		try {
-			\update_option( $option, $value, false );
+			\update_option( $option, $value, Config::autoload_for( $option ) );
 		} finally {
 			SettingsSync::suppress_sync( false );
 		}
