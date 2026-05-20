@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`StreamMerger` no longer aborts the merge on an unparseable offsetlog
+  entry.** It catches the `InvalidArgumentException` now thrown by
+  `Message::unpacked()` and skips restoring that remote's position (with a
+  rate-limited log) instead of letting the exception propagate. Requires the
+  matching strict-`unpacked()` change in `newspack-nodes`.
+
 ## [0.2.35] - 2026-05-19
 
 ### Changed
