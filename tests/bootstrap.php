@@ -206,6 +206,14 @@ if ( ! function_exists( 'get_option' ) ) {
 		unset( $GLOBALS['_wp_options'][ $key ] );
 		return true;
 	}
+	// WP 6.6+ autoload setter — records the requested flag so the one-time
+	// autoload-correction sweep can be asserted.
+	$GLOBALS['_wp_set_option_autoload'] = [];
+	function wp_set_option_autoload( string $option, $autoload ): bool {
+		$GLOBALS['_wp_set_option_autoload'][ $option ] = $autoload;
+		$GLOBALS['_wp_option_autoload'][ $option ]     = $autoload;
+		return true;
+	}
 	function wp_salt( string $scheme = 'auth' ): string {
 		return 'TEST_SALT_FOR_' . $scheme;
 	}
