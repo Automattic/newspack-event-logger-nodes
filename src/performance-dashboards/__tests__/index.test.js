@@ -75,12 +75,24 @@ describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 				await Promise.resolve();
 			} );
 		}
-		// Last-ditch real-timer flush for the unusual case where the lazy
-		// chunk's resolution piggybacks on a setTimeout(0).
-		await new Promise( ( r ) => setTimeout( r, 50 ) );
-		await act( async () => {
-			await Promise.resolve();
-		} );
+		// The microtask loop above CANNOT flush the post-Suspense re-render:
+		// index.js mounts via legacy ReactDOM.render, so React resolves the
+		// lazy import on a microtask but schedules the resulting re-render
+		// through its scheduler (MessageChannel/setTimeout in jsdom) — a
+		// MACROTASK. The mounted PerformanceDashboard (which captures onError)
+		// only appears after the event loop ticks. A single fixed wait here was
+		// the marginal, load-sensitive part — under coverage/parallel workers
+		// the scheduler tick can exceed it. Poll on real timers instead,
+		// returning the instant the mock fires (≈1s budget).
+		for ( let i = 0; i < 40; i++ ) {
+			if ( null !== mockOnError ) {
+				return admin;
+			}
+			// eslint-disable-next-line no-await-in-loop
+			await act( async () => {
+				await new Promise( ( r ) => setTimeout( r, 25 ) );
+			} );
+		}
 		return admin;
 	}
 
