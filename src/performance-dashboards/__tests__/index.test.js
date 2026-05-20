@@ -32,6 +32,14 @@ jest.mock( '../ErrorLog', () => ( {
 
 import { act } from '../../shared/hooks/__tests__/renderHook';
 
+// mountIndex waits on a timer-scheduled Suspense re-render (legacy
+// ReactDOM.render mode). Under run-coverage's heavy parallel load that
+// wall-clock wait dilates well past jest's 5s default, timing out the test
+// even though the poll would resolve given a little more room. Raise the
+// budget; the poll still returns the instant the lazy chunk resolves, so this
+// only costs time on a genuinely starved box.
+jest.setTimeout( 30000 );
+
 describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 	beforeEach( () => {
 		// Recover from any fake-timer state a previous test left active

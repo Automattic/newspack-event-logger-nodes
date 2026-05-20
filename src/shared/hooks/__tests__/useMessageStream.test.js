@@ -19,8 +19,11 @@ jest.mock( '../../utils/commandClient', () => {
 } );
 
 import useMessageStream from '../useMessageStream';
-import { __send as mockSend } from '../../utils/commandClient';
 import { renderHook, act } from './renderHook';
+
+// `__send` is a spy the commandClient mock exposes (not a real export); pull it
+// via requireMock so eslint's import/named doesn't flag it against the real module.
+const { __send: mockSend } = jest.requireMock( '../../utils/commandClient' );
 
 // In-memory EventSource that surfaces close / addEventListener events
 // and lets the test deliver `msg` / `heartbeat` / `error` events.
