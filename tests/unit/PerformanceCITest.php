@@ -1371,6 +1371,55 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_significant_events', $GLOBALS['_wp_options'] );
 	}
 
+	public function test_config_update_persists_autoload_per_policy(): void {
+		// Hot-path small scalars must be autoloaded (ride the one alloptions
+		// query); large list options (log_events / custom_events) stay off
+		// autoload so they don't bloat every frontend request's alloptions
+		// blob. Config::autoload_for() is the single source of truth; every
+		// write path must honor it.
+		$GLOBALS['_wp_option_autoload'] = [];
+		$ci                             = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'config_update',
+			[
+				'log_memory' => true,            // small scalar → autoloaded
+				'log_events' => [ 'init' ],      // large list  → NOT autoloaded
+			]
+		);
+
+		$this->assertTrue(
+			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_log_memory'],
+			'small hot-path scalar must be autoloaded'
+		);
+		$this->assertFalse(
+			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_log_events'],
+			'large list option must stay off autoload'
+		);
+	}
+
+	public function test_hooks_configure_keeps_log_events_off_autoload(): void {
+		// hooks_configure is a second writer of log_events / custom_events;
+		// it must honor the same autoload policy as config_update — the
+		// large lists stay off the per-request alloptions blob.
+		$GLOBALS['_wp_option_autoload'] = [];
+		$ci                             = new Performance_CI( $this->cache );
+		VerbHarness::fire(
+			$ci,
+			'performance',
+			'hooks_configure',
+			[ 'hooks' => [ 'init', 'shutdown' ], 'custom_events' => [ 'my_event' ] ]
+		);
+
+		$this->assertFalse(
+			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_log_events']
+		);
+		$this->assertFalse(
+			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_custom_events']
+		);
+	}
+
 	public function test_config_update_verb_flattens_array_assoc_shape(): void {
 		// Legacy `array_assoc` branch: the React tree sends URL lists as
 		// `{url: ''}` objects to play nicely with controlled inputs. The

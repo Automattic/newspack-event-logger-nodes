@@ -168,6 +168,10 @@ $_newspack_event_logger_nodes_register_user_topology_dir = static function (): v
 \add_action( 'rest_api_init', $_newspack_event_logger_nodes_register_user_topology_dir );
 \add_action( 'admin_init',    $_newspack_event_logger_nodes_register_user_topology_dir );
 
+// One-time autoload-correction sweep for existing installs (guarded; off
+// the frontend path). See Config::correct_option_autoload().
+\add_action( 'admin_init', [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
+
 /**
  * Worker-execution prerequisites that actually autoload meaningful
  * setup: the hub-side k:"job" → k:"remote_job" rewrite filter (forces

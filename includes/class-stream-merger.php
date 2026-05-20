@@ -566,7 +566,14 @@ class StreamMerger extends Node {
 			return;
 		}
 		$lines = \explode( "\n", \rtrim( $content, "\n" ) );
-		$msg    = Message::unpacked( (string) \end( $lines ) );
+		try {
+			$msg = Message::unpacked( (string) \end( $lines ) );
+		} catch ( \InvalidArgumentException $e ) {
+			// Unparseable offsetlog entry: skip restoring the remote's position
+			// rather than aborting the merge.
+			Core::print_less_often( "StreamMerger: ignoring unparseable offsetlog entry while restoring position: {$e->getMessage()}" );
+			return;
+		}
 		$latest = $msg[ Message::VALUE ];
 		if ( ! \is_array( $latest ) || ! isset( $latest[ $server_id ] ) || ! \is_array( $latest[ $server_id ] ) ) {
 			return;

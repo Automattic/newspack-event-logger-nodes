@@ -146,7 +146,7 @@ class HealthCheckExtensions {
 			// Suppress SettingsSync fan-out to prevent discovered hooks from being synced back.
 			SettingsSync::suppress_sync();
 			try {
-				\update_option( 'newspack_event_logger_nodes_log_events', $local, false );
+				\update_option( 'newspack_event_logger_nodes_log_events', $local, Config::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
 			} finally {
 				SettingsSync::suppress_sync( false );
 			}
@@ -179,7 +179,7 @@ class HealthCheckExtensions {
 		}
 
 		if ( $updated ) {
-			\update_option( 'newspack_event_logger_nodes_discovered_events', $discovered, false );
+			\update_option( 'newspack_event_logger_nodes_discovered_events', $discovered, Config::autoload_for( 'newspack_event_logger_nodes_discovered_events' ) );
 		}
 	}
 }

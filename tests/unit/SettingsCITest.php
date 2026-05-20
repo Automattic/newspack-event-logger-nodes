@@ -124,6 +124,21 @@ class SettingsCITest extends TestCase {
 		$this->assertSame( 7200, $GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] );
 	}
 
+	public function test_update_verb_persists_substrate_keys_as_autoloaded(): void {
+		// num_partitions / num_segments / segment_size / max_lifespan are
+		// read on every request by the substrate Config. They MUST be
+		// autoloaded so they ride the single alloptions query instead of
+		// becoming N separate per-request get_option lookups.
+		$GLOBALS['_wp_option_autoload'] = [];
+		$ci                             = new Settings_CI();
+		VerbHarness::fire( $ci, 'settings', 'update', [ 'num_partitions' => 4 ] );
+
+		$this->assertTrue(
+			$GLOBALS['_wp_option_autoload']['newspack_nodes_num_partitions'],
+			'substrate hot-path key must be written with autoload enabled'
+		);
+	}
+
 	public function test_update_verb_rejects_negative_int(): void {
 		// Substrate CI contract: verb throws RuntimeException → interpret()
 		// catches it and returns the message string as a TM_COMMAND|TM_ERROR
