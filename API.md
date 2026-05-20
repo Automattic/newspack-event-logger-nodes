@@ -132,7 +132,7 @@ Path param: `rid` matches `[a-zA-Z0-9_-]{1,128}`. Required query: `partition` (m
 
 ### `/performance/workers` response
 
-Per-worker status from `Bootstrap::expand_workers()` plus live cursor positions (memcache `np:pos:{path}:p{N}` → on-disk offsetlog fallback). Includes segments, total size, bytes-behind, started_at, heartbeat age, restart_pending flag, and per-input / per-output segment status. Standalone workers (supervisor + plugin-registered partitioned/non-partitioned) reported under a separate `standalone` array.
+Per-worker status from `Bootstrap::expand_workers()` plus live cursor positions (memcache `np:pos:{path}:p{N}` → on-disk offsetlog fallback). Includes segments, total size, bytes-behind, started_at, heartbeat age, restart_pending flag, and per-input / per-output segment status. The supervisor (a singleton, not a partition fleet) is returned in its own top-level `supervisor` field.
 
 ### `/performance/workers/restart` request
 

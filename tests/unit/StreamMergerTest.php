@@ -2611,4 +2611,44 @@ class StreamMergerTest extends TestCase {
 		);
 	}
 
+	public function test_position_skips_unparseable_offsetlog_entry(): void {
+		// Pre-seed a valid position, then corrupt that offsetlog entry in place
+		// at the same byte length (segment size unchanged) — a complete-but-
+		// unparseable line. add_remote() must restore without throwing and keep
+		// the default position rather than crashing the merge.
+		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
+		$dir         = "{$offsets_dir}/aggregator.p0";
+		if ( ! is_dir( $dir ) ) {
+			mkdir( $dir, 0755, true );
+		}
+		$offsetlog = new Partition( $dir, 0 );
+		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
+		$offsetlog->allow_large_writes();
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = [ 'siteG' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ];
+		$offsetlog->fill( $msg );
+		$offsetlog->flush();
+		$base = $offsetlog->name();
+		\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
+		\Newspack_Nodes\Core::unregister_node( "{$base}:heartbeat" );
+		$offsetlog->remove_node();
+
+		// Corrupt the entry in place. Same byte length keeps the segment size
+		// unchanged (the per-file filesize stat cache would otherwise mask the
+		// edit from the production-side reader).
+		$path    = "{$dir}/p0/0.log";
+		$content = (string) file_get_contents( $path );
+		$nl      = strpos( $content, "\n" );
+		file_put_contents( $path, str_repeat( 'x', (int) $nl ) . substr( $content, (int) $nl ) );
+		clearstatcache();
+
+		$sm = $this->make_merger();
+		$sm->add_remote( 'siteG', 'http://siteG.test/', 'tok' );
+
+		$pos = $sm->get_position( 'siteG' );
+		$this->assertSame( 0, $pos['segment_id'] );
+		$this->assertSame( 0, $pos['offset'] );
+	}
+
 }
