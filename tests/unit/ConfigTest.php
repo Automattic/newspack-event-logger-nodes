@@ -87,6 +87,42 @@ class ConfigTest extends TestCase {
 		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
 	}
 
+	public function test_correct_option_autoload_applies_policy(): void {
+		// One-time sweep flips existing installs to match autoload_for():
+		// hot-path scalars autoloaded; large lists (log_events/custom_events)
+		// and admin-only discovered_events kept off autoload.
+		$GLOBALS['_wp_set_option_autoload'] = [];
+		$GLOBALS['_wp_options']             = [];
+
+		Config::correct_option_autoload();
+
+		$this->assertTrue( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_enable_logging'] );
+		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_log_events'] );
+		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_discovered_events'] );
+	}
+
+	public function test_correct_option_autoload_runs_once(): void {
+		$GLOBALS['_wp_options'] = [];
+		Config::correct_option_autoload();
+		$GLOBALS['_wp_set_option_autoload'] = [];
+		Config::correct_option_autoload();
+		$this->assertSame( [], $GLOBALS['_wp_set_option_autoload'] );
+	}
+
+	public function test_load_config_does_not_overlay_aggregator_servers_wp_option(): void {
+		// aggregator_servers is admin/hub-only and read lazily by
+		// ServerRegistry — it must NOT ride the per-request load_config()
+		// schema (that's a get_option + sanitize of an encrypted credential
+		// blob on every frontend request, never consumed via load_config).
+		// Setting the WP option must therefore leave load_config's value at
+		// the file default ([]); only ServerRegistry reflects the option.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+			's1' => [ 'url' => 'https://spoke.example', 'auth_username' => 'u', 'auth_password' => 'p', 'enabled' => true ],
+		];
+		Config::reset();
+		$this->assertSame( [], Config::load_config()['aggregator_servers'] ?? [] );
+	}
+
 	public function test_reset_clears_cache(): void {
 		$config1 = Config::load_config();
 		Config::reset();
@@ -345,36 +381,10 @@ class ConfigTest extends TestCase {
 		$this->assertNull( $ref->invoke( null, 'not-an-array', 'array_strings' ) );
 	}
 
-	public function test_sanitize_option_aggregator_servers_valid(): void {
-		$ref = new \ReflectionMethod( Config::class, 'sanitize_option' );
-		$ref->setAccessible( true );
-		$input = [
-			'server1' => [
-				'url'           => 'https://example.com/api',
-				'auth_username' => 'user',
-				'auth_password' => 'pass',
-				'enabled'       => true,
-			],
-		];
-		$result = $ref->invoke( null, $input, 'aggregator_servers' );
-		$this->assertArrayHasKey( 'server1', $result );
-		$this->assertStringStartsWith( 'https://', $result['server1']['url'] );
-		$this->assertTrue( $result['server1']['enabled'] );
-	}
-
-	public function test_sanitize_option_aggregator_servers_rejects_http(): void {
-		$ref = new \ReflectionMethod( Config::class, 'sanitize_option' );
-		$ref->setAccessible( true );
-		$input  = [ 'bad' => [ 'url' => 'http://insecure.example.com' ] ];
-		$result = $ref->invoke( null, $input, 'aggregator_servers' );
-		$this->assertSame( [], $result );
-	}
-
-	public function test_sanitize_option_aggregator_servers_rejects_non_array(): void {
-		$ref = new \ReflectionMethod( Config::class, 'sanitize_option' );
-		$ref->setAccessible( true );
-		$this->assertNull( $ref->invoke( null, 'string', 'aggregator_servers' ) );
-	}
+	// aggregator_servers sanitization moved entirely to
+	// Admin::sanitize_aggregator_servers (the register_setting save path) —
+	// see AdminTest. It is no longer a load_config() schema type, so the
+	// app Config no longer carries a sanitize_option override for it.
 
 	public function test_sanitize_option_unknown_type_returns_null(): void {
 		$ref = new \ReflectionMethod( Config_Utils::class, 'sanitize_option' );

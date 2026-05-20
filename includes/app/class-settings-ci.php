@@ -84,12 +84,11 @@ class Settings_CI extends Service_CI {
 					if ( null === $sanitized ) {
 						throw new \RuntimeException( \esc_html( "invalid value for setting: {$key}" ) );
 					}
-					// Third arg is `autoload=false`: keeps the substrate
-					// keys out of the per-request alloptions blob (matches
-					// legacy SettingsController behavior). The 2-arg test
-					// stub silently ignores it; PHP doesn't error on extra
-					// positional args.
-					\update_option( "newspack_nodes_{$key}", $sanitized, false );
+					// autoload=true: these substrate scalars are read on
+					// every request by Newspack_Nodes\Config, so they must
+					// ride the single alloptions query rather than becoming
+					// N separate per-request get_option lookups.
+					\update_option( "newspack_nodes_{$key}", $sanitized, true );
 				}
 
 				// Application Config::reset() cascades into the substrate

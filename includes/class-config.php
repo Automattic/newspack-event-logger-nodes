@@ -57,8 +57,67 @@ class Config {
 		'allowed_users'               => 'array_strings',
 		'auto_disable_threshold'      => 'int',
 		'auto_protect_time_threshold' => 'float',
-		'aggregator_servers'          => 'aggregator_servers',
+		// NOTE: aggregator_servers is intentionally NOT in this per-request
+		// schema. It holds encrypted spoke credentials, is admin/hub-only,
+		// and is read lazily by ServerRegistry (get_wp_servers() + the file
+		// default via load_config_defaults()). Putting it here would mean a
+		// get_option + sanitize of that blob on every frontend request for a
+		// value load_config() never returns to any consumer.
 	];
+
+	/**
+	 * Fully-qualified option names that must NOT autoload. Single source of
+	 * truth for the autoload policy every write path consults via
+	 * `autoload_for()`. These are read on every request by `load_config()`,
+	 * but their values can grow unbounded (full instrumented-hook maps), so
+	 * keeping them out of the per-request `alloptions` blob is the right
+	 * trade — one targeted read each beats bloating every frontend request.
+	 * `discovered_events` is admin/health-check-only (not even in the schema)
+	 * and is listed here so its writers route through the same helper.
+	 */
+	private static $non_autoloaded_options = [
+		'newspack_event_logger_nodes_log_events'        => true,
+		'newspack_event_logger_nodes_custom_events'     => true,
+		'newspack_event_logger_nodes_discovered_events' => true,
+	];
+
+	/**
+	 * Whether a given option should be written with `autoload=true`. Every
+	 * `update_option()` call for an application option routes through this so
+	 * the hot-path scalars stay on the single alloptions query and the large
+	 * list options stay off it — consistently, regardless of which write path
+	 * (admin save, Performance_CI verbs, AutoTuner, health-check) fires.
+	 */
+	public static function autoload_for( string $option ): bool {
+		return ! isset( self::$non_autoloaded_options[ $option ] );
+	}
+
+	/** One-time marker so `correct_option_autoload()` sweeps once per install. */
+	public const AUTOLOAD_FIXED_OPTION = 'newspack_event_logger_nodes_autoload_fixed';
+
+	/**
+	 * One-time autoload-correction sweep, applying `autoload_for()` to every
+	 * application option (schema keys + the explicitly-non-autoloaded set).
+	 * Fixes existing installs that persisted these with the wrong flag, once,
+	 * guarded by a marker. Hooked on `admin_init`; no-op on WP < 6.6. The
+	 * substrate runs its own sweep for the `newspack_nodes_*` keys.
+	 */
+	public static function correct_option_autoload(): void {
+		if ( ! \function_exists( 'wp_set_option_autoload' ) ) {
+			return;
+		}
+		if ( ! empty( \get_option( self::AUTOLOAD_FIXED_OPTION ) ) ) {
+			return;
+		}
+		$options = \array_keys( self::$non_autoloaded_options );
+		foreach ( \array_keys( self::$option_schema ) as $key ) {
+			$options[] = "newspack_event_logger_nodes_{$key}";
+		}
+		foreach ( \array_unique( $options ) as $option ) {
+			\wp_set_option_autoload( $option, self::autoload_for( $option ) );
+		}
+		\update_option( self::AUTOLOAD_FIXED_OPTION, '1', false );
+	}
 
 	/**
 	 * Allowed directories for local config override files.
@@ -96,7 +155,7 @@ class Config {
 				if ( false === $value || '' === $value ) {
 					continue;
 				}
-				$sanitized = self::sanitize_option( $value, $type );
+				$sanitized = Config_Utils::sanitize_option( $value, $type );
 				if ( null !== $sanitized ) {
 					$config[ $key ] = $sanitized;
 				}
@@ -106,40 +165,6 @@ class Config {
 		self::$config = $config;
 
 		return $config;
-	}
-
-	/**
-	 * Sanitize an option value. Application-specific types (`aggregator_servers`)
-	 * are handled here; everything else delegates to Config_Utils.
-	 */
-	private static function sanitize_option( $value, string $type ) {
-		if ( 'aggregator_servers' !== $type ) {
-			return Config_Utils::sanitize_option( $value, $type );
-		}
-		if ( ! \is_array( $value ) ) {
-			return null;
-		}
-		$result = [];
-		foreach ( $value as $server_id => $config ) {
-			if ( ! \is_array( $config ) ) {
-				continue;
-			}
-			$server_id = Config_Utils::sanitize_string( $server_id );
-			if ( empty( $server_id ) ) {
-				continue;
-			}
-			$url = $config['url'] ?? '';
-			if ( ! \is_string( $url ) || 0 !== \strpos( $url, 'https://' ) ) {
-				continue;
-			}
-			$result[ $server_id ] = [
-				'url'           => \esc_url_raw( $url ),
-				'auth_username' => Config_Utils::sanitize_string( $config['auth_username'] ?? '' ),
-				'auth_password' => Config_Utils::sanitize_string( $config['auth_password'] ?? '' ),
-				'enabled'       => (bool) ( $config['enabled'] ?? true ),
-			];
-		}
-		return $result;
 	}
 
 	/**

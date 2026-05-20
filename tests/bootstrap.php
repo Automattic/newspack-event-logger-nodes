@@ -192,12 +192,26 @@ if ( ! function_exists( 'get_option' ) ) {
 		}
 		return $GLOBALS['_wp_options'][ $key ] ?? $default;
 	}
-	function update_option( string $key, mixed $value ): bool {
-		$GLOBALS['_wp_options'][ $key ] = $value;
+	// Records the autoload arg per option so tests can assert autoload
+	// hygiene (hot-path scalars autoloaded, large/rare ones not). Mirrors
+	// WP's 3-arg signature; `null` means "caller didn't specify" (WP keeps
+	// the existing flag, or defaults a new option to autoloaded).
+	$GLOBALS['_wp_option_autoload'] = [];
+	function update_option( string $key, mixed $value, $autoload = null ): bool {
+		$GLOBALS['_wp_options'][ $key ]          = $value;
+		$GLOBALS['_wp_option_autoload'][ $key ]  = $autoload;
 		return true;
 	}
 	function delete_option( string $key ): bool {
 		unset( $GLOBALS['_wp_options'][ $key ] );
+		return true;
+	}
+	// WP 6.6+ autoload setter — records the requested flag so the one-time
+	// autoload-correction sweep can be asserted.
+	$GLOBALS['_wp_set_option_autoload'] = [];
+	function wp_set_option_autoload( string $option, $autoload ): bool {
+		$GLOBALS['_wp_set_option_autoload'][ $option ] = $autoload;
+		$GLOBALS['_wp_option_autoload'][ $option ]     = $autoload;
 		return true;
 	}
 	function wp_salt( string $scheme = 'auth' ): string {
