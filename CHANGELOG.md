@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Aggregator dashboard "ago" values now reflect the aggregator's snapshot
+  time, not the browser clock.** Server HB / Client HB / Connected ages were
+  computed against `Date.now()` and re-ticked every second, so at a 10s refresh
+  a heartbeat the aggregator saw as "0s ago" displayed up to "9s ago" and
+  climbed on its own between fetches. They now compute against the response
+  Message's `TIMESTAMP` (the hub's clock when it built the snapshot), so each
+  value is what the aggregator actually saw and stays fixed until the next
+  refresh.
+
 ## [0.2.38] - 2026-05-20
 
 ### Fixed
