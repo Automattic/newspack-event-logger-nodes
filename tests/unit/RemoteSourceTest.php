@@ -677,6 +677,22 @@ class RemoteSourceTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
+	public function test_heartbeat_event_records_server_sse_heartbeat(): void {
+		// The spoke's messages-stream emits periodic `heartbeat` SSE events;
+		// receiving one records last_sse_heartbeat so the aggregator dashboard's
+		// "Server HB" reflects spoke liveness (previously dropped → always "–").
+		$cache  = new FakeMemcached();
+		$remote = $this->make_remote();
+		$remote->set_cache( $cache );
+		Core::$now = 1234.0;
+
+		$remote->process_sse_chunk( "event: heartbeat\ndata: {\"ts\":1234}\n\n" );
+
+		$status = $cache->get( 'aggregator_status:siteA:p0' );
+		$this->assertIsArray( $status );
+		$this->assertSame( 1234, $status['last_sse_heartbeat'] );
+	}
+
 	// =========================================================================
 	// forward_entry — drop / clip / filter paths. The happy-path sink
 	// assertion lives in `test_msg_envelope_with_entry_value_forwards_to_sink`.
