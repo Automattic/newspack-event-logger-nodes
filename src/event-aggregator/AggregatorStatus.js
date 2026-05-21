@@ -255,7 +255,6 @@ export default function AggregatorStatus() {
 	const [ serverNow, setServerNow ] = useState( null );
 	const [ loading, setLoading ] = useState( true );
 	const [ error, setError ] = useState( null );
-	const [ refreshing, setRefreshing ] = useState( false );
 	const [ lastRefresh, setLastRefresh ] = useState( null );
 	const [ , setTick ] = useState( 0 );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
@@ -292,11 +291,7 @@ export default function AggregatorStatus() {
 	 * same shape the legacy `/newspack-nodes-aggregator/v1/status` REST
 	 * route returned — confirmed by the M3 schema-parity audit).
 	 */
-	const fetchStatus = useCallback( async ( isInitial = false ) => {
-		if ( ! isInitial ) {
-			setRefreshing( true );
-		}
-
+	const fetchStatus = useCallback( async () => {
 		try {
 			const client = getCommandClient();
 			const message = await client.send( {
@@ -321,17 +316,16 @@ export default function AggregatorStatus() {
 			setError( err.message || 'Failed to fetch status' );
 		} finally {
 			setLoading( false );
-			setRefreshing( false );
 		}
 	}, [] );
 
 	// Initial fetch and auto-refresh.
 	useEffect( () => {
-		fetchStatus( true );
+		fetchStatus();
 
 		const intervalMs = parseInt( refreshInterval, 10 );
 		const interval = setInterval( () => {
-			fetchStatus( false );
+			fetchStatus();
 		}, intervalMs );
 
 		return () => clearInterval( interval );
@@ -353,24 +347,14 @@ export default function AggregatorStatus() {
 			<div className="aggregator-status-header">
 				<h2>Aggregator Status</h2>
 				<div className="aggregator-status-meta">
-					<div
-						className={ `aggregator-status-refresh-indicator${
-							refreshing ? ' refreshing' : ''
-						}` }
-					>
-						<span
-							className={ `aggregator-status-refresh-dot${
-								refreshing ? ' refreshing' : ''
-							}` }
-						/>
+					<div className="aggregator-status-refresh-indicator">
+						<span className="aggregator-status-refresh-dot" />
 						<span>
-							{ refreshing && 'Refreshing...' }
-							{ ! refreshing &&
-								lastRefresh &&
-								`Updated ${ formatTime(
-									lastRefresh / 1000
-								) }` }
-							{ ! refreshing && ! lastRefresh && 'Loading...' }
+							{ lastRefresh
+								? `Updated ${ formatTime(
+										lastRefresh / 1000
+								  ) }`
+								: 'Loading...' }
 						</span>
 					</div>
 					{ servers && (
