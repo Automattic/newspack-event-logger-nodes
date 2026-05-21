@@ -42,7 +42,7 @@ class Status_CI extends CommandInterpreter {
 		// inherited no-op is implicit. Mirrors Workers_CI / Discovery_CI,
 		// which extend CommandInterpreter and also skip the parent call.
 		$this->commands( [
-			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): array {
 				$config = RuntimeConfig::load_config();
 
 				$cache_available = false;
@@ -54,7 +54,7 @@ class Status_CI extends CommandInterpreter {
 					}
 				}
 
-				return (string) \wp_json_encode( [
+				return [
 					'status'          => 'ok',
 					'version'         => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
 					'runtime_version' => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
@@ -62,7 +62,7 @@ class Status_CI extends CommandInterpreter {
 					'topologies'      => \is_array( $config['topologies'] ?? null ) ? \array_values( $config['topologies'] ) : [],
 					'cache_available' => $cache_available,
 					'timestamp'       => \time(),
-				] );
+				];
 			},
 		] );
 	}

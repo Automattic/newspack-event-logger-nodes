@@ -42,15 +42,15 @@ class Logger_CI extends CommandInterpreter {
 		// Settings_CI / Workers_CI, which extend CommandInterpreter and
 		// also skip the parent call.
 		$this->commands( [
-			'config' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'config' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
 				// Echo the full filterable config; sensitive values (memcache
 				// server strings) stay since they're already managed via WP
 				// options. Value-equivalent with the legacy `get_config`
 				// response body — minus the `{data, meta}` REST envelope,
 				// which is reconstructed by the REST shim, not the CI.
-				return (string) \wp_json_encode( RuntimeConfig::load_config() );
+				return RuntimeConfig::load_config();
 			},
-			'hooks'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'hooks'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
 				$hooks       = [];
 				$by_category = HookCategorizer::get_registered_hooks_by_category();
 				$categories  = HookCategorizer::get_categories();
@@ -71,10 +71,10 @@ class Logger_CI extends CommandInterpreter {
 						}
 					}
 				}
-				return (string) \wp_json_encode( [
+				return [
 					'hooks'      => $hooks,
 					'categories' => $categories,
-				] );
+				];
 			},
 		] );
 	}

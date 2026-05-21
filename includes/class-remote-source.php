@@ -765,22 +765,30 @@ class RemoteSource extends Node {
 			return;
 		}
 
-		$headers['Content-Type'] = 'application/json';
-		$body                    = (string) \wp_json_encode( [
-			'type'  => Message::TM_COMMAND,
-			'to'    => 'workers',
-			'from'  => '_http',
-			'key'   => '',
-			'value' => (string) \wp_json_encode( [
-				'name'      => 'heartbeat',
-				'arguments' => '',
-				'payload'   => [
-					'slot'      => $this->slot,
-					'ttl'       => self::HEARTBEAT_INTERVAL * 4, // must outlive HEARTBEAT_INTERVAL — only the client refreshes the slot now
-					'partition' => $this->partition,
-				],
-			] ),
-		] );
+		// Body is a single packed Message (JSONL line) dispatching the
+		// substrate's `workers.heartbeat` verb. TYPE=TM_COMMAND, FROM=`_http`,
+		// TO=`workers`, VALUE = the LIVE structured `{name, arguments, payload}`
+		// array (NOT a separately wp_json_encode'd string). Content-Type is
+		// text/plain because WP REST 400s a JSONL body sent as
+		// application/json. Matches the browser CommandClient
+		// (src/runtime/command_client.js) — the same wire the dashboard JS
+		// uses for its own slot keep-alive.
+		$headers['Content-Type'] = RemoteManager::COMMAND_CONTENT_TYPE;
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
+		$msg[ Message::FROM ]  = '_http';
+		$msg[ Message::TO ]    = 'workers';
+		$msg[ Message::VALUE ] = [
+			'name'      => 'heartbeat',
+			'arguments' => '',
+			'payload'   => [
+				'slot'      => $this->slot,
+				'ttl'       => self::HEARTBEAT_INTERVAL * 4, // must outlive HEARTBEAT_INTERVAL — only the client refreshes the slot now
+				'partition' => $this->partition,
+			],
+		];
+		$body = Message::packed( $msg );
 
 		$start    = \microtime( true );
 		$response = @\wp_remote_post(

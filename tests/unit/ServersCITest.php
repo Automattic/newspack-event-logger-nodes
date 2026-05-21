@@ -16,6 +16,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Servers_CI;
+use Newspack_Event_Logger_Nodes\RemoteManager;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -297,18 +298,19 @@ class ServersCITest extends TestCase {
 	 * `/command` instead of the legacy `/discovery` route.
 	 */
 	private static function wrap_discovery_response( array $payload ): string {
-		return (string) \json_encode( [
-			\Newspack_Nodes\Message::TM_COMMAND,
-			0.0,
-			'discovery',
-			'_http',
-			'',
-			'',
-			(string) \json_encode( [
-				'name'    => 'get',
-				'payload' => (string) \json_encode( $payload ),
-			] ),
-		] );
+		$msg                                   = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND | \Newspack_Nodes\Message::TM_RESPONSE;
+		$msg[ \Newspack_Nodes\Message::FROM ]  = 'discovery';
+		$msg[ \Newspack_Nodes\Message::TO ]    = '_http';
+		// VALUE is the structured `{name, payload}` LIVE array; `payload` is
+		// the verb's structured return — NOT a nested JSON string. The
+		// whole-Message JSON is the only serialization boundary. Mirrors
+		// CommandInterpreter::interpret()'s response shape.
+		$msg[ \Newspack_Nodes\Message::VALUE ] = [
+			'name'    => 'get',
+			'payload' => $payload,
+		];
+		return \Newspack_Nodes\Message::packed( $msg );
 	}
 
 	public function test_test_verb_returns_connected_on_200_discovery_response(): void {
@@ -350,6 +352,60 @@ class ServersCITest extends TestCase {
 		// Basic-Auth header populated when credentials are present.
 		$this->assertArrayHasKey( 'headers', $captured['args'] );
 		$this->assertStringStartsWith( 'Basic ', $captured['args']['headers']['Authorization'] );
+
+		// Wire shape: the body is a single packed Message (positional 7-field
+		// array), NOT the legacy keyed `{type,to,from,value:"<json>"}` object.
+		// VALUE is the structured command LIVE array. Content-Type is
+		// text/plain to match the browser client (JSONL body).
+		$this->assertSame( 'text/plain; charset=UTF-8', $captured['args']['headers']['Content-Type'] ?? '' );
+		$message = \Newspack_Nodes\Message::unpacked( $captured['args']['body'] );
+		$this->assertSame( \Newspack_Nodes\Message::TM_COMMAND, $message[ \Newspack_Nodes\Message::TYPE ] );
+		$this->assertSame( '_http', $message[ \Newspack_Nodes\Message::FROM ] );
+		$this->assertSame( 'discovery', $message[ \Newspack_Nodes\Message::TO ] );
+		$value = $message[ \Newspack_Nodes\Message::VALUE ];
+		$this->assertIsArray( $value, 'VALUE must be the structured command array, not a JSON string' );
+		$this->assertSame( 'get', $value['name'] );
+	}
+
+	public function test_test_verb_builds_command_body_via_shared_remote_manager_builder(): void {
+		// probe_remote() and RemoteManager's periodic health-check probe must
+		// emit the SAME `discovery.get` command wire — both build it through
+		// RemoteManager::command_message_body() so the two surfaces can't drift.
+		$registry = new ServerRegistry();
+		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
+
+		$captured = null;
+		Servers_CI::$http_call = static function ( string $url, array $args ) use ( &$captured ): array {
+			$captured = $args;
+			return [
+				'response' => [ 'code' => 200 ],
+				'body'     => self::wrap_discovery_response( [ 'registered_hooks' => [ 'init' ] ] ),
+			];
+		};
+
+		$ci = new Servers_CI( $registry );
+		VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
+
+		// Compare the captured body to the shared builder's output field-by-field,
+		// zeroing the per-message microtime TIMESTAMP (the only field that can't
+		// match across two separate new_message() calls). Equality on every other
+		// field proves probe_remote builds through command_message_body().
+		$actual   = \Newspack_Nodes\Message::unpacked( $captured['body'] );
+		$expected = \Newspack_Nodes\Message::unpacked( RemoteManager::command_message_body( 'discovery', 'get', '' ) );
+		$actual[ \Newspack_Nodes\Message::TIMESTAMP ]   = 0;
+		$expected[ \Newspack_Nodes\Message::TIMESTAMP ] = 0;
+		$this->assertSame(
+			$expected,
+			$actual,
+			'probe_remote must build its body through the shared command_message_body() builder'
+		);
+		// Spell out the verb/arguments/payload the builder produces for this
+		// call so the de-dup can't silently regress them (the array equality
+		// above already covers TYPE/FROM/TO).
+		$value = $actual[ \Newspack_Nodes\Message::VALUE ];
+		$this->assertSame( 'get', $value['name'] );
+		$this->assertSame( '', $value['arguments'] );
+		$this->assertSame( '', $value['payload'] );
 	}
 
 	public function test_test_verb_returns_error_on_non_200_response(): void {

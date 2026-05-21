@@ -73,7 +73,49 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$this->assertSame(
 			$response_flags,
 			$msg[ Message::TYPE ] & ( $response_flags | Message::TM_ERROR ),
-			"verb '{$verb}' returned TM_ERROR or wrong type. VALUE was: " . (string) $msg[ Message::VALUE ]
+			"verb '{$verb}' returned TM_ERROR or wrong type. VALUE was: " . (string) \wp_json_encode( $msg[ Message::VALUE ] )
+		);
+		// Per the command protocol the response VALUE is a live PHP array
+		// `['name'=>'<verb>','payload'=><structure>]` — it rode through
+		// packed()/unpacked() as a nested object, never a re-encoded string.
+		$this->assertIsArray(
+			$msg[ Message::VALUE ],
+			"verb '{$verb}' response VALUE should be a structured array, not an encoded string"
+		);
+		$this->assertSame(
+			$verb,
+			$msg[ Message::VALUE ]['name'] ?? null,
+			"verb '{$verb}' response VALUE.name mismatch"
+		);
+		$this->assertArrayHasKey(
+			'payload',
+			$msg[ Message::VALUE ],
+			"verb '{$verb}' response VALUE missing payload"
+		);
+	}
+
+	/**
+	 * Fidelity guard for the data-provider's JSON-string args: the provider
+	 * passes `'{"limit":1}'` for events.recent, and build_request() must decode
+	 * it into the array the verb consumes (verbs do
+	 * `is_array($payload) ? $payload : []`, so a raw string collapses to `[]`
+	 * and the limit silently reverts to the 100 default). Asserting the verb
+	 * actually honoured `limit:1` proves the payload arrived decoded.
+	 */
+	public function test_events_recent_honours_json_string_limit_from_provider(): void {
+		$ctrl = new Command_Controller();
+		$ctrl->set_test_mode( true );
+		\ob_start();
+		$ctrl->dispatch( $this->build_request( 'events', 'recent', '{"limit":1}' ) );
+		$body = (string) \ob_get_clean();
+
+		$msg     = Message::unpacked( $body );
+		$payload = $msg[ Message::VALUE ]['payload'] ?? null;
+		$this->assertIsArray( $payload, 'events.recent must return a structured payload' );
+		$this->assertSame(
+			1,
+			$payload['meta']['limit'] ?? null,
+			'limit:1 from the JSON-string args must reach the verb (a string payload would default to 100)'
 		);
 	}
 
@@ -90,18 +132,26 @@ class M2CommandDispatchE2ETest extends TestCase {
 			public function get_body(): string { return $this->body; }
 			public function set_header( string $name, string $value ): void { /* no-op */ }
 		};
-		$req->set_body(
-			(string) \wp_json_encode(
-				[
-					'type'  => Message::TM_COMMAND,
-					'to'    => $to,
-					'from'  => '_http',
-					'id'    => "e2e-{$verb}",
-					'value' => \wp_json_encode( [ 'name' => $verb, 'arguments' => $args, 'payload' => '' ] ),
-				]
-			)
-		);
-		$req->set_header( 'content-type', 'application/json' );
+		// The controller requires a packed 7-element positional Message
+		// (`Message::unpacked()`), so build one rather than a keyed object.
+		// VALUE is the command struct as a live PHP array — never separately
+		// json-encoded; only the whole-message envelope (Message::packed) is
+		// JSON. The packed body is one JSONL line, which the substrate's
+		// messages_from_body() parses as a single command. `$args` is a
+		// JSON-string from the provider; decode it into the array the verbs
+		// expect (they do `is_array($payload) ? $payload : []`, so a raw
+		// string collapses to `[]` and the verb loses its parameters).
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
+		$msg[ Message::FROM ]  = '_http';
+		$msg[ Message::TO ]    = $to;
+		$msg[ Message::ID ]    = "e2e-{$verb}";
+		$msg[ Message::VALUE ] = [ 'name' => $verb, 'arguments' => '', 'payload' => \json_decode( $args, true ) ];
+
+		$req->set_body( Message::packed( $msg ) );
+		// text/plain matches the JSONL/text-plain wire contract (the controller
+		// ignores the header, but real callers post JSONL as text/plain).
+		$req->set_header( 'content-type', 'text/plain; charset=UTF-8' );
 		return $req;
 	}
 

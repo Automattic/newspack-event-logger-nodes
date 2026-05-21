@@ -74,7 +74,7 @@ class Aggregator_CI extends Service_CI {
 
 	private function verb_table( ServerRegistry $registry, ?object $cache ): array {
 		return [
-			'status'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry, $cache ): string {
+			'status'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry, $cache ): array {
 				self::require_manage_options();
 				$registry->reset_cache();
 				$servers = $registry->get_all();
@@ -101,9 +101,9 @@ class Aggregator_CI extends Service_CI {
 					];
 				}
 
-				return (string) \wp_json_encode( $result );
+				return $result;
 			},
-			'health'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): string {
+			'health'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): array {
 				self::require_manage_options();
 				$cache_available = false;
 				if ( null !== $cache ) {
@@ -113,13 +113,13 @@ class Aggregator_CI extends Service_CI {
 						// Leave cache=false; health endpoint never fails.
 					}
 				}
-				return (string) \wp_json_encode( [
+				return [
 					'healthy'   => true,
 					'cache'     => $cache_available,
 					'timestamp' => \time(),
-				] );
+				];
 			},
-			'servers' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): string {
+			'servers' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): array {
 				self::require_manage_options();
 				$registry->reset_cache();
 				$out = [];
@@ -133,7 +133,9 @@ class Aggregator_CI extends Service_CI {
 						'is_config'       => $registry->is_config_server( (string) $id ),
 					];
 				}
-				return (string) \wp_json_encode( $out );
+				// Sequential array, NOT a map keyed by id — legacy contract the
+				// React aggregator tree relies on.
+				return $out;
 			},
 		];
 	}

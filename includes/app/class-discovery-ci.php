@@ -30,7 +30,7 @@ class Discovery_CI extends CommandInterpreter {
 		// inherited no-op is implicit. Mirrors Workers_CI / RequestBuilder
 		// / FlameBuilder, which extend Node and also skip the parent call.
 		$this->commands( [
-			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): string {
+			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
 				$config           = RuntimeConfig::load_config();
 				$registered_hooks = self::extract_string_list( $config['log_events']    ?? [] );
 				$custom_events    = self::extract_string_list( $config['custom_events'] ?? [] );
@@ -42,10 +42,10 @@ class Discovery_CI extends CommandInterpreter {
 					$registered_hooks = \array_values( \array_filter( $registered_hooks, static fn ( $h ) => ! isset( $custom_set[ $h ] ) ) );
 				}
 
-				return (string) \wp_json_encode( [
+				return [
 					'registered_hooks' => $registered_hooks,
 					'custom_events'    => $custom_events,
-				] );
+				];
 			},
 		] );
 	}
