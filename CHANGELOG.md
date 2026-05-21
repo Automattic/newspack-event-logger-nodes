@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.41] - 2026-05-20
+
 ### Changed
 
 - **Dropped `intervalMs` from `useMessageStream` and its callers.** The hook no
