@@ -21,6 +21,7 @@ jest.mock( '../../shared/utils/unwrapCommandResponse', () => ( {
 import * as React from 'react';
 import AggregatorStatus from '../AggregatorStatus';
 import unwrap from '../../shared/utils/unwrapCommandResponse';
+import { TIMESTAMP } from '@newspack-nodes/runtime';
 import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
 // `__send` is a spy the commandClient mock exposes (not a real export); pull it
@@ -137,6 +138,35 @@ describe( 'AggregatorStatus', () => {
 		await flush();
 		// formatRtt(42) → "42.0" (between 1 and 100).
 		expect( container.textContent ).toContain( '42.0ms' );
+	} );
+
+	it( 'computes "ago" from the response timestamp, not the browser clock', async () => {
+		// Raw 7-field Message; TIMESTAMP (the hub's serve clock) at its index.
+		const message = [];
+		message[ TIMESTAMP ] = 2000;
+		const sample = {
+			srv: {
+				id: 'srv',
+				url: 'https://s.example.test',
+				enabled: true,
+				partitions: {
+					0: {
+						last_connection_status: 'connected',
+						// Aggregator recorded this 1s before it served the snapshot.
+						last_sse_heartbeat: 1999,
+					},
+				},
+			},
+		};
+		unwrap.mockReturnValue( sample );
+		mockSend.mockResolvedValue( message );
+
+		const { container } = mount();
+		await flush();
+
+		// Server HB = serverNow(2000) - last_sse_heartbeat(1999) = "1s ago".
+		// Computed against the browser clock it would be a huge value, never "1s ago".
+		expect( container.textContent ).toContain( '1s ago' );
 	} );
 
 	it( 'auto-refreshes on the configured interval', async () => {

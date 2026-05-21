@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from '@wordpress/element';
 
 import { getCommandClient } from '../shared/utils/commandClient';
 import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
+import { TIMESTAMP } from '@newspack-nodes/runtime';
 import './styles/aggregator-status.scss';
 
 /**
@@ -27,15 +28,22 @@ const DEFAULT_REFRESH_MS = '2000';
  * Format a Unix timestamp as relative time or absolute.
  *
  * @param {number} timestamp Unix timestamp in seconds.
+ * @param {number} now       Reference clock (the server's snapshot time); falls
+ *                           back to the browser clock when omitted.
  * @return {string} Formatted time string.
  */
-const formatTime = ( timestamp ) => {
+const formatTime = ( timestamp, now ) => {
 	if ( ! timestamp ) {
 		return '-';
 	}
 
-	const now = Date.now() / 1000;
-	const diff = now - timestamp;
+	// `now` is the server's clock at the moment it built this status snapshot
+	// (the response Message's TIMESTAMP). Computing "ago" against it — not the
+	// browser clock — means the value reflects what the aggregator itself saw
+	// and stays fixed between dashboard refreshes (no client-side drift). Falls
+	// back to the browser clock only for callers without a server time (header).
+	const ref = now ?? Date.now() / 1000;
+	const diff = ref - timestamp;
 
 	if ( diff < 60 ) {
 		return `${ Math.round( diff ) }s ago`;
@@ -92,9 +100,10 @@ const getRttClass = ( rtt ) => {
  * @param {Object} props           Component props.
  * @param {number} props.partition Partition number.
  * @param {Object} props.status    Partition status data.
+ * @param {number} props.now       Server snapshot clock for relative-time calc.
  * @return {import('react').ReactElement} Rendered component.
  */
-function PartitionStatus( { partition, status } ) {
+function PartitionStatus( { partition, status, now } ) {
 	const connectionStatus = status.last_connection_status || 'disconnected';
 	const heartbeatStatus = status.last_heartbeat_response_status || 'pending';
 	const errorMessage =
@@ -122,7 +131,7 @@ function PartitionStatus( { partition, status } ) {
 							: 'Attempt' }
 					</span>
 					<span className="aggregator-partition-stat-value">
-						{ formatTime( status.last_connection_attempt ) }
+						{ formatTime( status.last_connection_attempt, now ) }
 					</span>
 				</div>
 				<div className="aggregator-partition-row">
@@ -130,7 +139,7 @@ function PartitionStatus( { partition, status } ) {
 						Server HB
 					</span>
 					<span className="aggregator-partition-stat-value">
-						{ formatTime( status.last_sse_heartbeat ) }
+						{ formatTime( status.last_sse_heartbeat, now ) }
 					</span>
 				</div>
 				<div className="aggregator-partition-row">
@@ -147,7 +156,7 @@ function PartitionStatus( { partition, status } ) {
 								{ rttFormatted }ms
 							</span>
 						) }
-						{ formatTime( status.last_heartbeat_response ) }
+						{ formatTime( status.last_heartbeat_response, now ) }
 					</span>
 				</div>
 				<div className="aggregator-partition-row">
@@ -190,9 +199,10 @@ function PartitionStatus( { partition, status } ) {
  *
  * @param {Object} props        Component props.
  * @param {Object} props.server Server status data.
+ * @param {number} props.now    Server snapshot clock for relative-time calc.
  * @return {import('react').ReactElement} Rendered component.
  */
-function ServerCard( { server } ) {
+function ServerCard( { server, now } ) {
 	const partitions = server.partitions || {};
 	const partitionKeys = Object.keys( partitions ).sort(
 		( a, b ) => Number( a ) - Number( b )
@@ -227,6 +237,7 @@ function ServerCard( { server } ) {
 						key={ p }
 						partition={ Number( p ) }
 						status={ partitions[ p ] || {} }
+						now={ now }
 					/>
 				) ) }
 			</div>
@@ -241,6 +252,7 @@ function ServerCard( { server } ) {
  */
 export default function AggregatorStatus() {
 	const [ servers, setServers ] = useState( null );
+	const [ serverNow, setServerNow ] = useState( null );
 	const [ loading, setLoading ] = useState( true );
 	const [ error, setError ] = useState( null );
 	const [ refreshing, setRefreshing ] = useState( false );
@@ -292,6 +304,13 @@ export default function AggregatorStatus() {
 				verb: 'status',
 			} );
 			const data = unwrapCommandResponse( message );
+
+			// The response Message's TIMESTAMP is the hub's clock when it built
+			// this snapshot. Drive every "ago" off it so the values match what
+			// the aggregator saw and don't drift with the browser clock.
+			setServerNow(
+				Array.isArray( message ) ? message[ TIMESTAMP ] : null
+			);
 
 			// Convert object to array for easier rendering.
 			const serverList = Object.values( data || {} );
@@ -395,7 +414,11 @@ export default function AggregatorStatus() {
 				<div className="aggregator-status-servers">
 					{ servers && servers.length > 0 ? (
 						servers.map( ( server ) => (
-							<ServerCard key={ server.id } server={ server } />
+							<ServerCard
+								key={ server.id }
+								server={ server }
+								now={ serverNow }
+							/>
 						) )
 					) : (
 						<div className="aggregator-status-empty">
