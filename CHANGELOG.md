@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Removed the "Refreshing…" flash from the Aggregator dashboard.** At a 1s
+  refresh it flickered every second; the status indicator now just shows
+  "Updated …" / "Loading…". Dropped the `refreshing` state and the
+  initial-vs-refresh fetch distinction along with it.
+
 ## [0.2.39] - 2026-05-20
 
 ### Fixed
