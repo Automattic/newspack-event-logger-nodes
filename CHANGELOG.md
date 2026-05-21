@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.43] - 2026-05-21
+
 ### Fixed
 
 - **SSE slot TTL is refreshed ONLY by the client heartbeat — never server-side.**
