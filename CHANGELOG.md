@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.37] - 2026-05-20
+
 ### Fixed
 
 - **The Aggregator status dashboard now appears in the Event Logger admin menu
