@@ -214,7 +214,7 @@ class JobWorker extends Node {
 	public function fill( array &$message ): void {
 		++$this->counter;
 		$type = $message[ Message::TYPE ];
-		if ( ( $type & Message::TM_REQUEST ) && ! ( $type & Message::TM_RESPONSE ) ) {
+		if ( $type & Message::TM_REQUEST ) {
 			$this->handle_request( $message );
 			return;
 		}
@@ -430,7 +430,7 @@ class JobWorker extends Node {
 		}
 
 		$reply                   = Message::new_message();
-		$reply[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT;
+		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
 		$reply[ Message::FROM ]  = $this->name;
 		$reply[ Message::TO ]    = $message[ Message::FROM ];
 		$reply[ Message::ID ]    = $message[ Message::ID ];
