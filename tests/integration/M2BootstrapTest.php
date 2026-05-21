@@ -180,7 +180,7 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_sse_controller_base_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\SSEControllerBase' ),
-			'SSEControllerBase deleted in M6.10 — all 5 subclasses are gone; substrate Messages_Stream_Controller owns the SSE wire-format helpers via SSE_Helpers_Trait.'
+			'SSEControllerBase deleted in M6.10 — all 5 subclasses are gone; substrate Messages_Stream_Controller owns the SSE wire-format helpers via SSE_Stream_Trait.'
 		);
 	}
 
