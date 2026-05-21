@@ -74,10 +74,10 @@ Stats live in memcache only — never on disk. Per-partition prefix is `evlog[:s
 echo "stats slabs" | nc <memcache-host> 11211
 
 # Find the active salt.
-wp option get newspack_nodes_stats_salt
+wp option get newspack_event_logger_nodes_stats_salt
 
 # Force a flush (rotates salt, all old keys orphan via TTL).
-wp option update newspack_nodes_stats_salt $(openssl rand -hex 4)
+wp option update newspack_event_logger_nodes_stats_salt $(openssl rand -hex 4)
 wp nodes restart firehose-workers --all-partitions   # pick up new salt
 ```
 

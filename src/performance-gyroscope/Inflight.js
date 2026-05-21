@@ -284,7 +284,6 @@ export default function Inflight( { maxRows = 20 } ) {
 		lastEventTime,
 	} = useMessageStream( {
 		subscriptions: [ 'gyroscope' ],
-		intervalMs: 100,
 		onMessage: handleMessage,
 		onBeforeConnect: handleBeforeConnect,
 	} );

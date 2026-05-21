@@ -1471,7 +1471,7 @@ class AdminTest extends TestCase {
 	public function test_handle_flush_stats_rotates_salt_and_redirects(): void {
 		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
 		// Seed an old salt — flush_all() must overwrite it.
-		\update_option( 'newspack_nodes_stats_salt', 'old_salt' );
+		\update_option( 'newspack_event_logger_nodes_stats_salt', 'old_salt' );
 
 		$admin = new Admin();
 		try {
@@ -1482,7 +1482,7 @@ class AdminTest extends TestCase {
 		}
 
 		// A new salt was written (Stats_Store::flush_all overwrites unconditionally).
-		$new_salt = \get_option( 'newspack_nodes_stats_salt' );
+		$new_salt = \get_option( 'newspack_event_logger_nodes_stats_salt' );
 		$this->assertNotSame( 'old_salt', $new_salt );
 		$this->assertIsString( $new_salt );
 
@@ -1511,7 +1511,7 @@ class AdminTest extends TestCase {
 		} catch ( RedirectException $e ) {
 			// Expected.
 		}
-		$this->assertNotNull( \get_option( 'newspack_nodes_stats_salt' ) );
+		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
 	}
 
 	public function test_handle_flush_stats_falls_back_to_default_servers_for_non_array(): void {
@@ -1527,7 +1527,7 @@ class AdminTest extends TestCase {
 		} catch ( RedirectException $e ) {
 			// Expected.
 		}
-		$this->assertNotNull( \get_option( 'newspack_nodes_stats_salt' ) );
+		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
 	}
 
 	// ---- maybe_request_worker_restart: enable_aggregator branch -----------
@@ -1843,7 +1843,7 @@ class AdminTest extends TestCase {
 		} catch ( RedirectException $e ) {
 			// Expected.
 		}
-		$this->assertNotNull( \get_option( 'newspack_nodes_stats_salt' ) );
+		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
 	}
 
 	public function test_constructor_registers_admin_post_flush_action(): void {

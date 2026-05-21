@@ -90,7 +90,6 @@ describe( 'useMessageStream', () => {
 	it( 'opens an EventSource with the subscribe + nonce query', () => {
 		const { result, unmount } = mount( {
 			subscriptions: [ 'firehose' ],
-			intervalMs: 250,
 			onMessage: jest.fn(),
 		} );
 		act( () => {
@@ -100,7 +99,6 @@ describe( 'useMessageStream', () => {
 		const src = MockEventSource.instances[ 0 ];
 		expect( src.url ).toMatch( /\/messages\/stream\?/ );
 		expect( src.url ).toMatch( /subscribe=firehose/ );
-		expect( src.url ).toMatch( /interval=250/ );
 		expect( src.url ).toMatch( /_wpnonce=NONCE/ );
 		unmount();
 	} );

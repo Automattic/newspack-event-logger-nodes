@@ -212,7 +212,6 @@ export default function ErrorLog() {
 		lastEventTime,
 	} = useMessageStream( {
 		subscriptions: [ 'errors' ],
-		intervalMs: 1000,
 		onMessage: handleMessage,
 	} );
 

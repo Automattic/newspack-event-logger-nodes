@@ -318,7 +318,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		lastEventTime,
 	} = useMessageStream( {
 		subscriptions: [ 'completed' ],
-		intervalMs: 500,
 		onMessage: handleMessage,
 		onBeforeConnect: handleBeforeConnect,
 	} );
