@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Aggregator status dashboard now appears in the Event Logger admin menu
+  when "Enable Aggregator" is checked.** `enable_aggregator` was missing from
+  the config option schema, so `Config::load_config()` — which the menu gate
+  reads — never overlaid the WP option the checkbox writes; it returned only
+  the config-file default (off). Added `enable_aggregator` to the schema so the
+  checkbox takes effect.
+
 ## [0.2.36] - 2026-05-20
 
 ### Fixed
