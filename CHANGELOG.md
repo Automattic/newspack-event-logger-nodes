@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Aggregator dashboard now shows "Server HB" (remote SSE heartbeats).**
+  `RemoteSource::dispatch_event()` silently dropped the spoke's `heartbeat` SSE
+  events, so `last_sse_heartbeat` was never recorded and the dashboard always
+  showed "–". It now records the receipt time on each heartbeat. Requires
+  `newspack-nodes >= 0.2.4`, whose SSE flush fix ensures the spoke's heartbeats
+  actually reach the hub.
+
 ## [0.2.37] - 2026-05-20
 
 ### Fixed

@@ -573,9 +573,16 @@ class RemoteSource extends Node {
 
 		$decoded = \json_decode( $raw_data, true, 16 );
 
-		// Unified `/messages/stream` wire format: every line is a `msg` event
-		// carrying a 7-field Message envelope. The substrate emits no other
-		// event types, so anything else is silently ignored.
+		// The spoke's messages-stream emits periodic `heartbeat` events when a
+		// stream is idle-but-live. Record the receipt so the aggregator
+		// dashboard's "Server HB" reflects spoke liveness (not forwarded).
+		if ( 'heartbeat' === $type ) {
+			$this->record_sse_heartbeat();
+			return true;
+		}
+
+		// `/messages/stream` data lines are `msg` events carrying a 7-field
+		// Message envelope; any other event type is silently ignored.
 		if ( 'msg' === $type && \is_array( $decoded ) && \count( $decoded ) === 7 ) {
 			return $this->dispatch_msg_envelope( $decoded );
 		}
@@ -854,6 +861,19 @@ class RemoteSource extends Node {
 			'last_heartbeat_error'           => null,
 		];
 		$cache->set( $key, \array_merge( $existing, $data ), self::STATUS_TTL );
+	}
+
+	private function record_sse_heartbeat(): void {
+		$cache = $this->cache();
+		if ( null === $cache ) {
+			return;
+		}
+		$key      = $this->status_key();
+		$existing = $cache->get( $key );
+		if ( ! \is_array( $existing ) ) {
+			$existing = [];
+		}
+		$cache->set( $key, \array_merge( $existing, [ 'last_sse_heartbeat' => (int) Core::$now ] ), self::STATUS_TTL );
 	}
 
 	private function clear_heartbeat_status(): void {
