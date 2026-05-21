@@ -776,7 +776,7 @@ class RemoteSource extends Node {
 				'arguments' => '',
 				'payload'   => [
 					'slot'      => $this->slot,
-					'ttl'       => 10,
+					'ttl'       => self::HEARTBEAT_INTERVAL * 4, // must outlive HEARTBEAT_INTERVAL — only the client refreshes the slot now
 					'partition' => $this->partition,
 				],
 			] ),

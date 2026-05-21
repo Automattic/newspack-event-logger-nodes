@@ -96,13 +96,16 @@ class SseSlotPoolTest extends TestCase {
 		$this->assertTrue( $check( $slot, -1 ) );
 	}
 
-	public function test_check_calls_touch_to_refresh_ttl(): void {
-		// The substrate calls `$check_slot` once per drain iteration. Without
-		// a TTL refresh, the slot expires after `$ttl_browser` seconds
-		// mid-stream and the dashboard cycles reconnect → reacquire → repeat.
-		// Refresh-on-check matches the legacy SSEControllerBase heartbeat
-		// pattern but without a separate client-side ping. Verify the closure
-		// invokes touch_sse_slot by counting calls on a recording cache.
+	public function test_check_never_refreshes_ttl_only_checks(): void {
+		// INVARIANT: the SSE slot TTL is refreshed EXCLUSIVELY by the client's
+		// periodic `workers/heartbeat` poke. The substrate calls `$check_slot`
+		// once per drain iteration, but it must NEVER touch the TTL — a
+		// stream's own drain loop is not proof the browser is still alive, and
+		// refresh-on-check would let a zombie/abandoned connection hold a slot
+		// forever, defeating the slot pool's rate-limit invariant. `$check_slot`
+		// only ASKS whether the slot is still ours; when the client stops
+		// heart-beating the TTL lapses and this returns false, terminating the
+		// stream.
 		$recorder = new class extends FakeMemcached {
 			public int $touch_calls = 0;
 			public int $check_calls = 0;
@@ -126,9 +129,14 @@ class SseSlotPoolTest extends TestCase {
 
 		$this->assertTrue( $check( $slot, -1 ) );
 		$this->assertSame(
-			1,
+			0,
 			$recorder->touch_calls,
-			'check_slot must call touch_sse_slot to refresh TTL'
+			'check_slot must NEVER refresh the TTL — only the client heartbeat may'
+		);
+		$this->assertSame(
+			1,
+			$recorder->check_calls,
+			'check_slot must check (not touch) whether the slot is still held'
 		);
 	}
 

@@ -1207,7 +1207,18 @@ class RemoteSourceTest extends TestCase {
 		$this->assertSame( 'heartbeat', $value['name'] );
 		$this->assertSame( 2, $value['payload']['slot'] );
 		$this->assertSame( 0, $value['payload']['partition'] );
-		$this->assertSame( 10, $value['payload']['ttl'] );
+		// INVARIANT: the slot TTL is refreshed ONLY by this client heartbeat
+		// (the server no longer refresh-on-checks), so it MUST outlive the
+		// heartbeat interval or the slot dies in the gap between pokes.
+		$this->assertSame(
+			RemoteSource::HEARTBEAT_INTERVAL * 4,
+			$value['payload']['ttl']
+		);
+		$this->assertGreaterThan(
+			RemoteSource::HEARTBEAT_INTERVAL,
+			$value['payload']['ttl'],
+			'heartbeat ttl must exceed HEARTBEAT_INTERVAL so the slot survives between pokes'
+		);
 	}
 
 	public function test_maybe_send_heartbeat_posts_with_bearer_token(): void {

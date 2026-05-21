@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **SSE slot TTL is refreshed ONLY by the client heartbeat — never server-side.**
+  `Sse_Slot_Pool::$check_slot` was doing refresh-on-check (touching the TTL every
+  drain iteration), so a zombie/abandoned connection held its slot forever and the
+  pool stopped being a rate limit. It is now check-only — when the client stops
+  heart-beating, the TTL lapses and the stream terminates. `RemoteSource` (the
+  aggregator client) now sends a keepalive ttl of `HEARTBEAT_INTERVAL * 4` (60s,
+  was 10s) so its slot survives the 15s gap between its heartbeats now that the
+  server no longer refreshes it.
+
 ## [0.2.42] - 2026-05-20
 
 ### Changed
