@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The shared `useMessageStream` hook no longer sends an `interval` query
+  param** (synced from `newspack-nodes` ≥ 0.2.8). 0.2.41 dropped `intervalMs`
+  from the ELN-owned dashboard callers, but the shared hook is synced from
+  newspack-nodes and kept sending `interval` until the canonical was fixed —
+  this release ships the corrected synced copy.
+
 ## [0.2.41] - 2026-05-20
 
 ### Changed
