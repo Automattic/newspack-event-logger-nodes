@@ -97,7 +97,7 @@ These are intentional. Don't "fix" them.
 
 4. **Fail-closed SettingsSync polarity.** `enable_workers` MUST be strict `=== true`. Anything else (missing, false, 1, "1") means "not a hub, do not fan out." This polarity was a real silent-fan-out bug fixed in legacy 2.4.42 — guarding via `?? false` or `!! ` is what *caused* the bug. Keep `! isset || true !== ...`.
 
-5. **Salt-rotation schema migration.** `Stats_Store::flush_all()` rotates an 8-char salt stored in `newspack_nodes_stats_salt`. All existing keys orphan instantly (TTL handles cleanup). Schema bumps and emergency flushes share the mechanism. Long-running workers cache `prefix` at construction; restart workers after `flush_all()` for immediate effect.
+5. **Salt-rotation schema migration.** `Stats_Store::flush_all()` rotates an 8-char salt stored in `newspack_event_logger_nodes_stats_salt`. All existing keys orphan instantly (TTL handles cleanup). Schema bumps and emergency flushes share the mechanism. Long-running workers cache `prefix` at construction; restart workers after `flush_all()` for immediate effect.
 
 6. **`get_multi` batching is essential.** Reader paths multi-get across all retention buckets per partition in one round-trip. Per-key `get` is a latency cliff on dashboards. Implemented in both real and Fake memcached.
 

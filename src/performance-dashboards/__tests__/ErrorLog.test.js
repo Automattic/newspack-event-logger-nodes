@@ -70,7 +70,6 @@ describe( 'ErrorLog', () => {
 		expect( lastUseMessageStreamArgs.subscriptions ).toEqual( [
 			'errors',
 		] );
-		expect( lastUseMessageStreamArgs.intervalMs ).toBe( 1000 );
 	} );
 
 	it( 'calls connect() on mount when the page is visible', () => {

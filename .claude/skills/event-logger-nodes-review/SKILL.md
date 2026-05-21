@@ -55,7 +55,7 @@ Don't hardcode `127.0.0.1:11211` in callers. Use the constant. Single source of 
 
 ### 7. Salt rotation behavior
 
-`Stats_Store::flush_all()` rotates the 8-char salt stored in `newspack_nodes_stats_salt`. Existing keys orphan instantly (TTL handles cleanup; no scrubber).
+`Stats_Store::flush_all()` rotates the 8-char salt stored in `newspack_event_logger_nodes_stats_salt`. Existing keys orphan instantly (TTL handles cleanup; no scrubber).
 
 Long-running workers cache the prefix at construction, so they keep writing to the OLD salt until they respawn. A diff that uses `flush_all()` and expects immediate effect is wrong — the call sites need to either tolerate the stale-write window or trigger a worker restart.
 

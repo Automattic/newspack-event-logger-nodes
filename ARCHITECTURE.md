@@ -511,7 +511,7 @@ This fixes an EMA-clamp bug the old running-mean storage had — do NOT regress 
 ```php
 public function flush_all(): bool {
     $salt = bin2hex( random_bytes( 4 ) );
-    update_option( 'newspack_nodes_stats_salt', $salt );
+    update_option( 'newspack_event_logger_nodes_stats_salt', $salt );
     // All existing keys orphan instantly; they expire via TTL.
     // No scrubber walks; no large memcache scan.
     return true;

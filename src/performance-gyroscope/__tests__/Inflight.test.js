@@ -72,7 +72,6 @@ describe( 'Inflight', () => {
 		expect( lastUseMessageStreamArgs.subscriptions ).toEqual( [
 			'gyroscope',
 		] );
-		expect( lastUseMessageStreamArgs.intervalMs ).toBe( 100 );
 	} );
 
 	it( 'calls connect() when the page is visible', () => {

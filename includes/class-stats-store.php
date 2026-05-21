@@ -36,7 +36,7 @@ class Stats_Store {
 	public const MAX_DURATIONS_PER_BUCKET = 100;
 
 	private const PREFIX_BASE  = 'evlog';
-	private const SALT_OPTION  = 'newspack_nodes_stats_salt';
+	private const SALT_OPTION  = 'newspack_event_logger_nodes_stats_salt';
 	private const PREFIX_FLOOR = 3600;
 
 	private Cache_Interface $mc;

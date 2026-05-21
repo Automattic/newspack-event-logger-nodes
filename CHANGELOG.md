@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dropped `intervalMs` from `useMessageStream` and its callers.** The hook no
+  longer sends an `interval` query param; the server owns the heartbeat cadence
+  (hardcoded 2s, requires `newspack-nodes` with the `interval` param removed).
+  Removes the post-flush-fix-redundant client cadences (gyroscope 100ms,
+  request-log 500ms, errors 1000ms) that only generated idle keepalive traffic.
+- **Renamed the stats-salt option** `newspack_nodes_stats_salt` →
+  `newspack_event_logger_nodes_stats_salt` (ELN naming convention). This also
+  aligns it with the worker-restart dispatch's short-key prefix, which already
+  assumed the ELN prefix — so rotating the salt now triggers the request-worker
+  restart it always should have. One-time effect on deploy: existing stats
+  orphan once (equivalent to a Flush Cache) and rebuild.
+
 ## [0.2.40] - 2026-05-20
 
 ### Changed
