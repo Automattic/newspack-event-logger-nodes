@@ -57,6 +57,9 @@ class Config {
 		'allowed_users'               => 'array_strings',
 		'auto_disable_threshold'      => 'int',
 		'auto_protect_time_threshold' => 'float',
+		// Gates the Aggregator status dashboard menu entry (admin checkbox) —
+		// must overlay so load_config() reflects the WP option, not just the file.
+		'enable_aggregator'           => 'bool',
 		// NOTE: aggregator_servers is intentionally NOT in this per-request
 		// schema. It holds encrypted spoke credentials, is admin/hub-only,
 		// and is read lazily by ServerRegistry (get_wp_servers() + the file

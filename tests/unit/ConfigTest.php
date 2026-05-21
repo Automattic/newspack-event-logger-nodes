@@ -87,6 +87,15 @@ class ConfigTest extends TestCase {
 		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
 	}
 
+	public function test_enable_aggregator_wp_option_overlays_load_config(): void {
+		// The "Enable Aggregator" checkbox writes this option, and the admin
+		// menu gates the Aggregator status dashboard on load_config()'s value —
+		// so the WP option MUST overlay (it lives in the option schema).
+		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '1' );
+		Config::reset();
+		$this->assertTrue( (bool) ( Config::load_config()['enable_aggregator'] ?? false ) );
+	}
+
 	public function test_correct_option_autoload_applies_policy(): void {
 		// One-time sweep flips existing installs to match autoload_for():
 		// hot-path scalars autoloaded; large lists (log_events/custom_events)
