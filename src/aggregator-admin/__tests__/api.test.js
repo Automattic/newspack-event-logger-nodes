@@ -15,22 +15,18 @@ import { TM_COMMAND, TM_RESPONSE, TM_ERROR } from '@newspack-nodes/runtime';
 
 import { addServer, updateServer, removeServer, testServer } from '../api';
 
+// Per the command protocol, CommandClient.send() returns a Message whose
+// VALUE is the structured `{ name, payload }` OBJECT (fetch().json() already
+// decoded the whole envelope) and whose `payload` is the verb's structure —
+// neither is separately JSON-encoded.
 function buildResponse( type, valueObject ) {
-	return [
-		type,
-		1.23,
-		'servers',
-		'_http',
-		'cmd-1',
-		'',
-		JSON.stringify( valueObject ),
-	];
+	return [ type, 1.23, 'servers', '_http', 'cmd-1', '', valueObject ];
 }
 
 function buildOkResponse( payloadObject ) {
 	return buildResponse( TM_COMMAND | TM_RESPONSE, {
 		name: 'add',
-		payload: JSON.stringify( payloadObject ),
+		payload: payloadObject,
 	} );
 }
 

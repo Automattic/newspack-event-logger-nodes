@@ -69,10 +69,10 @@ class Settings_CI extends Service_CI {
 		// Workers_CI, which extend CommandInterpreter and also skip the
 		// parent call.
 		$this->commands( [
-			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
-				return (string) \wp_json_encode( self::snapshot() );
+			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+				return self::snapshot();
 			},
-			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 				$decoded = \is_array( $payload ) ? $payload : [];
 
@@ -96,7 +96,7 @@ class Settings_CI extends Service_CI {
 				// option values rather than the cached pre-update view.
 				AppConfig::reset();
 
-				return (string) \wp_json_encode( self::snapshot() );
+				return self::snapshot();
 			},
 		] );
 	}

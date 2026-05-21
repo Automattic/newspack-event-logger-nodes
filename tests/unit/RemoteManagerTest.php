@@ -35,23 +35,50 @@ class RemoteManagerTest extends TestCase {
 
 	/**
 	 * Wrap a discovery payload (registered_hooks / custom_events / lag) in
-	 * the Message envelope a real spoke's `discovery.get` verb would emit.
+	 * the packed Message a real spoke's `discovery.get` verb would emit.
 	 * Used by every test that mocks a spoke's response now that the probe
 	 * goes through `/command` instead of the legacy `/discovery` route.
+	 *
+	 * The whole-Message JSON is the ONLY serialization boundary: VALUE is
+	 * the structured `{name, payload}` array and `payload` is the verb's
+	 * structured return (the live discovery array), NOT a nested JSON
+	 * string. Mirrors `CommandInterpreter::interpret()`'s response shape.
 	 */
 	private static function wrap_discovery_response( array $payload ): string {
-		return (string) \json_encode( [
+		$msg                                   = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND | \Newspack_Nodes\Message::TM_RESPONSE;
+		$msg[ \Newspack_Nodes\Message::FROM ]  = 'discovery';
+		$msg[ \Newspack_Nodes\Message::TO ]    = '_http';
+		$msg[ \Newspack_Nodes\Message::VALUE ] = [
+			'name'    => 'get',
+			'payload' => $payload,
+		];
+		return \Newspack_Nodes\Message::packed( $msg );
+	}
+
+	/**
+	 * Decode a captured outbound `/command` POST body (a single packed
+	 * Message line / JSONL) into its 7-field positional array, and assert
+	 * the envelope shape: TM_COMMAND, FROM=`_http`, TO=$to, and a VALUE
+	 * that is the structured `{name, arguments, payload}` LIVE ARRAY (never
+	 * a separately-encoded JSON string). Returns the decoded VALUE struct.
+	 *
+	 * @param string $body Raw `wp_remote_post` body.
+	 * @param string $to   Expected TO node path.
+	 * @return array{name:string,arguments:string,payload:mixed}
+	 */
+	private static function assert_command_envelope( string $body, string $to ): array {
+		$message = \Newspack_Nodes\Message::unpacked( $body );
+		self::assertSame(
 			\Newspack_Nodes\Message::TM_COMMAND,
-			0.0,
-			'discovery',
-			'_http',
-			'',
-			'',
-			(string) \json_encode( [
-				'name'    => 'get',
-				'payload' => (string) \json_encode( $payload ),
-			] ),
-		] );
+			$message[ \Newspack_Nodes\Message::TYPE ],
+			'outbound command must be a TM_COMMAND (not TM_STRUCT)'
+		);
+		self::assertSame( '_http', $message[ \Newspack_Nodes\Message::FROM ] );
+		self::assertSame( $to, $message[ \Newspack_Nodes\Message::TO ] );
+		$value = $message[ \Newspack_Nodes\Message::VALUE ];
+		self::assertIsArray( $value, 'VALUE must be the structured command array, not a JSON string' );
+		return $value;
 	}
 
 	public function test_constants(): void {
@@ -412,10 +439,9 @@ class RemoteManagerTest extends TestCase {
 		// Decode and verify the credentials.
 		$decoded = \base64_decode( \substr( $auth, 6 ), true );
 		$this->assertSame( 'admin:app-pass', $decoded );
-		// Body is the TM_COMMAND envelope, not the raw {option, value} pair.
-		$envelope = \json_decode( $last['args']['body'], true );
-		$this->assertSame( \Newspack_Nodes\Message::TM_COMMAND, $envelope['type'] );
-		$this->assertSame( 'performance', $envelope['to'] );
+		// Body is a packed Message (positional 7-field array), not the raw
+		// {option, value} pair and not the legacy keyed {type,to,from,value} obj.
+		self::assert_command_envelope( $last['args']['body'], 'performance' );
 		// Defaults: no follow, response-size cap, timeout.
 		$this->assertSame( 0, $last['args']['redirection'] );
 		$this->assertSame( RemoteManager::REQUEST_TIMEOUT, $last['args']['timeout'] );
@@ -1182,10 +1208,9 @@ class RemoteManagerTest extends TestCase {
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $urls );
 
-		// Body is the TM_COMMAND envelope; verb payload carries the resolved
+		// Body is a packed Message; the verb payload carries the resolved
 		// {option, value} pair (perf-tuning key → Performance_CI.settings_update).
-		$envelope = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
-		$value    = \json_decode( $envelope['value'], true );
+		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'performance' );
 		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $value['payload']['option'] );
 		$this->assertSame( [ '/foo' ], $value['payload']['value'] );
 
@@ -1532,23 +1557,12 @@ class RemoteManagerTest extends TestCase {
 			'auth_password' => 'p',
 		] );
 
-		$verb_response = (string) \json_encode( [
+		// Packed Message: VALUE is the structured `{name, payload}` LIVE array
+		// and `payload` is the verb's structured discovery return — NOT a
+		// nested JSON string. The whole-Message JSON is the only encode layer.
+		$response_body = self::wrap_discovery_response( [
 			'registered_hooks' => [ 'init', 'shutdown' ],
 			'custom_events'    => [ 'custom_thing' ],
-		] );
-		$envelope_value = (string) \json_encode( [
-			'name'    => 'get',
-			'payload' => $verb_response,
-		] );
-		// 7-field Message tuple: [TYPE, TIMESTAMP, FROM, TO, ID, KEY, VALUE].
-		$response_body = (string) \json_encode( [
-			\Newspack_Nodes\Message::TM_COMMAND,
-			0.0,
-			'discovery',
-			'_http',
-			'',
-			'',
-			$envelope_value,
 		] );
 
 		$GLOBALS['_wp_test_remote_responses'] = [
@@ -1710,10 +1724,15 @@ class RemoteManagerTest extends TestCase {
 		// load-bearing assertion here — both the prefix-strip + the local→remote
 		// option name remap have to land for the spoke to apply the change.
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
-		$envelope = \json_decode( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], true );
-		$value    = \json_decode( $envelope['value'], true );
+		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'settings' );
+		$this->assertSame( 'update', $value['name'] );
 		$this->assertArrayHasKey( 'num_segments', $value['payload'] );
-		$this->assertSame( 42, $value['payload']['num_segments'] );
+		// The value is whatever Config::load_config() resolves for num_segments.
+		// (The app config file default wins over the substrate option via the
+		// load_config() array_merge layering, so read it from Config rather than
+		// hard-coding the option value — the remap from remote_num_segments →
+		// num_segments is the load-bearing assertion here.)
+		$this->assertSame( Config::load_config()['num_segments'], $value['payload']['num_segments'] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2296,12 +2315,13 @@ class RemoteManagerTest extends TestCase {
 	// post_to_server — body argument propagates as JSON-encoded payload.
 	// -------------------------------------------------------------------------
 
-	public function test_post_to_server_encodes_body_as_json(): void {
-		// Content-Type stays application/json. The outer body is the
-		// TM_COMMAND envelope JSON; `value` is JSON of `{name, arguments,
-		// payload}` with arguments empty (literal-string CLI tail) and the
-		// structured update map living in `payload`. Round-tripping the
-		// value confirms the encoding is lossless.
+	public function test_post_to_server_encodes_body_as_packed_message(): void {
+		// The body is a single packed Message (JSONL). VALUE is the structured
+		// `{name, arguments, payload}` LIVE array — arguments empty (literal-
+		// string CLI tail), the structured update map living in `payload`.
+		// Round-tripping the value confirms the encoding is lossless. The body
+		// is posted with Content-Type text/plain to match the browser client
+		// (WP REST 400s a JSONL body sent as application/json).
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		RemoteManager::post_to_server(
 			[ 'url' => 'https://x.test', 'auth_username' => 'u', 'auth_password' => 'p' ],
@@ -2312,9 +2332,8 @@ class RemoteManagerTest extends TestCase {
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
 
-		$this->assertSame( 'application/json', $last['args']['headers']['Content-Type'] ?? '' );
-		$envelope = \json_decode( $last['args']['body'], true );
-		$value    = \json_decode( $envelope['value'], true );
+		$this->assertSame( 'text/plain; charset=UTF-8', $last['args']['headers']['Content-Type'] ?? '' );
+		$value = self::assert_command_envelope( $last['args']['body'], 'performance' );
 		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $value['payload']['value'] );
 	}
 
@@ -2510,11 +2529,12 @@ class RemoteManagerTest extends TestCase {
 		$this->assertSame( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $last['url'] );
 	}
 
-	public function test_post_to_server_wraps_substrate_body_in_tm_command_envelope_for_settings_update(): void {
+	public function test_post_to_server_wraps_substrate_body_in_packed_command_message_for_settings_update(): void {
 		// Substrate-key endpoint maps to {to: settings, verb: update}. The body
-		// must be a TM_COMMAND wire envelope: type=8 (TM_COMMAND), to/from set,
-		// value=JSON({name, arguments, payload}), arguments empty (Tachikoma
-		// convention: literal-string args), structured update map in payload.
+		// must be a packed Message (positional 7-field array): TYPE=TM_COMMAND,
+		// FROM=_http, TO=settings, VALUE = LIVE {name, arguments, payload} array
+		// with arguments empty (Tachikoma convention: literal-string args) and
+		// the structured update map in payload.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		RemoteManager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
@@ -2522,15 +2542,9 @@ class RemoteManagerTest extends TestCase {
 			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
 		);
 
-		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
-		$envelope = \json_decode( $last['args']['body'], true );
+		$last  = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$value = self::assert_command_envelope( $last['args']['body'], 'settings' );
 
-		$this->assertIsArray( $envelope );
-		$this->assertSame( \Newspack_Nodes\Message::TM_COMMAND, $envelope['type'] );
-		$this->assertSame( 'settings', $envelope['to'] );
-		$this->assertSame( '_http', $envelope['from'] );
-
-		$value = \json_decode( $envelope['value'], true );
 		$this->assertSame( 'update', $value['name'] );
 		$this->assertSame( '', $value['arguments'] );
 		$this->assertSame(
@@ -2551,18 +2565,87 @@ class RemoteManagerTest extends TestCase {
 			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ]
 		);
 
-		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
-		$envelope = \json_decode( $last['args']['body'], true );
+		$last  = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$value = self::assert_command_envelope( $last['args']['body'], 'performance' );
 
-		$this->assertSame( 'performance', $envelope['to'] );
-
-		$value = \json_decode( $envelope['value'], true );
 		$this->assertSame( 'settings_update', $value['name'] );
 		$this->assertSame( '', $value['arguments'] );
 		$this->assertSame(
 			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ],
 			$value['payload']
 		);
+	}
+
+	public function test_command_content_type_is_publicly_accessible_for_same_plugin_reuse(): void {
+		// The Content-Type constant is the single source of truth for the
+		// `/command` wire header; same-plugin sites (Servers_CI::probe_remote,
+		// RemoteSource::maybe_send_heartbeat) reference it instead of
+		// re-hardcoding the literal, so it must be publicly readable.
+		$this->assertSame( 'text/plain; charset=UTF-8', RemoteManager::COMMAND_CONTENT_TYPE );
+	}
+
+	public function test_post_to_server_uses_text_plain_content_type_for_jsonl_body(): void {
+		// The body is JSONL (one packed Message per line). The browser client
+		// posts it as text/plain because WP REST 400s a JSONL body sent as
+		// application/json. The cross-spoke sender must match that header.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
+			SettingsSync::ENDPOINT,
+			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
+		);
+		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
+		// Pinned to the constant so a future drift at the call site is caught.
+		$this->assertSame( RemoteManager::COMMAND_CONTENT_TYPE, $last['args']['headers']['Content-Type'] ?? '' );
+	}
+
+	public function test_post_to_server_body_is_not_legacy_keyed_object(): void {
+		// Regression: the legacy wire was a keyed object
+		// `{type,to,from,key,value:"<json string>"}`. The new wire is a
+		// positional 7-field array with a LIVE-array VALUE.
+		$GLOBALS['_wp_test_remote_posts'] = [];
+		RemoteManager::post_to_server(
+			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
+			SettingsSync::ENDPOINT,
+			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
+		);
+		$last    = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$decoded = \json_decode( $last['args']['body'], true );
+		$this->assertTrue( \array_is_list( $decoded ), 'body must be a positional Message array, not a keyed object' );
+		$this->assertArrayNotHasKey( 'type', $decoded );
+		$this->assertArrayNotHasKey( 'value', $decoded );
+		$this->assertIsArray(
+			$decoded[ \Newspack_Nodes\Message::VALUE ],
+			'VALUE must be a live array, never a wp_json_encode\'d string'
+		);
+	}
+
+	public function test_discover_from_server_posts_packed_command_with_text_plain(): void {
+		// The health-check discovery probe POSTs a `discovery.get` command.
+		// Body = packed Message (TM_COMMAND, TO=discovery, VALUE live array),
+		// Content-Type text/plain, Basic Auth preserved.
+		$GLOBALS['_wp_test_remote_posts']     = [];
+		$GLOBALS['_wp_test_remote_responses'] = [
+			'https://probe.test/wp-json/newspack-nodes/v1/command' => [
+				'response' => [ 'code' => 200 ],
+				'body'     => self::wrap_discovery_response( [ 'registered_hooks' => [ 'init' ], 'custom_events' => [] ] ),
+			],
+		];
+
+		$payload = RemoteManager::discover_from_server(
+			[ 'url' => 'https://probe.test', 'auth_username' => 'admin', 'auth_password' => 'pw' ],
+			'probe'
+		);
+
+		// Response payload read directly from the structured VALUE (no second decode).
+		$this->assertSame( [ 'init' ], $payload['registered_hooks'] );
+
+		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$this->assertSame( 'text/plain; charset=UTF-8', $last['args']['headers']['Content-Type'] ?? '' );
+		$value = self::assert_command_envelope( $last['args']['body'], 'discovery' );
+		$this->assertSame( 'get', $value['name'] );
+		// Basic Auth survives the migration.
+		$this->assertStringStartsWith( 'Basic ', $last['args']['headers']['Authorization'] ?? '' );
 	}
 
 	public function test_post_to_server_preserves_basic_auth_header_through_envelope_migration(): void {
@@ -2593,9 +2676,8 @@ class RemoteManagerTest extends TestCase {
 			SettingsSync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_segment_size', 'value' => 1048576 ]
 		);
-		$last     = \end( $GLOBALS['_wp_test_remote_posts'] );
-		$envelope = \json_decode( $last['args']['body'], true );
-		$value    = \json_decode( $envelope['value'], true );
+		$last  = \end( $GLOBALS['_wp_test_remote_posts'] );
+		$value = self::assert_command_envelope( $last['args']['body'], 'settings' );
 		$this->assertArrayHasKey( 'segment_size', $value['payload'] );
 		$this->assertArrayNotHasKey( 'newspack_nodes_segment_size', $value['payload'] );
 		$this->assertSame( 1048576, $value['payload']['segment_size'] );

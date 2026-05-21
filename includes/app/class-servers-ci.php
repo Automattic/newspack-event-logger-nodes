@@ -81,24 +81,24 @@ class Servers_CI extends Service_CI {
 
 	private function verb_table( ServerRegistry $registry ): array {
 		return [
-			'list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+			'list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				$registry->reset_cache();
 				$out = [];
 				foreach ( $registry->get_all() as $id => $config ) {
 					$out[ $id ] = self::public_shape( (string) $id, $config, $registry );
 				}
-				return (string) \wp_json_encode( $out );
+				return $out;
 			},
-			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
 				$server = $registry->get( $id );
 				if ( null === $server ) {
 					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 				}
-				return (string) \wp_json_encode( self::public_shape( $id, $server, $registry ) );
+				return self::public_shape( $id, $server, $registry );
 			},
-			'add'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+			'add'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$decoded = \is_array( $payload ) ? $payload : [];
 				$id      = (string) ( $decoded['id'] ?? '' );
@@ -121,9 +121,9 @@ class Servers_CI extends Service_CI {
 					self::queue_settings_sync( [ $id ] );
 				}
 				self::request_supervisor_restart();
-				return (string) \wp_json_encode( [ 'id' => $id ] );
+				return [ 'id' => $id ];
 			},
-			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$decoded = \is_array( $payload ) ? $payload : [];
 				$id      = self::require_id( $decoded );
@@ -146,9 +146,9 @@ class Servers_CI extends Service_CI {
 					self::queue_settings_sync( [ $id ] );
 				}
 				self::request_supervisor_restart();
-				return (string) \wp_json_encode( [ 'id' => $id ] );
+				return [ 'id' => $id ];
 			},
-			'delete' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+			'delete' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
@@ -160,9 +160,9 @@ class Servers_CI extends Service_CI {
 					throw new \RuntimeException( 'delete failed' );
 				}
 				self::request_supervisor_restart();
-				return (string) \wp_json_encode( [ 'id' => $id ] );
+				return [ 'id' => $id ];
 			},
-			'test'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): string {
+			'test'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
@@ -170,7 +170,10 @@ class Servers_CI extends Service_CI {
 				if ( null === $server ) {
 					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 				}
-				return (string) \wp_json_encode( self::probe_remote( $id, $server ) );
+				// Returns a structure. (The cross-spoke /command HTTP body
+				// probe_remote() builds internally is a separate wire concern
+				// and stays JSON-encoded — don't conflate the two.)
+				return self::probe_remote( $id, $server );
 			},
 		];
 	}
@@ -289,11 +292,10 @@ class Servers_CI extends Service_CI {
 		$app_config = AppConfig::load_config();
 		$verify_ssl = ! isset( $app_config['aggregator_verify_ssl'] ) || (bool) $app_config['aggregator_verify_ssl'];
 
-		// M5 deleted the legacy `/discovery` REST route; the discovery
-		// surface is now a CommandInterpreter verb dispatched via
-		// `/command`. Build the wrap server-side, unwrap server-side —
-		// matches what `RemoteManager::discover_from_server()` does for
-		// the periodic health check.
+		// M5 deleted the legacy `/discovery` REST route; the discovery surface
+		// is now a `discovery.get` command dispatched via `/command`. Build the
+		// body through the shared RemoteManager builder so the manual Test
+		// probe and the periodic health-check probe can't drift.
 		$url  = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/command';
 		$args = [
 			// 5s bound on a synchronous Test-button probe — admin UI blocks on
@@ -303,18 +305,8 @@ class Servers_CI extends Service_CI {
 			'sslverify'           => $verify_ssl,
 			'redirection'         => 0,
 			'limit_response_size' => 1048576,
-			'headers'             => [ 'Content-Type' => 'application/json' ],
-			'body'                => (string) \wp_json_encode( [
-				'type'  => \Newspack_Nodes\Message::TM_COMMAND,
-				'to'    => 'discovery',
-				'from'  => '_http',
-				'key'   => '',
-				'value' => (string) \wp_json_encode( [
-					'name'      => 'get',
-					'arguments' => '',
-					'payload'   => '',
-				] ),
-			] ),
+			'headers'             => [ 'Content-Type' => RemoteManager::COMMAND_CONTENT_TYPE ],
+			'body'                => RemoteManager::command_message_body( 'discovery', 'get', '' ),
 		];
 
 		$username = (string) ( $server['auth_username'] ?? '' );
@@ -337,6 +329,12 @@ class Servers_CI extends Service_CI {
 			throw new \RuntimeException( \esc_html( "HTTP {$code} response from server" ) );
 		}
 
+		// Response is a packed Message whose VALUE is the structured
+		// `{name, payload}` LIVE array — the whole-Message JSON is the only
+		// serialization boundary, so ONE decode of the body yields a nested
+		// array and `payload` is read directly with NO second decode.
+		// Mirrors CommandInterpreter::interpret() and the JS-side
+		// `unwrapCommandResponse` helper.
 		$envelope = \json_decode( \wp_remote_retrieve_body( $response ), true, 16 );
 		if ( ! \is_array( $envelope ) || ! \array_key_exists( \Newspack_Nodes\Message::VALUE, $envelope ) ) {
 			throw new \RuntimeException( 'server returned malformed command envelope' );
@@ -344,13 +342,12 @@ class Servers_CI extends Service_CI {
 		if ( (int) ( $envelope[ \Newspack_Nodes\Message::TYPE ] ?? 0 ) & \Newspack_Nodes\Message::TM_ERROR ) {
 			throw new \RuntimeException( 'server returned TM_ERROR for discovery probe' );
 		}
-		$inner = \json_decode( (string) $envelope[ \Newspack_Nodes\Message::VALUE ], true, 16 );
-		if ( ! \is_array( $inner ) || ! isset( $inner['payload'] ) ) {
+		$value = $envelope[ \Newspack_Nodes\Message::VALUE ];
+		if ( ! \is_array( $value ) || ! \array_key_exists( 'payload', $value ) ) {
 			throw new \RuntimeException( 'server returned malformed command response' );
 		}
-		$body = '' === $inner['payload']
-			? []
-			: \json_decode( (string) $inner['payload'], true, 16 );
+		$payload = $value['payload'];
+		$body    = '' === $payload ? [] : $payload;
 		if ( ! \is_array( $body ) ) {
 			throw new \RuntimeException( 'server returned non-JSON discovery payload' );
 		}

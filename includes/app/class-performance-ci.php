@@ -170,7 +170,7 @@ class Performance_CI extends Service_CI {
 	 */
 	private function verb_table( ?Cache_Interface $cache ): array {
 		return [
-			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
+			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
 				self::require_manage_options();
 
 				// Optional args mirror the legacy PerfOverviewController query
@@ -212,9 +212,9 @@ class Performance_CI extends Service_CI {
 						: self::merge_server_categories_across_partitions( $cache, $server );
 				}
 
-				return (string) \wp_json_encode( $payload );
+				return $payload;
 			},
-			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
+			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -258,14 +258,14 @@ class Performance_CI extends Service_CI {
 						: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 )
 				);
 
-				return (string) \wp_json_encode( [
+				return [
 					'data'   => \array_slice( $index, $offset, $limit ),
 					'total'  => $total,
 					'limit'  => $limit,
 					'offset' => $offset,
-				] );
+				];
 			},
-			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
+			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -324,9 +324,9 @@ class Performance_CI extends Service_CI {
 					$payload['category_time_series'] = self::merge_url_categories( $cache, $hash );
 				}
 
-				return (string) \wp_json_encode( $payload );
+				return $payload;
 			},
-			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -344,7 +344,7 @@ class Performance_CI extends Service_CI {
 				for ( $p = 0; $p < $num_partitions; $p++ ) {
 					$found = self::find_request_index_entry( $log_base, $p, $rid, $scanned );
 					if ( null !== $found ) {
-						return (string) \wp_json_encode( $found );
+						return $found;
 					}
 					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
 						break;
@@ -353,7 +353,7 @@ class Performance_CI extends Service_CI {
 
 				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 			},
-			'request_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'request_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -376,20 +376,20 @@ class Performance_CI extends Service_CI {
 				if ( null === $result ) {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}
-				return (string) \wp_json_encode( $result );
+				return $result;
 			},
-			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
+			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_timing — merged
 				// hourly buckets across partitions. The legacy "data + meta"
 				// wrapper is dropped (REST artifact); CI returns the inner
 				// payload directly.
-				return (string) \wp_json_encode( [
+				return [
 					'time_series' => self::merge_hourly_across_partitions( $cache ),
-				] );
+				];
 			},
-			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
+			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_dashboard:
@@ -397,12 +397,12 @@ class Performance_CI extends Service_CI {
 				// the dashboard tree fans in with one round-trip. `load_index`
 				// is the heavy memcache fan-out — share it across both keys.
 				$index = self::load_index( $cache );
-				return (string) \wp_json_encode( [
+				return [
 					'overview' => self::build_overview_payload( $index, $cache ),
 					'urls'     => $index,
-				] );
+				];
 			},
-			'hooks_registered' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'hooks_registered' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_registered_hooks.
@@ -414,23 +414,23 @@ class Performance_CI extends Service_CI {
 				foreach ( $by_category as $list ) {
 					$total += \is_array( $list ) ? \count( $list ) : 0;
 				}
-				return (string) \wp_json_encode( [
+				return [
 					'total_hooks'       => $total,
 					'categories'        => HookCategorizer::get_categories(),
 					'hooks_by_category' => $by_category,
-				] );
+				];
 			},
-			'hooks_categories' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'hooks_categories' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_hook_categories
 				// — same shape the React tree consumes.
-				return (string) \wp_json_encode( [
+				return [
 					'categories' => HookCategorizer::get_categories(),
 					'config'     => HookCategorizer::get_merged_config(),
-				] );
+				];
 			},
-			'hooks_available' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'hooks_available' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
@@ -439,11 +439,11 @@ class Performance_CI extends Service_CI {
 				// hooks (instrumenting them loops via Config::load_config),
 				// and removes anything the operator has marked as a custom
 				// event so the picker doesn't double-list it.
-				return (string) \wp_json_encode( [
+				return [
 					'hooks' => self::collect_available_hooks(),
-				] );
+				];
 			},
-			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded       = \is_array( $payload ) ? $payload : [];
@@ -478,12 +478,12 @@ class Performance_CI extends Service_CI {
 				// the freshly-written WP options.
 				AppConfig::reset();
 
-				return (string) \wp_json_encode( [
+				return [
 					'success'          => true,
 					'hooks_configured' => $configured,
-				] );
+				];
 			},
-			'config_get'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'config_get'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::get_config, with one
@@ -494,7 +494,7 @@ class Performance_CI extends Service_CI {
 				// source. The legacy bug was masked because the legacy test
 				// asserted on key presence only, never on the actual values.
 				$cfg = AppConfig::load_config();
-				return (string) \wp_json_encode( [
+				return [
 					'config' => [
 						'log_events'                  => $cfg['log_events']    ?? [],
 						'custom_events'               => $cfg['custom_events'] ?? [],
@@ -506,9 +506,9 @@ class Performance_CI extends Service_CI {
 						'log_memory'                  => ! empty( $cfg['log_memory'] ),
 						'flush_every_line'            => ! empty( $cfg['flush_every_line'] ),
 					],
-				] );
+				];
 			},
-			'config_update'  => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'config_update'  => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::update_config — the
@@ -534,12 +534,12 @@ class Performance_CI extends Service_CI {
 					AppConfig::reset();
 				}
 
-				return (string) \wp_json_encode( [
+				return [
 					'success' => true,
 					'updated' => $updated,
-				] );
+				];
 			},
-			'settings_update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'settings_update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfSettingsController::update_setting —
@@ -577,12 +577,12 @@ class Performance_CI extends Service_CI {
 
 				AppConfig::reset();
 
-				return (string) \wp_json_encode( [
+				return [
 					'option'  => $option,
 					'updated' => (bool) $ok,
-				] );
+				];
 			},
-			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy GyroscopeController::get_timeline.
@@ -595,23 +595,23 @@ class Performance_CI extends Service_CI {
 				$decoded = \is_array( $payload ) ? $payload : [];
 				$rid     = (string) ( $decoded['request_id'] ?? '' );
 				if ( '' === $rid ) {
-					return (string) \wp_json_encode( [
+					return [
 						'data' => [ 'events' => [] ],
 						'meta' => [],
-					] );
+					];
 				}
 
 				[ $events, $scanned ] = self::scan_requests_for_events( $rid );
 
-				return (string) \wp_json_encode( [
+				return [
 					'data' => [
 						'request_id' => $rid,
 						'events'     => $events,
 					],
 					'meta' => [ 'scanned' => $scanned ],
-				] );
+				];
 			},
-			'request_log_list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'request_log_list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_list.
@@ -627,15 +627,15 @@ class Performance_CI extends Service_CI {
 				\usort( $entries, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
 				$entries = \array_slice( $entries, 0, $limit );
 
-				return (string) \wp_json_encode( [
+				return [
 					'data' => $entries,
 					'meta' => [
 						'limit'   => $limit,
 						'scanned' => $scanned,
 					],
-				] );
+				];
 			},
-			'request_log_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'request_log_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_detail.
@@ -653,26 +653,26 @@ class Performance_CI extends Service_CI {
 				[ $result, $scanned ] = self::find_request_envelope( $rid );
 
 				if ( null === $result ) {
-					return (string) \wp_json_encode( [
+					return [
 						'data' => [
 							'request_id' => $rid,
 							'entries'    => [],
 						],
 						'meta' => [ 'scanned' => $scanned ],
-					] );
+					];
 				}
 
 				// Normalize the entries shape — React tree expects `entries[]`.
 				// Body with no `events` key is wrapped as a single entry; the
 				// _partition marker lets the tree key on partition.
 				$entries = $result['events'] ?? [ $result ];
-				return (string) \wp_json_encode( [
+				return [
 					'data' => [
 						'request_id' => $rid,
 						'entries'    => $entries,
 					],
 					'meta' => [ 'scanned' => $scanned ],
-				] );
+				];
 			},
 		];
 	}

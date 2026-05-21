@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI verbs return structured data, matching the substrate's de-double-encoded
+  command protocol** (newspack-nodes ≥ Unreleased). Verbs return live PHP
+  structures instead of `wp_json_encode`'d strings, and the synced
+  `unwrapCommandResponse` reads the structured payload directly (single decode).
+  Dashboards consume the structured response unchanged.
+- **Cross-spoke `/command` senders speak the new wire.** `RemoteManager`,
+  `RemoteSource`, and `Servers_CI` post a packed Message (structured `VALUE`) as
+  `text/plain` and read the response payload with one decode. Hoisted
+  `RemoteManager::COMMAND_CONTENT_TYPE` + `command_message_body()` to public so
+  the same-plugin callers share one definition.
+
 ## [0.2.43] - 2026-05-21
 
 ### Fixed

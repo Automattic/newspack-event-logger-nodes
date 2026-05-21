@@ -65,7 +65,7 @@ class Events_CI extends Service_CI {
 		// inherited no-op is implicit. Mirrors Workers_CI / Settings_CI /
 		// Status_CI / Discovery_CI / Logger_CI.
 		$this->commands( [
-			'recent' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): string {
+			'recent' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				$decoded        = \is_array( $payload ) ? $payload : [];
 				$limit          = \max( 1, \min( 1000, (int) ( $decoded['limit'] ?? 100 ) ) );
 				$config         = RuntimeConfig::load_config();
@@ -121,15 +121,15 @@ class Events_CI extends Service_CI {
 					}
 				}
 
-				return (string) \wp_json_encode( [
+				return [
 					'data' => $entries,
 					'meta' => [
 						'limit'   => $limit,
 						'scanned' => $scanned,
 					],
-				] );
+				];
 			},
-			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): string {
+			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 				$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
@@ -155,12 +155,12 @@ class Events_CI extends Service_CI {
 					\ksort( $merged );
 				}
 
-				return (string) \wp_json_encode( [
+				return [
 					'data' => [
 						'time_series' => \array_values( $merged ),
 					],
 					'meta' => [],
-				] );
+				];
 			},
 		] );
 	}

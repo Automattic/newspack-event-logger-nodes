@@ -53,6 +53,22 @@ class RemoteManager {
 	private const COMMAND_PATH = '/wp-json/newspack-nodes/v1/command';
 
 	/**
+	 * Content-Type for `/command` POSTs. The body is JSONL (one packed
+	 * Message per line); WordPress's REST dispatcher 400s a JSONL body sent
+	 * as `application/json` (it pre-parses the body as a single JSON
+	 * document and rejects the newlines). text/plain makes WP pass the raw
+	 * body through to Command_Controller::messages_from_body(). Matches the
+	 * browser CommandClient (src/runtime/command_client.js).
+	 *
+	 * Public so the other same-plugin `/command` senders
+	 * (Servers_CI::probe_remote, RemoteSource::maybe_send_heartbeat) reference
+	 * this one definition instead of re-hardcoding the literal.
+	 *
+	 * @var string
+	 */
+	public const COMMAND_CONTENT_TYPE = 'text/plain; charset=UTF-8';
+
+	/**
 	 * Wire RemoteManager listeners into the WP/runtime hook surface. Idempotent
 	 * — safe to call multiple times.
 	 */
@@ -510,20 +526,9 @@ class RemoteManager {
 	 */
 	public static function discover_from_server( array $server, string $server_id ): ?array {
 		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
-		$body = (string) \wp_json_encode( [
-			'type'  => \Newspack_Nodes\Message::TM_COMMAND,
-			'to'    => 'discovery',
-			'from'  => '_http',
-			'key'   => '',
-			'value' => (string) \wp_json_encode( [
-				'name'      => 'get',
-				'arguments' => '',
-				'payload'   => '',
-			] ),
-		] );
 		$args = self::request_args( $server, [
-			'headers' => [ 'Content-Type' => 'application/json' ],
-			'body'    => $body,
+			'headers' => [ 'Content-Type' => self::COMMAND_CONTENT_TYPE ],
+			'body'    => self::command_message_body( 'discovery', 'get', '' ),
 		] );
 
 		$response = \function_exists( 'wp_remote_post' )
@@ -540,37 +545,86 @@ class RemoteManager {
 			return null;
 		}
 
-		// Outer envelope: 7-field Message tuple with VALUE = JSON of
-		// `{name, payload}`. The verb's return string (which is itself a
-		// JSON-encoded `{registered_hooks, custom_events}` object) lives
-		// in `payload`. The wrap mirrors what CommandInterpreter::interpret
-		// emits substrate-side; the unwrap matches CommandClient's JS-side
+		// Response is a packed Message whose VALUE is the structured
+		// `{name, payload}` LIVE array — the whole-Message JSON is the only
+		// serialization boundary, so a single decode of the body yields a
+		// nested array; `payload` is read directly with NO second decode.
+		// Mirrors CommandInterpreter::interpret() and the JS-side
 		// `unwrapCommandResponse` helper.
-		$envelope = \json_decode( self::response_body( $response ), true, 16 );
-		if ( ! \is_array( $envelope ) || ! \array_key_exists( \Newspack_Nodes\Message::VALUE, $envelope ) ) {
+		$payload = self::unwrap_command_payload( self::response_body( $response ), $server_id );
+		if ( null === $payload ) {
+			return null;
+		}
+		// Empty payload (verb returned '') → no discovery data, not an error.
+		if ( '' === $payload ) {
+			return [];
+		}
+		if ( ! \is_array( $payload ) ) {
+			self::log_status( $server_id, 'error', 'Invalid discovery payload' );
+			return null;
+		}
+		return $payload;
+	}
+
+	/**
+	 * Build the body for an outbound `/command` POST: a single packed Message
+	 * (JSONL line). TYPE=TM_COMMAND, FROM=`_http`, TO=$to, VALUE is the LIVE
+	 * structured command array `{name, arguments, payload}` — NOT a separately
+	 * `wp_json_encode`'d string. Matches the browser CommandClient wire shape
+	 * (src/runtime/command_client.js) and what Command_Controller decodes.
+	 *
+	 * Public so the admin Test button (Servers_CI::probe_remote) builds its
+	 * `discovery.get` body through this one builder — keeps the manual-probe
+	 * wire in lock-step with the periodic health-check probe.
+	 *
+	 * @param string $to      Target node path (the command's TO field).
+	 * @param string $verb    Command verb name.
+	 * @param mixed  $payload Structured payload (live array/scalar), '' for none.
+	 * @param string $args    Literal-string argument tail (Tachikoma convention).
+	 * @return string Packed Message JSONL line.
+	 */
+	public static function command_message_body( string $to, string $verb, mixed $payload, string $args = '' ): string {
+		$msg                                   = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND;
+		$msg[ \Newspack_Nodes\Message::FROM ]  = '_http';
+		$msg[ \Newspack_Nodes\Message::TO ]    = $to;
+		$msg[ \Newspack_Nodes\Message::VALUE ] = [
+			'name'      => $verb,
+			'arguments' => $args,
+			'payload'   => $payload,
+		];
+		return \Newspack_Nodes\Message::packed( $msg );
+	}
+
+	/**
+	 * Unwrap a `/command` HTTP response body (a packed Message) into the
+	 * verb's structured payload. One decode of the whole body yields the
+	 * 7-field positional array; VALUE is the structured `{name, payload}`
+	 * LIVE array and `payload` is read directly (no second decode). Logs an
+	 * error status and returns null on a malformed envelope or a TM_ERROR
+	 * response. Mirrors the JS `unwrapCommandResponse` helper.
+	 *
+	 * @param string $body      Raw HTTP response body.
+	 * @param string $server_id Server ID for log_status calls.
+	 * @return mixed The verb payload, or null on error.
+	 */
+	private static function unwrap_command_payload( string $body, string $server_id ): mixed {
+		$message = \json_decode( $body, true, 16 );
+		if ( ! \is_array( $message ) || ! \array_key_exists( \Newspack_Nodes\Message::VALUE, $message ) ) {
 			self::log_status( $server_id, 'error', 'Invalid command envelope' );
 			return null;
 		}
-		$type = (int) ( $envelope[ \Newspack_Nodes\Message::TYPE ] ?? 0 );
+		$type = (int) ( $message[ \Newspack_Nodes\Message::TYPE ] ?? 0 );
 		if ( $type & \Newspack_Nodes\Message::TM_ERROR ) {
 			self::log_status( $server_id, 'error', 'Spoke returned TM_ERROR' );
 			return null;
 		}
-		$inner = \json_decode( (string) $envelope[ \Newspack_Nodes\Message::VALUE ], true, 16 );
-		if ( ! \is_array( $inner ) || ! isset( $inner['payload'] ) ) {
+		$value = $message[ \Newspack_Nodes\Message::VALUE ];
+		if ( ! \is_array( $value ) || ! \array_key_exists( 'payload', $value ) ) {
 			self::log_status( $server_id, 'error', 'Invalid command inner envelope' );
 			return null;
 		}
-		$payload = $inner['payload'];
-		if ( '' === $payload ) {
-			return [];
-		}
-		$data = \json_decode( (string) $payload, true, 16 );
-		if ( ! \is_array( $data ) ) {
-			self::log_status( $server_id, 'error', 'Invalid discovery payload' );
-			return null;
-		}
-		return $data;
+		return $value['payload'];
 	}
 
 	/**
@@ -603,7 +657,7 @@ class RemoteManager {
 
 		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
 		$args = self::request_args( $server, [
-			'headers' => [ 'Content-Type' => 'application/json' ],
+			'headers' => [ 'Content-Type' => self::COMMAND_CONTENT_TYPE ],
 			'body'    => self::build_command_envelope( $endpoint, $body ),
 		] );
 
@@ -615,27 +669,24 @@ class RemoteManager {
 	}
 
 	/**
-	 * Build the TM_COMMAND wire envelope for a settings sync POST.
+	 * Build the packed-Message body for a settings-sync `/command` POST.
 	 *
-	 * Wire format (mirrors the JS CommandClient in src/shared/utils/commandClient.js):
-	 *   { type, to, from, key, value }
-	 *   value = JSON({ name, arguments, payload })
-	 *   arguments = JSON of the verb args object
+	 * Wire format (mirrors the JS CommandClient in src/runtime/command_client.js):
+	 *   a single packed Message (positional 7-field array) — JSONL.
+	 *   VALUE = { name, arguments, payload } as a LIVE array (NOT a nested
+	 *   JSON string). The whole-Message JSON is the only encode boundary;
+	 *   CommandInterpreter::interpret() reads VALUE directly with no decode.
 	 *
-	 * The double-JSON looks redundant but matches the substrate's
-	 * CommandInterpreter expectations on the receiver — each verb's
-	 * `decode_args()` parses the inner JSON string back to an array.
-	 *
-	 * Substrate-keys (`ENDPOINT`) flow to `settings.update` with arguments
-	 * stripped of the `newspack_nodes_` prefix (the verb's whitelist is
-	 * short-name-keyed: num_partitions, num_segments, segment_size,
-	 * max_lifespan). Perf-keys (`PERF_ENDPOINT`) flow to
+	 * Substrate-keys (`ENDPOINT`) flow to `settings.update` with the payload
+	 * keyed by short-name (`newspack_nodes_` prefix stripped — the verb's
+	 * whitelist is short-name-keyed: num_partitions, num_segments,
+	 * segment_size, max_lifespan). Perf-keys (`PERF_ENDPOINT`) flow to
 	 * `performance.settings_update` which takes the `{option, value}` pair
 	 * as-is.
 	 *
 	 * @param string $endpoint Tag selecting the verb target.
 	 * @param array  $body     Settings payload `{option, value}` from sync_setting.
-	 * @return string JSON-encoded TM_COMMAND envelope ready for `wp_remote_post` `body`.
+	 * @return string Packed Message JSONL line ready for `wp_remote_post` `body`.
 	 */
 	private static function build_command_envelope( string $endpoint, array $body ): string {
 		[ $to, $verb, $payload ] = self::resolve_command_target( $endpoint, $body );
@@ -643,19 +694,7 @@ class RemoteManager {
 		// arguments is the literal CLI-shaped tail; for settings-sync verbs
 		// the structured update map lives in `payload` (matches Tachikoma's
 		// contract — arguments is a string, payload is for structured data).
-		$value = (string) \wp_json_encode( [
-			'name'      => $verb,
-			'arguments' => '',
-			'payload'   => $payload,
-		] );
-
-		return (string) \wp_json_encode( [
-			'type'  => \Newspack_Nodes\Message::TM_COMMAND,
-			'to'    => $to,
-			'from'  => '_http',
-			'key'   => '',
-			'value' => $value,
-		] );
+		return self::command_message_body( $to, $verb, $payload );
 	}
 
 	/**

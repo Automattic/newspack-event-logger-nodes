@@ -1196,14 +1196,20 @@ class RemoteSourceTest extends TestCase {
 		$this->assertStringContainsString( '/wp-json/newspack-nodes/v1/command', $post['url'] );
 		$auth = $post['args']['headers']['Authorization'] ?? '';
 		$this->assertStringStartsWith( 'Basic ', $auth );
-		// Body is a TM_COMMAND envelope dispatching workers.heartbeat. Slot
-		// + partition + ttl ride in the verb's `payload` field (Tachikoma
-		// contract: arguments is the literal CLI tail, payload is for
-		// structured data).
-		$envelope = \json_decode( $post['args']['body'], true );
-		$this->assertSame( Message::TM_COMMAND, $envelope['type'] );
-		$this->assertSame( 'workers', $envelope['to'] );
-		$value = \json_decode( $envelope['value'], true );
+		// Body is a single packed Message (positional 7-field array)
+		// dispatching workers.heartbeat — NOT the legacy keyed
+		// `{type,to,from,value:"<json>"}` object. Content-Type is text/plain
+		// because the body is JSONL (WP REST 400s a JSONL application/json
+		// body). VALUE is the structured command LIVE array; slot + partition
+		// + ttl ride in the verb's `payload` field (Tachikoma contract:
+		// arguments is the literal CLI tail, payload is for structured data).
+		$this->assertSame( 'text/plain; charset=UTF-8', $post['args']['headers']['Content-Type'] ?? '' );
+		$message = Message::unpacked( $post['args']['body'] );
+		$this->assertSame( Message::TM_COMMAND, $message[ Message::TYPE ] );
+		$this->assertSame( '_http', $message[ Message::FROM ] );
+		$this->assertSame( 'workers', $message[ Message::TO ] );
+		$value = $message[ Message::VALUE ];
+		$this->assertIsArray( $value, 'VALUE must be the structured command array, not a JSON string' );
 		$this->assertSame( 'heartbeat', $value['name'] );
 		$this->assertSame( 2, $value['payload']['slot'] );
 		$this->assertSame( 0, $value['payload']['partition'] );
