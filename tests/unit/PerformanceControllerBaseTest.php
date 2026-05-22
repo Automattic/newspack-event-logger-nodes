@@ -2,21 +2,18 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( PerformanceControllerBase::class )]
 class PerformanceControllerBaseTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
-		// Reset shared cache between tests so rate-limit counters don't bleed.
-		PerformanceControllerBase::set_cache( new FakeMemcached() );
-	}
-
-	protected function tearDown(): void {
-		PerformanceControllerBase::set_cache( null );
-		parent::tearDown();
+		// Seed the shared handle; Core::reset() (in parent setUp) clears it
+		// each test so rate-limit counters don't bleed.
+		Core::$memd = new InMemoryMemcached();
 	}
 
 	public function test_read_permissions_check_requires_capability(): void {
@@ -79,9 +76,9 @@ class PerformanceControllerBaseTest extends TestCase {
 	}
 
 	public function test_check_rate_limit_fails_open_when_cache_unavailable(): void {
-		PerformanceControllerBase::set_cache( new FakeMemcached( fail_all: true ) );
-		$ctrl = new TestableController();
-		// Cache is unreachable; we should still allow the call (degraded > blocked).
+		Core::$memd = null;
+		$ctrl       = new TestableController();
+		// No shared handle; we should still allow the call (degraded > blocked).
 		for ( $i = 0; $i < 100; $i++ ) {
 			$this->assertTrue( $ctrl->check_rate_limit( 'user_x', 1, 60 ) );
 		}
@@ -94,41 +91,6 @@ class PerformanceControllerBaseTest extends TestCase {
 		$this->assertSame( 'rest_not_found', $err->get_error_code() );
 		$this->assertSame( 404, $err->data['status'] ?? 0 );
 		$this->assertStringContainsString( 'request rid=missing', $err->get_error_message() );
-	}
-
-	public function test_cache_lazy_factory_uses_substrate_config_when_uninjected(): void {
-		// With set_cache(null), the next cache() call must build a real
-		// Memcached_Cache from substrate config. Stuff an empty
-		// `memcache_servers` directly into the substrate Config cache via
-		// reflection so the assertion sees the empty-servers fixture
-		// regardless of what env LogManagerTest tearDown or anyone else
-		// may have left in place. Setting LOCAL_NEWSPACK_NODES_CONF here
-		// would leak into later tests (RemoteManager picks up the test
-		// config's `num_segments=2` and the test fixture's WP option
-		// `=42` is overlaid by the app's load_config_defaults, breaking
-		// downstream assertions).
-		$config_prop = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'config' );
-		$config_prop->setAccessible( true );
-		$original = $config_prop->getValue();
-		try {
-			$config_prop->setValue( null, [ 'memcache_servers' => [] ] );
-
-			PerformanceControllerBase::set_cache( null );
-			$cache = PerformanceControllerBase::cache();
-			$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Memcached_Cache::class, $cache );
-			$this->assertFalse( $cache->is_available(), 'empty memcache_servers means unavailable' );
-		} finally {
-			$config_prop->setValue( null, $original );
-			\Newspack_Nodes\Config::reset();
-		}
-	}
-
-	public function test_cache_returns_injected_instance_on_subsequent_calls(): void {
-		// Once injected, cache() must return the same instance — no re-fetch.
-		$fake = new FakeMemcached();
-		PerformanceControllerBase::set_cache( $fake );
-		$this->assertSame( $fake, PerformanceControllerBase::cache() );
-		$this->assertSame( $fake, PerformanceControllerBase::cache() );
 	}
 
 	public function test_check_rate_limit_falls_back_to_window_when_ttl_underflows(): void {

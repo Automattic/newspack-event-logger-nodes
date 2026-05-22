@@ -17,6 +17,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\App\Status_CI;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Status_CI::class )]
@@ -43,10 +45,8 @@ class StatusCITest extends TestCase {
 			'num_partitions' => 4,
 			'topologies'     => [ 'firehose-workers-and-jobs', 'request-workers' ],
 		] );
-		$cache = new class {
-			public function is_available(): bool { return true; }
-		};
-		$ci = new Status_CI( $cache );
+		Core::$memd = new InMemoryMemcached();
+		$ci         = new Status_CI();
 
 		$before = \time();
 		$result = VerbHarness::fire( $ci, 'status', 'get' );
@@ -64,34 +64,9 @@ class StatusCITest extends TestCase {
 		$this->assertLessThanOrEqual( $after, $result['timestamp'] );
 	}
 
-	public function test_cache_unavailable_reports_false(): void {
-		$cache = new class {
-			public function is_available(): bool { return false; }
-		};
-		$ci = new Status_CI( $cache );
-
-		$result = VerbHarness::fire( $ci, 'status', 'get' );
-
-		$this->assertFalse( $result['cache_available'] );
-		$this->assertSame( 'ok', $result['status'] );
-	}
-
-	public function test_cache_throwable_is_swallowed_and_reports_false(): void {
-		$cache = new class {
-			public function is_available(): bool {
-				throw new \RuntimeException( 'memcache unreachable' );
-			}
-		};
-		$ci = new Status_CI( $cache );
-
-		$result = VerbHarness::fire( $ci, 'status', 'get' );
-
-		$this->assertFalse( $result['cache_available'] );
-		$this->assertSame( 'ok', $result['status'] );
-	}
-
-	public function test_no_cache_injected_reports_cache_unavailable(): void {
-		$ci = new Status_CI();
+	public function test_cache_unavailable_reports_false_when_memd_null(): void {
+		Core::$memd = null;
+		$ci         = new Status_CI();
 
 		$result = VerbHarness::fire( $ci, 'status', 'get' );
 

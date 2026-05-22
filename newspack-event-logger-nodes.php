@@ -118,11 +118,11 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// spokes, so the hook stays registered at boot.
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
 
-	// The slot pool is substrate-side (generic SSE rate-limiting); the
-	// application injects its concrete `Memcached_Cache` store, then wires
-	// the 3-Closure seam on `SSE_Out` so the unified SSE endpoint inherits
-	// the same concurrency cap the legacy per-feed controllers used.
-	\Newspack_Event_Logger_Nodes\Sse_Slot_Pool::wire();
+	// Set the one shared Memcached handle on the substrate Core, then wire
+	// the substrate's SSE slot pool (generic rate-limiting) onto SSE_Out's
+	// 3-Closure seam so the unified SSE endpoint inherits the concurrency cap.
+	newspack_event_logger_nodes_init_memcached();
+	\Newspack_Nodes\Sse_Slot_Pool::wire();
 
 	// Hook instrumentation — the whole reason this plugin exists. Runs
 	// on every request that gets logged.
@@ -399,6 +399,30 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 // SSE need now.
 
 /**
+ * Build the one shared `\Memcached` handle from the substrate's
+ * `memcache_servers` config (host:port strings; defaults to 127.0.0.1:11211)
+ * and stash it on `\Newspack_Nodes\Core::$memd`. Left null if the PECL
+ * `\Memcached` class is absent or no server registers — every consumer's
+ * null-safe `Core::$memd?->...` then fails soft.
+ */
+function newspack_event_logger_nodes_init_memcached(): void {
+	if ( ! \class_exists( '\Memcached' ) ) {
+		return;
+	}
+	$config  = \Newspack_Nodes\Config::load_config();
+	$servers = $config['memcache_servers'] ?? [ '127.0.0.1:11211' ];
+	if ( ! \is_array( $servers ) || empty( $servers ) ) {
+		$servers = [ '127.0.0.1:11211' ];
+	}
+	$memd = new \Memcached();
+	foreach ( $servers as $server ) {
+		$parts = \explode( ':', (string) $server );
+		$memd->addServer( $parts[0], (int) ( $parts[1] ?? 11211 ) );
+	}
+	\Newspack_Nodes\Core::$memd = empty( $memd->getServerList() ) ? null : $memd;
+}
+
+/**
  * Service-CommandInterpreter (CI) mounting.
  *
  * The substrate's `HTTP_In::dispatch` lazy-builds the
@@ -410,39 +434,36 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
  * path to the HTTP_In and silently drop.
  *
  * Each CI is a service-shaped CommandInterpreter — verbs are JSON-in,
- * JSON-out. Dependencies (Cli, ServerRegistry, Memcached_Cache) are
- * injected via the constructor so tests can stub them; production wires
- * the live `Bootstrap::base_dir()` + substrate-derived cache here.
+ * JSON-out. Stateful deps (Cli, ServerRegistry) are constructor-injected;
+ * the memcache-backed CIs read the shared `Core::$memd` handle directly.
  *
  * Named function (not a closure) so tests that wipe
  * `$GLOBALS['_wp_actions']` for isolation can re-attach the same callback.
  */
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandInterpreter $base_ci ): void {
 	$registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
-	$cache    = \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
 
 	$base_ci->make_node( 'Discovery_CI',   'discovery' );
-	$base_ci->make_node( 'Status_CI',      'status',      $cache );
+	$base_ci->make_node( 'Status_CI',      'status' );
 	$base_ci->make_node( 'Settings_CI',    'settings' );
 	$base_ci->make_node( 'Logger_CI',      'logger' );
-	$base_ci->make_node( 'Events_CI',      'events',      $cache );
+	$base_ci->make_node( 'Events_CI',      'events' );
 	$base_ci->make_node( 'Servers_CI',     'servers',     $registry );
-	$base_ci->make_node( 'Aggregator_CI',  'aggregator',  $registry, $cache );
-	$base_ci->make_node( 'Performance_CI', 'performance', $cache );
+	$base_ci->make_node( 'Aggregator_CI',  'aggregator',  $registry );
+	$base_ci->make_node( 'Performance_CI', 'performance' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 
 /**
- * Supply the Memcached_Cache for the substrate's Workers_CI mount. The
- * substrate ships Workers_CI but can't depend on the application's
- * Cache_Interface implementation directly; it asks via this filter and
- * uses null (offsetlog fallback for live-position lookups, no
- * SSE-slot heartbeat verb) when nothing answers.
+ * Hand the substrate's Workers_CI the shared `\Memcached` handle for live
+ * cursor-position reads (`Cli::live_position` → `->get()`). Null falls back
+ * to on-disk offsetlog reads. The SSE-slot heartbeat verb refreshes via
+ * `Sse_Slot_Pool::touch` against `Core::$memd`, independent of this filter.
  */
 \add_filter(
 	'newspack_nodes/workers_cache',
 	static function ( $cache ) {
-		return $cache ?? \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
+		return $cache ?? \Newspack_Nodes\Core::$memd;
 	}
 );
 

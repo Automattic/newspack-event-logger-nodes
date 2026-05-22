@@ -4,10 +4,11 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\FlameBuilder;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -210,8 +211,8 @@ class FlameBuilderTest extends TestCase {
 	// --- Per-URL aggregate (sums-not-means) -------------------------------
 
 	public function test_per_url_aggregate_sums_durations_across_requests(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -234,8 +235,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flush_persists_hourly_to_memcache(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -253,8 +254,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flush_persists_dimensional_status(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -271,8 +272,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flush_persists_categories_and_leaderboard(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -311,8 +312,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_timed_out_requests_excluded_from_timing_but_counted(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -331,8 +332,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_workers_excluded_from_timing(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -346,8 +347,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_per_server_tracking_only_when_hub(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb_spoke = new FlameBuilder();
 		$fb_spoke->set_stats_store( $store );
@@ -583,8 +584,8 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_set_clock_drives_bucket_key_derivation(): void {
 		// Use a fixed clock so we can pin the bucket key without timing flake.
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -608,8 +609,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_maintenance_triggers_flush_when_interval_elapsed(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -820,8 +821,9 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_apply_auto_tune_with_store_uses_memcache_lock(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+		$mc         = new InMemoryMemcached();
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new FlameBuilder();
 		$capture = new CaptureSink();
@@ -849,10 +851,11 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_apply_auto_tune_skipped_when_lock_held(): void {
-		$mc = new FakeMemcached();
+		$mc         = new InMemoryMemcached();
+		Core::$memd = $mc;
 		// Pre-occupy the lock as if a sibling worker holds it.
 		$mc->add( 'evlog:auto_disable_lock', 'someone-else', 60 );
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new FlameBuilder();
 		$capture = new CaptureSink();
@@ -879,8 +882,9 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_apply_auto_tune_no_op_when_queues_empty(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+		$mc         = new InMemoryMemcached();
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new FlameBuilder();
 		$capture = new CaptureSink();
@@ -919,8 +923,8 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_hourly_expiration_drops_buckets_outside_retention(): void {
 		// Use a tight retention (1 hour) and seed an in-memory hourly entry with a far-past bucket.
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 3600 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 3600 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -942,8 +946,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_url_index_computes_percentiles_from_durations(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -970,8 +974,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_url_index_caps_at_500_keeps_top_by_count(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -994,8 +998,8 @@ class FlameBuilderTest extends TestCase {
 	// --- merge_and_cap_dimensional Other rollover -------------------------
 
 	public function test_dim_other_rollover_when_too_many_values(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -1019,8 +1023,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_url_dim_other_rollover_uses_tighter_cap(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -1047,8 +1051,8 @@ class FlameBuilderTest extends TestCase {
 	// --- merge_and_cap_categories: Other rollover + total preserved -------
 
 	public function test_categories_other_rollover_preserves_total(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -1074,8 +1078,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_categories_expiration_drops_old_buckets(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 3600 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 3600 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -1102,8 +1106,8 @@ class FlameBuilderTest extends TestCase {
 	// --- Per-server leaderboard merge + cap (hub mode) --------------------
 
 	public function test_per_server_leaderboard_cap_global_upper_bound(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
@@ -1134,8 +1138,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_hub_mode_per_server_categories_tracked(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
@@ -1162,8 +1166,8 @@ class FlameBuilderTest extends TestCase {
 	public function test_hub_mode_per_server_dim_skips_server_dim(): void {
 		// In hub mode, per-server tracking should be populated for non-server dimensions
 		// (status, method, country, etc.) but NOT for the 'server' dimension (redundant).
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
@@ -1190,8 +1194,8 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_legacy_ema_flame_shape_migrated_on_load(): void {
 		// Pre-seed the store with the legacy EMA-style shape (no sum_value).
-		$mc       = new FakeMemcached();
-		$store    = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/legacy';
 		$url_hash = RequestBuilder::url_hash( $url );
 		$store->set_url_stats( $url_hash, [
@@ -1227,8 +1231,8 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_flame_raw_promoted_to_flame_on_reload(): void {
 		// Set store with an entry that has flame_raw set (post-flush format).
-		$mc       = new FakeMemcached();
-		$store    = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/promoted';
 		$url_hash = RequestBuilder::url_hash( $url );
 		$store->set_url_stats( $url_hash, [
@@ -1321,8 +1325,8 @@ class FlameBuilderTest extends TestCase {
 	public function test_store_flame_returns_true_without_target(): void {
 		// When target/sink unset, store_flame returns true (aggregation continues)
 		// without emitting a message.
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 
@@ -1464,8 +1468,8 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_per_server_leaderboard_skipped_when_server_name_empty(): void {
 		// Hub mode but empty server_name → no per-server data.
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
@@ -1486,8 +1490,8 @@ class FlameBuilderTest extends TestCase {
 	// --- Save state after multiple flushes (idempotency) ------------------
 
 	public function test_double_flush_is_idempotent(): void {
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new FlameBuilder();
 		$fb->set_stats_store( $store );
 

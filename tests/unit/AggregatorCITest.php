@@ -22,9 +22,10 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Aggregator_CI;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Aggregator_CI::class )]
@@ -38,6 +39,7 @@ class AggregatorCITest extends TestCase {
 		$this->tmp = '/tmp/aggregator-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
 		$this->use_base_dir( $this->tmp );
+		Core::$memd                   = new InMemoryMemcached();
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
 	}
@@ -55,7 +57,7 @@ class AggregatorCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_status_verb_returns_empty_map_when_no_servers(): void {
-		$ci     = new Aggregator_CI( new ServerRegistry(), new FakeMemcached() );
+		$ci     = new Aggregator_CI( new ServerRegistry() );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertSame( [], $result );
@@ -70,10 +72,9 @@ class AggregatorCITest extends TestCase {
 		] );
 		$registry->reset_cache();
 
-		$cache = new FakeMemcached();
-		$cache->set( 'aggregator_status:spoke1:p0', [ 'state' => 'connected', 'lag' => 1234 ], 60 );
+		Core::$memd->set( 'aggregator_status:spoke1:p0', [ 'state' => 'connected', 'lag' => 1234 ], 60 );
 
-		$ci     = new Aggregator_CI( $registry, $cache );
+		$ci     = new Aggregator_CI( $registry );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertIsArray( $result );
@@ -96,7 +97,7 @@ class AggregatorCITest extends TestCase {
 		] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI( $registry, new FakeMemcached() );
+		$ci     = new Aggregator_CI( $registry );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertArrayHasKey( 'spoke2', $result );
@@ -110,7 +111,7 @@ class AggregatorCITest extends TestCase {
 		$registry->add( 'spoke3', [ 'url' => 'https://x.example/', 'enabled' => true ] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI( $registry, new FakeMemcached() );
+		$ci     = new Aggregator_CI( $registry );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertArrayHasKey( 'spoke3', $result );
@@ -123,7 +124,7 @@ class AggregatorCITest extends TestCase {
 		$registry->add( 'sp', [ 'url' => 'https://x.example/', 'enabled' => true ] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI( $registry, new FakeMemcached() );
+		$ci     = new Aggregator_CI( $registry );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertCount( 1, $result['sp']['partitions'] );
@@ -134,8 +135,8 @@ class AggregatorCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_health_verb_reports_cache_available(): void {
-		$cache = new FakeMemcached();
-		$ci    = new Aggregator_CI( new ServerRegistry(), $cache );
+		// Core::$memd seeded in setUp().
+		$ci = new Aggregator_CI( new ServerRegistry() );
 
 		$before = \time();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
@@ -149,36 +150,10 @@ class AggregatorCITest extends TestCase {
 		$this->assertLessThanOrEqual( $after, $result['timestamp'] );
 	}
 
-	public function test_health_verb_reports_cache_unavailable(): void {
-		$cache = new class {
-			public function is_available(): bool {
-				return false;
-			}
-		};
-		$ci    = new Aggregator_CI( new ServerRegistry(), $cache );
+	public function test_health_verb_reports_cache_unavailable_when_memd_null(): void {
+		Core::$memd = null;
+		$ci         = new Aggregator_CI( new ServerRegistry() );
 
-		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
-
-		$this->assertTrue( $result['healthy'] );
-		$this->assertFalse( $result['cache'] );
-	}
-
-	public function test_health_verb_swallows_cache_throwable(): void {
-		$cache = new class {
-			public function is_available(): bool {
-				throw new \RuntimeException( 'memcache unreachable' );
-			}
-		};
-		$ci    = new Aggregator_CI( new ServerRegistry(), $cache );
-
-		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
-
-		$this->assertTrue( $result['healthy'] );
-		$this->assertFalse( $result['cache'] );
-	}
-
-	public function test_health_verb_with_null_cache_reports_unavailable(): void {
-		$ci     = new Aggregator_CI( new ServerRegistry(), null );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
 
 		$this->assertTrue( $result['healthy'] );
@@ -190,7 +165,7 @@ class AggregatorCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_servers_verb_returns_empty_sequential_array(): void {
-		$ci     = new Aggregator_CI( new ServerRegistry(), new FakeMemcached() );
+		$ci     = new Aggregator_CI( new ServerRegistry() );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertSame( [], $result );
@@ -206,7 +181,7 @@ class AggregatorCITest extends TestCase {
 		] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI( $registry, new FakeMemcached() );
+		$ci     = new Aggregator_CI( $registry );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertIsArray( $result );
@@ -228,7 +203,7 @@ class AggregatorCITest extends TestCase {
 		$registry->add( 'plain', [ 'url' => 'https://plain.example.com' ] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI( $registry, new FakeMemcached() );
+		$ci     = new Aggregator_CI( $registry );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertCount( 1, $result );
@@ -246,7 +221,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_status_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci    = new Aggregator_CI( new ServerRegistry(), new FakeMemcached() );
+		$ci    = new Aggregator_CI( new ServerRegistry() );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertIsString( $result );
@@ -255,7 +230,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_health_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci    = new Aggregator_CI( new ServerRegistry(), new FakeMemcached() );
+		$ci    = new Aggregator_CI( new ServerRegistry() );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
 
 		$this->assertIsString( $result );
@@ -264,7 +239,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_servers_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci    = new Aggregator_CI( new ServerRegistry(), new FakeMemcached() );
+		$ci    = new Aggregator_CI( new ServerRegistry() );
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertIsString( $result );

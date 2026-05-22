@@ -4,7 +4,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\RemoteSource;
 use Newspack_Event_Logger_Nodes\StreamMerger;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\SseFrameFactory;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
@@ -12,6 +11,7 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
 use Newspack_Nodes\Router;
 use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -712,9 +712,9 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_status_keys_written_to_memcache_on_connect(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteM', 'http://siteM.test/', 'tok' );
 
 		$status = $cache->get( 'aggregator_status:siteM:p0' );
@@ -732,9 +732,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_status_disconnect_records_error_and_backoff(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 		$sm->add_remote( 'siteN', 'http://siteN.test/', 'tok' );
 
@@ -1057,11 +1057,11 @@ class StreamMergerTest extends TestCase {
 		// http URLs at registration, so we construct a RemoteSource directly
 		// and add it to the merger's ref list so the helper can reach it.
 		$sm = new StreamMerger( "firehose", 0 );
-		$cache = new FakeMemcached();
-		$sm->set_cache( $cache );
+		$cache = new InMemoryMemcached();
+		Core::$memd = $cache;
 		$remote = new RemoteSource( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
 		$remote->set_require_https( true );
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		$this->poke_merger_remote_nodes( $sm, [ 'http-remote' => $remote ] );
 		// Connected + slot acquired so the maybe-send path is reached.
 		$this->poke_remote( $sm, 'http-remote', 'connected', true );
@@ -1122,9 +1122,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_success_response(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteHB', 'http://siteHB.test/', 'tok' );
 
 		Core::$now = 1000.0;
@@ -1142,9 +1142,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_wp_error(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteWPE', 'http://siteWPE.test/', 'tok' );
 
 		Core::$now = 1000.0;
@@ -1157,9 +1157,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_http_error_code(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteHTTPErr', 'http://siteHTTPErr.test/', 'tok' );
 
 		Core::$now = 1000.0;
@@ -1175,9 +1175,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_slot_expired(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteSlotExp', 'http://siteSlotExp.test/', 'tok' );
 
 		Core::$now = 1000.0;
@@ -1194,9 +1194,9 @@ class StreamMergerTest extends TestCase {
 
 	public function test_update_heartbeat_status_unexpected_response_shape(): void {
 		// Non-array, non-WP_Error response → 'error' / 'Unexpected ...'.
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteOdd', 'http://siteOdd.test/', 'tok' );
 
 		Core::$now = 1000.0;
@@ -1208,10 +1208,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_no_cache_noop(): void {
-		// No cache available → method short-circuits.
-		$failing = new FakeMemcached( fail_all: true );
-		$sm      = $this->make_merger();
-		$sm->set_cache( $failing );
+		// No shared handle → method short-circuits.
+		Core::$memd = null;
+		$sm         = $this->make_merger();
 		$sm->add_remote( 'siteCacheDown', 'http://siteCacheDown.test/', 'tok' );
 
 		Core::$now = 1000.0;
@@ -1696,22 +1695,21 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_record_successful_heartbeat_no_cache_noop(): void {
-		// Cache unavailable → record_successful_heartbeat short-circuits.
-		$failing = new FakeMemcached( fail_all: true );
-		$sm      = $this->make_merger();
-		$sm->set_cache( $failing );
+		// No shared handle → record_successful_heartbeat short-circuits.
+		Core::$memd = null;
+		$sm         = $this->make_merger();
 		$sm->add_remote( 'siteCacheDown', 'http://siteCacheDown.test/', 'tok' );
 
 		$this->invoke_remote( $sm, 'siteCacheDown', 'record_successful_heartbeat' );
 
-		// FakeMemcached(fail_all=true).get returns null → no key created.
-		$this->assertNull( $failing->get( 'aggregator_status:siteCacheDown:p0' ) );
+		// No handle → no key written; nothing to read back.
+		$this->addToAssertionCount( 1 );
 	}
 
 	public function test_clear_heartbeat_status_resets_fields(): void {
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$sm    = $this->make_merger();
-		$sm->set_cache( $cache );
+		Core::$memd = $cache;
 		$sm->add_remote( 'siteClear', 'http://siteClear.test/', 'tok' );
 
 		$key = 'aggregator_status:siteClear:p0';
@@ -2159,37 +2157,26 @@ class StreamMergerTest extends TestCase {
 	// Additional edge cases for higher coverage.
 	// =========================================================================
 
-	public function test_set_cache_propagates_to_existing_remote_children(): void {
-		// set_cache walks $remote_nodes and pushes the cache into each child.
-		$sm = $this->make_merger();
+	public function test_remote_children_write_to_shared_memd(): void {
+		// Children read Core::$memd directly — no per-child injection needed.
+		$cache      = new InMemoryMemcached();
+		Core::$memd = $cache;
+		$sm         = $this->make_merger();
 		$sm->add_remote( 'siteSC1', 'http://siteSC1.test/', 'tok' );
 		$sm->add_remote( 'siteSC2', 'http://siteSC2.test/', 'tok' );
 
-		$cache = new FakeMemcached();
-		$sm->set_cache( $cache );
-
-		// Verify children received the cache by triggering a status update
-		// that writes to memcache.
+		// Trigger a status update on a child that writes to the shared handle.
 		$h1 = $sm->test_get_handle( 'siteSC1' );
 		$sm->on_curl_data( $h1, $this->connected_frame( 1 ) );
 
-		// Status key should exist for siteSC1 — proves cache was injected.
 		$this->assertIsArray( $cache->get( 'aggregator_status:siteSC1:p0' ) );
 	}
 
-	public function test_set_cache_with_null_clears_children(): void {
-		// Setting cache to null clears it on children too (matches the
-		// `set_cache(?Cache_Interface)` nullable signature).
-		$sm    = $this->make_merger();
-		$cache = new FakeMemcached();
-		$sm->set_cache( $cache );
+	public function test_remote_children_noop_when_memd_null(): void {
+		// No shared handle → child status writes are no-ops, no exceptions.
+		Core::$memd = null;
+		$sm         = $this->make_merger();
 		$sm->add_remote( 'siteSCN', 'http://siteSCN.test/', 'tok' );
-
-		// Cache was used during add_remote — connection status is recorded.
-		$this->assertNotNull( $cache->get( 'aggregator_status:siteSCN:p0' ) );
-
-		// Now nullify; no exceptions.
-		$sm->set_cache( null );
 		$this->addToAssertionCount( 1 );
 	}
 

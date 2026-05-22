@@ -79,8 +79,6 @@ class RemoteSource extends Node {
 	private bool $verify_ssl    = true;
 	private bool $require_https = true;
 
-	private ?Cache_Interface $cache = null;
-
 	/** Owned multi handle, registered with the substrate's EventFramework. */
 	private ?\CurlMultiHandle $multi = null;
 
@@ -177,10 +175,6 @@ class RemoteSource extends Node {
 
 	public function url(): string {
 		return $this->url;
-	}
-
-	public function set_cache( ?Cache_Interface $cache ): void {
-		$this->cache = $cache;
 	}
 
 	public function set_verify_ssl( bool $verify ): void {
@@ -817,16 +811,8 @@ class RemoteSource extends Node {
 		return "aggregator_status:{$this->server_id}:p{$this->partition}";
 	}
 
-	private function cache(): ?Cache_Interface {
-		if ( null !== $this->cache ) {
-			return $this->cache->is_available() ? $this->cache : null;
-		}
-		$this->cache = Memcached_Cache::from_substrate_config();
-		return $this->cache->is_available() ? $this->cache : null;
-	}
-
 	private function update_connection_status( string $status, ?int $http_code = null, ?string $error = null, ?int $backoff = null ): void {
-		$cache = $this->cache();
+		$cache = Core::$memd;
 		if ( null === $cache ) {
 			return;
 		}
@@ -852,7 +838,7 @@ class RemoteSource extends Node {
 	}
 
 	private function record_successful_heartbeat(): void {
-		$cache = $this->cache();
+		$cache = Core::$memd;
 		if ( null === $cache ) {
 			return;
 		}
@@ -873,7 +859,7 @@ class RemoteSource extends Node {
 	}
 
 	private function record_sse_heartbeat(): void {
-		$cache = $this->cache();
+		$cache = Core::$memd;
 		if ( null === $cache ) {
 			return;
 		}
@@ -886,7 +872,7 @@ class RemoteSource extends Node {
 	}
 
 	private function clear_heartbeat_status(): void {
-		$cache = $this->cache();
+		$cache = Core::$memd;
 		if ( null === $cache ) {
 			return;
 		}
@@ -907,7 +893,7 @@ class RemoteSource extends Node {
 	}
 
 	private function update_heartbeat_status( $response, float $rtt, int $sent_at ): void {
-		$cache = $this->cache();
+		$cache = Core::$memd;
 		if ( null === $cache ) {
 			return;
 		}

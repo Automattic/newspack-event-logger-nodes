@@ -12,8 +12,8 @@
  *
  * Substrate config (num_partitions, max_lifespan, base_directory) is seeded
  * via TestCase::use_base_dir(), matching SettingsCITest / StatusCITest. The
- * Cache_Interface dep is stubbed via FakeMemcached so the stats path is
- * exercised without a real memcache server.
+ * shared `Core::$memd` handle is seeded with an in-memory `\Memcached` so the
+ * stats path is exercised without a real memcache server.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -22,24 +22,24 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Events_CI;
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Events_CI::class )]
 class EventsCITest extends TestCase {
 	private string $tmp;
-	private FakeMemcached $cache;
 
 	protected function setUp(): void {
 		parent::setUp();
 		// /tmp directly to dodge symlink-resolved sys_get_temp_dir on macOS,
 		// matching SettingsCITest / StatusCITest.
-		$this->tmp   = '/tmp/events-ci-test-' . \uniqid();
+		$this->tmp  = '/tmp/events-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
-		$this->cache = new FakeMemcached();
+		Core::$memd = new InMemoryMemcached();
 		$this->use_base_dir( $this->tmp );
 	}
 
@@ -54,7 +54,7 @@ class EventsCITest extends TestCase {
 	public function test_recent_verb_returns_data_meta_shape_when_empty(): void {
 		// No firehose logs on disk — verb still returns the canonical
 		// `{ data, meta }` envelope.
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 50 ] );
 
 		$this->assertIsArray( $result );
@@ -68,7 +68,7 @@ class EventsCITest extends TestCase {
 	public function test_recent_verb_default_limit_is_100(): void {
 		// Empty args body — verb should fall through to the legacy default
 		// limit of 100 (matches EventsController route default).
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'recent' );
 
 		$this->assertSame( 100, $result['meta']['limit'] );
@@ -77,14 +77,14 @@ class EventsCITest extends TestCase {
 	public function test_recent_verb_clamps_limit_low(): void {
 		// Mirror the legacy sanitize_callback: `max(1, min(1000, (int)$v))`.
 		// Negative input clamped to 1.
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => -5 ] );
 		$this->assertSame( 1, $result['meta']['limit'] );
 	}
 
 	public function test_recent_verb_clamps_limit_high(): void {
 		// Mirror the legacy sanitize_callback upper bound: 1000.
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 5000 ] );
 		$this->assertSame( 1000, $result['meta']['limit'] );
 	}
@@ -110,7 +110,7 @@ class EventsCITest extends TestCase {
 		$index = \pack( 'NN', 0, 0 );
 		\file_put_contents( "{$segment_dir}/0.idx", $index );
 
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 10 ] );
 
 		$this->assertCount( 1, $result['data'] );
@@ -127,7 +127,7 @@ class EventsCITest extends TestCase {
 	public function test_stats_verb_returns_data_meta_shape_when_empty(): void {
 		// No stats seeded — verb returns the canonical envelope with an
 		// empty time_series array.
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertIsArray( $result );
@@ -139,12 +139,12 @@ class EventsCITest extends TestCase {
 	public function test_stats_verb_returns_merged_hourly_buckets(): void {
 		// Seed one partition with one hourly bucket via Stats_Store.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_hourly( [
 			'2026-05-17-10' => [ 'count' => 3, 'sum_ms' => 1500.0, 'sum_peak_mb' => 30.0 ],
 		] );
 
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertCount( 1, $result['data']['time_series'] );
@@ -161,14 +161,14 @@ class EventsCITest extends TestCase {
 	public function test_stats_verb_merges_across_partitions(): void {
 		// Two partitions, same hour bucket — verb sums into one row.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2, 'max_lifespan' => 86400 ] );
-		( new Stats_Store( $this->cache, 0, 86400 ) )->set_hourly( [
+		( new Stats_Store( 0, 86400 ) )->set_hourly( [
 			'2026-05-17-10' => [ 'count' => 2, 'sum_ms' => 1000.0, 'sum_peak_mb' => 20.0 ],
 		] );
-		( new Stats_Store( $this->cache, 1, 86400 ) )->set_hourly( [
+		( new Stats_Store( 1, 86400 ) )->set_hourly( [
 			'2026-05-17-10' => [ 'count' => 5, 'sum_ms' => 2500.0, 'sum_peak_mb' => 50.0 ],
 		] );
 
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertCount( 1, $result['data']['time_series'] );
@@ -182,13 +182,13 @@ class EventsCITest extends TestCase {
 		// Two hour buckets, out of order in storage — ksort puts the
 		// earlier hour first in the output array.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_hourly( [
 			'2026-05-17-12' => [ 'count' => 1, 'sum_ms' => 100.0, 'sum_peak_mb' => 1.0 ],
 			'2026-05-17-09' => [ 'count' => 1, 'sum_ms' => 100.0, 'sum_peak_mb' => 1.0 ],
 		] );
 
-		$ci     = new Events_CI( $this->cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertCount( 2, $result['data']['time_series'] );
@@ -197,13 +197,13 @@ class EventsCITest extends TestCase {
 	}
 
 	public function test_stats_verb_fail_soft_when_cache_unavailable(): void {
-		// Cache-down: Stats_Store::get_hourly returns [], the verb returns
-		// the empty time_series envelope rather than throwing. Matches the
-		// legacy controller's fail-soft contract for stats reads.
+		// Cache-down (Core::$memd null): Stats_Store::get_hourly returns [], the
+		// verb returns the empty time_series envelope rather than throwing.
+		// Matches the legacy controller's fail-soft contract for stats reads.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
-		$failing_cache = new FakeMemcached( true );
+		Core::$memd = null;
 
-		$ci     = new Events_CI( $failing_cache );
+		$ci     = new Events_CI();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertSame( [], $result['data']['time_series'] );

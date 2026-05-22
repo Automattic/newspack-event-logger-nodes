@@ -19,13 +19,13 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\RemoteSource;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\SseFrameFactory;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( RemoteSource::class )]
@@ -169,24 +169,20 @@ class RemoteSourceTest extends TestCase {
 		$this->assertSame( $before + 1, $remote->counter() );
 	}
 
-	public function test_set_cache_overrides_default(): void {
-		$remote = $this->make_remote();
-		$cache  = new FakeMemcached();
-		$remote->set_cache( $cache );
-		// Triggering a status write reaches into the injected cache.
+	public function test_status_write_reaches_shared_memd(): void {
+		$remote     = $this->make_remote();
+		$cache      = new InMemoryMemcached();
+		Core::$memd = $cache;
+		// Triggering a status write reaches into the shared Core::$memd handle.
 		$this->invoke( $remote, 'update_connection_status', [ 'connecting', null, null, 1 ] );
 		$key = 'aggregator_status:siteA:p0';
 		$this->assertIsArray( $cache->get( $key ) );
 	}
 
-	public function test_set_cache_null_lazily_loads_substrate(): void {
-		// Passing null clears the injected cache; subsequent ops attempt the
-		// substrate fallback (Memcached_Cache::from_substrate_config). That
-		// returns a real instance but `is_available()` is false in test env
-		// (no real memcache), so `cache()` returns null and status writes are
-		// no-ops. The key invariant: no crash.
-		$remote = $this->make_remote();
-		$remote->set_cache( null );
+	public function test_status_write_is_noop_when_memd_null(): void {
+		// No shared handle → status writes are no-ops. The key invariant: no crash.
+		$remote     = $this->make_remote();
+		Core::$memd = null;
 		$this->invoke( $remote, 'update_connection_status', [ 'connecting', null, null, 1 ] );
 		$this->addToAssertionCount( 1 );
 	}
@@ -681,9 +677,9 @@ class RemoteSourceTest extends TestCase {
 		// The spoke's messages-stream emits periodic `heartbeat` SSE events;
 		// receiving one records last_sse_heartbeat so the aggregator dashboard's
 		// "Server HB" reflects spoke liveness (previously dropped → always "–").
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1234.0;
 
 		$remote->process_sse_chunk( "event: heartbeat\ndata: {\"ts\":1234}\n\n" );
@@ -934,9 +930,9 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_update_connection_status_writes_partial_to_cache(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$this->invoke( $remote, 'update_connection_status', [ 'connecting', null, null, 2 ] );
@@ -949,9 +945,9 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_update_connection_status_merges_with_existing_entry(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		// First write sets some fields.
@@ -968,17 +964,16 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_update_connection_status_no_cache_is_noop(): void {
 		// Failing cache → no write attempted.
-		$failing = new FakeMemcached( true );
-		$remote  = $this->make_remote();
-		$remote->set_cache( $failing );
+				$remote  = $this->make_remote();
+		Core::$memd = null;
 		$this->invoke( $remote, 'update_connection_status', [ 'connecting', null, null, 1 ] );
 		$this->addToAssertionCount( 1 );
 	}
 
 	public function test_record_successful_heartbeat_writes_cache(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$this->invoke( $remote, 'record_successful_heartbeat' );
@@ -989,17 +984,16 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_record_successful_heartbeat_no_cache_noop(): void {
-		$failing = new FakeMemcached( true );
-		$remote  = $this->make_remote();
-		$remote->set_cache( $failing );
+				$remote  = $this->make_remote();
+		Core::$memd = null;
 		$this->invoke( $remote, 'record_successful_heartbeat' );
 		$this->addToAssertionCount( 1 );
 	}
 
 	public function test_clear_heartbeat_status_zeros_fields(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 
 		// Pre-seed some fields.
 		$this->invoke( $remote, 'record_successful_heartbeat' );
@@ -1014,9 +1008,8 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_clear_heartbeat_status_no_cache_noop(): void {
-		$failing = new FakeMemcached( true );
-		$remote  = $this->make_remote();
-		$remote->set_cache( $failing );
+				$remote  = $this->make_remote();
+		Core::$memd = null;
 		$this->invoke( $remote, 'clear_heartbeat_status' );
 		$this->addToAssertionCount( 1 );
 	}
@@ -1026,9 +1019,9 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_update_heartbeat_status_success_response(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$response = [
@@ -1045,9 +1038,9 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_wp_error_response(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$wpe = new \WP_Error( 'timeout', 'Connection timed out' );
@@ -1059,9 +1052,9 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_http_error_code(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$response = [
@@ -1076,9 +1069,9 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_slot_expired(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$response = [
@@ -1093,9 +1086,9 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_unexpected_response_shape(): void {
-		$cache  = new FakeMemcached();
+		$cache  = new InMemoryMemcached();
 		$remote = $this->make_remote();
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		Core::$now = 1000.0;
 
 		$this->invoke( $remote, 'update_heartbeat_status', [ 'plain string', 0.0, 999 ] );
@@ -1105,9 +1098,8 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_update_heartbeat_status_no_cache_noop(): void {
-		$failing = new FakeMemcached( true );
-		$remote  = $this->make_remote();
-		$remote->set_cache( $failing );
+				$remote  = $this->make_remote();
+		Core::$memd = null;
 		Core::$now = 1000.0;
 
 		$this->invoke(
@@ -1165,11 +1157,11 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_maybe_send_heartbeat_refuses_non_https_when_required(): void {
 		// require_https=true + http:// URL: the heartbeat endpoint check fails.
-		$cache = new FakeMemcached();
+		$cache = new InMemoryMemcached();
 		$remote = new RemoteSource( 'http-remote', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
 		$remote->name( 'remote:http-remote' );
 		$remote->set_require_https( true );
-		$remote->set_cache( $cache );
+		Core::$memd = $cache;
 		$this->poke( $remote, 'connected', true );
 		$this->poke( $remote, 'slot', 5 );
 

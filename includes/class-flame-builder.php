@@ -1560,10 +1560,16 @@ class FlameBuilder extends Node {
 			return;
 		}
 
-		$cache        = $this->stats_store->cache();
+		$cache        = Core::$memd;
 		$lock_key     = 'evlog:auto_disable_lock';
 		$lock_timeout = 5;
 		$lock_value   = \bin2hex( \random_bytes( 8 ) );
+
+		// No shared handle → skip the cross-worker lock and just fire (single-process).
+		if ( null === $cache ) {
+			$this->fire_auto_tune_actions();
+			return;
+		}
 
 		if ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
 			return; // Lock held by another worker; retry on next flush.
@@ -1686,16 +1692,12 @@ class FlameBuilder extends Node {
 					}
 					$partition = (int) $parts[0];
 
-					// Read current substrate config for memcache + retention.
-					$config           = \Newspack_Event_Logger_Nodes\Config::load_config();
-					$max_lifespan     = (int) ( $config['max_lifespan'] ?? 86400 );
-					$memcache_servers = $config['memcache_servers'] ?? \Newspack_Event_Logger_Nodes\Memcached_Cache::DEFAULT_SERVERS;
-					if ( ! \is_array( $memcache_servers ) ) {
-						$memcache_servers = \Newspack_Event_Logger_Nodes\Memcached_Cache::DEFAULT_SERVERS;
-					}
+					// Read current substrate config for retention; the store reads
+					// the shared Core::$memd handle directly.
+					$config       = \Newspack_Event_Logger_Nodes\Config::load_config();
+					$max_lifespan = (int) ( $config['max_lifespan'] ?? 86400 );
 
-					$cache       = new \Newspack_Event_Logger_Nodes\Memcached_Cache( $memcache_servers );
-					$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $cache, $partition, $max_lifespan );
+					$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $partition, $max_lifespan );
 
 					/** @var self $patron */
 					$patron = $ci->patron();

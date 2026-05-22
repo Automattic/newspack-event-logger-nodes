@@ -31,10 +31,10 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
 use Newspack_Nodes\Service_CI;
@@ -51,16 +51,11 @@ class Events_CI extends Service_CI {
 	public const MAX_INDEX_ENTRIES = 100000;
 
 	/**
-	 * Build an Events_CI bound to the supplied cache.
-	 *
-	 * @param Cache_Interface|null $cache Backing store for Stats_Store. Production
-	 *                                     passes the shared Memcached_Cache; tests
-	 *                                     pass FakeMemcached. Null still works for
-	 *                                     the recent verb (which only reads disk)
-	 *                                     but the stats verb will return an empty
-	 *                                     time_series.
+	 * The `stats` verb reads per-partition Stats_Store off the shared
+	 * `Core::$memd` handle; a null handle yields an empty time_series. The
+	 * `recent` verb reads the firehose index off disk, independent of memcache.
 	 */
-	public function __construct( ?Cache_Interface $cache = null ) {
+	public function __construct() {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Workers_CI / Settings_CI /
 		// Status_CI / Discovery_CI / Logger_CI.
@@ -129,15 +124,15 @@ class Events_CI extends Service_CI {
 					],
 				];
 			},
-			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
+			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 				$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
 
 				$merged = [];
-				if ( null !== $cache ) {
+				if ( null !== Core::$memd ) {
 					for ( $p = 0; $p < $num_partitions; $p++ ) {
-						$store = new Stats_Store( $cache, $p, $max_lifespan );
+						$store = new Stats_Store( $p, $max_lifespan );
 						foreach ( $store->get_hourly() as $hour => $row ) {
 							if ( ! isset( $merged[ $hour ] ) ) {
 								$merged[ $hour ] = [

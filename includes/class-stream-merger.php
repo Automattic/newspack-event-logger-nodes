@@ -68,9 +68,6 @@ class StreamMerger extends Node {
 	/** @var float Last commit_all timestamp. */
 	private float $last_commit_time = 0.0;
 
-	/** @var Cache_Interface|null Status writer (memcache); null when injection hasn't happened yet. */
-	private ?Cache_Interface $cache = null;
-
 	/** @var bool Whether to require HTTPS (default: true, blocks plain HTTP). */
 	private bool $require_https = true;
 
@@ -182,13 +179,6 @@ class StreamMerger extends Node {
 	// =========================================================================
 	// Configuration / DI
 	// =========================================================================
-
-	public function set_cache( ?Cache_Interface $cache ): void {
-		$this->cache = $cache;
-		foreach ( $this->remote_nodes as $remote ) {
-			$remote->set_cache( $cache );
-		}
-	}
 
 	public function set_require_https( bool $require ): void {
 		if ( ! $require && $this->require_https ) {
@@ -323,14 +313,12 @@ class StreamMerger extends Node {
 		}
 
 		$remote = new RemoteSource( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->remote_topic, $this->partition );
-		// Propagate global policy + cache injection so children inherit current
-		// hub config (operator toggles set_verify_ssl/set_require_https at
-		// runtime; new children must reflect those without needing a respawn).
+		// Propagate global policy so children inherit current hub config
+		// (operator toggles set_verify_ssl/set_require_https at runtime; new
+		// children must reflect those without needing a respawn). Memcache is
+		// read off the shared Core::$memd handle, so no per-child injection.
 		$remote->set_verify_ssl( $this->verify_ssl );
 		$remote->set_require_https( $this->require_https );
-		if ( null !== $this->cache ) {
-			$remote->set_cache( $this->cache );
-		}
 		// Children pipe to the same sink the merger targets — straight through
 		// to firehose:topic. The rewrite filter fires inside RemoteSource.
 		if ( null !== $this->sink ) {
@@ -470,9 +458,6 @@ class StreamMerger extends Node {
 			$remote = new RemoteSource( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
 			$remote->set_verify_ssl( $this->verify_ssl );
 			$remote->set_require_https( $this->require_https );
-			if ( null !== $this->cache ) {
-				$remote->set_cache( $this->cache );
-			}
 			if ( null !== $this->sink ) {
 				$remote->sink( $this->sink );
 			}

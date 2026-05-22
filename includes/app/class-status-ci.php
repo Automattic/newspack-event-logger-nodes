@@ -11,10 +11,9 @@
  *         Enough for an admin dashboard to render a "is this thing alive?"
  *         surface without making a dozen separate calls.
  *
- * Cache is the only injectable dependency — the substrate Config is a
- * global accessed directly, matching the legacy controller. The cache
- * probe is wrapped in a Throwable catch so the status endpoint never
- * fails: a cache outage reports `cache_available=false`, not 500.
+ * The substrate Config is a global accessed directly, matching the legacy
+ * controller. `cache_available` reflects whether the shared `Core::$memd`
+ * handle is configured.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -23,36 +22,21 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
 
 class Status_CI extends CommandInterpreter {
 
-	/**
-	 * Build a Status_CI bound to the supplied cache.
-	 *
-	 * @param object|null $cache Anything exposing `is_available(): bool`.
-	 *                            Production passes \Newspack_Event_Logger_Nodes\Memcached_Cache;
-	 *                            tests pass FakeMemcached or an anon stub. Null
-	 *                            reports cache_available=false without invoking
-	 *                            anything.
-	 */
-	public function __construct( ?object $cache = null ) {
+	public function __construct() {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Workers_CI / Discovery_CI,
 		// which extend CommandInterpreter and also skip the parent call.
 		$this->commands( [
-			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): array {
+			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
 				$config = RuntimeConfig::load_config();
 
-				$cache_available = false;
-				if ( null !== $cache ) {
-					try {
-						$cache_available = (bool) $cache->is_available();
-					} catch ( \Throwable $e ) {
-						// Leave cache_available=false; status endpoint never fails.
-					}
-				}
+				$cache_available = null !== Core::$memd;
 
 				return [
 					'status'          => 'ok',

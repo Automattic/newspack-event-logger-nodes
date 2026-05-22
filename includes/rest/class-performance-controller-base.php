@@ -14,8 +14,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 \defined( 'ABSPATH' ) || exit;
 
-use Newspack_Event_Logger_Nodes\Cache_Interface;
-use Newspack_Event_Logger_Nodes\Memcached_Cache;
+use Newspack_Nodes\Core;
 
 abstract class PerformanceControllerBase {
 	/**
@@ -31,38 +30,7 @@ abstract class PerformanceControllerBase {
 	 */
 	public const RATE_LIMIT_REQUESTS = 600;
 
-	/**
-	 * Cache used for rate-limit counters. Lazy; production reaches for memcache,
-	 * tests inject a FakeMemcached via set_cache().
-	 *
-	 * @var Cache_Interface|null
-	 */
-	private static ?Cache_Interface $cache = null;
-
 	abstract public function register_routes(): void;
-
-	/**
-	 * Inject the cache driver (used by tests to wire FakeMemcached).
-	 */
-	public static function set_cache( ?Cache_Interface $cache ): void {
-		self::$cache = $cache;
-	}
-
-	/**
-	 * Lazy memcached factory: defer to filtered servers, fall back to defaults.
-	 * Once instantiated, reused for the rest of the request.
-	 *
-	 * Public so subclasses across the package (Workers, Overview, Aggregator,
-	 * etc.) can resolve the same shared instance without reflection. Tests
-	 * inject a FakeMemcached via `set_cache()`; once injected, every
-	 * `cache()` call returns it.
-	 */
-	public static function cache(): Cache_Interface {
-		if ( null === self::$cache ) {
-			self::$cache = Memcached_Cache::from_substrate_config();
-		}
-		return self::$cache;
-	}
 
 	public function read_permissions_check(): bool|\WP_Error {
 		if ( ! \current_user_can( 'manage_options' ) ) {
@@ -110,8 +78,8 @@ abstract class PerformanceControllerBase {
 	 * @return bool|\WP_Error True if allowed, WP_Error if rate limited.
 	 */
 	public function check_rate_limit( string $key, int $max_per_window = self::RATE_LIMIT_REQUESTS, int $window_s = self::RATE_LIMIT_WINDOW ): bool|\WP_Error {
-		$cache = self::cache();
-		if ( ! $cache->is_available() ) {
+		$memd = Core::$memd;
+		if ( null === $memd ) {
 			return true; // Fail-open — better degraded than blocked.
 		}
 		$now           = \time();
@@ -123,8 +91,8 @@ abstract class PerformanceControllerBase {
 		}
 
 		// add() returns false if key exists; that's fine, we just bump it.
-		$cache->add( $cache_key, 0, $ttl );
-		$count = (int) ( $cache->get( $cache_key ) ?? 0 );
+		$memd->add( $cache_key, 0, $ttl );
+		$count = (int) ( $memd->get( $cache_key ) ?: 0 );
 
 		if ( $count >= $max_per_window ) {
 			$retry_after = \max( 1, $window_start + $window_s - $now );
@@ -134,7 +102,7 @@ abstract class PerformanceControllerBase {
 				[ 'status' => 429 ]
 			);
 		}
-		$cache->set( $cache_key, $count + 1, $ttl );
+		$memd->set( $cache_key, $count + 1, $ttl );
 		return true;
 	}
 
