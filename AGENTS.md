@@ -2,7 +2,7 @@
 
 WordPress plugin: the application layer of the new event-logger. Replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo with two plugins — this one (application) and `newspack-nodes` (runtime substrate). High-throughput request-lifecycle logging, real-time SSE streaming, flame-graph generation, hub/spoke aggregation — expressed as Nodes.
 
-This plugin owns: `LogManager`, `RequestBuilder`, `FlameBuilder`, `JobRouter`, `JobWorker`, `JobIntake`, `StreamMerger`, `StatsAggregator`, `Stats_Store`, `ServerRegistry`, `SettingsSync`, `RemoteManager`, `Memcached_Cache`, REST controllers, React dashboards, topology files. Depends on `newspack-nodes` for everything substrate-level.
+This plugin owns: `LogManager`, `RequestBuilder`, `FlameBuilder`, `JobRouter`, `JobWorker`, `JobIntake`, `StreamMerger`, `StatsAggregator`, `Stats_Store`, `ServerRegistry`, `SettingsSync`, `RemoteManager`, REST controllers, React dashboards, topology files. Depends on `newspack-nodes` for everything substrate-level. Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached` built once by this plugin's bootstrap) — there is no plugin-local cache class.
 
 ## Plugin Load Order
 
@@ -15,10 +15,10 @@ Workaround: `newspack-event-logger-nodes.php` defers the `require_once` block vi
 Every code-writing turn — main Claude AND every subagent dispatched via the Agent tool — MUST:
 
 1. **Invoke `superpowers:test-driven-development` BEFORE writing any code.** No production code without a failing test first.
-2. **Invoke `superpowers:simplify` BEFORE every commit.** Review changed code for reuse, quality, efficiency; fix issues before committing.
+2. **Before every commit, main Claude runs `/code-review`** (replaces `superpowers:simplify`). It spawns its own review agents, so subagents CANNOT run it and do NOT commit; main Claude always runs it after a subagent finishes, then commits.
 
 Subagent prompts MUST include the literal phrase:
-> "Invoke `superpowers:test-driven-development` via the Skill tool BEFORE writing any code. Invoke `superpowers:simplify` via the Skill tool BEFORE every commit. Both are mandatory; do not skip."
+> "Invoke `superpowers:test-driven-development` via the Skill tool BEFORE writing any code — mandatory, no exceptions. Do NOT commit: implement, run your tests, and report; main Claude runs `/code-review` and commits."
 
 Subagents have no memory of conversation conventions; omission is a workflow violation. See `~/.claude/rules/workflow-discipline.md`.
 
@@ -148,8 +148,8 @@ These are mistakes that have actually happened. Pay attention.
 - **PIPE_BUF (4096 bytes) for firehose writes.** LogManager truncates >4KB to `{"truncated": true}`. Anything that might exceed (job payloads with serialized option blobs, image-handler args, full SettingsSync sweeps) MUST use `JobIntake::queue()`.
 - **`outputs` (plural), not `output`.** Log reader registration uses `outputs` array. Singular is silent failure.
 - **Hub vs spoke routing.** Nodes only ever write `k:"job"`. Every node's JobWorker dispatches its own `job` entries against `newspack_nodes/job_handlers`. On the hub, StreamMerger's `newspack_nodes/aggregator_ingest_line` filter rewrites incoming spoke lines to `k:"remote_job"`; the hub's JobWorker dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent — a job type registers under whichever side(s) should handle it (local on every node, hub-aggregated, or both).
-- **`Memcached_Cache::DEFAULT_SERVERS` constant.** Don't hardcode `127.0.0.1:11211`; use the constant.
-- **`Cache_Interface` for FakeMemcached test parity.** Both `Memcached_Cache` and the test `FakeMemcached` implement `Cache_Interface`. New cache call-sites should accept `Cache_Interface`, not `Memcached_Cache`.
+- **One shared `Core::$memd` handle — read it, don't build your own.** Caching is the single `\Newspack_Nodes\Core::$memd` (`\Memcached`), built once at boot by `newspack_event_logger_nodes_init_memcached()` from the substrate's `memcache_servers` config (defaults to `127.0.0.1:11211`). Consumers (`Stats_Store`, the service CIs) read `Core::$memd` directly with null-safe `Core::$memd?->...`; don't hardcode server lists or new up a second connection.
+- **Tests set `Core::$memd` to an in-memory `\Memcached` double.** There is no `Cache_Interface` / `Memcached_Cache` to inject — the substrate ships an in-memory `\Memcached` double (`tests/Helpers/InMemoryMemcached.php`) that tests assign to `Core::$memd` in setUp. New cache call-sites read `Core::$memd`; nothing should type-hint a cache interface.
 - **Salt rotation requires worker restart.** `Stats_Store::flush_all()` orphans keys, but workers cache `prefix` at construction. Restart workers after rotation for immediate effect.
 - **Stats fail-soft, SSE slots fail-closed.** Don't unify them. Dashboards must show "no data" on memcache failure. SSE connections must reject (HTTP 429) — the slot pool IS the rate limit.
 - **Application classes register with CommandInterpreter.** `newspack-event-logger-nodes.php` calls `\Newspack_Nodes\CommandInterpreter::register_class('FlameBuilder', ...)` etc. for FlameBuilder, JobRouter, JobWorker, RequestBuilder, StreamMerger. New application Node subclasses must register too.

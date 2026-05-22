@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Caching gutted down to the single shared `Core::$memd` handle.** Deleted the
+  plugin-local `Memcached_Cache` class, the `Cache_Interface` abstraction, and
+  the `FakeMemcached` test class. Caching is now `\Newspack_Nodes\Core::$memd` (a
+  raw `\Memcached`), built once at boot by
+  `newspack_event_logger_nodes_init_memcached()` from the substrate's
+  `memcache_servers` config and stashed on the substrate `Core`. `Stats_Store`
+  and the memcache-backed service CIs (`Status_CI`, `Events_CI`, `Aggregator_CI`,
+  `Performance_CI`) dropped their injected-cache constructor params and read
+  `Core::$memd` directly (null-safe). `Sse_Slot_Pool::wire()` and the
+  `newspack_nodes/workers_cache` filter both feed the substrate off `Core::$memd`.
+  Tests set `Core::$memd` to the substrate's in-memory `\Memcached` double
+  (`tests/Helpers/InMemoryMemcached.php`) instead of injecting a cache.
 - **CI verbs return structured data, matching the substrate's de-double-encoded
   command protocol** (newspack-nodes ≥ Unreleased). Verbs return live PHP
   structures instead of `wp_json_encode`'d strings, and the synced

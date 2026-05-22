@@ -498,7 +498,7 @@ Per-key prefix: `evlog[:salt]:p{N}:{namespace}:...`
 
 Overflow rolls into a synthetic `Other` bucket. The `total` pseudo-category is preserved before sorting — see the existing FlameBuilder implementation; do not regress when porting.
 
-**`get_multi` batching is essential.** Reader paths multi-get across all retention buckets per partition in one round-trip. Per-key `get` is a latency cliff. Both `Memcached_Cache` and `FakeMemcached` (test double) implement multi-get.
+**`get_multi` batching is essential.** Reader paths multi-get across all retention buckets per partition in one round-trip. Per-key `get` is a latency cliff. The shared `Core::$memd` (`\Memcached`) provides `getMulti` natively; the in-memory test double mirrors it.
 
 ## Stats_Store: Sums-Not-Means + Salt Rotation
 
@@ -751,7 +751,7 @@ Per-key documentation lives in the substrate; this plugin treats them as read-on
 
 Most config keys read through `Config::load_config()` which has a 5s in-process cache — a worker restart isn't needed for most changes. Exceptions:
 - `num_partitions` — wired into Topic/Partition construction at worker bootstrap; changing it requires `wp nodes restart` of all topology workers.
-- `memcache_servers` — Memcached_Cache caches its connection; restart required.
+- `memcache_servers` — the shared `Core::$memd` holds the one connection, built once at boot; restart required to pick up a server change.
 - Salt rotation (`Stats_Store::flush_all()`) — workers cache `prefix` at construction; restart for immediate effect.
 
 ## REST + React
