@@ -130,22 +130,21 @@ The 9 service CIs hook `newspack_nodes/request_graph_ready` and mount themselves
 
 ```php
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandInterpreter $base_ci ): void {
-    $cli      = new \Newspack_Nodes\Cli( \Newspack_Nodes\Bootstrap::base_dir() );
     $registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
-    $cache    = \Newspack_Event_Logger_Nodes\Memcached_Cache::from_substrate_config();
 
-    $base_ci->make_node( 'Workers_CI',     'workers',     $cli, $cache );
     $base_ci->make_node( 'Discovery_CI',   'discovery' );
-    $base_ci->make_node( 'Status_CI',      'status',      $cache );
+    $base_ci->make_node( 'Status_CI',      'status' );
     $base_ci->make_node( 'Settings_CI',    'settings' );
     $base_ci->make_node( 'Logger_CI',      'logger' );
-    $base_ci->make_node( 'Events_CI',      'events',      $cache );
+    $base_ci->make_node( 'Events_CI',      'events' );
     $base_ci->make_node( 'Servers_CI',     'servers',     $registry );
-    $base_ci->make_node( 'Aggregator_CI',  'aggregator',  $registry, $cache );
-    $base_ci->make_node( 'Performance_CI', 'performance', $cache );
+    $base_ci->make_node( 'Aggregator_CI',  'aggregator',  $registry );
+    $base_ci->make_node( 'Performance_CI', 'performance' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 ```
+
+The memcache-backed CIs (`Status_CI`, `Events_CI`, `Aggregator_CI`, `Performance_CI`) no longer take an injected cache — they read the shared `\Newspack_Nodes\Core::$memd` handle directly, which the plugin bootstrap builds once via `newspack_event_logger_nodes_init_memcached()` before the request graph mounts. `Workers_CI` itself moved to the substrate (mounted alongside Classes/Layouts/Topologies); the plugin hands it `Core::$memd` through the `newspack_nodes/workers_cache` filter rather than constructing it here.
 
 `make_node()` does three things atomically: instantiates the FQCN registered under the shell name, calls `$node->name($name)` (so the router can find it), and `$node->sink($this)` (so its reply walks back through the base CI → router → `_http`). Skipping the sink wiring — as the original M2 land did when it just called `register_class()` at `rest_api_init` priority 11 — leaves the CI registered but unwired; every reply silently drops on the floor because there's no path back to `HTTP_Out`. That was the substrate fix in commit `24921f5`.
 
@@ -197,15 +196,15 @@ There is no per-verb `try/catch`. Adding one breaks the contract; the central ca
 
 ### Verb reference
 
-#### `workers` — Workers_CI (`includes/app/class-workers-ci.php`)
+#### `workers` — Workers_CI (now `\Newspack_Nodes\Rest\Workers_CI`, in the substrate)
 
-Replaces: `class-workers-controller.php`, the `heartbeat` JSON method on `class-firehose-controller.php`. Constructor takes `(object $cli, ?object $cache = null)`; production passes `\Newspack_Nodes\Cli` + `Memcached_Cache`.
+Replaces: `class-workers-controller.php`, the `heartbeat` JSON method on `class-firehose-controller.php`. Since moved to the substrate (`newspack-nodes/includes/rest/class-workers-ci.php`) and mounted by the substrate's own `request_graph_ready` hook. Constructor takes `(object $cli, ?object $cache = null)`; production passes `\Newspack_Nodes\Cli` plus the shared `\Newspack_Nodes\Core::$memd` (a `\Memcached`), supplied via the `newspack_nodes/workers_cache` filter. A null cache falls back to on-disk offsetlog cursor reads.
 
 | Verb | Args | Returns | Notes |
 |------|------|---------|-------|
 | `list` | `""` (empty) | JSON list of workers `[{type, partition, position, ...}]`. `position` back-filled via `Cli::live_position()` per worker. | No auth check on the CI; REST route gates `manage_options`. |
 | `restart` | `{types: string[], partition?: int}` (default partition `-1` = all) | `{restarted: <Cli::restart_workers return>}` | No auth check on the CI; REST route gates `manage_options`. |
-| `heartbeat` | `{slot: int, ttl?: int=10, partition?: int=-1}` | `{success: bool, slot: int}` | Touches SSE slot via `Memcached_Cache::touch_sse_slot()`. Throws if cache wasn't injected (`cache not configured`) or `slot < 0` (`slot required`). |
+| `heartbeat` | `{slot: int, ttl?: int=10, partition?: int=-1}` | `{success: bool, slot: int}` | Refreshes the SSE slot via `Sse_Slot_Pool::touch( ..., $partition )` against `Core::$memd`. Throws if `Core::$memd` is null (`cache not configured`) or `slot < 0` (`slot required`). |
 
 #### `discovery` — Discovery_CI (`includes/app/class-discovery-ci.php`)
 
@@ -217,7 +216,7 @@ Replaces: `class-discovery-controller.php`. No constructor dependencies — read
 
 #### `status` — Status_CI (`includes/app/class-status-ci.php`)
 
-Replaces: `class-status-controller.php`. Constructor takes `(?object $cache = null)`.
+Replaces: `class-status-controller.php`. No constructor dependencies — the cache probe reads the shared `Core::$memd` handle directly.
 
 | Verb | Args | Returns | Notes |
 |------|------|---------|-------|
@@ -243,7 +242,7 @@ Replaces: `class-logger-controller.php`. No constructor dependencies — reads t
 
 #### `events` — Events_CI (`includes/app/class-events-ci.php`)
 
-Replaces: `class-events-controller.php`. Powers the `event-dashboards` React tree. Constructor takes `(?Cache_Interface $cache = null)`.
+Replaces: `class-events-controller.php`. Powers the `event-dashboards` React tree. No constructor dependencies — the `stats` verb reads per-partition `Stats_Store` off the shared `Core::$memd` handle (null handle → empty `time_series`).
 
 | Verb | Args | Returns | Notes |
 |------|------|---------|-------|
@@ -265,7 +264,7 @@ Replaces: `class-servers-controller.php`. Hub-side server registry. Constructor 
 
 #### `aggregator` — Aggregator_CI (`includes/app/class-aggregator-ci.php`)
 
-Replaces: `class-aggregator-controller.php`, `class-aggregator-status-controller.php`. The legacy `AggregatorStatusController` was the canonical `/status` implementation; the stub in `AggregatorController::get_status()` was a thin delegator. Constructor takes `(ServerRegistry $registry, ?object $cache = null)`.
+Replaces: `class-aggregator-controller.php`, `class-aggregator-status-controller.php`. The legacy `AggregatorStatusController` was the canonical `/status` implementation; the stub in `AggregatorController::get_status()` was a thin delegator. Constructor takes `(ServerRegistry $registry)` — the per-partition status + health probes read the shared `Core::$memd` handle directly.
 
 | Verb | Args | Returns | Notes |
 |------|------|---------|-------|
@@ -275,7 +274,7 @@ Replaces: `class-aggregator-controller.php`, `class-aggregator-status-controller
 
 #### `performance` — Performance_CI (`includes/app/class-performance-ci.php`)
 
-Replaces: `class-perf-overview-controller.php`, `class-perf-urls-controller.php`, `class-perf-requests-controller.php`, `class-performance-controller.php`, `class-perf-hooks-controller.php`, `class-perf-hooks-available-controller.php`, `class-perf-config-controller.php`, `class-perf-settings-controller.php`, the `logs`+`status` JSON methods on `class-firehose-controller.php`, the timeline JSON method on `class-gyroscope-controller.php`, and all of `class-request-log-controller.php`. Constructor takes `(?Cache_Interface $cache = null)`.
+Replaces: `class-perf-overview-controller.php`, `class-perf-urls-controller.php`, `class-perf-requests-controller.php`, `class-performance-controller.php`, `class-perf-hooks-controller.php`, `class-perf-hooks-available-controller.php`, `class-perf-config-controller.php`, `class-perf-settings-controller.php`, the `logs`+`status` JSON methods on `class-firehose-controller.php`, the timeline JSON method on `class-gyroscope-controller.php`, and all of `class-request-log-controller.php`. No constructor dependencies — reads the shared `Core::$memd` handle directly for the stats-backed verbs.
 
 **Every verb requires `manage_options`** (legacy parity — every replaced controller enforced it).
 

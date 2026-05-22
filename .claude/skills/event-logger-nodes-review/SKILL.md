@@ -43,15 +43,13 @@ The filter-based registration uses `outputs` (array), not `output` (string). Sin
 
 Anywhere you see `'output' => '...'` in a `newspack_nodes/log_readers` filter result, that's wrong.
 
-### 5. Cache_Interface, not Memcached_Cache
+### 5. Read the shared `Core::$memd`, don't inject a cache
 
-Tests inject a FakeMemcached via `PerformanceControllerBase::set_cache()`. New code that accepts `Memcached_Cache` directly (rather than the `Cache_Interface` it implements) breaks injection.
+Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached`). There is no `Cache_Interface` / `Memcached_Cache` to type-hint or inject — those were deleted. New code that adds a cache constructor param, type-hints a cache interface, or revives a per-class cache field is fighting the gut; consumers (`Stats_Store`, the service CIs) read `Core::$memd` directly with null-safe `Core::$memd?->...`. Tests set `Core::$memd` to the substrate's in-memory `\Memcached` double (`tests/Helpers/InMemoryMemcached.php`) in setUp — no `set_cache()` injection seam anymore.
 
-Same rule for any new component that holds a memcache reference: type-hint the interface, not the concrete class.
+### 6. One connection — don't build your own or hardcode servers
 
-### 6. Memcached_Cache::DEFAULT_SERVERS
-
-Don't hardcode `127.0.0.1:11211` in callers. Use the constant. Single source of truth for the default server list.
+`Core::$memd` is built once at boot by `newspack_event_logger_nodes_init_memcached()` from the substrate's `memcache_servers` config (defaults to `127.0.0.1:11211`). A diff that hardcodes a server list or news up a second `\Memcached` connection is wrong — read the shared handle. (The old `Memcached_Cache::DEFAULT_SERVERS` constant is gone with the class.)
 
 ### 7. Salt rotation behavior
 
@@ -125,7 +123,7 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 ## Common review nits that aren't bugs
 
 - The 9-namespace memcache schema looks redundant at first glance (why not collapse?). It's deliberate — different access patterns benefit from different keys, and the `get_multi` batching across all namespaces is essential for dashboard latency.
-- The `Memcached_Cache` rename (from `Memcached`) avoids colliding with PHP's bundled `\Memcached` class — don't ask why it has the awkward name.
+- Reading `\Newspack_Nodes\Core::$memd` (the raw `\Memcached`) directly from many classes looks like a missing abstraction, but it's the intended shape post-gut — one shared handle, null-safe access, no `Cache_Interface` indirection.
 - Application classes register with the substrate's CommandInterpreter — that's fine and intentional, even though they're not technically substrate.
 
 ## Related Skills
