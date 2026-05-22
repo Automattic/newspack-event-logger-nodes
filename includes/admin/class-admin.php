@@ -37,7 +37,6 @@
 namespace Newspack_Event_Logger_Nodes\Admin;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\Memcached_Cache;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Cli;
@@ -1245,16 +1244,10 @@ class Admin {
 			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
 		}
 
-		// Stats_Store::flush_all() only writes to the salt option — the
-		// Cache_Interface is unused on this path. Pass a real
-		// Memcached_Cache so the constructor signature is happy without
-		// allocating a separate test-double class.
-		$config         = Config::load_config();
-		$memcache_hosts = $config['memcache_servers'] ?? Memcached_Cache::DEFAULT_SERVERS;
-		if ( ! \is_array( $memcache_hosts ) ) {
-			$memcache_hosts = Memcached_Cache::DEFAULT_SERVERS;
-		}
-		$stats = new Stats_Store( new Memcached_Cache( $memcache_hosts ), 0, (int) ( $config['max_lifespan'] ?? 86400 ) );
+		// Stats_Store::flush_all() only rotates the salt option — it doesn't
+		// touch the cache, so no memcache handle is needed on this path.
+		$config = Config::load_config();
+		$stats  = new Stats_Store( 0, (int) ( $config['max_lifespan'] ?? 86400 ) );
 		$stats->flush_all();
 
 		// Restart every worker across every active topology. Long-running

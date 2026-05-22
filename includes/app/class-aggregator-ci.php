@@ -33,10 +33,10 @@
  * controllers gated every route through `read_permissions_check()`,
  * which enforces the capability.
  *
- * Cache injection mirrors Status_CI's pattern: the cache is duck-typed
- * (anything exposing `is_available(): bool`, plus `get($key)` for the
- * status verb). Production wiring passes `Memcached_Cache`; tests pass
- * `FakeMemcached` or anonymous stubs.
+ * Memcache reads go through the shared `Core::$memd` handle: the `status`
+ * verb reads `aggregator_status:{id}:p{N}` per partition; the `health` verb
+ * reports whether the handle is configured. The ServerRegistry is the only
+ * injected dependency (tests pass a fresh instance per test).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -46,6 +46,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\ServerRegistry;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Service_CI;
 
 \defined( 'ABSPATH' ) || exit;
@@ -53,28 +54,20 @@ use Newspack_Nodes\Service_CI;
 class Aggregator_CI extends Service_CI {
 
 	/**
-	 * Build an Aggregator_CI bound to the supplied registry and cache.
-	 *
-	 * @param ServerRegistry $registry Hub-side server registry. Tests pass
-	 *                                  a fresh instance per test so they
-	 *                                  don't share state.
-	 * @param object|null    $cache    Anything exposing `is_available(): bool`
-	 *                                  and `get(string $key)`. Production
-	 *                                  passes `Memcached_Cache`; tests pass
-	 *                                  `FakeMemcached` or an anon stub. Null
-	 *                                  reports `cache=false` on `health` and
-	 *                                  empty partition blocks on `status`.
+	 * @param ServerRegistry $registry Hub-side server registry. Tests pass a
+	 *                                  fresh instance per test so they don't
+	 *                                  share state.
 	 */
-	public function __construct( ServerRegistry $registry, ?object $cache = null ) {
+	public function __construct( ServerRegistry $registry ) {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Workers_CI / Servers_CI /
 		// Status_CI / Discovery_CI / Logger_CI / Events_CI / Settings_CI.
-		$this->commands( $this->verb_table( $registry, $cache ) );
+		$this->commands( $this->verb_table( $registry ) );
 	}
 
-	private function verb_table( ServerRegistry $registry, ?object $cache ): array {
+	private function verb_table( ServerRegistry $registry ): array {
 		return [
-			'status'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry, $cache ): array {
+			'status'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): array {
 				self::require_manage_options();
 				$registry->reset_cache();
 				$servers = $registry->get_all();
@@ -89,7 +82,7 @@ class Aggregator_CI extends Service_CI {
 					}
 					$partitions = [];
 					for ( $p = 0; $p < $num_partitions; $p++ ) {
-						$val = null !== $cache ? $cache->get( "aggregator_status:{$id}:p{$p}" ) : null;
+						$val              = Core::$memd?->get( "aggregator_status:{$id}:p{$p}" );
 						$partitions[ $p ] = \is_array( $val ) ? $val : [];
 					}
 
@@ -103,19 +96,11 @@ class Aggregator_CI extends Service_CI {
 
 				return $result;
 			},
-			'health'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $cache ): array {
+			'health'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
-				$cache_available = false;
-				if ( null !== $cache ) {
-					try {
-						$cache_available = (bool) $cache->is_available();
-					} catch ( \Throwable $e ) {
-						// Leave cache=false; health endpoint never fails.
-					}
-				}
 				return [
 					'healthy'   => true,
-					'cache'     => $cache_available,
+					'cache'     => null !== Core::$memd,
 					'timestamp' => \time(),
 				];
 			},

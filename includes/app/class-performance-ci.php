@@ -36,7 +36,6 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\Cache_Interface;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\FlameBuilder;
 use Newspack_Event_Logger_Nodes\HookCategorizer;
@@ -45,6 +44,7 @@ use Newspack_Event_Logger_Nodes\SettingsSync;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition;
 use Newspack_Nodes\Service_CI;
@@ -147,30 +147,25 @@ class Performance_CI extends Service_CI {
 	private const REQUEST_LIST_MAX_LIMIT = 1000;
 
 	/**
-	 * Build a Performance_CI bound to the supplied cache.
-	 *
-	 * @param Cache_Interface|null $cache Backing store for Stats_Store. Production
-	 *                                     passes the shared Memcached_Cache; tests
-	 *                                     pass FakeMemcached. Null still works for
-	 *                                     disk-walking verbs (request_search /
-	 *                                     request_detail), but stats-reading verbs
-	 *                                     return empty/zeroed shapes.
+	 * Stats-reading verbs build per-partition Stats_Store off the shared
+	 * `Core::$memd` handle; a null handle yields empty/zeroed shapes.
+	 * Disk-walking verbs (request_search / request_detail) work regardless.
 	 */
-	public function __construct( ?Cache_Interface $cache = null ) {
+	public function __construct() {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Aggregator_CI / Servers_CI /
 		// Events_CI / Settings_CI / Status_CI / Discovery_CI / Logger_CI /
 		// Workers_CI.
-		$this->commands( $this->verb_table( $cache ) );
+		$this->commands( $this->verb_table() );
 	}
 
 	/**
 	 * Verb-to-closure map. Each verb is a self-contained closure so
 	 * Tasks 10-12 can add siblings without disturbing existing entries.
 	 */
-	private function verb_table( ?Cache_Interface $cache ): array {
+	private function verb_table(): array {
 		return [
-			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
+			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Optional args mirror the legacy PerfOverviewController query
@@ -184,10 +179,10 @@ class Performance_CI extends Service_CI {
 				$breakdown  = (string) ( $decoded['breakdown'] ?? '' );
 				$categories = ! empty( $decoded['categories'] );
 
-				$payload                       = self::build_overview_payload( self::load_index( $cache ), $cache );
+				$payload                       = self::build_overview_payload( self::load_index() );
 				$payload['global_leaderboard'] = '' === $server
-					? self::build_global_leaderboard( $cache )
-					: self::build_server_leaderboard( $cache, $server );
+					? self::build_global_leaderboard()
+					: self::build_server_leaderboard( $server );
 
 				if ( '' !== $breakdown ) {
 					$dims = \array_values(
@@ -197,24 +192,24 @@ class Performance_CI extends Service_CI {
 						)
 					);
 					if ( 1 === \count( $dims ) ) {
-						$payload['breakdown_time_series'] = self::merge_dim_across_partitions( $cache, $dims[0], $server );
+						$payload['breakdown_time_series'] = self::merge_dim_across_partitions( $dims[0], $server );
 					} elseif ( ! empty( $dims ) ) {
 						$payload['breakdowns'] = [];
 						foreach ( $dims as $dim ) {
-							$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $cache, $dim, $server );
+							$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server );
 						}
 					}
 				}
 
 				if ( $categories ) {
 					$payload['category_time_series'] = '' === $server
-						? self::merge_categories_across_partitions( $cache )
-						: self::merge_server_categories_across_partitions( $cache, $server );
+						? self::merge_categories_across_partitions()
+						: self::merge_server_categories_across_partitions( $server );
 				}
 
 				return $payload;
 			},
-			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
+			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -232,7 +227,7 @@ class Performance_CI extends Service_CI {
 					$order = 'desc';
 				}
 
-				$index = self::load_index( $cache );
+				$index = self::load_index();
 
 				if ( '' !== $server ) {
 					$srv   = \strtolower( $server );
@@ -265,7 +260,7 @@ class Performance_CI extends Service_CI {
 					'offset' => $offset,
 				];
 			},
-			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
+			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -274,7 +269,7 @@ class Performance_CI extends Service_CI {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 
-				$index = self::load_index( $cache );
+				$index = self::load_index();
 				$stats = null;
 				foreach ( $index as $entry ) {
 					if ( ( $entry['hash'] ?? '' ) === $hash ) {
@@ -294,7 +289,7 @@ class Performance_CI extends Service_CI {
 							// Per-URL time series (consumed by UrlDetailView +
 							// urlRequestsPerSecond). Matches legacy
 							// PerfUrlsController::build_url_time_series.
-							'time_series'  => self::build_url_time_series( $cache, $hash ),
+							'time_series'  => self::build_url_time_series( $hash ),
 						];
 						break;
 					}
@@ -303,7 +298,7 @@ class Performance_CI extends Service_CI {
 					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 				}
 
-				$aggregate = self::find_url_aggregate( $hash, $cache );
+				$aggregate = self::find_url_aggregate( $hash );
 				$flame     = $aggregate['flame']
 					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
@@ -317,11 +312,11 @@ class Performance_CI extends Service_CI {
 
 				$breakdown = (string) ( $decoded['breakdown'] ?? '' );
 				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
-					$payload['breakdown_time_series'] = self::merge_url_dim( $cache, $hash, $breakdown );
+					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown );
 				}
 
 				if ( ! empty( $decoded['categories'] ) ) {
-					$payload['category_time_series'] = self::merge_url_categories( $cache, $hash );
+					$payload['category_time_series'] = self::merge_url_categories( $hash );
 				}
 
 				return $payload;
@@ -378,7 +373,7 @@ class Performance_CI extends Service_CI {
 				}
 				return $result;
 			},
-			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
+			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_timing — merged
@@ -386,19 +381,19 @@ class Performance_CI extends Service_CI {
 				// wrapper is dropped (REST artifact); CI returns the inner
 				// payload directly.
 				return [
-					'time_series' => self::merge_hourly_across_partitions( $cache ),
+					'time_series' => self::merge_hourly_across_partitions(),
 				];
 			},
-			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $cache ): array {
+			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_dashboard:
 				// nest the overview payload alongside the full URL index so
 				// the dashboard tree fans in with one round-trip. `load_index`
 				// is the heavy memcache fan-out — share it across both keys.
-				$index = self::load_index( $cache );
+				$index = self::load_index();
 				return [
-					'overview' => self::build_overview_payload( $index, $cache ),
+					'overview' => self::build_overview_payload( $index ),
 					'urls'     => $index,
 				];
 			},
@@ -880,12 +875,12 @@ class Performance_CI extends Service_CI {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * One Stats_Store per partition over the supplied cache.
+	 * One Stats_Store per partition over the shared `Core::$memd` handle.
 	 *
 	 * @return array<int,Stats_Store>
 	 */
-	private static function stats_stores( ?Cache_Interface $cache ): array {
-		if ( null === $cache ) {
+	private static function stats_stores(): array {
+		if ( null === Core::$memd ) {
 			return [];
 		}
 		$config         = RuntimeConfig::load_config();
@@ -893,7 +888,7 @@ class Performance_CI extends Service_CI {
 		$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
 		$stores         = [];
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$stores[] = new Stats_Store( $cache, $p, $max_lifespan );
+			$stores[] = new Stats_Store( $p, $max_lifespan );
 		}
 		return $stores;
 	}
@@ -925,10 +920,10 @@ class Performance_CI extends Service_CI {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private static function load_index( ?Cache_Interface $cache ): array {
+	private static function load_index(): array {
 		$buckets = self::recent_url_buckets();
 		$result  = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			$rows = $store->get_url_buckets( $buckets );
 			foreach ( $rows as $bucket_data ) {
 				if ( ! \is_array( $bucket_data ) ) {
@@ -1034,9 +1029,9 @@ class Performance_CI extends Service_CI {
 	 * Sum-merge per-partition hourly buckets into one sorted time_series.
 	 * Same contract as Events_CI's stats verb.
 	 */
-	private static function merge_hourly_across_partitions( ?Cache_Interface $cache ): array {
+	private static function merge_hourly_across_partitions(): array {
 		$merged = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			foreach ( $store->get_hourly() as $hour => $row ) {
 				$merged[ $hour ] ??= [
 					'hour'        => $hour,
@@ -1058,10 +1053,10 @@ class Performance_CI extends Service_CI {
 	 * `{count, sum_ms, sum_peak_mb}` time series. Mirrors
 	 * PerfUrlsController::build_url_time_series.
 	 */
-	private static function build_url_time_series( ?Cache_Interface $cache, string $hash ): array {
+	private static function build_url_time_series( string $hash ): array {
 		$buckets = self::recent_url_buckets();
 		$series  = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			$rows = $store->get_url_buckets( $buckets );
 			foreach ( $rows as $bucket_key => $bucket_data ) {
 				if ( ! \is_array( $bucket_data ) || ! isset( $bucket_data[ $hash ] ) ) {
@@ -1091,12 +1086,12 @@ class Performance_CI extends Service_CI {
 	 * Build the merged global category leaderboard for the recent window.
 	 * Mirror of PerfOverviewController::build_global_leaderboard.
 	 */
-	private static function build_global_leaderboard( ?Cache_Interface $cache ): array {
+	private static function build_global_leaderboard(): array {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
 		$buckets      = self::recent_url_buckets();
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			foreach ( $buckets as $b ) {
 				$row = $store->get_leaderboard_bucket( $b );
 				if ( empty( $row ) ) {
@@ -1114,12 +1109,12 @@ class Performance_CI extends Service_CI {
 	 * Build the per-server category leaderboard for the recent window.
 	 * Mirror of PerfOverviewController::build_server_leaderboard.
 	 */
-	private static function build_server_leaderboard( ?Cache_Interface $cache, string $server ): array {
+	private static function build_server_leaderboard( string $server ): array {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
 		$buckets      = self::recent_url_buckets();
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			foreach ( $buckets as $b ) {
 				$row = $store->get_server_leaderboard_bucket( $server, $b );
 				if ( empty( $row ) ) {
@@ -1158,9 +1153,9 @@ class Performance_CI extends Service_CI {
 	 * Sum-merge dimensional buckets across all partitions for one dim/server.
 	 * Mirror of PerfOverviewController::merge_dim_across_partitions.
 	 */
-	private static function merge_dim_across_partitions( ?Cache_Interface $cache, string $dimension, string $server ): array {
+	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
 		$merged = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			foreach ( $store->get_dimensional( $dimension, $server ) as $bucket => $values ) {
 				$merged[ $bucket ] ??= [];
 				foreach ( $values as $name => $entry ) {
@@ -1179,9 +1174,9 @@ class Performance_CI extends Service_CI {
 	 * Sum-merge category buckets across all partitions (global scope).
 	 * Mirror of PerfOverviewController::merge_categories_across_partitions.
 	 */
-	private static function merge_categories_across_partitions( ?Cache_Interface $cache ): array {
+	private static function merge_categories_across_partitions(): array {
 		$merged = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			self::merge_category_buckets_into( $merged, $store->get_categories() );
 		}
 		\ksort( $merged );
@@ -1192,9 +1187,9 @@ class Performance_CI extends Service_CI {
 	 * Sum-merge per-server category buckets across all partitions.
 	 * Mirror of PerfOverviewController::merge_server_categories_across_partitions.
 	 */
-	private static function merge_server_categories_across_partitions( ?Cache_Interface $cache, string $server ): array {
+	private static function merge_server_categories_across_partitions( string $server ): array {
 		$merged = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			self::merge_category_buckets_into( $merged, $store->get_server_categories( $server ) );
 		}
 		\ksort( $merged );
@@ -1205,9 +1200,9 @@ class Performance_CI extends Service_CI {
 	 * Sum-merge per-URL dimensional buckets for one dim/hash.
 	 * Mirror of PerfUrlsController::merge_url_dim.
 	 */
-	private static function merge_url_dim( ?Cache_Interface $cache, string $hash, string $dimension ): array {
+	private static function merge_url_dim( string $hash, string $dimension ): array {
 		$merged = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			$rows = $store->get_url_dimensional( $hash );
 			$dim  = $rows[ $dimension ] ?? [];
 			foreach ( $dim as $bucket => $values ) {
@@ -1228,9 +1223,9 @@ class Performance_CI extends Service_CI {
 	 * Sum-merge per-URL category buckets for one hash.
 	 * Mirror of PerfUrlsController::merge_url_categories.
 	 */
-	private static function merge_url_categories( ?Cache_Interface $cache, string $hash ): array {
+	private static function merge_url_categories( string $hash ): array {
 		$merged = [];
-		foreach ( self::stats_stores( $cache ) as $store ) {
+		foreach ( self::stats_stores() as $store ) {
 			self::merge_category_buckets_into( $merged, $store->get_url_categories( $hash ) );
 		}
 		\ksort( $merged );
@@ -1264,8 +1259,8 @@ class Performance_CI extends Service_CI {
 	 *
 	 * @param array<int,array<string,mixed>> $index Output of self::load_index().
 	 */
-	private static function build_overview_payload( array $index, ?Cache_Interface $cache ): array {
-		$time_series       = self::merge_hourly_across_partitions( $cache );
+	private static function build_overview_payload( array $index ): array {
+		$time_series       = self::merge_hourly_across_partitions();
 		$total_requests    = 0;
 		$total_sum_ms      = 0.0;
 		$total_sum_peak_mb = 0.0;
@@ -1294,8 +1289,8 @@ class Performance_CI extends Service_CI {
 	 * First partition with a matching blob wins — matches legacy
 	 * PerfUrlsController::find_url_aggregate.
 	 */
-	private static function find_url_aggregate( string $hash, ?Cache_Interface $cache ): ?array {
-		foreach ( self::stats_stores( $cache ) as $store ) {
+	private static function find_url_aggregate( string $hash ): ?array {
+		foreach ( self::stats_stores() as $store ) {
 			$stats = $store->get_url_stats( $hash );
 			if ( null !== $stats ) {
 				return $stats;

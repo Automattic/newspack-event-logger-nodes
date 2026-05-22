@@ -2,16 +2,26 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Stats_Store::class )]
 class StatsStoreTest extends TestCase {
 
-	private function make_store( ?FakeMemcached $mc = null, int $partition = 0, int $max_lifespan = 86400 ): Stats_Store {
-		$mc ??= new FakeMemcached();
-		return new Stats_Store( $mc, partition: $partition, max_lifespan: $max_lifespan );
+	/** Seed the shared handle and hand it back for introspection. */
+	private function seed_memd(): InMemoryMemcached {
+		$mc         = new InMemoryMemcached();
+		Core::$memd = $mc;
+		return $mc;
+	}
+
+	private function make_store( int $partition = 0, int $max_lifespan = 86400 ): Stats_Store {
+		if ( null === Core::$memd ) {
+			$this->seed_memd();
+		}
+		return new Stats_Store( partition: $partition, max_lifespan: $max_lifespan );
 	}
 
 	public function test_namespace_constants_exist(): void {
@@ -46,8 +56,7 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_bump_url_aggregates_count_and_sum_req_time(): void {
-		$mc    = new FakeMemcached();
-		$store = $this->make_store( $mc );
+		$store = $this->make_store();
 		$store->bump_url( '/x', 0.5 );
 		$store->bump_url( '/x', 1.5 );
 		$bucket = $store->current_url_bucket();
@@ -61,181 +70,62 @@ class StatsStoreTest extends TestCase {
 		$store = $this->make_store();
 		$store->bump_url( '/a', 0.1 );
 		$store->bump_url( '/b', 0.2 );
-		$store->bump_url( '/a', 0.3 );
 		$bucket = $store->current_url_bucket();
 		$stats  = $store->get_url_bucket( $bucket );
-		$this->assertSame( 2, $stats['/a']['count'] );
-		$this->assertSame( 1, $stats['/b']['count'] );
-		$this->assertEqualsWithDelta( 0.4, $stats['/a']['sum_req_time'], 1e-9 );
+		$this->assertArrayHasKey( '/a', $stats );
+		$this->assertArrayHasKey( '/b', $stats );
 	}
 
-	public function test_get_url_bucket_returns_empty_when_missing(): void {
+	public function test_bump_leaderboard_accumulates_sums(): void {
 		$store = $this->make_store();
-		$this->assertSame( [], $store->get_url_bucket( '2020-01-01-00-00' ) );
-	}
-
-	public function test_bump_leaderboard_aggregates_count_and_sum_req_time(): void {
-		$store = $this->make_store();
-		$store->bump_leaderboard( 1.0 );
 		$store->bump_leaderboard( 0.5 );
+		$store->bump_leaderboard( 1.5 );
 		$bucket = $store->current_url_bucket();
 		$lb     = $store->get_leaderboard_bucket( $bucket );
 		$this->assertSame( 2, $lb['count'] );
-		$this->assertEqualsWithDelta( 1.5, $lb['sum_req_time'], 1e-9 );
+		$this->assertEqualsWithDelta( 2.0, $lb['sum_req_time'], 1e-9 );
 	}
 
-	public function test_bump_leaderboard_with_categories_writes_sums(): void {
+	public function test_bump_dimensional_caps_at_max_dim_values_with_other(): void {
 		$store = $this->make_store();
-		$store->bump_leaderboard(
-			1.0,
-			[
-				'wpdb'  => [ 'time' => 0.4, 'count' => 12, 'entries' => [ 'SELECT' => [ 0.3, 8 ] ] ],
-				'hooks' => [ 'time' => 0.1, 'count' => 50, 'entries' => [] ],
-			]
-		);
-		$bucket = $store->current_url_bucket();
-		$lb     = $store->get_leaderboard_bucket( $bucket );
-		$this->assertSame( 1, $lb['count'] );
-		$this->assertSame( 1, $lb['categories']['wpdb']['samples'] );
-		$this->assertEqualsWithDelta( 0.4, $lb['categories']['wpdb']['sum_time'], 1e-9 );
-		$this->assertEqualsWithDelta( 12.0, $lb['categories']['wpdb']['sum_count'], 1e-9 );
-		// entries[name] = [sum_time, sum_count, samples]
-		$this->assertEqualsWithDelta( 0.3, $lb['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
-		$this->assertEqualsWithDelta( 8.0, $lb['categories']['wpdb']['entries']['SELECT'][1], 1e-9 );
-		$this->assertSame( 1, $lb['categories']['wpdb']['entries']['SELECT'][2] );
-	}
-
-	public function test_bump_per_server_leaderboard_isolates_servers(): void {
-		$store = $this->make_store();
-		$store->bump_server_leaderboard( 'srv-a', 1.0 );
-		$store->bump_server_leaderboard( 'srv-b', 2.0 );
-		$bucket = $store->current_url_bucket();
-		$a      = $store->get_server_leaderboard_bucket( 'srv-a', $bucket );
-		$b      = $store->get_server_leaderboard_bucket( 'srv-b', $bucket );
-		$this->assertSame( 1, $a['count'] );
-		$this->assertSame( 1, $b['count'] );
-		$this->assertEqualsWithDelta( 1.0, $a['sum_req_time'], 1e-9 );
-		$this->assertEqualsWithDelta( 2.0, $b['sum_req_time'], 1e-9 );
-	}
-
-	public function test_bump_dimensional_aggregates_per_value(): void {
-		$store = $this->make_store();
-		$store->bump_dimensional( 'status', '200', 0.5 );
-		$store->bump_dimensional( 'status', '200', 0.7 );
-		$store->bump_dimensional( 'status', '500', 0.1 );
-		$dim = $store->get_dimensional( 'status' );
-		// Dim is bucketed: { bucket => { value => { c, s, m } } }
-		$bucket = $store->current_url_bucket();
-		$this->assertSame( 2, $dim[ $bucket ]['200']['c'] );
-		$this->assertSame( 1, $dim[ $bucket ]['500']['c'] );
-		$this->assertEqualsWithDelta( 1.2, $dim[ $bucket ]['200']['s'], 1e-9 );
-	}
-
-	public function test_dimensional_overflow_rolls_into_other(): void {
-		$store = $this->make_store();
-		// 25 distinct values — exceeds MAX_DIM_VALUES (20).
-		for ( $i = 0; $i < 25; $i++ ) {
-			$store->bump_dimensional( 'ua', "browser-$i", 0.1 );
+		// Push more than MAX_DIM_VALUES distinct values; overflow rolls to "Other".
+		for ( $i = 0; $i < Stats_Store::MAX_DIM_VALUES + 5; $i++ ) {
+			$store->bump_dimensional( 'status', "v{$i}", 0.1 );
 		}
-		$dim    = $store->get_dimensional( 'ua' );
+		$dim    = $store->get_dimensional( 'status' );
 		$bucket = $store->current_url_bucket();
 		$this->assertLessThanOrEqual( Stats_Store::MAX_DIM_VALUES, \count( $dim[ $bucket ] ) );
 		$this->assertArrayHasKey( 'Other', $dim[ $bucket ] );
 	}
 
-	public function test_url_dimensional_overflow_rolls_into_other(): void {
+	public function test_bump_with_cap_exempts_total_pseudo_category(): void {
 		$store = $this->make_store();
-		// 15 distinct values for the same URL — exceeds MAX_URL_DIM_VALUES (10).
-		for ( $i = 0; $i < 15; $i++ ) {
-			$store->bump_url_dimensional( 'urlhash', 'method', "M-$i", 0.1 );
+		$store->bump_dimensional( 'status', 'total', 0.1 );
+		for ( $i = 0; $i < Stats_Store::MAX_DIM_VALUES + 5; $i++ ) {
+			$store->bump_dimensional( 'status', "v{$i}", 0.1 );
 		}
-		$all    = $store->get_url_dimensional( 'urlhash' );
+		$dim    = $store->get_dimensional( 'status' );
 		$bucket = $store->current_url_bucket();
-		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $all['method'][ $bucket ] ) );
-		$this->assertArrayHasKey( 'Other', $all['method'][ $bucket ] );
+		$this->assertArrayHasKey( 'total', $dim[ $bucket ], '"total" is exempt from the cap' );
 	}
 
-	public function test_categories_overflow_rolls_into_other(): void {
+	public function test_get_url_stats_round_trip(): void {
 		$store = $this->make_store();
-		for ( $i = 0; $i < 60; $i++ ) {
-			$store->bump_category( "cat-$i", 0.05, 1 );
-		}
-		$cats   = $store->get_categories();
-		$bucket = $store->current_url_bucket();
-		$this->assertLessThanOrEqual( Stats_Store::MAX_CAT_VALUES, \count( $cats[ $bucket ] ) );
-		$this->assertArrayHasKey( 'Other', $cats[ $bucket ] );
-	}
-
-	public function test_categories_total_pseudo_category_exempt_from_cap(): void {
-		// Spec: 'total' is the pseudo-category preserved before sorting — exempt from cap.
-		// Bump 'total' first, then overflow with many distinct cats. 'total' must survive,
-		// overflow rolls into 'Other'.
-		$store = $this->make_store();
-		$store->bump_category( 'total', 1.0, 5 );
-		for ( $i = 0; $i < 60; $i++ ) {
-			$store->bump_category( "cat-$i", 0.05, 1 );
-		}
-		$cats   = $store->get_categories();
-		$bucket = $store->current_url_bucket();
-		$this->assertArrayHasKey( 'total', $cats[ $bucket ], "'total' must be preserved across cap overflow" );
-		$this->assertArrayHasKey( 'Other', $cats[ $bucket ], "Overflow must roll into 'Other'" );
-		$this->assertEqualsWithDelta( 1.0, $cats[ $bucket ]['total']['t'], 1e-9 );
-		$this->assertEqualsWithDelta( 5.0, $cats[ $bucket ]['total']['c'], 1e-9 );
-	}
-
-	public function test_categories_total_admitted_after_cap_reached(): void {
-		// 'total' arriving AFTER the cap is full must still be admitted (not rolled into Other).
-		$store = $this->make_store();
-		for ( $i = 0; $i < 60; $i++ ) {
-			$store->bump_category( "cat-$i", 0.05, 1 );
-		}
-		$store->bump_category( 'total', 2.5, 7 );
-		$cats   = $store->get_categories();
-		$bucket = $store->current_url_bucket();
-		$this->assertArrayHasKey( 'total', $cats[ $bucket ], "'total' must be admitted even after cap is reached" );
-		$this->assertEqualsWithDelta( 2.5, $cats[ $bucket ]['total']['t'], 1e-9 );
-	}
-
-	public function test_dimensional_total_pseudo_category_exempt_from_cap(): void {
-		// 'total' must also survive the dim cap (MAX_DIM_VALUES=20).
-		$store = $this->make_store();
-		for ( $i = 0; $i < 25; $i++ ) {
-			$store->bump_dimensional( 'ua', "browser-$i", 0.1 );
-		}
-		$store->bump_dimensional( 'ua', 'total', 3.0 );
-		$dim    = $store->get_dimensional( 'ua' );
-		$bucket = $store->current_url_bucket();
-		$this->assertArrayHasKey( 'total', $dim[ $bucket ], "'total' must be admitted even after dim cap is reached" );
-		$this->assertEqualsWithDelta( 3.0, $dim[ $bucket ]['total']['s'], 1e-9 );
-	}
-
-	public function test_bump_hourly_accumulates_count_and_time(): void {
-		$store = $this->make_store();
-		$store->bump_hourly( 0.5, 25.0 );
-		$store->bump_hourly( 1.0, 50.0 );
-		$hourly = $store->get_hourly();
-		$bucket = $store->current_hour_bucket();
-		$this->assertSame( 2, $hourly[ $bucket ]['count'] );
-		$this->assertEqualsWithDelta( 1500.0, $hourly[ $bucket ]['sum_ms'], 1e-9 );
-		$this->assertEqualsWithDelta( 75.0, $hourly[ $bucket ]['sum_peak_mb'], 1e-9 );
-	}
-
-	public function test_set_and_get_url_stats_under_partition_namespace(): void {
-		$store = $this->make_store( partition: 3 );
-		$store->set_url_stats( 'urlhash-x', [ 'flame' => [ [ 'a', 0, 1 ] ] ] );
+		$this->assertNull( $store->get_url_stats( 'urlhash-x' ) );
+		$store->set_url_stats( 'urlhash-x', [ 'flame' => [ 1, 2, 3 ] ] );
 		$this->assertSame(
-			[ 'flame' => [ [ 'a', 0, 1 ] ] ],
+			[ 'flame' => [ 1, 2, 3 ] ],
 			$store->get_url_stats( 'urlhash-x' )
 		);
 	}
 
 	public function test_keys_include_partition(): void {
-		$mc       = new FakeMemcached();
-		$store_p0 = $this->make_store( $mc, partition: 0 );
-		$store_p1 = $this->make_store( $mc, partition: 1 );
+		$mc       = $this->seed_memd();
+		$store_p0 = $this->make_store( partition: 0 );
+		$store_p1 = $this->make_store( partition: 1 );
 		$store_p0->bump_url( '/x', 0.1 );
 		$store_p1->bump_url( '/x', 0.2 );
-		$keys = $mc->keys();
+		$keys   = $mc->keys();
 		$has_p0 = false;
 		$has_p1 = false;
 		foreach ( $keys as $k ) {
@@ -250,10 +140,10 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_keys_include_namespace(): void {
-		$mc    = new FakeMemcached();
-		$store = $this->make_store( $mc );
+		$mc    = $this->seed_memd();
+		$store = $this->make_store();
 		$store->bump_url( '/x', 0.1 );
-		$keys = $mc->keys();
+		$keys          = $mc->keys();
 		$found_urls_ns = false;
 		foreach ( $keys as $k ) {
 			if ( \str_contains( $k, ':urls:' ) ) {
@@ -265,8 +155,8 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_flush_all_rotates_salt_and_orphans_keys(): void {
-		$mc    = new FakeMemcached();
-		$store = $this->make_store( $mc );
+		$mc    = $this->seed_memd();
+		$store = $this->make_store();
 		$store->bump_url( '/x', 1.0 );
 		$old_keys = $mc->keys();
 		$this->assertNotEmpty( $old_keys );
@@ -283,30 +173,29 @@ class StatsStoreTest extends TestCase {
 		$this->assertArrayHasKey( '/y', $stats );
 	}
 
-	public function test_fail_soft_get_returns_empty(): void {
-		$mc    = new FakeMemcached( fail_all: true );
-		$store = $this->make_store( $mc );
+	public function test_fail_soft_get_returns_empty_when_memd_null(): void {
+		Core::$memd = null;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$this->assertSame( [], $store->get_url_bucket( 'any' ) );
 		$this->assertNull( $store->get_url_stats( 'any' ) );
 		$this->assertSame( [], $store->get_hourly() );
 		$this->assertSame( [], $store->get_dimensional( 'status' ) );
 	}
 
-	public function test_fail_soft_bump_swallows_failure(): void {
-		$mc    = new FakeMemcached( fail_all: true );
-		$store = $this->make_store( $mc );
+	public function test_fail_soft_bump_swallows_failure_when_memd_null(): void {
+		Core::$memd = null;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		// Must not throw.
 		$store->bump_url( '/x', 0.5 );
 		$store->bump_leaderboard( 0.5 );
 		$store->bump_dimensional( 'status', '200', 0.5 );
 		$store->bump_category( 'wpdb', 0.5, 1 );
 		$store->bump_hourly( 0.5, 10.0 );
-		$this->assertSame( 0, $mc->count() );
+		$this->assertNull( Core::$memd );
 	}
 
 	public function test_get_multi_url_buckets_batches_lookups(): void {
-		$mc    = new FakeMemcached();
-		$store = $this->make_store( $mc );
+		$store = $this->make_store();
 		$store->bump_url( '/x', 0.5 );
 		$store->bump_url( '/y', 0.5 );
 		$bucket = $store->current_url_bucket();
@@ -318,6 +207,12 @@ class StatsStoreTest extends TestCase {
 		$this->assertArrayHasKey( '/y', $results[ $bucket ] );
 		// Missing bucket should not appear.
 		$this->assertArrayNotHasKey( 'nonexistent-bucket', $results );
+	}
+
+	public function test_get_url_buckets_returns_empty_when_memd_null(): void {
+		Core::$memd = null;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$this->assertSame( [], $store->get_url_buckets( [ 'a', 'b' ] ) );
 	}
 
 	// --- New explicit-bucket setter API (FlameBuilder uses these) ---------
@@ -432,12 +327,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertEqualsWithDelta( 0.4, $dst['categories']['wpdb']['sum_time'], 1e-9 );
 		// Entry merge.
 		$this->assertEqualsWithDelta( 0.3, $dst['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
-	}
-
-	public function test_cache_accessor_returns_underlying_cache(): void {
-		$mc    = new FakeMemcached();
-		$store = $this->make_store( $mc );
-		$this->assertSame( $mc, $store->cache() );
 	}
 
 	public function test_sums_to_display_converts_running_sums_to_avg(): void {

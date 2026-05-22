@@ -6,7 +6,6 @@ use Newspack_Event_Logger_Nodes\JobRouter;
 use Newspack_Event_Logger_Nodes\JobWorker;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Consumer;
 use Newspack_Nodes\Core;
@@ -14,6 +13,7 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Router;
 use Newspack_Nodes\Tee;
 use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use Newspack_Nodes\Topic;
 
 /**
@@ -86,9 +86,9 @@ class FullPipelineTest extends TestCase {
 		$rb = new RequestBuilder();
 		$rb->name( 'request-builder' );
 
-		$mc    = new FakeMemcached();
-		$store = new Stats_Store( $mc, partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new FlameBuilder();
 		$fb->name( 'flame-builder' );
 		$fb->set_stats_store( $store );
 		$rb->sink( $fb );

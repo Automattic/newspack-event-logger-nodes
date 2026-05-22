@@ -1493,31 +1493,13 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
 	}
 
-	public function test_handle_flush_stats_uses_configured_memcache_hosts(): void {
-		// Inject a memcache_servers config value — the handler reads it from
-		// substrate config and passes it to Memcached_Cache. We're only checking
-		// that the path runs without throwing when the option is configured;
-		// the actual Memcached_Cache is a no-op when the PHP extension isn't loaded.
+	public function test_handle_flush_stats_rotates_salt(): void {
+		// flush_all() only rotates the salt option — it doesn't touch memcache,
+		// so the handler runs regardless of memcache configuration.
 		$this->use_base_dir(
 			$this->base_dir,
 			[ 'memcache_servers' => [ '127.0.0.1:11211', '127.0.0.1:11212' ] ]
 		);
-		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
-
-		$admin = new Admin();
-		try {
-			$admin->handle_flush_stats();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
-	}
-
-	public function test_handle_flush_stats_falls_back_to_default_servers_for_non_array(): void {
-		// Non-array memcache_servers must fall back to DEFAULT_SERVERS (covers
-		// the `! is_array($memcache_hosts)` guard).
-		$this->use_base_dir( $this->base_dir, [ 'memcache_servers' => 'not-an-array' ] );
 		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
 
 		$admin = new Admin();

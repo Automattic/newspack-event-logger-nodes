@@ -17,8 +17,8 @@
  *
  * Substrate config (num_partitions, max_lifespan, base_directory) is seeded
  * via TestCase::use_base_dir(), matching SettingsCITest / EventsCITest. The
- * Cache_Interface dep is stubbed via FakeMemcached so the Stats_Store path
- * is exercised without a real memcache server.
+ * shared `Core::$memd` handle is seeded with an in-memory `\Memcached` so the
+ * Stats_Store path is exercised without a real memcache server.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -30,24 +30,24 @@ use Newspack_Event_Logger_Nodes\FlameBuilder;
 use Newspack_Event_Logger_Nodes\HookCategorizer;
 use Newspack_Event_Logger_Nodes\RequestBuilder;
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\FakeMemcached;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Performance_CI::class )]
 class PerformanceCITest extends TestCase {
 	private string $tmp;
-	private FakeMemcached $cache;
 
 	protected function setUp(): void {
 		parent::setUp();
 		// /tmp directly to dodge symlink-resolved sys_get_temp_dir on macOS,
 		// matching SettingsCITest / EventsCITest.
-		$this->tmp   = '/tmp/performance-ci-test-' . \uniqid();
+		$this->tmp  = '/tmp/performance-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
-		$this->cache = new FakeMemcached();
+		Core::$memd = new InMemoryMemcached();
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
@@ -168,7 +168,7 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_verb_returns_empty_shape_when_no_data(): void {
 		// No URL buckets seeded — verb still returns the canonical envelope
 		// with zeroed totals + empty leaderboard.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'overview' );
 
 		$this->assertIsArray( $result );
@@ -184,12 +184,12 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_verb_aggregates_hourly_totals(): void {
 		// Seed an hourly bucket — verb totals should add up across the
 		// merged time_series array.
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_hourly( [
 			'2026-05-17-10' => [ 'count' => 4, 'sum_ms' => 2000.0, 'sum_peak_mb' => 40.0 ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'overview' );
 
 		$this->assertSame( 4, $result['total_requests'] );
@@ -202,7 +202,7 @@ class PerformanceCITest extends TestCase {
 		// Seed a URL bucket so the index walks pick something up. Bucket key
 		// is whatever Stats_Store::current_url_bucket returns "now" so the
 		// recent-bucket scan finds it.
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
@@ -213,7 +213,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'overview' );
 
 		$this->assertSame( 1, $result['total_urls'] );
@@ -226,7 +226,7 @@ class PerformanceCITest extends TestCase {
 		// Legacy controller gates every verb via read_permissions_check ==
 		// manage_options. Performance_CI matches that.
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'overview' );
 
 		$this->assertIsString( $result );
@@ -237,7 +237,7 @@ class PerformanceCITest extends TestCase {
 		// OverviewSection (React) renders `overview.global_leaderboard.{categories,total_time,count}`
 		// (see components/OverviewSection.js L330-358). Legacy PerfOverviewController::get_overview
 		// emits `global_leaderboard` unconditionally (L95-97). The CI verb must match.
-		$store   = new Stats_Store( $this->cache, 0, 86400 );
+		$store   = new Stats_Store( 0, 86400 );
 		$buckets = $this->recent_url_buckets();
 		// Seed the most-recent bucket so the leaderboard fan-out picks it up.
 		$store->set_leaderboard_bucket( $buckets[0], [
@@ -248,7 +248,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'overview' );
 
 		$this->assertArrayHasKey( 'global_leaderboard', $result );
@@ -261,7 +261,7 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_verb_uses_server_leaderboard_when_server_arg_set(): void {
 		// `server` arg scopes the leaderboard to that server (legacy L95-97
 		// switches to `build_server_leaderboard`). The CI verb must reroute.
-		$store   = new Stats_Store( $this->cache, 0, 86400 );
+		$store   = new Stats_Store( 0, 86400 );
 		$buckets = $this->recent_url_buckets();
 		$store->set_server_leaderboard_bucket( 'web01', $buckets[0], [
 			'count'        => 2,
@@ -271,7 +271,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -289,12 +289,12 @@ class PerformanceCITest extends TestCase {
 		// response — global or server-scoped. The dashboard always passes
 		// `categories=1` (see usePerformanceApi.js L54) and reads
 		// `overviewData.category_time_series` (PerformanceDashboard.js L391).
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_categories( [
 			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -311,14 +311,14 @@ class PerformanceCITest extends TestCase {
 		// `?breakdown=server` returns `breakdown_time_series` flat (legacy L111-112).
 		// Used by fetchBreakdown (usePerformanceApi.js L186 reads
 		// `data.breakdown_time_series`).
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_dimensional( 'server', [
 			'2026-05-17-10-00' => [
 				'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ],
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -335,7 +335,7 @@ class PerformanceCITest extends TestCase {
 		// (legacy L113-118). Used by the dashboard's `breakdownsFor` deduper
 		// (PerformanceDashboard.js L342-374), which always sends ≥2 dims so it
 		// can rely on the nested shape.
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_dimensional( 'server', [
 			'2026-05-17-10-00' => [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ],
 		] );
@@ -343,7 +343,7 @@ class PerformanceCITest extends TestCase {
 			'2026-05-17-10-00' => [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -361,7 +361,7 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_verb_breakdown_filters_unknown_dims(): void {
 		// Unknown dim names are filtered out so a typo'd query param can't surface
 		// arbitrary memcache reads (legacy L107-108 `in_array(...,DIMENSIONS,true)`).
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -377,7 +377,7 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_verb_server_scoped_categories_when_both_args(): void {
 		// `?server=X&categories=1` should use the per-server categories
 		// blob (legacy L122-124 `merge_server_categories_across_partitions`).
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_server_categories( 'web01', [
 			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ],
 		] );
@@ -385,7 +385,7 @@ class PerformanceCITest extends TestCase {
 			'2026-05-17-10-00' => [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -402,7 +402,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_urls_verb_returns_envelope_when_empty(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'urls' );
 
 		$this->assertIsArray( $result );
@@ -416,7 +416,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_urls_verb_default_limit_is_50(): void {
 		// Legacy controller default — `limit=50` from sanitize_callback default.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'urls' );
 
 		$this->assertSame( 50, $result['limit'] );
@@ -424,7 +424,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_urls_verb_clamps_limit_high(): void {
 		// Mirrors `min(1000, max(1, (int)$v))` from legacy sanitize_callback.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -435,7 +435,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_paginates_and_sorts(): void {
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000001 ],
@@ -443,7 +443,7 @@ class PerformanceCITest extends TestCase {
 			'cccccccccccc' => [ 'url' => '/c', 'count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -459,14 +459,14 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_filters_by_search_term(): void {
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/articles/123', 'count' => 1, 'sum_ms' => 50.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/home', 'count' => 2, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -480,7 +480,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_urls_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'urls' );
 
 		$this->assertIsString( $result );
@@ -494,7 +494,7 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_rejects_invalid_hash(): void {
 		// Legacy `get_url_detail` returns invalid_hash 400 when hash regex fails.
 		// We surface that as a verb error string (CI errors are string-encoded).
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -509,7 +509,7 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_returns_not_found_when_unknown_hash(): void {
 		// Hash matches the regex but doesn't exist in the URL index — legacy
 		// surfaces a 404 with "URL not found".
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -522,7 +522,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_url_detail_verb_returns_stats_and_default_flame(): void {
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
@@ -534,7 +534,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -556,7 +556,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_url_detail_verb_includes_aggregate_flame_when_seeded(): void {
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'cafebabe1234' => [
@@ -572,7 +572,7 @@ class PerformanceCITest extends TestCase {
 			'last_modified' => 1700001111,
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -586,7 +586,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_detail_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -603,7 +603,7 @@ class PerformanceCITest extends TestCase {
 		// PerformanceDashboard.js L727-741 (urlRequestsPerSecond computation).
 		// Legacy PerfUrlsController::find_url_stats L228 calls `build_url_time_series`
 		// which walks the recent buckets keyed by hash. The CI verb must too.
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
@@ -614,7 +614,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -630,7 +630,7 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_includes_breakdown_time_series_when_arg_set(): void {
 		// `?breakdown=method` on /urls/{hash} emits `breakdown_time_series`
 		// (legacy L195, L177-181). Consumed by fetchUrlBreakdown L213.
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
@@ -646,7 +646,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -662,7 +662,7 @@ class PerformanceCITest extends TestCase {
 		// `?categories=1` on /urls/{hash} emits `category_time_series`
 		// (legacy L196, L184-186). Consumed by UrlDetailView L282-295 +
 		// fetchUrlCategories L237.
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
@@ -676,7 +676,7 @@ class PerformanceCITest extends TestCase {
 			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -691,13 +691,13 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_breakdown_filters_unknown_dims(): void {
 		// Unknown dim → no breakdown_time_series (matches legacy L179's
 		// `in_array(...,DIMENSIONS,true)` guard).
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -713,7 +713,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_request_search_verb_returns_not_found_when_missing(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -739,7 +739,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -754,7 +754,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_request_search_verb_requires_rid(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'request_search' );
 
 		$this->assertIsString( $result );
@@ -763,7 +763,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_search_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -780,7 +780,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_request_detail_verb_returns_not_found_when_missing(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -794,7 +794,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_detail_verb_rejects_invalid_partition(): void {
 		// num_partitions = 1 (test setUp), partition = 5 is out of range.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -822,7 +822,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -859,7 +859,7 @@ class PerformanceCITest extends TestCase {
 			'flame'    => [ 'name' => 'request', 'value' => 12, 'children' => [] ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -871,7 +871,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_request_detail_verb_requires_rid(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -885,7 +885,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_detail_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -903,7 +903,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_timing_verb_returns_empty_time_series_when_no_data(): void {
 		// No hourly buckets seeded — canonical empty envelope.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'timing' );
 
 		$this->assertIsArray( $result );
@@ -913,13 +913,13 @@ class PerformanceCITest extends TestCase {
 
 	public function test_timing_verb_returns_merged_hourly_buckets(): void {
 		// Two hourly buckets — verb returns them sorted by hour key.
-		$store = new Stats_Store( $this->cache, 0, 86400 );
+		$store = new Stats_Store( 0, 86400 );
 		$store->set_hourly( [
 			'2026-05-17-09' => [ 'count' => 3, 'sum_ms' => 600.0, 'sum_peak_mb' => 30.0 ],
 			'2026-05-17-10' => [ 'count' => 5, 'sum_ms' => 2500.0, 'sum_peak_mb' => 50.0 ],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'timing' );
 
 		$this->assertCount( 2, $result['time_series'] );
@@ -931,7 +931,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_timing_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'timing' );
 
 		$this->assertIsString( $result );
@@ -946,7 +946,7 @@ class PerformanceCITest extends TestCase {
 		// No data seeded — verb still returns the canonical nested shape with
 		// an overview block plus an empty urls array. Lifted from legacy
 		// PerformanceController::get_dashboard, minus the REST data+meta wrapper.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'dashboard' );
 
 		$this->assertIsArray( $result );
@@ -959,7 +959,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_dashboard_verb_includes_seeded_urls(): void {
-		$store  = new Stats_Store( $this->cache, 0, 86400 );
+		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $store->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'dashboardhash' => [
@@ -970,7 +970,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'dashboard' );
 
 		$this->assertSame( 1, $result['overview']['total_urls'] );
@@ -981,7 +981,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dashboard_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'dashboard' );
 
 		$this->assertIsString( $result );
@@ -1011,7 +1011,7 @@ class PerformanceCITest extends TestCase {
 	public function test_hooks_registered_verb_returns_canonical_shape(): void {
 		$this->seed_wp_filter_with_known_hooks();
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
 
 		$this->assertIsArray( $result );
@@ -1023,7 +1023,7 @@ class PerformanceCITest extends TestCase {
 	public function test_hooks_registered_verb_total_matches_summed_buckets(): void {
 		$this->seed_wp_filter_with_known_hooks();
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
 
 		$summed = 0;
@@ -1036,7 +1036,7 @@ class PerformanceCITest extends TestCase {
 	public function test_hooks_registered_verb_includes_seeded_hooks(): void {
 		$this->seed_wp_filter_with_known_hooks();
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
 
 		$all = [];
@@ -1050,7 +1050,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_hooks_registered_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_registered' );
 
 		$this->assertIsString( $result );
@@ -1062,7 +1062,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_hooks_categories_verb_returns_categories_and_config(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_categories' );
 
 		$this->assertIsArray( $result );
@@ -1073,7 +1073,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_hooks_categories_verb_config_includes_patterns_and_colors(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_categories' );
 
 		$this->assertArrayHasKey( 'colors', $result['config'] );
@@ -1082,7 +1082,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_hooks_categories_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_categories' );
 
 		$this->assertIsString( $result );
@@ -1099,7 +1099,7 @@ class PerformanceCITest extends TestCase {
 		$wp_actions = [ 'init' => 1, 'wp_loaded' => 2 ];
 		$wp_filter  = [];
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
 
 		$this->assertIsArray( $result );
@@ -1123,7 +1123,7 @@ class PerformanceCITest extends TestCase {
 			'never_fired_filter' => new class { public array $callbacks = [ [ 'cb' => 'x' ] ]; },
 		];
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
 
 		$names = \array_column( $result['hooks'], 'name' );
@@ -1145,7 +1145,7 @@ class PerformanceCITest extends TestCase {
 		];
 		$wp_filter  = [];
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
 
 		$names = \array_column( $result['hooks'], 'name' );
@@ -1160,7 +1160,7 @@ class PerformanceCITest extends TestCase {
 		$wp_actions = [ 'zeta' => 1, 'alpha' => 1, 'mu' => 1 ];
 		$wp_filter  = [];
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
 
 		$names = \array_column( $result['hooks'], 'name' );
@@ -1173,7 +1173,7 @@ class PerformanceCITest extends TestCase {
 		$wp_actions = [];
 		$wp_filter  = [];
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
 
 		$this->assertSame( [], $result['hooks'] );
@@ -1181,7 +1181,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_hooks_available_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_available' );
 
 		$this->assertIsString( $result );
@@ -1193,7 +1193,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_hooks_configure_verb_writes_log_events_and_custom_events(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1212,7 +1212,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_hooks_configure_verb_sanitizes_strings_skips_empty_and_non_strings(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1229,7 +1229,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_hooks_configure_verb_accepts_only_custom_events(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1248,7 +1248,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_hooks_configure_verb_with_no_data(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'hooks_configure' );
 
 		$this->assertTrue( $result['success'] );
@@ -1257,7 +1257,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_hooks_configure_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1278,7 +1278,7 @@ class PerformanceCITest extends TestCase {
 	public function test_config_get_verb_returns_all_nine_perf_keys(): void {
 		// Legacy controller surfaces these nine keys regardless of which are
 		// set in WP options — the unset ones come back as zero / empty / false.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
 
 		$this->assertIsArray( $result );
@@ -1306,7 +1306,7 @@ class PerformanceCITest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'] = 2.5;
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory']                  = true;
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
 
 		$this->assertSame( [ 'init', 'wp_loaded' ], $result['config']['log_events'] );
@@ -1318,7 +1318,7 @@ class PerformanceCITest extends TestCase {
 	public function test_config_get_verb_coerces_types_when_options_empty(): void {
 		// Legacy controller defaults: int → 0, float → 0.0, bool → false,
 		// arrays → []. Confirm the verb honours each default branch.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
 
 		$this->assertSame( 0, $result['config']['auto_disable_threshold'] );
@@ -1331,7 +1331,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_config_get_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'config_get' );
 
 		$this->assertIsString( $result );
@@ -1346,7 +1346,7 @@ class PerformanceCITest extends TestCase {
 		// Legacy contract: only keys present in the request body are updated;
 		// the rest are untouched. Response `updated` lists the keys that were
 		// applied.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1378,7 +1378,7 @@ class PerformanceCITest extends TestCase {
 		// blob. Config::autoload_for() is the single source of truth; every
 		// write path must honor it.
 		$GLOBALS['_wp_option_autoload'] = [];
-		$ci                             = new Performance_CI( $this->cache );
+		$ci                             = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1404,7 +1404,7 @@ class PerformanceCITest extends TestCase {
 		// it must honor the same autoload policy as config_update — the
 		// large lists stay off the per-request alloptions blob.
 		$GLOBALS['_wp_option_autoload'] = [];
-		$ci                             = new Performance_CI( $this->cache );
+		$ci                             = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1424,7 +1424,7 @@ class PerformanceCITest extends TestCase {
 		// Legacy `array_assoc` branch: the React tree sends URL lists as
 		// `{url: ''}` objects to play nicely with controlled inputs. The
 		// controller flattens that into a deduped value array.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1448,7 +1448,7 @@ class PerformanceCITest extends TestCase {
 	public function test_config_update_verb_converts_array_bool_indexed_list(): void {
 		// Legacy `array_bool` branch: indexed list of strings becomes
 		// `{name: true}` map for the custom_events option.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1468,7 +1468,7 @@ class PerformanceCITest extends TestCase {
 		// Each scalar key gets a hard cast to int/float/bool — legacy
 		// PerfConfigController::update_config does the same on the way to
 		// update_option.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1491,7 +1491,7 @@ class PerformanceCITest extends TestCase {
 		// Unknown keys are silently ignored (legacy parity — the loop only
 		// considers keys present in CONFIG_MAP). Response should reflect zero
 		// updates and no options should be written.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1506,7 +1506,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_config_update_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1530,7 +1530,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_settings_update_verb_writes_bool_option(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1548,7 +1548,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_writes_int_option(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1563,7 +1563,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_writes_float_option(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1582,7 +1582,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_writes_array_option(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1600,7 +1600,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_array_sanitizes_text_values(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1617,7 +1617,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_rejects_unknown_option(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1634,7 +1634,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_settings_update_verb_rejects_int_overflow(): void {
 		// MAX_INT_VALUE in legacy PerfSettingsController is 1073741824 (2^30).
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1650,7 +1650,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_rejects_negative_int(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1666,7 +1666,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_rejects_non_numeric_int(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1683,7 +1683,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_settings_update_verb_rejects_float_overflow(): void {
 		// Float upper bound in legacy controller is 86400 (24h in seconds).
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1699,7 +1699,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_rejects_non_array_for_array_option(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1716,7 +1716,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_settings_update_verb_rejects_excessive_array_count(): void {
 		// MAX_EVENTS in legacy is 10000.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1738,7 +1738,7 @@ class PerformanceCITest extends TestCase {
 			$deep = [ 'nest' => $deep ];
 		}
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1754,7 +1754,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_requires_option_param(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1768,7 +1768,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_settings_update_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1792,7 +1792,7 @@ class PerformanceCITest extends TestCase {
 		// Empty rid yields the canonical initial-state shape — same as the
 		// legacy stub so the React tree mounts cleanly before a request is
 		// selected.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'gyroscope_timeline' );
 
 		$this->assertIsArray( $result );
@@ -1806,7 +1806,7 @@ class PerformanceCITest extends TestCase {
 		// Create the requests.log dir but no actual entries — scan finds nothing.
 		\mkdir( $this->tmp . '/logs/requests.log/p0', 0755, true );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1838,7 +1838,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1865,7 +1865,7 @@ class PerformanceCITest extends TestCase {
 		];
 		$this->write_request( $body );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1880,7 +1880,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_gyroscope_timeline_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1897,7 +1897,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_request_log_list_verb_returns_data_meta_envelope(): void {
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1915,7 +1915,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_log_list_verb_default_limit_is_100(): void {
 		// Legacy RequestLogController default — `limit=100`.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'request_log_list' );
 
 		$this->assertSame( 100, $result['meta']['limit'] );
@@ -1923,7 +1923,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_log_list_verb_clamps_limit_high(): void {
 		// Mirrors `min(1000, max(1, (int)$v))` from legacy sanitize_callback.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1936,7 +1936,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_log_list_verb_clamps_limit_low(): void {
 		// Floor of 1 for limit values <= 0.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -1968,7 +1968,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'POST',
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -2007,7 +2007,7 @@ class PerformanceCITest extends TestCase {
 			] );
 		}
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -2022,7 +2022,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_log_list_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'request_log_list' );
 
 		$this->assertIsString( $result );
@@ -2036,7 +2036,7 @@ class PerformanceCITest extends TestCase {
 	public function test_request_log_detail_verb_with_unknown_id_returns_empty_entries(): void {
 		// Legacy stub-compatible behavior: missing-but-not-empty rid returns
 		// the data envelope with empty `entries` rather than throwing.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -2055,7 +2055,7 @@ class PerformanceCITest extends TestCase {
 		// Empty id is a genuine usage error — legacy controller surfaces 404
 		// via not_found_error(). CI verb throws so the central catch turns
 		// it into TM_COMMAND|TM_ERROR.
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire( $ci, 'performance', 'request_log_detail' );
 
 		$this->assertIsString( $result );
@@ -2078,7 +2078,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -2105,7 +2105,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',
@@ -2121,7 +2121,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_request_log_detail_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI( $this->cache );
+		$ci     = new Performance_CI();
 		$result = VerbHarness::fire(
 			$ci,
 			'performance',

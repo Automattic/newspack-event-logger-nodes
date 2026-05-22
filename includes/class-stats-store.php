@@ -11,6 +11,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
+
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -39,17 +41,14 @@ class Stats_Store {
 	private const SALT_OPTION  = 'newspack_event_logger_nodes_stats_salt';
 	private const PREFIX_FLOOR = 3600;
 
-	private Cache_Interface $mc;
 	private int $partition;
 	private int $max_lifespan;
 	private string $prefix;
 
 	public function __construct(
-		Cache_Interface $mc,
 		int $partition = 0,
 		int $max_lifespan = 86400
 	) {
-		$this->mc           = $mc;
 		$this->partition    = $partition;
 		$this->max_lifespan = \max( self::PREFIX_FLOOR, $max_lifespan );
 		$this->prefix       = $this->compute_prefix();
@@ -128,12 +127,12 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_hourly(): array {
-		$val = $this->mc->get( $this->key( self::NS_HOURLY ) );
+		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_hourly( array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_HOURLY ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_HOURLY ), $data, $this->ttl() );
 	}
 
 	public function bump_hourly( float $req_time_secs, float $peak_mb ): void {
@@ -144,7 +143,7 @@ class Stats_Store {
 		$cur[ $bucket ]['sum_ms']      += $req_time_secs * 1000.0;
 		$cur[ $bucket ]['sum_peak_mb'] += $peak_mb;
 		$this->prune_old_hourly( $cur );
-		$this->mc->set( $this->key( self::NS_HOURLY ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_HOURLY ), $cur, $this->ttl() );
 	}
 
 	private function prune_old_hourly( array &$cur ): void {
@@ -163,7 +162,7 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_url_bucket( string $bucket ): array {
-		$val = $this->mc->get( $this->key( self::NS_URLS, $bucket ) );
+		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
@@ -178,7 +177,8 @@ class Stats_Store {
 			$keys[]    = $k;
 			$map[ $k ] = $b;
 		}
-		$results = $this->mc->get_multi( $keys );
+		// `?->` yields null when no handle; getMulti yields false on miss — both → [].
+		$results = Core::$memd?->getMulti( $keys ) ?: [];
 		$out     = [];
 		foreach ( $results as $k => $v ) {
 			if ( \is_array( $v ) && isset( $map[ $k ] ) ) {
@@ -195,12 +195,12 @@ class Stats_Store {
 		++$cur[ $url ]['count'];
 		++$cur[ $url ]['samples'];
 		$cur[ $url ]['sum_req_time'] += $req_time;
-		$this->mc->set( $this->key( self::NS_URLS, $bucket ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_URLS, $bucket ), $cur, $this->ttl() );
 	}
 
 	/** Explicit bucket setter (FlameBuilder's full-bucket overwrite path). */
 	public function set_url_index_hourly( string $bucket, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl() );
 	}
 
 	/** Alias of `get_url_bucket` matching upstream naming. */
@@ -214,12 +214,12 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_url_stats( string $url_hash ): ?array {
-		$val = $this->mc->get( $this->key( self::NS_URL, $url_hash ) );
+		$val = Core::$memd?->get( $this->key( self::NS_URL, $url_hash ) );
 		return \is_array( $val ) ? $val : null;
 	}
 
 	public function set_url_stats( string $url_hash, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats() );
 	}
 
 	// -------------------------------------------------------------------------
@@ -227,12 +227,12 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_leaderboard_bucket( string $bucket ): array {
-		$val = $this->mc->get( $this->key( self::NS_LB, $bucket ) );
+		$val = Core::$memd?->get( $this->key( self::NS_LB, $bucket ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_LB, $bucket ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_LB, $bucket ), $data, $this->ttl() );
 	}
 
 	public function bump_leaderboard( float $req_time, array $categories = [] ): void {
@@ -244,16 +244,16 @@ class Stats_Store {
 		++$cur['count'];
 		$cur['sum_req_time'] += $req_time;
 		$this->merge_categories_into( $cur['categories'], $categories );
-		$this->mc->set( $this->key( self::NS_LB, $bucket ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_LB, $bucket ), $cur, $this->ttl() );
 	}
 
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
-		$val = $this->mc->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
+		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl() );
 	}
 
 	public function bump_server_leaderboard( string $server, float $req_time, array $categories = [] ): void {
@@ -265,7 +265,7 @@ class Stats_Store {
 		++$cur['count'];
 		$cur['sum_req_time'] += $req_time;
 		$this->merge_categories_into( $cur['categories'], $categories );
-		$this->mc->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $cur, $this->ttl() );
 	}
 
 	/**
@@ -343,7 +343,7 @@ class Stats_Store {
 		if ( '' !== $server ) {
 			$parts[] = self::server_key( $server );
 		}
-		$val = $this->mc->get( $this->key( ...$parts ) );
+		$val = Core::$memd?->get( $this->key( ...$parts ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
@@ -352,7 +352,7 @@ class Stats_Store {
 		if ( '' !== $server ) {
 			$parts[] = self::server_key( $server );
 		}
-		return $this->mc->set( $this->key( ...$parts ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( ...$parts ), $data, $this->ttl() );
 	}
 
 	public function bump_dimensional( string $dimension, string $value, float $req_time ): void {
@@ -363,7 +363,7 @@ class Stats_Store {
 		$this->bump_with_cap( $bucket_data, $value, $req_time, self::MAX_DIM_VALUES );
 		unset( $bucket_data );
 		$this->prune_old_dim( $cur );
-		$this->mc->set( $this->key( self::NS_DIM, $dimension ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_DIM, $dimension ), $cur, $this->ttl() );
 	}
 
 	// -------------------------------------------------------------------------
@@ -373,12 +373,12 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_url_dimensional( string $url_hash ): array {
-		$val = $this->mc->get( $this->key( self::NS_URL_DIM, $url_hash ) );
+		$val = Core::$memd?->get( $this->key( self::NS_URL_DIM, $url_hash ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_url_dimensional( string $url_hash, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl() );
 	}
 
 	public function bump_url_dimensional( string $url_hash, string $dimension, string $value, float $req_time ): void {
@@ -389,7 +389,7 @@ class Stats_Store {
 		$bucket_data                          = &$cur[ $dimension ][ $bucket ];
 		$this->bump_with_cap( $bucket_data, $value, $req_time, self::MAX_URL_DIM_VALUES );
 		unset( $bucket_data );
-		$this->mc->set( $this->key( self::NS_URL_DIM, $url_hash ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_URL_DIM, $url_hash ), $cur, $this->ttl() );
 	}
 
 	/**
@@ -430,12 +430,12 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_categories(): array {
-		$val = $this->mc->get( $this->key( self::NS_CATEGORIES ) );
+		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_categories( array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_CATEGORIES ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_CATEGORIES ), $data, $this->ttl() );
 	}
 
 	public function bump_category( string $category, float $time, int $invocations ): void {
@@ -446,16 +446,16 @@ class Stats_Store {
 		$this->bump_category_with_cap( $bucket_data, $category, $time, $invocations, self::MAX_CAT_VALUES );
 		unset( $bucket_data );
 		$this->prune_old_dim( $cur );
-		$this->mc->set( $this->key( self::NS_CATEGORIES ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_CATEGORIES ), $cur, $this->ttl() );
 	}
 
 	public function get_server_categories( string $server ): array {
-		$val = $this->mc->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
+		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_server_categories( string $server, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl() );
 	}
 
 	// -------------------------------------------------------------------------
@@ -463,12 +463,12 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	public function get_url_categories( string $url_hash ): array {
-		$val = $this->mc->get( $this->key( self::NS_URL_CAT, $url_hash ) );
+		$val = Core::$memd?->get( $this->key( self::NS_URL_CAT, $url_hash ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
 	public function set_url_categories( string $url_hash, array $data ): bool {
-		return $this->mc->set( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl() );
+		return (bool) Core::$memd?->set( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl() );
 	}
 
 	public function bump_url_category( string $url_hash, string $category, float $time, int $invocations ): void {
@@ -478,7 +478,7 @@ class Stats_Store {
 		$bucket_data    = &$cur[ $bucket ];
 		$this->bump_category_with_cap( $bucket_data, $category, $time, $invocations, self::MAX_CAT_VALUES );
 		unset( $bucket_data );
-		$this->mc->set( $this->key( self::NS_URL_CAT, $url_hash ), $cur, $this->ttl() );
+		Core::$memd?->set( $this->key( self::NS_URL_CAT, $url_hash ), $cur, $this->ttl() );
 	}
 
 	/**
@@ -499,15 +499,6 @@ class Stats_Store {
 		$bucket_data[ $category ]['t'] += $time;
 		$bucket_data[ $category ]['c'] += $invocations;
 		++$bucket_data[ $category ]['n'];
-	}
-
-	// -------------------------------------------------------------------------
-	// Multi-key access (cache pool) — used by FlameBuilder + dashboards for
-	// retention-window scans across all partitions in one round-trip.
-	// -------------------------------------------------------------------------
-
-	public function cache(): Cache_Interface {
-		return $this->mc;
 	}
 
 	// -------------------------------------------------------------------------

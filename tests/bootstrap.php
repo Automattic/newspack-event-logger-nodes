@@ -428,11 +428,13 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/newspack-nodes.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CaptureSink.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/BoundedTicks.php';
+// The substrate's in-memory `\Memcached` subclass — shared so ELN tests can
+// seed `Core::$memd` deterministically without a real memcache server.
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMemcached.php';
 
 require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
 require_once __DIR__ . '/Helpers/TestCase.php';
-require_once __DIR__ . '/Helpers/FakeMemcached.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
 
