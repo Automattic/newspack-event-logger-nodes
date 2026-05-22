@@ -74,7 +74,6 @@
 }
 
 @keyframes pulse {
-
 	0%,
 	100% {
 		opacity: 1;
@@ -252,7 +251,6 @@
 }
 
 .aggregator-status-badge {
-
 	@include base.status-badge;
 
 	&.small {
@@ -362,7 +360,6 @@
 }
 
 .aggregator-heartbeat-badge {
-
 	@include base.status-badge;
 
 	&.small {
@@ -456,7 +453,6 @@
 }
 
 @keyframes spin {
-
 	to {
 		transform: rotate(360deg);
 	}
@@ -467,7 +463,6 @@
 // =============================================================================
 
 .aggregator-status-error {
-
 	@include base.dark-error-banner;
 	text-align: center;
 }
@@ -477,7 +472,6 @@
 // =============================================================================
 
 @media (max-width: 768px) {
-
 	.aggregator-server-identity {
 		flex-direction: column;
 		align-items: flex-start;

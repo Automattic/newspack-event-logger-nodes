@@ -28,24 +28,20 @@
 }
 
 input.event-logger-error-log-search {
-
 	@include base.dark-search-input;
 	width: 400px;
 }
 
 .event-logger-error-log-stats {
-
 	@include base.dark-stats;
 	min-width: 80px;
 }
 
 .event-logger-error-log-count {
-
 	@include base.dark-stats-count;
 }
 
 .event-logger-error-log-btn {
-
 	@include base.dark-button;
 
 	&.paused,
@@ -57,7 +53,6 @@ input.event-logger-error-log-search {
 }
 
 .event-logger-error-log-error {
-
 	@include base.dark-error-banner;
 }
 
@@ -155,7 +150,6 @@ input.event-logger-error-log-search {
 }
 
 .entry-keyword {
-
 	&--error {
 		color: base.$error-text;
 		font-weight: 600;
