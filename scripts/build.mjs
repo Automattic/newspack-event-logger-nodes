@@ -197,12 +197,10 @@ async function makeContext( entry, outDir ) {
 			'.png': 'dataurl',
 		},
 		alias: {
-			// Cross-plugin: the substrate runtime sits in the sibling
-			// newspack-nodes checkout. webpack used the same path.
-			'@newspack-nodes/runtime': path.resolve(
-				ROOT,
-				'../newspack-nodes/src/runtime/index.js'
-			),
+			// Substrate runtime: CI sets NEWSPACK_NODES_RUNTIME; local dev falls back to the sibling checkout.
+			'@newspack-nodes/runtime':
+				process.env.NEWSPACK_NODES_RUNTIME ||
+				path.resolve( ROOT, '../newspack-nodes/src/runtime/index.js' ),
 		},
 		plugins: [
 			wpExternalsPlugin( usedHandles ),

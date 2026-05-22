@@ -16,6 +16,9 @@ Thumbs.db
 .release-staging
 /release
 
+# CI-only: substrate runtime checked out by release.yml (build-time alias target)
+/.newspack-nodes
+
 # VCS / IDE
 .claude
 .git

@@ -32,6 +32,14 @@ jobs:
         if: steps.validate.outputs.is_release == 'true'
         uses: actions/checkout@v4
 
+      - name: Checkout newspack-nodes runtime (for the @newspack-nodes/runtime alias)
+        if: steps.validate.outputs.is_release == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Automattic/newspack-nodes
+          ref: main
+          path: .newspack-nodes
+
       - name: Setup PHP
         if: steps.validate.outputs.is_release == 'true'
         uses: shivammathur/setup-php@v2
@@ -53,6 +61,8 @@ jobs:
         # what ships — the same script developers run locally. It builds assets,
         # rsyncs via .distignore, installs production-only vendor, zips, and
         # emits the standalone profiler drop-in.
+        env:
+          NEWSPACK_NODES_RUNTIME: ${{ github.workspace }}/.newspack-nodes/src/runtime/index.js
         run: |
           npm install
           npm run release:archive
