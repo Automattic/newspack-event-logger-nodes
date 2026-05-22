@@ -59,27 +59,38 @@ The plugin is shipped as a standard WordPress plugin; how it's deployed (contain
 
 The version appears in three places: the `Version:` header in `newspack-event-logger-nodes.php`, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` PHP constant in the same file, and the `"version"` field in `package.json`. Do NOT edit these by hand — `tools/bump-event-logger-nodes-version.sh` (in `dndocker/`) rewrites all three atomically and refuses to bump to a version that's already current.
 
-```bash
-# Bump version (from dndocker root).
-dndocker/tools/bump-event-logger-nodes-version.sh <version>
+Releases are **automated by GitHub Actions** (`.github/workflows/release.yml`): pushing a `v<major>.<minor>.<patch>` tag builds the archive and publishes the GitHub Release with BOTH artifacts. You only bump, changelog, commit, and tag:
 
-# Release workflow:
-# 1. Update CHANGELOG.md with new version and changes (use Keep-a-Changelog format).
-# 2. Bump version across plugin header + constant + package.json:
+```bash
+# 1. Update CHANGELOG.md: rename `## [Unreleased]` → `## [<version>] - <date>`,
+#    then add a fresh empty `## [Unreleased]` above it (Keep-a-Changelog format).
+# 2. Bump version across plugin header + constant + package.json (from dndocker root):
 dndocker/tools/bump-event-logger-nodes-version.sh <version>
-# 3. Commit the changelog entry + version bump together (e.g. `chore: release v<version>`).
-# 4. Build the release artifacts:
-./build-release.sh           # outputs release/newspack-event-logger-nodes.zip + release/00-newspack-profiler.php
-# 5. Tag, push, and create GitHub release with BOTH artifacts:
+# 3. Commit the changelog + bump together (e.g. `chore(release): <version>`).
+# 4. Tag and push — the workflow does the rest:
 git tag v<version>
-git push origin main --tags
-gh release create v<version> \
-    release/newspack-event-logger-nodes.zip \
-    release/00-newspack-profiler.php \
-    --title "v<version>" --notes "changelog here"
+git push origin main
+git push origin v<version>
 ```
 
-`build-release.sh` runs `composer install --no-dev --optimize-autoloader`, then `npm run build` (the React dashboards must ship pre-built), then rsyncs the plugin into `release/newspack-event-logger-nodes/` minus development artifacts (`src/`, `tests/`, `node_modules/`, `composer.{json,lock}`, `package*.json`, `phpcs.xml.dist`, `build-release.sh`, AppleDouble sidecars, etc.) and zips it. The zip contains the plugin directory at root so `wp plugin install --force --activate <url>.zip` works as-is. The script ALSO copies `00-newspack-profiler.php` into `release/` as a standalone asset — the Atomic-side `deploy-event-logger.sh` script fetches it directly from the release URL because it lives under `mu-plugins/` on the target site, not under `wp-content/plugins/`. Both files must be attached to the GitHub release for the deploy script to succeed.
+On the tag push, the **Release** workflow validates the tag shape, runs
+`npm run release:archive` (= `build-release.sh`: build dashboards, rsync via
+`.distignore`, `composer install --no-dev`, zip, + emit the standalone profiler
+drop-in), extracts the matching `CHANGELOG.md` section as the release notes, and
+publishes the GitHub Release with **both** `release/newspack-event-logger-nodes.zip`
+and `release/00-newspack-profiler.php` attached. No manual `gh release create`.
+
+`build-release.sh` remains the single source of truth for archive contents and
+is what the workflow invokes; run `npm run release:archive` locally to build the
+same artifacts for testing. It rsyncs the plugin minus development artifacts
+(`src/`, `tests/`, `node_modules/`, `.github`, `composer.{json,lock}`,
+`package*.json`, etc.) so the zip holds the plugin directory at root — `wp plugin
+install --force --activate <url>.zip` works as-is. It ALSO copies
+`00-newspack-profiler.php` into `release/` as a standalone asset — the Atomic-side
+`deploy-event-logger.sh` fetches it directly from the release URL because it lives
+under `mu-plugins/` on the target site. Both files must be attached to the release
+for the deploy script to succeed (the workflow attaches both; `fail_on_unmatched_files`
+guards against a missing one).
 
 **Note on coupling**: this plugin's version is not tied to `newspack-nodes`'s — they release independently. If a release depends on a specific runtime version, call it out in the CHANGELOG entry; consider bumping the `newspack-nodes` requirement in the plugin header (`Requires Plugins:` once we use it).
 

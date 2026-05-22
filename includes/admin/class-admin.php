@@ -1320,7 +1320,7 @@ class Admin {
 	 *                            handler registration depends on these.
 	 *
 	 * Worker groups in this plugin:
-	 *  - `request-workers` (RequestBuilder + FlameBuilder + StatsAggregator)
+	 *  - `request-workers` (RequestBuilder + FlameBuilder)
 	 *  - `job-workers`     (JobRouter + JobWorker)
 	 *  Lock dirs: `{base_dir}/locks/{group}.p{N}.lock.d` per partition.
 	 *

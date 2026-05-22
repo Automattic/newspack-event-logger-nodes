@@ -1379,7 +1379,7 @@ class RemoteSourceTest extends TestCase {
 		$handle = $remote->test_get_handle();
 		$url    = \curl_getinfo( $handle, \CURLINFO_EFFECTIVE_URL );
 		// `subscribe=firehose.p3` is the substrate's IPC-style shape — partition
-		// number flows through Sse_Slot_Pool's partition arg so the per-partition
+		// number flows through \Newspack_Nodes\Sse_Slot_Pool's partition arg so the per-partition
 		// aggregator slot pool (60s TTL) is what we hit, not the shared browser
 		// pool (30s TTL).
 		$this->assertStringContainsString( 'subscribe=firehose.p3', $url );

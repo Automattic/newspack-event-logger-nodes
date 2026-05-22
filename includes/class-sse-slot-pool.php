@@ -1,10 +1,10 @@
 <?php
 /**
  * Sse_Slot_Pool: app-side wiring for the substrate's
- * `Messages_Stream_Controller` slot-pool seams.
+ * `SSE_Out` slot-pool seams.
  *
  * The substrate exposes three static Closure properties (acquire,
- * release, check) on `\Newspack_Nodes\Rest\Messages_Stream_Controller`.
+ * release, check) on `\Newspack_Nodes\Rest\SSE_Out`.
  * This class' `wire()` populates them with closures that delegate to
  * `Memcached_Cache::acquire_sse_slot()` / `release_sse_slot()` /
  * `check_sse_slot()` so the unified SSE endpoint inherits the same
@@ -17,7 +17,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 \defined( 'ABSPATH' ) || exit;
 
-use Newspack_Nodes\Rest\Messages_Stream_Controller;
+use Newspack_Nodes\Rest\SSE_Out;
 
 class Sse_Slot_Pool {
 
@@ -52,7 +52,7 @@ class Sse_Slot_Pool {
 	 * the app bootstrap once memcache config is loadable.
 	 */
 	public static function wire(): void {
-		Messages_Stream_Controller::$acquire_slot = static function ( int $partition ): int|false {
+		SSE_Out::$acquire_slot = static function ( int $partition ): int|false {
 			$cache   = self::cache();
 			$ttl     = $partition >= 0 ? self::$ttl_aggregator : self::$ttl_browser;
 			return $cache->acquire_sse_slot(
@@ -63,7 +63,7 @@ class Sse_Slot_Pool {
 				$partition
 			);
 		};
-		Messages_Stream_Controller::$release_slot = static function ( int $slot, int $partition ): void {
+		SSE_Out::$release_slot = static function ( int $slot, int $partition ): void {
 			self::cache()->release_sse_slot(
 				self::user_id(),
 				self::ip_hash(),
@@ -71,7 +71,7 @@ class Sse_Slot_Pool {
 				$partition
 			);
 		};
-		Messages_Stream_Controller::$check_slot = static function ( int $slot, int $partition ): bool {
+		SSE_Out::$check_slot = static function ( int $slot, int $partition ): bool {
 			// Check-only — NEVER refresh the TTL here. The slot TTL is
 			// refreshed EXCLUSIVELY by the client's periodic
 			// `workers/heartbeat` poke (Workers_CI -> touch_sse_slot). The

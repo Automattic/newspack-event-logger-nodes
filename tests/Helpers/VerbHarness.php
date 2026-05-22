@@ -3,7 +3,7 @@
  * VerbHarness: test fixture for service-CommandInterpreter (CI) verbs.
  *
  * Every M2 CI test uses this to fire a TM_COMMAND envelope through the
- * substrate's normal dispatch path (CI → base CI → Router → HTTP_Out) and
+ * substrate's normal dispatch path (CI → base CI → Router → HTTP_In) and
  * pull the verb's return value back out as a decoded PHP value. Tests
  * therefore exercise the same plumbing the live REST controller does —
  * no special "for tests" shortcut — but assert on the verb's logical
@@ -21,7 +21,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 
 use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\HTTP_Out;
+use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Rest\HTTP_In;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Router;
 
@@ -49,26 +50,26 @@ class VerbHarness {
 	 * @return mixed The verb's payload (structure for success verbs; error-message string for TM_ERROR).
 	 */
 	public static function fire( CommandInterpreter $ci, string $name, string $verb, mixed $verb_payload = null, string $args = '', string $key = '' ): mixed {
-		$router = new Router(); $router->name( '_router' );
-		$base   = new CommandInterpreter(); $base->name( '_command_interpreter' ); $base->sink( $router );
+		$router = new Router(); $router->name( Node_Names::ROUTER );
+		$base   = new CommandInterpreter(); $base->name( Node_Names::COMMAND_INTERPRETER ); $base->sink( $router );
 		$ci->name( $name );
 		$ci->sink( $base );
 
 		// status_header seam is unused — tests assert on the verb's return
-		// value, not which HTTP status code HTTP_Out emitted. The closure
-		// is a no-op so HTTP_Out's fill() path runs without trying to call
+		// value, not which HTTP status code HTTP_In emitted. The closure
+		// is a no-op so HTTP_In's fill() path runs without trying to call
 		// the real \status_header() (which isn't defined in tests).
-		$http_out = new HTTP_Out( static fn ( int $c ) => null );
-		$http_out->name( '_http' );
+		$http_in = new HTTP_In( static fn ( int $c ) => null );
+		$http_in->name( Node_Names::HTTP );
 
 		$msg = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
-		$msg[ Message::FROM ]  = '_http';
+		$msg[ Message::FROM ]  = Node_Names::HTTP;
 		$msg[ Message::TO ]    = '';  // empty TO triggers dispatch in CI::fill
 		$msg[ Message::ID ]    = 'test-' . \bin2hex( \random_bytes( 4 ) );
 		$msg[ Message::KEY ]   = $key;
 		// VALUE is the command struct as a live PHP array — never separately
-		// json-encoded; only the envelope/wire (HTTP_Out's packed Message) is JSON.
+		// json-encoded; only the envelope/wire (HTTP_In's packed Message) is JSON.
 		$msg[ Message::VALUE ] = [
 			'name'      => $verb,
 			'arguments' => $args,
@@ -82,7 +83,7 @@ class VerbHarness {
 		if ( '' === $body ) {
 			throw new \RuntimeException( "verb '{$verb}' on CI '{$name}' produced no response" );
 		}
-		// HTTP_Out packs the whole response Message; unpacked() restores VALUE
+		// HTTP_In packs the whole response Message; unpacked() restores VALUE
 		// as the live `['name'=>,'payload'=>]` array. The verb's payload is
 		// returned directly — a structure for success verbs, or the
 		// error-message string for a TM_COMMAND|TM_ERROR response.

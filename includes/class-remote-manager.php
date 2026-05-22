@@ -43,8 +43,8 @@ class RemoteManager {
 
 	/**
 	 * REST path for the substrate's unified TM_COMMAND dispatch endpoint.
-	 * Mirrors `Newspack_Nodes\Rest\Command_Controller::REST_NAMESPACE` +
-	 * `Command_Controller::ROUTE`. M5.2 cutover: all settings-sync POSTs
+	 * Mirrors `Newspack_Nodes\Rest\HTTP_In::REST_NAMESPACE` +
+	 * `HTTP_In::ROUTE`. M5.2 cutover: all settings-sync POSTs
 	 * land here rather than at the legacy /settings + /performance/settings
 	 * routes (deleted).
 	 *
@@ -57,7 +57,7 @@ class RemoteManager {
 	 * Message per line); WordPress's REST dispatcher 400s a JSONL body sent
 	 * as `application/json` (it pre-parses the body as a single JSON
 	 * document and rejects the newlines). text/plain makes WP pass the raw
-	 * body through to Command_Controller::messages_from_body(). Matches the
+	 * body through to HTTP_In's dispatch handler. Matches the
 	 * browser CommandClient (src/runtime/command_client.js).
 	 *
 	 * Public so the other same-plugin `/command` senders
@@ -86,7 +86,6 @@ class RemoteManager {
 			// Register the JobIntake handler. Two filter names are accepted so the
 			// runtime can dispatch under whichever convention it ends up using.
 			\add_filter( 'newspack_nodes/job_handlers', [ self::class, 'register_handler' ] );
-			\add_filter( 'newspack_event_logger_nodes/job_handlers', [ self::class, 'register_handler' ] );
 		}
 	}
 
@@ -571,7 +570,7 @@ class RemoteManager {
 	 * (JSONL line). TYPE=TM_COMMAND, FROM=`_http`, TO=$to, VALUE is the LIVE
 	 * structured command array `{name, arguments, payload}` — NOT a separately
 	 * `wp_json_encode`'d string. Matches the browser CommandClient wire shape
-	 * (src/runtime/command_client.js) and what Command_Controller decodes.
+	 * (src/runtime/command_client.js) and what HTTP_In decodes.
 	 *
 	 * Public so the admin Test button (Servers_CI::probe_remote) builds its
 	 * `discovery.get` body through this one builder — keeps the manual-probe
@@ -586,7 +585,7 @@ class RemoteManager {
 	public static function command_message_body( string $to, string $verb, mixed $payload, string $args = '' ): string {
 		$msg                                   = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND;
-		$msg[ \Newspack_Nodes\Message::FROM ]  = '_http';
+		$msg[ \Newspack_Nodes\Message::FROM ]  = \Newspack_Nodes\Node_Names::HTTP;
 		$msg[ \Newspack_Nodes\Message::TO ]    = $to;
 		$msg[ \Newspack_Nodes\Message::VALUE ] = [
 			'name'      => $verb,

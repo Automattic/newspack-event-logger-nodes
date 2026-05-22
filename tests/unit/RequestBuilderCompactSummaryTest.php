@@ -13,7 +13,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
  *  - hidden RequestFlight sibling attached at construction
  *  - sink() override propagates to Flight
  *  - set_completed_target() + compact-summary secondary emit
- *  - inflight_snapshot() + prime_inflight_for_testing() seam
+ *  - inflight_snapshot()
  *
  * Compact-summary schema mirrors the legacy
  * requests-stream-controller::transform_line output so the schema-parity
@@ -68,7 +68,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 			'remote_addr'    => '127.0.0.1',
 			'user_agent'     => 'test',
 		];
-		$rb->emit_completed_for_testing( $request );
+		$rb->emit_request( $request );
 
 		// The compact emit should show up in addition to whatever the primary emit does.
 		$compact = \array_values( \array_filter(
@@ -100,7 +100,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 
 		$long_url = '/x?' . \str_repeat( 'a', 3000 );
 		$long_ua  = \str_repeat( 'b', 600 );
-		$rb->emit_completed_for_testing(
+		$rb->emit_request(
 			(object) [
 				'rid'            => 'r',
 				'url'            => $long_url,
@@ -122,11 +122,9 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	public function test_inflight_snapshot_returns_active_requests_in_compact_form(): void {
 		$rb = new RequestBuilder();
 		$rb->name( 'rb-snap' );
-		$rb->prime_inflight_for_testing( [
-			'r-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
-			'r-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ],
-		] );
-		$snap = $rb->inflight_snapshot();
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ] );
+		$rb->cache->set( 'r-2', (object) [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ] );
+		$snap = $rb->flight->inflight_snapshot();
 		$this->assertCount( 2, $snap );
 		$this->assertSame( 'r-1', $snap[0]['rid'] );
 		// Default state for a primed request with no stack frames matches
@@ -158,7 +156,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 			'duration_ms'    => 25,
 			'status_code'    => 200,
 		];
-		$rb->emit_completed_for_testing( $request );
+		$rb->emit_request( $request );
 
 		$compact = \array_values( \array_filter(
 			$captured,
@@ -186,7 +184,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 			'duration_ms'    => 25,
 			'status_code'    => 200,
 		];
-		$rb->emit_completed_for_testing( $request );
+		$rb->emit_request( $request );
 
 		$compact = \array_values( \array_filter(
 			$captured,

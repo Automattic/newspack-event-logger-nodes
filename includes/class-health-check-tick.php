@@ -34,6 +34,7 @@ use Newspack_Nodes\CommandInterpreter;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
+use Newspack_Nodes\Node_Names;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -68,7 +69,7 @@ class HealthCheckTick extends Node {
 	 * uses — see StreamMerger::start_periodic_tick().
 	 */
 	public function start_periodic_tick(): void {
-		$router = Core::node( '_router' );
+		$router = Core::node( Node_Names::ROUTER );
 		if ( null === $router ) {
 			Core::print_less_often( 'HealthCheckTick::start_periodic_tick: no _router; periodic tick disabled' );
 			return;

@@ -35,11 +35,7 @@ class RequestFlight extends Timer {
 	}
 
 	public function fire_cb(): void {
-		$patron = $this->patron();
-		if ( null === $patron || ! \method_exists( $patron, 'inflight_snapshot' ) ) {
-			return;
-		}
-		$batch = $patron->inflight_snapshot();
+		$batch = $this->inflight_snapshot();
 		if ( empty( $batch ) ) {
 			return;
 		}
@@ -61,5 +57,52 @@ class RequestFlight extends Timer {
 		$msg[ Message::KEY ]       = 'inflight';
 		$msg[ Message::VALUE ]     = $batch;
 		$this->sink->fill( $msg );
+	}
+
+	/**
+	 * Snapshot the in-flight request map as a list of compact rows. Each row's
+	 * `state` field carries the top-of-stack hook name. Consumed by RequestFlight's
+	 * periodic fire — emitted to the gyroscope partition for cross-spoke
+	 * aggregation.
+	 *
+	 * Reads the live LruCache (the canonical in-flight map);
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function inflight_snapshot(): array {
+		$patron = $this->patron();
+		if ( ! $patron instanceof RequestBuilder ) {
+			return [];
+		}
+		$out = [];
+		$now = (float) ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
+		foreach ( $patron->cache->iterate() as $rid => $request ) {
+			$r = (array) $request;
+			// Process-start ts — the EARLIEST point PHP began handling this
+			// request. LogManager stamps `process (start)` with the
+			// mu-profiler's wall-clock load ts (captured before any plugins
+			// load), so this is the real request-start time the operator
+			// cares about.
+			$start_time  = (float) ( $r['timestamp'] ?? 0 );
+			$last_log_ts = (float) ( $r['last_log_ts'] ?? $start_time );
+			$tracker_ts  = (float) ( $r['tracker_ts'] ?? $now );
+			$time_ms     = ( $last_log_ts - $start_time ) * 1000;
+			$age_ms      = ( $now - $tracker_ts ) * 1000;
+			$out[]       = [
+				'rid'         => (string) $rid,
+				'method'      => (string) ( $r['request_method'] ?? 'GET' ),
+				'url'         => (string) ( $r['url'] ?? '' ),
+				'state'       => RequestBuilder::extract_state( $r ),
+				'what'        => RequestBuilder::extract_what( $r ),
+				'time_ms'     => \round( $time_ms, 1 ),
+				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
+				'start_time'  => $start_time,
+				'last_log_ts' => $last_log_ts,
+				'lag_ms'      => \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ),
+				'remote_addr' => (string) ( $r['remote_addr'] ?? '' ),
+				'user_agent'  => (string) ( $r['user_agent'] ?? '' ),
+			];
+		}
+		return $out;
 	}
 }

@@ -740,7 +740,7 @@ class FlameBuilderTest extends TestCase {
 		$reply = null;
 		foreach ( $capture->captured as $captured ) {
 			$type = $captured[ Message::TYPE ];
-			if ( ( $type & Message::TM_REQUEST ) && ( $type & Message::TM_RESPONSE ) ) {
+			if ( ( $type & Message::TM_RESPONSE ) && ( $type & Message::TM_STRUCT ) ) {
 				$reply = $captured;
 				break;
 			}
@@ -1451,7 +1451,7 @@ class FlameBuilderTest extends TestCase {
 		$reply = null;
 		foreach ( $capture->captured as $m ) {
 			$t = $m[ Message::TYPE ];
-			if ( ( $t & Message::TM_REQUEST ) && ( $t & Message::TM_RESPONSE ) ) {
+			if ( ( $t & Message::TM_RESPONSE ) && ( $t & Message::TM_STRUCT ) ) {
 				$reply = $m;
 				break;
 			}

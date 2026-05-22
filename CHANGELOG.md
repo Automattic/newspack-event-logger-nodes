@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `text/plain` and read the response payload with one decode. Hoisted
   `RemoteManager::COMMAND_CONTENT_TYPE` + `command_message_body()` to public so
   the same-plugin callers share one definition.
+- **Adapted to the substrate In/Out rename + `TM_*` renumber.** Follows
+  `Command_Controller`/`HTTP_Out` → `HTTP_In` and `Messages_Stream_Controller` →
+  `SSE_Out`; reserved node names use `Node_Names`; the reply-convention tests
+  assert `TM_STRUCT|TM_RESPONSE` (no `TM_REQUEST` echo).
+- Moved `00-newspack-profiler.php` under `mu-plugins/`; synced shared JS.
+- **`RequestFlight`** — hidden Timer-sibling of `RequestBuilder` that snapshots the
+  in-flight request map and emits a compact batch to the gyroscope partition.
+- Removed dead `StatsAggregator`.
 
 ## [0.2.43] - 2026-05-21
 

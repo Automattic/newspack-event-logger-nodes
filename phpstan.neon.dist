@@ -6,7 +6,7 @@ parameters:
     phpVersion: 80200
     paths:
         - newspack-event-logger-nodes.php
-        - 00-newspack-profiler.php
+        - mu-plugins
         - includes
     excludePaths:
         - vendor

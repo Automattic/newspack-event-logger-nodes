@@ -56,7 +56,10 @@ class RequestBuilder extends Node {
 	private const DEFAULT_NUM_BUCKETS = 3;
 
 	/** @var LruCache In-flight requests, keyed by rid. */
-	private $cache;
+	public $cache;
+
+	/** @var RequestFlight|null Hidden sibling — periodic in-flight snapshots. */
+	public ?RequestFlight $flight = null;
 
 	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
 	private $state_callbacks;
@@ -66,9 +69,6 @@ class RequestBuilder extends Node {
 
 	/** @var string Named target for compact-summary completed lines (empty = disabled). */
 	private string $completed_target = '';
-
-	/** @var RequestFlight|null Hidden sibling — periodic in-flight snapshots. */
-	private ?RequestFlight $flight = null;
 
 	/** @var int Process line counter (for tests/debug). */
 	private $line_counter = 0;
@@ -501,10 +501,7 @@ class RequestBuilder extends Node {
 
 		// Stop appending once we've hit the stack-depth cap — keeps memory
 		// bounded for runaway requests we deliberately keep visible in the
-		// inflight snapshot (see fill() line 338). Mirrors legacy
-		// InflightTracker::process line 127, which caps via the same
-		// < MAX_STACK_DEPTH guard. We still flag is_runaway below so the
-		// short-circuit in fill() stops doing per-entry work.
+		// inflight snapshot.
 		if ( \count( $request->stack ) >= self::MAX_STACK_DEPTH ) {
 			$request->is_runaway = true;
 			return;
@@ -663,7 +660,7 @@ class RequestBuilder extends Node {
 	 * completed_target is unset) so a topology that wires both the full
 	 * doc and the one-line summary gets both with one source call.
 	 */
-	private function emit_request( \stdClass $request ): void {
+	public function emit_request( \stdClass $request ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
@@ -730,68 +727,16 @@ class RequestBuilder extends Node {
 		$this->sink->fill( $msg );
 	}
 
-	/**
-	 * Snapshot the in-flight request map as a list of compact rows. Each row's
-	 * `state` field carries the top-of-stack hook name (matching legacy
-	 * InflightTracker::get_active semantics — e.g. `render`, `wp_head hook`,
-	 * or `process` for an unwound stack). Consumed by RequestFlight's
-	 * periodic fire — emitted to the gyroscope partition for cross-spoke
-	 * aggregation.
-	 *
-	 * Schema is the 12-field shape from legacy InflightTracker::get_active,
-	 * preserved verbatim so the M5 deletion gate (SchemaParityAuditTest) can
-	 * verify byte-for-byte parity before the legacy tracker is removed.
-	 *
-	 * Reads the live LruCache (the canonical in-flight map); tests use
-	 * prime_inflight_for_testing() to seed the cache without driving the
-	 * fill() pipeline.
-	 *
-	 * @return array<int,array<string,mixed>>
-	 */
-	public function inflight_snapshot(): array {
-		$out = [];
-		$now = (float) ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
-		foreach ( $this->cache->iterate() as $rid => $request ) {
-			$r = (array) $request;
-			// Process-start ts — the EARLIEST point PHP began handling this
-			// request. LogManager stamps `process (start)` with the
-			// mu-profiler's wall-clock load ts (captured before any plugins
-			// load), so this is the real request-start time the operator
-			// cares about.
-			$start_time  = (float) ( $r['timestamp'] ?? 0 );
-			$last_log_ts = (float) ( $r['last_log_ts'] ?? $start_time );
-			$tracker_ts  = (float) ( $r['tracker_ts'] ?? $now );
-			$time_ms     = ( $last_log_ts - $start_time ) * 1000;
-			$age_ms      = ( $now - $tracker_ts ) * 1000;
-			$out[]       = [
-				'rid'         => (string) $rid,
-				'method'      => (string) ( $r['request_method'] ?? 'GET' ),
-				'url'         => (string) ( $r['url'] ?? '' ),
-				'state'       => self::extract_state( $r ),
-				'what'        => self::extract_what( $r ),
-				'time_ms'     => \round( $time_ms, 1 ),
-				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
-				'start_time'  => $start_time,
-				'last_log_ts' => $last_log_ts,
-				'lag_ms'      => \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ),
-				'remote_addr' => (string) ( $r['remote_addr'] ?? '' ),
-				'user_agent'  => (string) ( $r['user_agent'] ?? '' ),
-			];
-		}
-		return $out;
-	}
-
-	private static function extract_what( array $request ): string {
+	public static function extract_what( array $request ): string {
 		return self::extract_stack_top_slot( $request, 1, 'what', '' );
 	}
 
-	private static function extract_state( array $request ): string {
+	public static function extract_state( array $request ): string {
 		return self::extract_stack_top_slot( $request, 0, 'state', 'process' );
 	}
 
 	/**
-	 * Read the stack-top frame slot for an in-flight request — mirrors
-	 * legacy `InflightTracker::get_active` lines 141-143 which derive both
+	 * Read the stack-top frame slot for an in-flight request — derive both
 	 * `state` (slot 0) and `what` (slot 1) from the top of the request's
 	 * hook stack, defaulting to `[ 'process', '' ]` when the stack is empty.
 	 *
@@ -815,35 +760,6 @@ class RequestBuilder extends Node {
 			return $request[ $fallback_field ];
 		}
 		return $default;
-	}
-
-	/**
-	 * Test seam: seed the in-flight cache with a map of rid → request fields.
-	 * Mirrors what process_(start) + state callbacks would set after a real
-	 * firehose lead-in, letting tests assert on inflight_snapshot() / the
-	 * compact-summary helpers without driving the full fill() pipeline.
-	 *
-	 * @internal Test-only.
-	 * @param array<string,array<string,mixed>|\stdClass> $map Rid → request fields.
-	 */
-	public function prime_inflight_for_testing( array $map ): void {
-		foreach ( $map as $rid => $entry ) {
-			$obj      = (object) $entry;
-			$obj->rid = (string) $rid;
-			$this->cache->set( (string) $rid, $obj );
-		}
-	}
-
-	/**
-	 * Test seam: invoke the full completed-request emit path (primary +
-	 * compact summary) directly, bypassing the firehose-line assembly the
-	 * `fill()` pipeline normally requires.
-	 *
-	 * @internal Test-only.
-	 * @param \stdClass|array $request Completed request envelope.
-	 */
-	public function emit_completed_for_testing( $request ): void {
-		$this->emit_request( (object) $request );
 	}
 
 	/**

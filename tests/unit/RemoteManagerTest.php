@@ -94,14 +94,14 @@ class RemoteManagerTest extends TestCase {
 		// the wiring contract.
 		$GLOBALS['_wp_actions'] = [];
 		\add_action( 'newspack_event_logger_nodes/health_check', [ RemoteManager::class, 'health_check' ] );
-		\add_filter( 'newspack_event_logger_nodes/job_handlers', [ RemoteManager::class, 'register_handler' ] );
+		\add_filter( 'newspack_nodes/job_handlers', [ RemoteManager::class, 'register_handler' ] );
 
 		$this->assertNotEmpty(
 			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/health_check'] ?? [],
 			'health_check action listener must be wired'
 		);
 		$this->assertNotEmpty(
-			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/job_handlers'] ?? [],
+			$GLOBALS['_wp_actions']['newspack_nodes/job_handlers'] ?? [],
 			'job_handlers filter must be wired'
 		);
 
