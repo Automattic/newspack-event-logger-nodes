@@ -38,28 +38,23 @@
 }
 
 .event-logger-inflight-stats {
-
 	@include base.dark-stats;
 }
 
 .event-logger-inflight-count {
-
 	@include base.dark-stats-count;
 }
 
 .event-logger-inflight-rps {
-
 	@include base.dark-stats-rps;
 }
 
 .event-logger-inflight-error {
-
 	@include base.dark-error-banner;
 }
 
 // Controls (buttons, dropdowns)
 .event-logger-inflight-btn {
-
 	@include base.dark-button;
 }
 
@@ -86,7 +81,6 @@
 }
 
 .event-logger-inflight-column-picker {
-
 	@include base.dark-column-picker;
 	gap: base.$space-md; // Slightly wider gap for this variant
 }
@@ -105,7 +99,6 @@
 	white-space: nowrap;
 	vertical-align: middle;
 }
-
 
 .event-logger-inflight-legend {
 	display: flex;
@@ -126,7 +119,6 @@
 // Gyroscope page - styles handled via inline JS for menu collapse detection
 // Just style the inner inflight component
 #event-logger-gyroscope {
-
 	.event-logger-inflight {
 		height: 100%;
 		border-radius: 0;

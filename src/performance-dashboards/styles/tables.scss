@@ -20,12 +20,10 @@
 }
 
 .event-logger-table__header {
-
 	@include base.table-header;
 }
 
 .event-logger-table__header-btn {
-
 	@include base.sortable-header-button;
 
 	&--numeric {
@@ -38,21 +36,17 @@
 }
 
 .event-logger-table__list {
-
 	@include base.table-list;
 }
 
 .event-logger-table__row {
-
 	@include base.table-row;
 }
 
 .event-logger-table__cell {
-
 	@include base.table-cell;
 
 	&--numeric {
-
 		@include base.table-cell-numeric;
 	}
 
@@ -74,7 +68,6 @@
 }
 
 .event-logger-table__empty {
-
 	@include base.table-empty;
 	height: 100px;
 }
@@ -84,10 +77,11 @@
 // =============================================================================
 
 .event-logger-table--urls {
-
 	.event-logger-table__header,
 	.event-logger-table__row {
-		grid-template-columns: 60px minmax(0, 1fr) repeat(4, 50px) repeat(4, 55px) 60px;
+		grid-template-columns:
+			60px minmax(0, 1fr) repeat(4, 50px) repeat(4, 55px)
+			60px;
 		min-width: 800px;
 	}
 }
@@ -159,7 +153,6 @@
 // =============================================================================
 
 .event-logger-log-entries {
-
 	table {
 		font-size: 12px;
 
