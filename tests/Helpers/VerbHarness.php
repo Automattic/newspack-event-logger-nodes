@@ -75,6 +75,9 @@ class VerbHarness {
 			'arguments' => $args,
 			'payload'   => $verb_payload,
 		];
+		// Exercises verb LOGIC, not authorization. Mark the command as in-process
+		// so the substrate's client-tier authorize gate (Message::LOCAL) passes.
+		$msg[ Message::LOCAL ] = true;
 
 		\ob_start();
 		$ci->fill( $msg );
