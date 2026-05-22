@@ -19,6 +19,7 @@ Thumbs.db
 # VCS / IDE
 .claude
 .git
+.github
 .gitignore
 .vscode
 
@@ -37,6 +38,7 @@ webpack.config.js
 
 # Dev infrastructure — not part of the installable plugin
 /coverage
+/mu-plugins
 /scripts
 /src
 /tests
@@ -51,9 +53,3 @@ CHANGELOG.md
 CLAUDE.md
 MIGRATION.md
 README.md
-
-# Ships as a standalone release asset (must-use plugin under wp-content/mu-plugins/)
-# rather than as a regular plugin under wp-content/plugins/. Bundling it inside
-# the plugin zip makes WordPress show a phantom "00-newspack-profiler" plugin
-# in the admin and risks double-loading if anyone activates it.
-00-newspack-profiler.php

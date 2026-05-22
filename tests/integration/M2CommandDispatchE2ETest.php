@@ -5,10 +5,10 @@
  * Proves that every service CI mounted by the plugin's
  * `newspack_nodes/request_graph_ready` listener actually responds
  * end-to-end to a representative verb when driven through the
- * substrate's production `Command_Controller` endpoint. The path under
+ * substrate's production `HTTP_In` endpoint. The path under
  * test:
  *
- *   POST /newspack-nodes/v1/command  →  Command_Controller::dispatch
+ *   POST /newspack-nodes/v1/command  →  HTTP_In::dispatch
  *                                    →  ensure_request_graph (lazy-builds
  *                                       _router / _command_interpreter / _http)
  *                                    →  do_action newspack_nodes/request_graph_ready
@@ -17,7 +17,7 @@
  *                                    →  Router (peels TO head)
  *                                    →  Service CI (interpret + run verb)
  *                                    →  CI sink → base CI → Router
- *                                    →  HTTP_Out (writes packed Message)
+ *                                    →  HTTP_In (writes packed Message)
  *                                    →  ob_get_clean captures the body
  *
  * Auth-gated CIs (aggregator, performance) get `_current_user_can = true` in
@@ -30,7 +30,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Rest\Command_Controller;
+use Newspack_Nodes\Rest\HTTP_In;
 
 class M2CommandDispatchE2ETest extends TestCase {
 
@@ -50,13 +50,13 @@ class M2CommandDispatchE2ETest extends TestCase {
 	 * @dataProvider verb_provider
 	 */
 	public function test_each_ci_responds_to_a_representative_verb( string $to, string $verb, string $args ): void {
-		// Command_Controller::dispatch lazy-builds the request-scope graph
+		// HTTP_In::dispatch lazy-builds the request-scope graph
 		// (`_router` / `_command_interpreter` / `_http`) and fires
 		// `newspack_nodes/request_graph_ready`, which the mount hook in
 		// setUp uses to construct and sink each service CI via the
 		// base CI's make_node() — same path production runs.
 
-		$ctrl = new Command_Controller();
+		$ctrl = new HTTP_In();
 		$ctrl->set_test_mode( true );
 		\ob_start();
 		$ctrl->dispatch( $this->build_request( $to, $verb, $args ) );
@@ -103,7 +103,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 	 * actually honoured `limit:1` proves the payload arrived decoded.
 	 */
 	public function test_events_recent_honours_json_string_limit_from_provider(): void {
-		$ctrl = new Command_Controller();
+		$ctrl = new HTTP_In();
 		$ctrl->set_test_mode( true );
 		\ob_start();
 		$ctrl->dispatch( $this->build_request( 'events', 'recent', '{"limit":1}' ) );
@@ -121,7 +121,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 
 	/**
 	 * The event-logger-nodes test bootstrap's WP_REST_Request stub only knows
-	 * get_param/set_param. Command_Controller reads the body via get_body(),
+	 * get_param/set_param. HTTP_In reads the body via get_body(),
 	 * so we subclass to add that. set_header is a no-op — the controller
 	 * doesn't read headers but real callers always set Content-Type.
 	 */

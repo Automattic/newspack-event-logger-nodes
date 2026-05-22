@@ -19,21 +19,6 @@ use PHPUnit\Framework\Attributes\CoversClass;
  */
 #[CoversClass( RequestFlight::class )]
 class RequestFlightTest extends TestCase {
-
-	/**
-	 * Anonymous patron exposing inflight_snapshot() — what Task 22 will add
-	 * to RequestBuilder. Lets these unit tests assert RequestFlight's wire
-	 * contract without depending on the eventual patron implementation.
-	 */
-	private function patron_with_snapshot( array $snapshot ): \Newspack_Nodes\Node {
-		return new class( $snapshot ) extends \Newspack_Nodes\Node {
-			public function __construct( private array $snapshot ) {}
-			public function inflight_snapshot(): array {
-				return $this->snapshot;
-			}
-		};
-	}
-
 	/**
 	 * Sink that records every fill() into the by-ref array.
 	 *
@@ -48,17 +33,15 @@ class RequestFlightTest extends TestCase {
 	public function test_fire_emits_inflight_batch_through_sink_chain(): void {
 		// End-to-end: RequestBuilder auto-attaches Flight in its ctor (Task 22),
 		// the overridden sink() setter propagates the sink down, and Flight's
-		// fire_cb() calls patron->inflight_snapshot() and emits the batch.
+		// fire_cb() calls inflight_snapshot() and emits the batch.
 		$rb = new RequestBuilder();
 		$rb->name( 'rb-flight-e2e' );
 
 		$got = [];
 		$rb->sink( $this->capture_sink( $got ) );
 
-		$rb->prime_inflight_for_testing( [
-			'rid-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
-			'rid-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ],
-		] );
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ] );
+		$rb->cache->set( 'r-2', (object) [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ] );
 
 		$flight = $rb->flight();
 		$flight->target( 'gyroscope_partition' );
@@ -71,12 +54,12 @@ class RequestFlightTest extends TestCase {
 		$this->assertSame( 'rb-flight-e2e:flight', $got[0][ Message::FROM ] );
 		$batch = $got[0][ Message::VALUE ];
 		$this->assertCount( 2, $batch );
-		$this->assertSame( 'rid-1', $batch[0]['rid'] );
+		$this->assertSame( 'r-1', $batch[0]['rid'] );
 		// Default state for a primed request with no stack frames matches
 		// legacy InflightTracker (lines 141-143): the unwound-stack default.
 		$this->assertSame( 'process', $batch[0]['state'] );
 		$this->assertSame( '/a', $batch[0]['url'] );
-		$this->assertSame( 'rid-2', $batch[1]['rid'] );
+		$this->assertSame( 'r-2', $batch[1]['rid'] );
 	}
 
 	public function test_patron_pointer_round_trips(): void {
@@ -133,14 +116,16 @@ class RequestFlightTest extends TestCase {
 		// Patron + sink wired but no target configured (set_inflight_target
 		// not yet invoked) — emit nothing. Patron has a non-empty snapshot
 		// to confirm the target gate kicks in BEFORE any sink dispatch.
-		$got    = [];
-		$patron = $this->patron_with_snapshot( [ 'rid-1' => [ 'state' => 'active' ] ] );
-		$patron->name( 'patron-with-snap' );
+		$rb = new RequestBuilder();
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ] );
+		$rb->cache->set( 'r-2', (object) [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ] );
 
-		$flight = new RequestFlight();
+		$got = [];
+		$rb->name( 'patron-with-snap' );
+		$rb->sink( $this->capture_sink( $got ) );
+
+		$flight = $rb->flight();
 		$flight->name( 'flight-no-target' );
-		$flight->patron( $patron );
-		$flight->sink( $this->capture_sink( $got ) );
 		$flight->fire_cb();
 
 		$this->assertSame( [], $got );
@@ -148,14 +133,14 @@ class RequestFlightTest extends TestCase {
 
 	public function test_fire_with_empty_snapshot_emits_nothing(): void {
 		// Patron + sink + target wired but snapshot is empty — no batch.
-		$got    = [];
-		$patron = $this->patron_with_snapshot( [] );
-		$patron->name( 'patron-empty-snap' );
+		$rb = new RequestBuilder();
 
-		$flight = new RequestFlight();
+		$got = [];
+		$rb->name( 'patron-empty-snap' );
+		$rb->sink( $this->capture_sink( $got ) );
+
+		$flight = $rb->flight();
 		$flight->name( 'flight-empty-snap' );
-		$flight->patron( $patron );
-		$flight->sink( $this->capture_sink( $got ) );
 		$flight->target( 'gyroscope_partition' );
 		$flight->fire_cb();
 
@@ -163,21 +148,21 @@ class RequestFlightTest extends TestCase {
 	}
 
 	public function test_fire_emits_batch_to_target_when_all_wired(): void {
-		// Asserts the wire-level message shape RequestFlight emits, using
-		// an anonymous patron in place of the eventual RequestBuilder
-		// inflight_snapshot() Task 22 will add.
-		$got    = [];
-		$batch  = [
-			'rid-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0, 'state' => 'active' ],
-			'rid-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0, 'state' => 'active' ],
-		];
-		$patron = $this->patron_with_snapshot( $batch );
-		$patron->name( 'patron-with-batch' );
+		// Asserts the wire-level message shape RequestFlight emits
+		$rb = new RequestBuilder();
+        $batch = [
+            'r-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
+            'r-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ]
+        ];
+		$rb->cache->set( 'r-1', (object) $batch['r-1'] );
+		$rb->cache->set( 'r-2', (object) $batch['r-2'] );
 
-		$flight = new RequestFlight();
+		$got = [];
+		$rb->name( 'patron-with-batch' );
+		$rb->sink( $this->capture_sink( $got ) );
+
+		$flight = $rb->flight();
 		$flight->name( 'flight-emits' );
-		$flight->patron( $patron );
-		$flight->sink( $this->capture_sink( $got ) );
 		$flight->target( 'gyroscope_partition' );
 		$flight->fire_cb();
 
@@ -186,6 +171,11 @@ class RequestFlightTest extends TestCase {
 		$this->assertSame( 'gyroscope_partition', $got[0][ Message::TO ] );
 		$this->assertSame( 'inflight', $got[0][ Message::KEY ] );
 		$this->assertSame( 'flight-emits', $got[0][ Message::FROM ] );
-		$this->assertSame( $batch, $got[0][ Message::VALUE ] );
+		$this->assertSame( $batch['r-1']['url'],            $got[0][ Message::VALUE ][0]['url'] );
+		$this->assertSame( $batch['r-1']['request_method'], $got[0][ Message::VALUE ][0]['method'] );
+		$this->assertSame( $batch['r-1']['timestamp'],      $got[0][ Message::VALUE ][0]['start_time'] );
+		$this->assertSame( $batch['r-2']['url'],            $got[0][ Message::VALUE ][1]['url'] );
+		$this->assertSame( $batch['r-2']['request_method'], $got[0][ Message::VALUE ][1]['method'] );
+		$this->assertSame( $batch['r-2']['timestamp'],      $got[0][ Message::VALUE ][1]['start_time'] );
 	}
 }

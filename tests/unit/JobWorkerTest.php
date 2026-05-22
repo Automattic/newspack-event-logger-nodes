@@ -599,7 +599,7 @@ class JobWorkerTest extends TestCase {
 		$this->assertCount( 1, $sink->captured );
 		$reply = $sink->captured[0];
 		$this->assertSame(
-			Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT,
+			Message::TM_RESPONSE | Message::TM_STRUCT,
 			$reply[ Message::TYPE ]
 		);
 		$this->assertSame( 'caller', $reply[ Message::TO ] );
@@ -661,14 +661,14 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_handle_request_ignores_response_messages(): void {
-		// fill() short-circuits on TM_REQUEST WITHOUT TM_RESPONSE only — an
-		// echoed reply (TM_REQUEST|TM_RESPONSE) must not re-trigger handle_request.
+		// An echoed reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) doesn't hit
+		// fill()'s TM_REQUEST gate, so handle_request never fires.
 		$jw = new JobWorker();
 		$sink = new \Newspack_Nodes\Tests\CaptureSink();
 		$jw->sink( $sink );
 
 		$req                   = Message::new_message();
-		$req[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$req[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
 		$req[ Message::FROM ]  = 'caller';
 		$req[ Message::VALUE ] = 'GET_HEALTH';
 		$jw->fill( $req );

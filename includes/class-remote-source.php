@@ -31,6 +31,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\EventFramework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
+use Newspack_Nodes\Node_Names;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -293,8 +294,8 @@ class RemoteSource extends Node {
 
 		$this->ensure_multi();
 
-		// Subscription shape `topic.pN` lands in Sse_Slot_Pool's per-partition
-		// aggregator pool (60s TTL) via Messages_Stream_Controller's
+		// Subscription shape `topic.pN` lands in \Newspack_Nodes\Sse_Slot_Pool's per-partition
+		// aggregator pool (60s TTL) via SSE_Out's
 		// `subscription_partition()` helper — no `aggregator=1` flag needed.
 		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/messages/stream';
 		$params   = [
@@ -777,7 +778,7 @@ class RemoteSource extends Node {
 
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
-		$msg[ Message::FROM ]  = '_http';
+		$msg[ Message::FROM ]  = Node_Names::HTTP;
 		$msg[ Message::TO ]    = 'workers';
 		$msg[ Message::VALUE ] = [
 			'name'      => 'heartbeat',

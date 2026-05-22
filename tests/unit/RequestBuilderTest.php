@@ -637,7 +637,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1700000000.000 ] );
 		$this->fill( $rb, 2, 'r1', 'request',         [ 'ts' => 1700000001.500, 'm' => 'GET /x' ] );
 
-		$snap = $rb->inflight_snapshot();
+		$snap = $rb->flight->inflight_snapshot();
 		$this->assertCount( 1, $snap );
 		$this->assertSame( 1700000000.000, $snap[0]['start_time'] );
 	}
@@ -767,7 +767,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 1, $capture->captured );
 		$reply = $capture->captured[0];
 		$this->assertSame(
-			Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT,
+			Message::TM_RESPONSE | Message::TM_STRUCT,
 			$reply[ Message::TYPE ]
 		);
 		$this->assertSame( 'rb', $reply[ Message::FROM ] );
@@ -838,15 +838,15 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_handle_request_with_request_response_flag_is_ignored(): void {
-		// TM_REQUEST + TM_RESPONSE is a reply, not a query — must not be
-		// re-dispatched as a request (would loop forever).
+		// A reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) bypasses fill()'s
+		// TM_REQUEST gate, so it's never re-dispatched as a request.
 		$rb      = new RequestBuilder();
 		$capture = new CaptureSink();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
 		$msg                      = Message::new_message();
-		$msg[ Message::TYPE ]     = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$msg[ Message::TYPE ]     = Message::TM_STRUCT | Message::TM_RESPONSE;
 		$msg[ Message::FROM ]     = 'asker';
 		$msg[ Message::ID ]       = 'req-1';
 		$msg[ Message::VALUE ]    = 'GET_CACHE';

@@ -41,7 +41,7 @@ echo "  ${PLUGIN}.zip"
 
 # The Atomic deploy script fetches this mu-plugin from the release URL; it
 # installs under mu-plugins/, not wp-content/plugins/.
-cp "${SCRIPT_DIR}/00-newspack-profiler.php" "${RELEASE_DIR}/"
+cp "${SCRIPT_DIR}/mu-plugins/00-newspack-profiler.php" "${RELEASE_DIR}/"
 
 rm -rf "${STAGING_DIR}"
 

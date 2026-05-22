@@ -118,11 +118,10 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// spokes, so the hook stays registered at boot.
 	\Newspack_Event_Logger_Nodes\SettingsSync::init();
 
-	// Install slot-pool closures on the substrate's `Messages_Stream_Controller`
-	// seams. Once dashboards migrate onto the unified SSE endpoint (M6.3+),
-	// connections inherit the same Memcached_Cache-backed concurrency cap
-	// the legacy per-feed controllers used. Wiring is a 3-Closure assign;
-	// no autoload pressure beyond `class-sse-slot-pool.php` itself.
+	// The slot pool is substrate-side (generic SSE rate-limiting); the
+	// application injects its concrete `Memcached_Cache` store, then wires
+	// the 3-Closure seam on `SSE_Out` so the unified SSE endpoint inherits
+	// the same concurrency cap the legacy per-feed controllers used.
 	\Newspack_Event_Logger_Nodes\Sse_Slot_Pool::wire();
 
 	// Hook instrumentation — the whole reason this plugin exists. Runs
@@ -396,19 +395,19 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 // — the four browser dashboards consume the substrate's unified
 // `/messages/stream` endpoint directly (M6.3-M6.6) and `RemoteSource`
 // (cross-server SSE pull) does the same (M6.7). The substrate's
-// Messages_Stream_Controller + Topology_Stream_Controller handle every
+// SSE_Out + Topology_Stream_Controller handle every
 // SSE need now.
 
 /**
  * Service-CommandInterpreter (CI) mounting.
  *
- * The substrate's `Command_Controller::dispatch` lazy-builds the
+ * The substrate's `HTTP_In::dispatch` lazy-builds the
  * request-scope graph (`_router` / `_command_interpreter` / `_http`)
  * then fires `newspack_nodes/request_graph_ready` so applications can
  * mount their CIs through the base CI's `make_node()` — which
  * constructs, names, and sinks each node in one atomic step. Without
  * the sink, verb responses (which walk back via TO=FROM) would have no
- * path to the HTTP_Out and silently drop.
+ * path to the HTTP_In and silently drop.
  *
  * Each CI is a service-shaped CommandInterpreter — verbs are JSON-in,
  * JSON-out. Dependencies (Cli, ServerRegistry, Memcached_Cache) are

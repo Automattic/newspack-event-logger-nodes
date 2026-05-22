@@ -1902,9 +1902,9 @@ class StreamMergerTest extends TestCase {
 		$this->assertCount( 1, $capture->captured );
 		$reply = $capture->captured[0];
 		$this->assertSame(
-			Message::TM_REQUEST | Message::TM_RESPONSE | Message::TM_STRUCT,
+			Message::TM_RESPONSE | Message::TM_STRUCT,
 			$reply[ Message::TYPE ],
-			'reply TYPE must be TM_REQUEST|TM_RESPONSE|TM_STRUCT'
+			'reply TYPE must be TM_RESPONSE|TM_STRUCT'
 		);
 		$this->assertSame( 'caller', $reply[ Message::TO ], 'reply TO must mirror request FROM' );
 		$this->assertSame( 'req-id-1', $reply[ Message::ID ], 'reply ID must echo the request ID' );
@@ -1947,17 +1947,15 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_fill_ignores_tm_request_with_tm_response_bit(): void {
-		// fill() only dispatches handle_request when TM_REQUEST is set AND
-		// TM_RESPONSE is NOT set — this branch is the "incoming response, not
-		// a request" path that bypasses handle_request and falls through to
-		// the sink pass-through. Verify the response message is forwarded
-		// untouched (counter increments, sink sees the original VALUE).
+		// A reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) bypasses fill()'s
+		// TM_REQUEST gate and falls through to the sink pass-through. Verify
+		// it's forwarded untouched (counter increments, sink sees the VALUE).
 		$sm      = $this->make_merger();
 		$capture = new CaptureSink();
 		$sm->sink( $capture );
 
 		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
 		$msg[ Message::VALUE ] = 'a-response-not-a-request';
 		$sm->fill( $msg );
 
