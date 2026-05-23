@@ -6,7 +6,7 @@ Application built on the [`newspack-nodes`](https://github.com/Automattic/newspa
 
 This plugin is the *application*. The *runtime* — Node, Message, Router, Topic, Partition, Worker, Supervisor, REPL — lives in [`newspack-nodes`](https://github.com/Automattic/newspack-nodes). Both plugins must be installed and active; the runtime must load first.
 
-Application classes (`RequestBuilder`, `FlameBuilder`, `JobRouter`, `JobWorker`, `StreamMerger`, `StatsAggregator`) are plain `Newspack_Nodes\Node` subclasses with their own `fill()` bodies. The runtime owns the wiring; this plugin owns the data-processing logic.
+Application classes (`Request_Builder_Node`, `Flame_Builder_Node`, `Job_Router_Node`, `Job_Worker_Node`, `Stream_Merger_Node`, `Auto_Tuner_Node`, …) are plain `Newspack_Nodes\Node` subclasses with their own `fill()` bodies — Node subclasses carry a `_Node` suffix; helpers (`Log_Manager`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`) don't. The runtime owns the wiring; this plugin owns the data-processing logic. The plugin registers its class namespace with the substrate (`Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' )`), so a topology's `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix — no per-class registration.
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ add_filter( 'newspack_nodes/config', static function ( $config ) {
 } );
 ```
 
-Remote spokes (when this site is the hub) are managed at **WP Admin → Performance Workers → Remote Servers**, or programmatically via the `ServerRegistry` class.
+Remote spokes (when this site is the hub) are managed at **WP Admin → Performance Workers → Remote Servers**, or programmatically via the `Server_Registry` class.
 
 ## Features
 
@@ -43,16 +43,16 @@ Application graph backed by `newspack-nodes` partitions, surfaced as dashboards 
 
 | Dashboard | Endpoint family | Source |
 |-----------|----------------|--------|
-| **Performance** | `/performance/overview`, `/performance/urls`, `/performance/dashboard`, `/performance/timing` | `RequestBuilder` + `FlameBuilder` + `Stats_Store` |
+| **Performance** | `/performance/overview`, `/performance/urls`, `/performance/dashboard`, `/performance/timing` | `Request_Builder_Node` + `Flame_Builder_Node` + `Stats_Store` |
 | **URL detail / Flame graph** | `/performance/urls/{hash}` | Per-URL flame stats from `Stats_Store` |
 | **Request profile** | `/performance/requests/{rid}`, `/performance/requests/search/{rid}` | Partition scan via `.idx` |
-| **Gyroscope** | `/gyroscope/timeline`, `/firehose/gyroscope` (SSE) | `RequestBuilder` in-flight cache |
-| **Request Log** | `/request-log/list`, `/request-log/detail/{id}`, `/firehose/requests` (SSE) | Requests index + `requests.log` |
-| **Raw Logs** | `/events/recent`, `/events/stats`, `/firehose/rawlogs` (SSE), `/firehose/stream` (SSE) | Direct firehose tail |
-| **Errors** | `/firehose/errors` (SSE) | Tail of `errors.log` |
+| **Gyroscope** | `/gyroscope/timeline`, `/messages/stream?subscribe=gyroscope.pN` (SSE) | `Request_Flight_Node` snapshots + `completed:tee` |
+| **Request Log** | `/request-log/list`, `/request-log/detail/{id}`, `/messages/stream?subscribe=completed.pN` (SSE) | Requests index + `requests.log` |
+| **Raw Logs** | `/events/recent`, `/events/stats`, `/messages/stream?subscribe=firehose.pN` (SSE) | Direct firehose tail |
+| **Errors** | `/messages/stream?subscribe=errors.pN` (SSE) | Tail of `errors.log` |
 | **Workers** | `/performance/workers`, `/performance/workers/restart` | `Bootstrap::expand_workers()` + lock-dir scan + offsetlog cursors |
 | **Settings** | `/logger/config`, `/logger/hooks`, `/performance/config`, `/performance/settings`, `/performance/hooks/available`, `/performance/hooks/configure`, `/performance/registered-hooks`, `/performance/hook-categories`, `/settings` | WP options |
-| **Aggregator (hub-only)** | `/newspack-nodes-aggregator/v1/status`, `/servers`, `/health`, `/servers/{id}`, `/servers/{id}/test` | `ServerRegistry` + `StreamMerger` per-remote state |
+| **Aggregator (hub-only)** | `/newspack-nodes-aggregator/v1/status`, `/servers`, `/health`, `/servers/{id}`, `/servers/{id}/test` | `Server_Registry` + `Stream_Merger_Node` per-remote state |
 
 All non-aggregator endpoints sit under `/wp-json/newspack-nodes/v1/`. For request/response shapes, see [API.md](API.md).
 

@@ -4,16 +4,16 @@ REST endpoints registered by the application plugin. The runtime substrate (`new
 
 Two namespaces:
 
-- `newspack-nodes/v1/*` — core dashboards, status, performance, events, gyroscope, logger, request-log, request CRUD, workers, firehose admin/SSE, servers, settings, discovery.
+- `newspack-nodes/v1/*` — core dashboards, status, performance, events, gyroscope, logger, request-log, request CRUD, workers, servers, settings, discovery. Real-time SSE is the substrate's unified `/messages/stream` (the per-feed `/firehose/*` SSE routes were removed in M6).
 - `newspack-nodes-aggregator/v1/*` — hub-side aggregator status, server registry, health.
 
 ## Authentication
 
-All endpoints inherit `PerformanceControllerBase::read_permissions_check()` which requires `current_user_can( 'manage_options' )`. Returns `403 Forbidden` (`rest_forbidden`) on insufficient permissions.
+All endpoints inherit `Performance_Controller_Base::read_permissions_check()` which requires `current_user_can( 'manage_options' )`. Returns `403 Forbidden` (`rest_forbidden`) on insufficient permissions.
 
 ## Rate Limiting
 
-`PerformanceControllerBase::check_rate_limit()` provides fixed-window rate limiting backed by memcache:
+`Performance_Controller_Base::check_rate_limit()` provides fixed-window rate limiting backed by memcache:
 
 - Default: 600 requests per 60-second window.
 - Window edges floor `time()` to the window length, so all callers in the same wall-clock window share a counter.
@@ -64,17 +64,17 @@ POST /wp-json/newspack-nodes/v1/performance/config
 POST /wp-json/newspack-nodes/v1/performance/settings
 ```
 
-Performance-dashboards tree, served by the dedicated overview/urls/requests/workers/hooks controllers. `/performance/dashboard` and `/performance/timing` are kept as the backward-compatible composite shape consumed by older dashboard code.
+Performance-dashboards tree. These are verbs on the `performance` service CI (`Performance_CI_Node`), reached through the substrate command protocol (`POST /command` → `TO=performance/<verb>`); the paths here are the verbs, not standalone REST routes. `/performance/dashboard` and `/performance/timing` are kept as the backward-compatible composite shape consumed by older dashboard code.
 
 ### `/performance/dashboard` response
 
-Composed from `PerfOverviewController` (overview) + `PerfUrlsController` (top URLs).
+Composed from the `overview` verb + the `urls` verb (top URLs).
 
 ```json
 {
   "data": {
-    "overview": { /* PerfOverviewController body */ },
-    "urls":     [ /* PerfUrlsController data[] */ ]
+    "overview": { /* performance `overview` verb body */ },
+    "urls":     [ /* performance `urls` verb data[] */ ]
   },
   "meta": []
 }
@@ -151,11 +151,11 @@ GET returns the 9 performance-tuning options as a flat `config` block. POST writ
 
 ### `/performance/settings` (POST)
 
-Single-option writer for the same 9-option set. Suppresses `SettingsSync` fan-out around the underlying `update_option()` so applying a remotely-synced setting on a spoke doesn't bounce back as a re-sync.
+Single-option writer for the same 9-option set. Suppresses `Settings_Sync` fan-out around the underlying `update_option()` so applying a remotely-synced setting on a spoke doesn't bounce back as a re-sync.
 
 ### `/performance/hooks/available` (GET)
 
-Sweeps `$wp_actions` + `$wp_filter` and returns the categorized hook list (via `HookCategorizer`). Custom events are filtered out of the list since they live on a separate config key.
+Sweeps `$wp_actions` + `$wp_filter` and returns the categorized hook list (via `Hook_Categorizer`). Custom events are filtered out of the list since they live on a separate config key.
 
 ### `/performance/hooks/configure` (POST)
 
@@ -193,27 +193,22 @@ Walks the firehose `.idx` newest-first across all partitions, capped at `MAX_IND
 
 Hourly time series merged across partitions (same shape as `/performance/timing`).
 
-## Firehose
+## Real-time SSE (substrate `/messages/stream`)
+
+The application no longer registers any per-feed SSE routes. The old `/firehose/stream`, `/firehose/rawlogs`, `/firehose/errors`, `/firehose/gyroscope`, `/firehose/requests`, `/firehose/logs`, `/firehose/status`, and `/firehose/heartbeat` routes (and their controller classes) were all deleted in the M6 consolidation. Every dashboard SSE need — plus the hub-side `Remote_Source_Node` cross-server pull — now goes through the substrate's single unified surface:
 
 ```
-GET  /wp-json/newspack-nodes/v1/firehose/logs
-GET  /wp-json/newspack-nodes/v1/firehose/status?log=...
-POST /wp-json/newspack-nodes/v1/firehose/heartbeat
-GET  /wp-json/newspack-nodes/v1/firehose/stream            (SSE)
-GET  /wp-json/newspack-nodes/v1/firehose/rawlogs           (SSE)
-GET  /wp-json/newspack-nodes/v1/firehose/errors            (SSE)
-GET  /wp-json/newspack-nodes/v1/firehose/gyroscope         (SSE)
-GET  /wp-json/newspack-nodes/v1/firehose/requests          (SSE)
+GET  /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[&positions=...]   (SSE)
 ```
 
-`/firehose/logs` lists the registered log catalog (firehose / jobs / jobintake / requests / errors / flames; extensible via the `newspack_nodes/firehose_logs` filter). `/firehose/status` returns per-partition segment metadata for one log. `/firehose/heartbeat` is the client-to-server keepalive POST that refreshes an SSE slot.
+`SSE_Out` (substrate) serves it: subscribe to one or more `<log>.p<N>` partitions, receive a 7-field message envelope per line plus an idle `heartbeat` event. Per-line transforms moved from server PHP to browser JS (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`); the browser hook is `useMessageStream`. See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the request/response shape and subscription syntax.
 
 ### SSE operational discipline
 
-- 10 memcache slots per stream type. New connections fail with **HTTP 429** when full (not 503).
-- TWO heartbeats: server-to-client SSE `heartbeat` events every 5s in-stream; client-to-server keepalive POSTs to refresh the slot (`SLOT_TTL_BROWSER=10s`, `SLOT_TTL_AGGREGATOR=30s`).
-- `flush_if_needed()` before sleeps, NOT per-event. Per-event flushing tanks throughput on TLS/proxy paths.
-- 1-hour `MAX_RUNTIME` per connection (client reconnects after timeout).
+- Memcache slot pool gates connections; new connections fail with **HTTP 429** when the pool is full or memcache is unreachable (fail-closed). The application supplies the slot pool (`Sse_Slot_Pool`) through the substrate's slot-check seam.
+- TWO heartbeats: server-to-client SSE `heartbeat` events when no data flows; client-to-server keepalive that refreshes the slot. **Only the client refreshes a slot's TTL** — the server-side check is check-only. Each client's TTL must outlive its own heartbeat interval; hub-side aggregator connections get a longer TTL than browsers.
+- Flush before the framework sleeps, NOT per-event. Per-event flushing tanks throughput on TLS/proxy paths.
+- A bounded per-connection runtime cap; the client reconnects after timeout.
 
 ## Gyroscope
 
@@ -221,7 +216,7 @@ GET  /wp-json/newspack-nodes/v1/firehose/requests          (SSE)
 GET  /wp-json/newspack-nodes/v1/gyroscope/timeline?request_id=...
 ```
 
-Performance-gyroscope tree. Synchronous timeline-snapshot fetch (used when a client wants the current state of an explicit request id). The SSE streaming counterpart lives at `/firehose/gyroscope`.
+Performance-gyroscope tree. Synchronous timeline-snapshot fetch (used when a client wants the current state of an explicit request id). The SSE streaming counterpart is the substrate's `/messages/stream?subscribe=gyroscope.p<N>`.
 
 ### Request
 
@@ -259,11 +254,11 @@ GET  /wp-json/newspack-nodes/v1/logger/config
 GET  /wp-json/newspack-nodes/v1/logger/hooks
 ```
 
-Performance-logger settings tree. `/logger/config` returns the full filterable config (via `newspack_nodes/config`); `/logger/hooks` returns a flat list of categorized hooks via `HookCategorizer`. Settings POST + hook configuration live on `/performance/config`, `/performance/settings`, and `/performance/hooks/configure`.
+Performance-logger settings tree. `/logger/config` returns the full filterable config (via `newspack_nodes/config`); `/logger/hooks` returns a flat list of categorized hooks via `Hook_Categorizer`. Settings POST + hook configuration live on `/performance/config`, `/performance/settings`, and `/performance/hooks/configure`.
 
 ### `/logger/config` response
 
-Echoes `PerformanceControllerBase::load_config()` (the result of the `newspack_nodes/config` filter):
+Echoes `Performance_Controller_Base::load_config()` (the result of the `newspack_nodes/config` filter):
 
 ```json
 {
@@ -358,7 +353,7 @@ DELETE /wp-json/newspack-nodes/v1/servers/{id}
 POST   /wp-json/newspack-nodes/v1/servers/{id}/test
 ```
 
-CRUD for remote spokes registered via `ServerRegistry`. IDs match `[a-zA-Z0-9_-]{1,64}`, URLs must be HTTPS, credentials cap at 256 bytes, log filenames must match `[a-zA-Z0-9_.-]+\.log$`. Storage is sodium-secretbox encrypted at rest (keyed on `wp_salt('auth')`); config-file overlay servers can only toggle `enabled` via PUT.
+CRUD for remote spokes registered via `Server_Registry`. IDs match `[a-zA-Z0-9_-]{1,64}`, URLs must be HTTPS, credentials cap at 256 bytes, log filenames must match `[a-zA-Z0-9_.-]+\.log$`. Storage is sodium-secretbox encrypted at rest (keyed on `wp_salt('auth')`); config-file overlay servers can only toggle `enabled` via PUT.
 
 `POST /servers/{id}/test` probes `/wp-json/newspack-nodes/v1/discovery` on the remote with the stored Basic Auth credentials, returning the remote's registered hooks / custom events / lag fields (whitelisted; never proxies arbitrary JSON).
 
@@ -376,7 +371,7 @@ Spoke-side endpoint that hub aggregators probe. Returns `registered_hooks`, `cus
 POST  /wp-json/newspack-nodes/v1/settings
 ```
 
-Whitelisted single-option writer for the four substrate-level integer options: `newspack_nodes_num_partitions`, `newspack_nodes_num_segments`, `newspack_nodes_segment_size`, `newspack_nodes_max_lifespan`. Used by hub-side aggregator fan-out (RemoteManager) when pushing core settings down to spokes. Triggers `Config::reset()` after a successful write so the next request sees the new value.
+Whitelisted single-option writer for the four substrate-level integer options: `newspack_nodes_num_partitions`, `newspack_nodes_num_segments`, `newspack_nodes_segment_size`, `newspack_nodes_max_lifespan`. Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings down to spokes. Triggers `Config::reset()` after a successful write so the next request sees the new value.
 
 ## Aggregator
 
@@ -386,7 +381,7 @@ GET  /wp-json/newspack-nodes-aggregator/v1/servers
 GET  /wp-json/newspack-nodes-aggregator/v1/health
 ```
 
-Hub-side aggregator endpoints. The `/status` route delegates to `AggregatorStatusController` for the per-server / per-partition memcache-backed status; `/servers` lists registered remote spokes from `ServerRegistry`; `/health` reports cache reachability.
+Hub-side aggregator endpoints — verbs on the `aggregator` service CI (`Aggregator_CI_Node`). `status` returns the per-server / per-partition memcache-backed status; `servers` lists registered remote spokes from `Server_Registry`; `health` reports cache reachability.
 
 ### `/status` response
 
@@ -399,7 +394,7 @@ Keyed by server id; per server, per-partition status pulled from `aggregator_sta
     "url": "https://spoke.example/",
     "enabled": true,
     "partitions": {
-      "0": { /* StreamMerger state for this spoke / partition */ }
+      "0": { /* Stream_Merger_Node state for this spoke / partition */ }
     }
   }
 }
@@ -444,7 +439,7 @@ HMAC-validated; not for public callers. See [`../newspack-nodes/API.md`](../news
 
 ## Permissions Check (shared)
 
-All non-spawn endpoints share `PerformanceControllerBase::read_permissions_check()`:
+All non-spawn endpoints share `Performance_Controller_Base::read_permissions_check()`:
 
 ```php
 public function read_permissions_check(): bool|\WP_Error {

@@ -67,7 +67,7 @@ grep -rn 'event-logger/v1\|event-aggregator/v1\|perf-logger/v1' src/
 
 ## Compact-summary schema (M1)
 
-As of v<NEXT_VERSION> (placeholder — set by `tools/bump-event-logger-nodes-version.sh` at release time), RequestBuilder writes two new outputs in addition to its existing primary `requests.log`:
+As of v<NEXT_VERSION> (placeholder — set by `tools/bump-event-logger-nodes-version.sh` at release time), `Request_Builder_Node` writes two new outputs in addition to its existing primary `requests.log`:
 
 - `completed.log` — one compact JSON line per completed request. Drives the request log dashboard. Schema (HTTP-access-log style; matches legacy `requests-stream-controller::transform_line` per the M1 schema-parity audit):
   - `rid` — request id
@@ -81,7 +81,7 @@ As of v<NEXT_VERSION> (placeholder — set by `tools/bump-event-logger-nodes-ver
   - `error_status` — `-` for none
   - `remote_addr` — client IP
   - `user_agent` — UA, clipped to 500 chars (`...` suffix when clipped)
-- `gyroscope.log` — same compact `complete` rows (via Tee fan-out from `completed:tee`) PLUS periodic active-state rows emitted by `RequestBuilder`'s hidden `:flight` sibling (every `set_inflight_interval` ms, default 1000). Schema for active rows (12 fields, matches legacy `InflightTracker::get_active` per the M1 audit):
+- `gyroscope.log` — same compact `complete` rows (via Tee fan-out from `completed:tee`) PLUS periodic active-state rows emitted by `Request_Builder_Node`'s hidden `Request_Flight_Node` sibling (every `set_inflight_interval` ms, default 1000). Schema for active rows (12 fields, matches legacy `InflightTracker::get_active` per the M1 audit):
   - `rid` — request id
   - `method` — HTTP method
   - `url` — URL
@@ -97,7 +97,7 @@ As of v<NEXT_VERSION> (placeholder — set by `tools/bump-event-logger-nodes-ver
 
 Runaway requests (those exceeding `MAX_STACK_DEPTH`) stay visible in `inflight_snapshot` for the gyroscope dashboard's benefit — matches the Perl Gyroscope behavior. When LRU rotation eventually evicts them, the existing `evict_request` path fires with `error_status='T'` so they still land in the completed pipeline.
 
-`requests.log` is unchanged — full request envelopes still land there for `wp nodes reqgrep`, hub StreamMerger fan-out, and any other forensic / aggregation consumers.
+`requests.log` is unchanged — full request envelopes still land there for `wp nodes reqgrep`, hub `Stream_Merger_Node` fan-out, and any other forensic / aggregation consumers.
 
 ### Field mapping vs legacy SSE controllers
 
@@ -129,8 +129,8 @@ Each request to `/command` arrives carrying a TM_COMMAND envelope. The substrate
 The 9 service CIs hook `newspack_nodes/request_graph_ready` and mount themselves via `$base_ci->make_node( $type, $name, ...$ctor_args )`:
 
 ```php
-function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandInterpreter $base_ci ): void {
-    $registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
+function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_ci ): void {
+    $registry = \Newspack_Event_Logger_Nodes\Server_Registry::get_instance();
 
     $base_ci->make_node( 'Discovery_CI',   'discovery' );
     $base_ci->make_node( 'Status_CI',      'status' );
@@ -146,7 +146,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandI
 
 The memcache-backed CIs (`Status_CI`, `Events_CI`, `Aggregator_CI`, `Performance_CI`) no longer take an injected cache — they read the shared `\Newspack_Nodes\Core::$memd` handle directly, which the plugin bootstrap builds once via `newspack_event_logger_nodes_init_memcached()` before the request graph mounts. `Workers_CI` itself moved to the substrate (mounted alongside Classes/Layouts/Topologies); the plugin hands it `Core::$memd` through the `newspack_nodes/workers_cache` filter rather than constructing it here.
 
-`make_node()` does three things atomically: instantiates the FQCN registered under the shell name, calls `$node->name($name)` (so the router can find it), and `$node->sink($this)` (so its reply walks back through the base CI → router → `_http`). Skipping the sink wiring — as the original M2 land did when it just called `register_class()` at `rest_api_init` priority 11 — leaves the CI registered but unwired; every reply silently drops on the floor because there's no path back to `HTTP_Out`. That was the substrate fix in commit `24921f5`.
+`make_node()` does three things atomically: resolves the shell name to an FQCN by scanning the registered namespace prefixes (the plugin registers `Newspack_Event_Logger_Nodes\` and its `App\` sub-namespace once at boot via `Command_Interpreter_Node::register_namespace()`, so `make_node('Discovery_CI')` resolves `…\App\Discovery_CI_Node`) and instantiates it, calls `$node->name($name)` (so the router can find it), and `$node->sink($this)` (so its reply walks back through the base CI → router → `_http`). Skipping the sink wiring — as the original M2 land did when it just called the now-removed `register_class()` per CI at `rest_api_init` priority 11 — leaves the CI registered but unwired; every reply silently drops on the floor because there's no path back to `HTTP_Out`. That was the substrate fix in commit `24921f5`.
 
 ### Browser dispatch shape
 

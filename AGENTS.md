@@ -2,7 +2,7 @@
 
 WordPress plugin: the application layer of the new event-logger. Replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo with two plugins — this one (application) and `newspack-nodes` (runtime substrate). High-throughput request-lifecycle logging, real-time SSE streaming, flame-graph generation, hub/spoke aggregation — expressed as Nodes.
 
-This plugin owns: `LogManager`, `RequestBuilder`, `FlameBuilder`, `JobRouter`, `JobWorker`, `JobIntake`, `StreamMerger`, `StatsAggregator`, `Stats_Store`, `ServerRegistry`, `SettingsSync`, `RemoteManager`, REST controllers, React dashboards, topology files. Depends on `newspack-nodes` for everything substrate-level. Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached` built once by this plugin's bootstrap) — there is no plugin-local cache class.
+This plugin owns: `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Job_Worker_Node`, `Job_Intake`, `Stream_Merger_Node`, `Remote_Source_Node`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`, the `App\*_CI_Node` service CIs, React dashboards, topology files. (Node subclasses carry a `_Node` suffix; helpers like `Log_Manager` / `Stats_Store` / `Server_Registry` don't.) Depends on `newspack-nodes` for everything substrate-level. Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached` built once by this plugin's bootstrap) — there is no plugin-local cache class.
 
 ## Plugin Load Order
 
@@ -112,31 +112,32 @@ These are intentional. Don't "fix" them.
 
 6. **`get_multi` batching is essential.** Reader paths multi-get across all retention buckets per partition in one round-trip. Per-key `get` is a latency cliff on dashboards. Implemented in both real and Fake memcached.
 
-7. **JobIntake for >4KB payloads, firehose for ≤4KB.** Runtime jobs (small) go through firehose with `k:"job"`; JobRouter extracts and routes them. Large jobs (>4KB) go directly to `jobintake.log` via `JobIntake::queue()` which acquires the auto-lock around large writes. Using the wrong path silently loses jobs (LogManager truncates >4KB to `{"truncated": true}`).
+7. **Job_Intake for >4KB payloads, firehose for ≤4KB.** Runtime jobs (small) go through firehose with `k:"job"`; `Job_Router_Node` extracts and routes them. Large jobs (>4KB) go directly to `jobintake.log` via `Job_Intake::queue()` which acquires the auto-lock around large writes. Using the wrong path silently loses jobs (`Log_Manager` truncates >4KB to `{"truncated": true}`).
 
-8. **Hub vs spoke topology.** Hub = `enable_aggregator` toggled on (the single operator switch for cross-site activity). Every node runs its own JobWorker that dispatches `type='job'` entries against `newspack_nodes/job_handlers`. The hub additionally runs a StreamMerger that pulls spoke firehoses and rewrites incoming `k:"job"` lines to `k:"remote_job"` via the `newspack_nodes/aggregator_ingest_line` filter; the hub's JobWorker dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent registrations — a job type can register under either or both depending on where it wants to run (locally on every node, only on the hub after aggregation, or in both places when local + aggregated work need different handling).
+8. **Hub vs spoke topology.** Hub = `enable_aggregator` toggled on (the single operator switch for cross-site activity). Every node runs its own `Job_Worker_Node` that dispatches `type='job'` entries against `newspack_nodes/job_handlers`. The hub additionally runs a `Stream_Merger_Node` that pulls spoke firehoses and rewrites incoming `k:"job"` lines to `k:"remote_job"` via the `newspack_nodes/aggregator_ingest_line` filter; the hub's `Job_Worker_Node` dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent registrations — a job type can register under either or both depending on where it wants to run (locally on every node, only on the hub after aggregation, or in both places when local + aggregated work need different handling).
 
-9. **CRC32 + 31-bit-mask partition routing.** Inherited from `Partition::hash_to_partition()` in the runtime. Used by Topic, JobIntake-keyed mode, and the URL-routing in LogManager. Same key → same partition across all producers.
+9. **CRC32 + 31-bit-mask partition routing.** Inherited from `Partition::hash_to_partition()` in the runtime. Used by Topic, `Job_Intake`-keyed mode, and the URL-routing in `Log_Manager`. Same key → same partition across all producers.
 
 ## Layout
 
 | Path | What |
 |------|------|
-| `newspack-event-logger-nodes.php` | Plugin entry; deferred loader; CommandInterpreter class registry; topology filter |
-| `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings) |
+| `newspack-event-logger-nodes.php` | Plugin entry; deferred loader; `register_namespace` for node-class resolution; memcache bootstrap; service-CI mount on `request_graph_ready`; stock-topology dir registration |
+| `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings, active `.tsl` topology list) |
 | `includes/class-config.php` | Application config loader (substrate keys live in `newspack-nodes`) |
-| `includes/class-log-manager.php` | Per-request firehose writer; redacts URL secrets; refuses root |
-| `includes/class-{request,flame}-builder.php` | Application Node subclasses for request assembly + flame aggregation |
-| `includes/class-{job-router,job-worker,job-intake}.php` | Job pipeline (firehose + jobintake → handlers) |
-| `includes/class-stream-merger.php` | StreamMerger Node subclass — pulls remote firehoses via SSE (cURL multi) |
-| `includes/class-stats-{aggregator,store}.php` | 9-namespace memcache schema producer + reader |
-| `includes/class-{server-registry,settings-sync,remote-manager}.php` | Hub-side fanout + remote-spoke management |
-| `includes/class-{memcached-cache,inflight-tracker,partition-reader,lru-cache,hook-categorizer,auto-tune-handlers,health-check-extensions}.php` | Helpers |
+| `includes/class-log-manager.php` | `Log_Manager` — per-request firehose writer; redacts URL secrets; refuses root |
+| `includes/class-{request-builder,request-flight,flame-builder,auto-tuner}.php` | Node subclasses: `Request_Builder_Node` (assembly) + `Request_Flight_Node` (hidden in-flight snapshot sibling) + `Flame_Builder_Node` (flame + stats fan-out) + `Auto_Tuner_Node` (applies auto-tune decisions) |
+| `includes/class-{job-router,job-worker,job-intake}.php` | Job pipeline: `Job_Router_Node` / `Job_Worker_Node` Node subclasses + `Job_Intake` helper (firehose + jobintake → handlers) |
+| `includes/class-{stream-merger,remote-source}.php` | `Stream_Merger_Node` (hub fan-in) + its `Remote_Source_Node` children — pull remote firehoses via SSE (cURL multi) |
+| `includes/class-stats-store.php` | `Stats_Store` — 9-namespace memcache schema producer + reader (production lives in `Flame_Builder_Node`) |
+| `includes/class-{server-registry,settings-sync,remote-manager,health-check-extensions,health-check-tick}.php` | Hub-side fanout + remote-spoke management: `Server_Registry`, `Settings_Sync`, `Remote_Manager`, `Health_Check_Extensions` helpers + `Health_Check_Tick_Node` |
+| `includes/class-{lru-cache,hook-categorizer}.php` | Helpers: `LRU_Cache`, `Hook_Categorizer` |
 | `includes/app/class-core.php` | WP-lifecycle hook instrumentation |
+| `includes/app/class-{discovery,status,settings,logger,events,servers,aggregator,performance}-ci.php` | Service CIs (`*_CI_Node`) mounted on `request_graph_ready`; the command-protocol REST surface |
 | `includes/admin/class-admin.php` | Application settings UI |
-| `includes/cli/class-reqgrep-command.php` | `wp nodes reqgrep` — application-aware firehose filter |
-| `includes/rest/` | REST controllers (performance, gyroscope, request-log, errors, etc.) |
-| `topologies/` | Per-partition node graphs (firehose-workers, request-workers, job-workers, aggregator) |
+| `includes/cli/class-reqgrep-command.php` | `Reqgrep_Command` — `wp nodes reqgrep` application-aware firehose filter |
+| `includes/rest/class-performance-controller-base.php` | `Performance_Controller_Base` — shared capability/rate-limit/config helper the service CIs lean on |
+| `topologies/` | Per-partition node graphs as declarative `.tsl` files (firehose-workers-and-jobs, firehose-workers-only, firehose-jobs-only, request-workers, job-workers, aggregator) |
 | `src/` | React dashboard trees (event-aggregator, event-dashboards, performance-*, performance-gyroscope, performance-request-log, shared) |
 | `tests/` | PHPUnit suite (unit + integration + Rest) |
 
@@ -144,10 +145,10 @@ These are intentional. Don't "fix" them.
 
 These are mistakes that have actually happened. Pay attention.
 
-- **Fail-closed polarity in SettingsSync.** Use `! isset( $config['enable_workers'] ) || true !== $config['enable_workers']`. Don't write `! ( $config['enable_workers'] ?? false )` — that's `1`/`"1"`-truthy, which silently turns spokes into hubs. Real bug fixed in legacy 2.4.42.
-- **PIPE_BUF (4096 bytes) for firehose writes.** LogManager truncates >4KB to `{"truncated": true}`. Anything that might exceed (job payloads with serialized option blobs, image-handler args, full SettingsSync sweeps) MUST use `JobIntake::queue()`.
+- **Fail-closed polarity in Settings_Sync.** Use `! isset( $config['enable_workers'] ) || true !== $config['enable_workers']`. Don't write `! ( $config['enable_workers'] ?? false )` — that's `1`/`"1"`-truthy, which silently turns spokes into hubs. Real bug fixed in legacy 2.4.42.
+- **PIPE_BUF (4096 bytes) for firehose writes.** `Log_Manager` truncates >4KB to `{"truncated": true}`. Anything that might exceed (job payloads with serialized option blobs, image-handler args, full `Settings_Sync` sweeps) MUST use `Job_Intake::queue()`.
 - **`outputs` (plural), not `output`.** Log reader registration uses `outputs` array. Singular is silent failure.
-- **Hub vs spoke routing.** Nodes only ever write `k:"job"`. Every node's JobWorker dispatches its own `job` entries against `newspack_nodes/job_handlers`. On the hub, StreamMerger's `newspack_nodes/aggregator_ingest_line` filter rewrites incoming spoke lines to `k:"remote_job"`; the hub's JobWorker dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent — a job type registers under whichever side(s) should handle it (local on every node, hub-aggregated, or both).
+- **Hub vs spoke routing.** Nodes only ever write `k:"job"`. Every node's `Job_Worker_Node` dispatches its own `job` entries against `newspack_nodes/job_handlers`. On the hub, `Stream_Merger_Node`'s `newspack_nodes/aggregator_ingest_line` filter rewrites incoming spoke lines to `k:"remote_job"`; the hub's `Job_Worker_Node` dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent — a job type registers under whichever side(s) should handle it (local on every node, hub-aggregated, or both).
 - **One shared `Core::$memd` handle — read it, don't build your own.** Caching is the single `\Newspack_Nodes\Core::$memd` (`\Memcached`), built once at boot by `newspack_event_logger_nodes_init_memcached()` from the substrate's `memcache_servers` config (defaults to `127.0.0.1:11211`). Consumers (`Stats_Store`, the service CIs) read `Core::$memd` directly with null-safe `Core::$memd?->...`; don't hardcode server lists or new up a second connection.
 - **Tests set `Core::$memd` to an in-memory `\Memcached` double.** There is no `Cache_Interface` / `Memcached_Cache` to inject — the substrate ships an in-memory `\Memcached` double (`tests/Helpers/InMemoryMemcached.php`) that tests assign to `Core::$memd` in setUp. New cache call-sites read `Core::$memd`; nothing should type-hint a cache interface.
 - **Salt rotation requires worker restart.** `Stats_Store::flush_all()` orphans keys, but workers cache `prefix` at construction. Restart workers after rotation for immediate effect.
