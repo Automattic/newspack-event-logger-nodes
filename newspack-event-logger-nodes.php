@@ -67,34 +67,15 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 	);
 
-	// Node-class registrations. These are `::class` constants (compile-
-	// time FQCN strings) into a static hashmap, so they don't autoload
-	// anything — virtually free at boot. They have to be at boot because
-	// the topology console's REST schema endpoint (admin, not worker)
-	// reads the class registry to populate the palette + per-node
-	// inspector. Deferring them to spawn_worker left the editor unable
-	// to render any application node — palette only listed substrate
-	// nodes, and selecting an existing RequestBuilder showed
-	// "No constructor arguments. No verbs registered."
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\Flame_Builder_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\Health_Check_Tick_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\Job_Router_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\Job_Worker_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\Request_Builder_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\Remote_Source_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\Stream_Merger_Node::class );
-	// Service CIs — discoverable to `$base_ci->make_node(...)`, which
-	// constructs + names + sinks each in one step from the
-	// `newspack_nodes/request_graph_ready` hook below.
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Discovery_CI',    \Newspack_Event_Logger_Nodes\App\Discovery_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Status_CI',       \Newspack_Event_Logger_Nodes\App\Status_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Settings_CI',     \Newspack_Event_Logger_Nodes\App\Settings_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Logger_CI',       \Newspack_Event_Logger_Nodes\App\Logger_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Events_CI',       \Newspack_Event_Logger_Nodes\App\Events_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Servers_CI',      \Newspack_Event_Logger_Nodes\App\Servers_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Aggregator_CI',   \Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node::class );
-	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Performance_CI',  \Newspack_Event_Logger_Nodes\App\Performance_CI_Node::class );
+	// Node-class namespace registration. `make_node('Request_Builder')` resolves
+	// the first `{$prefix}Request_Builder_Node` that exists across registered
+	// prefixes. The top-level prefix covers the application Node subclasses; the
+	// `App\` prefix lets `make_node('Discovery_CI')` etc. resolve the service CIs
+	// the `request_graph_ready` mount below constructs by short name. The catalog
+	// (Classes_CI) scans the composer classmap under these prefixes to populate
+	// the topology-console palette + per-node inspector.
+	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' );
+	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
 
 	// Named formatters are similarly cheap (one map insert each) and the
 	// captured closures don't autoload until invoked. `request-index`

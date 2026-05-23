@@ -24,7 +24,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -523,7 +523,7 @@ class RemoteSourceTest extends TestCase {
 		// across multiple lines (at pretty-print boundaries — whitespace is
 		// legal inside the envelope array) parses back identically.
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$envelope = \json_encode(
 			[
@@ -551,7 +551,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_process_sse_chunk_handles_partial_chunks(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$wire    = $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] );
 		$cut     = (int) ( \strlen( $wire ) / 2 );
@@ -565,7 +565,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_process_sse_chunk_strips_carriage_return(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$wire = $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] );
 		// Inject CRs in the SSE framing — the parser must rtrim them per spec.
@@ -576,7 +576,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_process_sse_chunk_ignores_comment_lines(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk(
 			": keepalive\n: another comment\n"
@@ -587,7 +587,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_process_sse_chunk_field_without_leading_space(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		// Drop the spaces after `event:` and `data:` (legal per SSE spec).
 		$wire = $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] );
@@ -598,7 +598,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_process_sse_chunk_unknown_fields_ignored(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk(
 			"id: 123\nretry: 5000\n"
@@ -640,7 +640,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_process_sse_chunk_empty_event_block_dropped(): void {
 		// `\n\n` with no preceding field — empty dispatch, sink never called.
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk( "\n\n" );
 		$this->assertCount( 0, $capture->captured );
@@ -666,7 +666,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_malformed_msg_envelope_dropped_silently(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		// Invalid JSON in a `msg` event — dispatch_event drops it; sink unchanged.
 		$remote->process_sse_chunk( "event: msg\ndata: not-json-at-all\n\n" );
@@ -701,7 +701,7 @@ class RemoteSourceTest extends TestCase {
 		// in downstream nodes. A spoke could publish gyroscope.log or
 		// completed.log payloads and they should pass through identically.
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$envelope = [
 			Message::TM_STRUCT, 1700000000.0, 'firehose.p0', '', '0:0', 'rid-1',
@@ -719,7 +719,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_forward_entry_drops_oversized_line(): void {
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$big_field = \str_repeat( 'A', Remote_Source_Node::MAX_LINE_BYTES + 100 );
 		$remote->process_sse_chunk(
@@ -731,7 +731,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_forward_entry_filter_drop_with_null_return(): void {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => null );
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
@@ -740,7 +740,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_forward_entry_filter_drop_with_false_return(): void {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => false );
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
@@ -749,7 +749,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_forward_entry_filter_drop_with_empty_string_return(): void {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => '' );
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
@@ -759,7 +759,7 @@ class RemoteSourceTest extends TestCase {
 		// Filter returns an array — silent drop (forward_entry only accepts strings).
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => [ 'not', 'a', 'string' ] );
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 		$this->assertCount( 0, $capture->captured );
@@ -772,7 +772,7 @@ class RemoteSourceTest extends TestCase {
 			static fn ( $line ) => $line . \str_repeat( 'B', Remote_Source_Node::MAX_LINE_BYTES )
 		);
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk(
 			$this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000, 'url' => '/x' ] )
@@ -793,7 +793,7 @@ class RemoteSourceTest extends TestCase {
 		$remote = new Remote_Source_Node( 'siteX', 'http://siteX.test', '', '', 'tok', 'firehose', 4 );
 		$remote->name( 'remote:siteX' );
 		$remote->set_require_https( false );
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
 
@@ -808,7 +808,7 @@ class RemoteSourceTest extends TestCase {
 		\add_filter( 'newspack_nodes/aggregator_ingest_line', static fn () => '"plain string"' );
 
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 
 		$remote->process_sse_chunk( $this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000 ] ) );
@@ -1408,7 +1408,7 @@ class RemoteSourceTest extends TestCase {
 		// substrate-side Consumer stamps FROM=`firehose.pN` and packs the
 		// firehose-entry dict into VALUE.
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 
 		$envelope = [
@@ -1454,7 +1454,7 @@ class RemoteSourceTest extends TestCase {
 		// `connected` is bookkeeping — must not land at the sink as a fake
 		// firehose entry.
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 
 		$envelope = [
@@ -1497,7 +1497,7 @@ class RemoteSourceTest extends TestCase {
 		// stamping only fire when VALUE is a dict; scalar payloads bypass
 		// the firehose-shape rewrites and reach the sink unchanged.
 		$remote  = $this->make_remote();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$remote->sink( $capture );
 
 		$envelope = [

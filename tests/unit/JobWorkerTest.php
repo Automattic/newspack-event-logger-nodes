@@ -585,7 +585,7 @@ class JobWorkerTest extends TestCase {
 		$jw->set_local_handler( 'b', fn () => null );
 		$jw->set_remote_handler( 'c', fn () => null );
 
-		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$sink = new \Newspack_Nodes\Tests\Capture_Sink_Node();
 		$jw->sink( $sink );
 
 		$req                   = Message::new_message();
@@ -626,7 +626,7 @@ class JobWorkerTest extends TestCase {
 
 	public function test_handle_request_unknown_verb_returns_error_payload(): void {
 		$jw = new Job_Worker_Node();
-		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$sink = new \Newspack_Nodes\Tests\Capture_Sink_Node();
 		$jw->sink( $sink );
 
 		$req                   = Message::new_message();
@@ -647,7 +647,7 @@ class JobWorkerTest extends TestCase {
 		// Verb normalisation: caller-supplied case must round-trip uppercased
 		// so the dispatch switch is case-insensitive at the entry point.
 		$jw = new Job_Worker_Node();
-		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$sink = new \Newspack_Nodes\Tests\Capture_Sink_Node();
 		$jw->sink( $sink );
 
 		$req                   = Message::new_message();
@@ -664,7 +664,7 @@ class JobWorkerTest extends TestCase {
 		// An echoed reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) doesn't hit
 		// fill()'s TM_REQUEST gate, so handle_request never fires.
 		$jw = new Job_Worker_Node();
-		$sink = new \Newspack_Nodes\Tests\CaptureSink();
+		$sink = new \Newspack_Nodes\Tests\Capture_Sink_Node();
 		$jw->sink( $sink );
 
 		$req                   = Message::new_message();

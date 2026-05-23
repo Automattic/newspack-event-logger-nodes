@@ -7,7 +7,7 @@ use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition_Node;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Topic_Node;
 
 /**
@@ -52,7 +52,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb      = new Request_Builder_Node();
 		$rb->sink( $capture );
 

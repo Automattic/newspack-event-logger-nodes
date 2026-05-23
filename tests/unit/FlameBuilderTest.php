@@ -7,7 +7,7 @@ use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -126,7 +126,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_flame_tree_built_from_entries_with_lifo_matching(): void {
 		$fb     = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->connect_node( 'flames:partition' );
@@ -162,7 +162,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_orphaned_complete_event_ignored(): void {
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->connect_node( 'flames:partition' );
@@ -185,7 +185,7 @@ class FlameBuilderTest extends TestCase {
 		// during merge for unambiguous tracking, then suffixes get stripped
 		// before storage / display.
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->connect_node( 'flames:partition' );
@@ -718,7 +718,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_handle_request_get_stats_returns_payload(): void {
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_is_hub( true );
@@ -761,7 +761,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_handle_request_unknown_verb_returns_error(): void {
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 
@@ -791,7 +791,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_apply_auto_tune_emits_messages_via_sink(): void {
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_auto_tune( 100, 0.0 );
@@ -826,7 +826,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_stats_store( $store );
@@ -858,7 +858,7 @@ class FlameBuilderTest extends TestCase {
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_stats_store( $store );
@@ -887,7 +887,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_stats_store( $store );
@@ -1276,7 +1276,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_label_and_detail_attached_to_flame_nodes(): void {
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->connect_node( 'flames:partition' );
@@ -1304,7 +1304,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_label_equal_to_detail_skips_detail_field(): void {
 		// If label and detail are identical, detail shouldn't be added.
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->connect_node( 'flames:partition' );
@@ -1426,7 +1426,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_handle_request_auto_tune_count_reflects_queue(): void {
 		$fb      = new Flame_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_auto_tune( 100, 0.05 );

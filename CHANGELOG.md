@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Registers its node namespace instead of per-class `register_class`; `.tsl`
+  shell-names normalized.** The plugin now calls
+  `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' )`
+  (+ the `App\` sub-namespace, since `request_graph_ready` `make_node`'s the
+  service CIs by short name) in place of its 17 `register_class()` calls. The
+  topology `.tsl` files use the normalized shell-names (`make_node FlameBuilder`
+  → `make_node Flame_Builder`, `JobRouter` → `Job_Router`, `JobWorker` →
+  `Job_Worker`, `RequestBuilder` → `Request_Builder`, `StreamMerger` →
+  `Stream_Merger`). Requires the matching `newspack-nodes` build (prefix
+  resolution lives in the substrate).
 - **Internal: class names normalized to `Word_Word` + `_Node` (lockstep with
   newspack-nodes).** ELN's own classes are now `Word_Word` with ALL-CAPS acronyms
   and a `_Node` suffix on Node subclasses (`FlameBuilder` → `Flame_Builder_Node`,

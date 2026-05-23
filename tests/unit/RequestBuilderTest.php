@@ -4,7 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -55,7 +55,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->fill( $msg );
 	}
 
-	private function captured_request( CaptureSink $capture, int $i = 0 ): array {
+	private function captured_request( Capture_Sink_Node $capture, int $i = 0 ): array {
 		return (array) $capture->captured[ $i ][ Message::VALUE ];
 	}
 
@@ -84,7 +84,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_complete_with_url_emits_assembled_request(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '99 on host', 'l' => '' ] );
@@ -105,7 +105,7 @@ class RequestBuilderTest extends TestCase {
 		// CLI bootstrap with no REQUEST_URI: process completes but request{} never
 		// fired, so url is empty. Don't emit (not addressable).
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
@@ -136,7 +136,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_environment_v2_extracts_remote_addr(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -150,7 +150,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_environment_v2_invalid_remote_addr_becomes_empty(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -164,7 +164,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_environment_v2_falls_back_to_x_forwarded_for(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -181,7 +181,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_environment_v2_extracts_server_name_country_user_agent_ja4(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -203,7 +203,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_worker_type_marks_request_as_worker(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -217,7 +217,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_memory_extracts_peak_mb(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -231,7 +231,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_request_strips_query_string_from_url(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -244,7 +244,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_process_start_extracts_process_id_and_host(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '12345 on test-host.lan', 'l' => '' ] );
@@ -260,7 +260,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_lifo_stack_pushes_pops_with_profile_aggregation(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -280,7 +280,7 @@ class RequestBuilderTest extends TestCase {
 		// Callback frames (' @N') represent breakdowns of their parent hook's
 		// time. So complete-of-callback must not subtract from the parent hook.
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -298,7 +298,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_mismatched_complete_searches_backward_and_unwinds(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -317,7 +317,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_runaway_stack_keeps_request_visible(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -339,7 +339,7 @@ class RequestBuilderTest extends TestCase {
 		// Reduce MAX_ENTRIES_PER_REQUEST? It's a constant. Fast smoke test:
 		// Fill 100 entries (well below 50000) and ensure no truncation marker.
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -361,7 +361,7 @@ class RequestBuilderTest extends TestCase {
 		// (the routed path); they're distinguished by the message TO field —
 		// errors carry TO=errors_target, completed-requests carry TO=target.
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->connect_node( 'main:target' );
 		$rb->set_errors_target( 'errors:target' );
@@ -382,7 +382,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_suffix_error_warning_keywords_also_forwarded(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->set_errors_target( 'errors:target' );
 
@@ -405,7 +405,7 @@ class RequestBuilderTest extends TestCase {
 		// bucket_size=1, num_buckets=2: one item per bucket, two buckets retained.
 		// After r2's set, r1's bucket is the oldest and gets evicted.
 		$rb      = new Request_Builder_Node( bucket_size: 1, num_buckets: 2 );
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		// r1: opens with URL, never completes — destined to be the orphan.
@@ -427,7 +427,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_save_and_restore_round_trip(): void {
 		$rb1     = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb1->sink( $capture );
 
 		$this->fill( $rb1, 1, 'r1', 'process (start)' );
@@ -694,7 +694,7 @@ class RequestBuilderTest extends TestCase {
 		// Open r1 with NO `request` keyword → url stays empty → evict_request
 		// hits the `empty( $request->url )` early return.
 		$rb      = new Request_Builder_Node( bucket_size: 1, num_buckets: 2 );
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -711,7 +711,7 @@ class RequestBuilderTest extends TestCase {
 		// guard the path. Stuff a complete-state stdClass directly into the
 		// cache via restore_state and force a rotation.
 		$rb      = new Request_Builder_Node( bucket_size: 1, num_buckets: 2 );
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		// Seed cache with a complete request via restore_state.
@@ -757,7 +757,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_handle_request_get_cache_returns_empty_payload_on_empty_cache(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
@@ -783,7 +783,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_handle_request_get_cache_reports_pending_count_and_sample(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
@@ -816,7 +816,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_handle_request_get_cache_increments_line_counter(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
@@ -841,7 +841,7 @@ class RequestBuilderTest extends TestCase {
 		// A reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) bypasses fill()'s
 		// TM_REQUEST gate, so it's never re-dispatched as a request.
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
@@ -858,7 +858,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_handle_request_unknown_verb_returns_error_payload(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
@@ -876,7 +876,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_handle_request_lowercase_verb_uppercased(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
@@ -919,7 +919,7 @@ class RequestBuilderTest extends TestCase {
 		// Stored entries carry optional duration_ms / peak_mb / l (label) fields
 		// when present on the source line.
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -950,7 +950,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_fill_truncates_long_string_m_to_max_entry_message_length(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$long = \str_repeat( 'A', 2048 );
@@ -976,7 +976,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_process_complete_invalid_error_status_normalized_to_dash(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -996,7 +996,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_process_complete_unknown_single_char_error_status_normalized_to_dash(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -1016,7 +1016,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_process_complete_accepts_f_status(): void {
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -1048,7 +1048,7 @@ class RequestBuilderTest extends TestCase {
 		// Round-trip via the public surface: save → swap to a new builder →
 		// restore → continue.
 		$rb1     = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb1->sink( $capture );
 
 		$this->fill( $rb1, 1, 'r1', 'process (start)' );
@@ -1230,7 +1230,7 @@ class RequestBuilderTest extends TestCase {
 		// No set_errors_target call → emit_error early-returns; the completed
 		// request still emits.
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
@@ -1263,7 +1263,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_environment_v2_skipped_when_message_exceeds_8192_bytes(): void {
 		// Lines longer than 8192 bytes are silently dropped (DoS guard).
 		$rb      = new Request_Builder_Node();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$huge = 'REMOTE_ADDR => "' . \str_repeat( '1', 9000 ) . '"';

@@ -28,7 +28,7 @@ use Newspack_Event_Logger_Nodes\Stream_Merger_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 class NodeLifecycleTest extends TestCase {
@@ -80,7 +80,7 @@ class NodeLifecycleTest extends TestCase {
 			$this->assertTrue( true, 'non-transit node — TM_ERROR contract not applicable' );
 			return;
 		}
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$node->sink( $capture );
 
 		$msg                   = Message::new_message();
@@ -111,7 +111,7 @@ class NodeLifecycleTest extends TestCase {
 			$this->assertTrue( true, 'non-transit node — TM_EOF contract not applicable' );
 			return;
 		}
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$node->sink( $capture );
 
 		$msg                   = Message::new_message();
