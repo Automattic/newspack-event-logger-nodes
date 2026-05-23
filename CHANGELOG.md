@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Synced shared `useMessageStream` hook: `workers/heartbeat` sends its slot
+  args positionally.** Mirrors the canonical hook in `newspack-nodes`, whose
+  `Workers_CI heartbeat` verb now reads positional `arguments` instead of a
+  structured `payload`. Requires the matching `newspack-nodes` build deployed
+  alongside (the heartbeat verb is substrate-side).
+
 ## [0.3.0] - 2026-05-22
 
 ### Changed

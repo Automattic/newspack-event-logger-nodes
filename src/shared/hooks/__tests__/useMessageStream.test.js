@@ -204,7 +204,7 @@ describe( 'useMessageStream', () => {
 		expect( mockSend ).toHaveBeenCalledWith( {
 			to: 'workers',
 			verb: 'heartbeat',
-			payload: { slot: 3, ttl: 10 },
+			args: '3 10',
 		} );
 		unmount();
 	} );
