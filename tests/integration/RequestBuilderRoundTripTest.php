@@ -1,14 +1,14 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
-use Newspack_Event_Logger_Nodes\RequestBuilder;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Consumer;
+use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Partition;
+use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Tests\CaptureSink;
-use Newspack_Nodes\Topic;
+use Newspack_Nodes\Topic_Node;
 
 /**
  * Verify Topic → Consumer → RequestBuilder assembles a complete request from
@@ -36,7 +36,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 	 * arg is retained for call-site readability but isn't used as the routing
 	 * key anymore.
 	 */
-	private function topic_write( Topic $topic, string $url, array $entry ): void {
+	private function topic_write( Topic_Node $topic, string $url, array $entry ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
@@ -47,16 +47,16 @@ class RequestBuilderRoundTripTest extends TestCase {
 	}
 
 	public function test_topic_to_consumer_to_request_builder_assembles_request(): void {
-		$topic = new Topic( "{$this->tmp}/firehose.log", 1 );
+		$topic = new Topic_Node( "{$this->tmp}/firehose.log", 1 );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
 		$capture = new CaptureSink();
-		$rb      = new RequestBuilder();
+		$rb      = new Request_Builder_Node();
 		$rb->sink( $capture );
 
-		$consumer = new Consumer( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/rb/p0" );
+		$consumer = new Consumer_Node( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/rb/p0" );
 		$consumer->sink( $rb );
 		$consumer->poll();
 

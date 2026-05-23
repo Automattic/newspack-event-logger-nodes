@@ -18,24 +18,24 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\RemoteSource;
+use Newspack_Event_Logger_Nodes\Remote_Source_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\SseFrameFactory;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\EventFramework;
+use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\CaptureSink;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( RemoteSource::class )]
+#[CoversClass( Remote_Source_Node::class )]
 class RemoteSourceTest extends TestCase {
 
 	use SseFrameFactory;
 
 	protected function setUp(): void {
 		parent::setUp();
-		EventFramework::reset();
+		Event_Framework::reset();
 		// Drop any ingest-filter callbacks left over from previous tests so
 		// drain_test_queue() / forward_entry() see a clean filter chain.
 		unset( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] );
@@ -46,7 +46,7 @@ class RemoteSourceTest extends TestCase {
 
 	protected function tearDown(): void {
 		unset( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] );
-		EventFramework::reset();
+		Event_Framework::reset();
 		parent::tearDown();
 	}
 
@@ -55,27 +55,27 @@ class RemoteSourceTest extends TestCase {
 	 * every test wants the http:// shortcut so a real connect attempt can be
 	 * driven via test seams without HTTPS plumbing.
 	 */
-	private function make_remote( string $server_id = 'siteA', string $url = 'http://siteA.test', int $partition = 0 ): RemoteSource {
-		$remote = new RemoteSource( $server_id, $url, '', '', 'tok', 'firehose', $partition );
+	private function make_remote( string $server_id = 'siteA', string $url = 'http://siteA.test', int $partition = 0 ): Remote_Source_Node {
+		$remote = new Remote_Source_Node( $server_id, $url, '', '', 'tok', 'firehose', $partition );
 		$remote->name( "remote:{$server_id}" );
 		$remote->set_require_https( false );
 		return $remote;
 	}
 
-	private function peek( RemoteSource $remote, string $field ): mixed {
-		$ref = new \ReflectionProperty( RemoteSource::class, $field );
+	private function peek( Remote_Source_Node $remote, string $field ): mixed {
+		$ref = new \ReflectionProperty( Remote_Source_Node::class, $field );
 		$ref->setAccessible( true );
 		return $ref->getValue( $remote );
 	}
 
-	private function poke( RemoteSource $remote, string $field, mixed $value ): void {
-		$ref = new \ReflectionProperty( RemoteSource::class, $field );
+	private function poke( Remote_Source_Node $remote, string $field, mixed $value ): void {
+		$ref = new \ReflectionProperty( Remote_Source_Node::class, $field );
 		$ref->setAccessible( true );
 		$ref->setValue( $remote, $value );
 	}
 
-	private function invoke( RemoteSource $remote, string $method, array $args = [] ): mixed {
-		$m = new \ReflectionMethod( RemoteSource::class, $method );
+	private function invoke( Remote_Source_Node $remote, string $method, array $args = [] ): mixed {
+		$m = new \ReflectionMethod( Remote_Source_Node::class, $method );
 		$m->setAccessible( true );
 		return $m->invoke( $remote, ...$args );
 	}
@@ -86,16 +86,16 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_class_constants_match_upstream_contract(): void {
-		$this->assertSame( 30, RemoteSource::MAX_BACKOFF );
-		$this->assertSame( 1, RemoteSource::INITIAL_BACKOFF );
-		$this->assertSame( 5, RemoteSource::CONNECT_TIMEOUT );
-		$this->assertSame( 45, RemoteSource::HEARTBEAT_TIMEOUT );
-		$this->assertSame( 15, RemoteSource::HEARTBEAT_INTERVAL );
-		$this->assertSame( 10485760, RemoteSource::MAX_BUFFER_SIZE );
-		$this->assertSame( 10485760, RemoteSource::MAX_EVENT_SIZE );
-		$this->assertSame( 10000, RemoteSource::MAX_QUEUE_SIZE );
-		$this->assertSame( 3900, RemoteSource::MAX_LINE_BYTES );
-		$this->assertSame( 300, RemoteSource::STATUS_TTL );
+		$this->assertSame( 30, Remote_Source_Node::MAX_BACKOFF );
+		$this->assertSame( 1, Remote_Source_Node::INITIAL_BACKOFF );
+		$this->assertSame( 5, Remote_Source_Node::CONNECT_TIMEOUT );
+		$this->assertSame( 45, Remote_Source_Node::HEARTBEAT_TIMEOUT );
+		$this->assertSame( 15, Remote_Source_Node::HEARTBEAT_INTERVAL );
+		$this->assertSame( 10485760, Remote_Source_Node::MAX_BUFFER_SIZE );
+		$this->assertSame( 10485760, Remote_Source_Node::MAX_EVENT_SIZE );
+		$this->assertSame( 10000, Remote_Source_Node::MAX_QUEUE_SIZE );
+		$this->assertSame( 3900, Remote_Source_Node::MAX_LINE_BYTES );
+		$this->assertSame( 300, Remote_Source_Node::STATUS_TTL );
 	}
 
 	// =========================================================================
@@ -103,17 +103,17 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_constructor_strips_trailing_slash_from_url(): void {
-		$remote = new RemoteSource( 'siteA', 'https://siteA.test/', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test/', '', '', 'tok', 'firehose', 0 );
 		$this->assertSame( 'https://siteA.test', $remote->url() );
 	}
 
 	public function test_constructor_stores_server_id(): void {
-		$remote = new RemoteSource( 'siteB', 'https://siteB.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteB', 'https://siteB.test', '', '', 'tok', 'firehose', 0 );
 		$this->assertSame( 'siteB', $remote->server_id() );
 	}
 
 	public function test_constructor_clamps_negative_partition_to_zero(): void {
-		$remote = new RemoteSource( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', -7 );
+		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', -7 );
 		// Negative partition -> 0; we can read it through current_status's URL params,
 		// but here just confirm the constructor accepted it and didn't crash.
 		$this->assertSame( 'siteA', $remote->server_id() );
@@ -125,7 +125,7 @@ class RemoteSourceTest extends TestCase {
 		// the make_node line. Verify all six positional args are joined,
 		// with the two credential slots scrubbed to `[REDACTED]` so a
 		// saved topology TSL never contains live passwords.
-		$remote = new RemoteSource( 'siteA', 'https://siteA.test', 'admin', 'pw', 'tok', 'firehose', 3 );
+		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', 'admin', 'pw', 'tok', 'firehose', 3 );
 		$args   = $remote->arguments();
 		$this->assertStringContainsString( 'siteA', $args );
 		$this->assertStringContainsString( 'https://siteA.test', $args );
@@ -142,7 +142,7 @@ class RemoteSourceTest extends TestCase {
 		// overrides it to scrub the two credential slots; both must
 		// survive in `[REDACTED]` form so the operator can tell whether
 		// they were set, but the raw secret must NOT leak.
-		$remote   = new RemoteSource( 'siteA', 'https://siteA.test', 'admin', 'secret-pw', 'secret-tok', 'firehose', 0 );
+		$remote   = new Remote_Source_Node( 'siteA', 'https://siteA.test', 'admin', 'secret-pw', 'secret-tok', 'firehose', 0 );
 		$snapshot = $remote->dump_node();
 		$this->assertSame( '[REDACTED]', $snapshot['auth_password'] );
 		$this->assertSame( '[REDACTED]', $snapshot['auth_token'] );
@@ -154,7 +154,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_dump_node_leaves_empty_credentials_alone(): void {
 		// Empty-string credentials stay empty (not redacted to "[REDACTED]")
 		// so the operator can tell at a glance which auth mode is in use.
-		$remote   = new RemoteSource( 'siteA', 'https://siteA.test', '', '', '', 'firehose', 0 );
+		$remote   = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', '', 'firehose', 0 );
 		$snapshot = $remote->dump_node();
 		$this->assertSame( '', $snapshot['auth_password'] );
 		$this->assertSame( '', $snapshot['auth_token'] );
@@ -205,7 +205,7 @@ class RemoteSourceTest extends TestCase {
 			$captured[] = $msg;
 		} );
 
-		$remote = new RemoteSource( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
 		$remote->set_require_https( false );
 
 		$concat = \implode( ' ', $captured );
@@ -219,7 +219,7 @@ class RemoteSourceTest extends TestCase {
 			$captured[] = $msg;
 		} );
 
-		$remote = new RemoteSource( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
 		$remote->set_require_https( false );
 		$first_count = \count( $captured );
 		$remote->set_require_https( false );
@@ -269,7 +269,7 @@ class RemoteSourceTest extends TestCase {
 		$this->assertNull( $status['last_http_code'] );
 		$this->assertNull( $status['slot'] );
 		$this->assertSame( [ 'segment_id' => 0, 'offset' => 0 ], $status['position'] );
-		$this->assertSame( RemoteSource::INITIAL_BACKOFF, $status['current_backoff'] );
+		$this->assertSame( Remote_Source_Node::INITIAL_BACKOFF, $status['current_backoff'] );
 		// last_event_time defaults to 0.0, so age is null.
 		$this->assertNull( $status['last_event_age_s'] );
 	}
@@ -290,7 +290,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_maybe_connect_refuses_non_https_when_required(): void {
 		Core::$now = 1000.0;
 		// Default require_https=true and a plain http:// URL.
-		$remote = new RemoteSource( 'insecure', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'insecure', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
 		$opened = $this->invoke( $remote, 'maybe_connect' );
 
 		$this->assertFalse( $opened );
@@ -348,7 +348,7 @@ class RemoteSourceTest extends TestCase {
 		Core::$now = 1000.0;
 		// We can't introspect cURL headers directly without a real transfer,
 		// but we can verify the path runs cleanly with credentials.
-		$remote = new RemoteSource( 'siteAuth', 'http://siteAuth.test', 'admin', 'pw', '', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteAuth', 'http://siteAuth.test', 'admin', 'pw', '', 'firehose', 0 );
 		$remote->set_require_https( false );
 		$opened = $this->invoke( $remote, 'maybe_connect' );
 		$this->assertTrue( $opened );
@@ -356,7 +356,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_maybe_connect_with_bearer_token_only(): void {
 		Core::$now = 1000.0;
-		$remote = new RemoteSource( 'siteTok', 'http://siteTok.test', '', '', 'tok-only', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteTok', 'http://siteTok.test', '', '', 'tok-only', 'firehose', 0 );
 		$remote->set_require_https( false );
 		$opened = $this->invoke( $remote, 'maybe_connect' );
 		$this->assertTrue( $opened );
@@ -610,7 +610,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_process_sse_chunk_buffer_overflow_returns_false(): void {
 		$remote = $this->make_remote();
 		// Feed > MAX_BUFFER_SIZE bytes with no newline.
-		$big   = \str_repeat( 'x', RemoteSource::MAX_BUFFER_SIZE + 1 );
+		$big   = \str_repeat( 'x', Remote_Source_Node::MAX_BUFFER_SIZE + 1 );
 		$ok    = $remote->process_sse_chunk( $big );
 		$this->assertFalse( $ok );
 		$this->assertStringContainsString( 'Buffer overflow', (string) $remote->get_last_error() );
@@ -623,7 +623,7 @@ class RemoteSourceTest extends TestCase {
 		// the first into current_event['data'], then the second tips it past
 		// the cap. Using two halves around MAX_EVENT_SIZE/2 keeps memory bounded
 		// to ~20MB total transient.
-		$half  = (int) ( RemoteSource::MAX_EVENT_SIZE / 2 ) + 100;
+		$half  = (int) ( Remote_Source_Node::MAX_EVENT_SIZE / 2 ) + 100;
 		$chunk = 'data: ' . \str_repeat( 'A', $half ) . "\n";
 		$remote->process_sse_chunk( $chunk );
 		$ok = $remote->process_sse_chunk( $chunk );
@@ -661,7 +661,7 @@ class RemoteSourceTest extends TestCase {
 			[ 'pid' => 1, 'slot' => 0, 'subscriptions' => [ 'firehose.p0' ], 'interval' => 500 ],
 		];
 		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
-		$this->assertSame( RemoteSource::INITIAL_BACKOFF, $remote->get_backoff() );
+		$this->assertSame( Remote_Source_Node::INITIAL_BACKOFF, $remote->get_backoff() );
 	}
 
 	public function test_malformed_msg_envelope_dropped_silently(): void {
@@ -721,7 +721,7 @@ class RemoteSourceTest extends TestCase {
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
 		$remote->sink( $capture );
-		$big_field = \str_repeat( 'A', RemoteSource::MAX_LINE_BYTES + 100 );
+		$big_field = \str_repeat( 'A', Remote_Source_Node::MAX_LINE_BYTES + 100 );
 		$remote->process_sse_chunk(
 			$this->entry_frame( [ 'k' => 'render', 'ts' => 1700000000, 'big' => $big_field ] )
 		);
@@ -769,7 +769,7 @@ class RemoteSourceTest extends TestCase {
 		// Filter inflates the line past MAX_LINE_BYTES post-stamp.
 		\add_filter(
 			'newspack_nodes/aggregator_ingest_line',
-			static fn ( $line ) => $line . \str_repeat( 'B', RemoteSource::MAX_LINE_BYTES )
+			static fn ( $line ) => $line . \str_repeat( 'B', Remote_Source_Node::MAX_LINE_BYTES )
 		);
 		$remote  = $this->make_remote();
 		$capture = new CaptureSink();
@@ -790,7 +790,7 @@ class RemoteSourceTest extends TestCase {
 			}
 		);
 
-		$remote = new RemoteSource( 'siteX', 'http://siteX.test', '', '', 'tok', 'firehose', 4 );
+		$remote = new Remote_Source_Node( 'siteX', 'http://siteX.test', '', '', 'tok', 'firehose', 4 );
 		$remote->name( 'remote:siteX' );
 		$remote->set_require_https( false );
 		$capture = new CaptureSink();
@@ -838,7 +838,7 @@ class RemoteSourceTest extends TestCase {
 		$handle = $remote->test_get_handle();
 
 		// Buffer overflow returns 0 — cURL aborts.
-		$ret = $remote->on_curl_data( $handle, \str_repeat( 'x', RemoteSource::MAX_BUFFER_SIZE + 1 ) );
+		$ret = $remote->on_curl_data( $handle, \str_repeat( 'x', Remote_Source_Node::MAX_BUFFER_SIZE + 1 ) );
 		$this->assertSame( 0, $ret );
 	}
 
@@ -889,7 +889,7 @@ class RemoteSourceTest extends TestCase {
 		$remote = $this->make_remote();
 		$this->invoke( $remote, 'maybe_connect' );
 		// Force last_event_time far in the past.
-		$this->poke( $remote, 'last_event_time', 1000.0 - RemoteSource::HEARTBEAT_TIMEOUT - 10 );
+		$this->poke( $remote, 'last_event_time', 1000.0 - Remote_Source_Node::HEARTBEAT_TIMEOUT - 10 );
 
 		$first = $remote->test_get_handle();
 		$this->assertNotNull( $first );
@@ -919,10 +919,10 @@ class RemoteSourceTest extends TestCase {
 		$this->invoke( $remote, 'increase_backoff' );
 		$this->assertSame( 16, $remote->get_backoff() );
 		$this->invoke( $remote, 'increase_backoff' );
-		$this->assertSame( RemoteSource::MAX_BACKOFF, $remote->get_backoff() );
+		$this->assertSame( Remote_Source_Node::MAX_BACKOFF, $remote->get_backoff() );
 		// Further increases capped.
 		$this->invoke( $remote, 'increase_backoff' );
-		$this->assertSame( RemoteSource::MAX_BACKOFF, $remote->get_backoff() );
+		$this->assertSame( Remote_Source_Node::MAX_BACKOFF, $remote->get_backoff() );
 	}
 
 	// =========================================================================
@@ -1158,7 +1158,7 @@ class RemoteSourceTest extends TestCase {
 	public function test_maybe_send_heartbeat_refuses_non_https_when_required(): void {
 		// require_https=true + http:// URL: the heartbeat endpoint check fails.
 		$cache = new InMemoryMemcached();
-		$remote = new RemoteSource( 'http-remote', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'http-remote', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
 		$remote->name( 'remote:http-remote' );
 		$remote->set_require_https( true );
 		Core::$memd = $cache;
@@ -1173,7 +1173,7 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_maybe_send_heartbeat_posts_with_basic_auth(): void {
-		$remote = new RemoteSource( 'siteHB', 'http://siteHB.test', 'admin', 'pw', '', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteHB', 'http://siteHB.test', 'admin', 'pw', '', 'firehose', 0 );
 		$remote->name( 'remote:siteHB' );
 		$remote->set_require_https( false );
 		$this->poke( $remote, 'connected', true );
@@ -1209,18 +1209,18 @@ class RemoteSourceTest extends TestCase {
 		// (the server no longer refresh-on-checks), so it MUST outlive the
 		// heartbeat interval or the slot dies in the gap between pokes.
 		$this->assertSame(
-			RemoteSource::HEARTBEAT_INTERVAL * 4,
+			Remote_Source_Node::HEARTBEAT_INTERVAL * 4,
 			$value['payload']['ttl']
 		);
 		$this->assertGreaterThan(
-			RemoteSource::HEARTBEAT_INTERVAL,
+			Remote_Source_Node::HEARTBEAT_INTERVAL,
 			$value['payload']['ttl'],
 			'heartbeat ttl must exceed HEARTBEAT_INTERVAL so the slot survives between pokes'
 		);
 	}
 
 	public function test_maybe_send_heartbeat_posts_with_bearer_token(): void {
-		$remote = new RemoteSource( 'siteTok', 'http://siteTok.test', '', '', 'bearer-tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node( 'siteTok', 'http://siteTok.test', '', '', 'bearer-tok', 'firehose', 0 );
 		$remote->name( 'remote:siteTok' );
 		$remote->set_require_https( false );
 		$this->poke( $remote, 'connected', true );
@@ -1253,7 +1253,7 @@ class RemoteSourceTest extends TestCase {
 		$first = $remote->test_get_handle();
 
 		// last_event_time is `now` at maybe_connect — under HEARTBEAT_TIMEOUT.
-		Core::$now = 1000.0 + RemoteSource::HEARTBEAT_TIMEOUT - 1;
+		Core::$now = 1000.0 + Remote_Source_Node::HEARTBEAT_TIMEOUT - 1;
 		$this->invoke( $remote, 'check_stale' );
 
 		$this->assertSame( $first, $remote->test_get_handle() );
@@ -1267,7 +1267,7 @@ class RemoteSourceTest extends TestCase {
 		$this->assertNotNull( $first );
 
 		// Push time past timeout.
-		Core::$now = 1000.0 + RemoteSource::HEARTBEAT_TIMEOUT + 1;
+		Core::$now = 1000.0 + Remote_Source_Node::HEARTBEAT_TIMEOUT + 1;
 		$this->invoke( $remote, 'check_stale' );
 
 		$this->assertNull( $remote->test_get_handle() );
@@ -1281,7 +1281,7 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_node_schema_returns_full_descriptor(): void {
-		$schema = RemoteSource::node_schema();
+		$schema = Remote_Source_Node::node_schema();
 		$this->assertIsArray( $schema );
 		$this->assertSame( 'I/O', $schema['category'] );
 		$this->assertNotEmpty( $schema['description'] );
@@ -1321,7 +1321,7 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_get_backoff_default_initial(): void {
 		$remote = $this->make_remote();
-		$this->assertSame( RemoteSource::INITIAL_BACKOFF, $remote->get_backoff() );
+		$this->assertSame( Remote_Source_Node::INITIAL_BACKOFF, $remote->get_backoff() );
 	}
 
 	public function test_get_slot_default_null(): void {

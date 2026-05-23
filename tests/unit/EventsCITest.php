@@ -20,7 +20,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Events_CI;
+use Newspack_Event_Logger_Nodes\App\Events_CI_Node;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -29,7 +29,7 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( Events_CI::class )]
+#[CoversClass( Events_CI_Node::class )]
 class EventsCITest extends TestCase {
 	private string $tmp;
 
@@ -54,7 +54,7 @@ class EventsCITest extends TestCase {
 	public function test_recent_verb_returns_data_meta_shape_when_empty(): void {
 		// No firehose logs on disk — verb still returns the canonical
 		// `{ data, meta }` envelope.
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 50 ] );
 
 		$this->assertIsArray( $result );
@@ -68,7 +68,7 @@ class EventsCITest extends TestCase {
 	public function test_recent_verb_default_limit_is_100(): void {
 		// Empty args body — verb should fall through to the legacy default
 		// limit of 100 (matches EventsController route default).
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'recent' );
 
 		$this->assertSame( 100, $result['meta']['limit'] );
@@ -77,14 +77,14 @@ class EventsCITest extends TestCase {
 	public function test_recent_verb_clamps_limit_low(): void {
 		// Mirror the legacy sanitize_callback: `max(1, min(1000, (int)$v))`.
 		// Negative input clamped to 1.
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => -5 ] );
 		$this->assertSame( 1, $result['meta']['limit'] );
 	}
 
 	public function test_recent_verb_clamps_limit_high(): void {
 		// Mirror the legacy sanitize_callback upper bound: 1000.
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 5000 ] );
 		$this->assertSame( 1000, $result['meta']['limit'] );
 	}
@@ -110,7 +110,7 @@ class EventsCITest extends TestCase {
 		$index = \pack( 'NN', 0, 0 );
 		\file_put_contents( "{$segment_dir}/0.idx", $index );
 
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'recent', [ 'limit' => 10 ] );
 
 		$this->assertCount( 1, $result['data'] );
@@ -127,7 +127,7 @@ class EventsCITest extends TestCase {
 	public function test_stats_verb_returns_data_meta_shape_when_empty(): void {
 		// No stats seeded — verb returns the canonical envelope with an
 		// empty time_series array.
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertIsArray( $result );
@@ -144,7 +144,7 @@ class EventsCITest extends TestCase {
 			'2026-05-17-10' => [ 'count' => 3, 'sum_ms' => 1500.0, 'sum_peak_mb' => 30.0 ],
 		] );
 
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertCount( 1, $result['data']['time_series'] );
@@ -168,7 +168,7 @@ class EventsCITest extends TestCase {
 			'2026-05-17-10' => [ 'count' => 5, 'sum_ms' => 2500.0, 'sum_peak_mb' => 50.0 ],
 		] );
 
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertCount( 1, $result['data']['time_series'] );
@@ -188,7 +188,7 @@ class EventsCITest extends TestCase {
 			'2026-05-17-09' => [ 'count' => 1, 'sum_ms' => 100.0, 'sum_peak_mb' => 1.0 ],
 		] );
 
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertCount( 2, $result['data']['time_series'] );
@@ -203,7 +203,7 @@ class EventsCITest extends TestCase {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
 		Core::$memd = null;
 
-		$ci     = new Events_CI();
+		$ci     = new Events_CI_Node();
 		$result = VerbHarness::fire( $ci, 'events', 'stats' );
 
 		$this->assertSame( [], $result['data']['time_series'] );

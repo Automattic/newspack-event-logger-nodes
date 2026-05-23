@@ -1,10 +1,10 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\RequestBuilder;
-use Newspack_Event_Logger_Nodes\RequestFlight;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Callback;
+use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -19,29 +19,29 @@ use PHPUnit\Framework\Attributes\CoversClass;
  * requests-stream-controller::transform_line output so the schema-parity
  * audit passes.
  */
-#[CoversClass( RequestBuilder::class )]
+#[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderCompactSummaryTest extends TestCase {
 
 	/**
 	 * Sink that records every fill() into the by-ref array.
 	 */
-	private function capture_sink( array &$sink ): Callback {
-		return new Callback( static function ( array &$m ) use ( &$sink ): void {
+	private function capture_sink( array &$sink ): Callback_Node {
+		return new Callback_Node( static function ( array &$m ) use ( &$sink ): void {
 			$sink[] = $m;
 		} );
 	}
 
 	public function test_constructor_attaches_flight_sibling(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$flight = $rb->flight();
-		$this->assertInstanceOf( RequestFlight::class, $flight );
+		$this->assertInstanceOf( Request_Flight_Node::class, $flight );
 		$this->assertSame( 'rb:flight', $flight->name() );
 		$this->assertSame( $rb, $flight->patron() );
 	}
 
 	public function test_sink_setter_propagates_to_flight(): void {
-		$rb   = new RequestBuilder();
+		$rb   = new Request_Builder_Node();
 		$rb->name( 'rb-sink-prop' );
 		$captured = [];
 		$sink     = $this->capture_sink( $captured );
@@ -51,7 +51,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	}
 
 	public function test_set_completed_target_dispatches_compact_summary_on_completion(): void {
-		$rb       = new RequestBuilder();
+		$rb       = new Request_Builder_Node();
 		$rb->name( 'rb-completed-target' );
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
@@ -92,7 +92,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	}
 
 	public function test_compact_summary_clips_url_and_user_agent(): void {
-		$rb       = new RequestBuilder();
+		$rb       = new Request_Builder_Node();
 		$rb->name( 'rb-clip' );
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
@@ -120,7 +120,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	}
 
 	public function test_inflight_snapshot_returns_active_requests_in_compact_form(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb-snap' );
 		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ] );
 		$rb->cache->set( 'r-2', (object) [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ] );
@@ -138,7 +138,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	}
 
 	public function test_set_completed_target_via_verb_enables_compact_summary_on_next_completion(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
@@ -166,7 +166,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	}
 
 	public function test_set_completed_target_empty_via_verb_clears_and_subsequent_emit_is_silent(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
@@ -194,7 +194,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	}
 
 	public function test_dump_config_round_trips_new_verb_invocations(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();

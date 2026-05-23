@@ -13,20 +13,20 @@
  * @package Newspack_Event_Logger_Nodes
  */
 
-namespace Newspack_Event_Logger_Nodes\Tests\Unit\Cli;
+namespace Newspack_Event_Logger_Nodes\Tests\Unit\CLI;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\LruCache;
+use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Partition;
+use Newspack_Nodes\Partition_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 require_once \dirname( __DIR__, 3 ) . '/includes/cli/class-reqgrep-command.php';
 require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WPCLIStub.php';
 
-use Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand;
+use Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command;
 
-#[CoversClass( ReqgrepCommand::class )]
+#[CoversClass( Reqgrep_Command::class )]
 class ReqgrepCommandTest extends TestCase {
 
 	private string $tmp;
@@ -43,7 +43,7 @@ class ReqgrepCommandTest extends TestCase {
 	/** @var \ReflectionMethod */
 	private \ReflectionMethod $output_remaining;
 
-	private ReqgrepCommand $cmd;
+	private Reqgrep_Command $cmd;
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -86,8 +86,8 @@ class ReqgrepCommandTest extends TestCase {
 		bool $incomplete = false,
 		int $bucket_size = 250,
 		int $num_buckets = 10
-	): ReqgrepCommand {
-		$cmd = new ReqgrepCommand();
+	): Reqgrep_Command {
+		$cmd = new Reqgrep_Command();
 
 		$set = function ( string $prop, $value ) use ( $cmd ): void {
 			$ref = new \ReflectionProperty( $cmd, $prop );
@@ -101,7 +101,7 @@ class ReqgrepCommandTest extends TestCase {
 		$set( 'bucket_size', $bucket_size );
 		$set( 'num_buckets', $num_buckets );
 
-		$inflight = ( new LruCache( 100, 3 ) )->with_timed_rotation(
+		$inflight = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation(
 			60.0,
 			function ( string $rid, $state ) use ( $cmd ): void {
 				if ( ! $state instanceof \stdClass ) {
@@ -142,7 +142,7 @@ class ReqgrepCommandTest extends TestCase {
 		// 1 slot × 1 bucket → setting a second item rotates the only bucket and
 		// fires on_evict for the first.
 		$evicted = [];
-		$cache   = new LruCache( 1, 1 );
+		$cache   = new LRU_Cache( 1, 1 );
 		$cache->with_timed_rotation( 0.001, function ( string $k, $v ) use ( &$evicted ): void {
 			$evicted[] = [ $k, $v ];
 		} );
@@ -158,7 +158,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_lru_cache_smoke_promotes_on_get(): void {
-		$cache = new LruCache( 2, 3 );
+		$cache = new LRU_Cache( 2, 3 );
 		$cache->set( 'a', 'A' );
 		$cache->set( 'b', 'B' );
 		$this->assertSame( 'A', $cache->get( 'a' ) );
@@ -305,7 +305,7 @@ class ReqgrepCommandTest extends TestCase {
 			);
 		}
 
-		/** @var LruCache $inflight */
+		/** @var LRU_Cache $inflight */
 		$inflight = $this->get_prop( 'inflight' );
 		$state    = $inflight->get( $rid );
 
@@ -757,7 +757,7 @@ class ReqgrepCommandTest extends TestCase {
 	 */
 	private function seed_partition( string $base_dir, int $partition, array $entries ): void {
 		\mkdir( "{$base_dir}/p{$partition}", 0755, true );
-		$p = new \Newspack_Nodes\Partition( $base_dir, $partition );
+		$p = new \Newspack_Nodes\Partition_Node( $base_dir, $partition );
 		foreach ( $entries as $entry ) {
 			$msg                       = \Newspack_Nodes\Message::new_message();
 			$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
@@ -898,7 +898,7 @@ class ReqgrepCommandTest extends TestCase {
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
 			$ref_method->setAccessible( true );
 
-			$partition = new \Newspack_Nodes\Partition( $tmp, 0 );
+			$partition = new \Newspack_Nodes\Partition_Node( $tmp, 0 );
 			$consumed  = $ref_method->invoke( $cmd, $partition, 0, 0, 0 );
 			$this->assertSame( 0, $consumed );
 
@@ -929,7 +929,7 @@ class ReqgrepCommandTest extends TestCase {
 			};
 			$set( 'base_dir', $tmp );
 
-			$partition  = new \Newspack_Nodes\Partition( $tmp, 0 );
+			$partition  = new \Newspack_Nodes\Partition_Node( $tmp, 0 );
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
 			$ref_method->setAccessible( true );
 
@@ -1183,7 +1183,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			// Suppress the prod-only output-buffer drain so PHPUnit's own
 			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
@@ -1221,7 +1221,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			// Suppress the prod-only output-buffer drain so PHPUnit's own
 			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
@@ -1253,7 +1253,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			// Suppress the prod-only output-buffer drain so PHPUnit's own
 			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
@@ -1457,7 +1457,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
@@ -1496,7 +1496,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
@@ -1543,7 +1543,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
@@ -1777,7 +1777,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
@@ -1811,7 +1811,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
-			$cmd = new \Newspack_Event_Logger_Nodes\CLI\ReqgrepCommand();
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );

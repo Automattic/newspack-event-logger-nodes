@@ -14,14 +14,14 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Status_CI;
+use Newspack_Event_Logger_Nodes\App\Status_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( Status_CI::class )]
+#[CoversClass( Status_CI_Node::class )]
 class StatusCITest extends TestCase {
 	private string $tmp;
 
@@ -46,7 +46,7 @@ class StatusCITest extends TestCase {
 			'topologies'     => [ 'firehose-workers-and-jobs', 'request-workers' ],
 		] );
 		Core::$memd = new InMemoryMemcached();
-		$ci         = new Status_CI();
+		$ci         = new Status_CI_Node();
 
 		$before = \time();
 		$result = VerbHarness::fire( $ci, 'status', 'get' );
@@ -66,7 +66,7 @@ class StatusCITest extends TestCase {
 
 	public function test_cache_unavailable_reports_false_when_memd_null(): void {
 		Core::$memd = null;
-		$ci         = new Status_CI();
+		$ci         = new Status_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'status', 'get' );
 
@@ -77,7 +77,7 @@ class StatusCITest extends TestCase {
 	public function test_num_partitions_defaults_to_one_when_missing(): void {
 		// use_base_dir() with no extras seeds only base_directory, leaving
 		// num_partitions/topologies to fall through to defaults.
-		$ci = new Status_CI();
+		$ci = new Status_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'status', 'get' );
 

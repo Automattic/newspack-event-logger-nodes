@@ -46,7 +46,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	}
 
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
-		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\ReqgrepCommand' );
+		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
 	}
 
 	// App Config invalidates on the substrate's reset broadcast. Must be
@@ -76,25 +76,25 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// to render any application node — palette only listed substrate
 	// nodes, and selecting an existing RequestBuilder showed
 	// "No constructor arguments. No verbs registered."
-	\Newspack_Nodes\CommandInterpreter::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\AutoTuner::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\FlameBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\HealthCheckTick::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\JobRouter::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\JobWorker::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\RequestBuilder::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\RemoteSource::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\StreamMerger::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'AutoTuner',       \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'FlameBuilder',    \Newspack_Event_Logger_Nodes\Flame_Builder_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'HealthCheckTick', \Newspack_Event_Logger_Nodes\Health_Check_Tick_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'JobRouter',       \Newspack_Event_Logger_Nodes\Job_Router_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'JobWorker',       \Newspack_Event_Logger_Nodes\Job_Worker_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'RequestBuilder',  \Newspack_Event_Logger_Nodes\Request_Builder_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'RemoteSource',    \Newspack_Event_Logger_Nodes\Remote_Source_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'StreamMerger',    \Newspack_Event_Logger_Nodes\Stream_Merger_Node::class );
 	// Service CIs — discoverable to `$base_ci->make_node(...)`, which
 	// constructs + names + sinks each in one step from the
 	// `newspack_nodes/request_graph_ready` hook below.
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Discovery_CI',    \Newspack_Event_Logger_Nodes\App\Discovery_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Status_CI',       \Newspack_Event_Logger_Nodes\App\Status_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Settings_CI',     \Newspack_Event_Logger_Nodes\App\Settings_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Logger_CI',       \Newspack_Event_Logger_Nodes\App\Logger_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Events_CI',       \Newspack_Event_Logger_Nodes\App\Events_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Servers_CI',      \Newspack_Event_Logger_Nodes\App\Servers_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Aggregator_CI',   \Newspack_Event_Logger_Nodes\App\Aggregator_CI::class );
-	\Newspack_Nodes\CommandInterpreter::register_class( 'Performance_CI',  \Newspack_Event_Logger_Nodes\App\Performance_CI::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Discovery_CI',    \Newspack_Event_Logger_Nodes\App\Discovery_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Status_CI',       \Newspack_Event_Logger_Nodes\App\Status_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Settings_CI',     \Newspack_Event_Logger_Nodes\App\Settings_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Logger_CI',       \Newspack_Event_Logger_Nodes\App\Logger_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Events_CI',       \Newspack_Event_Logger_Nodes\App\Events_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Servers_CI',      \Newspack_Event_Logger_Nodes\App\Servers_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Aggregator_CI',   \Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node::class );
+	\Newspack_Nodes\Command_Interpreter_Node::register_class( 'Performance_CI',  \Newspack_Event_Logger_Nodes\App\Performance_CI_Node::class );
 
 	// Named formatters are similarly cheap (one map insert each) and the
 	// captured closures don't autoload until invoked. `request-index`
@@ -104,25 +104,25 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	\Newspack_Nodes\Formatters::register(
 		'request-index',
 		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\RequestBuilder::format_index_entry( $line, $position, $data )
+			=> \Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( $line, $position, $data )
 	);
 	\Newspack_Nodes\Formatters::register(
 		'flame-index',
 		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\FlameBuilder::format_index_entry( $line, $position, $data )
+			=> \Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( $line, $position, $data )
 	);
 
 	// `SettingsSync::init` listens for `update_option` / `add_option` —
 	// which can fire from admin saves, REST settings endpoints, CLI,
 	// or programmatic callers. All of these should sync to remote
 	// spokes, so the hook stays registered at boot.
-	\Newspack_Event_Logger_Nodes\SettingsSync::init();
+	\Newspack_Event_Logger_Nodes\Settings_Sync::init();
 
 	// Set the one shared Memcached handle on the substrate Core, then wire
 	// the substrate's SSE slot pool (generic rate-limiting) onto SSE_Out's
 	// 3-Closure seam so the unified SSE endpoint inherits the concurrency cap.
 	newspack_event_logger_nodes_init_memcached();
-	\Newspack_Nodes\Sse_Slot_Pool::wire();
+	\Newspack_Nodes\SSE_Slot_Pool::wire();
 
 	// Hook instrumentation — the whole reason this plugin exists. Runs
 	// on every request that gets logged.
@@ -186,8 +186,8 @@ $_newspack_event_logger_nodes_register_user_topology_dir = static function (): v
  * carry their own static guards), so no outer guard is necessary.
  */
 $_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
-	\Newspack_Event_Logger_Nodes\StreamMerger::register_remote_job_rewrite_filter();
-	\Newspack_Event_Logger_Nodes\RemoteManager::init();
+	\Newspack_Event_Logger_Nodes\Stream_Merger_Node::register_remote_job_rewrite_filter();
+	\Newspack_Event_Logger_Nodes\Remote_Manager::init();
 };
 
 /**
@@ -298,7 +298,7 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 	\add_action(
 		'newspack_nodes/before_supervisor_run',
 		static function () use ( &$orig_server ): void {
-			$orig_server = \Newspack_Event_Logger_Nodes\JobWorker::begin_job_context( 'newspack-nodes/supervisor' );
+			$orig_server = \Newspack_Event_Logger_Nodes\Job_Worker_Node::begin_job_context( 'newspack-nodes/supervisor' );
 		}
 	);
 	\add_action(
@@ -307,7 +307,7 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 			if ( null === $orig_server ) {
 				return;
 			}
-			\Newspack_Event_Logger_Nodes\JobWorker::end_job_context( $orig_server );
+			\Newspack_Event_Logger_Nodes\Job_Worker_Node::end_job_context( $orig_server );
 			$orig_server = null;
 		}
 	);
@@ -340,7 +340,7 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 			$base_dir   = \Newspack_Nodes\Bootstrap::base_dir();
 			$nonce_salt = \defined( 'NONCE_SALT' ) ? \NONCE_SALT : '';
 			$supervisor = new \Newspack_Nodes\Supervisor( $base_dir, $nonce_salt );
-			$wb         = new \Newspack_Nodes\WorkerBase(
+			$wb         = new \Newspack_Nodes\Worker_Base(
 				$base_dir,
 				$type,
 				$partition,
@@ -364,7 +364,7 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 				$config['offsets_dir'] = \rtrim( (string) $config['base_directory'], '/' ) . '/offsets';
 			}
 			$topology = static function (
-				\Newspack_Nodes\CommandInterpreter $ci,
+				\Newspack_Nodes\Command_Interpreter_Node $ci,
 				int $partition_arg
 			) use ( $topology_name, $config ): void {
 				\Newspack_Nodes\Topology_Loader::load(
@@ -440,8 +440,8 @@ function newspack_event_logger_nodes_init_memcached(): void {
  * Named function (not a closure) so tests that wipe
  * `$GLOBALS['_wp_actions']` for isolation can re-attach the same callback.
  */
-function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\CommandInterpreter $base_ci ): void {
-	$registry = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance();
+function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_ci ): void {
+	$registry = \Newspack_Event_Logger_Nodes\Server_Registry::get_instance();
 
 	$base_ci->make_node( 'Discovery_CI',   'discovery' );
 	$base_ci->make_node( 'Status_CI',      'status' );

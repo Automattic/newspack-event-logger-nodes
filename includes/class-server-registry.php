@@ -17,7 +17,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Server Registry class.
  */
-class ServerRegistry {
+class Server_Registry {
 
 	/**
 	 * WP option name for storing server configurations.
@@ -42,9 +42,9 @@ class ServerRegistry {
 	/**
 	 * Singleton instance.
 	 *
-	 * @var ServerRegistry|null
+	 * @var Server_Registry|null
 	 */
-	private static ?ServerRegistry $instance = null;
+	private static ?Server_Registry $instance = null;
 
 	/**
 	 * Cached merged servers (config-file defaults + WP option overlay).
@@ -56,7 +56,7 @@ class ServerRegistry {
 	/**
 	 * Singleton accessor.
 	 */
-	public static function get_instance(): ServerRegistry {
+	public static function get_instance(): Server_Registry {
 		if ( null === self::$instance ) {
 			self::$instance = new self();
 		}

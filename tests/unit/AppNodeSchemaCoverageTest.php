@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 
 /**
  * Confirm every Newspack_Event_Logger_Nodes class registered in the
@@ -16,7 +16,7 @@ use Newspack_Nodes\CommandInterpreter;
 class AppNodeSchemaCoverageTest extends TestCase {
 	public function test_every_app_registered_class_returns_schema_with_category(): void {
 		$missing = [];
-		foreach ( CommandInterpreter::class_map() as $shell_name => $fqcn ) {
+		foreach ( Command_Interpreter_Node::class_map() as $shell_name => $fqcn ) {
 			if ( ! \str_starts_with( $fqcn, 'Newspack_Event_Logger_Nodes\\' ) ) {
 				continue;
 			}

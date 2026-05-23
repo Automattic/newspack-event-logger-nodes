@@ -1,20 +1,20 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
-use Newspack_Event_Logger_Nodes\FlameBuilder;
-use Newspack_Event_Logger_Nodes\JobRouter;
-use Newspack_Event_Logger_Nodes\JobWorker;
-use Newspack_Event_Logger_Nodes\RequestBuilder;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Job_Router_Node;
+use Newspack_Event_Logger_Nodes\Job_Worker_Node;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Consumer;
+use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Router;
-use Newspack_Nodes\Tee;
+use Newspack_Nodes\Router_Node;
+use Newspack_Nodes\Tee_Node;
 use Newspack_Nodes\Tests\CaptureSink;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
-use Newspack_Nodes\Topic;
+use Newspack_Nodes\Topic_Node;
 
 /**
  * Full pipeline integration test: real firehose JSONL lines flow through
@@ -43,7 +43,7 @@ class FullPipelineTest extends TestCase {
 	 * arg is retained for call-site readability but isn't used as the routing
 	 * key anymore.
 	 */
-	private function topic_write( Topic $topic, string $url, array $entry ): void {
+	private function topic_write( Topic_Node $topic, string $url, array $entry ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
@@ -55,7 +55,7 @@ class FullPipelineTest extends TestCase {
 
 	public function test_full_pipeline_topic_consumer_tee_request_builder_flame_builder_job_router(): void {
 		// Producer: write firehose lines mixing a request lifecycle and a job.
-		$topic = new Topic( "{$this->tmp}/firehose.log", 1 );
+		$topic = new Topic_Node( "{$this->tmp}/firehose.log", 1 );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );
@@ -76,19 +76,19 @@ class FullPipelineTest extends TestCase {
 		$this->topic_write( $topic, '/x', [ 'n' => 5, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
 		// Worker side: scaffolding.
-		$router = new Router();
+		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$tee = new Tee();
+		$tee = new Tee_Node();
 		$tee->name( 'firehose-fanout' );
 		$tee->sink( $router );
 
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
 
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new FlameBuilder();
+		$fb         = new Flame_Builder_Node();
 		$fb->name( 'flame-builder' );
 		$fb->set_stats_store( $store );
 		$rb->sink( $fb );
@@ -101,13 +101,13 @@ class FullPipelineTest extends TestCase {
 		// Production has a jobs.log Partition between them; the test wires
 		// them in-process to assert routing without the disk roundtrip.
 		$job_executions = [];
-		$jw             = new JobWorker();
+		$jw             = new Job_Worker_Node();
 		$jw->name( 'job-worker' );
 		$jw->set_local_handler( 'echo_job', function ( $params ) use ( &$job_executions ) {
 			$job_executions[] = $params;
 		} );
 
-		$jr = new JobRouter();
+		$jr = new Job_Router_Node();
 		$jr->name( 'job-router' );
 		$jr->sink( $router );
 		$jr->connect_node( 'job-worker' );
@@ -116,7 +116,7 @@ class FullPipelineTest extends TestCase {
 		$tee->connect_node( 'job-router' );
 
 		// Consumer must be named so JobRouter recognizes the source via FROM.
-		$consumer = new Consumer( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/r/p0" );
+		$consumer = new Consumer_Node( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/r/p0" );
 		$consumer->name( 'firehose:consumer' );
 		$consumer->sink( $tee );
 		$consumer->poll();
@@ -138,7 +138,7 @@ class FullPipelineTest extends TestCase {
 
 		// 3. FlameBuilder.flush() writes URL aggregate to memcache.
 		$fb->flush();
-		$url_hash = RequestBuilder::url_hash( '/x' );
+		$url_hash = Request_Builder_Node::url_hash( '/x' );
 		$stats    = $store->get_url_stats( $url_hash );
 		$this->assertNotNull( $stats, 'flush should write per-URL aggregate' );
 		$this->assertSame( 1, $stats['flame_raw']['count'] );

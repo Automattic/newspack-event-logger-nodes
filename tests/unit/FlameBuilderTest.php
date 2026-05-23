@@ -1,8 +1,8 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\FlameBuilder;
-use Newspack_Event_Logger_Nodes\RequestBuilder;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
@@ -27,7 +27,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
  * The flame tree is built from `entries` via LIFO matching of `^(.+?) \(start\)$`
  * / `^(.+?) \(complete\)$` patterns on `k`.
  */
-#[CoversClass( FlameBuilder::class )]
+#[CoversClass( Flame_Builder_Node::class )]
 class FlameBuilderTest extends TestCase {
 
 	/**
@@ -60,7 +60,7 @@ class FlameBuilderTest extends TestCase {
 		return \array_replace( $base, $overrides );
 	}
 
-	private function fill_request( FlameBuilder $fb, array $request ): void {
+	private function fill_request( Flame_Builder_Node $fb, array $request ): void {
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::VALUE ]     = $request;
@@ -68,7 +68,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_constructor_initializes_empty(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$this->assertSame( 0, $fb->stats_count() );
 	}
 
@@ -79,7 +79,7 @@ class FlameBuilderTest extends TestCase {
 		// owned auto-tuner sibling is patron-linked, so the GUI
 		// hides it via dump_metadata's filter — no extra edge
 		// surfaces from target().
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->connect_node( 'flames:partition' );
 
@@ -87,17 +87,17 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_owns_auto_tuner_sibling(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 
 		// Auto-tuner registered under {patron}:auto-tuner with patron link.
 		$at = \Newspack_Nodes\Core::node( 'fb:auto-tuner' );
-		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\AutoTuner::class, $at );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class, $at );
 		$this->assertSame( $fb, $at->patron() );
 	}
 
 	public function test_flame_builder_remove_node_cascades_auto_tuner(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertNotNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
 		$fb->remove_node();
@@ -105,7 +105,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_non_array_value_skipped(): void {
-		$fb                    = new FlameBuilder();
+		$fb                    = new Flame_Builder_Node();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::VALUE ] = 'not-an-array';
@@ -114,7 +114,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_non_bytestream_message_skipped(): void {
-		$fb                    = new FlameBuilder();
+		$fb                    = new Flame_Builder_Node();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_INFO;
 		$msg[ Message::VALUE ] = $this->completed_request();
@@ -125,7 +125,7 @@ class FlameBuilderTest extends TestCase {
 	// --- Flame tree construction ------------------------------------------
 
 	public function test_flame_tree_built_from_entries_with_lifo_matching(): void {
-		$fb     = new FlameBuilder();
+		$fb     = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -161,7 +161,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_orphaned_complete_event_ignored(): void {
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -184,7 +184,7 @@ class FlameBuilderTest extends TestCase {
 		// Two `init (start)` siblings under the root. They get \x00N suffixes
 		// during merge for unambiguous tracking, then suffixes get stripped
 		// before storage / display.
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -213,7 +213,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_per_url_aggregate_sums_durations_across_requests(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$req1 = $this->completed_request( [ 'url' => '/x', 'duration_ms' => 100.0 ] );
@@ -224,7 +224,7 @@ class FlameBuilderTest extends TestCase {
 		// Force flush.
 		$fb->flush();
 
-		$url_hash = RequestBuilder::url_hash( '/x' );
+		$url_hash = Request_Builder_Node::url_hash( '/x' );
 		$stats    = $store->get_url_stats( $url_hash );
 		$this->assertNotNull( $stats );
 		// flame_raw retains sums; flame is finalized for display.
@@ -237,7 +237,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flush_persists_hourly_to_memcache(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$req = $this->completed_request( [ 'duration_ms' => 100.0, 'peak_mb' => 32.0 ] );
@@ -256,7 +256,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flush_persists_dimensional_status(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'status_code' => 200 ] ) );
@@ -274,7 +274,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flush_persists_categories_and_leaderboard(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$now = \time();
@@ -314,7 +314,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_timed_out_requests_excluded_from_timing_but_counted(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		// error_status='T' means timed-out; duration is synthetic. Must not
@@ -334,7 +334,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_workers_excluded_from_timing(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 100.0, 'is_worker' => true ] ) );
@@ -350,11 +350,11 @@ class FlameBuilderTest extends TestCase {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
-		$fb_spoke = new FlameBuilder();
+		$fb_spoke = new Flame_Builder_Node();
 		$fb_spoke->set_stats_store( $store );
 		$fb_spoke->set_is_hub( false );
 
-		$fb_hub = new FlameBuilder();
+		$fb_hub = new Flame_Builder_Node();
 		$fb_hub->set_stats_store( $store );
 		$fb_hub->set_is_hub( true );
 
@@ -385,7 +385,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_noisy_hook_detection_threshold_zero_disables_check(): void {
 		// With threshold 0, no hook ever gets proposed.
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 0, 0.0 );
 
 		$req = $this->completed_request( [
@@ -399,7 +399,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_noisy_hook_detection_proposes_when_count_exceeds_threshold(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 100, 0.0 );
 
 		$req = $this->completed_request( [
@@ -414,7 +414,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_callback_categories_skipped_from_auto_tune(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 100, 0.0 );
 
 		$req = $this->completed_request( [
@@ -429,7 +429,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_significant_event_detection_picks_up_slow_avg(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 0, 0.05 ); // 50ms threshold
 
 		// avg_per_call = sum_time / sum_count = 0.4/2 = 0.2 ≥ 0.05 → significant.
@@ -452,11 +452,11 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
 		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
-		$entry    = FlameBuilder::format_index_entry( $line, $position );
+		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 68, \strlen( $entry ) );
 
-		$parsed = FlameBuilder::parse_flame_index( $entry );
+		$parsed = Flame_Builder_Node::parse_flame_index( $entry );
 		$this->assertSame( 'abc', $parsed['rid'] );
 		$this->assertSame( 'deadbeef0001', $parsed['url_hash'] );
 		$this->assertSame( 5, $parsed['segment_id'] );
@@ -470,17 +470,17 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
 		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( FlameBuilder::format_index_entry( $line, $position ) );
+		$this->assertNull( Flame_Builder_Node::format_index_entry( $line, $position ) );
 	}
 
 	public function test_parse_flame_index_returns_null_for_short_lines(): void {
-		$this->assertNull( FlameBuilder::parse_flame_index( 'too-short' ) );
+		$this->assertNull( Flame_Builder_Node::parse_flame_index( 'too-short' ) );
 	}
 
 	// --- save/restore state -----------------------------------------------
 
 	public function test_save_and_restore_pending_state_round_trip(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$this->fill_request( $fb, $this->completed_request( [
 			'duration_ms' => 50.0,
 			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
@@ -490,7 +490,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( 'pending_bucket', $saved );
 		$this->assertArrayHasKey( 'pending', $saved );
 
-		$fb2 = new FlameBuilder();
+		$fb2 = new Flame_Builder_Node();
 		$fb2->restore_state( $saved );
 		$saved2 = $fb2->save_state();
 		$this->assertSame( $saved['pending_bucket'], $saved2['pending_bucket'] );
@@ -510,13 +510,13 @@ class FlameBuilderTest extends TestCase {
 				[ 'name' => 'b', 'sum_value' => 3.0, 'children' => [] ],
 			],
 		];
-		FlameBuilder::finalize_flame_node( $node, 1 );
+		Flame_Builder_Node::finalize_flame_node( $node, 1 );
 		$this->assertEqualsWithDelta( 6.0, $node['value'], 1e-6 );
 	}
 
 	public function test_flush_without_stats_store_does_not_throw(): void {
 		// In test mode (no store), flush() still drains state but writes nowhere.
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$this->fill_request( $fb, $this->completed_request() );
 		$fb->flush(); // must not throw
 		$this->assertSame( 0, $fb->stats_count() );
@@ -531,7 +531,7 @@ class FlameBuilderTest extends TestCase {
 			'count'     => 1,
 			'children'  => [],
 		];
-		FlameBuilder::finalize_flame_node( $node, 1 );
+		Flame_Builder_Node::finalize_flame_node( $node, 1 );
 		$this->assertArrayNotHasKey( 'sum_value', $node );
 		$this->assertArrayNotHasKey( 'seen_count', $node );
 		$this->assertArrayNotHasKey( 'ts', $node );
@@ -540,14 +540,14 @@ class FlameBuilderTest extends TestCase {
 	// ── A3: sibling-CI + verbs ─────────────────────────────────
 
 	public function test_flame_builder_constructs_sibling_ci(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertNotNull( $fb->interpreter() );
 		$this->assertSame( 'fb:config', $fb->interpreter()->name() );
 	}
 
 	public function test_flame_builder_set_is_hub_verb_round_trips(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertSame( 'ok', $fb->interpreter()->dispatch( 'set_is_hub', 'true' ) );
 		$dump = $fb->dump_config();
@@ -555,7 +555,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_set_auto_tune_verb_round_trips(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertSame( 'ok', $fb->interpreter()->dispatch( 'set_auto_tune', '100 0.5' ) );
 		$dump = $fb->dump_config();
@@ -563,7 +563,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_set_significant_events_verb_round_trips(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertSame( 'ok', $fb->interpreter()->dispatch( 'set_significant_events', 'init,wp_loaded,shutdown' ) );
 		$dump = $fb->dump_config();
@@ -571,7 +571,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_node_schema_declares_verbs(): void {
-		$schema = FlameBuilder::node_schema();
+		$schema = Flame_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
 		$verb_names = \array_column( $schema['verbs'], 'name' );
 		$this->assertContains( 'set_is_hub', $verb_names );
@@ -586,7 +586,7 @@ class FlameBuilderTest extends TestCase {
 		// Use a fixed clock so we can pin the bucket key without timing flake.
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$fixed = 1_700_000_000; // Stable; floor to 5-min bucket.
@@ -611,7 +611,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_maintenance_triggers_flush_when_interval_elapsed(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		// Fill first, then backdate last_flush_time AFTER (fill() itself can
@@ -619,9 +619,9 @@ class FlameBuilderTest extends TestCase {
 		// flush we observe comes only from the maintenance() call.
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0 ] ) );
 
-		$ref = new \ReflectionProperty( FlameBuilder::class, 'last_flush_time' );
+		$ref = new \ReflectionProperty( Flame_Builder_Node::class, 'last_flush_time' );
 		$ref->setAccessible( true );
-		$ref->setValue( $fb, \microtime( true ) - ( FlameBuilder::FLUSH_INTERVAL_SEC + 1 ) );
+		$ref->setValue( $fb, \microtime( true ) - ( Flame_Builder_Node::FLUSH_INTERVAL_SEC + 1 ) );
 
 		// Confirm hourly is NOT yet persisted (last fill happened mid-window).
 		$hourly_before = $store->get_hourly();
@@ -635,7 +635,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_maintenance_skipped_when_interval_not_elapsed(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		// last_flush_time is "now" from the constructor.
 		// maintenance() should be a no-op — no exception, no error.
 		$fb->maintenance();
@@ -643,7 +643,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_set_custom_event_names_dispatches_to_custom_events(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 50, 0.0 );
 		$fb->set_custom_event_names( [ 'mything', 'other' ] );
 
@@ -665,7 +665,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_set_significant_events_suppresses_redundant_proposals(): void {
 		// Significant events should still appear in `significant_events` set;
 		// once present in $significant_events, repeated detection is suppressed.
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 0, 0.05 );
 		$fb->set_significant_events( [ 'wpdb' ] );
 
@@ -684,7 +684,7 @@ class FlameBuilderTest extends TestCase {
 	// --- restore_state edge cases -----------------------------------------
 
 	public function test_restore_state_ignores_non_string_pending_bucket(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->restore_state( [ 'pending_bucket' => 12345 ] );
 		$saved = $fb->save_state();
 		// Default is empty string.
@@ -692,7 +692,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_restore_state_ignores_non_array_pending(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->restore_state( [ 'pending' => 'not-an-array' ] );
 		$saved = $fb->save_state();
 		// Pending keeps its initialized shape.
@@ -701,7 +701,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_restore_state_merges_pending_array(): void {
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		// Manually craft pending payload.
 		$fb->restore_state( [
 			'pending_bucket' => '2024-01-01-12-00',
@@ -717,7 +717,7 @@ class FlameBuilderTest extends TestCase {
 	// --- handle_request (TM_REQUEST GET_STATS) ----------------------------
 
 	public function test_handle_request_get_stats_returns_payload(): void {
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -760,7 +760,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_handle_request_unknown_verb_returns_error(): void {
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -779,7 +779,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_response_messages_dont_trigger_handle_request(): void {
 		// TM_REQUEST | TM_RESPONSE should skip handle_request (it's a reply, not a request).
-		$fb                    = new FlameBuilder();
+		$fb                    = new Flame_Builder_Node();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
 		$msg[ Message::VALUE ] = 'GET_STATS';
@@ -790,7 +790,7 @@ class FlameBuilderTest extends TestCase {
 	// --- Auto-tune fire actions + memcache lock ---------------------------
 
 	public function test_apply_auto_tune_emits_messages_via_sink(): void {
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -825,7 +825,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = $mc;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -857,7 +857,7 @@ class FlameBuilderTest extends TestCase {
 		$mc->add( 'evlog:auto_disable_lock', 'someone-else', 60 );
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -886,7 +886,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = $mc;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -905,7 +905,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_emit_auto_tune_no_op_when_no_sink(): void {
 		// Sink-less FlameBuilder still completes flush without crashing.
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		// No sink attached.
 		$fb->set_auto_tune( 100, 0.0 );
@@ -925,7 +925,7 @@ class FlameBuilderTest extends TestCase {
 		// Use a tight retention (1 hour) and seed an in-memory hourly entry with a far-past bucket.
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 3600 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		// Pre-populate hourly with a very old bucket via Stats_Store directly.
@@ -948,7 +948,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_url_index_computes_percentiles_from_durations(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		// Drive 100 requests at the same URL with monotonic durations.
@@ -964,7 +964,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket    = $store->bucket_key_for( $now );
 		$index     = $store->get_url_index_hourly( $bucket );
-		$url_hash  = RequestBuilder::url_hash( '/p50' );
+		$url_hash  = Request_Builder_Node::url_hash( '/p50' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$stats     = $index[ $url_hash ];
 		$this->assertGreaterThan( 0, $stats['p50_ms'] );
@@ -976,7 +976,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_url_index_caps_at_500_keeps_top_by_count(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$now = \time();
@@ -1000,7 +1000,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_dim_other_rollover_when_too_many_values(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$now = \time();
@@ -1025,7 +1025,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_url_dim_other_rollover_uses_tighter_cap(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$now = \time();
@@ -1040,7 +1040,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$url_hash = RequestBuilder::url_hash( '/shared' );
+		$url_hash = Request_Builder_Node::url_hash( '/shared' );
 		$url_dim  = $store->get_url_dimensional( $url_hash );
 		$this->assertArrayHasKey( 'ua', $url_dim );
 		$bucket = $store->bucket_key_for( $now );
@@ -1053,7 +1053,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_categories_other_rollover_preserves_total(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$now = \time();
@@ -1080,7 +1080,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_categories_expiration_drops_old_buckets(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 3600 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		// Pre-seed an old bucket.
@@ -1108,7 +1108,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_per_server_leaderboard_cap_global_upper_bound(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
@@ -1132,7 +1132,7 @@ class FlameBuilderTest extends TestCase {
 		$lb_s   = $store->get_server_leaderboard_bucket( 'srv-cap', $bucket );
 		$this->assertArrayHasKey( 'wpdb', $lb_s['categories'] );
 		$this->assertLessThanOrEqual(
-			FlameBuilder::ENTRY_LIMIT_GLOBAL_UPPER,
+			Flame_Builder_Node::ENTRY_LIMIT_GLOBAL_UPPER,
 			\count( $lb_s['categories']['wpdb']['entries'] )
 		);
 	}
@@ -1140,7 +1140,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_hub_mode_per_server_categories_tracked(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
@@ -1168,7 +1168,7 @@ class FlameBuilderTest extends TestCase {
 		// (status, method, country, etc.) but NOT for the 'server' dimension (redundant).
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
@@ -1197,7 +1197,7 @@ class FlameBuilderTest extends TestCase {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/legacy';
-		$url_hash = RequestBuilder::url_hash( $url );
+		$url_hash = Request_Builder_Node::url_hash( $url );
 		$store->set_url_stats( $url_hash, [
 			'flame'    => [
 				'name'     => 'aggregate',
@@ -1209,7 +1209,7 @@ class FlameBuilderTest extends TestCase {
 			],
 		] );
 
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$this->fill_request( $fb, $this->completed_request( [
@@ -1234,7 +1234,7 @@ class FlameBuilderTest extends TestCase {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/promoted';
-		$url_hash = RequestBuilder::url_hash( $url );
+		$url_hash = Request_Builder_Node::url_hash( $url );
 		$store->set_url_stats( $url_hash, [
 			'flame_raw' => [
 				'name'      => 'aggregate',
@@ -1254,7 +1254,7 @@ class FlameBuilderTest extends TestCase {
 			],
 		] );
 
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		// Hit the URL once more.
@@ -1275,7 +1275,7 @@ class FlameBuilderTest extends TestCase {
 	// --- Stack depth safety + edge cases of build_flame_data --------------
 
 	public function test_label_and_detail_attached_to_flame_nodes(): void {
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1303,7 +1303,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_label_equal_to_detail_skips_detail_field(): void {
 		// If label and detail are identical, detail shouldn't be added.
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1327,7 +1327,7 @@ class FlameBuilderTest extends TestCase {
 		// without emitting a message.
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 22.0 ] ) );
@@ -1341,7 +1341,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_plugin_suffix_categories_skipped_from_auto_tune(): void {
 		// Categories ending with " plugin" are not eligible for auto-tune.
-		$fb = new FlameBuilder();
+		$fb = new Flame_Builder_Node();
 		$fb->set_auto_tune( 100, 0.05 );
 
 		$req = $this->completed_request( [
@@ -1362,7 +1362,7 @@ class FlameBuilderTest extends TestCase {
 			'name'     => 'orphan',
 			'children' => [],
 		];
-		FlameBuilder::finalize_flame_node( $node, 0 );
+		Flame_Builder_Node::finalize_flame_node( $node, 0 );
 		$this->assertSame( 0, $node['value'] );
 	}
 
@@ -1376,7 +1376,7 @@ class FlameBuilderTest extends TestCase {
 				[ 'name' => 'b', 'children' => [] ], // No sum_value.
 			],
 		];
-		FlameBuilder::finalize_flame_node( $node, 1 );
+		Flame_Builder_Node::finalize_flame_node( $node, 1 );
 		// Children sum = 5 + 0 = 5; parent had 2 → bumped to 5.
 		$this->assertEqualsWithDelta( 5.0, $node['value'], 1e-6 );
 	}
@@ -1391,7 +1391,7 @@ class FlameBuilderTest extends TestCase {
 		$line                  = Message::packed( $msg );
 		$position              = [ 'segment_id' => 1, 'offset' => 0, 'length' => 50 ];
 		$pre                   = null;
-		$entry                 = FlameBuilder::format_index_entry( $line, $position, $pre );
+		$entry                 = Flame_Builder_Node::format_index_entry( $line, $position, $pre );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 68, \strlen( $entry ) );
 	}
@@ -1406,9 +1406,9 @@ class FlameBuilderTest extends TestCase {
 		];
 		$line     = Message::packed( $msg );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$entry    = FlameBuilder::format_index_entry( $line, $position );
+		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
 		$this->assertNotNull( $entry );
-		$parsed   = FlameBuilder::parse_flame_index( $entry );
+		$parsed   = Flame_Builder_Node::parse_flame_index( $entry );
 		$this->assertSame( 32, \strlen( $parsed['rid'] ) );
 		$this->assertSame( 12, \strlen( $parsed['url_hash'] ) );
 	}
@@ -1419,13 +1419,13 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::VALUE ] = 'just-a-string';
 		$line                  = Message::packed( $msg );
 		$position              = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( FlameBuilder::format_index_entry( $line, $position ) );
+		$this->assertNull( Flame_Builder_Node::format_index_entry( $line, $position ) );
 	}
 
 	// --- handle_request payload includes auto-tune queue depth ------------
 
 	public function test_handle_request_auto_tune_count_reflects_queue(): void {
-		$fb      = new FlameBuilder();
+		$fb      = new Flame_Builder_Node();
 		$capture = new CaptureSink();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1470,7 +1470,7 @@ class FlameBuilderTest extends TestCase {
 		// Hub mode but empty server_name → no per-server data.
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
@@ -1492,7 +1492,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_double_flush_is_idempotent(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new FlameBuilder();
+		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 100.0 ] ) );

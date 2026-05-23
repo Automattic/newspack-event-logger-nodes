@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Internal: class names normalized to `Word_Word` + `_Node` (lockstep with
+  newspack-nodes).** ELN's own classes are now `Word_Word` with ALL-CAPS acronyms
+  and a `_Node` suffix on Node subclasses (`FlameBuilder` → `Flame_Builder_Node`,
+  `StreamMerger` → `Stream_Merger_Node`, `LogManager` → `Log_Manager`, `LruCache`
+  → `LRU_Cache`); every reference to the renamed substrate classes was updated to
+  match (`extends Service_CI` → `Service_CI_Node`, `\Newspack_Nodes\CommandInterpreter`
+  → `Command_Interpreter_Node`, …). Behavior-neutral: `register_class` shell-names
+  + `.tsl` topologies unchanged. Requires the matching `newspack-nodes` build
+  deployed alongside (the substrate classes are renamed there).
 - **Synced shared `useMessageStream` hook: `workers/heartbeat` sends its slot
   args positionally.** Mirrors the canonical hook in `newspack-nodes`, whose
   `Workers_CI heartbeat` verb now reads positional `arguments` instead of a

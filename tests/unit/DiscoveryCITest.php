@@ -15,12 +15,12 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Discovery_CI;
+use Newspack_Event_Logger_Nodes\App\Discovery_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( Discovery_CI::class )]
+#[CoversClass( Discovery_CI_Node::class )]
 class DiscoveryCITest extends TestCase {
 	private string $tmp;
 
@@ -44,7 +44,7 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ 'init', 'wp_loaded', 'shutdown' ],
 			'custom_events' => [ 'my_event' => true ],
 		] );
-		$ci = new Discovery_CI();
+		$ci = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
 
@@ -60,7 +60,7 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ 'my_event', 'init' ],
 			'custom_events' => [ 'my_event' ],
 		] );
-		$ci = new Discovery_CI();
+		$ci = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
 
@@ -74,7 +74,7 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ 'init' => true, 'shutdown' => true ],
 			'custom_events' => [ 'a', 'b' ],
 		] );
-		$ci = new Discovery_CI();
+		$ci = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
 
@@ -88,7 +88,7 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ '', 'init', '', 'init' ],
 			'custom_events' => [],
 		] );
-		$ci = new Discovery_CI();
+		$ci = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
 
@@ -101,7 +101,7 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => 'not-an-array',
 			'custom_events' => 42,
 		] );
-		$ci = new Discovery_CI();
+		$ci = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
 

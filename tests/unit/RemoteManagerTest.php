@@ -2,13 +2,13 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\RemoteManager;
-use Newspack_Event_Logger_Nodes\ServerRegistry;
-use Newspack_Event_Logger_Nodes\SettingsSync;
+use Newspack_Event_Logger_Nodes\Remote_Manager;
+use Newspack_Event_Logger_Nodes\Server_Registry;
+use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( RemoteManager::class )]
+#[CoversClass( Remote_Manager::class )]
 class RemoteManagerTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
@@ -23,8 +23,8 @@ class RemoteManagerTest extends TestCase {
 		// Reset the ServerRegistry singleton's in-process cache so each test
 		// starts with a clean view of $GLOBALS['_wp_options']. Without this
 		// reset, registries from a previous test leak through.
-		if ( \class_exists( ServerRegistry::class ) ) {
-			$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		if ( \class_exists( Server_Registry::class ) ) {
+			$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
 			$ref->setAccessible( true );
 			$ref->setValue( null, null );
 		}
@@ -82,10 +82,10 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_constants(): void {
-		$this->assertSame( 100, RemoteManager::MAX_SERVERS );
-		$this->assertSame( 50, RemoteManager::MAX_SETTINGS );
-		$this->assertSame( 600, RemoteManager::STALE_THRESHOLD );
-		$this->assertSame( 15, RemoteManager::REQUEST_TIMEOUT );
+		$this->assertSame( 100, Remote_Manager::MAX_SERVERS );
+		$this->assertSame( 50, Remote_Manager::MAX_SETTINGS );
+		$this->assertSame( 600, Remote_Manager::STALE_THRESHOLD );
+		$this->assertSame( 15, Remote_Manager::REQUEST_TIMEOUT );
 	}
 
 	public function test_init_registers_health_check_action(): void {
@@ -93,8 +93,8 @@ class RemoteManagerTest extends TestCase {
 		// run it's a no-op. Register the canonical callback directly to assert
 		// the wiring contract.
 		$GLOBALS['_wp_actions'] = [];
-		\add_action( 'newspack_event_logger_nodes/health_check', [ RemoteManager::class, 'health_check' ] );
-		\add_filter( 'newspack_nodes/job_handlers', [ RemoteManager::class, 'register_handler' ] );
+		\add_action( 'newspack_event_logger_nodes/health_check', [ Remote_Manager::class, 'health_check' ] );
+		\add_filter( 'newspack_nodes/job_handlers', [ Remote_Manager::class, 'register_handler' ] );
 
 		$this->assertNotEmpty(
 			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/health_check'] ?? [],
@@ -106,42 +106,42 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		// init() itself must be safely callable + idempotent.
-		RemoteManager::init();
-		RemoteManager::init();
+		Remote_Manager::init();
+		Remote_Manager::init();
 		$this->assertTrue( true );
 	}
 
 	public function test_register_handler_inserts_remote_manager(): void {
-		$handlers = RemoteManager::register_handler( [] );
+		$handlers = Remote_Manager::register_handler( [] );
 		$this->assertArrayHasKey( 'remote_manager', $handlers );
 		$this->assertIsCallable( $handlers['remote_manager'] );
 	}
 
 	public function test_register_handler_preserves_existing(): void {
-		$handlers = RemoteManager::register_handler( [ 'other' => 'callable' ] );
+		$handlers = Remote_Manager::register_handler( [ 'other' => 'callable' ] );
 		$this->assertArrayHasKey( 'remote_manager', $handlers );
 		$this->assertArrayHasKey( 'other', $handlers );
 	}
 
 	public function test_register_handler_handles_non_array(): void {
 		// Filters can be passed null/string by hostile callers; defensive accept.
-		$handlers = RemoteManager::register_handler( null );
+		$handlers = Remote_Manager::register_handler( null );
 		$this->assertIsArray( $handlers );
 		$this->assertArrayHasKey( 'remote_manager', $handlers );
 	}
 
 	public function test_handle_job_skips_empty_action(): void {
 		// Should silently bail; no exception, no errors.
-		RemoteManager::handle_job( [] );
-		RemoteManager::handle_job( [ 'action' => '' ] );
-		RemoteManager::handle_job( [ 'action' => null ] );
+		Remote_Manager::handle_job( [] );
+		Remote_Manager::handle_job( [ 'action' => '' ] );
+		Remote_Manager::handle_job( [ 'action' => null ] );
 		$this->assertTrue( true );
 	}
 
 	public function test_handle_job_drops_stale_sync_setting(): void {
 		// Stale by 1 hour past the 600s threshold.
 		$queued_at = \time() - 4000;
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_urls',
 			'value'     => [ '/x' ],
@@ -164,14 +164,14 @@ class RemoteManagerTest extends TestCase {
 				return $handlers;
 			}
 		);
-		RemoteManager::handle_job( [ 'action' => 'custom_thing' ] );
+		Remote_Manager::handle_job( [ 'action' => 'custom_thing' ] );
 		$this->assertTrue( $called, 'filter-registered handler must be invoked for unknown action' );
 	}
 
 	public function test_handle_job_unknown_action_with_no_filter_logs(): void {
 		// No filter registered; default action just logs and returns.
 		// Should not throw.
-		RemoteManager::handle_job( [ 'action' => 'truly_unknown_action_xyz' ] );
+		Remote_Manager::handle_job( [ 'action' => 'truly_unknown_action_xyz' ] );
 		$this->assertTrue( true );
 	}
 
@@ -188,7 +188,7 @@ class RemoteManagerTest extends TestCase {
 				return $handlers;
 			}
 		);
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'   => 'probe',
 			'endpoint' => '/wp-json/wp/v2/posts',  // disallowed
 			'data'     => 'preserved',
@@ -209,7 +209,7 @@ class RemoteManagerTest extends TestCase {
 				return $handlers;
 			}
 		);
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'   => 'probe2',
 			'endpoint' => '/wp-json/newspack-nodes/v1/something',  // allowed
 		] );
@@ -217,12 +217,12 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_queue_sync_all_settings_returns_zero_for_empty_servers(): void {
-		$queued = RemoteManager::queue_sync_all_settings( [] );
+		$queued = Remote_Manager::queue_sync_all_settings( [] );
 		$this->assertSame( 0, $queued );
 	}
 
 	public function test_sync_setting_caps_at_max_servers(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		// Register 3 servers (well under MAX_SERVERS=100, but enough to assert
 		// iteration walks them).
 		for ( $i = 0; $i < 3; $i++ ) {
@@ -233,7 +233,7 @@ class RemoteManagerTest extends TestCase {
 		}
 		// Without wp_remote_post mocked, the call returns errors silently;
 		// just assert it doesn't throw on a populated registry.
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'a', 'b' ],
 			'/wp-json/newspack-nodes/v1/settings',
@@ -243,13 +243,13 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_with_explicit_server_filter(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'token' => 'x' ] );
 		$reg->register( 'b', [ 'url' => 'https://b.test', 'token' => 'y' ] );
 
 		// Filtered to one server — wp_remote_* may not exist in tests so this
 		// just asserts the method handles a string array filter.
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'h' ],
 			'/wp-json/newspack-nodes/v1/settings',
@@ -259,7 +259,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_calculate_lag_returns_zero_for_empty_inputs(): void {
-		$this->assertSame( 0, RemoteManager::calculate_lag( [], [] ) );
+		$this->assertSame( 0, Remote_Manager::calculate_lag( [], [] ) );
 	}
 
 	public function test_calculate_lag_sums_unread_segment_bytes(): void {
@@ -276,7 +276,7 @@ class RemoteManagerTest extends TestCase {
 			0 => [ 'segment_id' => 'seg1', 'offset' => 50 ],
 		];
 		// (200 - 50) + 300 = 450
-		$this->assertSame( 450, RemoteManager::calculate_lag( $segments, $cursor ) );
+		$this->assertSame( 450, Remote_Manager::calculate_lag( $segments, $cursor ) );
 	}
 
 	public function test_calculate_lag_handles_multiple_partitions(): void {
@@ -289,7 +289,7 @@ class RemoteManagerTest extends TestCase {
 			1 => [ 'segment_id' => 'a', 'offset' => 50 ],
 		];
 		// 100 + (200-50) = 250
-		$this->assertSame( 250, RemoteManager::calculate_lag( $segments, $cursor ) );
+		$this->assertSame( 250, Remote_Manager::calculate_lag( $segments, $cursor ) );
 	}
 
 	public function test_calculate_lag_treats_unknown_cursor_as_full_lag(): void {
@@ -301,11 +301,11 @@ class RemoteManagerTest extends TestCase {
 		$cursor = [
 			0 => [ 'segment_id' => '', 'offset' => 0 ],
 		];
-		$this->assertSame( 300, RemoteManager::calculate_lag( $segments, $cursor ) );
+		$this->assertSame( 300, Remote_Manager::calculate_lag( $segments, $cursor ) );
 	}
 
 	public function test_post_to_server_rejects_disallowed_endpoint(): void {
-		$result = RemoteManager::post_to_server(
+		$result = Remote_Manager::post_to_server(
 			[ 'url' => 'https://example.test', 'token' => 'x' ],
 			'/wp-json/wp/v2/posts',
 			[ 'foo' => 'bar' ]
@@ -318,7 +318,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_get_from_server_rejects_disallowed_endpoint(): void {
-		$result = RemoteManager::get_from_server(
+		$result = Remote_Manager::get_from_server(
 			[ 'url' => 'https://example.test', 'token' => 'x' ],
 			'/wp-admin/admin-ajax.php'
 		);
@@ -337,13 +337,13 @@ class RemoteManagerTest extends TestCase {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 
-		$orig = RemoteManager::begin_job_context( 'remote_manager/sync_setting' );
+		$orig = Remote_Manager::begin_job_context( 'remote_manager/sync_setting' );
 
 		// During the job, $_SERVER['REQUEST_URI'] is the job URI.
 		$this->assertSame( '/jobs/remote_manager/sync_setting', $_SERVER['REQUEST_URI'] );
 		$this->assertSame( 'POST', $_SERVER['REQUEST_METHOD'] );
 
-		RemoteManager::end_job_context( $orig );
+		Remote_Manager::end_job_context( $orig );
 
 		// $_SERVER must be fully restored.
 		$this->assertSame( '/original', $_SERVER['REQUEST_URI'] );
@@ -360,7 +360,7 @@ class RemoteManagerTest extends TestCase {
 				$received = $data;
 			}
 		);
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 		$this->assertSame( [], $received, 'discovery action fires with empty array when no servers' );
 	}
 
@@ -385,7 +385,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 		// Doesn't crash on 200 entries.
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 		$this->assertTrue( true );
 	}
 
@@ -405,7 +405,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 		// Must not throw, must not POST anywhere.
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 		$this->assertTrue( true );
 	}
 
@@ -422,9 +422,9 @@ class RemoteManagerTest extends TestCase {
 			'auth_password' => 'app-pass',
 		];
 
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			$server,
-			SettingsSync::PERF_ENDPOINT,
+			Settings_Sync::PERF_ENDPOINT,
 			[ 'option' => 'newspack_event_logger_nodes_log_urls', 'value' => [ '/x' ] ]
 		);
 
@@ -444,7 +444,7 @@ class RemoteManagerTest extends TestCase {
 		self::assert_command_envelope( $last['args']['body'], 'performance' );
 		// Defaults: no follow, response-size cap, timeout.
 		$this->assertSame( 0, $last['args']['redirection'] );
-		$this->assertSame( RemoteManager::REQUEST_TIMEOUT, $last['args']['timeout'] );
+		$this->assertSame( Remote_Manager::REQUEST_TIMEOUT, $last['args']['timeout'] );
 	}
 
 	public function test_post_to_server_with_legacy_token_auth(): void {
@@ -456,7 +456,7 @@ class RemoteManagerTest extends TestCase {
 			'token' => 'legacy-bearer',
 		];
 
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			$server,
 			'/wp-json/newspack-nodes/v1/settings',
 			[]
@@ -473,7 +473,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		$server = [ 'url' => 'https://example.test' ];
 
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			$server,
 			'/wp-json/newspack-nodes/v1/settings',
 			[]
@@ -495,7 +495,7 @@ class RemoteManagerTest extends TestCase {
 			],
 		];
 
-		$response = RemoteManager::get_from_server(
+		$response = Remote_Manager::get_from_server(
 			[ 'url' => 'https://example.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
 			'/wp-json/newspack-nodes/v1/discovery'
 		);
@@ -511,7 +511,7 @@ class RemoteManagerTest extends TestCase {
 		// Register one enabled server, mock its discovery endpoint to return
 		// a valid payload, and verify the discovery action fires with the
 		// validated payload.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke-a', [
 			'url'           => 'https://spoke-a.test',
 			'auth_username' => 'admin',
@@ -538,7 +538,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		$this->assertIsArray( $received );
 		$this->assertArrayHasKey( 'spoke-a', $received );
@@ -555,7 +555,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_health_check_skips_disabled_servers(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'enabled-spoke', [
 			'url'           => 'https://enabled.test',
 			'auth_username' => 'a',
@@ -571,14 +571,14 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		// Disabled spoke not in payload.
 		$this->assertSame( [], $received );
 	}
 
 	public function test_health_check_logs_error_on_non_200(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke-err', [
 			'url'           => 'https://spoke-err.test',
 			'auth_username' => 'a',
@@ -600,14 +600,14 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		// Failure path: no entry in discovery payload for the broken spoke.
 		$this->assertArrayNotHasKey( 'spoke-err', (array) $received );
 	}
 
 	public function test_health_check_handles_invalid_json_response(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke-junk', [
 			'url'           => 'https://spoke-junk.test',
 			'auth_username' => 'a',
@@ -629,14 +629,14 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		// Invalid JSON path: spoke skipped from the payload.
 		$this->assertArrayNotHasKey( 'spoke-junk', (array) $received );
 	}
 
 	public function test_health_check_handles_wp_error_response(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke-network-fail', [
 			'url'           => 'https://spoke-network-fail.test',
 			'auth_username' => 'a',
@@ -654,7 +654,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		$this->assertArrayNotHasKey( 'spoke-network-fail', (array) $received );
 	}
@@ -662,7 +662,7 @@ class RemoteManagerTest extends TestCase {
 	// --- sync_setting with mocked spoke ------------------------------------
 
 	public function test_sync_setting_dispatches_to_each_enabled_server(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->register( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
@@ -670,7 +670,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'
@@ -685,7 +685,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_skips_disabled_server(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'enabled', [ 'url' => 'https://en.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->register( 'disabled', [ 'url' => 'https://dis.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->update( 'disabled', [ 'enabled' => false ] );
@@ -693,7 +693,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'
@@ -707,13 +707,13 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_logs_status_on_non_200(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke', [ 'url' => 'https://spoke.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 500 ] ];
 
 		// Non-200 must not throw; just logs sync_error via LogManager.
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'
@@ -725,14 +725,14 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_logs_on_wp_error(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke-fail', [ 'url' => 'https://spoke-fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// No mock entry — wp_remote_post returns the configured response,
 		// but if we set it to a WP_Error, the wp_error branch is exercised.
 		$GLOBALS['_wp_test_remote_post_response'] = new \WP_Error( 'http_failed', 'connection refused' );
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'
@@ -746,13 +746,13 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_skips_servers_filter_omitted_from_registry(): void {
 		// $servers parameter filters; if a filter ID is not in registry it's
 		// skipped without error.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[],
 			'/wp-json/newspack-nodes/v1/settings',
@@ -770,14 +770,14 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_with_explicit_servers(): void {
 		// Targeted server list: sync_setting sends only to those listed.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->register( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_events',
 			'value'     => [ 'init' ],
@@ -796,13 +796,13 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_falls_back_to_default_endpoint_when_disallowed(): void {
 		// If the endpoint param is disallowed, handle_job falls back to
 		// SettingsSync::ENDPOINT (allowed).
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_events',
 			'value'     => [ 'init' ],
@@ -819,12 +819,12 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_drops_when_option_empty(): void {
 		// Empty option name → silent return (no fan-out).
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_posts'] = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action' => 'sync_setting',
 			'option' => '',
 			'value'  => 'whatever',
@@ -844,7 +844,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'health_check',
 			'queued_at' => \time(),
 		] );
@@ -862,7 +862,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'health_check',
 			'queued_at' => \time() - 4000,
 		] );
@@ -874,13 +874,13 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_with_invalid_servers_param(): void {
 		// servers param that's a non-array (string, int, bool) is normalized
 		// to null (= all enabled).
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_events',
 			'value'     => [],
@@ -896,13 +896,13 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_with_empty_servers_array(): void {
 		// An empty servers array also normalizes to null (= all enabled).
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_events',
 			'value'     => [],
@@ -918,13 +918,13 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_filters_non_string_server_ids(): void {
 		// Servers list with mixed types — non-strings are filtered out.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_events',
 			'value'     => [],
@@ -946,7 +946,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_queue_sync_all_settings_returns_zero_when_no_filter(): void {
 		// No synced_settings filter → no jobs queued.
-		$result = RemoteManager::queue_sync_all_settings( [ 'a' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'a' ] );
 		$this->assertIsInt( $result );
 		// At least returns a count (could be > 0 if defaults registered).
 		$this->assertGreaterThanOrEqual( 0, $result );
@@ -968,7 +968,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$result = RemoteManager::queue_sync_all_settings( [ 'a' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'a' ] );
 		// Disallowed entry was skipped; result depends on other filters but
 		// the disallowed entry itself contributed 0.
 		$this->assertIsInt( $result );
@@ -993,7 +993,7 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		// Doesn't crash on 200 entries; the loop is capped.
-		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertIsInt( $result );
 	}
 
@@ -1005,7 +1005,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertSame( 0, $result );
 	}
 
@@ -1015,22 +1015,22 @@ class RemoteManagerTest extends TestCase {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		unset( $_SERVER['UNIQUE_ID'] );
 
-		$orig = RemoteManager::begin_job_context( 'remote_manager/test' );
+		$orig = Remote_Manager::begin_job_context( 'remote_manager/test' );
 
 		// UNIQUE_ID was set during begin_job_context.
 		$this->assertNotEmpty( $_SERVER['UNIQUE_ID'] );
 
-		RemoteManager::end_job_context( $orig );
+		Remote_Manager::end_job_context( $orig );
 	}
 
 	public function test_begin_job_context_sanitizes_job_name(): void {
 		// Job name with leading slash and special chars — used as path_info.
-		$orig = RemoteManager::begin_job_context( '/path/with/slashes' );
+		$orig = Remote_Manager::begin_job_context( '/path/with/slashes' );
 
 		// REQUEST_URI strips leading slash from name and prepends /jobs/.
 		$this->assertSame( '/jobs/path/with/slashes', $_SERVER['REQUEST_URI'] );
 
-		RemoteManager::end_job_context( $orig );
+		Remote_Manager::end_job_context( $orig );
 	}
 
 	public function test_begin_job_context_clears_content_headers(): void {
@@ -1043,13 +1043,13 @@ class RemoteManagerTest extends TestCase {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'inherited-id';
 
-		$orig = RemoteManager::begin_job_context( 'job/test' );
+		$orig = Remote_Manager::begin_job_context( 'job/test' );
 
 		$this->assertArrayNotHasKey( 'CONTENT_TYPE', $_SERVER );
 		$this->assertArrayNotHasKey( 'CONTENT_LENGTH', $_SERVER );
 		$this->assertArrayNotHasKey( 'HTTP_X_A8C_REQUEST_ID', $_SERVER );
 
-		RemoteManager::end_job_context( $orig );
+		Remote_Manager::end_job_context( $orig );
 
 		// Restored.
 		$this->assertSame( 'application/json', $_SERVER['CONTENT_TYPE'] );
@@ -1065,7 +1065,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_calculate_lag_handles_non_array_segments_per_partition(): void {
 		// Map with a non-array entry must be skipped without crashing.
-		$result = RemoteManager::calculate_lag(
+		$result = Remote_Manager::calculate_lag(
 			[
 				0 => 'invalid-non-array',
 				1 => [ [ 'id' => 'a', 'size' => 100 ] ],
@@ -1079,7 +1079,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_calculate_lag_handles_non_array_segment(): void {
 		// Individual non-array segment entries must be skipped.
-		$result = RemoteManager::calculate_lag(
+		$result = Remote_Manager::calculate_lag(
 			[
 				0 => [
 					'invalid-string',
@@ -1097,7 +1097,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_calculate_lag_with_offset_at_segment_end(): void {
 		// Cursor sits at the very end of segment 0 → 0 lag for that segment,
 		// plus the entire size of segment 1.
-		$result = RemoteManager::calculate_lag(
+		$result = Remote_Manager::calculate_lag(
 			[
 				0 => [
 					[ 'id' => 'seg0', 'size' => 100 ],
@@ -1113,7 +1113,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_calculate_lag_with_offset_past_segment(): void {
 		// Cursor offset past the segment end → max(0, ...) clamps to 0.
-		$result = RemoteManager::calculate_lag(
+		$result = Remote_Manager::calculate_lag(
 			[
 				0 => [
 					[ 'id' => 'seg0', 'size' => 100 ],
@@ -1130,7 +1130,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_register_handler_with_string_returns_array(): void {
 		// Defensive: non-array input must be replaced with an empty array.
-		$handlers = RemoteManager::register_handler( 'string-input' );
+		$handlers = Remote_Manager::register_handler( 'string-input' );
 		$this->assertIsArray( $handlers );
 		$this->assertArrayHasKey( 'remote_manager', $handlers );
 	}
@@ -1139,7 +1139,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_response_code_handles_non_array(): void {
 		// Direct invocation via reflection.
-		$method = new \ReflectionMethod( RemoteManager::class, 'response_code' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'response_code' );
 		$method->setAccessible( true );
 
 		// wp_remote_retrieve_response_code is stubbed; non-array returns 0.
@@ -1149,7 +1149,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_response_body_handles_non_array(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'response_body' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'response_body' );
 		$method->setAccessible( true );
 
 		$this->assertSame( '', $method->invoke( null, null ) );
@@ -1162,7 +1162,7 @@ class RemoteManagerTest extends TestCase {
 		// Unicode/control chars in the action should not cause issues — handle_job
 		// uses preg_replace + substr to restrict to safe chars before writing
 		// $_SERVER (via begin_job_context).
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action' => "control\x00chars\nmixed",
 		] );
 		// No crash; default branch logs and returns.
@@ -1175,7 +1175,7 @@ class RemoteManagerTest extends TestCase {
 		// Register a spoke and configure a synced_settings entry with a
 		// resolvable config_key. The full path: sync_all_settings → loops
 		// settings → resolves config_key → sync_setting → POSTs to the spoke.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke', [
 			'url'           => 'https://spoke.test',
 			'auth_username' => 'u',
@@ -1203,7 +1203,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $urls );
@@ -1226,7 +1226,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 		$this->assertTrue( true );
 	}
 
@@ -1247,7 +1247,7 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		// No crash; valid entry is processed.
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 		$this->assertTrue( true );
 	}
 
@@ -1261,7 +1261,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 		$this->assertTrue( true );
 	}
 
@@ -1275,7 +1275,7 @@ class RemoteManagerTest extends TestCase {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_urls',
 			'value'     => [],
@@ -1307,7 +1307,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$queued = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$queued = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		// Returns a count; can be 0 if JobIntake fails (filesystem) but should
 		// not crash.
 		$this->assertIsInt( $queued );
@@ -1319,7 +1319,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_request_args_includes_basic_auth_for_app_password(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$server = [
@@ -1329,7 +1329,7 @@ class RemoteManagerTest extends TestCase {
 		];
 		$args = $method->invoke( null, $server, [ 'headers' => [ 'X-Custom' => 'v' ] ] );
 
-		$this->assertSame( RemoteManager::REQUEST_TIMEOUT, $args['timeout'] );
+		$this->assertSame( Remote_Manager::REQUEST_TIMEOUT, $args['timeout'] );
 		$this->assertSame( 0, $args['redirection'] );
 		$this->assertSame( 1048576, $args['limit_response_size'] );
 		$this->assertSame( 'v', $args['headers']['X-Custom'] );
@@ -1339,7 +1339,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_request_args_uses_bearer_token_when_no_app_password(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$server = [
@@ -1352,7 +1352,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_request_args_no_auth_when_no_creds(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$args = $method->invoke( null, [ 'url' => 'https://x.test' ], [] );
@@ -1361,7 +1361,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_request_args_merges_extra_body_param(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$args = $method->invoke( null, [ 'url' => 'https://x.test' ], [
@@ -1378,7 +1378,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_reset_config_snapshots_runs_clean(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'reset_config_snapshots' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'reset_config_snapshots' );
 		$method->setAccessible( true );
 		// Just verify it doesn't blow up — its job is best-effort cache invalidation.
 		$method->invoke( null );
@@ -1393,7 +1393,7 @@ class RemoteManagerTest extends TestCase {
 		// Method does an error_log() under a 60-second rate-limit static guard.
 		// We can't easily intercept error_log without a custom error_log handler,
 		// but the method must not throw on either path.
-		$method = new \ReflectionMethod( RemoteManager::class, 'log_stale_drop' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'log_stale_drop' );
 		$method->setAccessible( true );
 
 		// First call (within the 60-second window may be suppressed by an
@@ -1411,7 +1411,7 @@ class RemoteManagerTest extends TestCase {
 		// log_status is best-effort: it bails silently if LogManager isn't
 		// in an enabled state. With $enabled flag false (default fresh
 		// instance), the method must not throw.
-		$method = new \ReflectionMethod( RemoteManager::class, 'log_status' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'log_status' );
 		$method->setAccessible( true );
 
 		// Without a $base_directory configured, LogManager::instance() exists
@@ -1428,11 +1428,11 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_registry_resolves_to_server_registry_instance(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'registry' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'registry' );
 		$method->setAccessible( true );
 
 		$reg = $method->invoke( null );
-		$this->assertInstanceOf( ServerRegistry::class, $reg );
+		$this->assertInstanceOf( Server_Registry::class, $reg );
 
 		// Second call returns the SAME instance (cached in the function-static).
 		$reg2 = $method->invoke( null );
@@ -1444,7 +1444,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_wp_error_or_array_returns_wp_error_when_class_exists(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'wp_error_or_array' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'wp_error_or_array' );
 		$method->setAccessible( true );
 
 		$result = $method->invoke( null, 'some_code', 'some_message' );
@@ -1464,8 +1464,8 @@ class RemoteManagerTest extends TestCase {
 		// register the action + filters without erroring. We verify by
 		// directly invoking and asserting no exception — the guard means
 		// we can't observe the wiring repeatedly across tests.
-		RemoteManager::init();
-		RemoteManager::init();  // Second call hits the guard.
+		Remote_Manager::init();
+		Remote_Manager::init();  // Second call hits the guard.
 		$this->assertTrue( true );
 	}
 
@@ -1476,7 +1476,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_stops_at_max_servers_cap(): void {
 		// Build a registry with >100 servers (MAX_SERVERS=100). Iteration must
 		// cap and not POST to all of them.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		for ( $i = 0; $i < 105; $i++ ) {
 			$reg->register(
 				"site-{$i}",
@@ -1487,7 +1487,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'
@@ -1495,7 +1495,7 @@ class RemoteManagerTest extends TestCase {
 
 		// Should be capped at exactly MAX_SERVERS (100), not 105.
 		$this->assertLessThanOrEqual(
-			RemoteManager::MAX_SERVERS,
+			Remote_Manager::MAX_SERVERS,
 			\count( $GLOBALS['_wp_test_remote_posts'] ),
 			'POST count must respect MAX_SERVERS cap'
 		);
@@ -1508,7 +1508,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_health_check_caps_at_max_servers(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		for ( $i = 0; $i < 105; $i++ ) {
 			$reg->register(
 				"hsite-{$i}",
@@ -1533,11 +1533,11 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		// Discovery payload capped at MAX_SERVERS=100.
 		$this->assertLessThanOrEqual(
-			RemoteManager::MAX_SERVERS,
+			Remote_Manager::MAX_SERVERS,
 			\count( (array) $received ),
 			'health_check must respect MAX_SERVERS cap'
 		);
@@ -1550,7 +1550,7 @@ class RemoteManagerTest extends TestCase {
 		// tick. The discovery payload now arrives wrapped in a Message
 		// envelope's VALUE; check_server must unwrap and validate the same
 		// keys it always did.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'cmd-spoke', [
 			'url'           => 'https://cmd-spoke.test',
 			'auth_username' => 'u',
@@ -1580,7 +1580,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		// Should have dispatched a POST to /command, NOT a GET to /discovery.
 		$post_urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
@@ -1608,7 +1608,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_check_server_caps_registered_hooks_and_custom_events_at_500(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'fat-spoke', [
 			'url'           => 'https://fat-spoke.test',
 			'auth_username' => 'u',
@@ -1643,7 +1643,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		$this->assertArrayHasKey( 'fat-spoke', $received );
 		$this->assertCount( 500, $received['fat-spoke']['registered_hooks'] );
@@ -1656,14 +1656,14 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_sync_setting_skips_non_string_server_ids_in_filter(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
 		// Filter contains a non-string id; it should be silently skipped.
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings',
@@ -1689,7 +1689,7 @@ class RemoteManagerTest extends TestCase {
 		// `num_segments` (config_key after stripping prefixes) → POST to
 		// remote_option `newspack_nodes_num_segments`. Mirrors what
 		// SettingsSync::register_synced_settings emits.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke', [
 			'url'           => 'https://spoke-remap.test',
 			'auth_username' => 'u',
@@ -1716,7 +1716,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 
 		// At least one POST happened. The substrate-key endpoint maps to
 		// Settings_CI.update, which expects short-name args (no `newspack_nodes_`
@@ -1757,7 +1757,7 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 		// Nothing posted.
 		$this->assertEmpty( $GLOBALS['_wp_test_remote_posts'] );
 	}
@@ -1786,7 +1786,7 @@ class RemoteManagerTest extends TestCase {
 		// Returns an int (count of queued jobs). May be 0 in test (JobIntake
 		// queue silently no-ops without an aggregator topology) but the
 		// resolution path is exercised.
-		$queued = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$queued = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertIsInt( $queued );
 	}
 
@@ -1808,7 +1808,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertSame( 0, $result );
 	}
 
@@ -1824,7 +1824,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertSame( 0, $result );
 	}
 
@@ -1848,7 +1848,7 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		// Non-array entry skipped; second entry skipped (no config); 0 queued.
-		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertSame( 0, $result );
 	}
 
@@ -1860,7 +1860,7 @@ class RemoteManagerTest extends TestCase {
 		// Server url has trailing slash — must be rtrim'd before endpoint
 		// concat (avoids double slashes in the URL).
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://x.test///', 'auth_username' => 'u', 'auth_password' => 'p' ],
 			'/wp-json/newspack-nodes/v1/settings',
 			[]
@@ -1885,7 +1885,7 @@ class RemoteManagerTest extends TestCase {
 			],
 		];
 
-		$response = RemoteManager::get_from_server(
+		$response = Remote_Manager::get_from_server(
 			[ 'url' => 'https://y.test/', 'auth_username' => 'u', 'auth_password' => 'p' ],
 			'/wp-json/newspack-nodes/v1/discovery'
 		);
@@ -1904,13 +1904,13 @@ class RemoteManagerTest extends TestCase {
 		// Missing queued_at means queued_at=0 → the stale check
 		// (queued_at > 0 && now-queued_at > STALE_THRESHOLD) short-circuits.
 		// Sync proceeds normally.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action' => 'sync_setting',
 			'option' => 'newspack_event_logger_nodes_log_events',
 			'value'  => [ 'init' ],
@@ -1939,7 +1939,7 @@ class RemoteManagerTest extends TestCase {
 		// No queued_at means queued_at=0; the stale predicate
 		// (queued_at > 0 && now-queued_at > STALE) short-circuits and the
 		// discovery action fires with an empty payload (no registered spokes).
-		RemoteManager::handle_job( [ 'action' => 'health_check' ] );
+		Remote_Manager::handle_job( [ 'action' => 'health_check' ] );
 
 		$this->assertSame( [], $received );
 	}
@@ -1950,9 +1950,9 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_silently_drops_non_string_action(): void {
 		// Action with non-string type → early return.
-		RemoteManager::handle_job( [ 'action' => 123 ] );
-		RemoteManager::handle_job( [ 'action' => [ 'array' ] ] );
-		RemoteManager::handle_job( [ 'action' => false ] );
+		Remote_Manager::handle_job( [ 'action' => 123 ] );
+		Remote_Manager::handle_job( [ 'action' => [ 'array' ] ] );
+		Remote_Manager::handle_job( [ 'action' => false ] );
 		// All pass; the guard is `is_string && '' !== action`.
 		$this->assertTrue( true );
 	}
@@ -1971,7 +1971,7 @@ class RemoteManagerTest extends TestCase {
 				return $handlers;
 			}
 		);
-		RemoteManager::handle_job( [ 'action' => 'noncallable_action' ] );
+		Remote_Manager::handle_job( [ 'action' => 'noncallable_action' ] );
 		$this->assertTrue( true );
 	}
 
@@ -1988,7 +1988,7 @@ class RemoteManagerTest extends TestCase {
 				return 'not-an-array';
 			}
 		);
-		RemoteManager::handle_job( [ 'action' => 'whatever_unknown' ] );
+		Remote_Manager::handle_job( [ 'action' => 'whatever_unknown' ] );
 		$this->assertTrue( true );
 	}
 
@@ -2000,7 +2000,7 @@ class RemoteManagerTest extends TestCase {
 		// When the `servers` filter includes a disabled server, the inner
 		// `false === (bool) $server['enabled']` check skips it. Mirrors what
 		// happens when a fan-out targets a now-disabled spoke.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'enabled-x', [ 'url' => 'https://enabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->register( 'disabled-x', [ 'url' => 'https://disabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->update( 'disabled-x', [ 'enabled' => false ] );
@@ -2008,7 +2008,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings',
@@ -2046,7 +2046,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$count = RemoteManager::queue_sync_all_settings( [ 'spoke-A' ] );
+		$count = Remote_Manager::queue_sync_all_settings( [ 'spoke-A' ] );
 		$this->assertIsInt( $count );
 		$this->assertGreaterThanOrEqual( 0, $count );
 	}
@@ -2059,7 +2059,7 @@ class RemoteManagerTest extends TestCase {
 		// Spoke returns 200 OK with a JSON payload that has only a lag value
 		// (no registered_hooks, no custom_events). The validated payload should
 		// contain only `lag`.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'lag-only', [
 			'url'           => 'https://lag-only.test',
 			'auth_username' => 'u',
@@ -2081,7 +2081,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		$this->assertArrayHasKey( 'lag-only', $received );
 		$this->assertSame( 999, $received['lag-only']['lag'] );
@@ -2095,7 +2095,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_request_args_preserves_extra_headers_when_no_auth(): void {
 		// Extra headers must be preserved when no auth fields are supplied.
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$args = $method->invoke(
@@ -2112,7 +2112,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_request_args_basic_auth_adds_to_existing_headers(): void {
 		// When extra headers are present AND auth creds are set, Authorization
 		// must be added alongside (not replacing) the existing headers.
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$args = $method->invoke(
@@ -2131,7 +2131,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_request_args_bearer_token_adds_to_existing_headers(): void {
 		// Same merge rule for the legacy `token` field.
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$args = $method->invoke(
@@ -2150,7 +2150,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_request_args_includes_default_sslverify_true(): void {
 		// `aggregator_verify_ssl` default is true; request_args reflects that.
-		$method = new \ReflectionMethod( RemoteManager::class, 'request_args' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'request_args' );
 		$method->setAccessible( true );
 
 		$args = $method->invoke( null, [ 'url' => 'https://x.test' ], [] );
@@ -2166,14 +2166,14 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_response_code_default_zero_for_missing_response_key(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'response_code' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'response_code' );
 		$method->setAccessible( true );
 		// Array missing `response.code` → wp_remote_retrieve_response_code returns 0.
 		$this->assertSame( 0, $method->invoke( null, [ 'body' => 'no code here' ] ) );
 	}
 
 	public function test_response_body_empty_for_missing_body_key(): void {
-		$method = new \ReflectionMethod( RemoteManager::class, 'response_body' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'response_body' );
 		$method->setAccessible( true );
 		// Array without `body` key → empty string.
 		$this->assertSame( '', $method->invoke( null, [ 'response' => [ 'code' => 200 ] ] ) );
@@ -2187,7 +2187,7 @@ class RemoteManagerTest extends TestCase {
 		// WP_Error is in the bootstrap so we always get WP_Error in this test
 		// suite. The method's important invariant is the shape — code +
 		// message present.
-		$method = new \ReflectionMethod( RemoteManager::class, 'wp_error_or_array' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'wp_error_or_array' );
 		$method->setAccessible( true );
 
 		$result = $method->invoke( null, 'my_code', 'my_message' );
@@ -2210,7 +2210,7 @@ class RemoteManagerTest extends TestCase {
 			],
 		];
 		$cursor = []; // no cursor entries at all
-		$this->assertSame( 300, RemoteManager::calculate_lag( $segments, $cursor ) );
+		$this->assertSame( 300, Remote_Manager::calculate_lag( $segments, $cursor ) );
 	}
 
 	public function test_calculate_lag_with_cursor_pointing_to_missing_segment(): void {
@@ -2227,7 +2227,7 @@ class RemoteManagerTest extends TestCase {
 		$cursor = [
 			0 => [ 'segment_id' => 'seg-not-here', 'offset' => 0 ],
 		];
-		$this->assertSame( 0, RemoteManager::calculate_lag( $segments, $cursor ) );
+		$this->assertSame( 0, Remote_Manager::calculate_lag( $segments, $cursor ) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -2237,13 +2237,13 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_skips_non_string_server_id_silently(): void {
 		// Mixed-type IDs: the inner `is_string($server_id)` guard skips
 		// non-strings without errors. Only the string 'real' makes the cut.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'real', [ 'url' => 'https://real.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[],
 			'/wp-json/newspack-nodes/v1/settings',
@@ -2264,13 +2264,13 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_servers_param_with_only_non_strings_normalizes_to_null(): void {
 		// `servers: [42, true, null]` → array_filter('is_string') yields empty
 		// → normalized to null → falls through to "all enabled".
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::handle_job( [
+		Remote_Manager::handle_job( [
 			'action'    => 'sync_setting',
 			'option'    => 'newspack_event_logger_nodes_log_events',
 			'value'     => [],
@@ -2292,13 +2292,13 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_handles_wp_error_with_method_exists(): void {
 		// post_to_server returns a WP_Error; the wp_error_or_array() branch
 		// flows through log_status('sync_error', $message).
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'fail', [ 'url' => 'https://fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// Configure wp_remote_post to return WP_Error.
 		$GLOBALS['_wp_test_remote_post_response'] = new \WP_Error( 'http_failed', 'host unreachable' );
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'
@@ -2323,9 +2323,9 @@ class RemoteManagerTest extends TestCase {
 		// is posted with Content-Type text/plain to match the browser client
 		// (WP REST 400s a JSONL body sent as application/json).
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://x.test', 'auth_username' => 'u', 'auth_password' => 'p' ],
-			SettingsSync::PERF_ENDPOINT,
+			Settings_Sync::PERF_ENDPOINT,
 			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'a' => 1, 'b' => 'two' ] ]
 		);
 
@@ -2345,7 +2345,7 @@ class RemoteManagerTest extends TestCase {
 		// Injecting an entry straight into the option (bypassing ServerRegistry's
 		// register API) exercises the merge path in get_all(). The health_check
 		// loop's is_string guard filters non-string keys naturally.
-		$GLOBALS['_wp_options'][ ServerRegistry::OPTION_KEY ] = [
+		$GLOBALS['_wp_options'][ Server_Registry::OPTION_KEY ] = [
 			'valid-id' => [
 				'url'           => 'https://valid.test',
 				'auth_username' => 'u',
@@ -2355,7 +2355,7 @@ class RemoteManagerTest extends TestCase {
 		];
 
 		// Reset the singleton so the option load is honored.
-		$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
@@ -2374,7 +2374,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		RemoteManager::health_check();
+		Remote_Manager::health_check();
 
 		$this->assertIsArray( $received );
 		$this->assertArrayHasKey( 'valid-id', $received );
@@ -2387,7 +2387,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sanitize_handler_parameters_preserves_non_endpoint_keys(): void {
 		// Reflection invocation; missing endpoint key → no special handling,
 		// other keys preserved.
-		$method = new \ReflectionMethod( RemoteManager::class, 'sanitize_handler_parameters' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'sanitize_handler_parameters' );
 		$method->setAccessible( true );
 
 		$result = $method->invoke(
@@ -2402,7 +2402,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sanitize_handler_parameters_drops_non_string_endpoint(): void {
 		// Non-string endpoint value is dropped (the `is_string` guard).
-		$method = new \ReflectionMethod( RemoteManager::class, 'sanitize_handler_parameters' );
+		$method = new \ReflectionMethod( Remote_Manager::class, 'sanitize_handler_parameters' );
 		$method->setAccessible( true );
 
 		$result = $method->invoke(
@@ -2435,7 +2435,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register( 'spoke-def', [
 			'url'           => 'https://spoke-def.test',
 			'auth_username' => 'u',
@@ -2445,7 +2445,7 @@ class RemoteManagerTest extends TestCase {
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_all_settings();
+		Remote_Manager::sync_all_settings();
 
 		// At least one POST hit the default endpoint.
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
@@ -2477,7 +2477,7 @@ class RemoteManagerTest extends TestCase {
 			}
 		);
 
-		$result = RemoteManager::queue_sync_all_settings( [ 'spoke' ] );
+		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertIsInt( $result );
 	}
 
@@ -2486,9 +2486,9 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_begin_job_context_with_empty_name(): void {
-		$orig = RemoteManager::begin_job_context( '' );
+		$orig = Remote_Manager::begin_job_context( '' );
 		$this->assertSame( '/jobs/', $_SERVER['REQUEST_URI'] );
-		RemoteManager::end_job_context( $orig );
+		Remote_Manager::end_job_context( $orig );
 	}
 
 	public function test_begin_job_context_records_unique_id(): void {
@@ -2497,13 +2497,13 @@ class RemoteManagerTest extends TestCase {
 		// situations where generate_request_id() is available.
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		unset( $_SERVER['UNIQUE_ID'] );
-		$orig = RemoteManager::begin_job_context( 'something' );
+		$orig = Remote_Manager::begin_job_context( 'something' );
 
 		// UNIQUE_ID has been set to something (could be empty string if
 		// generate_request_id failed, but it must be set).
 		$this->assertArrayHasKey( 'UNIQUE_ID', $_SERVER );
 
-		RemoteManager::end_job_context( $orig );
+		Remote_Manager::end_job_context( $orig );
 	}
 
 	// -------------------------------------------------------------------------
@@ -2518,9 +2518,9 @@ class RemoteManagerTest extends TestCase {
 		// strings (still useful as category tags), but the actual POST must
 		// land on /wp-json/newspack-nodes/v1/command.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			SettingsSync::ENDPOINT,
+			Settings_Sync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
 		);
 
@@ -2536,9 +2536,9 @@ class RemoteManagerTest extends TestCase {
 		// with arguments empty (Tachikoma convention: literal-string args) and
 		// the structured update map in payload.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			SettingsSync::ENDPOINT,
+			Settings_Sync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
 		);
 
@@ -2559,9 +2559,9 @@ class RemoteManagerTest extends TestCase {
 		// Performance_CI.settings_update expects a single {option, value} pair
 		// in `payload` — not a partial-keyed map like Settings_CI.update.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			SettingsSync::PERF_ENDPOINT,
+			Settings_Sync::PERF_ENDPOINT,
 			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ]
 		);
 
@@ -2581,7 +2581,7 @@ class RemoteManagerTest extends TestCase {
 		// `/command` wire header; same-plugin sites (Servers_CI::probe_remote,
 		// RemoteSource::maybe_send_heartbeat) reference it instead of
 		// re-hardcoding the literal, so it must be publicly readable.
-		$this->assertSame( 'text/plain; charset=UTF-8', RemoteManager::COMMAND_CONTENT_TYPE );
+		$this->assertSame( 'text/plain; charset=UTF-8', Remote_Manager::COMMAND_CONTENT_TYPE );
 	}
 
 	public function test_post_to_server_uses_text_plain_content_type_for_jsonl_body(): void {
@@ -2589,14 +2589,14 @@ class RemoteManagerTest extends TestCase {
 		// posts it as text/plain because WP REST 400s a JSONL body sent as
 		// application/json. The cross-spoke sender must match that header.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			SettingsSync::ENDPOINT,
+			Settings_Sync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
 		);
 		$last = \end( $GLOBALS['_wp_test_remote_posts'] );
 		// Pinned to the constant so a future drift at the call site is caught.
-		$this->assertSame( RemoteManager::COMMAND_CONTENT_TYPE, $last['args']['headers']['Content-Type'] ?? '' );
+		$this->assertSame( Remote_Manager::COMMAND_CONTENT_TYPE, $last['args']['headers']['Content-Type'] ?? '' );
 	}
 
 	public function test_post_to_server_body_is_not_legacy_keyed_object(): void {
@@ -2604,9 +2604,9 @@ class RemoteManagerTest extends TestCase {
 		// `{type,to,from,key,value:"<json string>"}`. The new wire is a
 		// positional 7-field array with a LIVE-array VALUE.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			SettingsSync::ENDPOINT,
+			Settings_Sync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
 		);
 		$last    = \end( $GLOBALS['_wp_test_remote_posts'] );
@@ -2632,7 +2632,7 @@ class RemoteManagerTest extends TestCase {
 			],
 		];
 
-		$payload = RemoteManager::discover_from_server(
+		$payload = Remote_Manager::discover_from_server(
 			[ 'url' => 'https://probe.test', 'auth_username' => 'admin', 'auth_password' => 'pw' ],
 			'probe'
 		);
@@ -2652,9 +2652,9 @@ class RemoteManagerTest extends TestCase {
 		// Basic Auth is a SPOKE authentication concern, independent of the
 		// envelope; migrating the body shape must not strip the header.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'admin', 'auth_password' => 'app-pw' ],
-			SettingsSync::ENDPOINT,
+			Settings_Sync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_num_partitions', 'value' => 4 ]
 		);
 
@@ -2671,9 +2671,9 @@ class RemoteManagerTest extends TestCase {
 		// same strip server-side; here we do it on the wire so the receiver
 		// doesn't have to know that history.
 		$GLOBALS['_wp_test_remote_posts'] = [];
-		RemoteManager::post_to_server(
+		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			SettingsSync::ENDPOINT,
+			Settings_Sync::ENDPOINT,
 			[ 'option' => 'newspack_nodes_segment_size', 'value' => 1048576 ]
 		);
 		$last  = \end( $GLOBALS['_wp_test_remote_posts'] );
@@ -2686,7 +2686,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_includes_legacy_server_without_enabled_key(): void {
 		// Legacy registries lack the `enabled` field; the code defaults to
 		// "no flag = enabled" so the spoke should receive the POST.
-		$GLOBALS['_wp_options'][ ServerRegistry::OPTION_KEY ] = [
+		$GLOBALS['_wp_options'][ Server_Registry::OPTION_KEY ] = [
 			'legacy' => [
 				// no 'enabled' key
 				'url'           => 'https://legacy.test',
@@ -2694,14 +2694,14 @@ class RemoteManagerTest extends TestCase {
 				'auth_password' => 'p',
 			],
 		];
-		$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
 
-		RemoteManager::sync_setting(
+		Remote_Manager::sync_setting(
 			'newspack_event_logger_nodes_log_events',
 			[ 'init' ],
 			'/wp-json/newspack-nodes/v1/settings'

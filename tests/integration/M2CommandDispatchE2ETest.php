@@ -30,7 +30,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Rest\HTTP_In;
+use Newspack_Nodes\Rest\HTTP_In_Node;
 
 class M2CommandDispatchE2ETest extends TestCase {
 
@@ -56,7 +56,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 		// setUp uses to construct and sink each service CI via the
 		// base CI's make_node() — same path production runs.
 
-		$ctrl = new HTTP_In();
+		$ctrl = new HTTP_In_Node();
 		$ctrl->set_test_mode( true );
 		\ob_start();
 		$ctrl->dispatch( $this->build_request( $to, $verb, $args ) );
@@ -103,7 +103,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 	 * actually honoured `limit:1` proves the payload arrived decoded.
 	 */
 	public function test_events_recent_honours_json_string_limit_from_provider(): void {
-		$ctrl = new HTTP_In();
+		$ctrl = new HTTP_In_Node();
 		$ctrl->set_test_mode( true );
 		\ob_start();
 		$ctrl->dispatch( $this->build_request( 'events', 'recent', '{"limit":1}' ) );

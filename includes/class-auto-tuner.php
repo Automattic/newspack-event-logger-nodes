@@ -31,7 +31,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class AutoTuner extends Node {
+class Auto_Tuner_Node extends Node {
 	public function fill( array &$message ): void {
 		if ( ( $message[ Message::TYPE ] & Message::TM_STRUCT ) === 0 ) {
 			return;
@@ -152,24 +152,24 @@ class AutoTuner extends Node {
 		// significant_events), which PerfSettingsController owns —
 		// not /settings. Without an aggregator topology + enabled
 		// remotes, the queued job has no consumer (silent no-op).
-		SettingsSync::queue_job(
+		Settings_Sync::queue_job(
 			'remote_manager',
 			[
 				'action'    => 'sync_setting',
 				'option'    => $option,
 				'value'     => $value,
-				'endpoint'  => SettingsSync::PERF_ENDPOINT,
+				'endpoint'  => Settings_Sync::PERF_ENDPOINT,
 				'queued_at' => \time(),
 			]
 		);
 		if ( ! \function_exists( 'update_option' ) ) {
 			return;
 		}
-		SettingsSync::suppress_sync( true );
+		Settings_Sync::suppress_sync( true );
 		try {
 			\update_option( $option, $value, Config::autoload_for( $option ) );
 		} finally {
-			SettingsSync::suppress_sync( false );
+			Settings_Sync::suppress_sync( false );
 		}
 	}
 

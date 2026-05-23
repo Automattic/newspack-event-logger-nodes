@@ -10,7 +10,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -22,7 +22,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Flame builder node class.
  */
-class FlameBuilder extends Node {
+class Flame_Builder_Node extends Node {
 
 	const EMA_SAMPLE_LIMIT   = 1000;
 	const FLUSH_INTERVAL_SEC = 5;
@@ -59,7 +59,7 @@ class FlameBuilder extends Node {
 	private const STATS_CACHE_BUCKET_SIZE = 1000;
 	private const STATS_CACHE_NUM_BUCKETS = 5;
 
-	/** @var LruCache Per-URL aggregate accumulator. */
+	/** @var LRU_Cache Per-URL aggregate accumulator. */
 	private $stats_cache;
 
 	/** @var array All flush arrays. */
@@ -98,11 +98,11 @@ class FlameBuilder extends Node {
 	/** @var callable|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
 
-	/** @var AutoTuner|null Owned sibling — receives auto-tune decisions. */
-	private ?AutoTuner $auto_tuner = null;
+	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
+	private ?Auto_Tuner_Node $auto_tuner = null;
 
 	public function __construct() {
-		$this->stats_cache     = new LruCache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
+		$this->stats_cache     = new LRU_Cache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
 		$this->last_flush_time = \microtime( true );
 		$this->reset_pending();
 
@@ -110,7 +110,7 @@ class FlameBuilder extends Node {
 		// FlameBuilder via verbs (set_is_hub, set_auto_tune,
 		// set_significant_events, configure_stats) instead of
 		// PHP-side setter calls.
-		$ci = new CommandInterpreter();
+		$ci = new Command_Interpreter_Node();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
@@ -119,7 +119,7 @@ class FlameBuilder extends Node {
 		// hides it from the canvas — it's plumbing for FlameBuilder,
 		// not a graph node operators interact with. Named on first
 		// patron name() (see name() override below).
-		$this->auto_tuner = new AutoTuner();
+		$this->auto_tuner = new Auto_Tuner_Node();
 		$this->auto_tuner->patron( $this );
 	}
 
@@ -289,7 +289,7 @@ class FlameBuilder extends Node {
 		}
 
 		$rid      = $request['rid'] ?? '';
-		$url_hash = RequestBuilder::url_hash( $request['url'] ?? '' );
+		$url_hash = Request_Builder_Node::url_hash( $request['url'] ?? '' );
 		$entries  = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
@@ -1654,7 +1654,7 @@ class FlameBuilder extends Node {
 		static $verbs = null;
 		if ( null === $verbs ) {
 			$verbs = [
-				'set_is_hub'             => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_is_hub'             => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \strtolower( \trim( $args ) );
 					$bool = ( 'true' === $args || '1' === $args );
 					/** @var self $patron */
@@ -1663,7 +1663,7 @@ class FlameBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_is_hub', $bool ? 'true' : 'false' );
 					return 'ok';
 				},
-				'set_auto_tune'          => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_auto_tune'          => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$parts = \preg_split( '/\s+/', \trim( $args ) );
 					if ( \count( $parts ) < 2 ) {
 						return 'usage: set_auto_tune <count_threshold> <time_threshold>';
@@ -1674,7 +1674,7 @@ class FlameBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_auto_tune', $args );
 					return 'ok';
 				},
-				'set_significant_events' => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_significant_events' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \trim( $args );
 					$list = '' === $args
 						? []
@@ -1685,7 +1685,7 @@ class FlameBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_significant_events', $args );
 					return 'ok';
 				},
-				'configure_stats'        => static function ( CommandInterpreter $ci, string $args ): string {
+				'configure_stats'        => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$parts = \preg_split( '/\s+/', \trim( $args ) );
 					if ( \count( $parts ) < 1 || '' === $parts[0] ) {
 						return 'usage: configure_stats <partition>';

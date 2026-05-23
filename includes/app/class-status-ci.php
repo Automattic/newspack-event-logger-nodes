@@ -20,20 +20,20 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Status_CI extends CommandInterpreter {
+class Status_CI_Node extends Command_Interpreter_Node {
 
 	public function __construct() {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Workers_CI / Discovery_CI,
 		// which extend CommandInterpreter and also skip the parent call.
 		$this->commands( [
-			'get' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
+			'get' => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				$config = RuntimeConfig::load_config();
 
 				$cache_available = null !== Core::$memd;

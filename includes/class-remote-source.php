@@ -28,7 +28,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
-use Newspack_Nodes\EventFramework;
+use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Node_Names;
@@ -48,7 +48,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 // phpcs:disable WordPress.WP.AlternativeFunctions.curl_curl_multi_close
 // Note: cURL is required for SSE multiplexing — wp_remote_get() doesn't support it.
 
-class RemoteSource extends Node {
+class Remote_Source_Node extends Node {
 
 	// ----- Reconnect / liveness tuning (mirrors upstream class-sse-client.php) -----
 
@@ -255,7 +255,7 @@ class RemoteSource extends Node {
 			return;
 		}
 		$this->multi = \curl_multi_init();
-		EventFramework::instance()->register_curl_handle( $this, $this->multi );
+		Event_Framework::instance()->register_curl_handle( $this, $this->multi );
 	}
 
 	/**
@@ -768,7 +768,7 @@ class RemoteSource extends Node {
 		// application/json. Matches the browser CommandClient
 		// (src/runtime/command_client.js) — the same wire the dashboard JS
 		// uses for its own slot keep-alive.
-		$headers['Content-Type'] = RemoteManager::COMMAND_CONTENT_TYPE;
+		$headers['Content-Type'] = Remote_Manager::COMMAND_CONTENT_TYPE;
 
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
@@ -972,7 +972,7 @@ class RemoteSource extends Node {
 	public function remove_node(): void {
 		$this->disconnect();
 		if ( null !== $this->multi ) {
-			EventFramework::instance()->unregister_curl_handle( $this );
+			Event_Framework::instance()->unregister_curl_handle( $this );
 			@\curl_multi_close( $this->multi );
 			$this->multi = null;
 		}

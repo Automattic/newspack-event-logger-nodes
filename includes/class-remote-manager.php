@@ -17,7 +17,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Remote Manager class.
  */
-class RemoteManager {
+class Remote_Manager {
 	/**
 	 * Maximum number of servers to process in a single job. Prevents unbounded
 	 * loops when a tampered registry returns thousands of entries.
@@ -137,9 +137,9 @@ class RemoteManager {
 				case 'sync_setting':
 					$option   = $parameters['option'] ?? '';
 					$value    = $parameters['value'] ?? null;
-					$endpoint = $parameters['endpoint'] ?? SettingsSync::ENDPOINT;
-					if ( ! SettingsSync::is_allowed_endpoint( (string) $endpoint ) ) {
-						$endpoint = SettingsSync::ENDPOINT;
+					$endpoint = $parameters['endpoint'] ?? Settings_Sync::ENDPOINT;
+					if ( ! Settings_Sync::is_allowed_endpoint( (string) $endpoint ) ) {
+						$endpoint = Settings_Sync::ENDPOINT;
 					}
 
 					// Skip stale jobs (older than sync interval).
@@ -300,7 +300,7 @@ class RemoteManager {
 		// merger directly instead of routing through a WP action. We still
 		// fire the `health_check_discovery` action so external plugins
 		// (pyrobase, etc.) can subscribe to discovered data.
-		HealthCheckExtensions::process_discovery( $all_discovery );
+		Health_Check_Extensions::process_discovery( $all_discovery );
 		if ( \function_exists( 'do_action' ) ) {
 			\do_action( 'newspack_event_logger_nodes/health_check_discovery', $all_discovery );
 		}
@@ -347,12 +347,12 @@ class RemoteManager {
 			}
 			$local_option  = $setting['local_option'] ?? '';
 			$remote_option = $setting['remote_option'] ?? $local_option;
-			$endpoint      = $setting['endpoint'] ?? SettingsSync::ENDPOINT;
+			$endpoint      = $setting['endpoint'] ?? Settings_Sync::ENDPOINT;
 
 			if ( '' === $local_option ) {
 				continue;
 			}
-			if ( ! SettingsSync::is_allowed_endpoint( (string) $endpoint ) ) {
+			if ( ! Settings_Sync::is_allowed_endpoint( (string) $endpoint ) ) {
 				continue;
 			}
 
@@ -414,12 +414,12 @@ class RemoteManager {
 			}
 			$local_option  = $setting['local_option'] ?? '';
 			$remote_option = $setting['remote_option'] ?? $local_option;
-			$endpoint      = $setting['endpoint'] ?? SettingsSync::ENDPOINT;
+			$endpoint      = $setting['endpoint'] ?? Settings_Sync::ENDPOINT;
 
 			if ( '' === $local_option ) {
 				continue;
 			}
-			if ( ! SettingsSync::is_allowed_endpoint( (string) $endpoint ) ) {
+			if ( ! Settings_Sync::is_allowed_endpoint( (string) $endpoint ) ) {
 				continue;
 			}
 
@@ -441,7 +441,7 @@ class RemoteManager {
 				continue;
 			}
 
-			$ok = SettingsSync::queue_job(
+			$ok = Settings_Sync::queue_job(
 				'remote_manager',
 				[
 					'action'    => 'sync_setting',
@@ -470,7 +470,7 @@ class RemoteManager {
 	private static function reset_config_snapshots(): void {
 		\Newspack_Nodes\Config::invalidate_options_cache();
 		Config::reset();
-		ServerRegistry::get_instance()->reset_cache();
+		Server_Registry::get_instance()->reset_cache();
 	}
 
 	/**
@@ -650,7 +650,7 @@ class RemoteManager {
 	 * @return array|\WP_Error Response or error.
 	 */
 	public static function post_to_server( array $server, string $endpoint, array $body ) {
-		if ( ! SettingsSync::is_allowed_endpoint( $endpoint ) ) {
+		if ( ! Settings_Sync::is_allowed_endpoint( $endpoint ) ) {
 			return self::wp_error_or_array( 'disallowed_endpoint', 'Endpoint not in allowed prefixes' );
 		}
 
@@ -704,7 +704,7 @@ class RemoteManager {
 	 * @return array{0:string,1:string,2:array} `[to, verb, payload]`.
 	 */
 	private static function resolve_command_target( string $endpoint, array $body ): array {
-		if ( SettingsSync::PERF_ENDPOINT === $endpoint ) {
+		if ( Settings_Sync::PERF_ENDPOINT === $endpoint ) {
 			// Performance_CI.settings_update keeps the full WP option name —
 			// its whitelist matches PerfSettingsController::ALLOWED_OPTIONS
 			// 1:1 (newspack_event_logger_nodes_log_events etc.).
@@ -730,7 +730,7 @@ class RemoteManager {
 	 * @return array|\WP_Error Response or error.
 	 */
 	public static function get_from_server( array $server, string $endpoint ) {
-		if ( ! SettingsSync::is_allowed_endpoint( $endpoint ) ) {
+		if ( ! Settings_Sync::is_allowed_endpoint( $endpoint ) ) {
 			return self::wp_error_or_array( 'disallowed_endpoint', 'Endpoint not in allowed prefixes' );
 		}
 
@@ -805,7 +805,7 @@ class RemoteManager {
 		$safe = [];
 		foreach ( $parameters as $key => $value ) {
 			if ( 'endpoint' === $key ) {
-				if ( \is_string( $value ) && SettingsSync::is_allowed_endpoint( $value ) ) {
+				if ( \is_string( $value ) && Settings_Sync::is_allowed_endpoint( $value ) ) {
 					$safe[ $key ] = $value;
 				}
 				continue;
@@ -826,7 +826,7 @@ class RemoteManager {
 	 */
 	private static function log_status( string $server_id, string $status, ?string $message, int $lag = 0 ): void {
 		try {
-			$lm = LogManager::instance();
+			$lm = Log_Manager::instance();
 			if ( ! $lm->enabled ) {
 				return;
 			}
@@ -883,7 +883,7 @@ class RemoteManager {
 		// Generate a fresh request id.
 		$rid = '';
 		try {
-			$rid = LogManager::generate_request_id();
+			$rid = Log_Manager::generate_request_id();
 		} catch ( \Throwable $e ) {
 			$rid = '';
 		}
@@ -1014,15 +1014,15 @@ class RemoteManager {
 	 * ServerRegistry exposes a static get_instance/reset_cache pair, we'll
 	 * pick it up via the new methods automatically.
 	 */
-	private static function registry(): ServerRegistry {
+	private static function registry(): Server_Registry {
 		static $registry = null;
-		if ( $registry instanceof ServerRegistry ) {
+		if ( $registry instanceof Server_Registry ) {
 			// Reset cache before reuse — long-running workers may have
 			// cached enabled-list state.
 			$registry->reset_cache();
 			return $registry;
 		}
-		$registry = ServerRegistry::get_instance();
+		$registry = Server_Registry::get_instance();
 		return $registry;
 	}
 }

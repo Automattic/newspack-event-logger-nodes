@@ -18,7 +18,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Hook Categorizer class.
  */
-class HookCategorizer {
+class Hook_Categorizer {
 
 	/**
 	 * Option name for user customizations.

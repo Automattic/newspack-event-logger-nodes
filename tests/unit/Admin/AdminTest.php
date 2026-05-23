@@ -1559,7 +1559,7 @@ class AdminTest extends TestCase {
 		// Drop a configured server straight into the WP option so ServerRegistry
 		// picks it up. Reset the cached singleton state.
 		\update_option(
-			\Newspack_Event_Logger_Nodes\ServerRegistry::OPTION_KEY,
+			\Newspack_Event_Logger_Nodes\Server_Registry::OPTION_KEY,
 			[
 				'spoke-a' => [
 					'url'           => 'https://a.example',
@@ -1575,7 +1575,7 @@ class AdminTest extends TestCase {
 				],
 			]
 		);
-		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 

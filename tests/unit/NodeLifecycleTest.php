@@ -17,14 +17,14 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\AutoTuner;
-use Newspack_Event_Logger_Nodes\FlameBuilder;
-use Newspack_Event_Logger_Nodes\HealthCheckTick;
-use Newspack_Event_Logger_Nodes\JobRouter;
-use Newspack_Event_Logger_Nodes\JobWorker;
-use Newspack_Event_Logger_Nodes\RemoteSource;
-use Newspack_Event_Logger_Nodes\RequestBuilder;
-use Newspack_Event_Logger_Nodes\StreamMerger;
+use Newspack_Event_Logger_Nodes\Auto_Tuner_Node;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
+use Newspack_Event_Logger_Nodes\Job_Router_Node;
+use Newspack_Event_Logger_Nodes\Job_Worker_Node;
+use Newspack_Event_Logger_Nodes\Remote_Source_Node;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Stream_Merger_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -38,14 +38,14 @@ class NodeLifecycleTest extends TestCase {
 	 */
 	public static function node_factories(): array {
 		return [
-			'AutoTuner'       => [ static fn () => new AutoTuner() ],
-			'FlameBuilder'    => [ static fn () => new FlameBuilder() ],
-			'HealthCheckTick' => [ static fn () => new HealthCheckTick() ],
-			'JobRouter'       => [ static fn () => new JobRouter() ],
-			'JobWorker'       => [ static fn () => new JobWorker() ],
-			'RequestBuilder'  => [ static fn () => new RequestBuilder() ],
-			'RemoteSource'    => [ static fn () => new RemoteSource( 'site', 'https://example.test' ) ],
-			'StreamMerger'    => [ static fn () => new StreamMerger( "firehose" ) ],
+			'AutoTuner'       => [ static fn () => new Auto_Tuner_Node() ],
+			'FlameBuilder'    => [ static fn () => new Flame_Builder_Node() ],
+			'HealthCheckTick' => [ static fn () => new Health_Check_Tick_Node() ],
+			'JobRouter'       => [ static fn () => new Job_Router_Node() ],
+			'JobWorker'       => [ static fn () => new Job_Worker_Node() ],
+			'RequestBuilder'  => [ static fn () => new Request_Builder_Node() ],
+			'RemoteSource'    => [ static fn () => new Remote_Source_Node( 'site', 'https://example.test' ) ],
+			'StreamMerger'    => [ static fn () => new Stream_Merger_Node( "firehose" ) ],
 		];
 	}
 
@@ -143,9 +143,9 @@ class NodeLifecycleTest extends TestCase {
 	 */
 	private function is_transit_node( object $node ): bool {
 		return ! (
-			$node instanceof RemoteSource
-			|| $node instanceof HealthCheckTick
-			|| $node instanceof AutoTuner
+			$node instanceof Remote_Source_Node
+			|| $node instanceof Health_Check_Tick_Node
+			|| $node instanceof Auto_Tuner_Node
 		);
 	}
 }

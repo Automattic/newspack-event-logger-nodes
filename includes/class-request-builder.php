@@ -9,7 +9,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -21,7 +21,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Request builder node class.
  */
-class RequestBuilder extends Node {
+class Request_Builder_Node extends Node {
 
 	/**
 	 * Maximum stack depth before request is considered runaway and evicted.
@@ -55,11 +55,11 @@ class RequestBuilder extends Node {
 	private const DEFAULT_BUCKET_SIZE = 100;
 	private const DEFAULT_NUM_BUCKETS = 3;
 
-	/** @var LruCache In-flight requests, keyed by rid. */
+	/** @var LRU_Cache In-flight requests, keyed by rid. */
 	public $cache;
 
-	/** @var RequestFlight|null Hidden sibling — periodic in-flight snapshots. */
-	public ?RequestFlight $flight = null;
+	/** @var Request_Flight_Node|null Hidden sibling — periodic in-flight snapshots. */
+	public ?Request_Flight_Node $flight = null;
 
 	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
 	private $state_callbacks;
@@ -74,7 +74,7 @@ class RequestBuilder extends Node {
 	private $line_counter = 0;
 
 	public function __construct( int $bucket_size = self::DEFAULT_BUCKET_SIZE, int $num_buckets = self::DEFAULT_NUM_BUCKETS ) {
-		$this->cache = ( new LruCache( $bucket_size, $num_buckets ) )
+		$this->cache = ( new LRU_Cache( $bucket_size, $num_buckets ) )
 			->with_timed_rotation(
 				self::BUCKET_ROTATION_S,
 				function ( string $rid, $request ): void {
@@ -86,7 +86,7 @@ class RequestBuilder extends Node {
 		// Sibling CommandInterpreter for runtime config verbs. See
 		// Partition's ctor for the contract; A1 declares one verb
 		// (set_errors_target) on the patron's :config CI.
-		$ci = new CommandInterpreter();
+		$ci = new Command_Interpreter_Node();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
@@ -96,11 +96,11 @@ class RequestBuilder extends Node {
 		// adopts `{patron}:flight` when the patron is named (mirroring the
 		// CI sibling's `{patron}:config` propagation in Node::name).
 		// Sink wiring also propagates from the overridden sink() setter.
-		$this->flight = new RequestFlight();
+		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
 	}
 
-	public function flight(): RequestFlight {
+	public function flight(): Request_Flight_Node {
 		return $this->flight;
 	}
 
@@ -941,7 +941,7 @@ class RequestBuilder extends Node {
 		static $verbs = null;
 		if ( null === $verbs ) {
 			$verbs = [
-				'set_errors_target' => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_errors_target' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \trim( $args );
 					// Empty arg clears the target (disables the secondary emit).
 					/** @var self $patron */
@@ -950,7 +950,7 @@ class RequestBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_errors_target', $args );
 					return 'ok';
 				},
-				'set_completed_target' => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_completed_target' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \trim( $args );
 					// Empty arg clears the target (disables the secondary emit).
 					/** @var self $patron */
@@ -959,7 +959,7 @@ class RequestBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_completed_target', $args );
 					return 'ok';
 				},
-				'set_inflight_target' => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_inflight_target' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \trim( $args );
 					// Empty arg clears Flight's target — its fire_cb early-returns
 					// on the target check, disabling the periodic snapshot emit.
@@ -969,7 +969,7 @@ class RequestBuilder extends Node {
 					$patron->mark_verb_invoked( 'set_inflight_target', $args );
 					return 'ok';
 				},
-				'set_inflight_interval' => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_inflight_interval' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \trim( $args );
 					if ( ! \ctype_digit( $args ) ) {
 						return 'usage: set_inflight_interval <ms>';

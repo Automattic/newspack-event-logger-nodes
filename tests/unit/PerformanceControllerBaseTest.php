@@ -1,13 +1,13 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\Rest\PerformanceControllerBase;
+use Newspack_Event_Logger_Nodes\Rest\Performance_Controller_Base;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( PerformanceControllerBase::class )]
+#[CoversClass( Performance_Controller_Base::class )]
 class PerformanceControllerBaseTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
@@ -143,7 +143,7 @@ class PerformanceControllerBaseTest extends TestCase {
 
 }
 
-class TestableController extends PerformanceControllerBase {
+class TestableController extends Performance_Controller_Base {
 	public function register_routes(): void {}
 	public function wrap_not_found( string $what ): \WP_Error {
 		return $this->not_found_error( $what );

@@ -16,13 +16,13 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Logger_CI;
-use Newspack_Event_Logger_Nodes\HookCategorizer;
+use Newspack_Event_Logger_Nodes\App\Logger_CI_Node;
+use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( Logger_CI::class )]
+#[CoversClass( Logger_CI_Node::class )]
 class LoggerCITest extends TestCase {
 	private string $tmp;
 
@@ -38,12 +38,12 @@ class LoggerCITest extends TestCase {
 		// HookCategorizer::get_registered_hooks reads from $wp_filter, which
 		// is shared with other tests in this run.
 		$GLOBALS['wp_filter']   = [];
-		HookCategorizer::clear_cache();
+		Hook_Categorizer::clear_cache();
 	}
 
 	protected function tearDown(): void {
 		VerbHarness::reset();
-		HookCategorizer::clear_cache();
+		Hook_Categorizer::clear_cache();
 		$GLOBALS['_wp_options'] = [];
 		$GLOBALS['wp_filter']   = [];
 		$this->rmdir_recursive( $this->tmp );
@@ -55,7 +55,7 @@ class LoggerCITest extends TestCase {
 			'num_partitions' => 4,
 			'topologies'     => [ 'firehose-workers-and-jobs' ],
 		] );
-		$ci = new Logger_CI();
+		$ci = new Logger_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'logger', 'config' );
 
@@ -77,7 +77,7 @@ class LoggerCITest extends TestCase {
 		$GLOBALS['wp_filter']['save_post']  = new \WP_Hook();
 		$GLOBALS['wp_filter']['save_post']->callbacks[10]['cb1'] = [ 'function' => 'noop' ];
 
-		$ci = new Logger_CI();
+		$ci = new Logger_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'logger', 'hooks' );
 
@@ -110,7 +110,7 @@ class LoggerCITest extends TestCase {
 		$GLOBALS['wp_filter']['init'] = new \WP_Hook();
 		$GLOBALS['wp_filter']['init']->callbacks[10]['cb1'] = [ 'function' => 'noop' ];
 
-		$ci = new Logger_CI();
+		$ci = new Logger_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'logger', 'hooks' );
 
@@ -120,7 +120,7 @@ class LoggerCITest extends TestCase {
 	}
 
 	public function test_hooks_verb_returns_empty_list_when_no_hooks_registered(): void {
-		$ci = new Logger_CI();
+		$ci = new Logger_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'logger', 'hooks' );
 

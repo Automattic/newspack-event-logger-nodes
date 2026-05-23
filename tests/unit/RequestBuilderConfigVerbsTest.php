@@ -21,15 +21,15 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\RequestBuilder;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( RequestBuilder::class )]
+#[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderConfigVerbsTest extends TestCase {
 
 	public function test_set_completed_target_verb_persists_value(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();
@@ -39,7 +39,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	}
 
 	public function test_set_completed_target_empty_args_clears_target(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();
@@ -52,7 +52,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	}
 
 	public function test_set_inflight_target_verb_writes_to_flight(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();
@@ -62,7 +62,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	}
 
 	public function test_set_inflight_target_empty_args_clears_flight_target(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();
@@ -75,7 +75,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	}
 
 	public function test_set_errors_target_empty_args_clears_target(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();
@@ -88,7 +88,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	}
 
 	public function test_set_inflight_interval_verb_calls_flight_set_interval(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();
@@ -98,7 +98,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	}
 
 	public function test_set_inflight_interval_rejects_non_numeric(): void {
-		$rb = new RequestBuilder();
+		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();
 		$verbs = $ci->commands();

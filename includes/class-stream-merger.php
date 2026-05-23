@@ -21,19 +21,19 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Node_Names;
-use Newspack_Nodes\Partition;
+use Newspack_Nodes\Partition_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class StreamMerger extends Node {
+class Stream_Merger_Node extends Node {
 
 	/** Offsetlog commit cadence. */
 	public const COMMIT_INTERVAL_S = 5;
@@ -42,22 +42,22 @@ class StreamMerger extends Node {
 	// Per-remote constants now live on RemoteSource (each child enforces its
 	// own limits). These aliases keep old call sites (tests, callers) working
 	// without rewriting; new code should reference RemoteSource directly.
-	public const INITIAL_BACKOFF    = RemoteSource::INITIAL_BACKOFF;
-	public const MAX_BACKOFF        = RemoteSource::MAX_BACKOFF;
-	public const CONNECT_TIMEOUT    = RemoteSource::CONNECT_TIMEOUT;
-	public const HEARTBEAT_TIMEOUT  = RemoteSource::HEARTBEAT_TIMEOUT;
-	public const HEARTBEAT_INTERVAL = RemoteSource::HEARTBEAT_INTERVAL;
-	public const MAX_BUFFER_SIZE    = RemoteSource::MAX_BUFFER_SIZE;
-	public const MAX_EVENT_SIZE     = RemoteSource::MAX_EVENT_SIZE;
-	public const MAX_QUEUE_SIZE     = RemoteSource::MAX_QUEUE_SIZE;
-	public const MAX_LINE_BYTES     = RemoteSource::MAX_LINE_BYTES;
-	public const STATUS_TTL         = RemoteSource::STATUS_TTL;
+	public const INITIAL_BACKOFF    = Remote_Source_Node::INITIAL_BACKOFF;
+	public const MAX_BACKOFF        = Remote_Source_Node::MAX_BACKOFF;
+	public const CONNECT_TIMEOUT    = Remote_Source_Node::CONNECT_TIMEOUT;
+	public const HEARTBEAT_TIMEOUT  = Remote_Source_Node::HEARTBEAT_TIMEOUT;
+	public const HEARTBEAT_INTERVAL = Remote_Source_Node::HEARTBEAT_INTERVAL;
+	public const MAX_BUFFER_SIZE    = Remote_Source_Node::MAX_BUFFER_SIZE;
+	public const MAX_EVENT_SIZE     = Remote_Source_Node::MAX_EVENT_SIZE;
+	public const MAX_QUEUE_SIZE     = Remote_Source_Node::MAX_QUEUE_SIZE;
+	public const MAX_LINE_BYTES     = Remote_Source_Node::MAX_LINE_BYTES;
+	public const STATUS_TTL         = Remote_Source_Node::STATUS_TTL;
 
-	/** @var array<string,RemoteSource> Refs to child RemoteSource nodes, keyed by server_id. */
+	/** @var array<string,Remote_Source_Node> Refs to child RemoteSource nodes, keyed by server_id. */
 	private array $remote_nodes = [];
 
-	/** @var Partition|null Per-partition offsetlog (one Partition for the whole merger). */
-	private ?Partition $offsetlog = null;
+	/** @var Partition_Node|null Per-partition offsetlog (one Partition for the whole merger). */
+	private ?Partition_Node $offsetlog = null;
 
 	/** @var string Topic name to pull from + heartbeat URL params. */
 	private string $remote_topic;
@@ -74,8 +74,8 @@ class StreamMerger extends Node {
 	/** @var bool Whether to verify SSL certs (default: true). */
 	private bool $verify_ssl = true;
 
-	/** @var HealthCheckTick|null Owned sibling — drives aggregator's periodic health-check sweep. */
-	private ?HealthCheckTick $health_check = null;
+	/** @var Health_Check_Tick_Node|null Owned sibling — drives aggregator's periodic health-check sweep. */
+	private ?Health_Check_Tick_Node $health_check = null;
 
 	public function __construct( string $remote_topic, int $partition = 0 ) {
 		$this->remote_topic = $remote_topic;
@@ -88,7 +88,7 @@ class StreamMerger extends Node {
 		// Sibling CommandInterpreter — TSL aggregator topology configures
 		// StreamMerger via verbs (set_verify_ssl, set_require_https,
 		// load_remotes_from_registry).
-		$ci = new CommandInterpreter();
+		$ci = new Command_Interpreter_Node();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
@@ -96,7 +96,7 @@ class StreamMerger extends Node {
 		// Owned HealthCheckTick sibling — TIMER-driven, hub-only, never
 		// independently configurable. Patron-linked so dump_metadata hides it
 		// and so its name tracks the StreamMerger's automatically.
-		$this->health_check = new HealthCheckTick();
+		$this->health_check = new Health_Check_Tick_Node();
 		$this->health_check->patron( $this );
 	}
 
@@ -281,7 +281,7 @@ class StreamMerger extends Node {
 		$auth_password = '';
 
 		if ( '' === $url ) {
-			$registry = new ServerRegistry();
+			$registry = new Server_Registry();
 			$entry    = $registry->get( $server_id );
 			if ( null === $entry ) {
 				Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
@@ -312,7 +312,7 @@ class StreamMerger extends Node {
 			unset( $this->remote_nodes[ $server_id ] );
 		}
 
-		$remote = new RemoteSource( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->remote_topic, $this->partition );
+		$remote = new Remote_Source_Node( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->remote_topic, $this->partition );
 		// Propagate global policy so children inherit current hub config
 		// (operator toggles set_verify_ssl/set_require_https at runtime; new
 		// children must reflect those without needing a respawn). Memcache is
@@ -366,7 +366,7 @@ class StreamMerger extends Node {
 		return $n;
 	}
 
-	/** @return array<string,RemoteSource> */
+	/** @return array<string,Remote_Source_Node> */
 	public function remote_nodes(): array {
 		return $this->remote_nodes;
 	}
@@ -401,7 +401,7 @@ class StreamMerger extends Node {
 	public function get_backoff( string $server_id ): int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_backoff()
-			: RemoteSource::INITIAL_BACKOFF;
+			: Remote_Source_Node::INITIAL_BACKOFF;
 	}
 
 	public function get_slot( string $server_id ): ?int {
@@ -455,7 +455,7 @@ class StreamMerger extends Node {
 	 */
 	public function process_sse_chunk( string $chunk ): void {
 		if ( ! isset( $this->remote_nodes['__test__'] ) ) {
-			$remote = new RemoteSource( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
+			$remote = new Remote_Source_Node( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
 			$remote->set_verify_ssl( $this->verify_ssl );
 			$remote->set_require_https( $this->require_https );
 			if ( null !== $this->sink ) {
@@ -533,7 +533,7 @@ class StreamMerger extends Node {
 	 * Read the offsetlog and push the latest position for $server_id into
 	 * $remote BEFORE its first connect() — used by add_remote().
 	 */
-	private function restore_position_for( RemoteSource $remote, string $server_id ): void {
+	private function restore_position_for( Remote_Source_Node $remote, string $server_id ): void {
 		$offsetlog = $this->ensure_offsetlog();
 		if ( null === $offsetlog ) {
 			return;
@@ -571,7 +571,7 @@ class StreamMerger extends Node {
 		);
 	}
 
-	private function ensure_offsetlog(): ?Partition {
+	private function ensure_offsetlog(): ?Partition_Node {
 		if ( null !== $this->offsetlog ) {
 			return $this->offsetlog;
 		}
@@ -588,7 +588,7 @@ class StreamMerger extends Node {
 		// partition is encoded in the dir name (`aggregator.p{N}`), so the
 		// inner Partition's own partition axis is always 0. Matches the
 		// pattern Consumer uses for its offsetlog.
-		$this->offsetlog = new Partition( $dir, 0 );
+		$this->offsetlog = new Partition_Node( $dir, 0 );
 		return $this->offsetlog;
 	}
 
@@ -601,7 +601,7 @@ class StreamMerger extends Node {
 	private static function config_verbs(): array {
 		if ( empty( self::$verbs_cache ) ) {
 			self::$verbs_cache = [
-				'set_verify_ssl'             => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_verify_ssl'             => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \strtolower( \trim( $args ) );
 					$bool = ( 'true' === $args || '1' === $args );
 					/** @var self $patron */
@@ -610,7 +610,7 @@ class StreamMerger extends Node {
 					$patron->mark_verb_invoked( 'set_verify_ssl', $bool ? 'true' : 'false' );
 					return 'ok';
 				},
-				'set_require_https'          => static function ( CommandInterpreter $ci, string $args ): string {
+				'set_require_https'          => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					$args = \strtolower( \trim( $args ) );
 					$bool = ( 'true' === $args || '1' === $args );
 					/** @var self $patron */
@@ -619,10 +619,10 @@ class StreamMerger extends Node {
 					$patron->mark_verb_invoked( 'set_require_https', $bool ? 'true' : 'false' );
 					return 'ok';
 				},
-				'load_remotes_from_registry' => static function ( CommandInterpreter $ci, string $args ): string {
+				'load_remotes_from_registry' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					/** @var self $patron */
 					$patron   = $ci->patron();
-					$registry = new ServerRegistry();
+					$registry = new Server_Registry();
 					foreach ( $registry->get_enabled() as $server_id => $entry ) {
 						$patron->add_remote( (string) $server_id );
 					}

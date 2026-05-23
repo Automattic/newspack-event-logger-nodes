@@ -19,12 +19,12 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
-use Newspack_Nodes\Rest\HTTP_In;
+use Newspack_Nodes\Rest\HTTP_In_Node;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Router;
+use Newspack_Nodes\Router_Node;
 
 class VerbHarness {
 	/**
@@ -39,7 +39,7 @@ class VerbHarness {
 	 * a TM_COMMAND|TM_ERROR response (since `interpret()` puts the thrown
 	 * message into `payload`).
 	 *
-	 * @param CommandInterpreter $ci         CI under test (already constructed).
+	 * @param Command_Interpreter_Node $ci         CI under test (already constructed).
 	 * @param string             $name       Name to register the CI under (e.g. 'workers').
 	 * @param string             $verb       Verb to invoke (e.g. 'list').
 	 * @param mixed              $verb_payload Structured data the verb consumes via its
@@ -49,9 +49,9 @@ class VerbHarness {
 	 * @param string             $key        Optional KEY field for the inbound message.
 	 * @return mixed The verb's payload (structure for success verbs; error-message string for TM_ERROR).
 	 */
-	public static function fire( CommandInterpreter $ci, string $name, string $verb, mixed $verb_payload = null, string $args = '', string $key = '' ): mixed {
-		$router = new Router(); $router->name( Node_Names::ROUTER );
-		$base   = new CommandInterpreter(); $base->name( Node_Names::COMMAND_INTERPRETER ); $base->sink( $router );
+	public static function fire( Command_Interpreter_Node $ci, string $name, string $verb, mixed $verb_payload = null, string $args = '', string $key = '' ): mixed {
+		$router = new Router_Node(); $router->name( Node_Names::ROUTER );
+		$base   = new Command_Interpreter_Node(); $base->name( Node_Names::COMMAND_INTERPRETER ); $base->sink( $router );
 		$ci->name( $name );
 		$ci->sink( $base );
 
@@ -59,7 +59,7 @@ class VerbHarness {
 		// value, not which HTTP status code HTTP_In emitted. The closure
 		// is a no-op so HTTP_In's fill() path runs without trying to call
 		// the real \status_header() (which isn't defined in tests).
-		$http_in = new HTTP_In( static fn ( int $c ) => null );
+		$http_in = new HTTP_In_Node( static fn ( int $c ) => null );
 		$http_in->name( Node_Names::HTTP );
 
 		$msg = Message::new_message();

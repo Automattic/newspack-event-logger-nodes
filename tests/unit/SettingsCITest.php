@@ -14,12 +14,12 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Settings_CI;
+use Newspack_Event_Logger_Nodes\App\Settings_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( Settings_CI::class )]
+#[CoversClass( Settings_CI_Node::class )]
 class SettingsCITest extends TestCase {
 	private string $tmp;
 
@@ -49,7 +49,7 @@ class SettingsCITest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_nodes_max_lifespan']   = 86400;
 		\Newspack_Event_Logger_Nodes\Config::reset();
 
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire( $ci, 'settings', 'get' );
 
 		$this->assertIsArray( $result );
@@ -64,7 +64,7 @@ class SettingsCITest extends TestCase {
 		// whatever the substrate Config defaults supply (driven by the
 		// per-test base_dir config file). num_partitions defaults to 1 from
 		// the substrate-config-defaults overlay.
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire( $ci, 'settings', 'get' );
 
 		$this->assertIsArray( $result );
@@ -82,7 +82,7 @@ class SettingsCITest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] = 3600;
 		\Newspack_Event_Logger_Nodes\Config::reset();
 
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -101,7 +101,7 @@ class SettingsCITest extends TestCase {
 	}
 
 	public function test_update_verb_writes_all_supplied_keys(): void {
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -130,7 +130,7 @@ class SettingsCITest extends TestCase {
 		// autoloaded so they ride the single alloptions query instead of
 		// becoming N separate per-request get_option lookups.
 		$GLOBALS['_wp_option_autoload'] = [];
-		$ci                             = new Settings_CI();
+		$ci                             = new Settings_CI_Node();
 		VerbHarness::fire( $ci, 'settings', 'update', [ 'num_partitions' => 4 ] );
 
 		$this->assertTrue(
@@ -143,7 +143,7 @@ class SettingsCITest extends TestCase {
 		// Substrate CI contract: verb throws RuntimeException → interpret()
 		// catches it and returns the message string as a TM_COMMAND|TM_ERROR
 		// payload. VerbHarness returns the raw string (not valid JSON).
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -160,7 +160,7 @@ class SettingsCITest extends TestCase {
 	public function test_update_verb_allows_zero_for_max_lifespan(): void {
 		// Value-equivalence with legacy: max_lifespan accepts 0 (the
 		// only one of the four whose min is 0 rather than 1).
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -176,7 +176,7 @@ class SettingsCITest extends TestCase {
 		// all have min=1, so 0 is rejected. Value-equivalence with legacy
 		// SettingsController::sanitize_value, which uses the same per-key
 		// min override.
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -189,7 +189,7 @@ class SettingsCITest extends TestCase {
 	}
 
 	public function test_update_verb_rejects_unknown_key(): void {
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -202,7 +202,7 @@ class SettingsCITest extends TestCase {
 	}
 
 	public function test_update_verb_rejects_non_numeric_value(): void {
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -215,7 +215,7 @@ class SettingsCITest extends TestCase {
 
 	public function test_update_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',
@@ -233,7 +233,7 @@ class SettingsCITest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_nodes_num_partitions'] = 2;
 		\Newspack_Event_Logger_Nodes\Config::reset();
 
-		$ci     = new Settings_CI();
+		$ci     = new Settings_CI_Node();
 		$result = VerbHarness::fire(
 			$ci,
 			'settings',

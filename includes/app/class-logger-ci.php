@@ -28,13 +28,13 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\HookCategorizer;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Logger_CI extends CommandInterpreter {
+class Logger_CI_Node extends Command_Interpreter_Node {
 
 	public function __construct() {
 		// Node + CommandInterpreter have no explicit __construct, so the
@@ -42,7 +42,7 @@ class Logger_CI extends CommandInterpreter {
 		// Settings_CI / Workers_CI, which extend CommandInterpreter and
 		// also skip the parent call.
 		$this->commands( [
-			'config' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
+			'config' => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				// Echo the full filterable config; sensitive values (memcache
 				// server strings) stay since they're already managed via WP
 				// options. Value-equivalent with the legacy `get_config`
@@ -50,10 +50,10 @@ class Logger_CI extends CommandInterpreter {
 				// which is reconstructed by the REST shim, not the CI.
 				return RuntimeConfig::load_config();
 			},
-			'hooks'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
+			'hooks'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				$hooks       = [];
-				$by_category = HookCategorizer::get_registered_hooks_by_category();
-				$categories  = HookCategorizer::get_categories();
+				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
+				$categories  = Hook_Categorizer::get_categories();
 				// Flatten by_category into a list of { name, category } so
 				// the React picker doesn't need to know about the grouping
 				// shape. Within each category the order follows the

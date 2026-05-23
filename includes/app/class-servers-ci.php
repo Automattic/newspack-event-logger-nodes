@@ -43,15 +43,15 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
-use Newspack_Event_Logger_Nodes\RemoteManager;
-use Newspack_Event_Logger_Nodes\ServerRegistry;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Event_Logger_Nodes\Remote_Manager;
+use Newspack_Event_Logger_Nodes\Server_Registry;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
-use Newspack_Nodes\Service_CI;
+use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Servers_CI extends Service_CI {
+class Servers_CI_Node extends Service_CI_Node {
 
 	/**
 	 * `wp_remote_get` seam used by the `test` verb. Lazily-defaulted to a
@@ -68,20 +68,20 @@ class Servers_CI extends Service_CI {
 	/**
 	 * Build a Servers_CI bound to the supplied registry.
 	 *
-	 * @param ServerRegistry $registry Hub-side server registry. Tests pass a
+	 * @param Server_Registry $registry Hub-side server registry. Tests pass a
 	 *                                  fresh instance per test so they don't
 	 *                                  share state.
 	 */
-	public function __construct( ServerRegistry $registry ) {
+	public function __construct( Server_Registry $registry ) {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Workers_CI / Settings_CI /
 		// Status_CI / Discovery_CI / Logger_CI / Events_CI.
 		$this->commands( $this->verb_table( $registry ) );
 	}
 
-	private function verb_table( ServerRegistry $registry ): array {
+	private function verb_table( Server_Registry $registry ): array {
 		return [
-			'list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
+			'list'   => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				$registry->reset_cache();
 				$out = [];
 				foreach ( $registry->get_all() as $id => $config ) {
@@ -89,7 +89,7 @@ class Servers_CI extends Service_CI {
 				}
 				return $out;
 			},
-			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
+			'get'    => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
 				$server = $registry->get( $id );
@@ -98,13 +98,13 @@ class Servers_CI extends Service_CI {
 				}
 				return self::public_shape( $id, $server, $registry );
 			},
-			'add'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
+			'add'    => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$decoded = \is_array( $payload ) ? $payload : [];
 				$id      = (string) ( $decoded['id'] ?? '' );
 				// Empty + format check together: legacy controller maps both to
 				// HTTP 400 with the same kind of "invalid id" message.
-				if ( ! ServerRegistry::is_valid_id( $id ) ) {
+				if ( ! Server_Registry::is_valid_id( $id ) ) {
 					throw new \RuntimeException( 'invalid server id' );
 				}
 				$registry->reset_cache();
@@ -123,7 +123,7 @@ class Servers_CI extends Service_CI {
 				self::request_supervisor_restart();
 				return [ 'id' => $id ];
 			},
-			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
+			'update' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$decoded = \is_array( $payload ) ? $payload : [];
 				$id      = self::require_id( $decoded );
@@ -148,7 +148,7 @@ class Servers_CI extends Service_CI {
 				self::request_supervisor_restart();
 				return [ 'id' => $id ];
 			},
-			'delete' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
+			'delete' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
@@ -162,7 +162,7 @@ class Servers_CI extends Service_CI {
 				self::request_supervisor_restart();
 				return [ 'id' => $id ];
 			},
-			'test'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
+			'test'   => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
 				self::require_manage_options();
 				$id = self::decoded_id( $payload );
 				$registry->reset_cache();
@@ -185,10 +185,10 @@ class Servers_CI extends Service_CI {
 	 *
 	 * @param string         $id       Server id.
 	 * @param array          $config   Decrypted server config from the registry.
-	 * @param ServerRegistry $registry Registry for the `is_config_server` lookup.
+	 * @param Server_Registry $registry Registry for the `is_config_server` lookup.
 	 * @return array Public-safe representation of the server.
 	 */
-	private static function public_shape( string $id, array $config, ServerRegistry $registry ): array {
+	private static function public_shape( string $id, array $config, Server_Registry $registry ): array {
 		return [
 			'id'              => $id,
 			'url'             => (string) ( $config['url'] ?? '' ),
@@ -253,7 +253,7 @@ class Servers_CI extends Service_CI {
 	 */
 	private static function queue_settings_sync( array $server_ids ): void {
 		try {
-			RemoteManager::queue_sync_all_settings( $server_ids );
+			Remote_Manager::queue_sync_all_settings( $server_ids );
 		} catch ( \Throwable $e ) {
 			// Swallow — legacy parity: the REST endpoint never failed on this.
 		}
@@ -270,7 +270,7 @@ class Servers_CI extends Service_CI {
 			$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
 			$lock_dir = $base_dir . '/locks/supervisor.lock.d';
 			if ( \is_dir( $lock_dir ) ) {
-				\Newspack_Nodes\Lock::request_restart_at( $lock_dir );
+				\Newspack_Nodes\Lock_Node::request_restart_at( $lock_dir );
 			}
 		} catch ( \Throwable $e ) {
 			// Swallow — best-effort signalling.
@@ -305,8 +305,8 @@ class Servers_CI extends Service_CI {
 			'sslverify'           => $verify_ssl,
 			'redirection'         => 0,
 			'limit_response_size' => 1048576,
-			'headers'             => [ 'Content-Type' => RemoteManager::COMMAND_CONTENT_TYPE ],
-			'body'                => RemoteManager::command_message_body( 'discovery', 'get', '' ),
+			'headers'             => [ 'Content-Type' => Remote_Manager::COMMAND_CONTENT_TYPE ],
+			'body'                => Remote_Manager::command_message_body( 'discovery', 'get', '' ),
 		];
 
 		$username = (string) ( $server['auth_username'] ?? '' );

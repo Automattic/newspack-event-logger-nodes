@@ -16,11 +16,11 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Timer;
+use Newspack_Nodes\Timer_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class RequestFlight extends Timer {
+class Request_Flight_Node extends Timer_Node {
 	private const DEFAULT_INTERVAL_MS = 1000;
 
 	private int $interval_ms = self::DEFAULT_INTERVAL_MS;
@@ -71,7 +71,7 @@ class RequestFlight extends Timer {
 	 */
 	public function inflight_snapshot(): array {
 		$patron = $this->patron();
-		if ( ! $patron instanceof RequestBuilder ) {
+		if ( ! $patron instanceof Request_Builder_Node ) {
 			return [];
 		}
 		$out = [];
@@ -92,8 +92,8 @@ class RequestFlight extends Timer {
 				'rid'         => (string) $rid,
 				'method'      => (string) ( $r['request_method'] ?? 'GET' ),
 				'url'         => (string) ( $r['url'] ?? '' ),
-				'state'       => RequestBuilder::extract_state( $r ),
-				'what'        => RequestBuilder::extract_what( $r ),
+				'state'       => Request_Builder_Node::extract_state( $r ),
+				'what'        => Request_Builder_Node::extract_what( $r ),
 				'time_ms'     => \round( $time_ms, 1 ),
 				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
 				'start_time'  => $start_time,

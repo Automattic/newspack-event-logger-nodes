@@ -1,12 +1,12 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\JobWorker;
+use Newspack_Event_Logger_Nodes\Job_Worker_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( JobWorker::class )]
+#[CoversClass( Job_Worker_Node::class )]
 class JobWorkerTest extends TestCase {
 
 	protected function setUp(): void {
@@ -32,7 +32,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_executes_job_via_handler(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$received = null;
 		$jw->register_handler( 'a', function ( $payload ) use ( &$received ) {
 			$received = $payload;
@@ -48,7 +48,7 @@ class JobWorkerTest extends TestCase {
 	// --- Per-job discipline -------------------------------------------------
 
 	public function test_server_super_is_restored_after_job(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'mutate', function () {
 			// Handler-side mutations to $_SERVER must NOT leak across jobs.
 			$_SERVER['HANDLER_RAN'] = 'yes';
@@ -71,7 +71,7 @@ class JobWorkerTest extends TestCase {
 	public function test_unique_id_is_per_job_inside_handler(): void {
 		// Inside the handler, $_SERVER['UNIQUE_ID'] should be the job's own ID,
 		// distinct from any outer ID, and 32-char base36.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$captured = [];
 		$jw->register_handler( 'capture', function () use ( &$captured ) {
 			$captured[] = $_SERVER['UNIQUE_ID'] ?? null;
@@ -98,7 +98,7 @@ class JobWorkerTest extends TestCase {
 
 	public function test_server_super_restored_even_if_handler_throws(): void {
 		// The try/finally must run end_job_context regardless of handler failure.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'boom', function () {
 			$_SERVER['SHOULDNT_LEAK'] = 1;
 			throw new \RuntimeException( 'handler failure' );
@@ -118,13 +118,13 @@ class JobWorkerTest extends TestCase {
 		// Format must match LogManager::generate_request_id exactly so per-job
 		// LogManager sessions have IDs indistinguishable from request-scope ones.
 		// Up to 32 chars, base36 (lowercase alphanumeric).
-		$id = JobWorker::generate_request_id();
+		$id = Job_Worker_Node::generate_request_id();
 		$this->assertLessThanOrEqual( 32, strlen( $id ) );
 		$this->assertGreaterThan( 0, strlen( $id ) );
 		$this->assertMatchesRegularExpression( '/^[0-9a-z]+$/', $id );
 
 		// Two consecutive calls produce different IDs.
-		$id2 = JobWorker::generate_request_id();
+		$id2 = Job_Worker_Node::generate_request_id();
 		$this->assertNotSame( $id, $id2 );
 	}
 
@@ -134,7 +134,7 @@ class JobWorkerTest extends TestCase {
 		// VALUE is no longer JSON-decoded by the consumer — it is the array (or
 		// other typed payload) directly. A non-array VALUE must be silently
 		// dropped rather than dispatched to a handler.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$called = false;
 		$jw->register_handler( 'deep', function () use ( &$called ) { $called = true; } );
 
@@ -150,7 +150,7 @@ class JobWorkerTest extends TestCase {
 	// --- Cadence tests (preserved from original suite) ----------------------
 
 	public function test_between_jobs_callback_fires_after_each_job(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'noop', fn ( $p ) => null );
 
 		$counters = [];
@@ -168,7 +168,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_callback_can_implement_every_n_cadence(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'noop', fn ( $p ) => null );
 
 		$flush_count = 0;
@@ -187,7 +187,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_callback_fires_after_exception(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'boom', function () { throw new \RuntimeException( 'x' ); } );
 
 		$cycles = 0;
@@ -201,7 +201,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_set_callback_to_null_clears_it(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'noop', fn ( $p ) => null );
 
 		$cycles = 0;
@@ -219,7 +219,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_handler_exception_caught_and_logged(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'boom', function () { throw new \RuntimeException( 'x' ); } );
 
 		$msg = $this->job_message( 'boom' );
@@ -228,7 +228,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_no_callback_does_not_fire(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'noop', fn ( $p ) => null );
 
 		for ( $i = 0; $i < 3; ++$i ) {
@@ -241,19 +241,19 @@ class JobWorkerTest extends TestCase {
 	// --- Constructor params + getters ---------------------------------------
 
 	public function test_default_stale_timeout_is_600(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->assertSame( 600, $jw->get_stale_timeout() );
 	}
 
 	public function test_default_max_runtime_is_600(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->assertSame( 600, $jw->get_max_runtime() );
 	}
 
 	public function test_constructor_overrides_stale_and_runtime(): void {
 		// Per-spec: long-running JobWorker variants tune via constructor, not by
 		// modifying global defaults.
-		$jw = new JobWorker( cache_flush_interval: 10, stale_timeout: 1200, max_runtime: 1200 );
+		$jw = new Job_Worker_Node( cache_flush_interval: 10, stale_timeout: 1200, max_runtime: 1200 );
 		$this->assertSame( 1200, $jw->get_stale_timeout() );
 		$this->assertSame( 1200, $jw->get_max_runtime() );
 	}
@@ -262,7 +262,7 @@ class JobWorkerTest extends TestCase {
 		// Run 49 jobs — flag wp_cache_flush every time it would be called.
 		// Without WP, wp_cache_flush isn't function_exists; we just verify the
 		// counter rolls over after 50.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'noop', fn ( $p ) => null );
 
 		// We can't observe wp_cache_flush directly without WP. Instead, drive
@@ -279,7 +279,7 @@ class JobWorkerTest extends TestCase {
 	// --- Memory pressure ----------------------------------------------------
 
 	public function test_memory_pressure_starts_false(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->assertFalse( $jw->memory_pressure() );
 	}
 
@@ -287,7 +287,7 @@ class JobWorkerTest extends TestCase {
 		// memory_limit=-1 (unlimited) means is_memory_high always returns false.
 		$prev = ini_set( 'memory_limit', '-1' );
 		try {
-			$jw = new JobWorker();
+			$jw = new Job_Worker_Node();
 			$this->assertFalse( $jw->is_memory_high() );
 		} finally {
 			if ( false !== $prev ) {
@@ -301,7 +301,7 @@ class JobWorkerTest extends TestCase {
 	public function test_non_job_lines_are_skipped(): void {
 		// Only k:"job" or k:"remote_job" entries are dispatched. A 'start' entry
 		// (request lifecycle) MUST NOT route through JobWorker.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$called = false;
 		$jw->register_handler( 'noop', function () use ( &$called ) { $called = true; } );
 
@@ -317,7 +317,7 @@ class JobWorkerTest extends TestCase {
 	// --- Local vs. remote handler split -------------------------------------
 
 	public function test_set_local_handler_dispatches_for_type_job(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$received = null;
 		$jw->set_local_handler( 'sync', function ( $p ) use ( &$received ) { $received = $p; } );
 
@@ -328,7 +328,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_set_remote_handler_dispatches_for_type_remote_job(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$received = null;
 		$jw->set_remote_handler( 'hub_op', function ( $p ) use ( &$received ) { $received = $p; } );
 
@@ -342,7 +342,7 @@ class JobWorkerTest extends TestCase {
 		// Same handler name registered ONLY on the local bucket; a remote_job
 		// entry must NOT fall through to it (that would let spokes execute
 		// hub-only operations).
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$called = false;
 		$jw->set_local_handler( 'priv', function () use ( &$called ) { $called = true; } );
 
@@ -354,7 +354,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_remote_handler_does_not_handle_local_job(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$called = false;
 		$jw->set_remote_handler( 'priv', function () use ( &$called ) { $called = true; } );
 
@@ -367,7 +367,7 @@ class JobWorkerTest extends TestCase {
 	public function test_same_handler_name_in_both_buckets_dispatches_both(): void {
 		// Common case for evTemplate-style handlers that should run in both
 		// spoke and hub contexts.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$local_calls = 0;
 		$remote_calls = 0;
 		$jw->set_local_handler( 'evTemplate', function () use ( &$local_calls ) { ++$local_calls; } );
@@ -386,7 +386,7 @@ class JobWorkerTest extends TestCase {
 
 	public function test_register_handler_is_alias_for_local(): void {
 		// Backward-compat: pre-split callers used register_handler.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'work', fn () => null );
 
 		$this->assertTrue( $jw->has_local_handler( 'work' ) );
@@ -406,7 +406,7 @@ class JobWorkerTest extends TestCase {
 			return $h;
 		} );
 
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->load_handlers_from_filters();
 
 		$this->assertTrue( $jw->has_local_handler( 'local_only' ) );
@@ -426,7 +426,7 @@ class JobWorkerTest extends TestCase {
 			return $h;
 		} );
 
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->load_handlers_from_filters();
 
 		$this->assertTrue( $jw->has_local_handler( 'valid' ) );
@@ -437,7 +437,7 @@ class JobWorkerTest extends TestCase {
 	// ── Sibling CI + eager handler loading ─────────────────────
 
 	public function test_job_worker_constructs_sibling_ci(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->name( 'jw' );
 		$this->assertNotNull( $jw->interpreter() );
 		$this->assertSame( 'jw:config', $jw->interpreter()->name() );
@@ -452,13 +452,13 @@ class JobWorkerTest extends TestCase {
 			'newspack_nodes/remote_job_handlers',
 			static fn ( $h ) => \array_merge( (array) $h, [ 'ctor_remote' => static fn () => null ] )
 		);
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->assertTrue( $jw->has_local_handler( 'ctor_test' ) );
 		$this->assertTrue( $jw->has_remote_handler( 'ctor_remote' ) );
 	}
 
 	public function test_job_worker_node_schema_no_verbs(): void {
-		$schema = JobWorker::node_schema();
+		$schema = Job_Worker_Node::node_schema();
 		$this->assertSame( 'Control', $schema['category'] );
 		$this->assertSame( [], $schema['verbs'] );
 	}
@@ -468,7 +468,7 @@ class JobWorkerTest extends TestCase {
 		// dashboards drive against a live JobWorker. The schema entry is what
 		// the editor uses to render the inspector panel — its presence is
 		// part of the public contract.
-		$schema = JobWorker::node_schema();
+		$schema = Job_Worker_Node::node_schema();
 		$this->assertArrayHasKey( 'requests', $schema );
 		$request_names = \array_column( $schema['requests'], 'name' );
 		$this->assertContains( 'GET_HEALTH', $request_names );
@@ -481,7 +481,7 @@ class JobWorkerTest extends TestCase {
 		// would otherwise produce a 0-jobs-cache-flush-interval (division-by-
 		// zero in some downstream codepath) or stale_timeout=0 (immediate
 		// staleness, supervisor would force-respawn on every spawn).
-		$jw = new JobWorker( cache_flush_interval: 0, stale_timeout: 0, max_runtime: -5 );
+		$jw = new Job_Worker_Node( cache_flush_interval: 0, stale_timeout: 0, max_runtime: -5 );
 		$this->assertSame( 1, $jw->get_stale_timeout() );
 		$this->assertSame( 1, $jw->get_max_runtime() );
 
@@ -499,13 +499,13 @@ class JobWorkerTest extends TestCase {
 	// --- Handler-name validation throw path ---------------------------------
 
 	public function test_set_local_handler_rejects_invalid_name(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->expectException( \InvalidArgumentException::class );
 		$jw->set_local_handler( '1bad-leading', fn () => null );
 	}
 
 	public function test_set_remote_handler_rejects_invalid_name(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->expectException( \InvalidArgumentException::class );
 		$jw->set_remote_handler( 'bad name with spaces', fn () => null );
 	}
@@ -513,7 +513,7 @@ class JobWorkerTest extends TestCase {
 	public function test_register_handler_rejects_invalid_name(): void {
 		// register_handler is the backward-compat alias for set_local_handler;
 		// validation must propagate through the alias unchanged.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$this->expectException( \InvalidArgumentException::class );
 		$jw->register_handler( '', fn () => null );
 	}
@@ -523,7 +523,7 @@ class JobWorkerTest extends TestCase {
 	public function test_fill_drops_non_struct_messages(): void {
 		// TM_BYTESTREAM (no TM_STRUCT bit) carries a string VALUE; the dispatch
 		// path requires TM_STRUCT because it reads VALUE as an array.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$called = false;
 		$jw->register_handler( 'noop', function () use ( &$called ) { $called = true; } );
 
@@ -540,13 +540,13 @@ class JobWorkerTest extends TestCase {
 		// MAX_JOB_SIZE=10MB cap protects the dispatcher from runaway payloads.
 		// A blob that exceeds the cap once JSON-encoded must be silently
 		// dropped (rate-limited stderr, no handler invocation).
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$called = false;
 		$jw->register_handler( 'big', function () use ( &$called ) { $called = true; } );
 
 		// 10MB + 1KB of 'x' is enough to clear MAX_JOB_SIZE even after JSON
 		// encoding (which adds wrapping braces + key strings of trivial size).
-		$huge_param = \str_repeat( 'x', JobWorker::MAX_JOB_SIZE + 1024 );
+		$huge_param = \str_repeat( 'x', Job_Worker_Node::MAX_JOB_SIZE + 1024 );
 		$msg = $this->job_message( 'big', [ 'blob' => $huge_param ] );
 		$jw->fill( $msg );
 
@@ -558,7 +558,7 @@ class JobWorkerTest extends TestCase {
 		// Even if the entry shape is valid (type/handler/parameters), an
 		// invalid HANDLER_NAME_PATTERN match must be rejected before any
 		// $handlers[] lookup that could mask a real registration.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$msg = $this->job_message( 'bad name with spaces' );
 		$jw->fill( $msg );
 		$this->assertSame( 0, $jw->jobs_executed() );
@@ -567,7 +567,7 @@ class JobWorkerTest extends TestCase {
 	public function test_fill_drops_unregistered_handler_name(): void {
 		// Valid name format but never registered. Rate-limited stderr, no
 		// handler called.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$msg = $this->job_message( 'never_registered' );
 		$jw->fill( $msg );
 		$this->assertSame( 0, $jw->jobs_executed() );
@@ -580,7 +580,7 @@ class JobWorkerTest extends TestCase {
 		// SSE dashboards. Reply must be a TM_REQUEST|TM_RESPONSE|TM_STRUCT
 		// addressed back to FROM with a structured payload including memory
 		// metrics + handler counts.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$jw->set_local_handler( 'a', fn () => null );
 		$jw->set_local_handler( 'b', fn () => null );
 		$jw->set_remote_handler( 'c', fn () => null );
@@ -625,7 +625,7 @@ class JobWorkerTest extends TestCase {
 	}
 
 	public function test_handle_request_unknown_verb_returns_error_payload(): void {
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$sink = new \Newspack_Nodes\Tests\CaptureSink();
 		$jw->sink( $sink );
 
@@ -646,7 +646,7 @@ class JobWorkerTest extends TestCase {
 	public function test_handle_request_uppercases_verb(): void {
 		// Verb normalisation: caller-supplied case must round-trip uppercased
 		// so the dispatch switch is case-insensitive at the entry point.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$sink = new \Newspack_Nodes\Tests\CaptureSink();
 		$jw->sink( $sink );
 
@@ -663,7 +663,7 @@ class JobWorkerTest extends TestCase {
 	public function test_handle_request_ignores_response_messages(): void {
 		// An echoed reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) doesn't hit
 		// fill()'s TM_REQUEST gate, so handle_request never fires.
-		$jw = new JobWorker();
+		$jw = new Job_Worker_Node();
 		$sink = new \Newspack_Nodes\Tests\CaptureSink();
 		$jw->sink( $sink );
 
@@ -682,8 +682,8 @@ class JobWorkerTest extends TestCase {
 	public function test_memory_limit_bytes_parses_g_suffix(): void {
 		$prev = \ini_set( 'memory_limit', '2G' );
 		try {
-			$jw  = new JobWorker();
-			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$jw  = new Job_Worker_Node();
+			$ref = new \ReflectionMethod( Job_Worker_Node::class, 'memory_limit_bytes' );
 			$ref->setAccessible( true );
 			$this->assertSame( 2 * 1024 * 1024 * 1024, $ref->invoke( $jw ) );
 		} finally {
@@ -696,8 +696,8 @@ class JobWorkerTest extends TestCase {
 	public function test_memory_limit_bytes_parses_m_suffix(): void {
 		$prev = \ini_set( 'memory_limit', '512M' );
 		try {
-			$jw  = new JobWorker();
-			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$jw  = new Job_Worker_Node();
+			$ref = new \ReflectionMethod( Job_Worker_Node::class, 'memory_limit_bytes' );
 			$ref->setAccessible( true );
 			$this->assertSame( 512 * 1024 * 1024, $ref->invoke( $jw ) );
 		} finally {
@@ -713,8 +713,8 @@ class JobWorkerTest extends TestCase {
 		// the 'k' suffix branch in the parser.
 		$prev = \ini_set( 'memory_limit', '1048576K' );
 		try {
-			$jw  = new JobWorker();
-			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$jw  = new Job_Worker_Node();
+			$ref = new \ReflectionMethod( Job_Worker_Node::class, 'memory_limit_bytes' );
 			$ref->setAccessible( true );
 			$this->assertSame( 1048576 * 1024, $ref->invoke( $jw ) );
 		} finally {
@@ -727,8 +727,8 @@ class JobWorkerTest extends TestCase {
 	public function test_memory_limit_bytes_unlimited_returns_negative_one(): void {
 		$prev = \ini_set( 'memory_limit', '-1' );
 		try {
-			$jw  = new JobWorker();
-			$ref = new \ReflectionMethod( JobWorker::class, 'memory_limit_bytes' );
+			$jw  = new Job_Worker_Node();
+			$ref = new \ReflectionMethod( Job_Worker_Node::class, 'memory_limit_bytes' );
 			$ref->setAccessible( true );
 			$this->assertSame( -1, $ref->invoke( $jw ) );
 		} finally {
@@ -746,7 +746,7 @@ class JobWorkerTest extends TestCase {
 		// (16G * 0.80) = 12.8G.
 		$prev = \ini_set( 'memory_limit', '16G' );
 		try {
-			$jw = new JobWorker();
+			$jw = new Job_Worker_Node();
 			$this->assertFalse( $jw->is_memory_high() );
 		} finally {
 			if ( false !== $prev ) {
@@ -761,7 +761,7 @@ class JobWorkerTest extends TestCase {
 		// inverted comparison regression in the watermark check.
 		$prev = \ini_set( 'memory_limit', '16G' );
 		try {
-			$jw = new JobWorker();
+			$jw = new Job_Worker_Node();
 			$jw->register_handler( 'noop', fn () => null );
 			$this->assertFalse( $jw->memory_pressure() );
 
@@ -784,7 +784,7 @@ class JobWorkerTest extends TestCase {
 		// Every cache_flush_interval jobs, JobWorker calls set_state('CACHE_FLUSH').
 		// Register a closure listener via Node::register so we can observe the
 		// event without needing wp_cache_flush to exist.
-		$jw = new JobWorker( cache_flush_interval: 3 );
+		$jw = new Job_Worker_Node( cache_flush_interval: 3 );
 		$jw->register_handler( 'noop', fn () => null );
 
 		// Inject a CACHE_FLUSH event into the registrations table via reflection

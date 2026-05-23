@@ -33,13 +33,13 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
-use Newspack_Nodes\Service_CI;
+use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Settings_CI extends Service_CI {
+class Settings_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Upper bound for all four integer settings (2^30 = 1 GiB). Matches
@@ -69,10 +69,10 @@ class Settings_CI extends Service_CI {
 		// Workers_CI, which extend CommandInterpreter and also skip the
 		// parent call.
 		$this->commands( [
-			'get'    => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'get'    => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				return self::snapshot();
 			},
-			'update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'update' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 				$decoded = \is_array( $payload ) ? $payload : [];
 

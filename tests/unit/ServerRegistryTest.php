@@ -11,11 +11,11 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\ServerRegistry;
+use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( ServerRegistry::class )]
+#[CoversClass( Server_Registry::class )]
 class ServerRegistryTest extends TestCase {
 
 	/**
@@ -76,7 +76,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_add_then_get_round_trips_credentials(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$ok  = $reg->add(
 			'site-a',
 			[
@@ -96,7 +96,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_stored_password_is_encrypted_at_rest(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -105,15 +105,15 @@ class ServerRegistryTest extends TestCase {
 				'auth_password' => 'plaintext-secret-XYZ',
 			]
 		);
-		$raw = \get_option( ServerRegistry::OPTION_KEY );
+		$raw = \get_option( Server_Registry::OPTION_KEY );
 		$this->assertIsArray( $raw );
 		$serialized = (string) \json_encode( $raw );
 		$this->assertStringNotContainsString( 'plaintext-secret-XYZ', $serialized );
-		$this->assertStringStartsWith( ServerRegistry::ENCRYPTED_PREFIX, $raw['site-a']['auth_password'] );
+		$this->assertStringStartsWith( Server_Registry::ENCRYPTED_PREFIX, $raw['site-a']['auth_password'] );
 	}
 
 	public function test_tampered_ciphertext_decrypts_to_empty(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -123,13 +123,13 @@ class ServerRegistryTest extends TestCase {
 		);
 
 		// Corrupt the ciphertext at rest by flipping a byte after the prefix.
-		$opt = \get_option( ServerRegistry::OPTION_KEY );
+		$opt = \get_option( Server_Registry::OPTION_KEY );
 		$enc = $opt['site-a']['auth_password'];
-		$body         = \substr( $enc, \strlen( ServerRegistry::ENCRYPTED_PREFIX ) );
+		$body         = \substr( $enc, \strlen( Server_Registry::ENCRYPTED_PREFIX ) );
 		$decoded      = \base64_decode( $body, true );
 		$decoded[20]  = \chr( \ord( $decoded[20] ) ^ 0xFF );
-		$opt['site-a']['auth_password'] = ServerRegistry::ENCRYPTED_PREFIX . \base64_encode( $decoded );
-		\update_option( ServerRegistry::OPTION_KEY, $opt );
+		$opt['site-a']['auth_password'] = Server_Registry::ENCRYPTED_PREFIX . \base64_encode( $decoded );
+		\update_option( Server_Registry::OPTION_KEY, $opt );
 
 		$reg->reset_cache();
 		$entry = $reg->get( 'site-a' );
@@ -138,18 +138,18 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_truncated_ciphertext_decrypts_to_empty(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		// Hand-craft an encrypted-looking value that is shorter than the nonce.
 		$opt = [
 			'site-x' => [
 				'url'           => 'https://x.example.com',
 				'auth_username' => 'u',
-				'auth_password' => ServerRegistry::ENCRYPTED_PREFIX . \base64_encode( 'short' ),
+				'auth_password' => Server_Registry::ENCRYPTED_PREFIX . \base64_encode( 'short' ),
 				'enabled'       => true,
 				'logs'          => [ 'firehose.log' ],
 			],
 		];
-		\update_option( ServerRegistry::OPTION_KEY, $opt );
+		\update_option( Server_Registry::OPTION_KEY, $opt );
 
 		$reg->reset_cache();
 		$entry = $reg->get( 'site-x' );
@@ -162,7 +162,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_add_returns_true_when_entry_lands_in_option(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$ok  = $reg->add(
 			'site-a',
 			[
@@ -171,12 +171,12 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 		$this->assertTrue( $ok );
-		$opt = \get_option( ServerRegistry::OPTION_KEY );
+		$opt = \get_option( Server_Registry::OPTION_KEY );
 		$this->assertArrayHasKey( 'site-a', $opt );
 	}
 
 	public function test_remove_verifies_via_re_read(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -186,7 +186,7 @@ class ServerRegistryTest extends TestCase {
 		);
 		$ok = $reg->remove( 'site-a' );
 		$this->assertTrue( $ok );
-		$opt = \get_option( ServerRegistry::OPTION_KEY, [] );
+		$opt = \get_option( Server_Registry::OPTION_KEY, [] );
 		$this->assertArrayNotHasKey( 'site-a', $opt );
 	}
 
@@ -199,20 +199,20 @@ class ServerRegistryTest extends TestCase {
 		// We use a config without auth_password so re-encrypt-with-new-nonce
 		// can't perturb the stored value between calls — second update() is a
 		// genuine no-op against the option array.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
 				'url' => 'https://a.example.com',
 			]
 		);
-		$first_opt = \get_option( ServerRegistry::OPTION_KEY );
+		$first_opt = \get_option( Server_Registry::OPTION_KEY );
 
 		// Apply the same partial twice — second call is a no-op at the WP layer.
 		$first_call  = $reg->update( 'site-a', [ 'enabled' => false ] );
-		$mid_opt     = \get_option( ServerRegistry::OPTION_KEY );
+		$mid_opt     = \get_option( Server_Registry::OPTION_KEY );
 		$second_call = $reg->update( 'site-a', [ 'enabled' => false ] );
-		$final_opt   = \get_option( ServerRegistry::OPTION_KEY );
+		$final_opt   = \get_option( Server_Registry::OPTION_KEY );
 
 		$this->assertTrue( $first_call );
 		$this->assertTrue( $second_call );
@@ -267,7 +267,7 @@ class ServerRegistryTest extends TestCase {
 
 		// Add a WP-option-managed entry too.
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'wp-only' => [
 					'url'           => 'https://wp.example.com',
@@ -279,7 +279,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$all = $reg->get_all();
 
 		$this->assertArrayHasKey( 'config-only', $all );
@@ -304,7 +304,7 @@ class ServerRegistryTest extends TestCase {
 		);
 
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'shared-id' => [
 					'url'     => 'https://override.example.com',
@@ -314,7 +314,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg   = new ServerRegistry();
+		$reg   = new Server_Registry();
 		$entry = $reg->get( 'shared-id' );
 		$this->assertSame( 'https://override.example.com', $entry['url'] );
 		$this->assertFalse( $entry['enabled'] );
@@ -350,7 +350,7 @@ class ServerRegistryTest extends TestCase {
 		);
 
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'from-option' => [
 					'url'     => 'https://option.example.com',
@@ -359,7 +359,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertTrue( $reg->is_config_server( 'from-file' ) );
 		$this->assertFalse( $reg->is_config_server( 'from-option' ) );
 		$this->assertFalse( $reg->is_config_server( 'unknown-id' ) );
@@ -400,7 +400,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 
 		// URL change should be ignored on config server.
 		$ok = $reg->update( 'pinned', [ 'url' => 'https://hacked.example.com' ] );
@@ -443,7 +443,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertFalse( $reg->remove( 'pinned' ) );
 	}
 
@@ -452,7 +452,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_validate_rejects_http_url(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$ok  = $reg->add(
 			'site-a',
 			[
@@ -464,17 +464,17 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_validate_rejects_missing_url(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertFalse( $reg->add( 'site-a', [ 'auth_password' => 'x' ] ) );
 	}
 
 	public function test_validate_rejects_non_string_url(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertFalse( $reg->add( 'site-a', [ 'url' => 12345 ] ) );
 	}
 
 	public function test_username_capped_at_256_bytes(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -488,7 +488,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_password_capped_at_256_bytes(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -502,7 +502,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_logs_filename_allowlist_filters_invalid_entries(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -523,7 +523,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_logs_falls_back_to_firehose_when_all_filtered(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -537,7 +537,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_id_regex_rejects_invalid_characters(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$cases = [
 			'',                     // empty
 			'a b',                  // space
@@ -564,7 +564,7 @@ class ServerRegistryTest extends TestCase {
 			\str_repeat( 'a', 64 ), // exactly 64 chars
 		];
 		foreach ( $cases as $good_id ) {
-			$reg = new ServerRegistry();
+			$reg = new Server_Registry();
 			$reg->reset_cache();
 			$GLOBALS['_wp_options'] = [];
 			$ok = $reg->add( $good_id, [ 'url' => 'https://a.example.com' ] );
@@ -573,9 +573,9 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_static_is_valid_id_helper(): void {
-		$this->assertTrue( ServerRegistry::is_valid_id( 'site-a' ) );
-		$this->assertFalse( ServerRegistry::is_valid_id( 'site a' ) );
-		$this->assertFalse( ServerRegistry::is_valid_id( '' ) );
+		$this->assertTrue( Server_Registry::is_valid_id( 'site-a' ) );
+		$this->assertFalse( Server_Registry::is_valid_id( 'site a' ) );
+		$this->assertFalse( Server_Registry::is_valid_id( '' ) );
 	}
 
 	// ---------------------------------------------------------------------
@@ -583,12 +583,12 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_reset_cache_picks_up_external_writes(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->get_all(); // prime the cache.
 
 		// Mutate option directly (simulating another worker / admin write).
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'external' => [
 					'url'     => 'https://external.example.com',
@@ -607,9 +607,9 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_max_servers_cap_blocks_101st_add(): void {
-		$reg     = new ServerRegistry();
+		$reg     = new Server_Registry();
 		$option  = [];
-		for ( $i = 0; $i < ServerRegistry::MAX_SERVERS; $i++ ) {
+		for ( $i = 0; $i < Server_Registry::MAX_SERVERS; $i++ ) {
 			$option[ "site-$i" ] = [
 				'url'           => "https://site-$i.example.com",
 				'auth_username' => '',
@@ -618,10 +618,10 @@ class ServerRegistryTest extends TestCase {
 				'logs'          => [ 'firehose.log' ],
 			];
 		}
-		\update_option( ServerRegistry::OPTION_KEY, $option );
+		\update_option( Server_Registry::OPTION_KEY, $option );
 		$reg->reset_cache();
 
-		$this->assertCount( ServerRegistry::MAX_SERVERS, $reg->get_all() );
+		$this->assertCount( Server_Registry::MAX_SERVERS, $reg->get_all() );
 		$ok = $reg->add(
 			'overflow',
 			[
@@ -633,7 +633,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_partial_update_preserves_untouched_fields(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -658,7 +658,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_partial_update_drops_non_whitelisted_keys(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -678,13 +678,13 @@ class ServerRegistryTest extends TestCase {
 		$this->assertTrue( $ok );
 
 		$reg->reset_cache();
-		$opt = \get_option( ServerRegistry::OPTION_KEY );
+		$opt = \get_option( Server_Registry::OPTION_KEY );
 		$this->assertArrayNotHasKey( 'malicious_field', $opt['site-a'] );
 		$this->assertArrayNotHasKey( '__proto__', $opt['site-a'] );
 	}
 
 	public function test_get_enabled_filters_disabled_entries(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'enabled-1',
 			[
@@ -716,7 +716,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_register_overwrites_existing_entry(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register(
 			'site-a',
 			[
@@ -744,7 +744,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_add_returns_false_for_duplicate_id(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -763,17 +763,17 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_remove_returns_false_for_unknown_id(): void {
-		$this->assertFalse( ( new ServerRegistry() )->remove( 'never-existed' ) );
+		$this->assertFalse( ( new Server_Registry() )->remove( 'never-existed' ) );
 	}
 
 	public function test_update_returns_false_for_unknown_id(): void {
 		$this->assertFalse(
-			( new ServerRegistry() )->update( 'never-existed', [ 'enabled' => false ] )
+			( new Server_Registry() )->update( 'never-existed', [ 'enabled' => false ] )
 		);
 	}
 
 	public function test_url_trailing_slash_is_stripped(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -790,7 +790,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_audit_log_emitted_on_add(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -807,7 +807,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_audit_log_emitted_on_update(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -822,7 +822,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_audit_log_emitted_on_remove(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -837,7 +837,7 @@ class ServerRegistryTest extends TestCase {
 
 	public function test_audit_log_includes_user_id_and_timestamp(): void {
 		$GLOBALS['_current_user_id'] = 17;
-		$reg                         = new ServerRegistry();
+		$reg                         = new Server_Registry();
 		$reg->add(
 			'site-z',
 			[
@@ -852,8 +852,8 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_singleton_returns_same_instance(): void {
-		$a = ServerRegistry::get_instance();
-		$b = ServerRegistry::get_instance();
+		$a = Server_Registry::get_instance();
+		$b = Server_Registry::get_instance();
 		$this->assertSame( $a, $b );
 	}
 
@@ -862,7 +862,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_get_servers_is_synonym_of_get_all(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -887,7 +887,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_list_servers_returns_numeric_indexed_with_id_field(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-x',
 			[
@@ -925,7 +925,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_list_servers_returns_empty_array_when_no_servers(): void {
-		$reg  = new ServerRegistry();
+		$reg  = new Server_Registry();
 		$list = $reg->list_servers();
 		$this->assertSame( [], $list );
 	}
@@ -935,7 +935,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_register_creates_new_entry_when_none_exists(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$ok  = $reg->register(
 			'fresh-id',
 			[
@@ -953,15 +953,15 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_register_rejects_invalid_id(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$ok  = $reg->register( 'has spaces', [ 'url' => 'https://a.example.com' ] );
 		$this->assertFalse( $ok );
 	}
 
 	public function test_register_rejects_when_at_capacity_for_new_id(): void {
-		$reg    = new ServerRegistry();
+		$reg    = new Server_Registry();
 		$option = [];
-		for ( $i = 0; $i < ServerRegistry::MAX_SERVERS; $i++ ) {
+		for ( $i = 0; $i < Server_Registry::MAX_SERVERS; $i++ ) {
 			$option[ "site-$i" ] = [
 				'url'           => "https://site-$i.example.com",
 				'auth_username' => '',
@@ -970,7 +970,7 @@ class ServerRegistryTest extends TestCase {
 				'logs'          => [ 'firehose.log' ],
 			];
 		}
-		\update_option( ServerRegistry::OPTION_KEY, $option );
+		\update_option( Server_Registry::OPTION_KEY, $option );
 		$reg->reset_cache();
 
 		// Adding a NEW id when at capacity fails.
@@ -995,7 +995,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_register_rejects_invalid_config(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		// HTTP not allowed.
 		$ok = $reg->register(
 			'bad-config',
@@ -1008,7 +1008,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_register_logs_audit_action(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->register(
 			'auditable',
 			[
@@ -1025,7 +1025,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_add_returns_false_on_validation_failure(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		// Empty array fails the URL check.
 		$this->assertFalse( $reg->add( 'site-a', [] ) );
 		// Non-string URL.
@@ -1033,7 +1033,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_update_returns_false_when_merge_fails_validation(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -1047,12 +1047,12 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_update_returns_false_for_invalid_id_format(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertFalse( $reg->update( 'has spaces', [ 'enabled' => false ] ) );
 	}
 
 	public function test_remove_returns_false_for_invalid_id_format(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertFalse( $reg->remove( 'has spaces' ) );
 	}
 
@@ -1076,9 +1076,9 @@ class ServerRegistryTest extends TestCase {
 		);
 		// Option is absent (get_option returns null when no entry exists for
 		// the key and default is null) — guarantee by setting it to null.
-		\delete_option( ServerRegistry::OPTION_KEY );
+		\delete_option( Server_Registry::OPTION_KEY );
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$all = $reg->get_all();
 		$this->assertArrayHasKey( 'from-file', $all );
 	}
@@ -1097,9 +1097,9 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 		// Hostile option value — string, not array.
-		\update_option( ServerRegistry::OPTION_KEY, 'unexpected-string' );
+		\update_option( Server_Registry::OPTION_KEY, 'unexpected-string' );
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$all = $reg->get_all();
 		// Config defaults still surface; the bogus option is ignored.
 		$this->assertArrayHasKey( 'from-file', $all );
@@ -1108,7 +1108,7 @@ class ServerRegistryTest extends TestCase {
 	public function test_get_all_skips_non_array_entries(): void {
 		// Hand-roll the option with a mix of valid and bogus entries.
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'good' => [
 					'url'           => 'https://good.example.com',
@@ -1121,7 +1121,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$all = $reg->get_all();
 		$this->assertArrayHasKey( 'good', $all );
 		$this->assertArrayNotHasKey( 'bogus', $all );
@@ -1131,7 +1131,7 @@ class ServerRegistryTest extends TestCase {
 		// Config-file entries can be missing keys like 'logs' / 'enabled';
 		// get_all must backfill defaults.
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'minimal' => [
 					'url' => 'https://min.example.com',
@@ -1139,7 +1139,7 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg   = new ServerRegistry();
+		$reg   = new Server_Registry();
 		$entry = $reg->get( 'minimal' );
 		$this->assertNotNull( $entry );
 		$this->assertSame( '', $entry['auth_username'] );
@@ -1153,7 +1153,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_get_returns_null_for_unknown_id(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -1165,7 +1165,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_get_enabled_returns_empty_array_when_all_disabled(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'a',
 			[
@@ -1190,7 +1190,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_reset_cache_nulls_internal_servers_cache(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'a',
 			[
@@ -1201,7 +1201,7 @@ class ServerRegistryTest extends TestCase {
 		// First read populates the cache.
 		$reg->get_all();
 
-		$ref = new \ReflectionProperty( ServerRegistry::class, 'servers' );
+		$ref = new \ReflectionProperty( Server_Registry::class, 'servers' );
 		$ref->setAccessible( true );
 		$this->assertNotNull( $ref->getValue( $reg ), 'servers should be cached after first read' );
 
@@ -1219,7 +1219,7 @@ class ServerRegistryTest extends TestCase {
 		// base64_decode, so legacy plaintext rows surface as empty — the
 		// contract documented for upgrades from pre-encryption rows.
 		\update_option(
-			ServerRegistry::OPTION_KEY,
+			Server_Registry::OPTION_KEY,
 			[
 				'legacy' => [
 					'url'           => 'https://legacy.example.com',
@@ -1231,19 +1231,19 @@ class ServerRegistryTest extends TestCase {
 			]
 		);
 
-		$reg   = new ServerRegistry();
+		$reg   = new Server_Registry();
 		$entry = $reg->get( 'legacy' );
 		$this->assertNotNull( $entry );
 		// Either decrypts to empty (current behaviour) or passes through —
 		// either way it must NEVER expose the original plaintext OR be left
 		// as the encrypted wire-format value.
-		$this->assertStringStartsNotWith( ServerRegistry::ENCRYPTED_PREFIX, $entry['auth_password'] );
+		$this->assertStringStartsNotWith( Server_Registry::ENCRYPTED_PREFIX, $entry['auth_password'] );
 	}
 
 	public function test_encrypt_then_decrypt_round_trip_via_double_validate(): void {
 		// Calling add() twice with an already-encrypted password tests the
 		// "already encrypted" branch in validate_config.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-rt',
 			[
@@ -1251,8 +1251,8 @@ class ServerRegistryTest extends TestCase {
 				'auth_password' => 'secret-roundtrip',
 			]
 		);
-		$raw_after_add = \get_option( ServerRegistry::OPTION_KEY )['site-rt']['auth_password'];
-		$this->assertStringStartsWith( ServerRegistry::ENCRYPTED_PREFIX, $raw_after_add );
+		$raw_after_add = \get_option( Server_Registry::OPTION_KEY )['site-rt']['auth_password'];
+		$this->assertStringStartsWith( Server_Registry::ENCRYPTED_PREFIX, $raw_after_add );
 
 		// Update via the same wire-format value — must verify and round-trip.
 		$reg->reset_cache();
@@ -1267,7 +1267,7 @@ class ServerRegistryTest extends TestCase {
 	public function test_update_with_unverifiable_encrypted_password_clears_it(): void {
 		// Hostile/garbage $enc$ prefix that base64-decodes to junk should
 		// trigger the "decrypts to empty → reject" branch in validate_config.
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'site-a',
 			[
@@ -1277,7 +1277,7 @@ class ServerRegistryTest extends TestCase {
 		);
 
 		// Forge a bogus wire-format value.
-		$bogus_enc = ServerRegistry::ENCRYPTED_PREFIX . \base64_encode( 'too-short-to-have-a-nonce' );
+		$bogus_enc = Server_Registry::ENCRYPTED_PREFIX . \base64_encode( 'too-short-to-have-a-nonce' );
 		$ok        = $reg->update( 'site-a', [ 'auth_password' => $bogus_enc ] );
 		// update should accept the call but stored auth_password should
 		// be cleared to ''.
@@ -1292,7 +1292,7 @@ class ServerRegistryTest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_validate_strips_trailing_slashes_from_url(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$reg->add(
 			'a',
 			[
@@ -1305,7 +1305,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_validate_empty_string_url_rejected(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$this->assertFalse(
 			$reg->add(
 				'a',
@@ -1318,7 +1318,7 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_validate_empty_string_password_skipped(): void {
-		$reg = new ServerRegistry();
+		$reg = new Server_Registry();
 		$ok  = $reg->add(
 			'a',
 			[
@@ -1332,8 +1332,8 @@ class ServerRegistryTest extends TestCase {
 	}
 
 	public function test_constants_have_expected_values(): void {
-		$this->assertSame( 'newspack_event_logger_nodes_aggregator_servers', ServerRegistry::OPTION_KEY );
-		$this->assertSame( 100, ServerRegistry::MAX_SERVERS );
-		$this->assertSame( '$enc$', ServerRegistry::ENCRYPTED_PREFIX );
+		$this->assertSame( 'newspack_event_logger_nodes_aggregator_servers', Server_Registry::OPTION_KEY );
+		$this->assertSame( 100, Server_Registry::MAX_SERVERS );
+		$this->assertSame( '$enc$', Server_Registry::ENCRYPTED_PREFIX );
 	}
 }

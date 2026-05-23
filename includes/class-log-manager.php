@@ -10,8 +10,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Topic;
-use Newspack_Nodes\Partition;
+use Newspack_Nodes\Topic_Node;
+use Newspack_Nodes\Partition_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -23,7 +23,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Singleton that provides the request lifecycle logging API.
  * External plugins (Pyrobase, etc.) use this to log custom events.
  */
-class LogManager {
+class Log_Manager {
 	public $enabled          = false;
 	private $started         = null;
 	private $finished        = false;
@@ -196,13 +196,13 @@ class LogManager {
 		// the same partition so RequestBuilder reconciles cleanly. URL-based
 		// routing split entries when producers disagreed on the URL shape
 		// (LogManager wrote path-only, Gyrobase::Log wrote scheme://host/path).
-		$this->partition_idx = Partition::hash_to_partition( $this->request_id, $num_partitions );
+		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
 		// Pass segment_size/num_segments/max_lifespan from core config to avoid Topic
 		// calling load_config(), which fires option schema filters and re-enters LogManager.
-		$segment_size = (int) ( $config['segment_size'] ?? Partition::DEFAULT_SEGMENT_SIZE );
-		$num_segments = (int) ( $config['num_segments'] ?? Partition::DEFAULT_NUM_SEGMENTS );
-		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition::DEFAULT_MAX_LIFESPAN );
-		$this->topic  = new Topic( $base_dir, $num_partitions, $segment_size, $num_segments, $max_lifespan );
+		$segment_size = (int) ( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
+		$num_segments = (int) ( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
+		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
+		$this->topic  = new Topic_Node( $base_dir, $num_partitions, $segment_size, $num_segments, $max_lifespan );
 	}
 
 	/**
@@ -488,11 +488,11 @@ class LogManager {
 		if ( null === $this->topic ) {
 			return;
 		}
-		$ref_partition_method = new \ReflectionMethod( Topic::class, 'partition' );
+		$ref_partition_method = new \ReflectionMethod( Topic_Node::class, 'partition' );
 		$ref_partition_method->setAccessible( true );
 		$partition = $ref_partition_method->invoke( $this->topic, $this->partition_idx );
 
-		$ref_init = new \ReflectionMethod( Partition::class, 'init_current_segment' );
+		$ref_init = new \ReflectionMethod( Partition_Node::class, 'init_current_segment' );
 		$ref_init->setAccessible( true );
 		$ref_init->invoke( $partition );
 	}

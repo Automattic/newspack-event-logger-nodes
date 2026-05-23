@@ -44,11 +44,11 @@
 namespace Newspack_Event_Logger_Nodes\CLI;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\LruCache;
-use Newspack_Nodes\Consumer;
-use Newspack_Nodes\Partition;
+use Newspack_Event_Logger_Nodes\LRU_Cache;
+use Newspack_Nodes\Consumer_Node;
+use Newspack_Nodes\Partition_Node;
 
-class ReqgrepCommand {
+class Reqgrep_Command {
 
 	/** Maximum lines per in-progress request. */
 	private const MAX_LINES_PER_REQUEST = 20000;
@@ -92,7 +92,7 @@ class ReqgrepCommand {
 	private float $fmt_last_timestamp = 0;
 
 	/** In-flight matched requests. Each value is stdClass {lines:array, bytes:int}. */
-	private ?LruCache $inflight = null;
+	private ?LRU_Cache $inflight = null;
 
 	/** History bucket array. Each bucket is a hashmap rid => string[]. */
 	private array $history = [ [] ];
@@ -216,7 +216,7 @@ class ReqgrepCommand {
 		$this->num_partitions = (int) ( $this->config['num_partitions'] ?? 1 );
 
 		// LruCache: 300 slots, 60s rotation, on-evict prints [incomplete].
-		$this->inflight = ( new LruCache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
+		$this->inflight = ( new LRU_Cache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
 			->with_timed_rotation(
 				self::INFLIGHT_ROTATE_INTERVAL,
 				function ( string $rid, $state ): void {
@@ -448,13 +448,13 @@ class ReqgrepCommand {
 	 * Trailing partial lines are NOT consumed — the caller's next poll will
 	 * pick them up once the writer flushes a newline.
 	 *
-	 * @param Partition $partition Partition instance.
+	 * @param Partition_Node $partition Partition instance.
 	 * @param int       $seg       Segment id.
 	 * @param int       $offset    Start offset within segment.
 	 * @param int       $length    Bytes to read.
 	 * @return int Bytes consumed (offset advance).
 	 */
-	private function stream_segment_lines( Partition $partition, int $seg, int $offset, int $length ): int {
+	private function stream_segment_lines( Partition_Node $partition, int $seg, int $offset, int $length ): int {
 		if ( $length <= 0 ) {
 			return 0;
 		}
@@ -463,7 +463,7 @@ class ReqgrepCommand {
 		// would balloon the CLI process.
 		$consumed = 0;
 		$pending  = '';
-		$max      = Consumer::MAX_POLL_BYTES;
+		$max      = Consumer_Node::MAX_POLL_BYTES;
 		while ( $consumed < $length ) {
 			$want  = \min( $max, $length - $consumed );
 			$bytes = $partition->read_at( $seg, $offset + $consumed, $want );
@@ -486,11 +486,11 @@ class ReqgrepCommand {
 	 * Lazily resolve a Partition for a given partition index.
 	 *
 	 * @param int $partition Partition index.
-	 * @return Partition
+	 * @return Partition_Node
 	 */
-	private function get_partition( int $partition ): Partition {
+	private function get_partition( int $partition ): Partition_Node {
 		if ( ! isset( $this->partition_cache[ $partition ] ) ) {
-			$this->partition_cache[ $partition ] = new Partition( $this->base_dir, $partition );
+			$this->partition_cache[ $partition ] = new Partition_Node( $this->base_dir, $partition );
 		}
 		return $this->partition_cache[ $partition ];
 	}
