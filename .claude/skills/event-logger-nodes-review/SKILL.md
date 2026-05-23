@@ -77,7 +77,7 @@ A diff that introduces running-mean storage (the EMA we explicitly fixed) regres
 
 ### 10. Application Node subclasses register with CommandInterpreter
 
-The plugin's main file calls `\Newspack_Nodes\CommandInterpreter::register_class('FlameBuilder', \Newspack_Event_Logger_Nodes\FlameBuilder::class)` etc. for FlameBuilder, JobRouter, JobWorker, RequestBuilder, StreamMerger.
+The plugin's main file calls `\Newspack_Nodes\Command_Interpreter_Node::register_namespace('Newspack_Event_Logger_Nodes\\')` (+ the `App\` sub-namespace). `make_node Flame_Builder` then resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix; there's no per-class registration to keep in sync.
 
 A new application node subclass MUST register itself the same way; otherwise topology PHP can't construct it via `$interpreter->make_node('Foo', 'foo')`.
 
