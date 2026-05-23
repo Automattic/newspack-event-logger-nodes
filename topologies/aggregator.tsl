@@ -14,7 +14,7 @@
 
 make_node Topic firehose:topic <config:logs_dir>/firehose.log <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
 
-make_node StreamMerger stream-merger firehose <partition>
+make_node Stream_Merger stream-merger firehose <partition>
 connect_node stream-merger firehose:topic
 cmd stream-merger:config set_verify_ssl <config:aggregator_verify_ssl>
 cmd stream-merger:config set_require_https <config:aggregator_require_https>

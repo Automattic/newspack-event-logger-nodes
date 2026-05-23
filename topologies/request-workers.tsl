@@ -8,7 +8,7 @@ make_node Partition flames:partition <config:logs_dir>/flames.log <partition> <c
 cmd flames:partition:config allow_large_writes
 cmd flames:partition:config with_index flame-index
 
-make_node FlameBuilder flame-builder
+make_node Flame_Builder flame-builder
 connect_node flame-builder flames:partition
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_is_hub <config:is_hub>

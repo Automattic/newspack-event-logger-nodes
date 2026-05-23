@@ -10,7 +10,7 @@ use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -123,7 +123,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_processes_sse_data_lines(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		// Two back-to-back `entry` events should produce two TM_STRUCT
@@ -141,7 +141,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_handles_partial_chunk_across_calls(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$frame = $this->entry_frame( [ 'k' => 'split' ] );
@@ -172,7 +172,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$sm->process_sse_chunk( $this->entry_frame( [ 'k' => 'job', 'handler' => 'x' ] ) );
@@ -209,7 +209,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteR', 'http://siteR.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteR' );
@@ -235,7 +235,7 @@ class StreamMergerTest extends TestCase {
 		// path that emits the canonical 3-arg signature. Drive it via add_remote
 		// + a dispatched `entry` event so the filter sees the production shape.
 		$sm = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		// HTTPS is required for real registration; add_remote with explicit URL
 		// tolerates http via require_https=false (set by make_merger).
@@ -261,7 +261,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_multiline_data_concatenated_with_newline(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		// Two `data:` lines under one event must concatenate with "\n".
@@ -297,7 +297,7 @@ class StreamMergerTest extends TestCase {
 		// Connected captures slot and doesn't sink; entries sink with
 		// `_source` stamped; envelope IDs advance the resume cursor.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteA', 'http://siteA.test/', 'tok' );
 
@@ -550,7 +550,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_oversized_entry_is_dropped_pre_filter(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteH', 'http://siteH.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteH' );
@@ -575,7 +575,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteI', 'http://siteI.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteI' );
@@ -599,7 +599,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteJ', 'http://siteJ.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteJ' );
@@ -620,7 +620,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteK', 'http://siteK.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteK' );
@@ -917,7 +917,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_sse_comment_lines_ignored(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		// Lines starting with `:` are SSE comments — must be ignored entirely.
@@ -928,7 +928,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_sse_lines_without_colon_ignored(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		// Lines without a colon are skipped (they aren't valid SSE field lines).
@@ -943,7 +943,7 @@ class StreamMergerTest extends TestCase {
 		// canonical `event: msg\ndata: ...\n\n` frame and then strip the spaces
 		// so this test stays focused on the SSE field-without-space parse path.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$wire = $this->entry_frame( [ 'k' => 'nospace', 'ts' => 1700000000 ] );
@@ -957,7 +957,7 @@ class StreamMergerTest extends TestCase {
 		// `id:`, `retry:`, and other non-`event/data` fields are silently dropped
 		// per the parser's switch fall-through.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$sm->process_sse_chunk( "id: 123\nretry: 5000\n" . $this->entry_frame( [ 'k' => 'surfaced' ] ) );
@@ -968,7 +968,7 @@ class StreamMergerTest extends TestCase {
 	public function test_sse_carriage_return_stripped_before_newline(): void {
 		// Real SSE streams use `\r\n` line endings; the parser must strip the `\r`.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$wire = $this->entry_frame( [ 'k' => 'crlf', 'ts' => 1700000000 ] );
@@ -981,7 +981,7 @@ class StreamMergerTest extends TestCase {
 	public function test_empty_data_block_dropped_at_test_path(): void {
 		// `\n\n` with no preceding event/data — empty heartbeat-comment, drop.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$sm->process_sse_chunk( "\n\n" );
@@ -992,7 +992,7 @@ class StreamMergerTest extends TestCase {
 		// Real remote: blank-line dispatch with type='' is filtered out at the
 		// real-remote path (only test path forwards typeless events).
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteEmpty', 'http://siteEmpty.test/', 'tok' );
 		$handle = $sm->test_get_handle( 'siteEmpty' );
@@ -1276,7 +1276,7 @@ class StreamMergerTest extends TestCase {
 		// firehose SSE controller back-fills entry['rid'] from the source
 		// Message::KEY, so this works for any well-formed spoke entry.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteKey', 'http://siteKey.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteKey' );
@@ -1294,7 +1294,7 @@ class StreamMergerTest extends TestCase {
 		// is a malformed remote payload. Forward anyway with empty KEY so
 		// it lands on partition 0 instead of getting dropped silently.)
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteNoRid', 'http://siteNoRid.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteNoRid' );
@@ -1307,7 +1307,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_forward_entry_stamps_from_node_name(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteFrom', 'http://siteFrom.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteFrom' );
@@ -1395,7 +1395,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_fill_increments_counter_and_passes_through(): void {
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$msg = Message::new_message();
@@ -1430,7 +1430,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteNonString', 'http://siteNonString.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteNonString' );
@@ -1447,7 +1447,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteFalse', 'http://siteFalse.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteFalse' );
@@ -1464,7 +1464,7 @@ class StreamMergerTest extends TestCase {
 		} );
 
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteEmpty', 'http://siteEmpty.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteEmpty' );
@@ -1883,7 +1883,7 @@ class StreamMergerTest extends TestCase {
 		// payload shape (count + per-remote status snapshots) matches what
 		// dashboards/`GET_REMOTES` consumers expect.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 		$sm->add_remote( 'siteReqA', 'http://siteReqA.test/', 'tok' );
 		$sm->add_remote( 'siteReqB', 'http://siteReqB.test/', 'tok' );
@@ -1927,7 +1927,7 @@ class StreamMergerTest extends TestCase {
 	public function test_fill_with_tm_request_unknown_verb_replies_with_error_payload(): void {
 		// Any verb other than GET_REMOTES drops into the error-payload branch.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$req                   = Message::new_message();
@@ -1949,7 +1949,7 @@ class StreamMergerTest extends TestCase {
 		// TM_REQUEST gate and falls through to the sink pass-through. Verify
 		// it's forwarded untouched (counter increments, sink sees the VALUE).
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$msg                   = Message::new_message();
@@ -1990,7 +1990,7 @@ class StreamMergerTest extends TestCase {
 		// TM_INFO with a KEY other than 'TIMER' must NOT trigger tick(); it
 		// falls through to the sink pass-through.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$msg                   = Message::new_message();
@@ -2323,7 +2323,7 @@ class StreamMergerTest extends TestCase {
 	public function test_fill_with_unknown_tm_request_verb_replies_with_error(): void {
 		// fill() with TM_REQUEST and an unknown verb produces an error reply.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$req                   = Message::new_message();
@@ -2343,7 +2343,7 @@ class StreamMergerTest extends TestCase {
 	public function test_fill_get_remotes_with_zero_remotes_returns_count_zero(): void {
 		// GET_REMOTES on an empty merger replies with `count: 0` + empty `remotes`.
 		$sm      = $this->make_merger();
-		$capture = new CaptureSink();
+		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
 		$req                   = Message::new_message();

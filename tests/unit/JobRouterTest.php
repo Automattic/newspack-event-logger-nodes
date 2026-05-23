@@ -4,7 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -13,20 +13,20 @@ use PHPUnit\Framework\Attributes\CoversClass;
  * and forwards via parent::fill to its target (jobs:partition in topology).
  * It never dispatches handlers itself; that's JobWorker's job.
  *
- * These tests sink JobRouter into a CaptureSink so we can assert what came
+ * These tests sink JobRouter into a Capture_Sink_Node so we can assert what came
  * out, then walk through the matrix of source × kind × validity.
  */
 #[CoversClass( Job_Router_Node::class )]
 class JobRouterTest extends TestCase {
 
 	private Job_Router_Node $jr;
-	private CaptureSink $sink;
+	private Capture_Sink_Node $sink;
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->jr = new Job_Router_Node();
 		$this->jr->name( 'job-router' );
-		$this->sink = new CaptureSink();
+		$this->sink = new Capture_Sink_Node();
 		$this->jr->sink( $this->sink );
 	}
 

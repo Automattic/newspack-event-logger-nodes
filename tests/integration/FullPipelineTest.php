@@ -12,7 +12,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tee_Node;
-use Newspack_Nodes\Tests\CaptureSink;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use Newspack_Nodes\Topic_Node;
 
@@ -93,7 +93,7 @@ class FullPipelineTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$rb->sink( $fb );
 
-		$flame_capture = new CaptureSink();
+		$flame_capture = new Capture_Sink_Node();
 		$fb->sink( $flame_capture );
 		$fb->connect_node( 'flames:partition' );
 
