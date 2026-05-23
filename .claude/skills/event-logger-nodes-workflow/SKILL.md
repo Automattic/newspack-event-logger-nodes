@@ -56,8 +56,8 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 
 #### Adding an application Node subclass
 
-1. Create `includes/class-{name}.php` extending `\Newspack_Nodes\Node`. Override `fill()`.
-2. Register in `newspack-event-logger-nodes.php` via `\Newspack_Nodes\CommandInterpreter::register_class('Foo', \Newspack_Event_Logger_Nodes\Foo::class)` so topology PHP can construct via `$interpreter->make_node('Foo', 'foo')`.
+1. Create `includes/class-{name}.php` with `class Foo_Node extends \Newspack_Nodes\Node` (every node class ends in `_Node`; shell-name = class minus `_Node`). Override `fill()`.
+2. **No registration** — the plugin registers the `Newspack_Event_Logger_Nodes\` namespace once, so `make_node('Foo')` resolves `\Newspack_Event_Logger_Nodes\Foo_Node` and the palette scans the classmap. Just `composer dump-autoload -o` after adding the file.
 3. Topology PHP wires it: `$interpreter->make_node('Foo', 'foo'); $foo->connect_node('next-step');`.
 
 #### Adding a CLI command (`wp nodes <verb>`)
@@ -126,7 +126,7 @@ For job handler changes: queue a job (via the legitimate caller), wait, check `w
 - **`outputs` (plural) for log reader registration**, not `output` (singular). Easy typo, silent failure.
 - **Memcache is required** for the application — Stats_Store, slot rate limiting, stats aggregator, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards).
 - **Salt rotation orphans keys but doesn't flush them** — workers keep writing to the OLD salt until they respawn. After `Stats_Store::flush_all()`, restart workers to take effect immediately.
-- **Application classes ARE registered** in `CommandInterpreter::$class_map` (RequestBuilder, FlameBuilder, JobRouter, JobWorker, StreamMerger). Topology files use `$interpreter->make_node(...)` — the registry path.
+- **Application nodes resolve by namespace prefix** (no registry): `make_node('Flame_Builder')` → `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` via the registered `Newspack_Event_Logger_Nodes\` prefix. Topology files use `$interpreter->make_node(...)`; the `.tsl` shell-name is the class minus `_Node` (`make_node Flame_Builder`, `Job_Router`, `Request_Builder`, …).
 
 ## After You Land
 
