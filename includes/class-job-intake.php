@@ -17,7 +17,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Partition;
+use Newspack_Nodes\Partition_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -26,7 +26,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Job Intake class.
  */
-class JobIntake {
+class Job_Intake {
 
 	/**
 	 * Valid handler name pattern (must match JobRouter and JobWorker).
@@ -62,7 +62,7 @@ class JobIntake {
 	/**
 	 * Partition instances for each partition index.
 	 *
-	 * @var array<int, Partition>
+	 * @var array<int, Partition_Node>
 	 */
 	private array $partitions = [];
 
@@ -119,7 +119,7 @@ class JobIntake {
 	 * `allow_large_writes()` call acquires the partition's write lock — blocks
 	 * up to ~65s on a respawn race, throws on a genuine concurrent writer.
 	 */
-	private function partition_handle( int $partition ): Partition {
+	private function partition_handle( int $partition ): Partition_Node {
 		if ( isset( $this->partitions[ $partition ] ) ) {
 			return $this->partitions[ $partition ];
 		}
@@ -128,7 +128,7 @@ class JobIntake {
 		// instantiated mid-process (e.g. during tests, or after a close) doesn't
 		// clash with stale Core registrations from the previous instance.
 		$instance_token = \getmypid() . '-' . \spl_object_id( $this );
-		$p              = new Partition( $log_base, $partition );
+		$p              = new Partition_Node( $log_base, $partition );
 		$p->name( "jobintake.{$instance_token}.p{$partition}" );
 		$p->allow_large_writes();
 		$this->partitions[ $partition ] = $p;
@@ -158,7 +158,7 @@ class JobIntake {
 		if ( null !== $this->pinned_partition ) {
 			$partition = $this->pinned_partition;
 		} elseif ( null !== $key && '' !== $key ) {
-			$partition = Partition::hash_to_partition( $key, $this->num_partitions );
+			$partition = Partition_Node::hash_to_partition( $key, $this->num_partitions );
 		} else {
 			$partition         = self::$round_robin % $this->num_partitions;
 			self::$round_robin = ( self::$round_robin + 1 ) % \PHP_INT_MAX;

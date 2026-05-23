@@ -16,7 +16,7 @@ namespace Newspack_Event_Logger_Nodes\Rest;
 
 use Newspack_Nodes\Core;
 
-abstract class PerformanceControllerBase {
+abstract class Performance_Controller_Base {
 	/**
 	 * Default rate limit window (seconds). Subclasses can override at the call site.
 	 */

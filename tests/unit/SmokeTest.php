@@ -6,7 +6,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 class SmokeTest extends TestCase {
 	public function test_runtime_loaded(): void {
 		$this->assertTrue( \class_exists( '\Newspack_Nodes\Node' ) );
-		$this->assertTrue( \class_exists( '\Newspack_Nodes\Topic' ) );
+		$this->assertTrue( \class_exists( '\Newspack_Nodes\Topic_Node' ) );
 	}
 
 	public function test_app_constants_defined(): void {

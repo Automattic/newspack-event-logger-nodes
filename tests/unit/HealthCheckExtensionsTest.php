@@ -2,32 +2,32 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\HealthCheckExtensions;
-use Newspack_Event_Logger_Nodes\SettingsSync;
+use Newspack_Event_Logger_Nodes\Health_Check_Extensions;
+use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( HealthCheckExtensions::class )]
+#[CoversClass( Health_Check_Extensions::class )]
 class HealthCheckExtensionsTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_options'] = [];
 		$GLOBALS['_wp_actions'] = [];
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		if ( \class_exists( Config::class ) ) {
 			Config::reset();
 		}
 	}
 
 	public function test_max_events_constant(): void {
-		$ref = new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' );
+		$ref = new \ReflectionClassConstant( Health_Check_Extensions::class, 'MAX_EVENTS' );
 		$this->assertSame( 10000, $ref->getValue() );
 	}
 
 	public function test_process_discovery_merges_remote_hooks_into_log_events(): void {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'wp_loaded' ];
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'registered_hooks' => [ 'wp_loaded', 'init', 'wp_footer' ],
 			],
@@ -47,7 +47,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']    = [ 'init' ];
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] = [ 'my_custom' => true ];
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'registered_hooks' => [ 'init', 'my_custom', 'wp_footer' ],
 			],
@@ -60,7 +60,7 @@ class HealthCheckExtensionsTest extends TestCase {
 	}
 
 	public function test_process_discovery_merges_custom_events_into_discovered(): void {
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'custom_events' => [ 'event_alpha', 'event_beta' ],
 			],
@@ -79,7 +79,7 @@ class HealthCheckExtensionsTest extends TestCase {
 
 	public function test_process_discovery_sanitizes_remote_strings(): void {
 		// Control characters in the remote payload must be stripped.
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'malicious-site' => [
 				'registered_hooks' => [ "init\x00bad", "valid_hook\nwith newline" ],
 			],
@@ -93,7 +93,7 @@ class HealthCheckExtensionsTest extends TestCase {
 	}
 
 	public function test_process_discovery_skips_non_string_hooks(): void {
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'registered_hooks' => [ 'valid', 123, [ 'nested' ], null, '' ],
 			],
@@ -109,13 +109,13 @@ class HealthCheckExtensionsTest extends TestCase {
 	}
 
 	public function test_process_discovery_caps_events_at_max(): void {
-		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
+		$max_events = ( new \ReflectionClassConstant( Health_Check_Extensions::class, 'MAX_EVENTS' ) )->getValue();
 		// Build an oversized payload — must be capped at MAX_EVENTS=10000.
 		$huge = [];
 		for ( $i = 0; $i < $max_events + 100; $i++ ) {
 			$huge[] = "event_{$i}";
 		}
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'registered_hooks' => $huge,
 			],
@@ -126,7 +126,7 @@ class HealthCheckExtensionsTest extends TestCase {
 	}
 
 	public function test_process_discovery_caps_existing_at_max_when_merging(): void {
-		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
+		$max_events = ( new \ReflectionClassConstant( Health_Check_Extensions::class, 'MAX_EVENTS' ) )->getValue();
 		// Existing already at max — adding more should be a no-op (the merge
 		// breaks once the cap is hit, so the existing list stays intact).
 		$existing = [];
@@ -135,7 +135,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		}
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = $existing;
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'registered_hooks' => [ 'new_one' ] ],
 		] );
 
@@ -145,7 +145,7 @@ class HealthCheckExtensionsTest extends TestCase {
 
 	public function test_process_discovery_handles_missing_keys(): void {
 		// Server with no registered_hooks / custom_events at all — must not crash.
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'lag' => 100 ],
 		] );
 
@@ -155,7 +155,7 @@ class HealthCheckExtensionsTest extends TestCase {
 
 	public function test_process_discovery_handles_non_array_data_per_server(): void {
 		// Hostile payload — non-array values for a server. Must skip and not crash.
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => 'not an array',
 			'site-b' => 42,
 			'site-c' => null,
@@ -167,14 +167,14 @@ class HealthCheckExtensionsTest extends TestCase {
 		// Call process_discovery and assert the static guard is OFF after the
 		// merge — i.e., the finally block restored it. (It's set TRUE during
 		// update_option but cleared by the time we get back.)
-		$this->assertFalse( SettingsSync::is_sync_suppressed() );
+		$this->assertFalse( Settings_Sync::is_sync_suppressed() );
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'registered_hooks' => [ 'init' ] ],
 		] );
 
 		$this->assertFalse(
-			SettingsSync::is_sync_suppressed(),
+			Settings_Sync::is_sync_suppressed(),
 			'suppress_sync must be cleared in the finally block after the merge'
 		);
 	}
@@ -187,7 +187,7 @@ class HealthCheckExtensionsTest extends TestCase {
 			'wp_loaded' => true,
 		];
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'registered_hooks' => [ 'wp_footer' ] ],
 		] );
 
@@ -199,7 +199,7 @@ class HealthCheckExtensionsTest extends TestCase {
 
 	public function test_process_discovery_skips_when_no_hooks_or_events(): void {
 		// Empty payload — neither merge_hooks nor merge_events should write.
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'registered_hooks' => [],
 				'custom_events'    => [],
@@ -212,7 +212,7 @@ class HealthCheckExtensionsTest extends TestCase {
 	public function test_process_discovery_does_not_duplicate_existing_hooks(): void {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'wp_loaded' ];
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'registered_hooks' => [ 'init', 'wp_loaded', 'init' ] ],
 		] );
 
@@ -229,13 +229,13 @@ class HealthCheckExtensionsTest extends TestCase {
 		// Existing test caps hooks; this one drives the parallel branch for
 		// custom_events. Push a payload larger than MAX_EVENTS through the
 		// custom_events path and assert the merged result is bounded.
-		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
+		$max_events = ( new \ReflectionClassConstant( Health_Check_Extensions::class, 'MAX_EVENTS' ) )->getValue();
 		$huge = [];
 		for ( $i = 0; $i < $max_events + 25; $i++ ) {
 			$huge[] = "evt_{$i}";
 		}
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'custom_events' => $huge ],
 		] );
 
@@ -248,7 +248,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		// as `[]` so the merge proceeds cleanly.
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = 'not-an-array';
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'registered_hooks' => [ 'init' ] ],
 		] );
 
@@ -266,7 +266,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] = 42;
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']    = [];
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'registered_hooks' => [ 'init', 'my_custom' ] ],
 		] );
 
@@ -286,7 +286,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		];
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']    = [];
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [
 				'registered_hooks' => [ 'init', 'event_alpha', 'event_beta', 'wp_footer' ],
 			],
@@ -307,7 +307,7 @@ class HealthCheckExtensionsTest extends TestCase {
 		// merging custom_events.
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] = 'bogus';
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'custom_events' => [ 'event_alpha' ] ],
 		] );
 
@@ -319,14 +319,14 @@ class HealthCheckExtensionsTest extends TestCase {
 	public function test_merge_events_breaks_when_existing_at_max_cap(): void {
 		// discovered already at MAX_EVENTS — adding more must hit the
 		// `break;` and leave the existing list at exactly MAX_EVENTS.
-		$max_events = ( new \ReflectionClassConstant( HealthCheckExtensions::class, 'MAX_EVENTS' ) )->getValue();
+		$max_events = ( new \ReflectionClassConstant( Health_Check_Extensions::class, 'MAX_EVENTS' ) )->getValue();
 		$existing = [];
 		for ( $i = 0; $i < $max_events; $i++ ) {
 			$existing[ "existing_{$i}" ] = true;
 		}
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] = $existing;
 
-		HealthCheckExtensions::process_discovery( [
+		Health_Check_Extensions::process_discovery( [
 			'site-a' => [ 'custom_events' => [ 'overflow_one', 'overflow_two' ] ],
 		] );
 

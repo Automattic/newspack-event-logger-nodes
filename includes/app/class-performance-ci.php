@@ -37,21 +37,21 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
-use Newspack_Event_Logger_Nodes\FlameBuilder;
-use Newspack_Event_Logger_Nodes\HookCategorizer;
-use Newspack_Event_Logger_Nodes\RequestBuilder;
-use Newspack_Event_Logger_Nodes\SettingsSync;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Partition;
-use Newspack_Nodes\Service_CI;
+use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Performance_CI extends Service_CI {
+class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Hard cap on .idx entries scanned per disk-walking verb. Matches the
@@ -165,7 +165,7 @@ class Performance_CI extends Service_CI {
 	 */
 	private function verb_table(): array {
 		return [
-			'overview'       => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'overview'       => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Optional args mirror the legacy PerfOverviewController query
@@ -209,7 +209,7 @@ class Performance_CI extends Service_CI {
 
 				return $payload;
 			},
-			'urls'           => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'urls'           => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -260,7 +260,7 @@ class Performance_CI extends Service_CI {
 					'offset' => $offset,
 				];
 			},
-			'url_detail'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'url_detail'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -321,7 +321,7 @@ class Performance_CI extends Service_CI {
 
 				return $payload;
 			},
-			'request_search' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'request_search' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -348,7 +348,7 @@ class Performance_CI extends Service_CI {
 
 				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 			},
-			'request_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'request_detail' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -373,7 +373,7 @@ class Performance_CI extends Service_CI {
 				}
 				return $result;
 			},
-			'timing'         => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'timing'         => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_timing — merged
@@ -384,7 +384,7 @@ class Performance_CI extends Service_CI {
 					'time_series' => self::merge_hourly_across_partitions(),
 				];
 			},
-			'dashboard'      => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'dashboard'      => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_dashboard:
@@ -397,35 +397,35 @@ class Performance_CI extends Service_CI {
 					'urls'     => $index,
 				];
 			},
-			'hooks_registered' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'hooks_registered' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_registered_hooks.
 				// The legacy controller also returned `total_hooks` as the sum
 				// of all category buckets; recomputing here keeps the contract
 				// identical without trusting the categorizer to sum for us.
-				$by_category = HookCategorizer::get_registered_hooks_by_category();
+				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 				$total       = 0;
 				foreach ( $by_category as $list ) {
 					$total += \is_array( $list ) ? \count( $list ) : 0;
 				}
 				return [
 					'total_hooks'       => $total,
-					'categories'        => HookCategorizer::get_categories(),
+					'categories'        => Hook_Categorizer::get_categories(),
 					'hooks_by_category' => $by_category,
 				];
 			},
-			'hooks_categories' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'hooks_categories' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_hook_categories
 				// — same shape the React tree consumes.
 				return [
-					'categories' => HookCategorizer::get_categories(),
-					'config'     => HookCategorizer::get_merged_config(),
+					'categories' => Hook_Categorizer::get_categories(),
+					'config'     => Hook_Categorizer::get_merged_config(),
 				];
 			},
-			'hooks_available' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'hooks_available' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
@@ -438,7 +438,7 @@ class Performance_CI extends Service_CI {
 					'hooks' => self::collect_available_hooks(),
 				];
 			},
-			'hooks_configure' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'hooks_configure' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded       = \is_array( $payload ) ? $payload : [];
@@ -478,7 +478,7 @@ class Performance_CI extends Service_CI {
 					'hooks_configured' => $configured,
 				];
 			},
-			'config_get'     => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'config_get'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::get_config, with one
@@ -503,7 +503,7 @@ class Performance_CI extends Service_CI {
 					],
 				];
 			},
-			'config_update'  => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'config_update'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::update_config — the
@@ -534,7 +534,7 @@ class Performance_CI extends Service_CI {
 					'updated' => $updated,
 				];
 			},
-			'settings_update' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'settings_update' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfSettingsController::update_setting —
@@ -563,11 +563,11 @@ class Performance_CI extends Service_CI {
 				// (Config::autoload_for): hot-path scalars autoloaded, large
 				// list options (log_events / custom_events) kept off the
 				// per-request alloptions blob.
-				SettingsSync::suppress_sync( true );
+				Settings_Sync::suppress_sync( true );
 				try {
 					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				} finally {
-					SettingsSync::suppress_sync( false );
+					Settings_Sync::suppress_sync( false );
 				}
 
 				AppConfig::reset();
@@ -577,7 +577,7 @@ class Performance_CI extends Service_CI {
 					'updated' => (bool) $ok,
 				];
 			},
-			'gyroscope_timeline' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'gyroscope_timeline' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy GyroscopeController::get_timeline.
@@ -606,7 +606,7 @@ class Performance_CI extends Service_CI {
 					'meta' => [ 'scanned' => $scanned ],
 				];
 			},
-			'request_log_list'   => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'request_log_list'   => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_list.
@@ -630,7 +630,7 @@ class Performance_CI extends Service_CI {
 					],
 				];
 			},
-			'request_log_detail' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'request_log_detail' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_detail.
@@ -823,12 +823,12 @@ class Performance_CI extends Service_CI {
 		if ( isset( $wp_actions ) && \is_array( $wp_actions ) ) {
 			foreach ( $wp_actions as $hook_name => $count ) {
 				$name = (string) $hook_name;
-				if ( HookCategorizer::is_internal( $name ) ) {
+				if ( Hook_Categorizer::is_internal( $name ) ) {
 					continue;
 				}
 				$hooks[ $name ] = [
 					'name'     => $name,
-					'category' => HookCategorizer::categorize( $name ),
+					'category' => Hook_Categorizer::categorize( $name ),
 					'count'    => (int) $count,
 				];
 			}
@@ -837,14 +837,14 @@ class Performance_CI extends Service_CI {
 		if ( isset( $wp_filter ) && ( \is_array( $wp_filter ) || $wp_filter instanceof \Traversable ) ) {
 			foreach ( $wp_filter as $hook_name => $callbacks ) {
 				$name = (string) $hook_name;
-				if ( HookCategorizer::is_internal( $name ) ) {
+				if ( Hook_Categorizer::is_internal( $name ) ) {
 					continue;
 				}
 				// $wp_actions count takes precedence — only add if missing.
 				if ( ! isset( $hooks[ $name ] ) ) {
 					$hooks[ $name ] = [
 						'name'     => $name,
-						'category' => HookCategorizer::categorize( $name ),
+						'category' => Hook_Categorizer::categorize( $name ),
 						'count'    => 0,
 					];
 				}
@@ -1319,8 +1319,8 @@ class Performance_CI extends Service_CI {
 		$requests      = [];
 		$entries_count = 0;
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
-				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$partition->scan_index(
 				static function ( string $line, int $segment_id ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
@@ -1328,7 +1328,7 @@ class Performance_CI extends Service_CI {
 					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
 						return false;
 					}
-					$entry = RequestBuilder::parse_request_index( $line );
+					$entry = Request_Builder_Node::parse_request_index( $line );
 					if ( ! \is_array( $entry ) || \trim( (string) $entry['url_hash'] ) !== $url_hash ) {
 						return null;
 					}
@@ -1375,8 +1375,8 @@ class Performance_CI extends Service_CI {
 	 */
 	private static function find_request_index_entry( string $log_base, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
-		$requests = ( new Partition( "{$log_base}/requests.log", $partition ) )->with_index(
-			static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+		$requests = ( new Partition_Node( "{$log_base}/requests.log", $partition ) )->with_index(
+			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 		);
 		$requests->scan_index(
 			static function ( string $line ) use ( &$result, &$entries_count, $partition, $rid ): ?bool {
@@ -1384,7 +1384,7 @@ class Performance_CI extends Service_CI {
 				if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
 					return false;
 				}
-				$entry = RequestBuilder::parse_request_index( $line );
+				$entry = Request_Builder_Node::parse_request_index( $line );
 				if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
 					return null;
 				}
@@ -1408,8 +1408,8 @@ class Performance_CI extends Service_CI {
 	private static function find_request_in_partition( string $log_base, int $partition, string $rid, int $num_partitions ): ?array {
 		$result        = null;
 		$entries_count = 0;
-		$requests      = ( new Partition( "{$log_base}/requests.log", $partition ) )->with_index(
-			static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+		$requests      = ( new Partition_Node( "{$log_base}/requests.log", $partition ) )->with_index(
+			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 		);
 		$requests->scan_index(
 			static function ( string $line ) use ( &$result, &$entries_count, $requests, $rid ): ?bool {
@@ -1417,7 +1417,7 @@ class Performance_CI extends Service_CI {
 				if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
 					return false;
 				}
-				$entry = RequestBuilder::parse_request_index( $line );
+				$entry = Request_Builder_Node::parse_request_index( $line );
 				if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
 					return null;
 				}
@@ -1470,8 +1470,8 @@ class Performance_CI extends Service_CI {
 		$scanned = 0;
 
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
-				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$found     = false;
 			$partition->scan_index(
@@ -1480,7 +1480,7 @@ class Performance_CI extends Service_CI {
 					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
 						return false;
 					}
-					$entry = RequestBuilder::parse_request_index( $line );
+					$entry = Request_Builder_Node::parse_request_index( $line );
 					if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
 						return null;
 					}
@@ -1534,8 +1534,8 @@ class Performance_CI extends Service_CI {
 		$scanned = 0;
 
 		for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
-			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
-				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$partition->scan_index(
 				static function ( string $line ) use ( &$entries, &$scanned, $limit, $p ): ?bool {
@@ -1546,7 +1546,7 @@ class Performance_CI extends Service_CI {
 					if ( \count( $entries ) >= $limit ) {
 						return false;
 					}
-					$parsed = RequestBuilder::parse_request_index( $line );
+					$parsed = Request_Builder_Node::parse_request_index( $line );
 					if ( ! \is_array( $parsed ) ) {
 						return null;
 					}
@@ -1587,8 +1587,8 @@ class Performance_CI extends Service_CI {
 		$scanned = 0;
 
 		for ( $p = 0; $p < $num_partitions && null === $result; $p++ ) {
-			$partition = ( new Partition( "{$log_base}/requests.log", $p ) )->with_index(
-				static fn ( $line, $position, &$data = null ) => RequestBuilder::format_index_entry( $line, $position, $data )
+			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$partition->scan_index(
 				static function ( string $line ) use ( &$result, &$scanned, $partition, $rid, $p ): ?bool {
@@ -1596,7 +1596,7 @@ class Performance_CI extends Service_CI {
 					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
 						return false;
 					}
-					$entry = RequestBuilder::parse_request_index( $line );
+					$entry = Request_Builder_Node::parse_request_index( $line );
 					if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
 						return null;
 					}
@@ -1631,8 +1631,8 @@ class Performance_CI extends Service_CI {
 	private static function find_flame_for_rid( string $log_base, string $rid, int $num_partitions ): ?array {
 		$entries_count = 0;
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$flames = ( new Partition( "{$log_base}/flames.log", $p ) )->with_index(
-				static fn ( $line, $position, &$data = null ) => FlameBuilder::format_index_entry( $line, $position, $data )
+			$flames = ( new Partition_Node( "{$log_base}/flames.log", $p ) )->with_index(
+				static fn ( $line, $position, &$data = null ) => Flame_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$result = null;
 			$flames->scan_index(
@@ -1641,7 +1641,7 @@ class Performance_CI extends Service_CI {
 					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
 						return false;
 					}
-					$entry = FlameBuilder::parse_flame_index( $line );
+					$entry = Flame_Builder_Node::parse_flame_index( $line );
 					if ( ! \is_array( $entry ) || \trim( $entry['rid'] ) !== $rid ) {
 						return null;
 					}

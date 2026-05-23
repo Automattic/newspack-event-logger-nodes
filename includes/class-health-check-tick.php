@@ -30,7 +30,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -40,7 +40,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class HealthCheckTick extends Node {
+class Health_Check_Tick_Node extends Node {
 
 	/**
 	 * Minimum seconds between consecutive sweeps. Matches legacy
@@ -56,7 +56,7 @@ class HealthCheckTick extends Node {
 		// Sibling CommandInterpreter — TSL aggregator topology
 		// invokes `cmd health-check-tick:config start_periodic_tick`
 		// to register with _router's TIMER event.
-		$ci = new CommandInterpreter();
+		$ci = new Command_Interpreter_Node();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
@@ -107,7 +107,7 @@ class HealthCheckTick extends Node {
 		// read and never reloads, so an operator enabling a spoke
 		// AFTER this worker spawned would otherwise be invisible
 		// until the worker's ~595s respawn. Reset before re-reading.
-		$registry = ServerRegistry::get_instance();
+		$registry = Server_Registry::get_instance();
 		$registry->reset_cache();
 
 		if ( empty( $registry->get_enabled() ) ) {
@@ -120,9 +120,9 @@ class HealthCheckTick extends Node {
 		// so the parent LogManager is disabled. begin_job_context suspends
 		// it, swaps REQUEST_URI to /jobs/health-check-tick, and the fresh
 		// LogManager built on first instance() call is enabled.
-		$orig_server = JobWorker::begin_job_context( 'health-check-tick' );
+		$orig_server = Job_Worker_Node::begin_job_context( 'health-check-tick' );
 		try {
-			$log_manager = LogManager::instance();
+			$log_manager = Log_Manager::instance();
 			$log_manager->message(
 				'job',
 				[
@@ -137,7 +137,7 @@ class HealthCheckTick extends Node {
 			);
 			$log_manager->flush();
 		} finally {
-			JobWorker::end_job_context( $orig_server );
+			Job_Worker_Node::end_job_context( $orig_server );
 		}
 	}
 
@@ -149,7 +149,7 @@ class HealthCheckTick extends Node {
 		static $verbs = null;
 		if ( null === $verbs ) {
 			$verbs = [
-				'start_periodic_tick' => static function ( CommandInterpreter $ci, string $args ): string {
+				'start_periodic_tick' => static function ( Command_Interpreter_Node $ci, string $args ): string {
 					/** @var self $patron */
 					$patron = $ci->patron();
 					$patron->start_periodic_tick();

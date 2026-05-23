@@ -10,35 +10,35 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\LruCache;
+use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( LruCache::class )]
+#[CoversClass( LRU_Cache::class )]
 class LruCacheTest extends TestCase {
 
 	// ── Basic get/set/delete ───────────────────────────────────────────────
 
 	public function test_get_set_basic(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->set( 'key1', 'value1' );
 		$this->assertSame( 'value1', $cache->get( 'key1' ) );
 	}
 
 	public function test_get_nonexistent_returns_null(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$this->assertNull( $cache->get( 'missing' ) );
 	}
 
 	public function test_set_overwrites_existing(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->set( 'key', 'old' );
 		$cache->set( 'key', 'new' );
 		$this->assertSame( 'new', $cache->get( 'key' ) );
 	}
 
 	public function test_set_different_value_types(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 
 		$cache->set( 'int', 42 );
 		$cache->set( 'float', 3.14 );
@@ -55,7 +55,7 @@ class LruCacheTest extends TestCase {
 		// LRU spec note: storing objects gives zero-copy mutation since PHP
 		// objects are references. Mutating through get() must mutate the stored
 		// object too — load-bearing behaviour for the InflightTracker pattern.
-		$cache  = new LruCache( 10, 3 );
+		$cache  = new LRU_Cache( 10, 3 );
 		$object = new \stdClass();
 		$object->count = 0;
 		$cache->set( 'k', $object );
@@ -68,14 +68,14 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_delete_removes_entry(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->set( 'key', 'value' );
 		$cache->delete( 'key' );
 		$this->assertNull( $cache->get( 'key' ) );
 	}
 
 	public function test_delete_nonexistent_is_safe(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->delete( 'nope' );
 		$this->assertTrue( true );
 	}
@@ -83,7 +83,7 @@ class LruCacheTest extends TestCase {
 	public function test_delete_finds_in_old_bucket(): void {
 		// Place entry in bucket 0, fill bucket 0 to trigger rotation, then
 		// delete the original — must traverse buckets back and remove.
-		$cache = new LruCache( 2, 3 );
+		$cache = new LRU_Cache( 2, 3 );
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
 		// Bucket 0 full; next set rotates to bucket 1.
@@ -99,7 +99,7 @@ class LruCacheTest extends TestCase {
 	public function test_lru_eviction_evicts_oldest_bucket_first(): void {
 		// bucket_size=3, num_buckets=2 → max ~6 items before oldest bucket
 		// evicts. Verify the "least recently used" bucket goes first.
-		$cache = new LruCache( 3, 2 );
+		$cache = new LRU_Cache( 3, 2 );
 
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
@@ -126,7 +126,7 @@ class LruCacheTest extends TestCase {
 		// to the current bucket so it survives subsequent rotations. Without
 		// promotion, frequently-read but rarely-written entries would evict
 		// after num_buckets rotations regardless of access pattern.
-		$cache = new LruCache( 3, 3 );
+		$cache = new LRU_Cache( 3, 3 );
 
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
@@ -152,7 +152,7 @@ class LruCacheTest extends TestCase {
 
 	public function test_bucket_rotation_with_single_bucket(): void {
 		// num_buckets=1: rotation immediately evicts the only bucket.
-		$cache = new LruCache( 2, 1 );
+		$cache = new LRU_Cache( 2, 1 );
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
 		$cache->set( 'c', 3 ); // Triggers rotation + eviction.
@@ -164,7 +164,7 @@ class LruCacheTest extends TestCase {
 
 	public function test_min_bucket_count_of_1(): void {
 		// num_buckets clamped to >=1.
-		$cache = new LruCache( 5, 0 );
+		$cache = new LRU_Cache( 5, 0 );
 		$cache->set( 'a', 1 );
 		$this->assertSame( 1, $cache->get( 'a' ) );
 	}
@@ -172,13 +172,13 @@ class LruCacheTest extends TestCase {
 	public function test_max_bucket_count_of_100(): void {
 		// num_buckets clamped to <=100. Just verifies the clamp doesn't break
 		// instantiation — actual bucket count is implementation-internal.
-		$cache = new LruCache( 1, 5000 );
+		$cache = new LRU_Cache( 1, 5000 );
 		$cache->set( 'a', 1 );
 		$this->assertSame( 1, $cache->get( 'a' ) );
 	}
 
 	public function test_bucket_size_clamped_to_min_1(): void {
-		$cache = new LruCache( 0, 3 );
+		$cache = new LRU_Cache( 0, 3 );
 		// Each set immediately triggers rotation since bucket size is clamped to 1.
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
@@ -190,7 +190,7 @@ class LruCacheTest extends TestCase {
 
 	public function test_on_evict_callback_called_on_capacity_eviction(): void {
 		$evicted = [];
-		$cache   = new LruCache( 2, 2 );
+		$cache   = new LRU_Cache( 2, 2 );
 		$cache->with_timed_rotation( 999, function ( $k, $v ) use ( &$evicted ) {
 			$evicted[ $k ] = $v;
 		} );
@@ -207,7 +207,7 @@ class LruCacheTest extends TestCase {
 
 	public function test_evict_bucket_without_callback_safe(): void {
 		// No on_evict registered (default constructor) — eviction must not throw.
-		$cache = new LruCache( 2, 2 );
+		$cache = new LRU_Cache( 2, 2 );
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
 		$cache->set( 'c', 3 );
@@ -221,20 +221,20 @@ class LruCacheTest extends TestCase {
 	// ── Timed rotation ────────────────────────────────────────────────────
 
 	public function test_with_timed_rotation_returns_self(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$result = $cache->with_timed_rotation( 1.0, function () {} );
 		$this->assertSame( $cache, $result );
 	}
 
 	public function test_rotate_if_due_noop_without_timed_rotation(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->set( 'a', 1 );
 		$cache->rotate_if_due();
 		$this->assertSame( 1, $cache->get( 'a' ) );
 	}
 
 	public function test_rotate_if_due_rotates_after_interval(): void {
-		$cache   = new LruCache( 100, 2 );
+		$cache   = new LRU_Cache( 100, 2 );
 		$evicted = [];
 		$cache->with_timed_rotation( 0.001, function ( $k, $v ) use ( &$evicted ) {
 			$evicted[ $k ] = $v;
@@ -253,7 +253,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_rotate_if_due_does_not_rotate_before_interval(): void {
-		$cache = new LruCache( 100, 2 );
+		$cache = new LRU_Cache( 100, 2 );
 		$cache->with_timed_rotation( 10.0, function () {} );
 
 		$cache->set( 'a', 1 );
@@ -266,7 +266,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_active_items_survive_timed_rotation(): void {
-		$cache   = new LruCache( 100, 3 );
+		$cache   = new LRU_Cache( 100, 3 );
 		$evicted = [];
 		$cache->with_timed_rotation( 0.001, function ( $k ) use ( &$evicted ) {
 			$evicted[] = $k;
@@ -290,7 +290,7 @@ class LruCacheTest extends TestCase {
 	// ── Iteration ──────────────────────────────────────────────────────────
 
 	public function test_iterate_returns_all_entries(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->set( 'x', 1 );
 		$cache->set( 'y', 2 );
 		$cache->set( 'z', 3 );
@@ -307,7 +307,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_iterate_empty_cache(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$items = [];
 		foreach ( $cache->iterate() as $key => $value ) {
 			$items[ $key ] = $value;
@@ -316,7 +316,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_iterate_across_buckets(): void {
-		$cache = new LruCache( 2, 3 );
+		$cache = new LRU_Cache( 2, 3 );
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
 		$cache->set( 'c', 3 ); // rotates
@@ -333,7 +333,7 @@ class LruCacheTest extends TestCase {
 	// ── State serialization ────────────────────────────────────────────────
 
 	public function test_get_state_and_restore_state(): void {
-		$cache = new LruCache( 5, 3 );
+		$cache = new LRU_Cache( 5, 3 );
 		$cache->set( 'k1', 'v1' );
 		$cache->set( 'k2', 'v2' );
 		$cache->set( 'k3', 'v3' );
@@ -342,7 +342,7 @@ class LruCacheTest extends TestCase {
 		$this->assertArrayHasKey( 'buckets', $state );
 		$this->assertArrayHasKey( 'current', $state );
 
-		$cache2 = new LruCache( 5, 3 );
+		$cache2 = new LRU_Cache( 5, 3 );
 		$cache2->restore_state( $state );
 
 		$this->assertSame( 'v1', $cache2->get( 'k1' ) );
@@ -351,7 +351,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_restore_state_with_empty_state(): void {
-		$cache = new LruCache( 5, 3 );
+		$cache = new LRU_Cache( 5, 3 );
 		$cache->set( 'existing', 'data' );
 
 		$cache->restore_state( [] );
@@ -361,7 +361,7 @@ class LruCacheTest extends TestCase {
 
 	public function test_restore_state_with_invalid_buckets_type(): void {
 		// Validation: non-array buckets must be rejected (no state change).
-		$cache = new LruCache( 5, 3 );
+		$cache = new LRU_Cache( 5, 3 );
 		$cache->set( 'a', 1 );
 
 		$cache->restore_state( [ 'buckets' => 'not an array', 'current' => 0 ] );
@@ -370,7 +370,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_restore_state_with_invalid_current_type(): void {
-		$cache = new LruCache( 5, 3 );
+		$cache = new LRU_Cache( 5, 3 );
 		$cache->set( 'a', 1 );
 
 		$cache->restore_state( [ 'buckets' => [ 0 => [ 'b' => 2 ] ], 'current' => 'not int' ] );
@@ -379,7 +379,7 @@ class LruCacheTest extends TestCase {
 
 	public function test_restore_state_clamps_current_to_max_key(): void {
 		// Out-of-range current must clamp to the highest bucket index.
-		$cache = new LruCache( 5, 3 );
+		$cache = new LRU_Cache( 5, 3 );
 		$cache->restore_state( [
 			'buckets' => [ 0 => [ 'a' => 1 ], 1 => [ 'b' => 2 ] ],
 			'current' => 999,
@@ -390,7 +390,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_restore_state_clamps_negative_current(): void {
-		$cache = new LruCache( 5, 3 );
+		$cache = new LRU_Cache( 5, 3 );
 		$cache->restore_state( [
 			'buckets' => [ 0 => [ 'a' => 1 ] ],
 			'current' => -10,
@@ -400,7 +400,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_get_state_preserves_bucket_structure(): void {
-		$cache = new LruCache( 3, 3 );
+		$cache = new LRU_Cache( 3, 3 );
 		for ( $i = 0; $i < 9; $i++ ) {
 			$cache->set( "k{$i}", $i );
 		}
@@ -413,7 +413,7 @@ class LruCacheTest extends TestCase {
 	// ── flush + is_empty ──────────────────────────────────────────────────
 
 	public function test_flush_clears_all(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
 		$cache->flush();
@@ -424,7 +424,7 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_is_empty(): void {
-		$cache = new LruCache( 10, 3 );
+		$cache = new LRU_Cache( 10, 3 );
 		$this->assertTrue( $cache->is_empty() );
 
 		$cache->set( 'k', 'v' );
@@ -437,7 +437,7 @@ class LruCacheTest extends TestCase {
 	// ── Combined behaviour ─────────────────────────────────────────────────
 
 	public function test_large_number_of_items(): void {
-		$cache = new LruCache( 100, 5 );
+		$cache = new LRU_Cache( 100, 5 );
 		for ( $i = 0; $i < 600; $i++ ) {
 			$cache->set( "key{$i}", $i );
 		}

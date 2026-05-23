@@ -18,11 +18,11 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
-use Newspack_Event_Logger_Nodes\RequestBuilder;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Router;
+use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Topology_Loader;
 use Newspack_Nodes\Topology_Registry;
 
@@ -66,11 +66,11 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * back in `_command_interpreter` (which doesn't know about sibling
 	 * CIs) and the verb never executes.
 	 */
-	private function load_topology( string $name ): CommandInterpreter {
-		$router = new Router();
+	private function load_topology( string $name ): Command_Interpreter_Node {
+		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$ci = new CommandInterpreter();
+		$ci = new Command_Interpreter_Node();
 		$ci->name( '_command_interpreter' );
 		$ci->sink( $router );
 
@@ -115,9 +115,9 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->load_topology( 'firehose-workers-and-jobs' );
 
 		$rb = Core::node( 'request-builder' );
-		$this->assertInstanceOf( RequestBuilder::class, $rb );
+		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
 
-		$ref = new \ReflectionProperty( RequestBuilder::class, 'completed_target' );
+		$ref = new \ReflectionProperty( Request_Builder_Node::class, 'completed_target' );
 		$ref->setAccessible( true );
 		$this->assertSame( 'completed:tee', $ref->getValue( $rb ) );
 	}
@@ -126,7 +126,7 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->load_topology( 'firehose-workers-and-jobs' );
 
 		$rb = Core::node( 'request-builder' );
-		$this->assertInstanceOf( RequestBuilder::class, $rb );
+		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
 		$this->assertSame( 'gyroscope:partition', $rb->flight()->target() );
 	}
 
@@ -134,7 +134,7 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->load_topology( 'firehose-workers-and-jobs' );
 
 		$rb = Core::node( 'request-builder' );
-		$this->assertInstanceOf( RequestBuilder::class, $rb );
+		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
 		// The default interval matches the spec value (1000ms), so the
 		// `interval()` getter alone can't tell us whether the topology
 		// line fired. dump_config replays mark_verb_invoked entries —

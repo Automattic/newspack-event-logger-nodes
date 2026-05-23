@@ -1,16 +1,16 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\HealthCheckTick;
-use Newspack_Event_Logger_Nodes\LogManager;
-use Newspack_Event_Logger_Nodes\ServerRegistry;
+use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
+use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Router;
+use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( HealthCheckTick::class )]
+#[CoversClass( Health_Check_Tick_Node::class )]
 class HealthCheckTickTest extends TestCase {
 
 	/** @var array Original $_SERVER backup. */
@@ -24,25 +24,25 @@ class HealthCheckTickTest extends TestCase {
 
 		// Reset the ServerRegistry singleton so each test starts with a clean
 		// view of $GLOBALS['_wp_options']. Mirrors RemoteManagerTest::setUp().
-		$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
 		// Wipe LogManager singleton + suspend stack so begin/end_job_context
 		// round-trips don't leak from a prior test. LogManager::reset() only
 		// nulls $instance; the suspend stack needs reflection-level cleanup.
-		LogManager::reset();
+		Log_Manager::reset();
 		$this->clear_log_manager_stack();
 	}
 
 	protected function tearDown(): void {
-		LogManager::reset();
+		Log_Manager::reset();
 		$this->clear_log_manager_stack();
 		$_SERVER = $this->orig_server;
 
 		// Reset registry again so the next test's setUp sees a clean slate
 		// even if a test mutated $GLOBALS['_wp_options'] mid-flight.
-		$ref = new \ReflectionProperty( ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
@@ -56,7 +56,7 @@ class HealthCheckTickTest extends TestCase {
 	 * pop a ghost LogManager.
 	 */
 	private function clear_log_manager_stack(): void {
-		$ref = new \ReflectionProperty( LogManager::class, 'context_stack' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'context_stack' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, [] );
 	}
@@ -79,14 +79,14 @@ class HealthCheckTickTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_health_check_tick_constructs_sibling_ci(): void {
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$this->assertNotNull( $h->interpreter() );
 		$this->assertSame( 'h:config', $h->interpreter()->name() );
 	}
 
 	public function test_health_check_tick_start_periodic_tick_verb_round_trips(): void {
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$result = $h->interpreter()->dispatch( 'start_periodic_tick' );
 		$this->assertSame( 'ok', $result );
@@ -96,7 +96,7 @@ class HealthCheckTickTest extends TestCase {
 	}
 
 	public function test_health_check_tick_node_schema_declares_verb(): void {
-		$schema = HealthCheckTick::node_schema();
+		$schema = Health_Check_Tick_Node::node_schema();
 		// Hidden from the topology console — instantiated as a
 		// patron-linked sibling of StreamMerger, not built from TSL.
 		$this->assertSame( 'Hidden', $schema['category'] );
@@ -114,7 +114,7 @@ class HealthCheckTickTest extends TestCase {
 		// rather than throw — periodic tick is disabled, not an error.
 		$this->assertNull( Core::node( '_router' ) );
 
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$h->start_periodic_tick();
 
@@ -126,10 +126,10 @@ class HealthCheckTickTest extends TestCase {
 	public function test_start_periodic_tick_registers_with_router_timer(): void {
 		// With _router present, registration must succeed and a Router::notify('TIMER')
 		// will dispatch a TM_INFO into HealthCheckTick's fill().
-		$router = new Router();
+		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$h->start_periodic_tick();
 
@@ -151,7 +151,7 @@ class HealthCheckTickTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_fill_ignores_non_info_message(): void {
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 
 		$msg                   = Message::new_message();
@@ -168,7 +168,7 @@ class HealthCheckTickTest extends TestCase {
 	public function test_fill_ignores_info_with_wrong_key(): void {
 		// TM_INFO carries lots of event names (FIRE, CACHE_FLUSH, MEMORY_PRESSURE, …).
 		// Only KEY='TIMER' triggers the sweep — anything else is a no-op.
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 
 		$msg                   = Message::new_message();
@@ -187,7 +187,7 @@ class HealthCheckTickTest extends TestCase {
 		// $_SERVER mutation).
 		$GLOBALS['_wp_options'] = [];
 
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$msg = $this->timer_tick();
 		$h->fill( $msg );
@@ -207,7 +207,7 @@ class HealthCheckTickTest extends TestCase {
 		$orig_uri = $_SERVER['REQUEST_URI'] ?? '/original';
 		$_SERVER['REQUEST_URI'] = $orig_uri;
 
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$msg = $this->timer_tick();
 		$h->fill( $msg );
@@ -232,9 +232,9 @@ class HealthCheckTickTest extends TestCase {
 
 		// Trigger sodium key init by reading via ServerRegistry first. wp_salt()
 		// is stubbed in bootstrap so encryption round-trips work.
-		$this->assertNotEmpty( ServerRegistry::get_instance()->get_enabled() );
+		$this->assertNotEmpty( Server_Registry::get_instance()->get_enabled() );
 
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 
 		// First tick: triggers full enqueue path (LogManager dance, $_SERVER
@@ -249,7 +249,7 @@ class HealthCheckTickTest extends TestCase {
 		// Use reflection to confirm last_check landed (debounce gate is now
 		// armed). Direct assertion via state would require a getter we don't
 		// have; reflection is the test-only seam.
-		$ref = new \ReflectionProperty( HealthCheckTick::class, 'last_check' );
+		$ref = new \ReflectionProperty( Health_Check_Tick_Node::class, 'last_check' );
 		$ref->setAccessible( true );
 		$last_check_after_first = $ref->getValue( $h );
 		$this->assertGreaterThan( 0, $last_check_after_first );
@@ -279,7 +279,7 @@ class HealthCheckTickTest extends TestCase {
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 		$_SERVER['UNIQUE_ID']      = 'outer_unique_id';
 
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$msg = $this->timer_tick();
 		$h->fill( $msg );
@@ -298,7 +298,7 @@ class HealthCheckTickTest extends TestCase {
 		// state.
 		// Set up: pre-populate cache with empty view, then add a server.
 		$GLOBALS['_wp_options'] = [];
-		$reg                    = ServerRegistry::get_instance();
+		$reg                    = Server_Registry::get_instance();
 		$this->assertSame( [], $reg->get_enabled() ); // cache now has empty view.
 
 		// Operator-equivalent: enable a remote after the cache was built.
@@ -315,12 +315,12 @@ class HealthCheckTickTest extends TestCase {
 		// Without reset_cache(), get_enabled() would still return [] and the
 		// path would short-circuit on no-remotes. With reset_cache(), the read
 		// sees the new server and the enqueue path proceeds (last_check ticks).
-		$h = new HealthCheckTick();
+		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$msg = $this->timer_tick();
 		$h->fill( $msg );
 
-		$ref = new \ReflectionProperty( HealthCheckTick::class, 'last_check' );
+		$ref = new \ReflectionProperty( Health_Check_Tick_Node::class, 'last_check' );
 		$ref->setAccessible( true );
 		$this->assertGreaterThan( 0, $ref->getValue( $h ) );
 	}
@@ -329,6 +329,6 @@ class HealthCheckTickTest extends TestCase {
 		// Spec-locked: legacy newspack-event-aggregator used 300s; the new
 		// HealthCheckTick MUST match. Diverging from 300s changes hub-side load
 		// characteristics across every operator. Keep the constant verifiable.
-		$this->assertSame( 300, HealthCheckTick::DEBOUNCE_SECONDS );
+		$this->assertSame( 300, Health_Check_Tick_Node::DEBOUNCE_SECONDS );
 	}
 }

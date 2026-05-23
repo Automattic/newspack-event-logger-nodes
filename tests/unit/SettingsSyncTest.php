@@ -2,16 +2,16 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\SettingsSync;
+use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( SettingsSync::class )]
+#[CoversClass( Settings_Sync::class )]
 class SettingsSyncTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		// Ensure each test starts with the static guard cleared.
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		$GLOBALS['_wp_options'] = [];
 		$GLOBALS['_wp_actions'] = [];
 		// Drop cached Config so each test can stub options independently.
@@ -27,7 +27,7 @@ class SettingsSyncTest extends TestCase {
 		// without an aggregator topology + enabled remotes the queued
 		// remote_manager job has no consumer (silent no-op).
 		$received = null;
-		$sync = new SettingsSync(
+		$sync = new Settings_Sync(
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $ciphertext ) use ( &$received ) {
 				$received = [ 'option' => $option, 'value' => $value, 'ciphertext' => $ciphertext ];
@@ -40,14 +40,14 @@ class SettingsSyncTest extends TestCase {
 		$this->assertNotSame( '', $received['ciphertext'] );
 
 		// The ciphertext must round-trip back to the same plaintext payload.
-		$decoded = SettingsSync::decode_payload( $received['ciphertext'] );
+		$decoded = Settings_Sync::decode_payload( $received['ciphertext'] );
 		$this->assertSame( 'log_urls', $decoded['option'] );
 		$this->assertSame( [ '/new' ], $decoded['value'] );
 	}
 
 	public function test_skips_unsynced_option(): void {
 		$called = false;
-		$sync = new SettingsSync(
+		$sync = new Settings_Sync(
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -57,7 +57,7 @@ class SettingsSyncTest extends TestCase {
 
 	public function test_suppress_sync_blocks_sync(): void {
 		$called = false;
-		$sync = new SettingsSync(
+		$sync = new Settings_Sync(
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -74,11 +74,11 @@ class SettingsSyncTest extends TestCase {
 
 	public function test_encrypt_round_trips(): void {
 		$plaintext  = 'hello world: structured values too {"x":1}';
-		$ciphertext = SettingsSync::encrypt( $plaintext );
+		$ciphertext = Settings_Sync::encrypt( $plaintext );
 		$this->assertNotSame( '', $ciphertext );
 		$this->assertNotSame( $plaintext, $ciphertext, 'ciphertext must not equal plaintext' );
 
-		$decrypted = SettingsSync::decrypt( $ciphertext );
+		$decrypted = Settings_Sync::decrypt( $ciphertext );
 		$this->assertSame( $plaintext, $decrypted );
 	}
 
@@ -87,16 +87,16 @@ class SettingsSyncTest extends TestCase {
 		// is fresh per call). This is a load-bearing security property — repeat
 		// nonces under a fixed key break sodium's confidentiality guarantees.
 		$plaintext = 'identical-input';
-		$a = SettingsSync::encrypt( $plaintext );
-		$b = SettingsSync::encrypt( $plaintext );
+		$a = Settings_Sync::encrypt( $plaintext );
+		$b = Settings_Sync::encrypt( $plaintext );
 		$this->assertNotSame( $a, $b );
 		// Both decrypt to the same plaintext.
-		$this->assertSame( $plaintext, SettingsSync::decrypt( $a ) );
-		$this->assertSame( $plaintext, SettingsSync::decrypt( $b ) );
+		$this->assertSame( $plaintext, Settings_Sync::decrypt( $a ) );
+		$this->assertSame( $plaintext, Settings_Sync::decrypt( $b ) );
 	}
 
 	public function test_decrypt_returns_null_on_tampered_ciphertext(): void {
-		$ciphertext = SettingsSync::encrypt( 'sensitive' );
+		$ciphertext = Settings_Sync::encrypt( 'sensitive' );
 		$this->assertNotSame( '', $ciphertext );
 
 		// Tamper: flip a byte deep inside the payload (after the nonce). Use a
@@ -110,22 +110,22 @@ class SettingsSyncTest extends TestCase {
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 		$tampered = \base64_encode( $raw );
 
-		$this->assertNull( SettingsSync::decrypt( $tampered ) );
+		$this->assertNull( Settings_Sync::decrypt( $tampered ) );
 	}
 
 	public function test_decrypt_returns_null_on_truncated_payload(): void {
 		// Less than nonce-size bytes — definitely malformed.
 		$short = \base64_encode( 'short' );
-		$this->assertNull( SettingsSync::decrypt( $short ) );
+		$this->assertNull( Settings_Sync::decrypt( $short ) );
 	}
 
 	public function test_decrypt_returns_null_on_invalid_base64(): void {
 		// `!` is not in the base64 alphabet — strict decode rejects.
-		$this->assertNull( SettingsSync::decrypt( '!!!not-base64!!!' ) );
+		$this->assertNull( Settings_Sync::decrypt( '!!!not-base64!!!' ) );
 	}
 
 	public function test_decode_payload_returns_null_on_tamper(): void {
-		$cipher = SettingsSync::encrypt( \json_encode( [ 'option' => 'log_urls', 'value' => [ '/x' ] ] ) );
+		$cipher = Settings_Sync::encrypt( \json_encode( [ 'option' => 'log_urls', 'value' => [ '/x' ] ] ) );
 		// Tamper with the ciphertext.
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 		$raw     = \base64_decode( $cipher, true );
@@ -133,20 +133,20 @@ class SettingsSyncTest extends TestCase {
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 		$tampered = \base64_encode( $raw );
 
-		$this->assertNull( SettingsSync::decode_payload( $tampered ) );
+		$this->assertNull( Settings_Sync::decode_payload( $tampered ) );
 	}
 
 	public function test_decode_payload_returns_null_on_non_payload_plaintext(): void {
 		// Encrypt arbitrary plaintext that isn't a payload-shaped JSON object.
-		$cipher = SettingsSync::encrypt( 'just-a-string-not-a-json-object' );
-		$this->assertNull( SettingsSync::decode_payload( $cipher ) );
+		$cipher = Settings_Sync::encrypt( 'just-a-string-not-a-json-object' );
+		$this->assertNull( Settings_Sync::decode_payload( $cipher ) );
 	}
 
 	// --- Encryption-required fail-closed --------------------------------
 
 	public function test_dispatch_receives_non_empty_ciphertext_when_encryption_works(): void {
 		$dispatched = null;
-		$sync       = new SettingsSync(
+		$sync       = new Settings_Sync(
 			synced_options: [ 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$dispatched ) {
 				$dispatched = $cipher;
@@ -165,9 +165,9 @@ class SettingsSyncTest extends TestCase {
 		// first. We register the same callbacks directly to assert the wiring
 		// contract — these are the exact callables init() registers.
 		$GLOBALS['_wp_actions'] = [];
-		\add_action( 'update_option', [ SettingsSync::class, 'on_static_option_update' ] );
-		\add_action( 'add_option', [ SettingsSync::class, 'on_static_option_add' ] );
-		\add_filter( 'newspack_event_logger_nodes/synced_settings', [ SettingsSync::class, 'register_synced_settings' ] );
+		\add_action( 'update_option', [ Settings_Sync::class, 'on_static_option_update' ] );
+		\add_action( 'add_option', [ Settings_Sync::class, 'on_static_option_add' ] );
+		\add_filter( 'newspack_event_logger_nodes/synced_settings', [ Settings_Sync::class, 'register_synced_settings' ] );
 
 		// All three hooks must now be wired.
 		$this->assertNotEmpty(
@@ -184,13 +184,13 @@ class SettingsSyncTest extends TestCase {
 		);
 
 		// And init() itself must be safely callable (idempotent).
-		SettingsSync::init();
-		SettingsSync::init();
+		Settings_Sync::init();
+		Settings_Sync::init();
 		$this->assertTrue( true, 'init() must be idempotent' );
 	}
 
 	public function test_register_synced_settings_includes_remap_and_perf_options(): void {
-		$settings = SettingsSync::register_synced_settings( [] );
+		$settings = Settings_Sync::register_synced_settings( [] );
 
 		// Pull out local→remote pairs for assertion convenience.
 		$pairs = [];
@@ -248,22 +248,22 @@ class SettingsSyncTest extends TestCase {
 	}
 
 	public function test_static_suppress_sync_toggles_static_guard(): void {
-		$this->assertFalse( SettingsSync::is_sync_suppressed(), 'baseline: not suppressed' );
+		$this->assertFalse( Settings_Sync::is_sync_suppressed(), 'baseline: not suppressed' );
 
-		SettingsSync::suppress_sync( true );
-		$this->assertTrue( SettingsSync::is_sync_suppressed() );
+		Settings_Sync::suppress_sync( true );
+		$this->assertTrue( Settings_Sync::is_sync_suppressed() );
 
-		SettingsSync::suppress_sync( false );
-		$this->assertFalse( SettingsSync::is_sync_suppressed() );
+		Settings_Sync::suppress_sync( false );
+		$this->assertFalse( Settings_Sync::is_sync_suppressed() );
 	}
 
 	public function test_is_allowed_endpoint_accepts_newspack_nodes_prefixes(): void {
-		$this->assertTrue( SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes/v1/settings' ) );
-		$this->assertTrue( SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v1/health' ) );
-		$this->assertFalse( SettingsSync::is_allowed_endpoint( '/wp-json/event-logger/v1/settings' ) );
-		$this->assertFalse( SettingsSync::is_allowed_endpoint( '/wp-json/wp/v2/posts' ) );
-		$this->assertFalse( SettingsSync::is_allowed_endpoint( '' ) );
-		$this->assertFalse( SettingsSync::is_allowed_endpoint( 'newspack-nodes/v1/settings' ) );
+		$this->assertTrue( Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-nodes/v1/settings' ) );
+		$this->assertTrue( Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v1/health' ) );
+		$this->assertFalse( Settings_Sync::is_allowed_endpoint( '/wp-json/event-logger/v1/settings' ) );
+		$this->assertFalse( Settings_Sync::is_allowed_endpoint( '/wp-json/wp/v2/posts' ) );
+		$this->assertFalse( Settings_Sync::is_allowed_endpoint( '' ) );
+		$this->assertFalse( Settings_Sync::is_allowed_endpoint( 'newspack-nodes/v1/settings' ) );
 	}
 
 	public function test_static_listeners_handle_add_and_update_option(): void {
@@ -272,8 +272,8 @@ class SettingsSyncTest extends TestCase {
 		// so the static handler returns at the synced-option check before
 		// touching Config or JobIntake (avoids real filesystem side-effects
 		// in the unit test).
-		SettingsSync::on_static_option_update( 'totally_unrelated_option', null, 42 );
-		SettingsSync::on_static_option_add( 'totally_unrelated_option', 42 );
+		Settings_Sync::on_static_option_update( 'totally_unrelated_option', null, 42 );
+		Settings_Sync::on_static_option_add( 'totally_unrelated_option', 42 );
 
 		// The contract under test here is "doesn't crash" — handled errors only.
 		$this->assertTrue( true );
@@ -284,17 +284,17 @@ class SettingsSyncTest extends TestCase {
 		// synced-option check, before Config, before JobIntake. So even passing
 		// an option that IS in PERF_TUNING_OPTIONS must not trigger a real
 		// JobIntake write.
-		SettingsSync::suppress_sync( true );
-		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
-		SettingsSync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'a' ] );
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( true );
+		Settings_Sync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
+		Settings_Sync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'a' ] );
+		Settings_Sync::suppress_sync( false );
 		$this->assertTrue( true );
 	}
 
 	public function test_static_handler_ignores_unknown_option(): void {
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		// Unknown option must not crash and must not attempt to load Config.
-		SettingsSync::on_static_option_update( 'totally_unrelated_option', null, 42 );
+		Settings_Sync::on_static_option_update( 'totally_unrelated_option', null, 42 );
 		$this->assertTrue( true );
 	}
 
@@ -304,33 +304,33 @@ class SettingsSyncTest extends TestCase {
 		// the class.
 		$this->assertArrayHasKey(
 			'newspack_event_logger_nodes_remote_num_segments',
-			SettingsSync::SYNCED_OPTIONS
+			Settings_Sync::SYNCED_OPTIONS
 		);
 		$this->assertSame(
 			'newspack_nodes_num_segments',
-			SettingsSync::SYNCED_OPTIONS['newspack_event_logger_nodes_remote_num_segments']
+			Settings_Sync::SYNCED_OPTIONS['newspack_event_logger_nodes_remote_num_segments']
 		);
 	}
 
 	public function test_perf_tuning_options_constant_lists_nine_options(): void {
-		$this->assertContains( 'newspack_event_logger_nodes_log_events', SettingsSync::PERF_TUNING_OPTIONS );
-		$this->assertContains( 'newspack_event_logger_nodes_log_urls', SettingsSync::PERF_TUNING_OPTIONS );
-		$this->assertContains( 'newspack_event_logger_nodes_custom_events', SettingsSync::PERF_TUNING_OPTIONS );
-		$this->assertContains( 'newspack_event_logger_nodes_significant_events', SettingsSync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_log_events', Settings_Sync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_log_urls', Settings_Sync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_custom_events', Settings_Sync::PERF_TUNING_OPTIONS );
+		$this->assertContains( 'newspack_event_logger_nodes_significant_events', Settings_Sync::PERF_TUNING_OPTIONS );
 		// The full list is 9 entries.
-		$this->assertCount( 9, SettingsSync::PERF_TUNING_OPTIONS );
+		$this->assertCount( 9, Settings_Sync::PERF_TUNING_OPTIONS );
 	}
 
 	public function test_allowed_endpoint_prefixes_constant(): void {
 		$this->assertSame(
 			[ '/wp-json/newspack-nodes/', '/wp-json/newspack-nodes-aggregator/' ],
-			SettingsSync::ALLOWED_ENDPOINT_PREFIXES
+			Settings_Sync::ALLOWED_ENDPOINT_PREFIXES
 		);
 	}
 
 	public function test_endpoint_constant(): void {
-		$this->assertSame( '/wp-json/newspack-nodes/v1/settings', SettingsSync::ENDPOINT );
-		$this->assertTrue( SettingsSync::is_allowed_endpoint( SettingsSync::ENDPOINT ) );
+		$this->assertSame( '/wp-json/newspack-nodes/v1/settings', Settings_Sync::ENDPOINT );
+		$this->assertTrue( Settings_Sync::is_allowed_endpoint( Settings_Sync::ENDPOINT ) );
 	}
 
 	// --- Static handler with full config setup -------------------------------
@@ -340,10 +340,10 @@ class SettingsSyncTest extends TestCase {
 		// Verified by absence of any side-effects from Config::load_config()
 		// (which would update_option for any non-existent option set in
 		// $GLOBALS['_wp_options']).
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		$GLOBALS['_wp_options'] = [];
 
-		SettingsSync::on_static_option_update( 'random_unrelated_option', null, 'value' );
+		Settings_Sync::on_static_option_update( 'random_unrelated_option', null, 'value' );
 
 		// The option name is untouched; no fan-out queued.
 		$this->assertArrayNotHasKey( 'random_unrelated_option', $GLOBALS['_wp_options'] );
@@ -353,19 +353,19 @@ class SettingsSyncTest extends TestCase {
 		// A3: enable_workers gate removed. Smoke test that the static
 		// handler runs end-to-end without crashing for a
 		// PERF_TUNING_OPTIONS entry.
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
-		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
+		Settings_Sync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'a' ] );
 		$this->assertTrue( true );
 	}
 
 	public function test_static_handler_with_perf_tuning_option(): void {
 		// Smoke test: pass an option from PERF_TUNING_OPTIONS (1:1
 		// mapping). Just exercises the perf-tuning recognition branch.
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
 
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_log_urls',
 			[],
 			[ '/foo' ]
@@ -378,10 +378,10 @@ class SettingsSyncTest extends TestCase {
 	public function test_static_handler_with_synced_options_remap(): void {
 		// SYNCED_OPTIONS contains remote_num_segments (which remaps to
 		// num_segments on the wire). Trigger the is_remap branch.
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
 
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_remote_num_segments',
 			0,
 			16
@@ -399,7 +399,7 @@ class SettingsSyncTest extends TestCase {
 		// the value, and a non-empty ciphertext.
 		$received_option = null;
 		$received_value  = null;
-		$sync = new SettingsSync(
+		$sync = new Settings_Sync(
 			synced_options: [ 'log_events', 'log_urls' ],
 			dispatch: function ( $option, $value, $cipher ) use ( &$received_option, &$received_value ) {
 				$received_option = $option;
@@ -419,17 +419,17 @@ class SettingsSyncTest extends TestCase {
 		// Suppression must short-circuit BEFORE the synced-option check so
 		// even known options don't queue when suppression is active. The
 		// add_option signature path must respect the same guard.
-		SettingsSync::suppress_sync( true );
+		Settings_Sync::suppress_sync( true );
 		Config::reset();
 
 		// add_option (2-arg) signature path — also guarded.
-		SettingsSync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'init' ] );
-		SettingsSync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'init' ] );
+		Settings_Sync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'init' ] );
+		Settings_Sync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'init' ] );
 
 		// No crash — handler returned early at the guard.
-		$this->assertTrue( SettingsSync::is_sync_suppressed() );
+		$this->assertTrue( Settings_Sync::is_sync_suppressed() );
 
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 	}
 
 	// --- Encryption fail-closed flow ----------------------------------------
@@ -439,7 +439,7 @@ class SettingsSyncTest extends TestCase {
 		// verify the encrypt path is non-empty when sodium is available
 		// (which is the normal case). The fail-closed branches are documented
 		// at the implementation level and exercised by test_decrypt_returns_*.
-		$this->assertNotSame( '', SettingsSync::encrypt( 'plaintext' ) );
+		$this->assertNotSame( '', Settings_Sync::encrypt( 'plaintext' ) );
 	}
 
 	public function test_decode_payload_round_trip(): void {
@@ -448,8 +448,8 @@ class SettingsSyncTest extends TestCase {
 			'option' => 'log_events',
 			'value'  => [ 'init', 'wp_head' ],
 		] );
-		$cipher    = SettingsSync::encrypt( $plaintext );
-		$decoded   = SettingsSync::decode_payload( $cipher );
+		$cipher    = Settings_Sync::encrypt( $plaintext );
+		$decoded   = Settings_Sync::decode_payload( $cipher );
 
 		$this->assertNotNull( $decoded );
 		$this->assertSame( 'log_events', $decoded['option'] );
@@ -459,9 +459,9 @@ class SettingsSyncTest extends TestCase {
 	public function test_decode_payload_returns_null_on_payload_without_option_key(): void {
 		// JSON without 'option' field is rejected by decode_payload.
 		$plaintext = (string) \json_encode( [ 'value' => 42 ] );
-		$cipher    = SettingsSync::encrypt( $plaintext );
+		$cipher    = Settings_Sync::encrypt( $plaintext );
 
-		$this->assertNull( SettingsSync::decode_payload( $cipher ) );
+		$this->assertNull( Settings_Sync::decode_payload( $cipher ) );
 	}
 
 	public function test_register_synced_settings_appends_to_existing(): void {
@@ -474,7 +474,7 @@ class SettingsSyncTest extends TestCase {
 				'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
 			],
 		];
-		$result = SettingsSync::register_synced_settings( $existing );
+		$result = Settings_Sync::register_synced_settings( $existing );
 
 		// Original entry preserved.
 		$this->assertSame( 'foreign_local', $result[0]['local_option'] );
@@ -487,7 +487,7 @@ class SettingsSyncTest extends TestCase {
 	public function test_queue_job_returns_false_when_no_jobintake(): void {
 		// In the test harness JobIntake is loaded — so this is more about
 		// asserting the contract: queue_job returns a bool.
-		$result = SettingsSync::queue_job( 'remote_manager', [
+		$result = Settings_Sync::queue_job( 'remote_manager', [
 			'action' => 'sync_setting',
 			'option' => 'log_events',
 		] );
@@ -498,14 +498,14 @@ class SettingsSyncTest extends TestCase {
 
 	public function test_is_allowed_endpoint_with_aggregator_prefix(): void {
 		$this->assertTrue(
-			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v1/anything' )
+			Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v1/anything' )
 		);
 	}
 
 	public function test_is_allowed_endpoint_partial_match_at_start_only(): void {
 		// Prefix must be at the start; matching anywhere else is rejected.
 		$this->assertFalse(
-			SettingsSync::is_allowed_endpoint( '/something/wp-json/newspack-nodes/v1/' ),
+			Settings_Sync::is_allowed_endpoint( '/something/wp-json/newspack-nodes/v1/' ),
 			'prefix only valid at start'
 		);
 	}
@@ -513,14 +513,14 @@ class SettingsSyncTest extends TestCase {
 	public function test_is_allowed_endpoint_with_close_but_not_matching_prefix(): void {
 		// Close but not exact: 'newspack-node' (singular) — not allowed.
 		$this->assertFalse(
-			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-node/v1/settings' )
+			Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-node/v1/settings' )
 		);
 	}
 
 	public function test_suppress_instance_sync_default_arg(): void {
 		// suppress_instance_sync() with no arg defaults to true.
 		$called = false;
-		$sync = new SettingsSync(
+		$sync = new Settings_Sync(
 			synced_options: [ 'log_urls' ],
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -539,11 +539,11 @@ class SettingsSyncTest extends TestCase {
 		// Set enable_workers to fire the queue path.
 		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
 		Config::reset();
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 
 		// remote_num_segments is in SYNCED_OPTIONS — empty value triggers
 		// defaults-lookup for the canonical 'num_segments' key.
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_remote_num_segments',
 			null,
 			''
@@ -559,10 +559,10 @@ class SettingsSyncTest extends TestCase {
 	public function test_static_handler_with_false_value_substitutes_defaults(): void {
 		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
 		Config::reset();
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 
 		// PERF_TUNING_OPTIONS entry with false → defaults lookup.
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_log_events',
 			null,
 			false
@@ -578,9 +578,9 @@ class SettingsSyncTest extends TestCase {
 	public function test_static_handler_add_option_with_perf_tuning_option(): void {
 		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
 		Config::reset();
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 
-		SettingsSync::on_static_option_add(
+		Settings_Sync::on_static_option_add(
 			'newspack_event_logger_nodes_log_urls',
 			[ '/foo' ]
 		);
@@ -598,8 +598,8 @@ class SettingsSyncTest extends TestCase {
 			'option' => 'log_urls',
 			'value'  => [ '/x', '/y', [ 'nested' => true ] ],
 		] );
-		$ct    = SettingsSync::encrypt( $pt );
-		$out   = SettingsSync::decode_payload( $ct );
+		$ct    = Settings_Sync::encrypt( $pt );
+		$out   = Settings_Sync::decode_payload( $ct );
 
 		$this->assertSame( 'log_urls', $out['option'] );
 		$this->assertSame( [ '/x', '/y', [ 'nested' => true ] ], $out['value'] );
@@ -608,8 +608,8 @@ class SettingsSyncTest extends TestCase {
 	public function test_decode_payload_with_null_value(): void {
 		// Decode supports null value.
 		$pt    = (string) \json_encode( [ 'option' => 'log_urls', 'value' => null ] );
-		$ct    = SettingsSync::encrypt( $pt );
-		$out   = SettingsSync::decode_payload( $ct );
+		$ct    = Settings_Sync::encrypt( $pt );
+		$out   = Settings_Sync::decode_payload( $ct );
 
 		$this->assertSame( 'log_urls', $out['option'] );
 		$this->assertNull( $out['value'] );
@@ -622,7 +622,7 @@ class SettingsSyncTest extends TestCase {
 		// aggregator gate is gone — there's still no point dispatching
 		// options the hub doesn't care about.
 		$called = false;
-		$sync   = new SettingsSync(
+		$sync   = new Settings_Sync(
 			synced_options: [ 'log_urls' ], // 'other_option' NOT in this list
 			dispatch: function () use ( &$called ) { $called = true; }
 		);
@@ -641,12 +641,12 @@ class SettingsSyncTest extends TestCase {
 	 * `newspack_event_logger_nodes_remote_*` tests.
 	 */
 	public function test_static_handler_substrate_prefix_strip_for_num_partitions(): void {
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
 
 		// Empty value triggers defaults-lookup; the prefix strip must run
 		// against the `newspack_nodes_` arm (not `newspack_event_logger_nodes_`).
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_nodes_num_partitions',
 			null,
 			''
@@ -662,10 +662,10 @@ class SettingsSyncTest extends TestCase {
 	 * signature) to exercise the add_option side of the static fan-out.
 	 */
 	public function test_static_handler_add_option_substrate_prefix_strip(): void {
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
 
-		SettingsSync::on_static_option_add( 'newspack_nodes_num_partitions', '' );
+		Settings_Sync::on_static_option_add( 'newspack_nodes_num_partitions', '' );
 
 		$this->assertTrue( true );
 	}
@@ -680,10 +680,10 @@ class SettingsSyncTest extends TestCase {
 	 * value to cover the no-substitution branch with a different shape.
 	 */
 	public function test_static_handler_remap_with_non_empty_string_value(): void {
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
 
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_remote_segment_size',
 			0,
 			'2048'
@@ -700,10 +700,10 @@ class SettingsSyncTest extends TestCase {
 	 * arm of the ternary. Covers the is_perf=true non-empty branch end-to-end.
 	 */
 	public function test_static_handler_perf_with_non_empty_array_value(): void {
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		Config::reset();
 
-		SettingsSync::on_static_option_update(
+		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_significant_events',
 			[],
 			[ 'init', 'wp_loaded' ]
@@ -721,13 +721,13 @@ class SettingsSyncTest extends TestCase {
 	 * false (no IPC backend) — but never throws and never returns non-bool.
 	 */
 	public function test_queue_job_with_valid_handler_returns_bool(): void {
-		$result = SettingsSync::queue_job(
+		$result = Settings_Sync::queue_job(
 			'remote_manager',
 			[
 				'action'    => 'sync_setting',
 				'option'    => 'log_events',
 				'value'     => [ 'init', 'wp_loaded' ],
-				'endpoint'  => SettingsSync::PERF_ENDPOINT,
+				'endpoint'  => Settings_Sync::PERF_ENDPOINT,
 				'queued_at' => \time(),
 			]
 		);
@@ -740,7 +740,7 @@ class SettingsSyncTest extends TestCase {
 	 * result verbatim, so a handler with spaces returns false.
 	 */
 	public function test_queue_job_with_invalid_handler_returns_false(): void {
-		$result = SettingsSync::queue_job(
+		$result = Settings_Sync::queue_job(
 			'bad handler name with spaces',
 			[ 'action' => 'noop' ]
 		);
@@ -753,7 +753,7 @@ class SettingsSyncTest extends TestCase {
 	 * hint, but the path still returns a bool.
 	 */
 	public function test_queue_job_with_key_returns_bool(): void {
-		$result = SettingsSync::queue_job(
+		$result = Settings_Sync::queue_job(
 			'remote_manager',
 			[ 'action' => 'sync_setting' ],
 			'consistent-partition-key'
@@ -774,9 +774,9 @@ class SettingsSyncTest extends TestCase {
 		// Multiple back-to-back calls hit the static-guard short-circuit.
 		// First call may or may not be the first-in-process (plugin bootstrap
 		// already fired it), but all later calls MUST be no-ops.
-		SettingsSync::init();
-		SettingsSync::init();
-		SettingsSync::init();
+		Settings_Sync::init();
+		Settings_Sync::init();
+		Settings_Sync::init();
 
 		// No assertion needed beyond "doesn't crash" — the contract is purely
 		// about idempotency.
@@ -791,7 +791,7 @@ class SettingsSyncTest extends TestCase {
 	 * return null without throwing.
 	 */
 	public function test_decrypt_with_empty_string_returns_null(): void {
-		$this->assertNull( SettingsSync::decrypt( '' ) );
+		$this->assertNull( Settings_Sync::decrypt( '' ) );
 	}
 
 	/**
@@ -799,7 +799,7 @@ class SettingsSyncTest extends TestCase {
 	 * path; the json_decode of empty string returns null and short-circuits.
 	 */
 	public function test_decode_payload_with_empty_string_returns_null(): void {
-		$this->assertNull( SettingsSync::decode_payload( '' ) );
+		$this->assertNull( Settings_Sync::decode_payload( '' ) );
 	}
 
 	/**
@@ -812,8 +812,8 @@ class SettingsSyncTest extends TestCase {
 			'option' => 'log_events',
 			'value'  => [ 'event\\"with\nquotes', 'unicode-£€™' ],
 		] );
-		$cipher    = SettingsSync::encrypt( $plaintext );
-		$decoded   = SettingsSync::decode_payload( $cipher );
+		$cipher    = Settings_Sync::encrypt( $plaintext );
+		$decoded   = Settings_Sync::decode_payload( $cipher );
 
 		$this->assertNotNull( $decoded );
 		$this->assertSame( [ 'event\\"with\nquotes', 'unicode-£€™' ], $decoded['value'] );
@@ -829,11 +829,11 @@ class SettingsSyncTest extends TestCase {
 	public function test_is_allowed_endpoint_rejects_mid_string_prefix(): void {
 		// Allowed prefix appears at offset 12, not at the start.
 		$this->assertFalse(
-			SettingsSync::is_allowed_endpoint( '/redirector/wp-json/newspack-nodes/v1/settings' )
+			Settings_Sync::is_allowed_endpoint( '/redirector/wp-json/newspack-nodes/v1/settings' )
 		);
 		// Same idea with the aggregator namespace.
 		$this->assertFalse(
-			SettingsSync::is_allowed_endpoint( '/foo/wp-json/newspack-nodes-aggregator/v1/health' )
+			Settings_Sync::is_allowed_endpoint( '/foo/wp-json/newspack-nodes-aggregator/v1/health' )
 		);
 	}
 
@@ -845,10 +845,10 @@ class SettingsSyncTest extends TestCase {
 	 */
 	public function test_is_allowed_endpoint_with_arbitrary_subroute(): void {
 		$this->assertTrue(
-			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes/v1/anywhere/at/all' )
+			Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-nodes/v1/anywhere/at/all' )
 		);
 		$this->assertTrue(
-			SettingsSync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v2/future' )
+			Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-nodes-aggregator/v2/future' )
 		);
 	}
 }

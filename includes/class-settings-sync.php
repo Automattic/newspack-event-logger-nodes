@@ -19,7 +19,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Settings Sync class.
  */
-class SettingsSync {
+class Settings_Sync {
 	/**
 	 * Substrate-tuning options that sync to remote servers with name remap.
 	 * Maps local option name → remote option name.
@@ -303,7 +303,7 @@ class SettingsSync {
 	public static function queue_job( string $handler, array $params, ?string $key = null ): bool {
 		// Resolve base_dir + num_partitions from Config (cheap; cached).
 		// JobIntake auto-resolves base_dir + num_partitions from substrate Config.
-		return (bool) JobIntake::queue( $handler, $params, $key );
+		return (bool) Job_Intake::queue( $handler, $params, $key );
 	}
 
 	/**

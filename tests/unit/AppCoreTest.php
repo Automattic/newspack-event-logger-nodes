@@ -13,7 +13,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Core;
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\LogManager;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -25,7 +25,7 @@ class AppCoreTest extends TestCase {
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
 		}
-		LogManager::reset();
+		Log_Manager::reset();
 		$GLOBALS['_wp_options']             = [];
 		$GLOBALS['_wp_test_options']        = [];
 		$GLOBALS['_wp_test_current_filter'] = '';
@@ -67,7 +67,7 @@ class AppCoreTest extends TestCase {
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
 		}
-		LogManager::reset();
+		Log_Manager::reset();
 		parent::tearDown();
 	}
 
@@ -121,7 +121,7 @@ class AppCoreTest extends TestCase {
 			$GLOBALS['_wp_test_options'][ "newspack_event_logger_nodes_{$key}" ] = $value;
 		}
 		Config::reset();
-		LogManager::reset();
+		Log_Manager::reset();
 	}
 
 	// ── short_name tests via reflection ─────────────────────────────────

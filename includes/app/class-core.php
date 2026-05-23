@@ -15,8 +15,8 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\HookCategorizer;
-use Newspack_Event_Logger_Nodes\LogManager;
+use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -120,7 +120,7 @@ class Core {
 			// them creates a re-entry loop via Config::load_config during
 			// LogManager bootstrap. HookCategorizer::is_internal covers
 			// both slash and underscore prefix styles.
-			if ( HookCategorizer::is_internal( $hook_name ) ) {
+			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
 				continue;
 			}
 			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
@@ -139,7 +139,7 @@ class Core {
 		// current LogManager scope. Caching at construction would pin us to
 		// whichever LM existed at App\Core load time (typically the worker's
 		// disabled spawn-URL scope).
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		if ( ! $lm->enabled ) {
 			return $v;
 		}
@@ -214,7 +214,7 @@ class Core {
 				// invoked inside a /jobs/* scope).
 				$label   = "{$name} @{$priority}";
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
-					$lm   = LogManager::instance();
+					$lm   = Log_Manager::instance();
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
 					$lm->start( $label, [ 'l' => '' ] );
 					try {
@@ -242,7 +242,7 @@ class Core {
 	 */
 	public function hook_complete( $v = null ) {
 		$hook_name = \current_filter();
-		LogManager::instance()->complete( $hook_name . ' hook' );
+		Log_Manager::instance()->complete( $hook_name . ' hook' );
 		return $v;
 	}
 }

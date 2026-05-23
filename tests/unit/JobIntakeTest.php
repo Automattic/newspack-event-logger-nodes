@@ -5,14 +5,14 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 // require addition; until then the test pulls the class file in directly).
 require_once \dirname( __DIR__, 2 ) . '/includes/class-job-intake.php';
 
-use Newspack_Event_Logger_Nodes\JobIntake;
+use Newspack_Event_Logger_Nodes\Job_Intake;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Lock;
+use Newspack_Nodes\Lock_Node;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Partition;
+use Newspack_Nodes\Partition_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( JobIntake::class )]
+#[CoversClass( Job_Intake::class )]
 class JobIntakeTest extends TestCase {
 	private string $tmp;
 
@@ -70,20 +70,20 @@ class JobIntakeTest extends TestCase {
 	// --- Validation ---------------------------------------------------------
 
 	public function test_rejects_invalid_handler_name(): void {
-		$intake = new JobIntake( $this->tmp );
+		$intake = new Job_Intake( $this->tmp );
 		$this->assertFalse( $intake->write_job( 'Bad-Name!', [] ) );
 		$intake->close();
 	}
 
 	public function test_accepts_alphanumeric_underscore_handler(): void {
-		$intake = new JobIntake( $this->tmp );
+		$intake = new Job_Intake( $this->tmp );
 		$this->assertTrue( $intake->write_job( 'good_handler', [ 'x' => 1 ] ) );
 		$intake->close();
 	}
 
 	public function test_accepts_dashed_handler(): void {
 		// HANDLER_NAME_PATTERN matches upstream — permissive at intake.
-		$intake = new JobIntake( $this->tmp );
+		$intake = new Job_Intake( $this->tmp );
 		$this->assertTrue( $intake->write_job( 'sync-settings', [ 'x' => 1 ] ) );
 		$intake->close();
 	}
@@ -91,14 +91,14 @@ class JobIntakeTest extends TestCase {
 	public function test_static_queue_validates_before_lock(): void {
 		// Fail-fast: invalid handler name MUST return false without ever touching
 		// the filesystem (validate before entering the retry loop).
-		$this->assertFalse( JobIntake::queue( '!bad', [], null, $this->tmp ) );
+		$this->assertFalse( Job_Intake::queue( '!bad', [], null, $this->tmp ) );
 		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
 	}
 
 	// --- Write semantics ----------------------------------------------------
 
 	public function test_write_job_writes_envelope_to_partition_log(): void {
-		$intake = new JobIntake( $this->tmp, num_partitions: 1 );
+		$intake = new Job_Intake( $this->tmp, num_partitions: 1 );
 		$intake->partition( 0 );
 		$this->assertTrue( $intake->write_job( 'sync', [ 'opt' => 'log_urls' ] ) );
 		$intake->close();
@@ -112,7 +112,7 @@ class JobIntakeTest extends TestCase {
 	}
 
 	public function test_pinned_partition_routes_all_writes_to_one_dir(): void {
-		$intake = new JobIntake( $this->tmp, num_partitions: 4 );
+		$intake = new Job_Intake( $this->tmp, num_partitions: 4 );
 		$intake->partition( 2 );
 
 		$this->assertTrue( $intake->write_job( 'a', [] ) );
@@ -128,8 +128,8 @@ class JobIntakeTest extends TestCase {
 
 	public function test_keyed_routing_uses_hash_to_partition(): void {
 		// Same key → same partition every time. Guaranteed by Partition::hash_to_partition.
-		$intake = new JobIntake( $this->tmp, num_partitions: 4 );
-		$expected = Partition::hash_to_partition( 'event_42', 4 );
+		$intake = new Job_Intake( $this->tmp, num_partitions: 4 );
+		$expected = Partition_Node::hash_to_partition( 'event_42', 4 );
 		$this->assertTrue( $intake->write_job( 'sync', [ 'eid' => 42 ], 'event_42' ) );
 		$this->assertTrue( $intake->write_job( 'sync', [ 'eid' => 42 ], 'event_42' ) );
 		$intake->close();
@@ -138,7 +138,7 @@ class JobIntakeTest extends TestCase {
 	}
 
 	public function test_round_robin_distribution(): void {
-		$intake = new JobIntake( $this->tmp, num_partitions: 4 );
+		$intake = new Job_Intake( $this->tmp, num_partitions: 4 );
 		// Issue 8 writes; the round-robin counter advances monotonically.
 		for ( $i = 0; $i < 8; $i++ ) {
 			$this->assertTrue( $intake->write_job( 'noop', [ 'i' => $i ] ) );
@@ -156,7 +156,7 @@ class JobIntakeTest extends TestCase {
 
 	public function test_oversized_payload_rejected(): void {
 		// 11MB JSON > MAX_JOB_SIZE 10MB.
-		$intake = new JobIntake( $this->tmp );
+		$intake = new Job_Intake( $this->tmp );
 		$big    = str_repeat( 'x', 11 * 1024 * 1024 );
 		$this->assertFalse( $intake->write_job( 'big', [ 'data' => $big ] ) );
 		$intake->close();
@@ -172,7 +172,7 @@ class JobIntakeTest extends TestCase {
 			[ 'handler' => 'c', 'parameters' => [ 3 ] ],
 		];
 
-		$intake = new JobIntake( $this->tmp );
+		$intake = new Job_Intake( $this->tmp );
 		$this->assertSame( 3, $intake->queue_many( $jobs ) );
 		$intake->close();
 
@@ -191,7 +191,7 @@ class JobIntakeTest extends TestCase {
 			[ 'handler' => 'good2', 'parameters' => 'not-array' ], // non-array parameters
 			[ 'handler' => 'good3', 'parameters' => [] ],
 		];
-		$intake = new JobIntake( $this->tmp );
+		$intake = new Job_Intake( $this->tmp );
 		$this->assertSame( 2, $intake->queue_many( $jobs ) );
 		$intake->close();
 	}
@@ -203,7 +203,7 @@ class JobIntakeTest extends TestCase {
 
 	public function test_write_job_acquires_partition_lock(): void {
 		// Writing materializes the Partition + its per-partition write lock.
-		$intake = new JobIntake( $this->tmp, num_partitions: 1 );
+		$intake = new Job_Intake( $this->tmp, num_partitions: 1 );
 		$this->assertTrue( $intake->write_job( 'a', [] ) );
 		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 		// No host-wide intake lock created.
@@ -216,7 +216,7 @@ class JobIntakeTest extends TestCase {
 	public function test_destruct_releases_partition_lock(): void {
 		// __destruct calls close(); per-partition lock should be released even
 		// if the caller forgets to call close() explicitly.
-		$intake = new JobIntake( $this->tmp, num_partitions: 1 );
+		$intake = new Job_Intake( $this->tmp, num_partitions: 1 );
 		$intake->write_job( 'a', [] );
 		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 		unset( $intake );
@@ -226,11 +226,11 @@ class JobIntakeTest extends TestCase {
 	public function test_writes_to_different_partitions_do_not_contend(): void {
 		// Per-Partition locking means a writer on p0 doesn't block a writer
 		// on p1 — the legacy host-wide intake lock used to gate both.
-		$first = new JobIntake( $this->tmp, num_partitions: 4 );
+		$first = new Job_Intake( $this->tmp, num_partitions: 4 );
 		$first->partition( 0 );
 		$this->assertTrue( $first->write_job( 'a', [] ) );
 
-		$second = new JobIntake( $this->tmp, num_partitions: 4 );
+		$second = new Job_Intake( $this->tmp, num_partitions: 4 );
 		$second->partition( 1 );
 		$this->assertTrue( $second->write_job( 'b', [] ) );
 
@@ -241,25 +241,25 @@ class JobIntakeTest extends TestCase {
 	// --- Static queue() helper ----------------------------------------------
 
 	public function test_static_queue_writes_single_job(): void {
-		$this->assertTrue( JobIntake::queue( 'a_handler', [ 'x' => 1 ], null, $this->tmp ) );
+		$this->assertTrue( Job_Intake::queue( 'a_handler', [ 'x' => 1 ], null, $this->tmp ) );
 		$lines = $this->read_all_jobintake_lines();
 		$this->assertCount( 1, $lines );
 		$this->assertSame( 'a_handler', $lines[0]['handler'] );
 	}
 
 	public function test_static_queue_with_key_routes_consistently(): void {
-		$expected = Partition::hash_to_partition( 'k', 4 );
-		$this->assertTrue( JobIntake::queue( 'a', [], 'k', $this->tmp, 4 ) );
+		$expected = Partition_Node::hash_to_partition( 'k', 4 );
+		$this->assertTrue( Job_Intake::queue( 'a', [], 'k', $this->tmp, 4 ) );
 		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p{$expected}" ) );
 	}
 
 	public function test_static_queue_releases_lock_after_call(): void {
 		// Single-shot calls must release the per-Partition lock so another
 		// caller can immediately queue another job.
-		JobIntake::queue( 'a', [], null, $this->tmp, 1 );
+		Job_Intake::queue( 'a', [], null, $this->tmp, 1 );
 		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
 
 		// Second call succeeds without contention.
-		$this->assertTrue( JobIntake::queue( 'b', [], null, $this->tmp, 1 ) );
+		$this->assertTrue( Job_Intake::queue( 'b', [], null, $this->tmp, 1 ) );
 	}
 }

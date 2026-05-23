@@ -32,16 +32,16 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Partition;
-use Newspack_Nodes\Service_CI;
+use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Events_CI extends Service_CI {
+class Events_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Hard cap on index entries scanned per recent() call. Matches the
@@ -60,7 +60,7 @@ class Events_CI extends Service_CI {
 		// inherited no-op is implicit. Mirrors Workers_CI / Settings_CI /
 		// Status_CI / Discovery_CI / Logger_CI.
 		$this->commands( [
-			'recent' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'recent' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				$decoded        = \is_array( $payload ) ? $payload : [];
 				$limit          = \max( 1, \min( 1000, (int) ( $decoded['limit'] ?? 100 ) ) );
 				$config         = RuntimeConfig::load_config();
@@ -72,7 +72,7 @@ class Events_CI extends Service_CI {
 				$scanned = 0;
 
 				for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
-					$partition = new Partition( "{$log_base}/firehose.log", $p );
+					$partition = new Partition_Node( "{$log_base}/firehose.log", $p );
 					$partition->scan_index(
 						function ( $seg, $off ) use ( &$entries, &$scanned, $limit, $partition, $p ) {
 							++$scanned;
@@ -124,7 +124,7 @@ class Events_CI extends Service_CI {
 					],
 				];
 			},
-			'stats' => static function ( CommandInterpreter $self, string $args, array $envelope, mixed $payload ): array {
+			'stats' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 				$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );

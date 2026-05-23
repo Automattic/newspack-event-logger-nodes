@@ -32,7 +32,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -44,7 +44,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Job Worker class.
  */
-class JobWorker extends Node {
+class Job_Worker_Node extends Node {
 	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 	public const MAX_JOB_SIZE         = 10485760;
 
@@ -99,7 +99,7 @@ class JobWorker extends Node {
 		// Sibling CommandInterpreter — kept for `mark_verb_invoked()`
 		// metadata hooks even though there are no operator-facing
 		// config verbs today.
-		$ci = new CommandInterpreter();
+		$ci = new Command_Interpreter_Node();
 		$ci->patron( $this );
 		$ci->commands( self::config_verbs() );
 		$this->attach_interpreter( $ci );
@@ -312,7 +312,7 @@ class JobWorker extends Node {
 		$orig_server = $_SERVER;
 
 		// LogManager::suspend() pushes the parent context onto its stack.
-		\Newspack_Event_Logger_Nodes\LogManager::suspend();
+		\Newspack_Event_Logger_Nodes\Log_Manager::suspend();
 
 		$path_info = '/' . \ltrim( $handler, '/' );
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
@@ -344,7 +344,7 @@ class JobWorker extends Node {
 	 * @param array<string,mixed> $orig_server $_SERVER snapshot from begin_job_context().
 	 */
 	public static function end_job_context( array $orig_server ): void {
-		\Newspack_Event_Logger_Nodes\LogManager::resume();
+		\Newspack_Event_Logger_Nodes\Log_Manager::resume();
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
 		$_SERVER = $orig_server;
 	}

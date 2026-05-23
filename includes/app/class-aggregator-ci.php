@@ -43,31 +43,31 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\ServerRegistry;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Event_Logger_Nodes\Server_Registry;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Service_CI;
+use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Aggregator_CI extends Service_CI {
+class Aggregator_CI_Node extends Service_CI_Node {
 
 	/**
-	 * @param ServerRegistry $registry Hub-side server registry. Tests pass a
+	 * @param Server_Registry $registry Hub-side server registry. Tests pass a
 	 *                                  fresh instance per test so they don't
 	 *                                  share state.
 	 */
-	public function __construct( ServerRegistry $registry ) {
+	public function __construct( Server_Registry $registry ) {
 		// Node + CommandInterpreter have no explicit __construct, so the
 		// inherited no-op is implicit. Mirrors Workers_CI / Servers_CI /
 		// Status_CI / Discovery_CI / Logger_CI / Events_CI / Settings_CI.
 		$this->commands( $this->verb_table( $registry ) );
 	}
 
-	private function verb_table( ServerRegistry $registry ): array {
+	private function verb_table( Server_Registry $registry ): array {
 		return [
-			'status'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): array {
+			'status'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ) use ( $registry ): array {
 				self::require_manage_options();
 				$registry->reset_cache();
 				$servers = $registry->get_all();
@@ -96,7 +96,7 @@ class Aggregator_CI extends Service_CI {
 
 				return $result;
 			},
-			'health'  => static function ( CommandInterpreter $self, string $args, array $envelope = [] ): array {
+			'health'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 				return [
 					'healthy'   => true,
@@ -104,7 +104,7 @@ class Aggregator_CI extends Service_CI {
 					'timestamp' => \time(),
 				];
 			},
-			'servers' => static function ( CommandInterpreter $self, string $args, array $envelope = [] ) use ( $registry ): array {
+			'servers' => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ) use ( $registry ): array {
 				self::require_manage_options();
 				$registry->reset_cache();
 				$out = [];

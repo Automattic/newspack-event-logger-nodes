@@ -1,15 +1,15 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\RemoteSource;
-use Newspack_Event_Logger_Nodes\StreamMerger;
+use Newspack_Event_Logger_Nodes\Remote_Source_Node;
+use Newspack_Event_Logger_Nodes\Stream_Merger_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\SseFrameFactory;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\EventFramework;
+use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Partition;
-use Newspack_Nodes\Router;
+use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tests\CaptureSink;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -30,7 +30,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
  *   - 3-arg ingest filter signature ($line, $server_id, $partition).
  *   - Filter-rewrite of k:"job" -> k:"remote_job" still works.
  */
-#[CoversClass( StreamMerger::class )]
+#[CoversClass( Stream_Merger_Node::class )]
 class StreamMergerTest extends TestCase {
 
 	use SseFrameFactory;
@@ -39,7 +39,7 @@ class StreamMergerTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		EventFramework::reset();
+		Event_Framework::reset();
 		// Drop any ingest-filter callbacks left over from previous tests.
 		// parent::setUp() resets Core but NOT $GLOBALS['_wp_actions'] (the WP
 		// shim is process-wide); without this, a filter registered by an
@@ -65,8 +65,8 @@ class StreamMergerTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function make_merger(): StreamMerger {
-		$sm = new StreamMerger( "firehose", 0 );
+	private function make_merger(): Stream_Merger_Node {
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->name( 'test-stream-merger' );
 		$sm->set_require_https( false );  // back-compat: most legacy tests use http://
 		return $sm;
@@ -77,7 +77,7 @@ class StreamMergerTest extends TestCase {
 	 * state via these helpers now that the per-remote logic lives on a
 	 * separate node class rather than as array entries inside StreamMerger.
 	 */
-	private function remote( StreamMerger $sm, string $server_id ): RemoteSource {
+	private function remote( Stream_Merger_Node $sm, string $server_id ): Remote_Source_Node {
 		$nodes = $sm->remote_nodes();
 		if ( ! isset( $nodes[ $server_id ] ) ) {
 			throw new \RuntimeException( "no RemoteSource for server_id '{$server_id}'" );
@@ -85,23 +85,23 @@ class StreamMergerTest extends TestCase {
 		return $nodes[ $server_id ];
 	}
 
-	private function poke_remote( StreamMerger $sm, string $server_id, string $field, $value ): void {
+	private function poke_remote( Stream_Merger_Node $sm, string $server_id, string $field, $value ): void {
 		$remote = $this->remote( $sm, $server_id );
-		$ref    = new \ReflectionProperty( RemoteSource::class, $field );
+		$ref    = new \ReflectionProperty( Remote_Source_Node::class, $field );
 		$ref->setAccessible( true );
 		$ref->setValue( $remote, $value );
 	}
 
-	private function peek_remote( StreamMerger $sm, string $server_id, string $field ) {
+	private function peek_remote( Stream_Merger_Node $sm, string $server_id, string $field ) {
 		$remote = $this->remote( $sm, $server_id );
-		$ref    = new \ReflectionProperty( RemoteSource::class, $field );
+		$ref    = new \ReflectionProperty( Remote_Source_Node::class, $field );
 		$ref->setAccessible( true );
 		return $ref->getValue( $remote );
 	}
 
-	private function invoke_remote( StreamMerger $sm, string $server_id, string $method, array $args = [] ) {
+	private function invoke_remote( Stream_Merger_Node $sm, string $server_id, string $method, array $args = [] ) {
 		$remote = $this->remote( $sm, $server_id );
-		$m      = new \ReflectionMethod( RemoteSource::class, $method );
+		$m      = new \ReflectionMethod( Remote_Source_Node::class, $method );
 		$m->setAccessible( true );
 		return $m->invoke( $remote, ...$args );
 	}
@@ -110,8 +110,8 @@ class StreamMergerTest extends TestCase {
 	 * Force a manually-constructed RemoteSource into StreamMerger's ref map
 	 * (used by the few tests that need to bypass the add_remote HTTPS gate).
 	 */
-	private function poke_merger_remote_nodes( StreamMerger $sm, array $nodes ): void {
-		$ref = new \ReflectionProperty( StreamMerger::class, 'remote_nodes' );
+	private function poke_merger_remote_nodes( Stream_Merger_Node $sm, array $nodes ): void {
+		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'remote_nodes' );
 		$ref->setAccessible( true );
 		$existing = $ref->getValue( $sm );
 		$ref->setValue( $sm, \array_merge( \is_array( $existing ) ? $existing : [], $nodes ) );
@@ -326,7 +326,7 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteB', 'http://siteB.test/', 'tok' );
 
 		// Initial backoff is 1s.
-		$this->assertSame( StreamMerger::INITIAL_BACKOFF, $sm->get_backoff( 'siteB' ) );
+		$this->assertSame( Stream_Merger_Node::INITIAL_BACKOFF, $sm->get_backoff( 'siteB' ) );
 
 		// Each disconnect doubles, capped at MAX_BACKOFF.
 		$sequence = [ 2, 4, 8, 16, 30, 30, 30 ];
@@ -334,7 +334,7 @@ class StreamMergerTest extends TestCase {
 			$handle = $sm->test_get_handle( 'siteB' );
 			if ( null === $handle ) {
 				// Need to be connected to have a handle to disconnect.
-				Core::$now = Core::$now + StreamMerger::MAX_BACKOFF + 1;
+				Core::$now = Core::$now + Stream_Merger_Node::MAX_BACKOFF + 1;
 				$sm->tick();
 				$handle = $sm->test_get_handle( 'siteB' );
 			}
@@ -375,7 +375,7 @@ class StreamMergerTest extends TestCase {
 
 		// Receive any event — backoff resets.
 		$sm->on_curl_data( $handle, $this->connected_frame( 1 ) );
-		$this->assertSame( StreamMerger::INITIAL_BACKOFF, $sm->get_backoff( 'siteC' ) );
+		$this->assertSame( Stream_Merger_Node::INITIAL_BACKOFF, $sm->get_backoff( 'siteC' ) );
 	}
 
 	// =========================================================================
@@ -393,7 +393,7 @@ class StreamMergerTest extends TestCase {
 		$sm->on_curl_data( $first_handle, $this->connected_frame( 0 ) );
 
 		// Just under timeout — connection survives.
-		Core::$now = 1000.0 + StreamMerger::HEARTBEAT_TIMEOUT - 1;
+		Core::$now = 1000.0 + Stream_Merger_Node::HEARTBEAT_TIMEOUT - 1;
 		$sm->tick();
 		$this->assertSame( $first_handle, $sm->test_get_handle( 'siteD' ), 'connection must survive within HEARTBEAT_TIMEOUT' );
 
@@ -401,7 +401,7 @@ class StreamMergerTest extends TestCase {
 		// IMMEDIATELY tries to reconnect (because elapsed > new 2s backoff),
 		// so the visible end-state is: new handle, last_error reset by
 		// maybe_connect, current_backoff still 2 from the kill path.
-		Core::$now = 1000.0 + StreamMerger::HEARTBEAT_TIMEOUT + 1;
+		Core::$now = 1000.0 + Stream_Merger_Node::HEARTBEAT_TIMEOUT + 1;
 		$sm->tick();
 
 		$second_handle = $sm->test_get_handle( 'siteD' );
@@ -416,7 +416,7 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_https_only_default_refuses_http(): void {
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		// require_https defaults to true.
 		$sm->add_remote( 'insecure', 'http://insecure.test/', 'tok' );
 		// add_remote refuses non-HTTPS — no entry stored, no handle opened.
@@ -425,7 +425,7 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_https_only_default_accepts_https(): void {
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		// HTTPS URL: registration succeeds even with require_https=true. The
 		// connect attempt itself will fail (no real server) but the entry is
 		// stored and a connect attempt is made.
@@ -434,7 +434,7 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_require_https_opt_out_permits_http(): void {
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false );
 		$sm->add_remote( 'plain', 'http://plain.test/', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
@@ -458,7 +458,7 @@ class StreamMergerTest extends TestCase {
 		if ( ! is_dir( $dir ) ) {
 			mkdir( $dir, 0755, true );
 		}
-		$offsetlog = new Partition( $dir, 0 );
+		$offsetlog = new Partition_Node( $dir, 0 );
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
@@ -532,14 +532,14 @@ class StreamMergerTest extends TestCase {
 		$total      = 0;
 
 		// Feed up to MAX_BUFFER_SIZE without exceeding (last chunk under-sized).
-		while ( $total + $chunk_size <= StreamMerger::MAX_BUFFER_SIZE ) {
+		while ( $total + $chunk_size <= Stream_Merger_Node::MAX_BUFFER_SIZE ) {
 			$ret    = $sm->on_curl_data( $handle, $chunk );
 			$this->assertSame( $chunk_size, $ret, 'parser must consume full chunk under limit' );
 			$total += $chunk_size;
 		}
 
 		// Push exactly one byte past the limit -> abort.
-		$ret = $sm->on_curl_data( $handle, str_repeat( 'y', StreamMerger::MAX_BUFFER_SIZE - $total + 1 ) );
+		$ret = $sm->on_curl_data( $handle, str_repeat( 'y', Stream_Merger_Node::MAX_BUFFER_SIZE - $total + 1 ) );
 		$this->assertSame( 0, $ret, 'cURL abort signal expected once MAX_BUFFER_SIZE crossed' );
 		$this->assertStringContainsString( 'Buffer overflow', (string) $sm->get_last_error( 'siteG' ) );
 	}
@@ -560,7 +560,7 @@ class StreamMergerTest extends TestCase {
 			'k'   => 'render',
 			'ts'  => 1700000002,
 			'url' => '/h',
-			'big' => str_repeat( 'A', StreamMerger::MAX_LINE_BYTES + 100 ),
+			'big' => str_repeat( 'A', Stream_Merger_Node::MAX_LINE_BYTES + 100 ),
 		];
 		$sm->on_curl_data( $handle, $this->entry_frame( $entry ) );
 
@@ -571,7 +571,7 @@ class StreamMergerTest extends TestCase {
 		unset( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] );
 		// Filter inflates the line past the boundary.
 		add_filter( 'newspack_nodes/aggregator_ingest_line', function ( $line ): string {
-			return $line . str_repeat( 'B', StreamMerger::MAX_LINE_BYTES );
+			return $line . str_repeat( 'B', Stream_Merger_Node::MAX_LINE_BYTES );
 		} );
 
 		$sm      = $this->make_merger();
@@ -635,7 +635,7 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_add_remote_registers_curl_handle_with_event_framework(): void {
-		$sm = new StreamMerger( "firehose" );
+		$sm = new Stream_Merger_Node( "firehose" );
 		$sm->set_require_https( false );
 		$sm->add_remote( 'site-a', 'http://localhost:9999/stream', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
@@ -720,7 +720,7 @@ class StreamMergerTest extends TestCase {
 		$status = $cache->get( 'aggregator_status:siteM:p0' );
 		$this->assertIsArray( $status );
 		$this->assertSame( 'connecting', $status['last_connection_status'] );
-		$this->assertSame( StreamMerger::INITIAL_BACKOFF, $status['current_backoff'] );
+		$this->assertSame( Stream_Merger_Node::INITIAL_BACKOFF, $status['current_backoff'] );
 
 		// On `connected` envelope, status flips to connected + records heartbeat.
 		$handle = $sm->test_get_handle( 'siteM' );
@@ -765,7 +765,7 @@ class StreamMergerTest extends TestCase {
 			$captured[] = $msg;
 		} );
 
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false );
 
 		$concat = \implode( ' ', $captured );
@@ -875,7 +875,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_get_backoff_unknown_server_returns_initial(): void {
 		$sm = $this->make_merger();
-		$this->assertSame( StreamMerger::INITIAL_BACKOFF, $sm->get_backoff( 'unknown' ) );
+		$this->assertSame( Stream_Merger_Node::INITIAL_BACKOFF, $sm->get_backoff( 'unknown' ) );
 	}
 
 	public function test_get_slot_unknown_server_returns_null(): void {
@@ -898,17 +898,17 @@ class StreamMergerTest extends TestCase {
 	public function test_class_constants_match_upstream_contract(): void {
 		// Wire-contract assertions: any change here breaks back-compat with
 		// upstream's class-sse-client.php heartbeat / backoff machinery.
-		$this->assertSame( 30, StreamMerger::MAX_BACKOFF );
-		$this->assertSame( 1, StreamMerger::INITIAL_BACKOFF );
-		$this->assertSame( 5, StreamMerger::CONNECT_TIMEOUT );
-		$this->assertSame( 45, StreamMerger::HEARTBEAT_TIMEOUT );
-		$this->assertSame( 15, StreamMerger::HEARTBEAT_INTERVAL );
-		$this->assertSame( 10485760, StreamMerger::MAX_BUFFER_SIZE );
-		$this->assertSame( 10485760, StreamMerger::MAX_EVENT_SIZE );
-		$this->assertSame( 10000, StreamMerger::MAX_QUEUE_SIZE );
-		$this->assertSame( 3900, StreamMerger::MAX_LINE_BYTES );
-		$this->assertSame( 5, StreamMerger::COMMIT_INTERVAL_S );
-		$this->assertSame( 300, StreamMerger::STATUS_TTL );
+		$this->assertSame( 30, Stream_Merger_Node::MAX_BACKOFF );
+		$this->assertSame( 1, Stream_Merger_Node::INITIAL_BACKOFF );
+		$this->assertSame( 5, Stream_Merger_Node::CONNECT_TIMEOUT );
+		$this->assertSame( 45, Stream_Merger_Node::HEARTBEAT_TIMEOUT );
+		$this->assertSame( 15, Stream_Merger_Node::HEARTBEAT_INTERVAL );
+		$this->assertSame( 10485760, Stream_Merger_Node::MAX_BUFFER_SIZE );
+		$this->assertSame( 10485760, Stream_Merger_Node::MAX_EVENT_SIZE );
+		$this->assertSame( 10000, Stream_Merger_Node::MAX_QUEUE_SIZE );
+		$this->assertSame( 3900, Stream_Merger_Node::MAX_LINE_BYTES );
+		$this->assertSame( 5, Stream_Merger_Node::COMMIT_INTERVAL_S );
+		$this->assertSame( 300, Stream_Merger_Node::STATUS_TTL );
 	}
 
 	// =========================================================================
@@ -1038,7 +1038,7 @@ class StreamMergerTest extends TestCase {
 			$sm,
 			'siteOversize',
 			'current_event',
-			[ 'event' => '', 'data' => \str_repeat( 'A', RemoteSource::MAX_EVENT_SIZE ) ]
+			[ 'event' => '', 'data' => \str_repeat( 'A', Remote_Source_Node::MAX_EVENT_SIZE ) ]
 		);
 		$this->poke_remote( $sm, 'siteOversize', 'connected', true );
 
@@ -1056,10 +1056,10 @@ class StreamMergerTest extends TestCase {
 		// HTTPS-only mode rejects http heartbeats too. add_remote refuses
 		// http URLs at registration, so we construct a RemoteSource directly
 		// and add it to the merger's ref list so the helper can reach it.
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$cache = new InMemoryMemcached();
 		Core::$memd = $cache;
-		$remote = new RemoteSource( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
+		$remote = new Remote_Source_Node( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
 		$remote->set_require_https( true );
 		Core::$memd = $cache;
 		$this->poke_merger_remote_nodes( $sm, [ 'http-remote' => $remote ] );
@@ -1546,7 +1546,7 @@ class StreamMergerTest extends TestCase {
 		// Pre-seed the offsetlog with a Message whose VALUE is a scalar (not an array).
 		$dir = "{$this->tmp_dir}/remote_firehose.log";
 		@\mkdir( $dir, 0755, true );
-		$offsetlog = new Partition( $dir, 0 );
+		$offsetlog = new Partition_Node( $dir, 0 );
 		$offsetlog->name( 'streammerger-bad-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
@@ -1574,7 +1574,7 @@ class StreamMergerTest extends TestCase {
 		// for a DIFFERENT server. That second server should NOT find its key.
 		$dir = "{$this->tmp_dir}/remote_firehose.log";
 		@\mkdir( $dir, 0755, true );
-		$offsetlog = new Partition( $dir, 0 );
+		$offsetlog = new Partition_Node( $dir, 0 );
 		$offsetlog->name( 'streammerger-mixed-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
@@ -1612,7 +1612,7 @@ class StreamMergerTest extends TestCase {
 		$this->poke_remote( $sm, '__test__', 'connected', true );
 
 		// Now feed a single huge chunk with no newline — buffer overflows.
-		$big = \str_repeat( 'x', RemoteSource::MAX_BUFFER_SIZE + 1 );
+		$big = \str_repeat( 'x', Remote_Source_Node::MAX_BUFFER_SIZE + 1 );
 		$sm->process_sse_chunk( $big );
 
 		$this->assertFalse( $this->peek_remote( $sm, '__test__', 'connected' ) );
@@ -1761,12 +1761,12 @@ class StreamMergerTest extends TestCase {
 		unset( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] );
 
 		// Snapshot count before our calls.
-		StreamMerger::register_remote_job_rewrite_filter();
+		Stream_Merger_Node::register_remote_job_rewrite_filter();
 		$first_count = \count( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] ?? [] );
 
 		// A second call must not add another filter — the static $registered guard
 		// makes it idempotent for the lifetime of the process.
-		StreamMerger::register_remote_job_rewrite_filter();
+		Stream_Merger_Node::register_remote_job_rewrite_filter();
 		$second_count = \count( $GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'] ?? [] );
 
 		$this->assertSame( $first_count, $second_count, 'second call must not register a duplicate filter' );
@@ -1832,14 +1832,14 @@ class StreamMergerTest extends TestCase {
 	// ── A3: sibling-CI + verbs ─────────────────────────────────
 
 	public function test_stream_merger_constructs_sibling_ci(): void {
-		$sm = new StreamMerger( "firehose" );
+		$sm = new Stream_Merger_Node( "firehose" );
 		$sm->name( 'sm' );
 		$this->assertNotNull( $sm->interpreter() );
 		$this->assertSame( 'sm:config', $sm->interpreter()->name() );
 	}
 
 	public function test_stream_merger_set_verify_ssl_verb_round_trips(): void {
-		$sm = new StreamMerger( "firehose" );
+		$sm = new Stream_Merger_Node( "firehose" );
 		$sm->name( 'sm' );
 		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_verify_ssl', 'false' ) );
 		$dump = $sm->dump_config();
@@ -1847,7 +1847,7 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_stream_merger_set_require_https_verb_round_trips(): void {
-		$sm = new StreamMerger( "firehose" );
+		$sm = new Stream_Merger_Node( "firehose" );
 		$sm->name( 'sm' );
 		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'true' ) );
 		$dump = $sm->dump_config();
@@ -1855,7 +1855,7 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_stream_merger_node_schema_declares_verbs(): void {
-		$schema = StreamMerger::node_schema();
+		$schema = Stream_Merger_Node::node_schema();
 		$this->assertSame( 'I/O', $schema['category'] );
 		$verb_names = \array_column( $schema['verbs'], 'name' );
 		$this->assertContains( 'set_verify_ssl', $verb_names );
@@ -2099,10 +2099,10 @@ class StreamMergerTest extends TestCase {
 		// real Router and hits the register('TIMER', $this->name) branch
 		// (the version covered by the rest of the suite goes through the
 		// `null === $router` print_less_often path).
-		$router = new Router();
+		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false );
 		$sm->name( 'sm-with-router' );
 
@@ -2212,7 +2212,7 @@ class StreamMergerTest extends TestCase {
 		$this->assertCount( 2, $nodes );
 		$this->assertArrayHasKey( 'siteA', $nodes );
 		$this->assertArrayHasKey( 'siteB', $nodes );
-		$this->assertInstanceOf( RemoteSource::class, $nodes['siteA'] );
+		$this->assertInstanceOf( Remote_Source_Node::class, $nodes['siteA'] );
 	}
 
 	public function test_active_count_responds_to_connection_flips(): void {
@@ -2252,7 +2252,7 @@ class StreamMergerTest extends TestCase {
 	public function test_add_remote_registry_path_with_full_entry(): void {
 		// add_remote with empty $url consults ServerRegistry. With a valid
 		// HTTPS entry the entry is added.
-		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\ServerRegistry::OPTION_KEY ] = [
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Server_Registry::OPTION_KEY ] = [
 			'site-reg' => [
 				'url'           => 'https://site-reg.test',
 				'auth_username' => 'admin',
@@ -2260,23 +2260,23 @@ class StreamMergerTest extends TestCase {
 				'enabled'       => true,
 			],
 		];
-		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->name( 'test-reg-sm' );
 		$sm->add_remote( 'site-reg' );
 
 		$this->assertSame( 1, $sm->remote_count() );
 		$this->assertArrayHasKey( 'site-reg', $sm->remote_nodes() );
 
-		unset( $GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\ServerRegistry::OPTION_KEY ] );
+		unset( $GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Server_Registry::OPTION_KEY ] );
 	}
 
 	public function test_add_remote_registry_path_missing_url(): void {
 		// Registry entry exists but URL is empty → add_remote logs + returns.
-		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\ServerRegistry::OPTION_KEY ] = [
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Server_Registry::OPTION_KEY ] = [
 			'no-url' => [
 				'url'           => '',
 				'auth_username' => '',
@@ -2284,7 +2284,7 @@ class StreamMergerTest extends TestCase {
 				'enabled'       => true,
 			],
 		];
-		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\ServerRegistry::class, 'instance' );
+		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Server_Registry::class, 'instance' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
@@ -2310,7 +2310,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_namespaced_remote_name_uses_default_prefix_when_unnamed(): void {
 		// Without a name set, the namespaced child name uses 'stream-merger'.
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false );
 		// Don't call name().
 		$sm->add_remote( 'siteNoName', 'http://siteNoName.test/', 'tok' );
@@ -2377,11 +2377,11 @@ class StreamMergerTest extends TestCase {
 
 	public function test_constructor_clamps_negative_partition_to_zero(): void {
 		// `partition = max(0, $partition)` in __construct.
-		$sm = new StreamMerger( -5 );
+		$sm = new Stream_Merger_Node( -5 );
 		$sm->set_require_https( false );
 
 		// Reflect to verify the clamp.
-		$ref = new \ReflectionProperty( StreamMerger::class, 'partition' );
+		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'partition' );
 		$ref->setAccessible( true );
 		$this->assertSame( 0, $ref->getValue( $sm ) );
 	}
@@ -2389,7 +2389,7 @@ class StreamMergerTest extends TestCase {
 	public function test_name_setter_propagates_to_health_check_sibling(): void {
 		// Naming the merger names the health_check sibling
 		// "{name}:health-check".
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false );
 		$sm->name( 'parent-merger' );
 
@@ -2398,10 +2398,10 @@ class StreamMergerTest extends TestCase {
 
 	public function test_name_setter_idempotent_does_not_double_register_timer(): void {
 		// Setting the same name twice must not double-register TIMER.
-		$router = new Router();
+		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false );
 		$sm->name( 'sm-twice' );
 		$sm->name( 'sm-twice' );
@@ -2418,7 +2418,7 @@ class StreamMergerTest extends TestCase {
 		// returns false the second time, so no new warning is emitted. Only the
 		// SECOND-call (no-op) assertion is robust here, because the first call may
 		// be suppressed by the print_less_often rate limiter from a previous test.
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 		$sm->set_require_https( false ); // first call; may or may not log (rate-limited)
 
 		// Second call → require_https already false → the warn-branch guard fails.
@@ -2434,7 +2434,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_set_require_https_enabling_again_does_not_warn(): void {
 		// Going from `true` to `true` → no warning (the warn branch guards on the transition).
-		$sm = new StreamMerger( "firehose", 0 );
+		$sm = new Stream_Merger_Node( "firehose", 0 );
 
 		$captured = [];
 		\Newspack_Nodes\Core::set_stderr_handler( function ( string $msg ) use ( &$captured ): void {
@@ -2450,7 +2450,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_node_schema_describes_request_verb_for_get_remotes(): void {
 		// GET_REMOTES is the only documented request — schema must declare it.
-		$schema = StreamMerger::node_schema();
+		$schema = Stream_Merger_Node::node_schema();
 
 		$this->assertArrayHasKey( 'requests', $schema );
 		$this->assertNotEmpty( $schema['requests'] );
@@ -2460,7 +2460,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_node_schema_describes_partition_ctor_arg(): void {
 		// The constructor's `partition` arg must be advertised.
-		$schema = StreamMerger::node_schema();
+		$schema = Stream_Merger_Node::node_schema();
 
 		$this->assertArrayHasKey( 'ctor', $schema );
 		$ctor_args = \array_column( $schema['ctor'], 'name' );
@@ -2486,7 +2486,7 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	private function reset_stream_merger_verbs_cache(): void {
-		$ref = new \ReflectionProperty( StreamMerger::class, 'verbs_cache' );
+		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'verbs_cache' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, [] );
 	}
@@ -2500,7 +2500,7 @@ class StreamMergerTest extends TestCase {
 
 		// 'true' sets verify_ssl true.
 		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, 'true' ) );
-		$ref = new \ReflectionProperty( StreamMerger::class, 'verify_ssl' );
+		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'verify_ssl' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $sm ) );
 
@@ -2515,7 +2515,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_set_require_https_verb_closure_dispatches_to_patron(): void {
 		$this->reset_stream_merger_verbs_cache();
-		$sm = new StreamMerger( 'firehose', 0 );
+		$sm = new Stream_Merger_Node( 'firehose', 0 );
 		$sm->name( 'sm-require-https' );
 		$ci = $sm->interpreter();
 		$verbs = $ci->commands();
@@ -2523,7 +2523,7 @@ class StreamMergerTest extends TestCase {
 
 		// Toggle on via verb dispatch.
 		$this->assertSame( 'ok', $verbs['set_require_https']( $ci, 'true' ) );
-		$ref = new \ReflectionProperty( StreamMerger::class, 'require_https' );
+		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'require_https' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $sm ) );
 
@@ -2580,14 +2580,14 @@ class StreamMergerTest extends TestCase {
 		// populates it. Subsequent constructions reuse the cached array
 		// (the `if ( empty( $verbs_cache ) )` short-circuit).
 		$this->reset_stream_merger_verbs_cache();
-		$first  = new StreamMerger( 'firehose', 0 );
-		$ref    = new \ReflectionProperty( StreamMerger::class, 'verbs_cache' );
+		$first  = new Stream_Merger_Node( 'firehose', 0 );
+		$ref    = new \ReflectionProperty( Stream_Merger_Node::class, 'verbs_cache' );
 		$ref->setAccessible( true );
 		$cache1 = $ref->getValue();
 
 		$this->assertNotEmpty( $cache1, 'first construction populates verbs_cache' );
 
-		$second = new StreamMerger( 'firehose', 1 );
+		$second = new Stream_Merger_Node( 'firehose', 1 );
 		$cache2 = $ref->getValue();
 		$this->assertSame(
 			$cache1,
@@ -2606,7 +2606,7 @@ class StreamMergerTest extends TestCase {
 		if ( ! is_dir( $dir ) ) {
 			mkdir( $dir, 0755, true );
 		}
-		$offsetlog = new Partition( $dir, 0 );
+		$offsetlog = new Partition_Node( $dir, 0 );
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                   = Message::new_message();

@@ -1,7 +1,7 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\JobRouter;
+use Newspack_Event_Logger_Nodes\Job_Router_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\CaptureSink;
@@ -16,15 +16,15 @@ use PHPUnit\Framework\Attributes\CoversClass;
  * These tests sink JobRouter into a CaptureSink so we can assert what came
  * out, then walk through the matrix of source × kind × validity.
  */
-#[CoversClass( JobRouter::class )]
+#[CoversClass( Job_Router_Node::class )]
 class JobRouterTest extends TestCase {
 
-	private JobRouter $jr;
+	private Job_Router_Node $jr;
 	private CaptureSink $sink;
 
 	protected function setUp(): void {
 		parent::setUp();
-		$this->jr = new JobRouter();
+		$this->jr = new Job_Router_Node();
 		$this->jr->name( 'job-router' );
 		$this->sink = new CaptureSink();
 		$this->jr->sink( $this->sink );

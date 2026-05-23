@@ -17,11 +17,11 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\CommandInterpreter;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
-use Newspack_Nodes\Rest\HTTP_In;
-use Newspack_Nodes\Router;
+use Newspack_Nodes\Rest\HTTP_In_Node;
+use Newspack_Nodes\Router_Node;
 
 class M2BootstrapTest extends TestCase {
 
@@ -52,11 +52,11 @@ class M2BootstrapTest extends TestCase {
 	 * is the contract.
 	 */
 	public function test_request_graph_ready_registers_all_nine_service_cis(): void {
-		( new Router() )->name( Node_Names::ROUTER );
-		$base = new CommandInterpreter();
+		( new Router_Node() )->name( Node_Names::ROUTER );
+		$base = new Command_Interpreter_Node();
 		$base->name( Node_Names::COMMAND_INTERPRETER );
 		$base->sink( Core::node( Node_Names::ROUTER ) );
-		( new HTTP_In( static fn ( int $code ): null => null ) )->name( Node_Names::HTTP );
+		( new HTTP_In_Node( static fn ( int $code ): null => null ) )->name( Node_Names::HTTP );
 
 		\do_action( 'newspack_nodes/request_graph_ready', $base );
 

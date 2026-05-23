@@ -17,7 +17,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Health Check Extensions class.
  */
-class HealthCheckExtensions {
+class Health_Check_Extensions {
 
 	/**
 	 * Maximum discovered events to merge.
@@ -144,11 +144,11 @@ class HealthCheckExtensions {
 
 		if ( $updated ) {
 			// Suppress SettingsSync fan-out to prevent discovered hooks from being synced back.
-			SettingsSync::suppress_sync();
+			Settings_Sync::suppress_sync();
 			try {
 				\update_option( 'newspack_event_logger_nodes_log_events', $local, Config::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
 			} finally {
-				SettingsSync::suppress_sync( false );
+				Settings_Sync::suppress_sync( false );
 			}
 		}
 	}

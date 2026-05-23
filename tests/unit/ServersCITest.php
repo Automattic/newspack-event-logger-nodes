@@ -15,14 +15,14 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Servers_CI;
-use Newspack_Event_Logger_Nodes\RemoteManager;
-use Newspack_Event_Logger_Nodes\ServerRegistry;
+use Newspack_Event_Logger_Nodes\App\Servers_CI_Node;
+use Newspack_Event_Logger_Nodes\Remote_Manager;
+use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( Servers_CI::class )]
+#[CoversClass( Servers_CI_Node::class )]
 class ServersCITest extends TestCase {
 	private string $tmp;
 
@@ -37,7 +37,7 @@ class ServersCITest extends TestCase {
 		$GLOBALS['_current_user_can']        = true;
 		$GLOBALS['_wp_test_remote_gets']     = [];
 		$GLOBALS['_wp_test_remote_responses'] = [];
-		Servers_CI::$http_call               = null;
+		Servers_CI_Node::$http_call               = null;
 	}
 
 	protected function tearDown(): void {
@@ -46,7 +46,7 @@ class ServersCITest extends TestCase {
 		$GLOBALS['_current_user_can']        = false;
 		$GLOBALS['_wp_test_remote_gets']     = [];
 		$GLOBALS['_wp_test_remote_responses'] = [];
-		Servers_CI::$http_call               = null;
+		Servers_CI_Node::$http_call               = null;
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
@@ -56,14 +56,14 @@ class ServersCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_list_verb_returns_empty_map_when_no_servers_registered(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'list' );
 
 		$this->assertSame( [], $result );
 	}
 
 	public function test_list_verb_returns_registered_servers_with_public_shape(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [
 			'url'           => 'https://a.example.com',
 			'auth_username' => 'admin',
@@ -72,7 +72,7 @@ class ServersCITest extends TestCase {
 		] );
 		$registry->reset_cache();
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'list' );
 
 		$this->assertIsArray( $result );
@@ -91,12 +91,12 @@ class ServersCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_get_verb_returns_single_server(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [
 			'url' => 'https://a.example.com',
 		] );
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'get', [ 'id' => 'site-a' ] );
 
 		$this->assertIsArray( $result );
@@ -106,7 +106,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_get_verb_returns_error_for_unknown_id(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'get', [ 'id' => 'nope' ] );
 
 		$this->assertIsString( $result );
@@ -114,7 +114,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_get_verb_requires_id(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'get', [] );
 
 		$this->assertIsString( $result );
@@ -126,8 +126,8 @@ class ServersCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_add_verb_persists_server_in_registry(): void {
-		$registry = new ServerRegistry();
-		$ci       = new Servers_CI( $registry );
+		$registry = new Server_Registry();
+		$ci       = new Servers_CI_Node( $registry );
 
 		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'            => 'new-site',
@@ -148,8 +148,8 @@ class ServersCITest extends TestCase {
 
 	public function test_add_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$registry = new ServerRegistry();
-		$ci       = new Servers_CI( $registry );
+		$registry = new Server_Registry();
+		$ci       = new Servers_CI_Node( $registry );
 
 		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'  => 'site-a',
@@ -165,7 +165,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_add_verb_rejects_invalid_id(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'  => '!!bad-id!!',
 			'url' => 'https://a.example.com',
@@ -176,7 +176,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_add_verb_rejects_http_url(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'add', [
 			'id'  => 'plain',
 			'url' => 'http://insecure.example.com',
@@ -192,13 +192,13 @@ class ServersCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_update_verb_applies_partial_update(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [
 			'url'     => 'https://a.example.com',
 			'enabled' => false,
 		] );
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'update', [
 			'id'      => 'site-a',
 			'enabled' => true,
@@ -213,14 +213,14 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_update_verb_rejects_unauthorized(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [
 			'url'     => 'https://a.example.com',
 			'enabled' => false,
 		] );
 		$GLOBALS['_current_user_can'] = false;
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'update', [
 			'id'      => 'site-a',
 			'enabled' => true,
@@ -235,7 +235,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_update_verb_returns_error_for_unknown_id(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'update', [
 			'id'      => 'never-existed',
 			'enabled' => true,
@@ -250,10 +250,10 @@ class ServersCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_delete_verb_removes_server(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'delete', [ 'id' => 'site-a' ] );
 
 		$this->assertIsArray( $result );
@@ -264,11 +264,11 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_delete_verb_rejects_unauthorized(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 		$GLOBALS['_current_user_can'] = false;
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'delete', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
@@ -279,7 +279,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_delete_verb_returns_error_for_unknown_id(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'delete', [ 'id' => 'never-existed' ] );
 
 		$this->assertIsString( $result );
@@ -314,7 +314,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_test_verb_returns_connected_on_200_discovery_response(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [
 			'url'           => 'https://a.example.com',
 			'auth_username' => 'admin',
@@ -324,7 +324,7 @@ class ServersCITest extends TestCase {
 		// Closure seam: capture outbound args + return a 200 discovery body
 		// wrapped in the same command envelope a real spoke would emit.
 		$captured = null;
-		Servers_CI::$http_call = static function ( string $url, array $args ) use ( &$captured ): array {
+		Servers_CI_Node::$http_call = static function ( string $url, array $args ) use ( &$captured ): array {
 			$captured = [ 'url' => $url, 'args' => $args ];
 			return [
 				'response' => [ 'code' => 200 ],
@@ -336,7 +336,7 @@ class ServersCITest extends TestCase {
 			];
 		};
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsArray( $result );
@@ -371,11 +371,11 @@ class ServersCITest extends TestCase {
 		// probe_remote() and RemoteManager's periodic health-check probe must
 		// emit the SAME `discovery.get` command wire — both build it through
 		// RemoteManager::command_message_body() so the two surfaces can't drift.
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 
 		$captured = null;
-		Servers_CI::$http_call = static function ( string $url, array $args ) use ( &$captured ): array {
+		Servers_CI_Node::$http_call = static function ( string $url, array $args ) use ( &$captured ): array {
 			$captured = $args;
 			return [
 				'response' => [ 'code' => 200 ],
@@ -383,7 +383,7 @@ class ServersCITest extends TestCase {
 			];
 		};
 
-		$ci = new Servers_CI( $registry );
+		$ci = new Servers_CI_Node( $registry );
 		VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		// Compare the captured body to the shared builder's output field-by-field,
@@ -391,7 +391,7 @@ class ServersCITest extends TestCase {
 		// match across two separate new_message() calls). Equality on every other
 		// field proves probe_remote builds through command_message_body().
 		$actual   = \Newspack_Nodes\Message::unpacked( $captured['body'] );
-		$expected = \Newspack_Nodes\Message::unpacked( RemoteManager::command_message_body( 'discovery', 'get', '' ) );
+		$expected = \Newspack_Nodes\Message::unpacked( Remote_Manager::command_message_body( 'discovery', 'get', '' ) );
 		$actual[ \Newspack_Nodes\Message::TIMESTAMP ]   = 0;
 		$expected[ \Newspack_Nodes\Message::TIMESTAMP ] = 0;
 		$this->assertSame(
@@ -409,13 +409,13 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_test_verb_returns_error_on_non_200_response(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 
-		Servers_CI::$http_call = static fn( string $url, array $args ): array =>
+		Servers_CI_Node::$http_call = static fn( string $url, array $args ): array =>
 			[ 'response' => [ 'code' => 503 ], 'body' => '' ];
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
@@ -423,13 +423,13 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_test_verb_returns_error_on_wp_error_response(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 
-		Servers_CI::$http_call = static fn( string $url, array $args ): \WP_Error =>
+		Servers_CI_Node::$http_call = static fn( string $url, array $args ): \WP_Error =>
 			new \WP_Error( 'http_timeout', 'request timed out' );
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
@@ -437,11 +437,11 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_test_verb_rejects_unauthorized(): void {
-		$registry = new ServerRegistry();
+		$registry = new Server_Registry();
 		$registry->add( 'site-a', [ 'url' => 'https://a.example.com' ] );
 		$GLOBALS['_current_user_can'] = false;
 
-		$ci     = new Servers_CI( $registry );
+		$ci     = new Servers_CI_Node( $registry );
 		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'site-a' ] );
 
 		$this->assertIsString( $result );
@@ -449,7 +449,7 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_test_verb_returns_error_for_unknown_id(): void {
-		$ci     = new Servers_CI( new ServerRegistry() );
+		$ci     = new Servers_CI_Node( new Server_Registry() );
 		$result = VerbHarness::fire( $ci, 'servers', 'test', [ 'id' => 'never-existed' ] );
 
 		$this->assertIsString( $result );

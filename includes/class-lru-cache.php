@@ -20,7 +20,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * LRU cache using bucket rotation.
  */
-class LruCache {
+class LRU_Cache {
 
 	/** @var array Buckets array. */
 	private array $buckets = [];

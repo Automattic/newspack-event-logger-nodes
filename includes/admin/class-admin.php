@@ -39,9 +39,9 @@ namespace Newspack_Event_Logger_Nodes\Admin;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
-use Newspack_Nodes\Cli;
+use Newspack_Nodes\CLI;
 use Newspack_Nodes\Config as Substrate_Config;
-use Newspack_Nodes\Lock;
+use Newspack_Nodes\Lock_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -885,7 +885,7 @@ class Admin {
 	 * servers_field_callback).
 	 */
 	public function configured_servers_callback(): void {
-		$servers = \Newspack_Event_Logger_Nodes\ServerRegistry::get_instance()->get_all();
+		$servers = \Newspack_Event_Logger_Nodes\Server_Registry::get_instance()->get_all();
 		?>
 		<div id="event-aggregator-servers">
 			<table class="wp-list-table widefat fixed striped" style="max-width: 800px;">
@@ -1265,7 +1265,7 @@ class Admin {
 		try {
 			$workers   = Bootstrap::expand_workers();
 			$base_dir  = (string) ( Substrate_Config::load_config()['base_directory'] ?? '/tmp/newspack-nodes' );
-			$restarted = ( new Cli( $base_dir ) )->restart_workers( $workers, [], -1 );
+			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
 		} catch ( \Throwable $e ) {
 			// Best-effort: the next supervisor pass picks up the new salt
 			// on the next spawn regardless. Log via the substrate's
@@ -1359,7 +1359,7 @@ class Admin {
 		if ( 'enable_aggregator' === $short ) {
 			try {
 				$locks_dir = Config::get_locks_directory();
-				Lock::request_restart_at( "{$locks_dir}/aggregator.p0.lock.d" );
+				Lock_Node::request_restart_at( "{$locks_dir}/aggregator.p0.lock.d" );
 			} catch ( \Throwable $e ) {
 				// Best-effort. Next supervisor pass will catch up.
 			}
@@ -1410,7 +1410,7 @@ class Admin {
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			foreach ( $worker_groups as $group ) {
 				$lock_dir = "{$locks_dir}/{$group}.p{$p}.lock.d";
-				Lock::request_restart_at( $lock_dir );
+				Lock_Node::request_restart_at( $lock_dir );
 			}
 		}
 	}

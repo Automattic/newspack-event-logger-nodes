@@ -15,12 +15,12 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\LogManager;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( LogManager::class )]
+#[CoversClass( Log_Manager::class )]
 class LogManagerTest extends TestCase {
 
 	private const TEST_DIR = '/tmp/event-logger-nodes-test';
@@ -35,7 +35,7 @@ class LogManagerTest extends TestCase {
 		$this->orig_server = $_SERVER;
 
 		// Reset singleton so each test starts fresh.
-		LogManager::reset();
+		Log_Manager::reset();
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
 		}
@@ -58,7 +58,7 @@ class LogManagerTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		LogManager::reset();
+		Log_Manager::reset();
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
 		}
@@ -103,16 +103,16 @@ class LogManagerTest extends TestCase {
 
 	public function test_singleton_instance(): void {
 		$this->require_config_or_skip();
-		$instance1 = LogManager::instance();
-		$instance2 = LogManager::instance();
+		$instance1 = Log_Manager::instance();
+		$instance2 = Log_Manager::instance();
 		$this->assertSame( $instance1, $instance2 );
 	}
 
 	public function test_reset_clears_singleton(): void {
 		$this->require_config_or_skip();
-		$instance1 = LogManager::instance();
-		LogManager::reset();
-		$instance2 = LogManager::instance();
+		$instance1 = Log_Manager::instance();
+		Log_Manager::reset();
+		$instance2 = Log_Manager::instance();
 		$this->assertNotSame( $instance1, $instance2 );
 	}
 
@@ -130,7 +130,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_construct_blocks_reentrant_instance(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		$reentrant_instance = null;
@@ -142,11 +142,11 @@ class LogManagerTest extends TestCase {
 			if ( $reentry_count++ > 0 ) {
 				return;
 			}
-			$reentrant_instance = LogManager::instance();
+			$reentrant_instance = Log_Manager::instance();
 		};
 
 		try {
-			$top_instance = LogManager::instance();
+			$top_instance = Log_Manager::instance();
 			$this->assertSame(
 				$top_instance,
 				$reentrant_instance,
@@ -159,26 +159,26 @@ class LogManagerTest extends TestCase {
 
 	public function test_constructor_sets_enabled_when_logging_enabled(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->enabled );
 	}
 
 	public function test_constructor_disabled_when_config_disables_logging(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-disabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertFalse( $lm->enabled );
 	}
 
 	// ── Request ID ─────────────────────────────────────────────────────────
 
 	public function test_generate_request_id_format(): void {
-		$rid = LogManager::generate_request_id();
+		$rid = Log_Manager::generate_request_id();
 		$this->assertIsString( $rid );
 		$this->assertSame( 32, \strlen( $rid ) );
 		// Should be alphanumeric (base36).
@@ -188,7 +188,7 @@ class LogManagerTest extends TestCase {
 	public function test_generate_request_id_uniqueness(): void {
 		$ids = [];
 		for ( $i = 0; $i < 50; $i++ ) {
-			$ids[] = LogManager::generate_request_id();
+			$ids[] = Log_Manager::generate_request_id();
 		}
 		$unique = \array_unique( $ids );
 		$this->assertCount( 50, $unique, 'All generated request IDs should be unique' );
@@ -198,14 +198,14 @@ class LogManagerTest extends TestCase {
 
 	public function test_message_returns_true(): void {
 		$this->require_config_or_skip();
-		$lm     = LogManager::instance();
+		$lm     = Log_Manager::instance();
 		$result = $lm->message( 'test_category', [ 'm' => 'hello world' ] );
 		$this->assertTrue( $result );
 	}
 
 	public function test_message_truncates_large_data(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// Create data larger than MAX_DATA_SIZE (3840 bytes).
 		$large  = [ 'm' => \str_repeat( 'x', 4000 ) ];
@@ -217,21 +217,21 @@ class LogManagerTest extends TestCase {
 
 	public function test_error_convenience_method(): void {
 		$this->require_config_or_skip();
-		$lm     = LogManager::instance();
+		$lm     = Log_Manager::instance();
 		$result = $lm->error( 'Something went wrong' );
 		$this->assertTrue( $result );
 	}
 
 	public function test_warning_convenience_method(): void {
 		$this->require_config_or_skip();
-		$lm     = LogManager::instance();
+		$lm     = Log_Manager::instance();
 		$result = $lm->warning( 'Watch out' );
 		$this->assertTrue( $result );
 	}
 
 	public function test_info_convenience_method(): void {
 		$this->require_config_or_skip();
-		$lm     = LogManager::instance();
+		$lm     = Log_Manager::instance();
 		$result = $lm->info( 'FYI' );
 		$this->assertTrue( $result );
 	}
@@ -240,7 +240,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_start_complete_timing(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// start() requires ensure_started(), which sets up the firehose Topic.
 		$lm->start( 'test_op', [ 'm' => 'starting operation' ] );
@@ -248,7 +248,7 @@ class LogManagerTest extends TestCase {
 		$lm->complete( 'test_op' );
 
 		// Verify the timer stack only has the root 'process' entry left.
-		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
 		$ref->setAccessible( true );
 		$times = $ref->getValue( $lm );
 		$this->assertCount( 1, $times, 'Timer stack should have only root entry after complete' );
@@ -256,7 +256,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_complete_without_start_is_noop(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// complete() without matching start() should not throw.
 		$lm->complete( 'nonexistent_label' );
 		$this->assertTrue( true );
@@ -264,7 +264,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_nested_start_complete(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		$lm->start( 'outer' );
 		$lm->start( 'inner' );
@@ -276,7 +276,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_lifecycle(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		$lm->start( 'process_test' );
 		$lm->message( 'test_event', [ 'm' => 'data' ] );
@@ -291,7 +291,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_get_request_id_returns_string(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Force initialization by calling start (triggers ensure_started/init_firehose).
 		$lm->start( 'init' );
 		$rid = $lm->get_request_id();
@@ -301,11 +301,11 @@ class LogManagerTest extends TestCase {
 
 	public function test_worker_type_tagging(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		$_SERVER['NEWSPACK_NODES_WORKER_TYPE'] = 'test_worker';
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
 		$lm->complete( 'work' );
 
@@ -318,34 +318,34 @@ class LogManagerTest extends TestCase {
 
 	public function test_matches_url_filter_with_skip_urls(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'skip-urls' ) );
 		Config::reset();
 
 		$_SERVER['REQUEST_URI'] = '/health';
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertFalse( $lm->enabled, 'Skip URL should disable logging' );
 	}
 
 	public function test_matches_url_filter_with_log_urls(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
 		Config::reset();
 
 		$_SERVER['REQUEST_URI'] = '/other/page';
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertFalse( $lm->enabled, 'Non-matching URL should be disabled when log_urls is set' );
 	}
 
 	public function test_matches_url_filter_accepts_matching_url(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
 		Config::reset();
 
 		$_SERVER['REQUEST_URI'] = '/api/data';
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->enabled, 'Matching URL should be enabled' );
 	}
 
@@ -353,7 +353,7 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		// Exercises the public method against a freshly constructed instance
 		// that has no compiled regex.
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->matches_url_filter( '/anything' ), 'No filter = log all' );
 	}
 
@@ -361,7 +361,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_line_limiting_mutes_after_max(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// Verify the mechanism works by calling message — well below MAX_LOG_LINES.
 		$lm->message( 'line1' );
@@ -372,10 +372,10 @@ class LogManagerTest extends TestCase {
 
 	public function test_start_complete_muted_when_line_limited(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// Use reflection to set line_limited to true.
-		$ref = new \ReflectionProperty( LogManager::class, 'line_limited' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'line_limited' );
 		$ref->setAccessible( true );
 		$ref->setValue( $lm, true );
 
@@ -390,7 +390,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_complete_with_mismatched_label(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// Start one label, complete a different one. The orphaned 'inner'
 		// should be logged as orphaned. No exception expected.
@@ -402,17 +402,17 @@ class LogManagerTest extends TestCase {
 
 	public function test_log_memory_config_flag(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-memory' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->enabled );
 
 		// Verify log_memory flag is set via reflection.
-		$ref = new \ReflectionProperty( LogManager::class, 'log_memory' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'log_memory' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $lm ), 'log_memory should be true with logging-memory config' );
 
@@ -427,14 +427,14 @@ class LogManagerTest extends TestCase {
 	public function test_finish_computes_real_duration(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'custom_event', [ 'm' => 'tracked with start' ] );
 
 		// Brief sleep to ensure non-zero duration.
@@ -464,14 +464,14 @@ class LogManagerTest extends TestCase {
 	public function test_message_m_field_url_redaction(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'redaction_test' );
 		$lm->message( 'test', [ 'm' => 'https://example.com?client_secret=SECRET&id=123' ] );
 		$lm->finish();
@@ -558,14 +558,14 @@ class LogManagerTest extends TestCase {
 	public function test_message_k_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'k_override_test' );
 		$lm->message( 'job', [ 'k' => 'discovery', 'm' => 'test' ] );
 		$lm->finish();
@@ -584,14 +584,14 @@ class LogManagerTest extends TestCase {
 	public function test_message_ts_field_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'ts_override_test' );
 		$lm->message( 'test', [ 'ts' => 12345.678, 'm' => 'hello' ] );
 		$lm->finish();
@@ -607,14 +607,14 @@ class LogManagerTest extends TestCase {
 	public function test_message_rid_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'rid_override_test' );
 		$lm->message( 'test', [ 'rid' => 'fake_id', 'm' => 'hello' ] );
 		$lm->finish();
@@ -631,14 +631,14 @@ class LogManagerTest extends TestCase {
 	public function test_message_n_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'n_override_test' );
 		$lm->message( 'test', [ 'n' => 99999, 'm' => 'hello' ] );
 		$lm->finish();
@@ -652,11 +652,11 @@ class LogManagerTest extends TestCase {
 
 	public function test_unique_id_server_var_used_when_set(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		$_SERVER['UNIQUE_ID'] = 'test-unique-id-123';
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Trigger initialization.
 		$lm->start( 'test' );
 		$lm->complete( 'test' );
@@ -670,24 +670,24 @@ class LogManagerTest extends TestCase {
 	// ── Constants preserved verbatim ───────────────────────────────────────
 
 	public function test_max_timer_depth_constant_preserved(): void {
-		$ref = new \ReflectionClassConstant( LogManager::class, 'MAX_TIMER_DEPTH' );
+		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_TIMER_DEPTH' );
 		$this->assertSame( 100, $ref->getValue() );
 	}
 
 	public function test_max_data_size_constant_preserved(): void {
-		$ref = new \ReflectionClassConstant( LogManager::class, 'MAX_DATA_SIZE' );
+		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_DATA_SIZE' );
 		$this->assertSame( 3840, $ref->getValue() );
 	}
 
 	public function test_max_log_lines_constant_preserved(): void {
-		$ref = new \ReflectionClassConstant( LogManager::class, 'MAX_LOG_LINES' );
+		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_LOG_LINES' );
 		$this->assertSame( 40000, $ref->getValue() );
 	}
 
 	public function test_fatal_types_constant_preserved(): void {
 		$this->assertSame(
 			[ E_ERROR, E_PARSE, E_COMPILE_ERROR, E_USER_ERROR ],
-			LogManager::FATAL_TYPES
+			Log_Manager::FATAL_TYPES
 		);
 	}
 
@@ -699,7 +699,7 @@ class LogManagerTest extends TestCase {
 	 * @return array
 	 */
 	private function read_context_stack(): array {
-		$ref = new \ReflectionProperty( LogManager::class, 'context_stack' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'context_stack' );
 		$ref->setAccessible( true );
 		return $ref->getValue();
 	}
@@ -711,7 +711,7 @@ class LogManagerTest extends TestCase {
 	 * the next test.
 	 */
 	private function clear_context_stack(): void {
-		$ref = new \ReflectionProperty( LogManager::class, 'context_stack' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'context_stack' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, [] );
 	}
@@ -720,20 +720,20 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->clear_context_stack();
 
-		$parent = LogManager::instance();
+		$parent = Log_Manager::instance();
 		// Trigger started state so suspend exercises the flush path.
 		$parent->start( 'parent_op' );
 
 		$this->assertCount( 0, $this->read_context_stack() );
 
-		LogManager::suspend();
+		Log_Manager::suspend();
 
 		$stack = $this->read_context_stack();
 		$this->assertCount( 1, $stack, 'suspend() must push the instance onto the stack' );
 		$this->assertSame( $parent, $stack[0] );
 
 		// After suspend, instance() returns a NEW LogManager.
-		$child = LogManager::instance();
+		$child = Log_Manager::instance();
 		$this->assertNotSame( $parent, $child );
 
 		// Drain so the static stack doesn't leak into the next test.
@@ -742,10 +742,10 @@ class LogManagerTest extends TestCase {
 
 	public function test_suspend_when_no_instance_is_noop(): void {
 		$this->clear_context_stack();
-		LogManager::reset();
+		Log_Manager::reset();
 		// reset() finishes the singleton then nulls it. suspend() with null
 		// instance should be a no-op (no fatal, no stack growth).
-		LogManager::suspend();
+		Log_Manager::suspend();
 		$this->assertCount( 0, $this->read_context_stack() );
 	}
 
@@ -753,16 +753,16 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->clear_context_stack();
 
-		$parent = LogManager::instance();
+		$parent = Log_Manager::instance();
 		$parent->start( 'parent_op' );
-		LogManager::suspend();
+		Log_Manager::suspend();
 
-		$child = LogManager::instance();
+		$child = Log_Manager::instance();
 		$this->assertNotSame( $parent, $child );
 
-		LogManager::resume();
+		Log_Manager::resume();
 
-		$this->assertSame( $parent, LogManager::instance(), 'resume() should restore the parent context' );
+		$this->assertSame( $parent, Log_Manager::instance(), 'resume() should restore the parent context' );
 		$this->assertCount( 0, $this->read_context_stack(), 'stack should be empty after resume' );
 	}
 
@@ -771,13 +771,13 @@ class LogManagerTest extends TestCase {
 		$this->clear_context_stack();
 
 		// No suspend before resume — should still finish current and null out.
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
 
-		LogManager::resume();
+		Log_Manager::resume();
 
 		// instance() now creates a fresh one (different identity).
-		$fresh = LogManager::instance();
+		$fresh = Log_Manager::instance();
 		$this->assertNotSame( $lm, $fresh );
 	}
 
@@ -785,24 +785,24 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->clear_context_stack();
 
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		$_SERVER['UNIQUE_ID'] = 'parent-rid-abc';
 
-		$parent = LogManager::instance();
+		$parent = Log_Manager::instance();
 		// ensure_started populates request_id from UNIQUE_ID; trigger it.
 		$parent->start( 'init' );
 		$this->assertSame( 'parent-rid-abc', $parent->get_request_id() );
 
-		LogManager::suspend();
+		Log_Manager::suspend();
 
 		// Child overwrites UNIQUE_ID with its own.
 		$_SERVER['UNIQUE_ID'] = 'child-rid-def';
-		$child                = LogManager::instance();
+		$child                = Log_Manager::instance();
 		$child->start( 'child_work' );
 		$this->assertSame( 'child-rid-def', $child->get_request_id() );
 
-		LogManager::resume();
+		Log_Manager::resume();
 
 		$this->assertSame( 'parent-rid-abc', $_SERVER['UNIQUE_ID'], 'resume() must restore parent UNIQUE_ID' );
 	}
@@ -811,25 +811,25 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->clear_context_stack();
 
-		$lm1 = LogManager::instance();
+		$lm1 = Log_Manager::instance();
 		$lm1->start( 'lm1' );
-		LogManager::suspend();
+		Log_Manager::suspend();
 
-		$lm2 = LogManager::instance();
+		$lm2 = Log_Manager::instance();
 		$lm2->start( 'lm2' );
-		LogManager::suspend();
+		Log_Manager::suspend();
 
-		$lm3 = LogManager::instance();
+		$lm3 = Log_Manager::instance();
 		$lm3->start( 'lm3' );
 
 		$this->assertCount( 2, $this->read_context_stack() );
-		$this->assertSame( $lm3, LogManager::instance() );
+		$this->assertSame( $lm3, Log_Manager::instance() );
 
-		LogManager::resume();
-		$this->assertSame( $lm2, LogManager::instance() );
+		Log_Manager::resume();
+		$this->assertSame( $lm2, Log_Manager::instance() );
 
-		LogManager::resume();
-		$this->assertSame( $lm1, LogManager::instance() );
+		Log_Manager::resume();
+		$this->assertSame( $lm1, Log_Manager::instance() );
 
 		$this->assertCount( 0, $this->read_context_stack() );
 	}
@@ -840,7 +840,7 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 
 		// Brand-new LogManager — topic isn't created until ensure_started().
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// No exception should fire from flush() before any start/message.
 		$lm->flush();
 		$this->assertTrue( true );
@@ -850,7 +850,7 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
 		$lm->message( 'before_flush', [ 'm' => 'data1' ] );
 		$lm->flush();
@@ -865,7 +865,7 @@ class LogManagerTest extends TestCase {
 	public function test_refresh_firehose_no_topic_is_noop(): void {
 		$this->require_config_or_skip();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// No exception when topic is null.
 		$lm->refresh_firehose();
 		$this->assertTrue( true );
@@ -875,7 +875,7 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
 		$lm->message( 'pre_refresh', [ 'm' => 'data' ] );
 		$lm->flush();
@@ -894,7 +894,7 @@ class LogManagerTest extends TestCase {
 	public function test_finish_emits_environment_resources_memory_and_process_complete(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
@@ -904,7 +904,7 @@ class LogManagerTest extends TestCase {
 		$_SERVER['SOME_API_KEY']     = 'k-do-not-log';
 		$_SERVER['CUSTOM_NICE_VAR']  = "hello\x07world";
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'unit' );
 		$lm->complete( 'unit' );
 		$lm->finish();
@@ -955,7 +955,7 @@ class LogManagerTest extends TestCase {
 		// inflight_snapshot.start_time reflects the real PHP-request start.
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
@@ -967,7 +967,7 @@ class LogManagerTest extends TestCase {
 			'plugins'      => [],
 		];
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -989,7 +989,7 @@ class LogManagerTest extends TestCase {
 	public function test_log_process_records_method_and_full_url(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
@@ -999,7 +999,7 @@ class LogManagerTest extends TestCase {
 		$_SERVER['HTTPS']          = 'on';
 		$_SERVER['REQUEST_URI']    = '/api/work?key=hidden&q=visible';
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -1020,7 +1020,7 @@ class LogManagerTest extends TestCase {
 	public function test_log_process_https_off_uses_http_scheme(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
@@ -1028,7 +1028,7 @@ class LogManagerTest extends TestCase {
 		$_SERVER['SERVER_NAME'] = 'plain.test';
 		$_SERVER['HTTPS']       = 'off';
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -1047,7 +1047,7 @@ class LogManagerTest extends TestCase {
 	public function test_log_process_without_server_name_uses_path_only(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
@@ -1056,7 +1056,7 @@ class LogManagerTest extends TestCase {
 		$_SERVER['REQUEST_URI']    = '/cli/path';
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -1078,12 +1078,12 @@ class LogManagerTest extends TestCase {
 	public function test_finish_emits_orphaned_complete_for_unclosed_starts(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Three unclosed starts on top of the root 'process' entry.
 		$lm->start( 'outer' );
 		$lm->start( 'middle' );
@@ -1114,12 +1114,12 @@ class LogManagerTest extends TestCase {
 	public function test_finish_second_call_is_idempotent(): void {
 		$this->require_config_or_skip();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
 		$lm->finish();
 
 		// Read property to confirm finished latch.
-		$ref = new \ReflectionProperty( LogManager::class, 'finished' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'finished' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $lm ) );
 
@@ -1131,12 +1131,12 @@ class LogManagerTest extends TestCase {
 	public function test_finish_before_started_is_noop(): void {
 		$this->require_config_or_skip();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Never started — finish should bail out without emitting any entries.
 		$lm->finish();
 
 		// 'finished' latch should remain unchanged because started was false.
-		$ref = new \ReflectionProperty( LogManager::class, 'finished' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'finished' );
 		$ref->setAccessible( true );
 		$this->assertFalse( $ref->getValue( $lm ) );
 	}
@@ -1145,13 +1145,13 @@ class LogManagerTest extends TestCase {
 
 	public function test_http_x_a8c_request_id_takes_priority_over_unique_id(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-priority-rid';
 		$_SERVER['UNIQUE_ID']             = 'should-be-ignored';
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$this->assertSame( 'a8c-priority-rid', $lm->get_request_id() );
 
@@ -1160,12 +1160,12 @@ class LogManagerTest extends TestCase {
 
 	public function test_request_id_header_capped_at_64_chars(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = \str_repeat( 'A', 200 );
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$rid = $lm->get_request_id();
 		$this->assertSame( 64, \strlen( $rid ), 'Request id from header must be capped at 64 chars' );
@@ -1175,12 +1175,12 @@ class LogManagerTest extends TestCase {
 
 	public function test_request_id_generated_when_no_header_present(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 
 		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$rid = $lm->get_request_id();
 		$this->assertSame( 32, \strlen( $rid ), 'Generated rid must be 32 chars' );
@@ -1193,12 +1193,12 @@ class LogManagerTest extends TestCase {
 
 	public function test_message_returns_false_when_logging_disabled(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-disabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$this->assertFalse( $lm->enabled );
 		// message() routes through ensure_started; with enabled=false it
 		// returns false without writing.
@@ -1207,17 +1207,17 @@ class LogManagerTest extends TestCase {
 
 	public function test_start_short_circuits_when_message_returns_false(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-disabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Disabled logger: start() should NOT push onto $times because
 		// message() fails. Confirm via reflection.
 		$lm->start( 'dud' );
 
-		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
 		$ref->setAccessible( true );
 		$this->assertSame( [], $ref->getValue( $lm ), 'Disabled logger must not accumulate timer entries' );
 	}
@@ -1225,13 +1225,13 @@ class LogManagerTest extends TestCase {
 	public function test_start_blocks_at_max_timer_depth(): void {
 		$this->require_config_or_skip();
 
-		$cap_ref = new \ReflectionClassConstant( LogManager::class, 'MAX_TIMER_DEPTH' );
+		$cap_ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_TIMER_DEPTH' );
 		$cap     = (int) $cap_ref->getValue();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Seed the timer stack at the cap via reflection — saves doing 100
 		// real start() calls.
-		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
 		$ref->setAccessible( true );
 		$seeded = [];
 		for ( $i = 0; $i < $cap; $i++ ) {
@@ -1259,12 +1259,12 @@ class LogManagerTest extends TestCase {
 	public function test_message_emits_truncated_entry_when_data_exceeds_max_size(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'truncation_test' );
 		// 5000 bytes — well over MAX_DATA_SIZE (3840).
 		$lm->message( 'oversized_event', [ 'm' => \str_repeat( 'A', 5000 ) ] );
@@ -1296,10 +1296,10 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_short_circuits_when_started_set_externally(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// Force-start without calling start() — Topic remains null because
 		// init_firehose was never invoked.
-		$started_ref = new \ReflectionProperty( LogManager::class, 'started' );
+		$started_ref = new \ReflectionProperty( Log_Manager::class, 'started' );
 		$started_ref->setAccessible( true );
 		$started_ref->setValue( $lm, true );
 
@@ -1321,16 +1321,16 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_start_silently_drops_past_max_timer_depth_via_public_api(): void {
 		$this->require_config_or_skip();
-		$cap_ref = new \ReflectionClassConstant( LogManager::class, 'MAX_TIMER_DEPTH' );
+		$cap_ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_TIMER_DEPTH' );
 		$cap     = (int) $cap_ref->getValue();
 
-		$lm  = LogManager::instance();
+		$lm  = Log_Manager::instance();
 		// Trigger ensure_started + log_process so the stack root is in place;
 		// otherwise the first start() ALSO calls log_process which pushes its
 		// own 'process' entry, racing with our seeded values.
 		$lm->start( 'priming_start' );
 
-		$ref = new \ReflectionProperty( LogManager::class, 'times' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
 		$ref->setAccessible( true );
 
 		// Now overwrite to exactly cap entries (well past the seeded root).
@@ -1363,13 +1363,13 @@ class LogManagerTest extends TestCase {
 	public function test_message_flushes_immediately_when_flush_every_line_enabled(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		// logging-enabled config has flush_every_line=true.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->message( 'visible_immediately', [ 'm' => 'no explicit flush' ] );
 
@@ -1381,7 +1381,7 @@ class LogManagerTest extends TestCase {
 		$this->assertNotEmpty( $files, 'flush_every_line=true must drain on every message' );
 
 		// Verify the flush_every_line property was actually set from config.
-		$ref = new \ReflectionProperty( LogManager::class, 'flush_every_line' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'flush_every_line' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $lm ) );
 
@@ -1403,20 +1403,20 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_matches_url_filter_skip_wins_over_log(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// Force-set both regex sources via reflection so we exercise the
 		// skip-then-log composition without touching disk.
-		$skip = new \ReflectionProperty( LogManager::class, 'skip_regex' );
+		$skip = new \ReflectionProperty( Log_Manager::class, 'skip_regex' );
 		$skip->setAccessible( true );
 		$skip->setValue( $lm, '/\/health/i' );
 
-		$log = new \ReflectionProperty( LogManager::class, 'log_regex' );
+		$log = new \ReflectionProperty( Log_Manager::class, 'log_regex' );
 		$log->setAccessible( true );
 		$log->setValue( $lm, '/\/health/i' );
 
@@ -1439,11 +1439,11 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_matches_url_filter_returns_false_when_log_regex_set_and_no_match(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		// log-urls config has log_urls = [ '/api/' ]; pass a non-match.
 		$result = $lm->matches_url_filter( '/totally/not/matching' );
 		$this->assertFalse( $result );
@@ -1463,12 +1463,12 @@ class LogManagerTest extends TestCase {
 	public function test_refresh_firehose_preserves_segment_layout_after_no_writes(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'pre' );
 		$lm->flush();
 
@@ -1496,14 +1496,14 @@ class LogManagerTest extends TestCase {
 	public function test_log_environment_strips_full_control_char_range(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
 		$_SERVER['CUSTOM_CTRL'] = "before\x00\x01\x02\x1F\x7Fafter";
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -1536,14 +1536,14 @@ class LogManagerTest extends TestCase {
 	public function test_log_environment_silently_skips_array_server_values(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
 		$_SERVER['SOME_ARRAY_VAR'] = [ 'nested', 'value' ];
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -1567,12 +1567,12 @@ class LogManagerTest extends TestCase {
 	public function test_complete_emits_orphaned_for_nested_unfinished_starts(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'outer' );
 		$lm->start( 'inner' );
 		$lm->start( 'deeper' );
@@ -1610,12 +1610,12 @@ class LogManagerTest extends TestCase {
 	public function test_finish_omits_fatal_tagging_when_no_fatal_error(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
@@ -1643,15 +1643,15 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_start_marks_muted_when_line_limited_but_still_tracks(): void {
 		$this->require_config_or_skip();
-		$lm = LogManager::instance();
+		$lm = Log_Manager::instance();
 
 		// Force line_limited true.
-		$ref = new \ReflectionProperty( LogManager::class, 'line_limited' );
+		$ref = new \ReflectionProperty( Log_Manager::class, 'line_limited' );
 		$ref->setAccessible( true );
 		$ref->setValue( $lm, true );
 
 		// times-stack snapshot.
-		$tref = new \ReflectionProperty( LogManager::class, 'times' );
+		$tref = new \ReflectionProperty( Log_Manager::class, 'times' );
 		$tref->setAccessible( true );
 		$before = $tref->getValue( $lm );
 
@@ -1681,14 +1681,14 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_instance_returns_canonical_singleton_post_construction(): void {
 		$this->require_config_or_skip();
-		LogManager::reset();
+		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$a = LogManager::instance();
-		$b = LogManager::instance();
-		$c = LogManager::instance();
+		$a = Log_Manager::instance();
+		$b = Log_Manager::instance();
+		$c = Log_Manager::instance();
 		$this->assertSame( $a, $b );
 		$this->assertSame( $b, $c );
 	}
@@ -1700,7 +1700,7 @@ class LogManagerTest extends TestCase {
 	// =========================================================================
 
 	private function invoke_extract_plugin_slug( string $file ): ?string {
-		$ref = new \ReflectionMethod( LogManager::class, 'extract_plugin_slug' );
+		$ref = new \ReflectionMethod( Log_Manager::class, 'extract_plugin_slug' );
 		$ref->setAccessible( true );
 		return $ref->invoke( null, $file );
 	}

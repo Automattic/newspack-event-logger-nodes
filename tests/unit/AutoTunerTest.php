@@ -1,14 +1,14 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\AutoTuner;
+use Newspack_Event_Logger_Nodes\Auto_Tuner_Node;
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\SettingsSync;
+use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
-#[CoversClass( AutoTuner::class )]
+#[CoversClass( Auto_Tuner_Node::class )]
 class AutoTunerTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
@@ -17,7 +17,7 @@ class AutoTunerTest extends TestCase {
 		$GLOBALS['_current_user_can']  = false;
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
-		SettingsSync::suppress_sync( false );
+		Settings_Sync::suppress_sync( false );
 		if ( \class_exists( Config::class ) ) {
 			Config::reset();
 		}
@@ -42,7 +42,7 @@ class AutoTunerTest extends TestCase {
 		$_SERVER['NEWSPACK_NODES_WORKER_TYPE'] = 'firehose';
 	}
 
-	private function dispatch( AutoTuner $tuner, string $key, array $items, array $context = [] ): void {
+	private function dispatch( Auto_Tuner_Node $tuner, string $key, array $items, array $context = [] ): void {
 		$msg = $this->autotune_message( $key, $items, $context );
 		$tuner->fill( $msg );
 	}
@@ -53,7 +53,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
-		$tuner                 = new AutoTuner();
+		$tuner                 = new Auto_Tuner_Node();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
 		$msg[ Message::KEY ]   = 'disable_hooks';
@@ -68,7 +68,7 @@ class AutoTunerTest extends TestCase {
 
 	public function test_non_array_value_ignored(): void {
 		$this->worker_context();
-		$tuner                 = new AutoTuner();
+		$tuner                 = new Auto_Tuner_Node();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::KEY ]   = 'disable_hooks';
@@ -79,14 +79,14 @@ class AutoTunerTest extends TestCase {
 
 	public function test_unknown_key_ignored(): void {
 		$this->worker_context();
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'bogus_key', [ 'a', 'b' ] );
 		$this->assertEmpty( $GLOBALS['_wp_options'] );
 	}
 
 	public function test_empty_items_ignored(): void {
 		$this->worker_context();
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_hooks', [] );
 		$this->dispatch( $tuner, 'disable_custom_events', [] );
 		$this->dispatch( $tuner, 'add_significant_events', [] );
@@ -98,7 +98,7 @@ class AutoTunerTest extends TestCase {
 	public function test_skips_when_unauthorized(): void {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_hooks', [ 'noisy' ] );
 
 		$this->assertSame(
@@ -111,7 +111,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_hooks', [ 'noisy' ] );
 
 		$this->assertSame(
@@ -124,7 +124,7 @@ class AutoTunerTest extends TestCase {
 		$GLOBALS['_current_user_can'] = true;
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_hooks', [ 'noisy' ] );
 
 		$this->assertSame(
@@ -143,7 +143,7 @@ class AutoTunerTest extends TestCase {
 			'important',
 		];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch(
 			$tuner,
 			'disable_hooks',
@@ -161,7 +161,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = 'not-an-array';
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_hooks', [ 'noisy' ] );
 
 		$this->assertSame( [], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] );
@@ -171,7 +171,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch(
 			$tuner,
 			'disable_hooks',
@@ -195,7 +195,7 @@ class AutoTunerTest extends TestCase {
 			'event_c' => true,
 		];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch(
 			$tuner,
 			'disable_custom_events',
@@ -213,7 +213,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] = false;
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_custom_events', [ 'a' ] );
 
 		$this->assertSame( [], $GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] );
@@ -228,7 +228,7 @@ class AutoTunerTest extends TestCase {
 			'existing_b',
 		];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'add_significant_events', [ 'new_one', 'existing_a', 'new_two' ] );
 
 		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_significant_events'];
@@ -243,7 +243,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_significant_events'] = null;
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'add_significant_events', [ 'new_one' ] );
 
 		$this->assertSame(
@@ -262,7 +262,7 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_significant_events'] = 'not-an-array';
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'add_significant_events', [ 'new_one', 'new_two' ] );
 
 		$this->assertSame(
@@ -277,11 +277,11 @@ class AutoTunerTest extends TestCase {
 		$this->worker_context();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
-		$tuner = new AutoTuner();
+		$tuner = new Auto_Tuner_Node();
 		$this->dispatch( $tuner, 'disable_hooks', [ 'noisy' ] );
 
 		$this->assertFalse(
-			SettingsSync::is_sync_suppressed(),
+			Settings_Sync::is_sync_suppressed(),
 			'suppress_sync must be cleared in the finally block after the local update'
 		);
 	}
