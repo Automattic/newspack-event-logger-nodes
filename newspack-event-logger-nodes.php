@@ -28,6 +28,44 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 /**
+ * Operator-override topology dir. Reads `Bootstrap::base_dir()` (config
+ * lookup), so it's invoked from the deferred loader (once the runtime is
+ * present) plus every entrypoint that reads user_dir() before the catalog
+ * publishes or a worker spawns: `rest_api_init` / `admin_init`, and the
+ * `newspack_nodes/before_worker_spawn` listener below. Defined above the
+ * deferred loader so the loader can `use` it. Static-guarded — repeats free.
+ */
+$_newspack_event_logger_nodes_register_user_topology_dir = static function (): void {
+	static $registered = false;
+	if ( $registered ) {
+		return;
+	}
+	$registered = true;
+	\Newspack_Nodes\Topology_Registry::set_user_dir(
+		\Newspack_Nodes\Bootstrap::base_dir() . '/topologies'
+	);
+};
+
+/**
+ * Worker-execution prerequisites that actually autoload meaningful
+ * setup: the hub-side k:"job" → k:"remote_job" rewrite filter (forces
+ * StreamMerger autoload) and RemoteManager::init (autoload +
+ * `add_action` hookups). Only needed before a worker's Topology_Loader
+ * parses the TSL — invoked from the `newspack_nodes/before_worker_spawn`
+ * listener below. Class registrations and named formatters used to live
+ * here too, but they're cheap `::class`-string + map-insert operations the
+ * editor REST schema endpoint also needs at boot, so they moved up.
+ *
+ * Every callee is independently idempotent
+ * (`register_remote_job_rewrite_filter` and `RemoteManager::init`
+ * carry their own static guards), so no outer guard is necessary.
+ */
+$_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
+	\Newspack_Event_Logger_Nodes\Stream_Merger_Node::register_remote_job_rewrite_filter();
+	\Newspack_Event_Logger_Nodes\Remote_Manager::init();
+};
+
+/**
  * Application classes extend `Newspack_Nodes\Node` from the runtime plugin.
  * WordPress loads plugins alphabetically, and `newspack-event-logger-nodes`
  * sorts before `newspack-nodes` — so the runtime isn't available at our
@@ -36,7 +74,9 @@ require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
  *
  * (Tests bypass this — they require the runtime explicitly in bootstrap.php.)
  */
-$_newspack_event_logger_nodes_load = static function (): void {
+$_newspack_event_logger_nodes_load = static function () use (
+	$_newspack_event_logger_nodes_register_user_topology_dir
+): void {
 	if ( ! \class_exists( '\Newspack_Nodes\Node' ) ) {
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		\error_log(
@@ -57,25 +97,56 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
 	);
 
-	// Stock-topology dir registration is a single array append with no
-	// config dependency, so it stays at boot — anyone calling
-	// `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor)
-	// finds the stock files. The matching `set_user_dir()` requires
-	// `Bootstrap::base_dir()` (which hits Config) and is deferred to
-	// `$_newspack_event_logger_nodes_register_user_topology_dir` below.
-	\Newspack_Nodes\Topology_Registry::register_stock_dir(
-		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+	// One-call substrate registration: registers the application namespace,
+	// the stock-topology dir, a `newspack_nodes/topologies` catalog entry per
+	// curated topology, and a guarded `newspack_nodes/spawn_worker` handler
+	// (which fires `newspack_nodes/before_worker_spawn` for owned types — see
+	// the listener below). Pass the curated `names` from app config (NOT null)
+	// so only the configured fleets publish, not every *.tsl in the dir.
+	// `num_partitions` is omitted so register_plugin reads the substrate
+	// `num_partitions` option — matching the old bespoke filter's behavior.
+	$eln_config = \Newspack_Event_Logger_Nodes\Config::load_config();
+	$names      = ( isset( $eln_config['topologies'] ) && \is_array( $eln_config['topologies'] ) ) ? $eln_config['topologies'] : [];
+	\Newspack_Nodes\Topology_Registry::register_plugin(
+		'Newspack_Event_Logger_Nodes\\',
+		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies',
+		names: $names
 	);
 
-	// Node-class namespace registration. `make_node('Request_Builder')` resolves
-	// the first `{$prefix}Request_Builder_Node` that exists across registered
-	// prefixes. The top-level prefix covers the application Node subclasses; the
-	// `App\` prefix lets `make_node('Discovery_CI')` etc. resolve the service CIs
-	// the `request_graph_ready` mount below constructs by short name. The catalog
+	// Set the operator-override dir now (before the catalog publishes / before
+	// spawn) — it used to be set lazily inside the now-deleted topologies filter.
+	$_newspack_event_logger_nodes_register_user_topology_dir();
+
+	// Node-class namespace registration for the service CIs. register_plugin
+	// above registered the top-level prefix; the `App\` prefix lets
+	// `make_node('Discovery_CI')` etc. resolve the service CIs the
+	// `request_graph_ready` mount below constructs by short name. The catalog
 	// (Classes_CI) scans the composer classmap under these prefixes to populate
 	// the topology-console palette + per-node inspector.
-	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' );
 	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
+
+	// Topology `<eln:KEY>` token resolver. The substrate owns the `config`
+	// namespace (logs_dir, num_partitions, segment_size, etc.); these six
+	// app-specific keys resolve straight off the application Config so the
+	// `.tsl` files read the same values they did under the old merged config.
+	\Newspack_Nodes\Core::register_config_namespace(
+		'eln',
+		static function ( string $key ) {
+			static $own = [
+				'is_hub',
+				'auto_disable_threshold',
+				'auto_protect_time_threshold',
+				'aggregator_require_https',
+				'aggregator_verify_ssl',
+				'significant_events_csv',
+			];
+			if ( ! \in_array( $key, $own, true ) ) {
+				return null;
+			}
+			$config = \Newspack_Event_Logger_Nodes\Config::load_config();
+			return $config[ $key ] ?? null;
+		}
+	);
 
 	// Named formatters are similarly cheap (one map insert each) and the
 	// captured closures don't autoload until invoked. `request-index`
@@ -121,30 +192,13 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
 }
 
-/**
- * Operator-override topology dir. Reads `Bootstrap::base_dir()` (config
- * lookup), so it's deferred to the entrypoints that actually need user
- * overrides to shadow stock — the `newspack_nodes/topologies` filter
- * callback and the `newspack_nodes/spawn_worker` action handler.
- */
-$_newspack_event_logger_nodes_register_user_topology_dir = static function (): void {
-	static $registered = false;
-	if ( $registered ) {
-		return;
-	}
-	$registered = true;
-	\Newspack_Nodes\Topology_Registry::set_user_dir(
-		\Newspack_Nodes\Bootstrap::base_dir() . '/topologies'
-	);
-};
-
-// Wire the closure to every entrypoint that may read user_dir() before
-// the `newspack_nodes/topologies` filter or `spawn_worker` action fires:
-// REST handlers (admin "save topology" POST → TopologiesController hits
-// user_dir() directly; without this it returned 500 "Topology_Registry
-// has no writable user dir.") and admin pages (list/edit UIs need
-// describe()/list() to see user overrides). The closure's static guard
-// keeps repeated registrations free.
+// The user-override topology dir is set inside the deferred loader (above)
+// once the runtime is present. Re-wire the same closure to every other
+// entrypoint that may read user_dir() before a worker spawns: REST handlers
+// (admin "save topology" POST → TopologiesController hits user_dir() directly;
+// without this it returned 500 "Topology_Registry has no writable user dir.")
+// and admin pages (list/edit UIs need describe()/list() to see user overrides).
+// The closure's static guard keeps repeated registrations free.
 \add_action( 'rest_api_init', $_newspack_event_logger_nodes_register_user_topology_dir );
 \add_action( 'admin_init',    $_newspack_event_logger_nodes_register_user_topology_dir );
 
@@ -152,77 +206,20 @@ $_newspack_event_logger_nodes_register_user_topology_dir = static function (): v
 // the frontend path). See Config::correct_option_autoload().
 \add_action( 'admin_init', [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
 
-/**
- * Worker-execution prerequisites that actually autoload meaningful
- * setup: the hub-side k:"job" → k:"remote_job" rewrite filter (forces
- * StreamMerger autoload) and RemoteManager::init (autoload +
- * `add_action` hookups). Only needed inside the spawn_worker action
- * handler before Topology_Loader parses the TSL. Class registrations
- * and named formatters used to live here too, but they're cheap
- * `::class`-string + map-insert operations that the editor REST schema
- * endpoint also needs at boot, so they moved up.
- *
- * Every callee is independently idempotent
- * (`register_remote_job_rewrite_filter` and `RemoteManager::init`
- * carry their own static guards), so no outer guard is necessary.
- */
-$_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
-	\Newspack_Event_Logger_Nodes\Stream_Merger_Node::register_remote_job_rewrite_filter();
-	\Newspack_Event_Logger_Nodes\Remote_Manager::init();
-};
-
-/**
- * Topology registration. Reads the substrate's flat `topologies`
- * config list (a flat array of TSL topology names) and emits one
- * descriptor per name, with per-topology metadata sourced from each
- * TSL file's `var` frontmatter via Topology_Registry::frontmatter().
- *
- * The runtime's Bootstrap::expand_workers() reads the resulting
- * array and spawns workers per partition; this plugin file owns the
- * filter wiring. Worker dispatch (the `newspack_nodes/spawn_worker`
- * action handler below) loads each topology via Topology_Loader.
- */
-\add_filter(
-	'newspack_nodes/topologies',
-	static function ( array $topologies ) use ( $_newspack_event_logger_nodes_register_user_topology_dir ): array {
-		$_newspack_event_logger_nodes_register_user_topology_dir();
-		// Publish ONLY the application's file-default topologies. The
-		// substrate's Bootstrap layers `get_option(newspack_nodes_topologies)`
-		// on top to compute the active set — operator overrides live in
-		// the WP option and are owned by the substrate. The app's job
-		// is just to describe what topologies exist and their default
-		// metadata.
-		// Topology name list — read MERGED app config (file defaults
-		// overlaid by any WP-option override). The substrate's
-		// `Bootstrap::get_topologies()` further filters by the
-		// substrate-owned `newspack_nodes_topologies` operator-overlay
-		// option, but the catalog this filter publishes IS the
-		// authoritative "what topologies exist" list — and operators
-		// must always be able to override file defaults via WP options.
-		$config = \Newspack_Event_Logger_Nodes\Config::load_config();
-		$names  = $config['topologies'] ?? [];
-
-		// Partition count — substrate-owned option. Already merged via
-		// `\Newspack_Event_Logger_Nodes\Config::load_config()`'s
-		// substrate-overlay step (it composes substrate config first),
-		// so reading $config['num_partitions'] picks up the operator
-		// override for `newspack_nodes_num_partitions` automatically.
-		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		$num_partitions = \max( 1, \min( 16, $num_partitions ) );
-		if ( ! \is_array( $names ) ) {
-			return $topologies;
-		}
-
-		foreach ( $names as $name ) {
-			if ( ! \is_string( $name ) || '' === $name ) {
-				continue;
-			}
-			$entry = \Newspack_Nodes\Topology_Registry::synthesize_entry( $name, $num_partitions, 60 );
-			if ( null !== $entry ) {
-				$topologies[ $name ] = $entry;
-			}
-		}
-		return $topologies;
+// Per-worker runtime init, run right before a worker's topology loads.
+// register_plugin (in the deferred loader) provides the guarded spawn handler
+// and fires `newspack_nodes/before_worker_spawn` ($type, $partition) for owned
+// types only, just before Topology_Loader parses the TSL. Set the user-override
+// dir (so a `<…>` topology can be shadowed by an operator file) and run the
+// hub-side rewrite filter + RemoteManager init before the graph is built.
+\add_action(
+	'newspack_nodes/before_worker_spawn',
+	static function () use (
+		$_newspack_event_logger_nodes_register_user_topology_dir,
+		$_newspack_event_logger_nodes_register_worker_runtime
+	): void {
+		$_newspack_event_logger_nodes_register_user_topology_dir(); // user-override dir before Topology_Loader::resolve.
+		$_newspack_event_logger_nodes_register_worker_runtime();    // hub rewrite filter + RemoteManager init.
 	}
 );
 
@@ -294,77 +291,11 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 	);
 } )();
 
-/**
- * Hook the runtime's spawn action: when SpawnController fires
- * `newspack_nodes/spawn_worker`, locate the topology config for this {type, partition},
- * build a WorkerBase, and call ->execute() to start the drain loop.
- *
- * The WorkerBase will register a shutdown handler that fires self_respawn() when
- * this PHP process ends — keeping the worker pool alive without external supervision.
- */
-\add_action(
-	'newspack_nodes/spawn_worker',
-	static function ( string $type, int $partition ) use (
-		$_newspack_event_logger_nodes_register_user_topology_dir,
-		$_newspack_event_logger_nodes_register_worker_runtime
-	): void {
-		$_newspack_event_logger_nodes_register_user_topology_dir();
-		$_newspack_event_logger_nodes_register_worker_runtime();
-		$workers = \Newspack_Nodes\Bootstrap::expand_workers();
-		foreach ( $workers as $w ) {
-			if ( $w['type'] !== $type || $w['partition'] !== $partition ) {
-				continue;
-			}
-			// Via substrate Bootstrap (not raw filter) so the config-file
-			// overlay wins. Otherwise the worker process spawns under the
-			// filter default while dashboards/CLI read from the file value.
-			$base_dir   = \Newspack_Nodes\Bootstrap::base_dir();
-			$nonce_salt = \defined( 'NONCE_SALT' ) ? \NONCE_SALT : '';
-			$supervisor = new \Newspack_Nodes\Supervisor( $base_dir, $nonce_salt );
-			$wb         = new \Newspack_Nodes\Worker_Base(
-				$base_dir,
-				$type,
-				$partition,
-				stale_timeout: $w['stale_timeout']
-			);
-
-			// `topology` is now a TSL topology name. WorkerBase::execute
-			// expects a callable of shape `($ci, $partition): void`;
-			// build one that invokes Topology_Loader against the worker's
-			// CommandInterpreter with the live merged config.
-			$topology_name = (string) $w['topology'];
-			$config        = \Newspack_Event_Logger_Nodes\Config::load_config();
-			// Pre-derived `<config:logs_dir>` and `<config:offsets_dir>`
-			// since topologies use them frequently; let topology authors
-			// write the short form rather than
-			// `<config:base_directory>/logs` everywhere.
-			if ( ! isset( $config['logs_dir'] ) && isset( $config['base_directory'] ) ) {
-				$config['logs_dir'] = \rtrim( (string) $config['base_directory'], '/' ) . '/logs';
-			}
-			if ( ! isset( $config['offsets_dir'] ) && isset( $config['base_directory'] ) ) {
-				$config['offsets_dir'] = \rtrim( (string) $config['base_directory'], '/' ) . '/offsets';
-			}
-			$topology = static function (
-				\Newspack_Nodes\Command_Interpreter_Node $ci,
-				int $partition_arg
-			) use ( $topology_name, $config ): void {
-				\Newspack_Nodes\Topology_Loader::load(
-					$topology_name,
-					$partition_arg,
-					$ci,
-					$config
-				);
-			};
-
-			$spawn_url = \rest_url( 'newspack-nodes/v1/workers/spawn' );
-			$token     = $supervisor->generate_spawn_token( \time() );
-			$wb->execute( $topology, $spawn_url, $token );
-			break;
-		}
-	},
-	10,
-	2
-);
+// Worker dispatch (`newspack_nodes/spawn_worker`) is provided by the substrate's
+// register_plugin (in the deferred loader): a guarded handler that builds a
+// Worker_Base + loads the topology via Topology_Loader for owned types only.
+// ELN's per-worker runtime init runs from the `before_worker_spawn` listener
+// above, which register_plugin's handler fires just before the topology loads.
 
 /**
  * REST route registration. The runtime's Bootstrap::register_rest_routes wires

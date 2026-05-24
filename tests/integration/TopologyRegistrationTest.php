@@ -21,9 +21,18 @@ class TopologyRegistrationTest extends TestCase {
 	 * filter shape here (name-keyed descriptors, num_partitions /
 	 * stale_timeout numbers); the names map to real TSL files in
 	 * `topologies/` so Topology_Registry::resolve() returns a path.
+	 *
+	 * The stock dir is also (re-)registered: the plugin file mounts it at boot
+	 * via Topology_Registry::register_plugin, but other integration tests reset
+	 * the registry (clearing both stock dirs and the register_plugin guard), so
+	 * resolve() would otherwise return null here. Re-registration is a no-op
+	 * when the path is already present.
 	 */
 	protected function setUp(): void {
 		parent::setUp();
+		Topology_Registry::register_stock_dir(
+			\dirname( __DIR__, 2 ) . '/topologies'
+		);
 		\add_filter(
 			'newspack_nodes/topologies',
 			static function ( array $topologies ): array {
