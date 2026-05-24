@@ -30,6 +30,9 @@ class TopologyCompactSummaryTest extends TestCase {
 
 	private string $tmp = '';
 
+	/** Snapshot of the process-lifetime token-resolver registry, restored in tearDown. */
+	private array $saved_resolvers = [];
+
 	/**
 	 * Per-test scratch dir for Consumer offset files / Partition segment files
 	 * the TSL conjures. A pre-existing logs dir from a previous run with
@@ -40,16 +43,43 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * Topology_Registry::register_stock_dir is also (re-)called defensively
 	 * because the base substrate TestCase resets Core in setUp() but leaves
 	 * the registry alone — re-registration on the same path is a no-op.
+	 *
+	 * Topology_Loader::load no longer takes a `$config` array — `<config:KEY>`
+	 * tokens resolve through the substrate's registered `config` namespace.
+	 * Override that resolver here so the TSL's `<config:logs_dir>` /
+	 * `<config:offsets_dir>` (and the segment/lifespan literals) point at this
+	 * test's scratch dir instead of the real base directory — otherwise the
+	 * Consumer/Partition nodes open against `/tmp/newspack-nodes` and stall on
+	 * orphan lock dirs from prior runs.
 	 */
 	protected function setUp(): void {
 		parent::setUp();
-		$this->tmp = $this->make_temp_dir( 'topology-compact-summary-' );
+		$this->tmp             = $this->make_temp_dir( 'topology-compact-summary-' );
+		$this->saved_resolvers = Core::$config_resolvers;
 		Topology_Registry::register_stock_dir(
 			\dirname( __DIR__, 2 ) . '/topologies'
+		);
+		$tmp = $this->tmp;
+		Core::register_config_namespace(
+			'config',
+			static function ( string $key ) use ( $tmp ) {
+				static $values = null;
+				if ( null === $values ) {
+					$values = [
+						'logs_dir'     => $tmp . '/logs',
+						'offsets_dir'  => $tmp . '/offsets',
+						'segment_size' => '1048576',
+						'num_segments' => '4',
+						'max_lifespan' => '3600',
+					];
+				}
+				return $values[ $key ] ?? null;
+			}
 		);
 	}
 
 	protected function tearDown(): void {
+		Core::$config_resolvers = $this->saved_resolvers;
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
@@ -74,13 +104,7 @@ class TopologyCompactSummaryTest extends TestCase {
 		$ci->name( '_command_interpreter' );
 		$ci->sink( $router );
 
-		Topology_Loader::load( $name, 0, $ci, [
-			'logs_dir'      => $this->tmp . '/logs',
-			'offsets_dir'   => $this->tmp . '/offsets',
-			'segment_size'  => '1048576',
-			'num_segments'  => '4',
-			'max_lifespan'  => '3600',
-		] );
+		Topology_Loader::load( $name, 0, $ci );
 		return $ci;
 	}
 

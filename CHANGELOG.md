@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Reduced onto the substrate's `register_plugin` + namespaced config tokens.** The
+  substrate stopped feeding topology `<config:…>` tokens from a single merged
+  `Core::$config` array, so this plugin no longer merges substrate + app config to spawn
+  workers. Its 6 app-specific tokens moved to an `<eln:…>` namespace
+  (`is_hub`, `auto_disable_threshold`, `auto_protect_time_threshold`,
+  `aggregator_require_https`, `aggregator_verify_ssl`, `significant_events_csv`),
+  resolved by a small `eln` resolver registered with
+  `Core::register_config_namespace()`; substrate-owned tokens (`logs_dir`, `offsets_dir`,
+  `num_partitions`, `segment_size`, `num_segments`, `max_lifespan`) keep the `<config:…>`
+  namespace. The bespoke `newspack_nodes/topologies` filter and `newspack_nodes/spawn_worker`
+  handler are deleted in favor of `Topology_Registry::register_plugin( …, names: <curated
+  list> )`; worker-runtime init (StreamMerger rewrite filter + RemoteManager) now runs from a
+  `newspack_nodes/before_worker_spawn` listener. Behavior-preserving — requires the matching
+  `newspack-nodes` build.
+
 ## [0.4.0] - 2026-05-23
 
 ### Changed

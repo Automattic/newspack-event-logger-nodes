@@ -434,6 +434,28 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMem
 
 require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
+// Register the application `eln` token namespace so `<eln:…>` resolves in
+// tests (mirrors the substrate bootstrap's register_token_namespace() call).
+// Same six owned keys + load_config() lookup as the plugin entry's resolver.
+\Newspack_Nodes\Core::register_config_namespace(
+	'eln',
+	static function ( string $key ) {
+		static $own = [
+			'is_hub',
+			'auto_disable_threshold',
+			'auto_protect_time_threshold',
+			'aggregator_require_https',
+			'aggregator_verify_ssl',
+			'significant_events_csv',
+		];
+		if ( ! \in_array( $key, $own, true ) ) {
+			return null;
+		}
+		$config = \Newspack_Event_Logger_Nodes\Config::load_config();
+		return $config[ $key ] ?? null;
+	}
+);
+
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';

@@ -16,6 +16,6 @@ make_node Topic firehose:topic <config:logs_dir>/firehose.log <config:num_partit
 
 make_node Stream_Merger stream-merger firehose <partition>
 connect_node stream-merger firehose:topic
-cmd stream-merger:config set_verify_ssl <config:aggregator_verify_ssl>
-cmd stream-merger:config set_require_https <config:aggregator_require_https>
+cmd stream-merger:config set_verify_ssl <eln:aggregator_verify_ssl>
+cmd stream-merger:config set_require_https <eln:aggregator_require_https>
 cmd stream-merger:config load_remotes_from_registry
