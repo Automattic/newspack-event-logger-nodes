@@ -18,9 +18,9 @@ $newspack_profiler = [
 	// hrtime: nanosecond counter, monotonic, used downstream for delta math.
 	'request_time' => \hrtime( true ),
 	// microtime: wall-clock equivalent of the same moment. Consumed by
-	// LogManager to stamp the firehose `process (start)` ts (so
+	// Log_Manager to stamp the firehose `process (start)` ts (so
 	// RequestBuilder's inflight_snapshot.start_time reflects the real
-	// PHP-request start, not the LogManager-emit time deep in WP bootstrap).
+	// PHP-request start, not the Log_Manager-emit time deep in WP bootstrap).
 	'request_ts'   => \microtime( true ),
 	'plugins'      => [],
 ];
@@ -105,18 +105,18 @@ $newspack_profiler_state = [
 // -10000); we flush at -10001 so plugin load events appear in the log before
 // any plugins_loaded callbacks, matching reality. Requires that
 // newspack-event-logger-nodes register its composer autoloader at plugin-file
-// load time (not deferred to plugins_loaded 11), so LogManager is
+// load time (not deferred to plugins_loaded 11), so Log_Manager is
 // autoload-resolvable here.
 \add_action(
 	'plugins_loaded',
 	function () {
 		global $newspack_profiler;
 
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\LogManager' ) ) {
+		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Log_Manager' ) ) {
 			return;
 		}
 
-		$lm = \Newspack_Event_Logger_Nodes\LogManager::instance();
+		$lm = \Newspack_Event_Logger_Nodes\Log_Manager::instance();
 		if ( ! $lm->enabled ) {
 			return;
 		}
