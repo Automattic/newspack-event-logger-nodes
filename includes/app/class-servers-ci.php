@@ -115,7 +115,9 @@ class Servers_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'get',
 					'description' => 'A single server record by id.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
 						$id = self::decoded_id( $payload );
 						$self->registry->reset_cache();
@@ -129,7 +131,14 @@ class Servers_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'add',
 					'description' => 'Add a new server (manage_options).',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'url', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'auth_username', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'auth_password', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'enabled', 'type' => 'bool', 'required' => false, 'default' => true ],
+						[ 'name' => 'logs', 'type' => 'json', 'required' => false, 'default' => [ 'firehose.log' ] ],
+					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
 						self::require_manage_options();
 						$decoded = \is_array( $payload ) ? $payload : [];
@@ -159,7 +168,14 @@ class Servers_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'update',
 					'description' => 'Partial-update of an existing server (manage_options).',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'url', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'auth_username', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'auth_password', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'enabled', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'logs', 'type' => 'json', 'required' => false ],
+					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
 						self::require_manage_options();
 						$decoded = \is_array( $payload ) ? $payload : [];
@@ -189,7 +205,9 @@ class Servers_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'delete',
 					'description' => 'Remove a server (manage_options).',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
 						self::require_manage_options();
 						$id = self::decoded_id( $payload );
@@ -208,7 +226,9 @@ class Servers_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'test',
 					'description' => "Probe a spoke's /command discovery endpoint with stored Basic Auth (manage_options).",
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
 						self::require_manage_options();
 						$id = self::decoded_id( $payload );

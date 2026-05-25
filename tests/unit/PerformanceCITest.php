@@ -2154,4 +2154,174 @@ class PerformanceCITest extends TestCase {
 			$this->assertIsCallable( $verbs[ $name ]['handler'], "the '{$name}' verb must carry a callable handler" );
 		}
 	}
+
+	public function test_no_input_verbs_declare_no_args(): void {
+		// These verbs read no $payload/$args — they return a fixed shape, so the
+		// Inspector fires them immediately with no arg modal.
+		$verbs = self::verbs_by_name();
+		foreach ( [ 'timing', 'dashboard', 'hooks_registered', 'hooks_categories', 'hooks_available', 'config_get' ] as $name ) {
+			$this->assertSame( [], $verbs[ $name ]['args'], "'{$name}' must declare no args" );
+		}
+	}
+
+	public function test_overview_verb_declares_optional_filters(): void {
+		// overview reads server / breakdown / categories (all optional).
+		$args = self::args_by_name( 'overview' );
+		$this->assertSame( [ 'server', 'breakdown', 'categories' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['server']['type'] );
+		$this->assertSame( 'string', $args['breakdown']['type'] );
+		$this->assertSame( 'bool', $args['categories']['type'] );
+		foreach ( $args as $arg ) {
+			$this->assertFalse( $arg['required'] );
+		}
+	}
+
+	public function test_urls_verb_declares_sort_paging_filter_args(): void {
+		// urls reads sort/order/limit/offset/search/server — all optional.
+		$args = self::args_by_name( 'urls' );
+		$this->assertSame(
+			[ 'sort', 'order', 'limit', 'offset', 'search', 'server' ],
+			\array_keys( $args )
+		);
+		$this->assertSame( 'string', $args['sort']['type'] );
+		$this->assertSame( 'string', $args['order']['type'] );
+		$this->assertSame( 'int', $args['limit']['type'] );
+		$this->assertSame( 50, $args['limit']['default'] );
+		$this->assertSame( 'int', $args['offset']['type'] );
+		$this->assertSame( 0, $args['offset']['default'] );
+		$this->assertSame( 'string', $args['search']['type'] );
+		$this->assertSame( 'string', $args['server']['type'] );
+		foreach ( $args as $arg ) {
+			$this->assertFalse( $arg['required'] );
+		}
+	}
+
+	public function test_url_detail_verb_declares_required_hash_plus_filters(): void {
+		// url_detail requires hash (regex check throws on empty/bad) + optional
+		// breakdown/categories.
+		$args = self::args_by_name( 'url_detail' );
+		$this->assertSame( [ 'hash', 'breakdown', 'categories' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['hash']['type'] );
+		$this->assertTrue( $args['hash']['required'] );
+		$this->assertFalse( $args['breakdown']['required'] );
+		$this->assertSame( 'bool', $args['categories']['type'] );
+		$this->assertFalse( $args['categories']['required'] );
+	}
+
+	public function test_request_search_verb_declares_required_rid(): void {
+		// request_search throws 'rid required' when absent → required string.
+		$args = self::args_by_name( 'request_search' );
+		$this->assertSame( [ 'rid' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['rid']['type'] );
+		$this->assertTrue( $args['rid']['required'] );
+	}
+
+	public function test_request_detail_verb_declares_required_rid_optional_partition(): void {
+		// request_detail throws on empty rid; partition defaults to 0.
+		$args = self::args_by_name( 'request_detail' );
+		$this->assertSame( [ 'rid', 'partition' ], \array_keys( $args ) );
+		$this->assertTrue( $args['rid']['required'] );
+		$this->assertSame( 'int', $args['partition']['type'] );
+		$this->assertFalse( $args['partition']['required'] );
+		$this->assertSame( 0, $args['partition']['default'] );
+	}
+
+	public function test_hooks_configure_verb_declares_optional_json_lists(): void {
+		// hooks_configure reads hooks + custom_events arrays (both optional).
+		$args = self::args_by_name( 'hooks_configure' );
+		$this->assertSame( [ 'hooks', 'custom_events' ], \array_keys( $args ) );
+		$this->assertSame( 'json', $args['hooks']['type'] );
+		$this->assertSame( 'json', $args['custom_events']['type'] );
+		foreach ( $args as $arg ) {
+			$this->assertFalse( $arg['required'] );
+		}
+	}
+
+	public function test_config_update_verb_declares_the_nine_optional_options(): void {
+		// config_update sweeps CONFIG_MAP — nine optional perf-tuning keys.
+		$args = self::args_by_name( 'config_update' );
+		$this->assertSame(
+			[
+				'log_events', 'custom_events', 'log_urls', 'skip_urls',
+				'auto_disable_threshold', 'auto_protect_time_threshold',
+				'significant_events', 'log_memory', 'flush_every_line',
+			],
+			\array_keys( $args )
+		);
+		// array_assoc / array_bool config types surface as json payload fields.
+		foreach ( [ 'log_events', 'custom_events', 'log_urls', 'skip_urls', 'significant_events' ] as $name ) {
+			$this->assertSame( 'json', $args[ $name ]['type'], "{$name} must be json" );
+		}
+		$this->assertSame( 'int', $args['auto_disable_threshold']['type'] );
+		$this->assertSame( 'float', $args['auto_protect_time_threshold']['type'] );
+		$this->assertSame( 'bool', $args['log_memory']['type'] );
+		$this->assertSame( 'bool', $args['flush_every_line']['type'] );
+		foreach ( $args as $arg ) {
+			$this->assertFalse( $arg['required'] );
+		}
+	}
+
+	public function test_settings_update_verb_declares_required_option_and_value(): void {
+		// settings_update throws 'option required' / 'value required' → both required.
+		$args = self::args_by_name( 'settings_update' );
+		$this->assertSame( [ 'option', 'value' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['option']['type'] );
+		$this->assertTrue( $args['option']['required'] );
+		// $value is mixed (int|float|bool|array depending on the option) — string
+		// is the renderable catch-all the Inspector can collect.
+		$this->assertSame( 'string', $args['value']['type'] );
+		$this->assertTrue( $args['value']['required'] );
+	}
+
+	public function test_gyroscope_timeline_verb_declares_optional_request_id(): void {
+		// Empty request_id returns the initial-state shape (NOT an error) → optional.
+		$args = self::args_by_name( 'gyroscope_timeline' );
+		$this->assertSame( [ 'request_id' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['request_id']['type'] );
+		$this->assertFalse( $args['request_id']['required'] );
+	}
+
+	public function test_request_log_list_verb_declares_optional_limit(): void {
+		// request_log_list clamps limit 1..1000, default 100 → optional int.
+		$args = self::args_by_name( 'request_log_list' );
+		$this->assertSame( [ 'limit' ], \array_keys( $args ) );
+		$this->assertSame( 'int', $args['limit']['type'] );
+		$this->assertFalse( $args['limit']['required'] );
+		$this->assertSame( 100, $args['limit']['default'] );
+	}
+
+	public function test_request_log_detail_verb_declares_required_id(): void {
+		// request_log_detail throws 'id required' when empty → required string.
+		$args = self::args_by_name( 'request_log_detail' );
+		$this->assertSame( [ 'id' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['id']['type'] );
+		$this->assertTrue( $args['id']['required'] );
+	}
+
+	/**
+	 * node_schema()['verbs'] indexed by verb name.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function verbs_by_name(): array {
+		$verbs = [];
+		foreach ( Performance_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+		return $verbs;
+	}
+
+	/**
+	 * A verb's args[] indexed by arg name.
+	 *
+	 * @param string $verb Verb name.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function args_by_name( string $verb ): array {
+		$out = [];
+		foreach ( self::verbs_by_name()[ $verb ]['args'] as $arg ) {
+			$out[ $arg['name'] ] = $arg;
+		}
+		return $out;
+	}
 }

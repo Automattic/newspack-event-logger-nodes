@@ -256,4 +256,52 @@ class SettingsCITest extends TestCase {
 		$this->assertIsCallable( $verbs['get']['handler'] );
 		$this->assertIsCallable( $verbs['update']['handler'] );
 	}
+
+	public function test_get_verb_declares_no_args(): void {
+		// `get` reads no $payload/$args — it just returns the snapshot.
+		$verbs = self::verbs_by_name();
+		$this->assertSame( [], $verbs['get']['args'] );
+	}
+
+	public function test_update_verb_declares_the_four_optional_int_settings(): void {
+		// `update` partial-applies any subset of the four substrate-owned
+		// integer settings — all optional. Inspector renders an int field per key.
+		$args = self::args_by_name( 'update' );
+
+		$this->assertSame(
+			[ 'num_partitions', 'num_segments', 'segment_size', 'max_lifespan' ],
+			\array_keys( $args )
+		);
+		foreach ( $args as $name => $arg ) {
+			$this->assertSame( 'int', $arg['type'], "{$name} must be int" );
+			$this->assertFalse( $arg['required'], "{$name} must be optional (partial update)" );
+		}
+	}
+
+	/**
+	 * node_schema()['verbs'] indexed by verb name.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function verbs_by_name(): array {
+		$verbs = [];
+		foreach ( Settings_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+		return $verbs;
+	}
+
+	/**
+	 * A verb's args[] indexed by arg name.
+	 *
+	 * @param string $verb Verb name.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function args_by_name( string $verb ): array {
+		$out = [];
+		foreach ( self::verbs_by_name()[ $verb ]['args'] as $arg ) {
+			$out[ $arg['name'] ] = $arg;
+		}
+		return $out;
+	}
 }

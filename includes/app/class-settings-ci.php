@@ -85,7 +85,12 @@ class Settings_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'update',
 					'description' => 'Partial-apply any subset of the four settings, then return the post-update snapshot.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'num_partitions', 'type' => 'int', 'required' => false ],
+						[ 'name' => 'num_segments', 'type' => 'int', 'required' => false ],
+						[ 'name' => 'segment_size', 'type' => 'int', 'required' => false ],
+						[ 'name' => 'max_lifespan', 'type' => 'int', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 						self::require_manage_options();
 						$decoded = \is_array( $payload ) ? $payload : [];

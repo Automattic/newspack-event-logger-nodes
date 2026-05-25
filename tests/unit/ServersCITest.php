@@ -477,6 +477,105 @@ class ServersCITest extends TestCase {
 		}
 	}
 
+	public function test_list_verb_declares_no_args(): void {
+		// `list` reads no $payload/$args — it just enumerates the registry.
+		$verbs = self::verbs_by_name();
+		$this->assertSame( [], $verbs['list']['args'] );
+	}
+
+	public function test_id_only_verbs_declare_required_id(): void {
+		// get/delete/test all funnel $payload through decoded_id() →
+		// require_id(), which throws 'id required' when absent → required string.
+		foreach ( [ 'get', 'delete', 'test' ] as $name ) {
+			$args = self::args_by_name( $name );
+			$this->assertSame( [ 'id' ], \array_keys( $args ), "'{$name}' must take only id" );
+			$this->assertSame( 'string', $args['id']['type'] );
+			$this->assertTrue( $args['id']['required'], "'{$name}' id must be required" );
+		}
+	}
+
+	public function test_add_verb_declares_id_plus_config_fields(): void {
+		// `add` reads id (is_valid_id rejects empty → required) then
+		// extract_server_config() reads url/auth_username/auth_password (default
+		// ''), enabled (default true), logs (default ['firehose.log']).
+		$args = self::args_by_name( 'add' );
+
+		$this->assertSame(
+			[ 'id', 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ],
+			\array_keys( $args )
+		);
+		$this->assertSame( 'string', $args['id']['type'] );
+		$this->assertTrue( $args['id']['required'] );
+
+		// url is required: registry->add() runs validate_config which rejects a
+		// missing/non-HTTPS url, so `add` fails without one (handler throws
+		// 'add failed: check URL format ... missing url').
+		$this->assertSame( 'string', $args['url']['type'] );
+		$this->assertTrue( $args['url']['required'] );
+
+		$this->assertSame( 'string', $args['auth_username']['type'] );
+		$this->assertFalse( $args['auth_username']['required'] );
+		$this->assertSame( 'string', $args['auth_password']['type'] );
+		$this->assertFalse( $args['auth_password']['required'] );
+
+		$this->assertSame( 'bool', $args['enabled']['type'] );
+		$this->assertFalse( $args['enabled']['required'] );
+		$this->assertTrue( $args['enabled']['default'], 'enabled defaults to true (extract_server_config)' );
+
+		$this->assertSame( 'json', $args['logs']['type'] );
+		$this->assertFalse( $args['logs']['required'] );
+		$this->assertSame( [ 'firehose.log' ], $args['logs']['default'] );
+	}
+
+	public function test_update_verb_declares_required_id_plus_optional_config(): void {
+		// `update` requires id (require_id throws) then array_intersect_key with
+		// [url, auth_username, auth_password, enabled, logs] — all optional partial.
+		$args = self::args_by_name( 'update' );
+
+		$this->assertSame(
+			[ 'id', 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ],
+			\array_keys( $args )
+		);
+		$this->assertTrue( $args['id']['required'], 'update id must be required' );
+		foreach ( [ 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ] as $name ) {
+			$this->assertFalse( $args[ $name ]['required'], "update {$name} must be optional (partial update)" );
+		}
+		$this->assertSame( 'bool', $args['enabled']['type'] );
+		$this->assertSame( 'json', $args['logs']['type'] );
+		// Partial update declares NO defaults: a default would pre-fill the
+		// Inspector form (e.g. enabled=true), silently flipping a field the
+		// operator never meant to touch. `add` seeds defaults; `update` must not.
+		$this->assertArrayNotHasKey( 'default', $args['enabled'], 'update enabled must not default (partial update footgun)' );
+		$this->assertArrayNotHasKey( 'default', $args['logs'], 'update logs must not default (partial update footgun)' );
+	}
+
+	/**
+	 * node_schema()['verbs'] indexed by verb name.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function verbs_by_name(): array {
+		$verbs = [];
+		foreach ( Servers_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+		return $verbs;
+	}
+
+	/**
+	 * A verb's args[] indexed by arg name.
+	 *
+	 * @param string $verb Verb name.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function args_by_name( string $verb ): array {
+		$out = [];
+		foreach ( self::verbs_by_name()[ $verb ]['args'] as $arg ) {
+			$out[ $arg['name'] ] = $arg;
+		}
+		return $out;
+	}
+
 	public function test_list_verb_reads_the_injected_registry(): void {
 		// Duck-typed Server_Registry whose get_all() returns a sentinel server.
 		// If the handler reaches $self->registry (the injected instance) the
