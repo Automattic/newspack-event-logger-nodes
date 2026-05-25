@@ -222,4 +222,48 @@ class EventsCITest extends TestCase {
 		$this->assertIsCallable( $verbs['recent']['handler'] );
 		$this->assertIsCallable( $verbs['stats']['handler'] );
 	}
+
+	public function test_recent_verb_declares_optional_limit_arg(): void {
+		// `recent` reads `$payload['limit'] ?? 100`, clamped 1..1000 — optional
+		// int defaulting to 100, so the Inspector renders a single int field.
+		$args = self::args_by_name( 'recent' );
+
+		$this->assertSame( [ 'limit' ], \array_keys( $args ) );
+		$this->assertSame( 'int', $args['limit']['type'] );
+		$this->assertFalse( $args['limit']['required'] );
+		$this->assertSame( 100, $args['limit']['default'] );
+	}
+
+	public function test_stats_verb_declares_no_args(): void {
+		// `stats` reads no $payload/$args — it just merges hourly buckets.
+		$verbs = self::verbs_by_name();
+		$this->assertSame( [], $verbs['stats']['args'] );
+	}
+
+	/**
+	 * node_schema()['verbs'] indexed by verb name.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function verbs_by_name(): array {
+		$verbs = [];
+		foreach ( Events_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+		return $verbs;
+	}
+
+	/**
+	 * A verb's args[] indexed by arg name.
+	 *
+	 * @param string $verb Verb name.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function args_by_name( string $verb ): array {
+		$out = [];
+		foreach ( self::verbs_by_name()[ $verb ]['args'] as $arg ) {
+			$out[ $arg['name'] ] = $arg;
+		}
+		return $out;
+	}
 }

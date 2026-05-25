@@ -19,8 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   injected `Server_Registry`, which their handlers reach via `$self->registry`. Because
   they now publish a `Service`-category schema, the five CIs also appear in the topology
   console's class catalog and their verbs are Inspector-invokable (they were uncategorized
-  and catalog-invisible before). Behavior-preserving for dispatch — requires the matching
-  `newspack-nodes` build.
+  and catalog-invisible before). Each arg-bearing verb declares its `args` (name/type/
+  required/default, derived from what the handler reads) so the Inspector renders the right
+  input fields — e.g. `servers add` requires `id`+`url`, `servers update` is an all-optional
+  partial-update (no defaults that would silently re-write a field). Behavior-preserving for
+  dispatch — requires the matching `newspack-nodes` build.
 
 - **Reduced onto the substrate's `register_plugin` + namespaced config tokens.** The
   substrate stopped feeding topology `<config:…>` tokens from a single merged

@@ -162,7 +162,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'description' => 'High-level performance stats across all partitions.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -211,7 +215,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'description' => 'Paginated/sortable URL leaderboard.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
+						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 50 ],
+						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
+						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -267,7 +278,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'url_detail',
 					'description' => 'Single-URL detail incl. aggregate flame data.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -333,7 +348,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'request_search',
 					'description' => 'Locate a request by rid across partitions.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -365,7 +382,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'request_detail',
 					'description' => 'Full request + flame data for a known {rid, partition}.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -485,7 +505,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'hooks_configure',
 					'description' => 'Persist selected hooks / custom events.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'hooks', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -560,7 +583,17 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'config_update',
 					'description' => 'Bulk-update the nine perf-tuning options.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'log_events', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'log_urls', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'skip_urls', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'auto_disable_threshold', 'type' => 'int', 'required' => false ],
+						[ 'name' => 'auto_protect_time_threshold', 'type' => 'float', 'required' => false ],
+						[ 'name' => 'significant_events', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'log_memory', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'flush_every_line', 'type' => 'bool', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -596,7 +629,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'settings_update',
 					'description' => 'Single-option perf setting write with sync guard.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -644,7 +680,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'gyroscope_timeline',
 					'description' => 'Per-request event timeline from requests.log.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'request_id', 'type' => 'string', 'required' => false ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -678,7 +716,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'request_log_list',
 					'description' => 'Recent request list across partitions.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 100 ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
@@ -707,7 +747,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'request_log_detail',
 					'description' => 'Full request envelope for one request id.',
-					'args'        => [],
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+					],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 

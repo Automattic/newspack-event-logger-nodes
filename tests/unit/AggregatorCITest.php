@@ -268,6 +268,19 @@ class AggregatorCITest extends TestCase {
 		}
 	}
 
+	public function test_all_verbs_declare_no_args(): void {
+		// status/health/servers read no $payload/$args — none of their handlers
+		// even declare a $payload param, so each verb stays args => [].
+		$verbs = [];
+		foreach ( Aggregator_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+
+		foreach ( [ 'status', 'health', 'servers' ] as $name ) {
+			$this->assertSame( [], $verbs[ $name ]['args'], "'{$name}' must declare no args" );
+		}
+	}
+
 	public function test_servers_verb_reads_the_injected_registry(): void {
 		// Duck-typed Server_Registry whose get_all() returns a sentinel server.
 		// If the handler reaches $self->registry (the injected instance) the
