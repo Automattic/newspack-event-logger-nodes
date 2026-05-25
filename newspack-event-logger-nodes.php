@@ -27,6 +27,29 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 // registers an spl callback — actual class loading stays lazy.
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
+// Runtime floor for the newspack-nodes substrate: bail with an admin notice (not a fatal) when it's absent or too old to expose the APIs ELN calls.
+$nodes_version = \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : null;
+if ( ! \Newspack_Event_Logger_Nodes\Substrate_Guard::satisfied(
+	$nodes_version,
+	\Newspack_Event_Logger_Nodes\Substrate_Guard::MINIMUM_NODES_VERSION,
+	\Newspack_Event_Logger_Nodes\Substrate_Guard::required_apis_present()
+) ) {
+	\add_action(
+		'admin_notices',
+		static function () use ( $nodes_version ): void {
+			$found = null === $nodes_version ? \__( 'not active', 'newspack-event-logger-nodes' ) : $nodes_version;
+			$msg   = \sprintf(
+				/* translators: 1: minimum newspack-nodes version, 2: installed version or "not active". */
+				\__( 'Newspack Event Logger Nodes requires the Newspack Nodes plugin (version %1$s or newer, with the register_plugin / config-namespace APIs); found %2$s. The event logger is inactive until that is resolved.', 'newspack-event-logger-nodes' ),
+				\Newspack_Event_Logger_Nodes\Substrate_Guard::MINIMUM_NODES_VERSION,
+				$found
+			);
+			echo '<div class="notice notice-error"><p>' . \esc_html( $msg ) . '</p></div>';
+		}
+	);
+	return; // Skip all substrate-dependent wiring; the autoloader above stays registered.
+}
+
 /**
  * Operator-override topology dir. Reads `Bootstrap::base_dir()` (config
  * lookup), so it's invoked from the deferred loader (once the runtime is
