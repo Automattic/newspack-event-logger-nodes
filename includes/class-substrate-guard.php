@@ -51,6 +51,30 @@ class Substrate_Guard {
 	}
 
 	/**
+	 * Gate ELN's substrate-dependent wiring on the runtime floor.
+	 *
+	 * MUST be invoked once the substrate is loaded (on `plugins_loaded`, NOT at
+	 * ELN's file-load time): ELN sorts alphabetically before `newspack-nodes`, so
+	 * at file-load `NEWSPACK_NODES_VERSION` is undefined and every probed class is
+	 * absent — checking then routes a healthy install to `on_unsatisfied` and
+	 * disables the whole plugin. When `satisfied()`, runs `$on_ready`; otherwise
+	 * hands the (possibly null) installed version to `$on_unsatisfied` so the
+	 * caller can render the admin notice.
+	 *
+	 * @param string|null $installed_version Substrate version, or null if absent.
+	 * @param bool         $has_required_apis Whether every probed API is present.
+	 * @param callable     $on_ready          Runs the substrate-dependent wiring.
+	 * @param callable     $on_unsatisfied    Receives the installed version (string|null).
+	 */
+	public static function boot( ?string $installed_version, bool $has_required_apis, callable $on_ready, callable $on_unsatisfied ): void {
+		if ( self::satisfied( $installed_version, self::MINIMUM_NODES_VERSION, $has_required_apis ) ) {
+			$on_ready();
+			return;
+		}
+		$on_unsatisfied( $installed_version );
+	}
+
+	/**
 	 * Does the loaded substrate expose every symbol ELN's bootstrap calls?
 	 *
 	 * Probes the load-bearing, newest-API subset the deferred loader invokes:

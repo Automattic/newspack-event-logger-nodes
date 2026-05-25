@@ -10,11 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Runtime guard for the `newspack-nodes` dependency (`Substrate_Guard`).** ELN now
-  verifies at load that the substrate is present and at/above its minimum version
-  (`0.4.0`) with the APIs it calls (`register_plugin`, `register_config_namespace`,
+  verifies — deferred to `plugins_loaded` (via `Substrate_Guard::boot()`), once the
+  substrate has loaded — that it is present and at/above its minimum version (`0.4.0`)
+  with the APIs it calls (`register_plugin`, `register_config_namespace`,
   `Service_CI_Node`, `Command_Interpreter_Node`) before touching any substrate symbol.
-  When the substrate is missing or too old, ELN shows an admin notice and bails
-  gracefully — instead of fatal-ing at the first missing-symbol call or binding
+  The check MUST run deferred, not at ELN's file-load: ELN sorts alphabetically before
+  `newspack-nodes`, so the runtime isn't loaded yet when ELN's plugin file executes —
+  checking then always saw it "not active" and disabled the whole plugin (no request
+  logging, dead dashboards, command auth failing closed on a null `Core::$memd`).
+  When the substrate is genuinely missing or too old, ELN shows an admin notice and
+  bails gracefully — instead of fatal-ing at the first missing-symbol call or binding
   silently against a stale runtime. This complements the existing
   `Requires Plugins: newspack-nodes` header (which WP <6.5 doesn't enforce and which
   can't catch a present-but-outdated substrate). The plugin's own autoloader stays

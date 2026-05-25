@@ -76,4 +76,58 @@ class SubstrateGuardTest extends TestCase {
 			Substrate_Guard::MINIMUM_NODES_VERSION
 		);
 	}
+
+	public function test_boot_invokes_on_ready_when_satisfied(): void {
+		$ready = false;
+		$unsat = false;
+		Substrate_Guard::boot(
+			Substrate_Guard::MINIMUM_NODES_VERSION,
+			true,
+			static function () use ( &$ready ): void {
+				$ready = true;
+			},
+			static function ( ?string $found ) use ( &$unsat ): void {
+				$unsat = true;
+			}
+		);
+		$this->assertTrue( $ready, 'on_ready must fire when the substrate is satisfied' );
+		$this->assertFalse( $unsat, 'on_unsatisfied must NOT fire when satisfied' );
+	}
+
+	public function test_boot_invokes_on_unsatisfied_with_version_when_version_null(): void {
+		// The regression: at ELN's file-load time the substrate isn't loaded yet,
+		// so NEWSPACK_NODES_VERSION is undefined → null. boot() must route to
+		// on_unsatisfied (NOT on_ready) and hand it the null version for the notice.
+		$ready    = false;
+		$received = 'sentinel';
+		Substrate_Guard::boot(
+			null,
+			false,
+			static function () use ( &$ready ): void {
+				$ready = true;
+			},
+			static function ( ?string $found ) use ( &$received ): void {
+				$received = $found;
+			}
+		);
+		$this->assertFalse( $ready, 'on_ready must NOT fire when the substrate is absent' );
+		$this->assertNull( $received, 'on_unsatisfied must receive the (null) installed version' );
+	}
+
+	public function test_boot_invokes_on_unsatisfied_when_version_below_minimum(): void {
+		$ready = false;
+		$unsat = false;
+		Substrate_Guard::boot(
+			'0.3.0',
+			true,
+			static function () use ( &$ready ): void {
+				$ready = true;
+			},
+			static function ( ?string $found ) use ( &$unsat ): void {
+				$unsat = true;
+			}
+		);
+		$this->assertFalse( $ready, 'on_ready must NOT fire for a below-minimum substrate' );
+		$this->assertTrue( $unsat, 'on_unsatisfied must fire for a below-minimum substrate' );
+	}
 }
