@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `newspack_nodes/before_worker_spawn` listener. Behavior-preserving — requires the matching
   `newspack-nodes` build.
 
+### Fixed
+
+- **Profiler mu-plugin was silently inert after the `LogManager` → `Log_Manager` rename.**
+  `mu-plugins/00-newspack-profiler.php` gated its `plugins_loaded` flush on
+  `class_exists( '…\LogManager' )` and called `LogManager::instance()`, but the class is
+  `Log_Manager` — so the guard was always false and the deferred plugin-load events
+  (`{plugin} (start)` / `(complete)`, the firehose `process (start)` timing) were never
+  flushed. Corrected the class references; a new test fires the profiler's hook and asserts
+  it resolves `Log_Manager` so the rename can't silently break it again.
+
 ## [0.4.0] - 2026-05-23
 
 ### Changed
