@@ -66,6 +66,16 @@ class Servers_CI_Node extends Service_CI_Node {
 	public static ?\Closure $http_call = null;
 
 	/**
+	 * Hub-side server registry the six verb handlers reach via `$self->registry`.
+	 * node_schema() is static and can't `use` the ctor arg, so the handlers read
+	 * it off the dispatched instance (legal: defined inside this class, so they
+	 * may touch its private props on any instance — same shape Workers_CI uses).
+	 *
+	 * @var Server_Registry
+	 */
+	private Server_Registry $registry;
+
+	/**
 	 * Build a Servers_CI bound to the supplied registry.
 	 *
 	 * @param Server_Registry $registry Hub-side server registry. Tests pass a
@@ -73,108 +83,147 @@ class Servers_CI_Node extends Service_CI_Node {
 	 *                                  share state.
 	 */
 	public function __construct( Server_Registry $registry ) {
-		// Node + CommandInterpreter have no explicit __construct, so the
-		// inherited no-op is implicit. Mirrors Workers_CI / Settings_CI /
-		// Status_CI / Discovery_CI / Logger_CI / Events_CI.
-		$this->commands( $this->verb_table( $registry ) );
+		// Prop set before parent builds commands from node_schema(). Handlers
+		// are closures (not invoked until dispatch), so order doesn't affect
+		// correctness; props-first keeps intent obvious.
+		$this->registry = $registry;
+		parent::__construct();
 	}
 
-	private function verb_table( Server_Registry $registry ): array {
+	public static function node_schema(): array {
 		return [
-			'list'   => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
-				$registry->reset_cache();
-				$out = [];
-				foreach ( $registry->get_all() as $id => $config ) {
-					$out[ $id ] = self::public_shape( (string) $id, $config, $registry );
-				}
-				return $out;
-			},
-			'get'    => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
-				$id = self::decoded_id( $payload );
-				$registry->reset_cache();
-				$server = $registry->get( $id );
-				if ( null === $server ) {
-					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
-				}
-				return self::public_shape( $id, $server, $registry );
-			},
-			'add'    => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
-				self::require_manage_options();
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$id      = (string) ( $decoded['id'] ?? '' );
-				// Empty + format check together: legacy controller maps both to
-				// HTTP 400 with the same kind of "invalid id" message.
-				if ( ! Server_Registry::is_valid_id( $id ) ) {
-					throw new \RuntimeException( 'invalid server id' );
-				}
-				$registry->reset_cache();
-				if ( null !== $registry->get( $id ) ) {
-					throw new \RuntimeException( \esc_html( "server already exists: {$id}" ) );
-				}
-				$config = self::extract_server_config( $decoded );
-				if ( ! $registry->add( $id, $config ) ) {
-					// Registry rejected on validate_config (non-HTTPS URL,
-					// missing url, etc.) or hit MAX_SERVERS.
-					throw new \RuntimeException( 'add failed: check URL format (must be HTTPS) and registry capacity' );
-				}
-				if ( true === ( $config['enabled'] ?? true ) ) {
-					self::queue_settings_sync( [ $id ] );
-				}
-				self::request_supervisor_restart();
-				return [ 'id' => $id ];
-			},
-			'update' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
-				self::require_manage_options();
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$id      = self::require_id( $decoded );
-				$registry->reset_cache();
-				$existing = $registry->get( $id );
-				if ( null === $existing ) {
-					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
-				}
-				$partial = \array_intersect_key(
-					$decoded,
-					\array_flip( [ 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ] )
-				);
-				if ( ! $registry->update( $id, $partial ) ) {
-					throw new \RuntimeException( 'update failed' );
-				}
-				// Targeted full-settings sweep when `enabled` flips false → true.
-				$was_enabled = true === ( $existing['enabled'] ?? false );
-				$now_enabled = isset( $partial['enabled'] ) && true === $partial['enabled'];
-				if ( ! $was_enabled && $now_enabled ) {
-					self::queue_settings_sync( [ $id ] );
-				}
-				self::request_supervisor_restart();
-				return [ 'id' => $id ];
-			},
-			'delete' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
-				self::require_manage_options();
-				$id = self::decoded_id( $payload );
-				$registry->reset_cache();
-				if ( null === $registry->get( $id ) ) {
-					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
-				}
-				if ( ! $registry->remove( $id ) ) {
-					// Config-file servers reach here.
-					throw new \RuntimeException( 'delete failed' );
-				}
-				self::request_supervisor_restart();
-				return [ 'id' => $id ];
-			},
-			'test'   => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ) use ( $registry ): array {
-				self::require_manage_options();
-				$id = self::decoded_id( $payload );
-				$registry->reset_cache();
-				$server = $registry->get( $id );
-				if ( null === $server ) {
-					throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
-				}
-				// Returns a structure. (The cross-spoke /command HTTP body
-				// probe_remote() builds internally is a separate wire concern
-				// and stays JSON-encoded — don't conflate the two.)
-				return self::probe_remote( $id, $server );
-			},
+			'category'    => 'Service',
+			'description' => 'Hub-side server registry: list / get / add / update / delete / test spokes.',
+			'ctor'        => [],
+			'verbs'       => [
+				[
+					'name'        => 'list',
+					'description' => 'All registered servers as a map keyed by id.',
+					'args'        => [],
+					// $self is the dispatching CI instance — always a Servers_CI_Node
+					// here (dispatch() passes $this), so it's typed concretely to read
+					// the ctor-injected registry off it (node_schema is static).
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+						$self->registry->reset_cache();
+						$out = [];
+						foreach ( $self->registry->get_all() as $id => $config ) {
+							$out[ $id ] = self::public_shape( (string) $id, $config, $self->registry );
+						}
+						return $out;
+					},
+				],
+				[
+					'name'        => 'get',
+					'description' => 'A single server record by id.',
+					'args'        => [],
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+						$id = self::decoded_id( $payload );
+						$self->registry->reset_cache();
+						$server = $self->registry->get( $id );
+						if ( null === $server ) {
+							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
+						}
+						return self::public_shape( $id, $server, $self->registry );
+					},
+				],
+				[
+					'name'        => 'add',
+					'description' => 'Add a new server (manage_options).',
+					'args'        => [],
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+						self::require_manage_options();
+						$decoded = \is_array( $payload ) ? $payload : [];
+						$id      = (string) ( $decoded['id'] ?? '' );
+						// Empty + format check together: legacy controller maps both to
+						// HTTP 400 with the same kind of "invalid id" message.
+						if ( ! Server_Registry::is_valid_id( $id ) ) {
+							throw new \RuntimeException( 'invalid server id' );
+						}
+						$self->registry->reset_cache();
+						if ( null !== $self->registry->get( $id ) ) {
+							throw new \RuntimeException( \esc_html( "server already exists: {$id}" ) );
+						}
+						$config = self::extract_server_config( $decoded );
+						if ( ! $self->registry->add( $id, $config ) ) {
+							// Registry rejected on validate_config (non-HTTPS URL,
+							// missing url, etc.) or hit MAX_SERVERS.
+							throw new \RuntimeException( 'add failed: check URL format (must be HTTPS) and registry capacity' );
+						}
+						if ( true === ( $config['enabled'] ?? true ) ) {
+							self::queue_settings_sync( [ $id ] );
+						}
+						self::request_supervisor_restart();
+						return [ 'id' => $id ];
+					},
+				],
+				[
+					'name'        => 'update',
+					'description' => 'Partial-update of an existing server (manage_options).',
+					'args'        => [],
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+						self::require_manage_options();
+						$decoded = \is_array( $payload ) ? $payload : [];
+						$id      = self::require_id( $decoded );
+						$self->registry->reset_cache();
+						$existing = $self->registry->get( $id );
+						if ( null === $existing ) {
+							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
+						}
+						$partial = \array_intersect_key(
+							$decoded,
+							\array_flip( [ 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ] )
+						);
+						if ( ! $self->registry->update( $id, $partial ) ) {
+							throw new \RuntimeException( 'update failed' );
+						}
+						// Targeted full-settings sweep when `enabled` flips false → true.
+						$was_enabled = true === ( $existing['enabled'] ?? false );
+						$now_enabled = isset( $partial['enabled'] ) && true === $partial['enabled'];
+						if ( ! $was_enabled && $now_enabled ) {
+							self::queue_settings_sync( [ $id ] );
+						}
+						self::request_supervisor_restart();
+						return [ 'id' => $id ];
+					},
+				],
+				[
+					'name'        => 'delete',
+					'description' => 'Remove a server (manage_options).',
+					'args'        => [],
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+						self::require_manage_options();
+						$id = self::decoded_id( $payload );
+						$self->registry->reset_cache();
+						if ( null === $self->registry->get( $id ) ) {
+							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
+						}
+						if ( ! $self->registry->remove( $id ) ) {
+							// Config-file servers reach here.
+							throw new \RuntimeException( 'delete failed' );
+						}
+						self::request_supervisor_restart();
+						return [ 'id' => $id ];
+					},
+				],
+				[
+					'name'        => 'test',
+					'description' => "Probe a spoke's /command discovery endpoint with stored Basic Auth (manage_options).",
+					'args'        => [],
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+						self::require_manage_options();
+						$id = self::decoded_id( $payload );
+						$self->registry->reset_cache();
+						$server = $self->registry->get( $id );
+						if ( null === $server ) {
+							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
+						}
+						// Returns a structure. (The cross-spoke /command HTTP body
+						// probe_remote() builds internally is a separate wire concern
+						// and stays JSON-encoded — don't conflate the two.)
+						return self::probe_remote( $id, $server );
+					},
+				],
+			],
 		];
 	}
 

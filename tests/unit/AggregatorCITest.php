@@ -245,4 +245,51 @@ class AggregatorCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
+
+	// ---------------------------------------------------------------------
+	// schema-driven dispatch + stateful-registry reach
+	//
+	// After the schema migration the three verbs live in node_schema()['verbs']
+	// with handlers, and the ctor-injected registry is reached via $self->registry
+	// (node_schema is static and can't `use` the ctor arg). The fake-registry test
+	// proves the dispatched handler actually read THE INJECTED instance, not a
+	// fresh/global one.
+	// ---------------------------------------------------------------------
+
+	public function test_node_schema_lists_all_verbs_with_handlers(): void {
+		$verbs = [];
+		foreach ( Aggregator_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+
+		foreach ( [ 'status', 'health', 'servers' ] as $name ) {
+			$this->assertArrayHasKey( $name, $verbs, "node_schema must list the '{$name}' verb" );
+			$this->assertIsCallable( $verbs[ $name ]['handler'] );
+		}
+	}
+
+	public function test_servers_verb_reads_the_injected_registry(): void {
+		// Duck-typed Server_Registry whose get_all() returns a sentinel server.
+		// If the handler reaches $self->registry (the injected instance) the
+		// sentinel surfaces in the response; a handler bound to a different
+		// registry would not see it.
+		$fake = new class() extends Server_Registry {
+			public bool $reached = false;
+			public function reset_cache(): void {}
+			public function get_all(): array {
+				$this->reached = true;
+				return [ 'sentinel' => [ 'url' => 'https://sentinel.example/', 'enabled' => true, 'logs' => [] ] ];
+			}
+			public function is_config_server( string $id ): bool {
+				return false;
+			}
+		};
+
+		$ci     = new Aggregator_CI_Node( $fake );
+		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
+
+		$this->assertTrue( $fake->reached, 'handler must reach the injected registry via $self->registry' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'sentinel', $result[0]['id'] );
+	}
 }

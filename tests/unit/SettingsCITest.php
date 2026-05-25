@@ -242,4 +242,18 @@ class SettingsCITest extends TestCase {
 		);
 		$this->assertSame( 2, $result['num_partitions'] );
 	}
+
+	// ── schema-driven dispatch ──────────────────────────────────────────────
+
+	public function test_node_schema_lists_both_verbs_with_handlers(): void {
+		$verbs = [];
+		foreach ( Settings_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+
+		$this->assertArrayHasKey( 'get', $verbs );
+		$this->assertArrayHasKey( 'update', $verbs );
+		$this->assertIsCallable( $verbs['get']['handler'] );
+		$this->assertIsCallable( $verbs['update']['handler'] );
+	}
 }

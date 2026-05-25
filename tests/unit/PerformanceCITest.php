@@ -2132,4 +2132,26 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
+
+	// ── schema-driven dispatch ──────────────────────────────────────────────
+
+	public function test_node_schema_lists_all_verbs_with_handlers(): void {
+		$expected = [
+			'overview', 'urls', 'url_detail', 'request_search', 'request_detail',
+			'timing', 'dashboard', 'hooks_registered', 'hooks_categories',
+			'hooks_available', 'hooks_configure', 'config_get', 'config_update',
+			'settings_update', 'gyroscope_timeline', 'request_log_list',
+			'request_log_detail',
+		];
+
+		$verbs = [];
+		foreach ( Performance_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+
+		foreach ( $expected as $name ) {
+			$this->assertArrayHasKey( $name, $verbs, "node_schema must list the '{$name}' verb" );
+			$this->assertIsCallable( $verbs[ $name ]['handler'], "the '{$name}' verb must carry a callable handler" );
+		}
+	}
 }

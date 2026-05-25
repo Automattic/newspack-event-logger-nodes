@@ -455,4 +455,49 @@ class ServersCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
 	}
+
+	// ---------------------------------------------------------------------
+	// schema-driven dispatch + stateful-registry reach
+	//
+	// After the schema migration the six verbs live in node_schema()['verbs']
+	// with handlers, and the ctor-injected registry is reached via
+	// $self->registry. The fake-registry test proves the dispatched handler
+	// actually read THE INJECTED instance.
+	// ---------------------------------------------------------------------
+
+	public function test_node_schema_lists_all_verbs_with_handlers(): void {
+		$verbs = [];
+		foreach ( Servers_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+
+		foreach ( [ 'list', 'get', 'add', 'update', 'delete', 'test' ] as $name ) {
+			$this->assertArrayHasKey( $name, $verbs, "node_schema must list the '{$name}' verb" );
+			$this->assertIsCallable( $verbs[ $name ]['handler'] );
+		}
+	}
+
+	public function test_list_verb_reads_the_injected_registry(): void {
+		// Duck-typed Server_Registry whose get_all() returns a sentinel server.
+		// If the handler reaches $self->registry (the injected instance) the
+		// sentinel surfaces in the response.
+		$fake = new class() extends Server_Registry {
+			public bool $reached = false;
+			public function reset_cache(): void {}
+			public function get_all(): array {
+				$this->reached = true;
+				return [ 'sentinel' => [ 'url' => 'https://sentinel.example/', 'enabled' => true, 'logs' => [] ] ];
+			}
+			public function is_config_server( string $id ): bool {
+				return false;
+			}
+		};
+
+		$ci     = new Servers_CI_Node( $fake );
+		$result = VerbHarness::fire( $ci, 'servers', 'list' );
+
+		$this->assertTrue( $fake->reached, 'handler must reach the injected registry via $self->registry' );
+		$this->assertArrayHasKey( 'sentinel', $result );
+		$this->assertSame( 'sentinel', $result['sentinel']['id'] );
+	}
 }

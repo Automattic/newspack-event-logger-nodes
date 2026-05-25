@@ -63,42 +63,58 @@ class Settings_CI_Node extends Service_CI_Node {
 		'max_lifespan'   => 0,
 	];
 
-	public function __construct() {
-		// Node + CommandInterpreter have no explicit __construct, so the
-		// inherited no-op is implicit. Mirrors Status_CI / Discovery_CI /
-		// Workers_CI, which extend CommandInterpreter and also skip the
-		// parent call.
-		$this->commands( [
-			'get'    => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
-				return self::snapshot();
-			},
-			'update' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
-				self::require_manage_options();
-				$decoded = \is_array( $payload ) ? $payload : [];
+	/**
+	 * Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
+	 * its `handler`. The inherited Service_CI_Node ctor builds the commands
+	 * table from this schema. Configuration-only verbs; no service dependencies.
+	 */
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Service',
+			'description' => 'Substrate-level integer settings: get / update num_partitions, num_segments, segment_size, max_lifespan.',
+			'ctor'        => [],
+			'verbs'       => [
+				[
+					'name'        => 'get',
+					'description' => 'Return the four substrate-owned integer settings as a snapshot.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+						return self::snapshot();
+					},
+				],
+				[
+					'name'        => 'update',
+					'description' => 'Partial-apply any subset of the four settings, then return the post-update snapshot.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+						self::require_manage_options();
+						$decoded = \is_array( $payload ) ? $payload : [];
 
-				foreach ( $decoded as $key => $value ) {
-					if ( ! isset( self::ALLOWED_KEYS[ $key ] ) ) {
-						throw new \RuntimeException( \esc_html( "unknown setting: {$key}" ) );
-					}
-					$sanitized = self::sanitize_int( $value, self::ALLOWED_KEYS[ $key ], self::MAX_INT_VALUE );
-					if ( null === $sanitized ) {
-						throw new \RuntimeException( \esc_html( "invalid value for setting: {$key}" ) );
-					}
-					// autoload=true: these substrate scalars are read on
-					// every request by Newspack_Nodes\Config, so they must
-					// ride the single alloptions query rather than becoming
-					// N separate per-request get_option lookups.
-					\update_option( "newspack_nodes_{$key}", $sanitized, true );
-				}
+						foreach ( $decoded as $key => $value ) {
+							if ( ! isset( self::ALLOWED_KEYS[ $key ] ) ) {
+								throw new \RuntimeException( \esc_html( "unknown setting: {$key}" ) );
+							}
+							$sanitized = self::sanitize_int( $value, self::ALLOWED_KEYS[ $key ], self::MAX_INT_VALUE );
+							if ( null === $sanitized ) {
+								throw new \RuntimeException( \esc_html( "invalid value for setting: {$key}" ) );
+							}
+							// autoload=true: these substrate scalars are read on
+							// every request by Newspack_Nodes\Config, so they must
+							// ride the single alloptions query rather than becoming
+							// N separate per-request get_option lookups.
+							\update_option( "newspack_nodes_{$key}", $sanitized, true );
+						}
 
-				// Application Config::reset() cascades into the substrate
-				// Config::reset(), so the snapshot rebuild reads the fresh
-				// option values rather than the cached pre-update view.
-				AppConfig::reset();
+						// Application Config::reset() cascades into the substrate
+						// Config::reset(), so the snapshot rebuild reads the fresh
+						// option values rather than the cached pre-update view.
+						AppConfig::reset();
 
-				return self::snapshot();
-			},
-		] );
+						return self::snapshot();
+					},
+				],
+			],
+		];
 	}
 
 	/**

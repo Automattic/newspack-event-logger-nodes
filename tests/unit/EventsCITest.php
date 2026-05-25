@@ -208,4 +208,18 @@ class EventsCITest extends TestCase {
 
 		$this->assertSame( [], $result['data']['time_series'] );
 	}
+
+	// ── schema-driven dispatch ──────────────────────────────────────────────
+
+	public function test_node_schema_lists_both_verbs_with_handlers(): void {
+		$verbs = [];
+		foreach ( Events_CI_Node::node_schema()['verbs'] as $verb ) {
+			$verbs[ $verb['name'] ] = $verb;
+		}
+
+		$this->assertArrayHasKey( 'recent', $verbs );
+		$this->assertArrayHasKey( 'stats', $verbs );
+		$this->assertIsCallable( $verbs['recent']['handler'] );
+		$this->assertIsCallable( $verbs['stats']['handler'] );
+	}
 }

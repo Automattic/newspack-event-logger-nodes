@@ -147,25 +147,23 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const REQUEST_LIST_MAX_LIMIT = 1000;
 
 	/**
-	 * Stats-reading verbs build per-partition Stats_Store off the shared
-	 * `Core::$memd` handle; a null handle yields empty/zeroed shapes.
-	 * Disk-walking verbs (request_search / request_detail) work regardless.
+	 * Schema-driven dispatch: each of the 17 verbs is declared once in
+	 * `verbs[]` carrying its `handler`. The inherited Service_CI_Node ctor
+	 * builds the commands table from this schema. Stats-reading verbs build
+	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
+	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
 	 */
-	public function __construct() {
-		// Node + CommandInterpreter have no explicit __construct, so the
-		// inherited no-op is implicit. Mirrors Aggregator_CI / Servers_CI /
-		// Events_CI / Settings_CI / Status_CI / Discovery_CI / Logger_CI /
-		// Workers_CI.
-		$this->commands( $this->verb_table() );
-	}
-
-	/**
-	 * Verb-to-closure map. Each verb is a self-contained closure so
-	 * Tasks 10-12 can add siblings without disturbing existing entries.
-	 */
-	private function verb_table(): array {
+	public static function node_schema(): array {
 		return [
-			'overview'       => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+			'category'    => 'Service',
+			'description' => 'Performance-dashboard surface: overview, URLs, requests, hooks, config, settings.',
+			'ctor'        => [],
+			'verbs'       => [
+				[
+					'name'        => 'overview',
+					'description' => 'High-level performance stats across all partitions.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Optional args mirror the legacy PerfOverviewController query
@@ -208,8 +206,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				return $payload;
-			},
-			'urls'           => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'urls',
+					'description' => 'Paginated/sortable URL leaderboard.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -259,8 +262,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'limit'  => $limit,
 					'offset' => $offset,
 				];
-			},
-			'url_detail'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'url_detail',
+					'description' => 'Single-URL detail incl. aggregate flame data.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -320,8 +328,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				return $payload;
-			},
-			'request_search' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'request_search',
+					'description' => 'Locate a request by rid across partitions.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -347,8 +360,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
-			},
-			'request_detail' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'request_detail',
+					'description' => 'Full request + flame data for a known {rid, partition}.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded = \is_array( $payload ) ? $payload : [];
@@ -372,8 +390,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}
 				return $result;
-			},
-			'timing'         => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'timing',
+					'description' => 'Merged hourly timing buckets across partitions.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_timing — merged
@@ -383,8 +406,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				return [
 					'time_series' => self::merge_hourly_across_partitions(),
 				];
-			},
-			'dashboard'      => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'dashboard',
+					'description' => 'Overview payload + full URL index in one round-trip.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_dashboard:
@@ -396,8 +424,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'overview' => self::build_overview_payload( $index ),
 					'urls'     => $index,
 				];
-			},
-			'hooks_registered' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'hooks_registered',
+					'description' => 'Registered hooks grouped by category.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_registered_hooks.
@@ -414,8 +447,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'categories'        => Hook_Categorizer::get_categories(),
 					'hooks_by_category' => $by_category,
 				];
-			},
-			'hooks_categories' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'hooks_categories',
+					'description' => 'Hook categories + merged config.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_hook_categories
@@ -424,8 +462,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'categories' => Hook_Categorizer::get_categories(),
 					'config'     => Hook_Categorizer::get_merged_config(),
 				];
-			},
-			'hooks_available' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'hooks_available',
+					'description' => 'All runtime hooks for the picker UI.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
@@ -437,8 +480,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				return [
 					'hooks' => self::collect_available_hooks(),
 				];
-			},
-			'hooks_configure' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'hooks_configure',
+					'description' => 'Persist selected hooks / custom events.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				$decoded       = \is_array( $payload ) ? $payload : [];
@@ -477,8 +525,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'success'          => true,
 					'hooks_configured' => $configured,
 				];
-			},
-			'config_get'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'config_get',
+					'description' => 'Read the nine perf-tuning options.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::get_config, with one
@@ -502,8 +555,13 @@ class Performance_CI_Node extends Service_CI_Node {
 						'flush_every_line'            => ! empty( $cfg['flush_every_line'] ),
 					],
 				];
-			},
-			'config_update'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'config_update',
+					'description' => 'Bulk-update the nine perf-tuning options.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::update_config — the
@@ -533,8 +591,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'success' => true,
 					'updated' => $updated,
 				];
-			},
-			'settings_update' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'settings_update',
+					'description' => 'Single-option perf setting write with sync guard.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfSettingsController::update_setting —
@@ -576,8 +639,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'option'  => $option,
 					'updated' => (bool) $ok,
 				];
-			},
-			'gyroscope_timeline' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'gyroscope_timeline',
+					'description' => 'Per-request event timeline from requests.log.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy GyroscopeController::get_timeline.
@@ -605,8 +673,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					],
 					'meta' => [ 'scanned' => $scanned ],
 				];
-			},
-			'request_log_list'   => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'request_log_list',
+					'description' => 'Recent request list across partitions.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_list.
@@ -629,8 +702,13 @@ class Performance_CI_Node extends Service_CI_Node {
 						'scanned' => $scanned,
 					],
 				];
-			},
-			'request_log_detail' => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					},
+				],
+				[
+					'name'        => 'request_log_detail',
+					'description' => 'Full request envelope for one request id.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_detail.
@@ -668,7 +746,9 @@ class Performance_CI_Node extends Service_CI_Node {
 					],
 					'meta' => [ 'scanned' => $scanned ],
 				];
-			},
+					},
+				],
+			],
 		];
 	}
 

@@ -54,74 +54,109 @@ use Newspack_Nodes\Service_CI_Node;
 class Aggregator_CI_Node extends Service_CI_Node {
 
 	/**
+	 * Hub-side server registry the `status`/`servers` handlers reach via
+	 * `$self->registry`. node_schema() is static and can't `use` a ctor arg,
+	 * so the handlers read it off the dispatched instance (legal: they're
+	 * defined inside this class and so may touch its private props on any
+	 * instance — same shape Workers_CI uses).
+	 *
+	 * @var Server_Registry
+	 */
+	private Server_Registry $registry;
+
+	/**
 	 * @param Server_Registry $registry Hub-side server registry. Tests pass a
 	 *                                  fresh instance per test so they don't
 	 *                                  share state.
 	 */
 	public function __construct( Server_Registry $registry ) {
-		// Node + CommandInterpreter have no explicit __construct, so the
-		// inherited no-op is implicit. Mirrors Workers_CI / Servers_CI /
-		// Status_CI / Discovery_CI / Logger_CI / Events_CI / Settings_CI.
-		$this->commands( $this->verb_table( $registry ) );
+		// Prop set before parent builds commands from node_schema(). Handlers
+		// are closures (not invoked until dispatch), so order doesn't affect
+		// correctness; props-first keeps intent obvious.
+		$this->registry = $registry;
+		parent::__construct();
 	}
 
-	private function verb_table( Server_Registry $registry ): array {
+	public static function node_schema(): array {
 		return [
-			'status'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ) use ( $registry ): array {
-				self::require_manage_options();
-				$registry->reset_cache();
-				$servers = $registry->get_all();
+			'category'    => 'Service',
+			'description' => 'Hub-side aggregator dashboards: per-server status, cache health, registered servers.',
+			'ctor'        => [],
+			'verbs'       => [
+				[
+					'name'        => 'status',
+					'description' => 'Per-server partition snapshot keyed by server id.',
+					'args'        => [],
+					// $self is the dispatching CI instance — always an Aggregator_CI_Node
+					// here (dispatch() passes $this), so it's typed concretely to read
+					// the ctor-injected registry off it (node_schema is static).
+					'handler'     => static function ( Aggregator_CI_Node $self, string $args, array $envelope = [] ): array {
+						self::require_manage_options();
+						$self->registry->reset_cache();
+						$servers = $self->registry->get_all();
 
-				$config         = RuntimeConfig::load_config();
-				$num_partitions = \min( 16, \max( 1, (int) ( $config['num_partitions'] ?? 1 ) ) );
+						$config         = RuntimeConfig::load_config();
+						$num_partitions = \min( 16, \max( 1, (int) ( $config['num_partitions'] ?? 1 ) ) );
 
-				$result = [];
-				foreach ( $servers as $id => $server ) {
-					if ( ! \is_array( $server ) ) {
-						continue;
-					}
-					$partitions = [];
-					for ( $p = 0; $p < $num_partitions; $p++ ) {
-						$val              = Core::$memd?->get( "aggregator_status:{$id}:p{$p}" );
-						$partitions[ $p ] = \is_array( $val ) ? $val : [];
-					}
+						$result = [];
+						foreach ( $servers as $id => $server ) {
+							if ( ! \is_array( $server ) ) {
+								continue;
+							}
+							$partitions = [];
+							for ( $p = 0; $p < $num_partitions; $p++ ) {
+								$val              = Core::$memd?->get( "aggregator_status:{$id}:p{$p}" );
+								$partitions[ $p ] = \is_array( $val ) ? $val : [];
+							}
 
-					$result[ $id ] = [
-						'id'         => $id,
-						'url'        => isset( $server['url'] ) ? \esc_url_raw( (string) $server['url'] ) : '',
-						'enabled'    => $server['enabled'] ?? true,
-						'partitions' => $partitions,
-					];
-				}
+							$result[ $id ] = [
+								'id'         => $id,
+								'url'        => isset( $server['url'] ) ? \esc_url_raw( (string) $server['url'] ) : '',
+								'enabled'    => $server['enabled'] ?? true,
+								'partitions' => $partitions,
+							];
+						}
 
-				return $result;
-			},
-			'health'  => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-				return [
-					'healthy'   => true,
-					'cache'     => null !== Core::$memd,
-					'timestamp' => \time(),
-				];
-			},
-			'servers' => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ) use ( $registry ): array {
-				self::require_manage_options();
-				$registry->reset_cache();
-				$out = [];
-				foreach ( $registry->get_all() as $id => $cfg ) {
-					$out[] = [
-						'id'              => (string) $id,
-						'url'             => (string) ( $cfg['url'] ?? '' ),
-						'enabled'         => (bool) ( $cfg['enabled'] ?? false ),
-						'logs'            => $cfg['logs'] ?? [],
-						'has_credentials' => ! empty( $cfg['auth_username'] ) && ! empty( $cfg['auth_password'] ),
-						'is_config'       => $registry->is_config_server( (string) $id ),
-					];
-				}
-				// Sequential array, NOT a map keyed by id — legacy contract the
-				// React aggregator tree relies on.
-				return $out;
-			},
+						return $result;
+					},
+				],
+				[
+					'name'        => 'health',
+					'description' => 'Cache reachability + wall-clock timestamp.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+						self::require_manage_options();
+						return [
+							'healthy'   => true,
+							'cache'     => null !== Core::$memd,
+							'timestamp' => \time(),
+						];
+					},
+				],
+				[
+					'name'        => 'servers',
+					'description' => 'Registered servers as a sequential array (legacy aggregator-tree contract).',
+					'args'        => [],
+					'handler'     => static function ( Aggregator_CI_Node $self, string $args, array $envelope = [] ): array {
+						self::require_manage_options();
+						$self->registry->reset_cache();
+						$out = [];
+						foreach ( $self->registry->get_all() as $id => $cfg ) {
+							$out[] = [
+								'id'              => (string) $id,
+								'url'             => (string) ( $cfg['url'] ?? '' ),
+								'enabled'         => (bool) ( $cfg['enabled'] ?? false ),
+								'logs'            => $cfg['logs'] ?? [],
+								'has_credentials' => ! empty( $cfg['auth_username'] ) && ! empty( $cfg['auth_password'] ),
+								'is_config'       => $self->registry->is_config_server( (string) $id ),
+							];
+						}
+						// Sequential array, NOT a map keyed by id — legacy contract the
+						// React aggregator tree relies on.
+						return $out;
+					},
+				],
+			],
 		];
 	}
 }
