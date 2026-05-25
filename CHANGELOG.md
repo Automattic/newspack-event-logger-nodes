@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Request Log dashboard reimplemented as a JS-Node graph + thin React view.** Following the
+  Raw Logs / Worker Status reference (nodes repo), the live request-stream data flow moved out
+  of React effects into a graph that imports the substrate runtime via `@newspack-nodes/runtime`
+  — `requestlog/stream` (SSE-in: EventSource + slot-heartbeat poke + reconnect, replacing the
+  shared `useMessageStream`), `requestlog/transform` (`transformCompletedLine`), `requestlog/view`
+  (the row buffer + requests/sec model) — wired by `useRequestLogGraph` (page-visibility pause +
+  the `setViewReady` re-render trigger). `RequestStream.js` is now a thin view: `useNodeState(
+  'requestlog/view','view')` for the low-freq model, and the virtualized list reads the high-freq
+  buffer (`node.entries`/`.rps`) off the node each rAF — preserving DOM, SCSS, columns,
+  virtualization, smooth-scroll, filter, RPS, "Xs ago", and Clear. `jest.config.js` gains a
+  `moduleNameMapper` deduping React / `@wordpress/element` to ELN's copy (the runtime's React
+  hooks resolve from the sibling checkout; mirrors the production WP-global externalization).
+
 ### Added
 
 - **Runtime guard for the `newspack-nodes` dependency (`Substrate_Guard`).** ELN now

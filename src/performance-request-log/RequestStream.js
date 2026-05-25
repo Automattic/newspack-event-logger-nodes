@@ -3,44 +3,39 @@
  * Request Stream Component
  *
  * Real-time scrolling log of completed requests.
- * Uses SSE (single multiplexed connection) to stream completed requests.
- * Click any request to view its full trace in the Performance Dashboard.
- * Entries are newest-first - user scrolls down to see history.
+ *
+ * This is a THIN view over the `requestlog/*` node graph (mounted by
+ * `useRequestLogGraph`). The graph owns all data: `requestlog/stream` holds the
+ * SSE connection, `requestlog/transform` turns envelopes into rows, and
+ * `requestlog/view` holds the buffer + view model. This component only renders.
+ *
+ * Two read paths, matching the view node's two cadences:
+ * - LOW frequency: `useNodeState('requestlog/view','view')` for `{ paused }` (the
+ *   pause button + empty-state label).
+ * - HIGH frequency: the rAF reads `Core.node('requestlog/view').entries`, `.rps`
+ *   and `.lastEventTime` directly each frame — a busy stream never re-renders
+ *   React per request; only the cheap derived state (the snapshot + rps) is pushed
+ *   when it changes.
+ *
+ * Click any request to view its full trace in the Performance Dashboard. Entries
+ * are newest-first - user scrolls down to see history.
  */
 
-import {
-	useState,
-	useEffect,
-	useRef,
-	useCallback,
-	useMemo,
-	memo,
-} from '@wordpress/element';
+import { useState, useEffect, useRef, useMemo, memo } from '@wordpress/element';
 
-import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useMessageStream from '../shared/hooks/useMessageStream';
-import transformCompletedLine from './transformCompletedLine';
+import { Core, useNodeState } from '@newspack-nodes/runtime';
+import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import useVirtualization from '../shared/hooks/useVirtualization';
 import {
 	formatDuration,
 	getDurationClass,
 	getStatusClass,
 } from '../shared/utils/formatUtils';
-import fnv1a from '../shared/utils/fnv1a';
 import './styles/request-stream.scss';
 
-/**
- * Generate URL hash for linking to URL detail.
- *
- * @param {string} url URL to hash.
- * @return {import('react').ReactElement} {string} 12-character FNV-1a hash.
- */
-const urlHash = ( url ) => {
-	const urlPath = url?.split( '?' )[ 0 ] || '';
-	return fnv1a( urlPath );
-};
-
 const ROW_HEIGHT = 33; // Fixed row height in pixels.
+const VIEW_NODE = 'requestlog/view';
+const EMPTY_VIEW = { paused: false };
 
 /**
  * Column definitions for the request log.
@@ -204,10 +199,20 @@ const StreamRow = memo( function StreamRow( {
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function RequestStream( { maxEntries = 500 } ) {
-	const [ entries, setEntries ] = useState( [] );
+	// Mount the node graph; it returns the thin control callbacks.
+	const { setPaused, clear } = useRequestLogGraph( { maxEntries } );
+
+	// Low-frequency view model (pause button + empty-state label).
+	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
+	const { paused: isPaused } = view;
+
 	const [ filter, setFilter ] = useState( '' );
-	const [ isPaused, setIsPaused ] = useState( false );
+	// The rendered entry buffer + RPS, both fed from the rAF at frame rate (read
+	// straight off the view node). The original re-rendered via a 100ms setInterval;
+	// per-frame for both is visually identical and keeps everything in one push.
+	const [ entries, setEntries ] = useState( [] );
 	const [ requestsPerSecond, setRequestsPerSecond ] = useState( 0 );
+
 	const [ visibleColumns, setVisibleColumns ] = useState( () => {
 		// Load from localStorage with validation.
 		const validColumns = Object.keys( COLUMNS );
@@ -227,188 +232,27 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	} );
 	const [ showColumnPicker, setShowColumnPicker ] = useState( false );
 
-	const entriesBufferRef = useRef( [] );
-	const completedHistoryRef = useRef( [] );
-	const entryCounterRef = useRef( 0 ); // For stable even/odd alternation.
-	const lastProcessedCountRef = useRef( 0 ); // Track last processed entry count.
-	const isPageVisible = usePageVisibility();
 	const listRef = useRef( null );
 	const contentRef = useRef( null );
 	const offsetRef = useRef( 0 ); // Smooth scroll offset.
 	const savedOffsetRef = useRef( 0 ); // Saved offset for resume.
 	const rafRef = useRef( null );
-	const isAdjustingScrollRef = useRef( false ); // Flag to skip scroll events during programmatic adjustment.
+	const isAdjustingScrollRef = useRef( false ); // Skip scroll events during programmatic adjustment.
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 ); // Rows worth of animation offset.
 
-	// Calculate requests per second from completed requests over 10-second window.
-	const updateRequestsPerSecond = useCallback( ( completedCount ) => {
-		const now = Date.now();
-		const windowMs = 10000;
-
-		if ( completedCount > 0 ) {
-			completedHistoryRef.current.push( {
-				time: now,
-				count: completedCount,
-			} );
-		}
-
-		completedHistoryRef.current = completedHistoryRef.current.filter(
-			( entry ) => now - entry.time < windowMs
-		);
-
-		const totalInWindow = completedHistoryRef.current.reduce(
-			( sum, entry ) => sum + entry.count,
-			0
-		);
-
-		setRequestsPerSecond( totalInWindow / ( windowMs / 1000 ) );
-	}, [] );
-
-	// Per-Message handler: each envelope on /messages/stream?subscribe=completed
-	// becomes one row in the buffer. Drops the substrate's `connected` envelope.
-	const handleMessage = useCallback(
-		( envelope ) => {
-			if ( envelope[ 5 ] === 'connected' ) {
-				return;
-			}
-			const req = transformCompletedLine( envelope );
-			if ( ! req ) {
-				return;
-			}
-			entryCounterRef.current += 1;
-			const entry = {
-				// Monotonic per-mount counter — used as the React list key so
-				// two entries with the same rid (a worker's reset-then-rebuild
-				// in the same second, or a colliding rid from an aggregated
-				// spoke) get distinct DOM nodes. Without it the virtualized
-				// list reuses one node for both and scrolling jumps.
-				seq: entryCounterRef.current,
-				rid: req.rid,
-				url: req.url,
-				urlHash: urlHash( req.url ),
-				method: req.method,
-				duration_ms: req.duration_ms,
-				status_code: req.status_code,
-				timestamp: req.end_time,
-				remote_addr: req.remote_addr,
-				user_agent: req.user_agent,
-				isEven: entryCounterRef.current % 2 === 0,
-			};
-			entriesBufferRef.current.unshift( entry );
-
-			if ( entriesBufferRef.current.length > maxEntries ) {
-				entriesBufferRef.current.length = maxEntries;
-			}
-		},
-		[ maxEntries ]
-	);
-
-	// Reset RPS counter on reconnect.
-	const handleBeforeConnect = useCallback( () => {
-		completedHistoryRef.current = [];
-	}, [] );
-
-	// Unified message-stream subscription. Source is `completed.log` (the
-	// topology's `completed:tee` already filters to completion events), so
-	// no extra `state === 'complete'` guard is needed in the transform.
-	const {
-		error,
-		connect,
-		close: closeSource,
-		lastEventTime,
-	} = useMessageStream( {
-		subscriptions: [ 'completed' ],
-		onMessage: handleMessage,
-		onBeforeConnect: handleBeforeConnect,
-	} );
-
-	// Smooth scroll animation - interpolate offset back to 0.
-	useEffect( () => {
-		let lastOffsetRows = 0;
-
-		const animate = () => {
-			const content = contentRef.current;
-			if ( content && Math.abs( offsetRef.current ) > 0.5 ) {
-				offsetRef.current += ( 0 - offsetRef.current ) * 0.01;
-				content.style.transform = `translate3d(0,${ offsetRef.current }px,0)`;
-
-				// Update virtualization when offset crosses row boundaries.
-				const currentOffsetRows = Math.floor(
-					Math.abs( offsetRef.current ) / ROW_HEIGHT
-				);
-				if ( currentOffsetRows !== lastOffsetRows ) {
-					lastOffsetRows = currentOffsetRows;
-					setAnimOffsetRows( currentOffsetRows );
-				}
-			} else if ( content && offsetRef.current !== 0 ) {
-				offsetRef.current = 0;
-				content.style.transform = '';
-				if ( lastOffsetRows !== 0 ) {
-					lastOffsetRows = 0;
-					setAnimOffsetRows( 0 );
-				}
-			}
-			rafRef.current = requestAnimationFrame( animate );
-		};
-
-		rafRef.current = requestAnimationFrame( animate );
-		return () => cancelAnimationFrame( rafRef.current );
-	}, [] );
-
-	// Batch UI updates - entries are newest-first, normal flex column.
-	useEffect( () => {
-		const timer = setInterval( () => {
-			const currentCount = entryCounterRef.current;
-			const newCount = currentCount - lastProcessedCountRef.current;
-
-			if ( newCount > 0 ) {
-				const buffer = entriesBufferRef.current;
-				// Only check the NEW entries (at front of buffer), not the whole thing.
-				const newEntries = buffer.slice( 0, newCount );
-				const filterLower = filter.toLowerCase();
-				const visibleNewCount = filter
-					? newEntries.filter( ( e ) =>
-							e.url.toLowerCase().includes( filterLower )
-					  ).length
-					: newCount;
-
-				const list = listRef.current;
-				const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
-
-				// Only animate when at top.
-				if ( visibleNewCount > 0 && isAtTop ) {
-					offsetRef.current -= visibleNewCount * ROW_HEIGHT;
-				}
-
-				setEntries( [ ...buffer ] );
-
-				// Maintain scroll position when scrolled down.
-				if ( visibleNewCount > 0 && ! isAtTop ) {
-					isAdjustingScrollRef.current = true;
-					list.scrollTop += visibleNewCount * ROW_HEIGHT;
-					// Reset flag after browser processes scroll event.
-					requestAnimationFrame( () => {
-						isAdjustingScrollRef.current = false;
-					} );
-				}
-
-				updateRequestsPerSecond( newCount );
-				lastProcessedCountRef.current = currentCount;
-			}
-		}, 100 );
-
-		return () => clearInterval( timer );
-	}, [ filter, updateRequestsPerSecond ] );
-
-	// Handle page visibility.
-	useEffect( () => {
-		if ( isPageVisible && ! isPaused ) {
-			connect();
-		} else {
-			closeSource();
-		}
-		return () => closeSource();
-	}, [ isPageVisible, isPaused, connect, closeSource ] );
+	// Last rendered buffer length — drives the smooth/virtual scroll math each
+	// frame (replaces the old per-batch newCount the SSE handler tracked).
+	const lastRenderedCountRef = useRef( 0 );
+	// Last filtered length seen by the rAF — for scroll compensation.
+	const filteredCountRef = useRef( 0 );
+	// Last state we pushed to React — so idle frames (nothing changed) push no
+	// new refs and don't re-render.
+	const pushedRef = useRef( { count: -1, filter: null, rps: -1 } );
+	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
+	const filterRef = useRef( filter );
+	filterRef.current = filter;
+	// Last node lastEventTime the rAF observed — drives the "Xs ago" staleness.
+	const lastEventTimeRef = useRef( null );
 
 	// Ticking "Xs ago" display.
 	const [ now, setNow ] = useState( Date.now() );
@@ -416,9 +260,96 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		const id = setInterval( () => setNow( Date.now() ), 1000 );
 		return () => clearInterval( id );
 	}, [] );
-	const staleSec = lastEventTime
-		? Math.max( 0, Math.floor( ( now - lastEventTime ) / 1000 ) )
+	const staleSec = lastEventTimeRef.current
+		? Math.max( 0, Math.floor( ( now - lastEventTimeRef.current ) / 1000 ) )
 		: null;
+
+	// Animation/read loop. Reads the high-volume buffer (node.entries) directly
+	// every frame, snapshots + filters it, drives the smooth scroll, and pushes
+	// the cheap derived state (entries snapshot + RPS) to React only when changed.
+	useEffect( () => {
+		const animate = () => {
+			const node = Core.node( VIEW_NODE );
+			const buffer = node?.entries ?? [];
+			const rps = node?.rps ?? 0;
+			const filterLower = filterRef.current.toLowerCase();
+
+			// New rows since last frame → drive scroll + staleness.
+			const newCount = Math.max(
+				0,
+				buffer.length - lastRenderedCountRef.current
+			);
+			if ( newCount > 0 && node?.lastEventTime ) {
+				lastEventTimeRef.current = node.lastEventTime;
+			}
+
+			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
+			// what we draw / count.
+			const snapshot = filterRef.current
+				? buffer.filter( ( e ) =>
+						e.url.toLowerCase().includes( filterLower )
+				  )
+				: buffer.slice();
+
+			// Visible-count delta in the filtered view, for scroll compensation.
+			const visibleNewCount = snapshot.length - filteredCountRef.current;
+			const list = listRef.current;
+			const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
+
+			filteredCountRef.current = snapshot.length;
+			lastRenderedCountRef.current = buffer.length;
+
+			if ( visibleNewCount > 0 ) {
+				if ( isAtTop ) {
+					// Compensate offset — decay will smooth-scroll to 0.
+					offsetRef.current -= visibleNewCount * ROW_HEIGHT;
+				} else if ( list ) {
+					// Maintain scroll position when scrolled down.
+					isAdjustingScrollRef.current = true;
+					list.scrollTop += visibleNewCount * ROW_HEIGHT;
+				}
+			}
+
+			// Decay offset toward 0 (smooth scroll), updating virtualization when
+			// the offset crosses row boundaries.
+			const content = contentRef.current;
+			if ( content && Math.abs( offsetRef.current ) > 0.5 ) {
+				offsetRef.current += ( 0 - offsetRef.current ) * 0.01;
+				content.style.transform = `translate3d(0,${ offsetRef.current }px,0)`;
+			} else if ( content && offsetRef.current !== 0 ) {
+				offsetRef.current = 0;
+				content.style.transform = '';
+			}
+			const currentOffsetRows = Math.floor(
+				Math.abs( offsetRef.current ) / ROW_HEIGHT
+			);
+
+			// Push the cheap derived state ONLY when it changed — the snapshot
+			// (count rides the array identity), the filter, and RPS. Skipping
+			// unchanged frames keeps idle frames from re-rendering React.
+			const pushed = pushedRef.current;
+			if (
+				snapshot.length !== pushed.count ||
+				filterRef.current !== pushed.filter
+			) {
+				setEntries( snapshot );
+				pushed.count = snapshot.length;
+				pushed.filter = filterRef.current;
+			}
+			if ( rps !== pushed.rps ) {
+				setRequestsPerSecond( rps );
+				pushed.rps = rps;
+			}
+			setAnimOffsetRows( ( prev ) =>
+				prev === currentOffsetRows ? prev : currentOffsetRows
+			);
+
+			rafRef.current = requestAnimationFrame( animate );
+		};
+
+		rafRef.current = requestAnimationFrame( animate );
+		return () => cancelAnimationFrame( rafRef.current );
+	}, [] );
 
 	// Save column selection to localStorage.
 	useEffect( () => {
@@ -430,9 +361,10 @@ export default function RequestStream( { maxEntries = 500 } ) {
 
 	// Handle scroll for animation save/restore.
 	const wasAtTopRef = useRef( true );
-	const handleScroll = useCallback( ( e ) => {
+	const handleScroll = ( e ) => {
 		// Skip scroll events triggered by programmatic adjustment.
 		if ( isAdjustingScrollRef.current ) {
+			isAdjustingScrollRef.current = false;
 			return;
 		}
 
@@ -459,7 +391,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		}
 
 		wasAtTopRef.current = isAtTop;
-	}, [] );
+	};
 
 	// Toggle column visibility.
 	const toggleColumn = ( col ) => {
@@ -504,11 +436,13 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	);
 	const visibleEntries = filteredEntries.slice( startIndex, endIndex );
 
-	// Clear all entries.
+	// Clear all entries — clears the node buffer via the graph; the next frame
+	// reflects 0 entries.
 	const handleClear = () => {
-		entriesBufferRef.current = [];
-		entryCounterRef.current = 0;
-		lastProcessedCountRef.current = 0;
+		clear();
+		filteredCountRef.current = 0;
+		lastRenderedCountRef.current = 0;
+		pushedRef.current = { count: 0, filter: filterRef.current, rps: 0 };
 		setEntries( [] );
 		offsetRef.current = 0;
 	};
@@ -555,7 +489,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						className={ `event-logger-request-stream-btn ${
 							isPaused ? 'paused' : ''
 						}` }
-						onClick={ () => setIsPaused( ! isPaused ) }
+						onClick={ () => setPaused( ! isPaused ) }
 						title={
 							isPaused ? 'Resume streaming' : 'Pause streaming'
 						}
@@ -601,12 +535,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 							{ col.label }
 						</label>
 					) ) }
-				</div>
-			) }
-
-			{ error && (
-				<div className="event-logger-request-stream-error">
-					{ error }
 				</div>
 			) }
 

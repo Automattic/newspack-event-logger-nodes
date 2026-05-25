@@ -16,6 +16,24 @@ module.exports = {
 			__dirname,
 			'../newspack-nodes/src/runtime'
 		),
+		// Force ONE copy of React + @wordpress/element across both plugins. The
+		// runtime's react hooks (useNodeState/useNodeFill) live in the sibling
+		// newspack-nodes checkout, which has its own node_modules; without this,
+		// the runtime's `@wordpress/element` resolves to the sibling's React while
+		// ELN components use ELN's, and a runtime hook called from an ELN render
+		// trips React's "Invalid hook call" (two dispatchers). The production
+		// build dedupes these by externalizing them to the single WP global; jest
+		// mirrors that by pinning all three to ELN's copy.
+		'^@wordpress/element$': path.resolve(
+			__dirname,
+			'node_modules/@wordpress/element'
+		),
+		'^react$': path.resolve( __dirname, 'node_modules/react' ),
+		'^react-dom$': path.resolve( __dirname, 'node_modules/react-dom' ),
+		'^react/jsx-runtime$': path.resolve(
+			__dirname,
+			'node_modules/react/jsx-runtime'
+		),
 		'\\.(css|scss)$': '<rootDir>/jest.style-mock.js',
 	},
 	transform: {

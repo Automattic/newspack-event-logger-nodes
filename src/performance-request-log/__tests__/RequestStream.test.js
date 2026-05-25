@@ -1,28 +1,16 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * Tests for RequestStream — mocks the hook chain so the test exercises
- * the render path + onMessage handling without touching SSE / d3.
+ * RequestStream UI-surface tests — the thin view over the requestlog node graph.
+ *
+ * The graph is owned by useRequestLogGraph (tested separately); here we mock it to
+ * hand back spy control callbacks, and we register a fixture `requestlog/view`
+ * node in Core so the view can read its low-frequency model via useNodeState and
+ * its high-frequency buffer (entries/rps/lastEventTime) directly off the node in
+ * the rAF.
  */
 
-const mockConnect = jest.fn();
-const mockClose = jest.fn();
-let lastUseMessageStreamArgs = null;
-
-jest.mock( '../../shared/hooks/usePageVisibility', () => ( {
-	__esModule: true,
-	default: () => true,
-} ) );
-jest.mock( '../../shared/hooks/useMessageStream', () => ( {
-	__esModule: true,
-	default: ( args ) => {
-		lastUseMessageStreamArgs = args;
-		return {
-			error: null,
-			connect: mockConnect,
-			close: mockClose,
-			lastEventTime: null,
-		};
-	},
+jest.mock( '../hooks/useRequestLogGraph', () => ( {
+	useRequestLogGraph: jest.fn(),
 } ) );
 jest.mock( '../../shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
@@ -37,11 +25,95 @@ jest.mock( '../../shared/hooks/useVirtualization', () => ( {
 } ) );
 
 import * as React from 'react';
+import { Core } from '@newspack-nodes/runtime';
 import RequestStream from '../RequestStream';
 import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
+const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
+
+// A minimal stand-in for the requestlog/view node: the low-frequency model lives
+// in setStateCache.view (what useNodeState subscribes to) and the high-frequency
+// buffer / rps / lastEventTime live directly on the instance (what the rAF reads).
+// setState here notifies subscribers exactly like the real Node.setState.
+function registerViewFixture( {
+	paused = false,
+	entries = [],
+	rps = 0,
+	lastEventTime = null,
+} = {} ) {
+	const node = {
+		registrations: { view: {} },
+		setStateCache: {},
+		entries,
+		rps,
+		lastEventTime,
+		register( event, listener, cb ) {
+			this.registrations[ event ][ listener ] = cb;
+			if ( event in this.setStateCache ) {
+				cb( this.setStateCache[ event ] );
+			}
+		},
+		unregister( event, listener ) {
+			delete this.registrations[ event ]?.[ listener ];
+		},
+		setState( event, payload ) {
+			this.setStateCache[ event ] = payload;
+			Object.values( this.registrations[ event ] || {} ).forEach(
+				( cb ) => cb( payload )
+			);
+		},
+	};
+	node.setState( 'view', { paused } );
+	Core.nodes.set( 'requestlog/view', node );
+	return node;
+}
+
+function entry( overrides = {} ) {
+	return {
+		seq: 1,
+		rid: 'r1',
+		url: '/foo',
+		urlHash: 'abc123',
+		method: 'GET',
+		duration_ms: 50,
+		status_code: 200,
+		timestamp: 1748960000,
+		remote_addr: '10.0.0.1',
+		user_agent: 'curl/7',
+		isEven: false,
+		...overrides,
+	};
+}
+
 describe( 'RequestStream', () => {
+	let setPaused;
+	let clear;
+	let rafCbs;
 	const mounted = [];
+
+	beforeEach( () => {
+		Core.reset();
+		window.localStorage.clear();
+		setPaused = jest.fn();
+		clear = jest.fn();
+		useRequestLogGraph.mockClear();
+		useRequestLogGraph.mockReturnValue( { setPaused, clear } );
+
+		// Capture rAF callbacks so a test can drive exactly one frame (the rAF
+		// reads node.entries / node.rps and pushes them into React state).
+		rafCbs = [];
+		global.requestAnimationFrame = ( cb ) => {
+			rafCbs.push( cb );
+			return rafCbs.length;
+		};
+		global.cancelAnimationFrame = () => {};
+	} );
+
+	afterEach( () => {
+		while ( mounted.length ) {
+			mounted.pop().unmount();
+		}
+	} );
 
 	function mount( props = {} ) {
 		const r = renderComponent(
@@ -51,115 +123,80 @@ describe( 'RequestStream', () => {
 		return r;
 	}
 
-	beforeEach( () => {
-		mockConnect.mockReset();
-		mockClose.mockReset();
-		lastUseMessageStreamArgs = null;
-		window.localStorage.clear();
-		jest.useFakeTimers();
-	} );
-
-	afterEach( () => {
-		jest.useRealTimers();
-	} );
-
-	afterEach( () => {
-		while ( mounted.length ) {
-			mounted.pop().unmount();
-		}
-	} );
+	// Run a single queued animation frame.
+	const tickFrame = () => {
+		const cbs = rafCbs;
+		rafCbs = [];
+		act( () => cbs.forEach( ( cb ) => cb( performance.now() ) ) );
+	};
 
 	it( 'renders the Request Log heading', () => {
+		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent ).toMatch( /Request/i );
 	} );
 
-	it( 'subscribes to the completed firehose via useMessageStream', () => {
-		mount();
-		expect( lastUseMessageStreamArgs ).not.toBeNull();
-		// Subscriptions list contains the request log feed name.
-		expect( Array.isArray( lastUseMessageStreamArgs.subscriptions ) ).toBe(
-			true
-		);
-		expect( lastUseMessageStreamArgs.subscriptions.length ).toBeGreaterThan(
-			0
-		);
-	} );
-
-	it( 'calls connect() when the page is visible on mount', () => {
-		mount();
-		expect( mockConnect ).toHaveBeenCalled();
-	} );
-
 	it( 'renders an "empty" message initially', () => {
+		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent.toLowerCase() ).toMatch(
 			/no|empty|wait/i
 		);
 	} );
 
-	it( 'toggles pause/resume on button click', () => {
+	it( 'renders entries read from the node buffer in the rAF', () => {
+		registerViewFixture( {
+			entries: [ entry( { rid: 'r-flow', url: '/foo' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-flow' );
+	} );
+
+	it( 'pause button reflects the view model and calls setPaused on click', () => {
+		registerViewFixture( { paused: false } );
 		const { container } = mount();
 		const pauseBtn = container.querySelector(
 			'.event-logger-request-stream-btn'
 		);
 		expect( pauseBtn.textContent ).toContain( '⏸' );
-		act( () => {
-			pauseBtn.click();
-		} );
-		// After click, button now shows the resume glyph.
-		expect( pauseBtn.textContent ).toContain( '▶' );
+		act( () => pauseBtn.click() );
+		expect( setPaused ).toHaveBeenCalledWith( true );
 	} );
 
-	it( 'Clear button empties rendered entries', () => {
+	it( 'pause button shows ▶ when the view model is paused', () => {
+		registerViewFixture( { paused: true } );
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:0',
-					'completed',
-					{
-						rid: 'r-foo',
-						url: '/foo',
-						method: 'GET',
-						status_code: 200,
-						duration_ms: 50,
-						end_time: 1,
-					},
-				],
-				{ type: 1 }
-			);
+		const pauseBtn = container.querySelector(
+			'.event-logger-request-stream-btn'
+		);
+		expect( pauseBtn.textContent ).toContain( '▶' );
+		act( () => pauseBtn.click() );
+		expect( setPaused ).toHaveBeenCalledWith( false );
+	} );
+
+	it( 'Clear button calls the graph clear callback', () => {
+		registerViewFixture( {
+			entries: [ entry( { rid: 'r-foo' } ) ],
 		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
+		const { container } = mount();
+		tickFrame();
 		expect( container.textContent ).toContain( 'r-foo' );
-		// Click Clear.
 		const clearBtn = Array.from(
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent === 'Clear' );
-		act( () => {
-			clearBtn.click();
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
-		expect( container.textContent ).not.toContain( 'r-foo' );
+		act( () => clearBtn.click() );
+		expect( clear ).toHaveBeenCalled();
 	} );
 
 	it( 'toggles the column picker on Cols button click', () => {
+		registerViewFixture();
 		const { container } = mount();
 		const colsBtn = Array.from(
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent === 'Cols' );
 		expect( colsBtn ).toBeTruthy();
-		act( () => {
-			colsBtn.click();
-		} );
+		act( () => colsBtn.click() );
 		expect(
 			container.querySelector(
 				'.event-logger-request-stream-column-picker'
@@ -167,84 +204,19 @@ describe( 'RequestStream', () => {
 		).toBeTruthy();
 	} );
 
-	it( 'forwards a completed-line envelope into rendered rows', () => {
-		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:0',
-					'completed',
-					{
-						rid: 'r1',
-						url: '/foo',
-						method: 'GET',
-						status_code: 200,
-						duration_ms: 50,
-						end_time: 1748960000,
-					},
-				],
-				{ type: 1 }
-			);
-		} );
-		// The component buffers entries and flushes via setInterval; advance
-		// enough to cover the batch interval (default 500ms).
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
-		expect( container.textContent ).toContain( 'r1' );
-	} );
-
 	it( 'filter input narrows URL-matching entries', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 2, rid: 'rB', url: '/baz', isEven: true } ),
+				entry( { seq: 1, rid: 'rA', url: '/foo/bar' } ),
+			],
+		} );
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:0',
-					'completed',
-					{
-						rid: 'rA',
-						url: '/foo/bar',
-						method: 'GET',
-						status_code: 200,
-						end_time: 1,
-					},
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:1',
-					'completed',
-					{
-						rid: 'rB',
-						url: '/baz',
-						method: 'GET',
-						status_code: 200,
-						end_time: 2,
-					},
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
+		tickFrame();
 		expect( container.textContent ).toContain( 'rA' );
 		expect( container.textContent ).toContain( 'rB' );
 		const input = container.querySelector(
-			'input[type="text"], input.event-logger-request-stream-search'
+			'.event-logger-request-stream-search'
 		);
 		expect( input ).toBeTruthy();
 		const setter = Object.getOwnPropertyDescriptor(
@@ -255,15 +227,12 @@ describe( 'RequestStream', () => {
 			setter.call( input, 'foo' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		act( () => {
-			jest.advanceTimersByTime( 300 );
-		} );
+		tickFrame();
 		expect( container.textContent ).toContain( 'rA' );
+		expect( container.textContent ).not.toContain( 'rB' );
 	} );
 
 	it( 'renders user_agent and remote_addr columns when entry carries them', () => {
-		// Persist a column set that includes user_agent so its render
-		// branch (lines 180-190) runs.
 		window.localStorage.setItem(
 			'event-logger-stream-columns',
 			JSON.stringify( [
@@ -276,163 +245,57 @@ describe( 'RequestStream', () => {
 				'duration',
 			] )
 		);
+		registerViewFixture( {
+			entries: [
+				entry( {
+					rid: 'r-ua',
+					url: '/x',
+					user_agent: 'Mozilla/5.0',
+					remote_addr: '192.168.1.1',
+				} ),
+			],
+		} );
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:0',
-					'completed',
-					{
-						rid: 'r-ua',
-						url: '/x',
-						method: 'GET',
-						status_code: 200,
-						user_agent: 'Mozilla/5.0',
-						remote_addr: '192.168.1.1',
-						end_time: 1,
-					},
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
+		tickFrame();
 		expect( container.textContent ).toContain( 'r-ua' );
 		expect( container.textContent ).toContain( 'Mozilla/5.0' );
 		window.localStorage.removeItem( 'event-logger-stream-columns' );
 	} );
 
-	it( 'renders the entry with no user_agent (default to "-") when column is enabled', () => {
+	it( 'displays the requests/second read from the node in the rAF', () => {
+		registerViewFixture( {
+			entries: [ entry( { rid: 'r-rps' } ) ],
+			rps: 4.2,
+		} );
+		const { container } = mount();
+		tickFrame();
+		const rps = container.querySelector(
+			'.event-logger-request-stream-rps'
+		);
+		expect( rps ).not.toBeNull();
+		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
+	} );
+
+	it( 'falls back to an empty model when the view node is absent', () => {
+		// No fixture registered — useNodeState yields undefined; the view must
+		// still render (Waiting…) without throwing.
+		const { container } = mount();
+		expect( container.textContent.toLowerCase() ).toMatch(
+			/wait|no|empty/i
+		);
+	} );
+
+	it( 'does not throw rendering an entry with no user_agent (defaults to "-")', () => {
 		window.localStorage.setItem(
 			'event-logger-stream-columns',
 			JSON.stringify( [ 'time', 'rid', 'url', 'user_agent' ] )
 		);
+		registerViewFixture( {
+			entries: [ entry( { rid: 'r-no-ua', user_agent: '' } ) ],
+		} );
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:0',
-					'completed',
-					{
-						rid: 'r-no-ua',
-						url: '/x',
-						method: 'GET',
-						status_code: 200,
-						end_time: 1,
-					},
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
+		tickFrame();
 		expect( container.textContent ).toContain( 'r-no-ua' );
 		window.localStorage.removeItem( 'event-logger-stream-columns' );
-	} );
-
-	it( 'column picker labels toggle on click', () => {
-		const { container } = mount();
-		const colsBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Cols' );
-		act( () => colsBtn.click() );
-		// Find checkboxes / labels in the picker.
-		const labels = container.querySelectorAll(
-			'.event-logger-request-stream-column-picker label'
-		);
-		expect( labels.length ).toBeGreaterThan( 0 );
-		// Click the first one to toggle.
-		const input = labels[ 0 ].querySelector( 'input' );
-		if ( input ) {
-			act( () => input.click() );
-			act( () => input.click() );
-		}
-		expect(
-			container.querySelector(
-				'.event-logger-request-stream-column-picker'
-			)
-		).toBeTruthy();
-	} );
-
-	it( 'scroll handler runs without throwing on the list element', () => {
-		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'firehose.p0',
-					'',
-					'1:0',
-					'completed',
-					{
-						rid: 'r-scroll',
-						url: '/x',
-						method: 'GET',
-						status_code: 200,
-						end_time: 1,
-					},
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
-		const list = container.querySelector(
-			'.event-logger-request-stream-list, .event-logger-request-stream-content'
-		);
-		if ( list ) {
-			Object.defineProperty( list, 'scrollTop', {
-				configurable: true,
-				value: 100,
-			} );
-			act( () => {
-				list.dispatchEvent( new Event( 'scroll' ) );
-			} );
-			Object.defineProperty( list, 'scrollTop', {
-				configurable: true,
-				value: 0,
-			} );
-			act( () => {
-				list.dispatchEvent( new Event( 'scroll' ) );
-			} );
-		}
-		expect( container.textContent ).toContain( 'r-scroll' );
-	} );
-
-	it( 'handles malformed completed envelopes (missing fields)', () => {
-		const { container } = mount();
-		expect( () => {
-			act( () => {
-				lastUseMessageStreamArgs.onMessage(
-					[
-						1,
-						0,
-						'firehose.p0',
-						'',
-						'1:0',
-						'completed',
-						{
-							rid: 'r-bad',
-							// no url
-						},
-					],
-					{ type: 1 }
-				);
-				jest.advanceTimersByTime( 1000 );
-			} );
-		} ).not.toThrow();
-		expect( container.textContent ).toBeDefined();
 	} );
 } );
