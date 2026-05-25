@@ -27,28 +27,11 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 // registers an spl callback — actual class loading stays lazy.
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
-// Runtime floor for the newspack-nodes substrate: bail with an admin notice (not a fatal) when it's absent or too old to expose the APIs ELN calls.
-$nodes_version = \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : null;
-if ( ! \Newspack_Event_Logger_Nodes\Substrate_Guard::satisfied(
-	$nodes_version,
-	\Newspack_Event_Logger_Nodes\Substrate_Guard::MINIMUM_NODES_VERSION,
-	\Newspack_Event_Logger_Nodes\Substrate_Guard::required_apis_present()
-) ) {
-	\add_action(
-		'admin_notices',
-		static function () use ( $nodes_version ): void {
-			$found = null === $nodes_version ? \__( 'not active', 'newspack-event-logger-nodes' ) : $nodes_version;
-			$msg   = \sprintf(
-				/* translators: 1: minimum newspack-nodes version, 2: installed version or "not active". */
-				\__( 'Newspack Event Logger Nodes requires the Newspack Nodes plugin (version %1$s or newer, with the register_plugin / config-namespace APIs); found %2$s. The event logger is inactive until that is resolved.', 'newspack-event-logger-nodes' ),
-				\Newspack_Event_Logger_Nodes\Substrate_Guard::MINIMUM_NODES_VERSION,
-				$found
-			);
-			echo '<div class="notice notice-error"><p>' . \esc_html( $msg ) . '</p></div>';
-		}
-	);
-	return; // Skip all substrate-dependent wiring; the autoloader above stays registered.
-}
+// The newspack-nodes substrate runtime-floor guard runs DEFERRED, in the
+// bootstrap below (Substrate_Guard::boot on plugins_loaded): ELN sorts before
+// newspack-nodes alphabetically, so NEWSPACK_NODES_VERSION + the probed classes
+// aren't defined yet at this file-load point — checking here always sees "not
+// active" and would disable a healthy install.
 
 /**
  * Operator-override topology dir. Reads `Bootstrap::base_dir()` (config
@@ -100,14 +83,8 @@ $_newspack_event_logger_nodes_register_worker_runtime = static function (): void
 $_newspack_event_logger_nodes_load = static function () use (
 	$_newspack_event_logger_nodes_register_user_topology_dir
 ): void {
-	if ( ! \class_exists( '\Newspack_Nodes\Node' ) ) {
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		\error_log(
-			'newspack-event-logger-nodes: \Newspack_Nodes\Node missing — newspack-nodes inactive?'
-		);
-		return;
-	}
-
+	// No substrate-presence check here: the only caller is Substrate_Guard::boot()'s
+	// on_ready, which runs solely when the runtime is satisfied.
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
 	}
@@ -208,43 +185,72 @@ $_newspack_event_logger_nodes_load = static function () use (
 	}
 };
 
+// Substrate-gated bootstrap, deferred to plugins_loaded:11 — Substrate_Guard::boot()
+// reads the now-loaded substrate version + probes its APIs, then wires ELN
+// (on_ready) or shows an admin notice (on_unsatisfied). See boot()'s docblock for
+// why this can't run at file-load. Boots immediately only if a reorder already
+// loaded the runtime.
+$_newspack_event_logger_nodes_bootstrap = static function () use (
+	$_newspack_event_logger_nodes_load,
+	$_newspack_event_logger_nodes_register_user_topology_dir,
+	$_newspack_event_logger_nodes_register_worker_runtime
+): void {
+	\Newspack_Event_Logger_Nodes\Substrate_Guard::boot(
+		\defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : null,
+		\Newspack_Event_Logger_Nodes\Substrate_Guard::required_apis_present(),
+		static function () use (
+			$_newspack_event_logger_nodes_load,
+			$_newspack_event_logger_nodes_register_user_topology_dir,
+			$_newspack_event_logger_nodes_register_worker_runtime
+		): void {
+			$_newspack_event_logger_nodes_load();
+
+			// Re-wire the user-override topology dir to entrypoints that read
+			// user_dir() before a worker spawns: REST (save-topology POST hits it
+			// directly) + admin pages (list/edit see overrides). Static-guarded.
+			\add_action( 'rest_api_init', $_newspack_event_logger_nodes_register_user_topology_dir );
+			\add_action( 'admin_init',    $_newspack_event_logger_nodes_register_user_topology_dir );
+
+			// One-time autoload-correction sweep for existing installs.
+			\add_action( 'admin_init', [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
+
+			// Per-worker runtime init, right before a worker's topology loads.
+			\add_action(
+				'newspack_nodes/before_worker_spawn',
+				static function () use (
+					$_newspack_event_logger_nodes_register_user_topology_dir,
+					$_newspack_event_logger_nodes_register_worker_runtime
+				): void {
+					$_newspack_event_logger_nodes_register_user_topology_dir(); // override dir before Topology_Loader::resolve.
+					$_newspack_event_logger_nodes_register_worker_runtime();    // hub rewrite filter + RemoteManager init.
+				}
+			);
+		},
+		static function ( ?string $found ): void {
+			// Substrate absent/too old — admin notice, no wiring.
+			\add_action(
+				'admin_notices',
+				static function () use ( $found ): void {
+					$found_label = null === $found ? \__( 'not active', 'newspack-event-logger-nodes' ) : $found;
+					$msg         = \sprintf(
+						/* translators: 1: minimum newspack-nodes version, 2: installed version or "not active". */
+						\__( 'Newspack Event Logger Nodes requires the Newspack Nodes plugin (version %1$s or newer, with the register_plugin / config-namespace APIs); found %2$s. The event logger is inactive until that is resolved.', 'newspack-event-logger-nodes' ),
+						\Newspack_Event_Logger_Nodes\Substrate_Guard::MINIMUM_NODES_VERSION,
+						$found_label
+					);
+					echo '<div class="notice notice-error"><p>' . \esc_html( $msg ) . '</p></div>';
+				}
+			);
+		}
+	);
+};
+
 if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
-	// Loaded after newspack-nodes (later alphabetically, but possible if reordered).
-	$_newspack_event_logger_nodes_load();
+	// Runtime already loaded (reordered to load first) — bootstrap now.
+	$_newspack_event_logger_nodes_bootstrap();
 } else {
-	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
+	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_bootstrap, 11 );
 }
-
-// The user-override topology dir is set inside the deferred loader (above)
-// once the runtime is present. Re-wire the same closure to every other
-// entrypoint that may read user_dir() before a worker spawns: REST handlers
-// (admin "save topology" POST → TopologiesController hits user_dir() directly;
-// without this it returned 500 "Topology_Registry has no writable user dir.")
-// and admin pages (list/edit UIs need describe()/list() to see user overrides).
-// The closure's static guard keeps repeated registrations free.
-\add_action( 'rest_api_init', $_newspack_event_logger_nodes_register_user_topology_dir );
-\add_action( 'admin_init',    $_newspack_event_logger_nodes_register_user_topology_dir );
-
-// One-time autoload-correction sweep for existing installs (guarded; off
-// the frontend path). See Config::correct_option_autoload().
-\add_action( 'admin_init', [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
-
-// Per-worker runtime init, run right before a worker's topology loads.
-// register_plugin (in the deferred loader) provides the guarded spawn handler
-// and fires `newspack_nodes/before_worker_spawn` ($type, $partition) for owned
-// types only, just before Topology_Loader parses the TSL. Set the user-override
-// dir (so a `<…>` topology can be shadowed by an operator file) and run the
-// hub-side rewrite filter + RemoteManager init before the graph is built.
-\add_action(
-	'newspack_nodes/before_worker_spawn',
-	static function () use (
-		$_newspack_event_logger_nodes_register_user_topology_dir,
-		$_newspack_event_logger_nodes_register_worker_runtime
-	): void {
-		$_newspack_event_logger_nodes_register_user_topology_dir(); // user-override dir before Topology_Loader::resolve.
-		$_newspack_event_logger_nodes_register_worker_runtime();    // hub rewrite filter + RemoteManager init.
-	}
-);
 
 /**
  * Always-expected basenames written by app runtime code (not by any
