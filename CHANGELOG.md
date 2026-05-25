@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **App service CIs declare their verbs via `node_schema()` (schema-driven dispatch).**
+  The five application service CIs (`Events_CI`, `Settings_CI`, `Performance_CI`,
+  `Aggregator_CI`, `Servers_CI`) migrated to the substrate's schema-driven command
+  mechanism: each verb is declared once in `node_schema()['verbs']` (name/description/args
+  + a `handler` closure), and `Service_CI_Node`'s constructor builds the dispatch table
+  from it — so their bespoke `verb_table()`/`__construct()` command wiring is gone. The two
+  registry-backed CIs (`Aggregator_CI`, `Servers_CI`) keep a constructor only to store the
+  injected `Server_Registry`, which their handlers reach via `$self->registry`. Because
+  they now publish a `Service`-category schema, the five CIs also appear in the topology
+  console's class catalog and their verbs are Inspector-invokable (they were uncategorized
+  and catalog-invisible before). Behavior-preserving for dispatch — requires the matching
+  `newspack-nodes` build.
+
 - **Reduced onto the substrate's `register_plugin` + namespaced config tokens.** The
   substrate stopped feeding topology `<config:…>` tokens from a single merged
   `Core::$config` array, so this plugin no longer merges substrate + app config to spawn
