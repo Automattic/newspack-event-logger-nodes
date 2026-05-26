@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Aggregator Status dashboard reimplemented as a JS-Node graph + thin React view.** First
+  command-poll conversion in ELN (mirrors Worker Status, not the SSE dashboards): `aggregator/poll`
+  (command-out — sends `{to:'aggregator', verb:'status'}` on the interval, captures the reply's
+  server `TIMESTAMP`, injectable command seam, `close()` cancel guard) → `aggregator/view` (reshapes
+  the per-server status map → array + connected/total counts, `setState('view',…)`) — wired by
+  `useAggregatorStatusGraph` (owns the poll interval — no page-visibility gating, as before — plus
+  the `setViewReady` re-render trigger). `AggregatorStatus.js` is now a thin view:
+  `useNodeState('aggregator/view','view')` + the 1s "ago" tick; the ServerCard / PartitionStatus
+  render, refresh-interval select, error banner, and all SCSS are preserved.
 - **Gyroscope (in-flight requests) dashboard reimplemented as a JS-Node graph + thin React
   view.** Same SSE pattern as Request Log: `gyroscope/stream` (SSE-in, `subscribe=gyroscope`,
   replacing the shared `useMessageStream`), `gyroscope/transform` (`transformGyroscopeLine`),

@@ -1,37 +1,34 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * Tests for AggregatorStatus — fetches server connection status via
- * the substrate CommandClient and renders a per-server / per-partition
- * grid. Auto-refreshes on an interval driven by a select control.
+ * AggregatorStatus UI-surface tests — the thin view over the aggregator node
+ * graph.
+ *
+ * The graph is owned by useAggregatorStatusGraph (tested separately); here we mock
+ * it to hand back spy control callbacks, and we register a fixture
+ * `aggregator/view` node in Core so the view can read its model via useNodeState.
+ * Mirrors how RequestStream.test.js was rewritten against its graph.
  */
 
-jest.mock( '../../shared/utils/commandClient', () => {
-	const send = jest.fn();
+jest.mock( '../hooks/useAggregatorStatusGraph', () => {
+	const actual = jest.requireActual( '../hooks/useAggregatorStatusGraph' );
 	return {
 		__esModule: true,
-		getCommandClient: jest.fn( () => ( { send } ) ),
-		__send: send,
+		...actual,
+		useAggregatorStatusGraph: jest.fn(),
 	};
 } );
-jest.mock( '../../shared/utils/unwrapCommandResponse', () => ( {
-	__esModule: true,
-	default: jest.fn( ( msg ) => msg ),
-} ) );
 
 import * as React from 'react';
+import { Core } from '@newspack-nodes/runtime';
 import AggregatorStatus from '../AggregatorStatus';
-import unwrap from '../../shared/utils/unwrapCommandResponse';
-import { TIMESTAMP } from '@newspack-nodes/runtime';
 import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
-// `__send` is a spy the commandClient mock exposes (not a real export); pull it
-// via requireMock so eslint's import/named doesn't flag it against the real module.
-const { __send: mockSend } = jest.requireMock(
-	'../../shared/utils/commandClient'
-);
+const {
+	useAggregatorStatusGraph,
+} = require( '../hooks/useAggregatorStatusGraph' );
 
-const SAMPLE = {
-	server1: {
+const SAMPLE_SERVERS = [
+	{
 		id: 'server1',
 		url: 'https://a.example.test',
 		enabled: true,
@@ -51,16 +48,72 @@ const SAMPLE = {
 			},
 		},
 	},
-	server2: {
+	{
 		id: 'server2',
 		url: 'https://b.example.test',
 		enabled: false,
 		partitions: {},
 	},
-};
+];
+
+// A minimal stand-in for the aggregator/view node: the model lives in
+// setStateCache.view (what useNodeState subscribes to). setState here notifies
+// subscribers exactly like the real Node.setState.
+function registerViewFixture( overrides = {} ) {
+	const model = {
+		servers: null,
+		serverNow: null,
+		connectedCount: 0,
+		totalCount: 0,
+		error: null,
+		loading: true,
+		lastRefresh: null,
+		...overrides,
+	};
+	const node = {
+		registrations: { view: {} },
+		setStateCache: {},
+		register( event, listener, cb ) {
+			this.registrations[ event ][ listener ] = cb;
+			if ( event in this.setStateCache ) {
+				cb( this.setStateCache[ event ] );
+			}
+		},
+		unregister( event, listener ) {
+			delete this.registrations[ event ]?.[ listener ];
+		},
+		setState( event, payload ) {
+			this.setStateCache[ event ] = payload;
+			Object.values( this.registrations[ event ] || {} ).forEach(
+				( cb ) => cb( payload )
+			);
+		},
+	};
+	node.setState( 'view', model );
+	Core.nodes.set( 'aggregator/view', node );
+	return node;
+}
 
 describe( 'AggregatorStatus', () => {
+	let setRefreshInterval;
 	const mounted = [];
+
+	beforeEach( () => {
+		Core.reset();
+		window.localStorage.clear();
+		setRefreshInterval = jest.fn();
+		useAggregatorStatusGraph.mockClear();
+		useAggregatorStatusGraph.mockReturnValue( {
+			setRefreshInterval,
+			refreshInterval: '2000',
+		} );
+	} );
+
+	afterEach( () => {
+		while ( mounted.length ) {
+			mounted.pop().unmount();
+		}
+	} );
 
 	function mount() {
 		const r = renderComponent( React.createElement( AggregatorStatus ) );
@@ -68,116 +121,145 @@ describe( 'AggregatorStatus', () => {
 		return r;
 	}
 
-	beforeEach( () => {
-		mockSend.mockReset();
-		unwrap.mockReset();
-		unwrap.mockImplementation( ( msg ) => msg );
-		jest.useFakeTimers();
+	it( 'renders the Aggregator Status heading', () => {
+		registerViewFixture();
+		const { container } = mount();
+		expect( container.textContent ).toContain( 'Aggregator Status' );
 	} );
 
-	afterEach( () => {
-		while ( mounted.length ) {
-			mounted.pop().unmount();
-		}
-		jest.useRealTimers();
-	} );
-
-	async function flush() {
-		await act( async () => {} );
-	}
-
-	it( 'shows the loading state before the first fetch resolves', () => {
-		mockSend.mockReturnValue( new Promise( () => {} ) );
+	it( 'shows the loading state before the first poll publishes', () => {
+		registerViewFixture( { loading: true } );
 		const { container } = mount();
 		expect( container.textContent ).toContain( 'Loading server status' );
 	} );
 
-	it( 'fetches aggregator.status on mount and renders server cards', async () => {
-		mockSend.mockResolvedValue( SAMPLE );
-		const { container } = mount();
-		await flush();
-		expect( mockSend ).toHaveBeenCalledWith( {
-			to: 'aggregator',
-			verb: 'status',
+	it( 'renders server cards from the view model', () => {
+		registerViewFixture( {
+			servers: SAMPLE_SERVERS,
+			connectedCount: 1,
+			totalCount: 2,
+			loading: false,
 		} );
-		// Both servers visible.
+		const { container } = mount();
 		expect( container.textContent ).toContain( 'server1' );
 		expect( container.textContent ).toContain( 'server2' );
-		// Partition labels p0/p1 for server1.
 		expect( container.textContent ).toContain( 'p0' );
 		expect( container.textContent ).toContain( 'p1' );
-		// Connected summary: only server1 has any connected partition.
 		expect( container.textContent ).toContain( '1 / 2 connected' );
 	} );
 
-	it( 'shows the empty state when no servers are returned', async () => {
-		mockSend.mockResolvedValue( {} );
+	it( 'shows the empty state when servers is an empty array', () => {
+		registerViewFixture( { servers: [], loading: false } );
 		const { container } = mount();
-		await flush();
 		expect( container.textContent ).toContain( 'No servers configured' );
 	} );
 
-	it( 'shows the error state when the fetch fails', async () => {
-		mockSend.mockRejectedValue( new Error( 'aggregator down' ) );
+	it( 'shows the error state from the view model', () => {
+		registerViewFixture( {
+			servers: null,
+			error: 'aggregator down',
+			loading: false,
+		} );
 		const { container } = mount();
-		await flush();
 		expect( container.textContent ).toContain( 'aggregator down' );
 	} );
 
-	it( 'shows the connection error info for a disconnected partition', async () => {
-		mockSend.mockResolvedValue( SAMPLE );
+	it( 'shows the connection error info for a disconnected partition', () => {
+		registerViewFixture( {
+			servers: SAMPLE_SERVERS,
+			connectedCount: 1,
+			totalCount: 2,
+			loading: false,
+		} );
 		const { container } = mount();
-		await flush();
 		expect( container.textContent ).toContain( 'HTTP 504' );
 		expect( container.textContent ).toContain( 'timeout' );
 	} );
 
-	it( 'shows the RTT badge for the heartbeat', async () => {
-		mockSend.mockResolvedValue( SAMPLE );
+	it( 'shows the RTT badge for the heartbeat', () => {
+		registerViewFixture( {
+			servers: SAMPLE_SERVERS,
+			connectedCount: 1,
+			totalCount: 2,
+			loading: false,
+		} );
 		const { container } = mount();
-		await flush();
 		// formatRtt(42) → "42.0" (between 1 and 100).
 		expect( container.textContent ).toContain( '42.0ms' );
 	} );
 
-	it( 'computes "ago" from the response timestamp, not the browser clock', async () => {
-		// Raw 7-field Message; TIMESTAMP (the hub's serve clock) at its index.
-		const message = [];
-		message[ TIMESTAMP ] = 2000;
-		const sample = {
-			srv: {
-				id: 'srv',
-				url: 'https://s.example.test',
-				enabled: true,
-				partitions: {
-					0: {
-						last_connection_status: 'connected',
-						// Aggregator recorded this 1s before it served the snapshot.
-						last_sse_heartbeat: 1999,
+	it( 'computes "ago" from the model serverNow, not the browser clock', () => {
+		registerViewFixture( {
+			servers: [
+				{
+					id: 'srv',
+					url: 'https://s.example.test',
+					enabled: true,
+					partitions: {
+						0: {
+							last_connection_status: 'connected',
+							// Recorded 1s before the snapshot serverNow below.
+							last_sse_heartbeat: 1999,
+						},
 					},
 				},
-			},
-		};
-		unwrap.mockReturnValue( sample );
-		mockSend.mockResolvedValue( message );
-
+			],
+			serverNow: 2000,
+			connectedCount: 1,
+			totalCount: 1,
+			loading: false,
+		} );
 		const { container } = mount();
-		await flush();
-
 		// Server HB = serverNow(2000) - last_sse_heartbeat(1999) = "1s ago".
-		// Computed against the browser clock it would be a huge value, never "1s ago".
 		expect( container.textContent ).toContain( '1s ago' );
 	} );
 
-	it( 'auto-refreshes on the configured interval', async () => {
-		mockSend.mockResolvedValue( SAMPLE );
-		mount();
-		await flush();
-		expect( mockSend ).toHaveBeenCalledTimes( 1 );
+	it( 'renders the refresh select bound to the graph callback', () => {
+		registerViewFixture( { servers: [], loading: false } );
+		const { container } = mount();
+		const select = container.querySelector(
+			'.event-logger-refresh-select'
+		);
+		expect( select ).toBeTruthy();
+		expect( select.value ).toBe( '2000' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLSelectElement.prototype,
+			'value'
+		).set;
 		act( () => {
-			jest.advanceTimersByTime( 2000 ); // DEFAULT_REFRESH_MS.
+			setter.call( select, '5000' );
+			select.dispatchEvent( new Event( 'change', { bubbles: true } ) );
 		} );
-		await flush();
-		expect( mockSend.mock.calls.length ).toBeGreaterThanOrEqual( 2 );
+		expect( setRefreshInterval ).toHaveBeenCalledWith( '5000' );
+	} );
+
+	it( 'mounts the graph (calls useAggregatorStatusGraph)', () => {
+		registerViewFixture();
+		mount();
+		expect( useAggregatorStatusGraph ).toHaveBeenCalled();
+	} );
+
+	it( 'falls back to a loading model when the view node is absent', () => {
+		// No fixture registered — useNodeState yields undefined; the view must
+		// still render the loading state without throwing.
+		const { container } = mount();
+		expect( container.textContent ).toContain( 'Loading server status' );
+	} );
+
+	it( 'keeps ticking the 1s ago clock (re-renders without re-polling)', () => {
+		jest.useFakeTimers();
+		registerViewFixture( {
+			servers: SAMPLE_SERVERS,
+			connectedCount: 1,
+			totalCount: 2,
+			loading: false,
+		} );
+		const { container } = mount();
+		// The 1s tick must not throw and the dashboard stays rendered.
+		act( () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
+		expect( container.textContent ).toContain( 'server1' );
+		jest.useRealTimers();
 	} );
 } );
