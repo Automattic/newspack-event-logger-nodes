@@ -23,6 +23,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo, memo } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
@@ -43,21 +44,47 @@ const EMPTY_VIEW = { paused: false, connectionError: false };
  * Column definitions for the request log.
  */
 const COLUMNS = {
-	time: { label: 'Time', tooltip: 'Request completion time', width: '100px' },
+	time: {
+		label: __( 'Time', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Request completion time', 'newspack-event-logger-nodes' ),
+		width: '100px',
+	},
 	rid: {
-		label: 'Request ID',
-		tooltip: 'Unique request identifier - click to view full trace',
+		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Unique request identifier - click to view full trace',
+			'newspack-event-logger-nodes'
+		),
 		width: '240px',
 	},
-	url: { label: 'URL', tooltip: 'Request method and URL', width: 'auto' },
-	status: { label: 'Status', tooltip: 'HTTP status code', width: '50px' },
-	remote_addr: { label: 'IP', tooltip: 'Client IP address', width: '100px' },
+	url: {
+		label: __( 'URL', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Request method and URL', 'newspack-event-logger-nodes' ),
+		width: 'auto',
+	},
+	status: {
+		label: __( 'Status', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'HTTP status code', 'newspack-event-logger-nodes' ),
+		width: '50px',
+	},
+	remote_addr: {
+		label: __( 'IP', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Client IP address', 'newspack-event-logger-nodes' ),
+		width: '100px',
+	},
 	user_agent: {
-		label: 'UA',
-		tooltip: 'Browser/client identifier',
+		label: __( 'UA', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Browser/client identifier',
+			'newspack-event-logger-nodes'
+		),
 		width: '200px',
 	},
-	duration: { label: 'Duration', tooltip: 'Request duration', width: '70px' },
+	duration: {
+		label: __( 'Duration', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Request duration', 'newspack-event-logger-nodes' ),
+		width: '70px',
+	},
 };
 
 const DEFAULT_COLUMNS = [
@@ -148,7 +175,10 @@ const StreamRow = memo( function StreamRow( {
 								<a
 									href={ `admin.php?page=newspack-nodes-performance&url=${ entry.urlHash }` }
 									className="entry-url-link"
-									title="View URL stats"
+									title={ __(
+										'View URL stats',
+										'newspack-event-logger-nodes'
+									) }
 								>
 									{ entry.url }
 								</a>
@@ -162,7 +192,10 @@ const StreamRow = memo( function StreamRow( {
 									href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
 										entry.rid
 									) }` }
-									title="View request trace"
+									title={ __(
+										'View request trace',
+										'newspack-event-logger-nodes'
+									) }
 								>
 									{ entry.rid }
 								</a>
@@ -456,18 +489,30 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			aria-label="Request log"
 		>
 			<div className="event-logger-request-stream-header">
-				<h3>Request Log</h3>
+				<h3>{ __( 'Request Log', 'newspack-event-logger-nodes' ) }</h3>
 				<div className="event-logger-request-stream-controls">
 					<input
 						type="text"
 						className="event-logger-request-stream-search"
-						placeholder="Filter by URL..."
+						placeholder={ __(
+							'Filter by URL…',
+							'newspack-event-logger-nodes'
+						) }
 						value={ filter }
 						onChange={ ( e ) => setFilter( e.target.value ) }
 					/>
 					<span className="event-logger-request-stream-stats">
 						<span className="event-logger-request-stream-count">
-							{ filteredEntries.length } requests
+							{ sprintf(
+								// translators: %d: number of requests shown in the log.
+								_n(
+									'%d request',
+									'%d requests',
+									filteredEntries.length,
+									'newspack-event-logger-nodes'
+								),
+								filteredEntries.length
+							) }
 						</span>
 						{ requestsPerSecond > 0 && (
 							<span className="event-logger-request-stream-rps">
@@ -483,7 +528,14 @@ export default function RequestStream( { maxEntries = 500 } ) {
 									marginLeft: '8px',
 								} }
 							>
-								{ staleSec }s ago
+								{ sprintf(
+									// translators: %d: seconds since the last request was received.
+									__(
+										'%ds ago',
+										'newspack-event-logger-nodes'
+									),
+									staleSec
+								) }
 							</span>
 						) }
 					</span>
@@ -493,7 +545,15 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						}` }
 						onClick={ () => setPaused( ! isPaused ) }
 						title={
-							isPaused ? 'Resume streaming' : 'Pause streaming'
+							isPaused
+								? __(
+										'Resume streaming',
+										'newspack-event-logger-nodes'
+								  )
+								: __(
+										'Pause streaming',
+										'newspack-event-logger-nodes'
+								  )
 						}
 					>
 						{ isPaused ? '▶' : '⏸' }
@@ -501,9 +561,12 @@ export default function RequestStream( { maxEntries = 500 } ) {
 					<button
 						className="event-logger-request-stream-btn"
 						onClick={ handleClear }
-						title="Clear all entries"
+						title={ __(
+							'Clear all entries',
+							'newspack-event-logger-nodes'
+						) }
 					>
-						Clear
+						{ __( 'Clear', 'newspack-event-logger-nodes' ) }
 					</button>
 					<button
 						className={ `event-logger-request-stream-btn ${
@@ -512,14 +575,23 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						onClick={ () =>
 							setShowColumnPicker( ! showColumnPicker )
 						}
-						title="Select columns"
+						title={ __(
+							'Select columns',
+							'newspack-event-logger-nodes'
+						) }
 					>
-						Cols
+						{ __( 'Cols', 'newspack-event-logger-nodes' ) }
 					</button>
 				</div>
 			</div>
 
-			<ConnectionBanner connectionError={ connectionError } />
+			<ConnectionBanner
+				connectionError={ connectionError }
+				message={ __(
+					'Connection lost. Reconnecting…',
+					'newspack-event-logger-nodes'
+				) }
+			/>
 
 			{ showColumnPicker && (
 				<div className="event-logger-request-stream-column-picker">
@@ -572,8 +644,14 @@ export default function RequestStream( { maxEntries = 500 } ) {
 					{ filteredEntries.length === 0 ? (
 						<div className="event-logger-request-stream-empty">
 							{ isPaused
-								? 'Paused - click play to resume'
-								: 'Waiting for requests...' }
+								? __(
+										'Paused - click play to resume',
+										'newspack-event-logger-nodes'
+								  )
+								: __(
+										'Waiting for requests…',
+										'newspack-event-logger-nodes'
+								  ) }
 						</div>
 					) : (
 						<>

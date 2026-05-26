@@ -6,6 +6,7 @@
  */
 
 import { useState, useMemo, useEffect } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 import {
 	Modal,
 	Button,
@@ -26,30 +27,117 @@ const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
  * Category metadata with descriptions.
  */
 const CATEGORY_META = {
-	Lifecycle: { description: 'Core request lifecycle' },
-	'Content Rendering': { description: 'Block & content output' },
-	'Query & Posts': { description: 'Database queries & post ops' },
-	'Taxonomies & Terms': { description: 'Categories & tags' },
-	'Users & Auth': { description: 'Authentication & caps' },
-	'Options & Settings': { description: 'Options API (high volume)' },
-	'REST API': { description: 'REST endpoints' },
-	Admin: { description: 'Admin screens & updates' },
-	'Scripts & Styles': { description: 'Asset loading' },
-	Media: { description: 'Uploads & attachments' },
-	Comments: { description: 'Comments & pingbacks' },
-	URLs: { description: 'URL generation & links' },
-	Cron: { description: 'Scheduled & future posts' },
-	Widgets: { description: 'Widget areas' },
-	Theme: { description: 'Theme & customizer' },
-	Localization: { description: 'Translations (noisy)' },
-	Sanitization: { description: 'Input escaping (noisy)' },
-	HTTP: { description: 'Remote requests & mail' },
-	AJAX: { description: 'AJAX & heartbeat' },
-	'Block Editor': { description: 'Blocks & TinyMCE' },
-	Metadata: { description: 'Meta operations' },
-	Feeds: { description: 'RSS, Atom, RDF' },
-	Menus: { description: 'Navigation menus' },
-	Other: { description: 'Uncategorized hooks' },
+	Lifecycle: {
+		description: __(
+			'Core request lifecycle',
+			'newspack-event-logger-nodes'
+		),
+	},
+	'Content Rendering': {
+		description: __(
+			'Block & content output',
+			'newspack-event-logger-nodes'
+		),
+	},
+	'Query & Posts': {
+		description: __(
+			'Database queries & post ops',
+			'newspack-event-logger-nodes'
+		),
+	},
+	'Taxonomies & Terms': {
+		description: __( 'Categories & tags', 'newspack-event-logger-nodes' ),
+	},
+	'Users & Auth': {
+		description: __(
+			'Authentication & caps',
+			'newspack-event-logger-nodes'
+		),
+	},
+	'Options & Settings': {
+		description: __(
+			'Options API (high volume)',
+			'newspack-event-logger-nodes'
+		),
+	},
+	'REST API': {
+		description: __( 'REST endpoints', 'newspack-event-logger-nodes' ),
+	},
+	Admin: {
+		description: __(
+			'Admin screens & updates',
+			'newspack-event-logger-nodes'
+		),
+	},
+	'Scripts & Styles': {
+		description: __( 'Asset loading', 'newspack-event-logger-nodes' ),
+	},
+	Media: {
+		description: __(
+			'Uploads & attachments',
+			'newspack-event-logger-nodes'
+		),
+	},
+	Comments: {
+		description: __(
+			'Comments & pingbacks',
+			'newspack-event-logger-nodes'
+		),
+	},
+	URLs: {
+		description: __(
+			'URL generation & links',
+			'newspack-event-logger-nodes'
+		),
+	},
+	Cron: {
+		description: __(
+			'Scheduled & future posts',
+			'newspack-event-logger-nodes'
+		),
+	},
+	Widgets: {
+		description: __( 'Widget areas', 'newspack-event-logger-nodes' ),
+	},
+	Theme: {
+		description: __( 'Theme & customizer', 'newspack-event-logger-nodes' ),
+	},
+	Localization: {
+		description: __(
+			'Translations (noisy)',
+			'newspack-event-logger-nodes'
+		),
+	},
+	Sanitization: {
+		description: __(
+			'Input escaping (noisy)',
+			'newspack-event-logger-nodes'
+		),
+	},
+	HTTP: {
+		description: __(
+			'Remote requests & mail',
+			'newspack-event-logger-nodes'
+		),
+	},
+	AJAX: {
+		description: __( 'AJAX & heartbeat', 'newspack-event-logger-nodes' ),
+	},
+	'Block Editor': {
+		description: __( 'Blocks & TinyMCE', 'newspack-event-logger-nodes' ),
+	},
+	Metadata: {
+		description: __( 'Meta operations', 'newspack-event-logger-nodes' ),
+	},
+	Feeds: {
+		description: __( 'RSS, Atom, RDF', 'newspack-event-logger-nodes' ),
+	},
+	Menus: {
+		description: __( 'Navigation menus', 'newspack-event-logger-nodes' ),
+	},
+	Other: {
+		description: __( 'Uncategorized hooks', 'newspack-event-logger-nodes' ),
+	},
 };
 
 /**
@@ -237,8 +325,11 @@ export default function HookSelectorModal( {
 		<Modal
 			title={
 				mode === 'exclude'
-					? 'Select Hooks to Skip'
-					: 'Select Hooks to Log'
+					? __(
+							'Select Hooks to Skip',
+							'newspack-event-logger-nodes'
+					  )
+					: __( 'Select Hooks to Log', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onClose }
 			className="event-logger-hook-selector-modal"
@@ -248,22 +339,44 @@ export default function HookSelectorModal( {
 				<SearchControl
 					value={ search }
 					onChange={ setSearch }
-					placeholder="Search hooks..."
+					placeholder={ __(
+						'Search hooks…',
+						'newspack-event-logger-nodes'
+					) }
 				/>
 				<div className="hook-selector-actions">
 					<Button variant="tertiary" onClick={ selectAll }>
 						{ isFiltered
-							? `Select Matches (${ totalVisible })`
-							: 'Select All' }
+							? sprintf(
+									// translators: %d: number of hooks matching the current search filter.
+									__(
+										'Select Matches (%d)',
+										'newspack-event-logger-nodes'
+									),
+									totalVisible
+							  )
+							: __(
+									'Select All',
+									'newspack-event-logger-nodes'
+							  ) }
 					</Button>
 					<Button variant="tertiary" onClick={ selectRecommended }>
-						Recommended
+						{ __( 'Recommended', 'newspack-event-logger-nodes' ) }
 					</Button>
 					<Button variant="tertiary" onClick={ clearAll }>
-						{ isFiltered ? 'Clear Matches' : 'Clear All' }
+						{ isFiltered
+							? __(
+									'Clear Matches',
+									'newspack-event-logger-nodes'
+							  )
+							: __( 'Clear All', 'newspack-event-logger-nodes' ) }
 					</Button>
 					<Button variant="primary" onClick={ handleApply }>
-						Apply ({ totalSelected })
+						{ sprintf(
+							// translators: %d: number of currently selected hooks.
+							__( 'Apply (%d)', 'newspack-event-logger-nodes' ),
+							totalSelected
+						) }
 					</Button>
 				</div>
 			</div>
@@ -280,7 +393,12 @@ export default function HookSelectorModal( {
 						} }
 					>
 						<Spinner />
-						<span>Loading registered hooks...</span>
+						<span>
+							{ __(
+								'Loading registered hooks…',
+								'newspack-event-logger-nodes'
+							) }
+						</span>
 					</div>
 				) }
 				{ categoryOrder
