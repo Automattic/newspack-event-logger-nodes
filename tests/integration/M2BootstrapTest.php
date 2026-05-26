@@ -115,7 +115,7 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_gyroscope_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\GyroscopeController' ),
-			'Legacy GyroscopeController (non-streaming /gyroscope/timeline) must be deleted; Performance_CI.gyroscope_timeline replaces it. GyroscopeStreamController stays for SSE.'
+			'Legacy GyroscopeController (non-streaming /gyroscope/timeline) must be deleted; GyroscopeStreamController stays for SSE.'
 		);
 	}
 

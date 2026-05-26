@@ -1785,114 +1785,6 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// gyroscope_timeline verb — replaces GyroscopeController::get_timeline.
-	// -------------------------------------------------------------------------
-
-	public function test_gyroscope_timeline_verb_returns_empty_when_no_rid(): void {
-		// Empty rid yields the canonical initial-state shape — same as the
-		// legacy stub so the React tree mounts cleanly before a request is
-		// selected.
-		$ci     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $ci, 'performance', 'gyroscope_timeline' );
-
-		$this->assertIsArray( $result );
-		$this->assertArrayHasKey( 'data', $result );
-		$this->assertArrayHasKey( 'meta', $result );
-		$this->assertSame( [ 'events' => [] ], $result['data'] );
-		$this->assertSame( [], $result['meta'] );
-	}
-
-	public function test_gyroscope_timeline_verb_with_unknown_rid_returns_no_events(): void {
-		// Create the requests.log dir but no actual entries — scan finds nothing.
-		\mkdir( $this->tmp . '/logs/requests.log/p0', 0755, true );
-
-		$ci     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$ci,
-			'performance',
-			'gyroscope_timeline',
-			[ 'request_id' => 'no-such-rid' ]
-		);
-
-		$this->assertSame( 'no-such-rid', $result['data']['request_id'] );
-		$this->assertSame( [], $result['data']['events'] );
-		$this->assertSame( 0, $result['meta']['scanned'] );
-	}
-
-	public function test_gyroscope_timeline_verb_returns_events_when_request_found(): void {
-		// 32-char rid so the fixed-width index round-trip preserves it exactly.
-		$rid    = 'rid-found-123456789012345678901';
-		$events = [
-			[ 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.01, 'n' => 1 ],
-			[ 'k' => 'init', 'm' => 'middle', 'ts' => 1700000000.05, 'n' => 2 ],
-			[ 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1, 'n' => 3 ],
-		];
-		$this->write_request( [
-			'rid'            => $rid,
-			'url'            => '/test',
-			'timestamp'      => 1700000000,
-			'duration_ms'    => 100,
-			'status_code'    => 200,
-			'peak_mb'        => 1,
-			'events'         => $events,
-			'request_method' => 'GET',
-		] );
-
-		$ci     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$ci,
-			'performance',
-			'gyroscope_timeline',
-			[ 'request_id' => $rid ]
-		);
-
-		$this->assertSame( $rid, $result['data']['request_id'] );
-		$this->assertSame( $events, $result['data']['events'] );
-		$this->assertGreaterThanOrEqual( 1, $result['meta']['scanned'] );
-	}
-
-	public function test_gyroscope_timeline_verb_treats_request_without_events_as_envelope(): void {
-		// Body has no 'events' key — verb should wrap the body itself as a
-		// single event entry (mirrors GyroscopeController behavior).
-		$rid  = 'rid-noevents-1234567890123456789';
-		$body = [
-			'rid'            => $rid,
-			'url'            => '/no-events',
-			'timestamp'      => 1700000000,
-			'duration_ms'    => 50,
-			'status_code'    => 200,
-			'request_method' => 'GET',
-		];
-		$this->write_request( $body );
-
-		$ci     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$ci,
-			'performance',
-			'gyroscope_timeline',
-			[ 'request_id' => $rid ]
-		);
-
-		$this->assertSame( $rid, $result['data']['request_id'] );
-		$this->assertCount( 1, $result['data']['events'] );
-		$this->assertSame( $body, $result['data']['events'][0] );
-	}
-
-	public function test_gyroscope_timeline_verb_rejects_unauthorized(): void {
-		$GLOBALS['_current_user_can'] = false;
-		$ci     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$ci,
-			'performance',
-			'gyroscope_timeline',
-			[ 'request_id' => 'rid-anything' ]
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'permission denied', $result );
-	}
-
-	// -------------------------------------------------------------------------
 	// request_log_list verb — replaces RequestLogController::get_list.
 	// -------------------------------------------------------------------------
 
@@ -2140,7 +2032,7 @@ class PerformanceCITest extends TestCase {
 			'overview', 'urls', 'url_detail', 'request_search', 'request_detail',
 			'timing', 'dashboard', 'hooks_registered', 'hooks_categories',
 			'hooks_available', 'hooks_configure', 'config_get', 'config_update',
-			'settings_update', 'gyroscope_timeline', 'request_log_list',
+			'settings_update', 'request_log_list',
 			'request_log_detail',
 		];
 
@@ -2271,14 +2163,6 @@ class PerformanceCITest extends TestCase {
 		// is the renderable catch-all the Inspector can collect.
 		$this->assertSame( 'string', $args['value']['type'] );
 		$this->assertTrue( $args['value']['required'] );
-	}
-
-	public function test_gyroscope_timeline_verb_declares_optional_request_id(): void {
-		// Empty request_id returns the initial-state shape (NOT an error) → optional.
-		$args = self::args_by_name( 'gyroscope_timeline' );
-		$this->assertSame( [ 'request_id' ], \array_keys( $args ) );
-		$this->assertSame( 'string', $args['request_id']['type'] );
-		$this->assertFalse( $args['request_id']['required'] );
 	}
 
 	public function test_request_log_list_verb_declares_optional_limit(): void {
