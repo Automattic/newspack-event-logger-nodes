@@ -27,6 +27,7 @@ import {
 	useMemo,
 	memo,
 } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
@@ -46,20 +47,27 @@ const EMPTY_VIEW = {
  * Column definitions for the error log.
  */
 const COLUMNS = {
-	time: { label: 'Time', tooltip: 'Error timestamp', width: '100px' },
+	time: {
+		label: __( 'Time', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Error timestamp', 'newspack-event-logger-nodes' ),
+		width: '100px',
+	},
 	rid: {
-		label: 'Request ID',
-		tooltip: 'Click to view request trace',
+		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Click to view request trace',
+			'newspack-event-logger-nodes'
+		),
 		width: '240px',
 	},
 	keyword: {
-		label: 'Keyword',
-		tooltip: 'Error/warning keyword',
+		label: __( 'Keyword', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Error/warning keyword', 'newspack-event-logger-nodes' ),
 		width: '240px',
 	},
 	message: {
-		label: 'Message',
-		tooltip: 'Error message',
+		label: __( 'Message', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Error message', 'newspack-event-logger-nodes' ),
 		width: 'auto',
 	},
 };
@@ -136,7 +144,10 @@ const ErrorRow = memo( function ErrorRow( {
 									href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
 										entry.rid
 									) }` }
-									title="View request trace"
+									title={ __(
+										'View request trace',
+										'newspack-event-logger-nodes'
+									) }
 								>
 									{ entry.rid }
 								</a>
@@ -390,18 +401,30 @@ export default function ErrorLog() {
 			aria-label="Error log"
 		>
 			<div className="event-logger-error-log-header">
-				<h3>Error Log</h3>
+				<h3>{ __( 'Error Log', 'newspack-event-logger-nodes' ) }</h3>
 				<div className="event-logger-error-log-controls">
 					<input
 						type="text"
 						className="event-logger-error-log-search"
-						placeholder="Filter by keyword, message, or request ID..."
+						placeholder={ __(
+							'Filter by keyword, message, or request ID…',
+							'newspack-event-logger-nodes'
+						) }
 						value={ filter }
 						onChange={ ( e ) => setFilter( e.target.value ) }
 					/>
 					<span className="event-logger-error-log-stats">
 						<span className="event-logger-error-log-count">
-							{ filteredEntries.length } entries
+							{ sprintf(
+								// translators: %d: number of error-log entries shown.
+								_n(
+									'%d entry',
+									'%d entries',
+									filteredEntries.length,
+									'newspack-event-logger-nodes'
+								),
+								filteredEntries.length
+							) }
 						</span>
 						{ staleSec !== null && (
 							<span
@@ -411,7 +434,14 @@ export default function ErrorLog() {
 										staleSec > 10 ? '#dba617' : '#757575',
 								} }
 							>
-								{ staleSec }s ago
+								{ sprintf(
+									// translators: %d: seconds since the last error was received.
+									__(
+										'%ds ago',
+										'newspack-event-logger-nodes'
+									),
+									staleSec
+								) }
 							</span>
 						) }
 					</span>
@@ -421,7 +451,15 @@ export default function ErrorLog() {
 						}` }
 						onClick={ () => setPaused( ! isPaused ) }
 						title={
-							isPaused ? 'Resume streaming' : 'Pause streaming'
+							isPaused
+								? __(
+										'Resume streaming',
+										'newspack-event-logger-nodes'
+								  )
+								: __(
+										'Pause streaming',
+										'newspack-event-logger-nodes'
+								  )
 						}
 					>
 						{ isPaused ? '▶' : '⏸' }
@@ -429,14 +467,23 @@ export default function ErrorLog() {
 					<button
 						className="event-logger-error-log-btn"
 						onClick={ handleClear }
-						title="Clear all entries"
+						title={ __(
+							'Clear all entries',
+							'newspack-event-logger-nodes'
+						) }
 					>
-						Clear
+						{ __( 'Clear', 'newspack-event-logger-nodes' ) }
 					</button>
 				</div>
 			</div>
 
-			<ConnectionBanner connectionError={ connectionError } />
+			<ConnectionBanner
+				connectionError={ connectionError }
+				message={ __(
+					'Connection lost. Reconnecting…',
+					'newspack-event-logger-nodes'
+				) }
+			/>
 
 			<div
 				role="row"
@@ -468,8 +515,14 @@ export default function ErrorLog() {
 					{ filteredEntries.length === 0 ? (
 						<div className="event-logger-error-log-empty">
 							{ isPaused
-								? 'Paused - click play to resume'
-								: 'Waiting for errors...' }
+								? __(
+										'Paused - click play to resume',
+										'newspack-event-logger-nodes'
+								  )
+								: __(
+										'Waiting for errors…',
+										'newspack-event-logger-nodes'
+								  ) }
 						</div>
 					) : (
 						<>

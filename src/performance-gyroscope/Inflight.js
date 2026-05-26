@@ -22,6 +22,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
@@ -47,61 +48,88 @@ const EMPTY_VIEW = { connectionError: false };
  */
 const COLUMNS = {
 	rid: {
-		label: 'Request ID',
-		tooltip:
+		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
+		tooltip: __(
 			'Unique request identifier - click to view in Performance Dashboard',
+			'newspack-event-logger-nodes'
+		),
 		width: '240px',
 	},
 	url: {
-		label: 'URL',
-		tooltip: 'Request method and URL - click to view URL stats',
+		label: __( 'URL', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Request method and URL - click to view URL stats',
+			'newspack-event-logger-nodes'
+		),
 		width: 'auto',
 	},
 	status_code: {
-		label: 'Status',
-		tooltip: 'HTTP response status code',
+		label: __( 'Status', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'HTTP response status code',
+			'newspack-event-logger-nodes'
+		),
 		width: '50px',
 	},
 	state: {
-		label: 'State',
-		tooltip: 'What the request is currently doing',
+		label: __( 'State', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'What the request is currently doing',
+			'newspack-event-logger-nodes'
+		),
 		width: '100px',
 	},
 	what: {
-		label: 'What',
-		tooltip: 'Details: query text, template name, hook name, etc.',
+		label: __( 'What', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Details: query text, template name, hook name, etc.',
+			'newspack-event-logger-nodes'
+		),
 		width: '200px',
 	},
 	remote_addr: {
-		label: 'IP',
-		tooltip: 'Client IP address',
+		label: __( 'IP', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Client IP address', 'newspack-event-logger-nodes' ),
 		width: '100px',
 	},
 	user_agent: {
-		label: 'UA',
-		tooltip: 'Browser/client identifier',
+		label: __( 'UA', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Browser/client identifier',
+			'newspack-event-logger-nodes'
+		),
 		width: '200px',
 	},
 	est: {
-		label: 'Est',
-		tooltip: 'Estimated request duration (accounts for display delay)',
+		label: __( 'Est', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Estimated request duration (accounts for display delay)',
+			'newspack-event-logger-nodes'
+		),
 		width: '70px',
 	},
 	time: {
-		label: 'Time',
-		tooltip:
+		label: __( 'Time', 'newspack-event-logger-nodes' ),
+		tooltip: __(
 			'Request duration from server logs only (ignores display delay)',
+			'newspack-event-logger-nodes'
+		),
 		width: '50px',
 	},
 	age: {
-		label: 'Age',
-		tooltip: 'Display delay - how far behind real-time this view is',
+		label: __( 'Age', 'newspack-event-logger-nodes' ),
+		tooltip: __(
+			'Display delay - how far behind real-time this view is',
+			'newspack-event-logger-nodes'
+		),
 		width: '50px',
 	},
 	lag: {
-		label: 'Lag',
-		tooltip:
+		label: __( 'Lag', 'newspack-event-logger-nodes' ),
+		tooltip: __(
 			'Server processing delay - high values mean the log processor is backed up',
+			'newspack-event-logger-nodes'
+		),
 		width: '50px',
 	},
 };
@@ -300,7 +328,10 @@ export default function Inflight( { maxRows = 20 } ) {
 							href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
 								req.rid
 							) }` }
-							title="View request trace"
+							title={ __(
+								'View request trace',
+								'newspack-event-logger-nodes'
+							) }
 						>
 							{ req.rid }
 						</a>
@@ -414,7 +445,10 @@ export default function Inflight( { maxRows = 20 } ) {
 								req.url
 							) }` }
 							className="entry-url-link"
-							title="View URL stats"
+							title={ __(
+								'View URL stats',
+								'newspack-event-logger-nodes'
+							) }
 						>
 							{ req.url }
 						</a>
@@ -456,7 +490,12 @@ export default function Inflight( { maxRows = 20 } ) {
 			aria-label="In-flight requests"
 		>
 			<div className="event-logger-inflight-header">
-				<h3>In-Flight Requests</h3>
+				<h3>
+					{ __(
+						'In-Flight Requests',
+						'newspack-event-logger-nodes'
+					) }
+				</h3>
 				<div className="event-logger-inflight-legend">
 					{ [
 						'Lifecycle',
@@ -494,11 +533,27 @@ export default function Inflight( { maxRows = 20 } ) {
 				<span className="event-logger-inflight-meta">
 					<span className="event-logger-inflight-stats">
 						<span className="event-logger-inflight-count">
-							{ totalCount } requests
+							{ sprintf(
+								// translators: %d: number of in-flight requests.
+								_n(
+									'%d request',
+									'%d requests',
+									totalCount,
+									'newspack-event-logger-nodes'
+								),
+								totalCount
+							) }
 						</span>
 						{ requestsPerSecond > 0 && (
 							<span className="event-logger-inflight-rps">
-								{ requestsPerSecond.toFixed( 1 ) } req/s
+								{ sprintf(
+									// translators: %s: requests-per-second rate, formatted to one decimal place.
+									__(
+										'%s req/s',
+										'newspack-event-logger-nodes'
+									),
+									requestsPerSecond.toFixed( 1 )
+								) }
 							</span>
 						) }
 						{ staleSec !== null && (
@@ -510,7 +565,14 @@ export default function Inflight( { maxRows = 20 } ) {
 									marginLeft: '8px',
 								} }
 							>
-								{ staleSec }s ago
+								{ sprintf(
+									// translators: %d: seconds since the last event was received.
+									__(
+										'%ds ago',
+										'newspack-event-logger-nodes'
+									),
+									staleSec
+								) }
 							</span>
 						) }
 					</span>
@@ -520,7 +582,10 @@ export default function Inflight( { maxRows = 20 } ) {
 						onChange={ ( e ) =>
 							setRefreshInterval( parseFloat( e.target.value ) )
 						}
-						title="Refresh interval (also press 0-9 keys)"
+						title={ __(
+							'Refresh interval (also press 0–9 keys)',
+							'newspack-event-logger-nodes'
+						) }
 					>
 						{ INFLIGHT_REFRESH_OPTIONS.map( ( opt ) => (
 							<option key={ opt.value } value={ opt.value }>
@@ -535,14 +600,23 @@ export default function Inflight( { maxRows = 20 } ) {
 						onClick={ () =>
 							setShowColumnPicker( ! showColumnPicker )
 						}
-						title="Select columns"
+						title={ __(
+							'Select columns',
+							'newspack-event-logger-nodes'
+						) }
 					>
-						Cols
+						{ __( 'Cols', 'newspack-event-logger-nodes' ) }
 					</button>
 				</span>
 			</div>
 
-			<ConnectionBanner connectionError={ connectionError } />
+			<ConnectionBanner
+				connectionError={ connectionError }
+				message={ __(
+					'Connection lost. Reconnecting…',
+					'newspack-event-logger-nodes'
+				) }
+			/>
 
 			{ showColumnPicker && (
 				<div className="event-logger-inflight-column-picker">
@@ -584,7 +658,10 @@ export default function Inflight( { maxRows = 20 } ) {
 				<div className="event-logger-request-stream-content">
 					{ requests.length === 0 ? (
 						<div className="event-logger-request-stream-empty">
-							No active requests.
+							{ __(
+								'No active requests.',
+								'newspack-event-logger-nodes'
+							) }
 						</div>
 					) : (
 						requests.map( ( req, index ) => {

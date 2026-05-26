@@ -13,6 +13,7 @@ import {
 	useEffect,
 	useRef,
 } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
 import { getStateColor, hexToRgba } from '../../shared/utils/formatUtils';
 import {
@@ -835,7 +836,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					marginLeft: '6px',
 				} }
 			>
-				[{ entry.childCount } entries]
+				{ sprintf(
+					// translators: %d: number of nested log entries hidden inside this collapsed pair.
+					_n(
+						'[%d entry]',
+						'[%d entries]',
+						entry.childCount,
+						'newspack-event-logger-nodes'
+					),
+					entry.childCount
+				) }
 			</span>
 		);
 		return (
@@ -906,7 +916,13 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					alignItems: 'center',
 				} }
 			>
-				<h3>Log Entries ({ realCount ?? entries.length })</h3>
+				<h3>
+					{ sprintf(
+						// translators: %d: number of log entries in the request.
+						__( 'Log Entries (%d)', 'newspack-event-logger-nodes' ),
+						realCount ?? entries.length
+					) }
+				</h3>
 				<div style={ { fontSize: '13px' } }>
 					<button
 						type="button"
@@ -921,7 +937,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 							padding: 0,
 						} }
 					>
-						&minus; Fold All
+						&minus;{ ' ' }
+						{ __( 'Fold All', 'newspack-event-logger-nodes' ) }
 					</button>
 					<button
 						type="button"
@@ -935,14 +952,17 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 							padding: 0,
 						} }
 					>
-						+ Unfold All
+						+ { __( 'Unfold All', 'newspack-event-logger-nodes' ) }
 					</button>
 				</div>
 			</div>
 			<div className="log-entries-search">
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
 					<TextControl
-						placeholder="Search entries..."
+						placeholder={ __(
+							'Search entries…',
+							'newspack-event-logger-nodes'
+						) }
 						value={ searchQuery }
 						onChange={ setSearchQuery }
 						onKeyDown={ ( e ) => {
@@ -979,7 +999,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				{ searchQuery && (
 					<div className="log-entries-search__controls">
 						<span className="log-entries-search__count">
-							{ matchedIndices.length === 0 && 'No matches' }
+							{ matchedIndices.length === 0 &&
+								__(
+									'No matches',
+									'newspack-event-logger-nodes'
+								) }
 							{ matchedIndices.length > 0 &&
 								currentMatchIndex >= 0 &&
 								`${ currentMatchIndex + 1 }/${
@@ -987,7 +1011,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 								}` }
 							{ matchedIndices.length > 0 &&
 								currentMatchIndex < 0 &&
-								`${ matchedIndices.length } matches` }
+								sprintf(
+									// translators: %d: number of entries matching the search query.
+									_n(
+										'%d match',
+										'%d matches',
+										matchedIndices.length,
+										'newspack-event-logger-nodes'
+									),
+									matchedIndices.length
+								) }
 						</span>
 						<button
 							type="button"
@@ -1004,7 +1037,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 								navigateToMatch( prev );
 							} }
 							disabled={ matchedIndices.length === 0 }
-							title="Previous match (p)"
+							title={ __(
+								'Previous match (p)',
+								'newspack-event-logger-nodes'
+							) }
 						>
 							&#9650;
 						</button>
@@ -1024,7 +1060,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 								navigateToMatch( next );
 							} }
 							disabled={ matchedIndices.length === 0 }
-							title="Next match (n)"
+							title={ __(
+								'Next match (n)',
+								'newspack-event-logger-nodes'
+							) }
 						>
 							&#9660;
 						</button>
@@ -1032,7 +1071,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 							type="button"
 							className="log-entries-search__nav"
 							onClick={ clearSearch }
-							title="Clear search (Esc)"
+							title={ __(
+								'Clear search (Esc)',
+								'newspack-event-logger-nodes'
+							) }
 						>
 							&#10005;
 						</button>
@@ -1045,9 +1087,21 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						<tr>
 							<th style={ { width: '6px', padding: 0 } }></th>
 							<th style={ { width: '45px' } }>#</th>
-							<th style={ { width: '120px' } }>Time</th>
-							<th style={ { whiteSpace: 'nowrap' } }>Keyword</th>
-							<th>Message</th>
+							<th style={ { width: '120px' } }>
+								{ __( 'Time', 'newspack-event-logger-nodes' ) }
+							</th>
+							<th style={ { whiteSpace: 'nowrap' } }>
+								{ __(
+									'Keyword',
+									'newspack-event-logger-nodes'
+								) }
+							</th>
+							<th>
+								{ __(
+									'Message',
+									'newspack-event-logger-nodes'
+								) }
+							</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1093,7 +1147,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 										title={
 											entry.pairId !== null &&
 											entry.pairId !== undefined
-												? 'Click to highlight pair'
+												? __(
+														'Click to highlight pair',
+														'newspack-event-logger-nodes'
+												  )
 												: undefined
 										}
 									/>
