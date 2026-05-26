@@ -99,20 +99,13 @@ $_newspack_event_logger_nodes_load = static function () use (
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
 	);
 
-	// One-call substrate registration: registers the application namespace,
-	// the stock-topology dir, a `newspack_nodes/topologies` catalog entry per
-	// curated topology, and a guarded `newspack_nodes/spawn_worker` handler
-	// (which fires `newspack_nodes/before_worker_spawn` for owned types — see
-	// the listener below). Pass the curated `names` from app config (NOT null)
-	// so only the configured fleets publish, not every *.tsl in the dir.
-	// `num_partitions` is omitted so register_plugin reads the substrate
-	// `num_partitions` option — matching the old bespoke filter's behavior.
-	$eln_config = \Newspack_Event_Logger_Nodes\Config::load_config();
-	$names      = ( isset( $eln_config['topologies'] ) && \is_array( $eln_config['topologies'] ) ) ? $eln_config['topologies'] : [];
+	// One-call substrate registration: registers the application namespace and
+	// the stock-topology dir. Topologies are NOT plugin-owned — the substrate
+	// catalogs every *.tsl in the dir and the active set is the substrate
+	// `topologies` config key (operator overlay, else config-file default).
 	\Newspack_Nodes\Topology_Registry::register_plugin(
 		'Newspack_Event_Logger_Nodes\\',
-		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies',
-		names: $names
+		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 	);
 
 	// Set the operator-override dir now (before the catalog publishes / before
@@ -322,11 +315,12 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 	);
 } )();
 
-// Worker dispatch (`newspack_nodes/spawn_worker`) is provided by the substrate's
-// register_plugin (in the deferred loader): a guarded handler that builds a
-// Worker_Base + loads the topology via Topology_Loader for owned types only.
+// Worker dispatch (`newspack_nodes/spawn_worker`) is handled by the substrate's
+// own `Topology_Registry::spawn_worker` (registered once in newspack-nodes.php):
+// it builds a Worker_Base + loads the topology via Topology_Loader for any worker
+// in the active set (ungated by plugin ownership — topologies aren't owned).
 // ELN's per-worker runtime init runs from the `before_worker_spawn` listener
-// above, which register_plugin's handler fires just before the topology loads.
+// above, which the substrate handler fires just before the topology loads.
 
 /**
  * REST route registration. The runtime's Bootstrap::register_rest_routes wires

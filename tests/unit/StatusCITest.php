@@ -17,8 +17,10 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\App\Status_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
+use Newspack_Nodes\Topology_Registry;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Status_CI_Node::class )]
@@ -32,6 +34,22 @@ class StatusCITest extends TestCase {
 		$this->tmp = '/tmp/status-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
 		$this->use_base_dir( $this->tmp );
+		// The reported topology set is the substrate's ACTIVE set
+		// (`Bootstrap::get_topologies()`), whose names are resolved against
+		// the stock topology dir. Register it so the active names synthesize.
+		Topology_Registry::register_stock_dir(
+			\dirname( __DIR__, 2 ) . '/topologies'
+		);
+	}
+
+	/**
+	 * Declare the substrate's active topology set the operator way: the
+	 * `newspack_nodes_topologies` option overlays the substrate config-file
+	 * default. Reset the substrate Config so the overlay is picked up.
+	 */
+	private function activate_topologies( array $names ): void {
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = $names;
+		RuntimeConfig::reset();
 	}
 
 	protected function tearDown(): void {
@@ -43,8 +61,8 @@ class StatusCITest extends TestCase {
 	public function test_get_verb_returns_canonical_status_payload(): void {
 		$this->use_base_dir( $this->tmp, [
 			'num_partitions' => 4,
-			'topologies'     => [ 'firehose-workers-and-jobs', 'request-workers' ],
 		] );
+		$this->activate_topologies( [ 'firehose-workers-and-jobs', 'request-workers' ] );
 		Core::$memd = new InMemoryMemcached();
 		$ci         = new Status_CI_Node();
 
@@ -64,6 +82,19 @@ class StatusCITest extends TestCase {
 		$this->assertLessThanOrEqual( $after, $result['timestamp'] );
 	}
 
+	public function test_topologies_reports_substrate_active_set_dropping_unresolvable_names(): void {
+		// The reported list is the substrate ACTIVE set
+		// (`Bootstrap::get_topologies()` keys), which drops names that don't
+		// resolve to a real topology — NOT the raw config `topologies` array,
+		// which would echo the bogus name verbatim.
+		$this->activate_topologies( [ 'request-workers', 'no-such-topology' ] );
+		$ci = new Status_CI_Node();
+
+		$result = VerbHarness::fire( $ci, 'status', 'get' );
+
+		$this->assertSame( [ 'request-workers' ], $result['topologies'] );
+	}
+
 	public function test_cache_unavailable_reports_false_when_memd_null(): void {
 		Core::$memd = null;
 		$ci         = new Status_CI_Node();
@@ -76,7 +107,9 @@ class StatusCITest extends TestCase {
 
 	public function test_num_partitions_defaults_to_one_when_missing(): void {
 		// use_base_dir() with no extras seeds only base_directory, leaving
-		// num_partitions/topologies to fall through to defaults.
+		// num_partitions to default to 1. With no active topologies declared
+		// (no substrate overlay, empty config-file default), the substrate's
+		// active set — and thus the reported list — is empty.
 		$ci = new Status_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'status', 'get' );

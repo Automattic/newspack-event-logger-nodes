@@ -6,8 +6,9 @@
  * that mounts at priority 11 alongside the rest of the M2 service CIs.
  *
  * Verbs:
- *   get — return plugin version, runtime version, partition count, configured
- *         topology list, cache reachability, and a wall-clock timestamp.
+ *   get — return plugin version, runtime version, partition count, the
+ *         substrate's active topology set, cache reachability, and a
+ *         wall-clock timestamp.
  *         Enough for an admin dashboard to render a "is this thing alive?"
  *         surface without making a dozen separate calls.
  *
@@ -20,6 +21,7 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
@@ -43,7 +45,7 @@ class Status_CI_Node extends Command_Interpreter_Node {
 					'version'         => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
 					'runtime_version' => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
 					'num_partitions'  => (int) ( $config['num_partitions'] ?? 1 ),
-					'topologies'      => \is_array( $config['topologies'] ?? null ) ? \array_values( $config['topologies'] ) : [],
+					'topologies'      => \array_keys( Bootstrap::get_topologies() ),
 					'cache_available' => $cache_available,
 					'timestamp'       => \time(),
 				];
