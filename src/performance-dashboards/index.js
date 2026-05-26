@@ -11,6 +11,7 @@ import {
 	lazy,
 	Suspense,
 } from '@wordpress/element';
+import { __ } from '@wordpress/i18n';
 import { Notice, Spinner } from '@wordpress/components';
 
 // Lazy load heavy performance components for code splitting.
@@ -25,7 +26,9 @@ import './styles/base.scss';
  * @param {string} props.message Loading message to display.
  * @return {import('react').ReactElement} Rendered component.
  */
-function LoadingFallback( { message = 'Loading...' } ) {
+function LoadingFallback( {
+	message = __( 'Loading…', 'newspack-event-logger-nodes' ),
+} ) {
 	return (
 		<div className="event-logger-performance-loading">
 			<Spinner />
@@ -48,7 +51,10 @@ function AdminApp() {
 	 * @param {Error} err Error object.
 	 */
 	const handleError = ( err ) => {
-		setError( err.message || 'An error occurred' );
+		setError(
+			err.message ||
+				__( 'An error occurred', 'newspack-event-logger-nodes' )
+		);
 	};
 
 	// Auto-clear errors after 5 seconds.
@@ -63,7 +69,12 @@ function AdminApp() {
 
 	return (
 		<div className="event-logger-admin-wrap">
-			<h1>Event Logger - Performance Dashboard</h1>
+			<h1>
+				{ __(
+					'Event Logger - Performance Dashboard',
+					'newspack-event-logger-nodes'
+				) }
+			</h1>
 
 			{ error && (
 				<Notice
@@ -78,7 +89,12 @@ function AdminApp() {
 			<div className="event-logger-admin-app">
 				<Suspense
 					fallback={
-						<LoadingFallback message="Loading dashboard..." />
+						<LoadingFallback
+							message={ __(
+								'Loading dashboard…',
+								'newspack-event-logger-nodes'
+							) }
+						/>
 					}
 				>
 					<PerformanceDashboard onError={ handleError } />
@@ -118,7 +134,16 @@ function ErrorLogPage() {
 				overflowY: 'hidden',
 			} }
 		>
-			<Suspense fallback={ <LoadingFallback message="Loading..." /> }>
+			<Suspense
+				fallback={
+					<LoadingFallback
+						message={ __(
+							'Loading…',
+							'newspack-event-logger-nodes'
+						) }
+					/>
+				}
+			>
 				<ErrorLog />
 			</Suspense>
 		</div>

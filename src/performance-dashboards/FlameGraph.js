@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { flamegraph } from 'd3-flame-graph';
 import 'd3-flame-graph/dist/d3-flamegraph.css';
@@ -38,13 +39,25 @@ const getTooltipText = ( d ) => {
 
 	// Format: show both percentages for non-root nodes.
 	if ( d.parent && Math.abs( pctParent - pctTotal ) > 0.1 ) {
-		return `${ name } - ${ pctParent.toFixed(
-			1
-		) }% of parent, ${ pctTotal.toFixed( 1 ) }% of total, ${ value.toFixed(
-			3
-		) }ms`;
+		return sprintf(
+			// translators: 1: node name, 2: percent of parent, 3: percent of total, 4: duration in milliseconds.
+			__(
+				'%1$s - %2$s%% of parent, %3$s%% of total, %4$sms',
+				'newspack-event-logger-nodes'
+			),
+			name,
+			pctParent.toFixed( 1 ),
+			pctTotal.toFixed( 1 ),
+			value.toFixed( 3 )
+		);
 	}
-	return `${ name } - ${ pctTotal.toFixed( 1 ) }%, ${ value.toFixed( 3 ) }ms`;
+	return sprintf(
+		// translators: 1: node name, 2: percent of total, 3: duration in milliseconds.
+		__( '%1$s - %2$s%%, %3$sms', 'newspack-event-logger-nodes' ),
+		name,
+		pctTotal.toFixed( 1 ),
+		value.toFixed( 3 )
+	);
 };
 
 /**
@@ -392,7 +405,12 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	if ( ! data || ! data.children || data.children.length === 0 ) {
 		return (
 			<div className="event-logger-flame-empty">
-				<p>No flame graph data available.</p>
+				<p>
+					{ __(
+						'No flame graph data available.',
+						'newspack-event-logger-nodes'
+					) }
+				</p>
 			</div>
 		);
 	}

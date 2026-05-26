@@ -15,6 +15,7 @@ import {
 	useEffect,
 	useCallback,
 } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { Button, SelectControl } from '@wordpress/components';
 import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
 
@@ -101,9 +102,25 @@ const RequestRow = memo( function RequestRow( {
 				style={ { color: statusColor } }
 			>
 				{ req.error_status === 'F' && (
-					<span title="Fatal error">F</span>
+					<span
+						title={ __(
+							'Fatal error',
+							'newspack-event-logger-nodes'
+						) }
+					>
+						F
+					</span>
 				) }
-				{ req.error_status === 'T' && <span title="Timed out">T</span> }
+				{ req.error_status === 'T' && (
+					<span
+						title={ __(
+							'Timed out',
+							'newspack-event-logger-nodes'
+						) }
+					>
+						T
+					</span>
+				) }
 				{ ! req.error_status && ( req.status_code || '-' ) }
 			</div>
 			<div className="event-logger-table__cell event-logger-table__cell--numeric">
@@ -242,7 +259,10 @@ export default function UrlDetailView( {
 							} }
 						>
 							<SelectControl
-								label="Metric"
+								label={ __(
+									'Metric',
+									'newspack-event-logger-nodes'
+								) }
 								value={ chartMetric }
 								options={ CHART_METRIC_OPTIONS }
 								onChange={ setChartMetric }
@@ -250,7 +270,10 @@ export default function UrlDetailView( {
 								style={ { minWidth: '180px' } }
 							/>
 							<SelectControl
-								label="Breakdown"
+								label={ __(
+									'Breakdown',
+									'newspack-event-logger-nodes'
+								) }
 								value={ chartBreakdown }
 								options={ CHART_BREAKDOWN_OPTIONS }
 								onChange={ setChartBreakdown }
@@ -265,7 +288,10 @@ export default function UrlDetailView( {
 										paddingBottom: '8px',
 									} }
 								>
-									Loading...
+									{ __(
+										'Loading…',
+										'newspack-event-logger-nodes'
+									) }
 								</span>
 							) }
 						</div>
@@ -284,17 +310,26 @@ export default function UrlDetailView( {
 					<CategoryTimeChart
 						data={ urlDetail.category_time_series }
 						mode="time"
-						title="Time by Category"
+						title={ __(
+							'Time by Category',
+							'newspack-event-logger-nodes'
+						) }
 					/>
 					<CategoryTimeChart
 						data={ urlDetail.category_time_series }
 						mode="count"
-						title="Events by Category"
+						title={ __(
+							'Events by Category',
+							'newspack-event-logger-nodes'
+						) }
 					/>
 					<CategoryTimeChart
 						data={ urlDetail.category_time_series }
 						mode="average"
-						title="Average Time per Event"
+						title={ __(
+							'Average Time per Event',
+							'newspack-event-logger-nodes'
+						) }
 					/>
 				</>
 			) }
@@ -314,8 +349,22 @@ export default function UrlDetailView( {
 						className="event-logger-flame-container"
 						style={ { marginTop: '20px' } }
 					>
-						<h3>Aggregate Flame Graph</h3>
-						<Suspense fallback={ <div>Loading chart...</div> }>
+						<h3>
+							{ __(
+								'Aggregate Flame Graph',
+								'newspack-event-logger-nodes'
+							) }
+						</h3>
+						<Suspense
+							fallback={
+								<div>
+									{ __(
+										'Loading chart…',
+										'newspack-event-logger-nodes'
+									) }
+								</div>
+							}
+						>
 							<FlameGraph
 								data={ urlDetail.aggregate_flame }
 								lastModified={ urlDetail.last_modified }
@@ -341,8 +390,16 @@ export default function UrlDetailView( {
 							marginTop: '8px',
 						} }
 					>
-						Average breakdown across{ ' ' }
-						{ urlDetail.aggregate_profiles?.count || 0 } requests
+						{ sprintf(
+							// translators: %d: number of requests.
+							_n(
+								'Average breakdown across %d request',
+								'Average breakdown across %d requests',
+								urlDetail.aggregate_profiles?.count || 0,
+								'newspack-event-logger-nodes'
+							),
+							urlDetail.aggregate_profiles?.count || 0
+						) }
 					</p>
 				</div>
 			) }
@@ -358,25 +415,59 @@ export default function UrlDetailView( {
 					} }
 				>
 					<h3 style={ { margin: 0 } }>
-						Recent Requests ({ filteredRequests.length })
+						{ sprintf(
+							// translators: %d: number of recent requests shown.
+							__(
+								'Recent Requests (%d)',
+								'newspack-event-logger-nodes'
+							),
+							filteredRequests.length
+						) }
 					</h3>
 					<Button
 						variant={ errorsOnly ? 'primary' : 'secondary' }
 						isSmall
 						onClick={ () => setErrorsOnly( ! errorsOnly ) }
 					>
-						{ errorsOnly ? 'Showing Errors' : 'Errors Only' }
+						{ errorsOnly
+							? __(
+									'Showing Errors',
+									'newspack-event-logger-nodes'
+							  )
+							: __(
+									'Errors Only',
+									'newspack-event-logger-nodes'
+							  ) }
 					</Button>
 				</div>
 
 				{ /* Header outside scroll container */ }
 				<div className="event-logger-table__header">
-					{ renderSortHeader( 'timestamp', 'Time' ) }
-					<div className="event-logger-table__cell">Method</div>
-					<div className="event-logger-table__cell">Request ID</div>
-					{ renderSortHeader( 'status_code', 'Status', 'center' ) }
-					{ renderSortHeader( 'duration_ms', 'Duration', 'numeric' ) }
-					{ renderSortHeader( 'peak_mb', 'Mem', 'numeric' ) }
+					{ renderSortHeader(
+						'timestamp',
+						__( 'Time', 'newspack-event-logger-nodes' )
+					) }
+					<div className="event-logger-table__cell">
+						{ __( 'Method', 'newspack-event-logger-nodes' ) }
+					</div>
+					<div className="event-logger-table__cell">
+						{ __( 'Request ID', 'newspack-event-logger-nodes' ) }
+					</div>
+					{ renderSortHeader(
+						'status_code',
+						__( 'Status', 'newspack-event-logger-nodes' ),
+						'center'
+					) }
+					{ renderSortHeader(
+						'duration_ms',
+						__( 'Duration', 'newspack-event-logger-nodes' ),
+						'numeric'
+					) }
+					{ renderSortHeader(
+						'peak_mb',
+						__( 'Mem', 'newspack-event-logger-nodes' ),
+						'numeric'
+					) }
 					<div
 						className="event-logger-table__cell event-logger-table__cell--center"
 						style={ { width: '30px' } }
@@ -386,7 +477,10 @@ export default function UrlDetailView( {
 				<div ref={ listRef } className="event-logger-table__list">
 					{ filteredRequests.length === 0 ? (
 						<div className="event-logger-table__empty">
-							No requests to display
+							{ __(
+								'No requests to display',
+								'newspack-event-logger-nodes'
+							) }
 						</div>
 					) : (
 						<>

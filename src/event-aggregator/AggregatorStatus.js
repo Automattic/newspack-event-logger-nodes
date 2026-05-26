@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
 import {
@@ -54,10 +55,18 @@ const formatTime = ( timestamp, now ) => {
 	const diff = ref - timestamp;
 
 	if ( diff < 60 ) {
-		return `${ Math.round( diff ) }s ago`;
+		return sprintf(
+			// translators: %d: number of seconds since the last update.
+			__( '%ds ago', 'newspack-event-logger-nodes' ),
+			Math.round( diff )
+		);
 	}
 	if ( diff < 3600 ) {
-		return `${ Math.round( diff / 60 ) }m ago`;
+		return sprintf(
+			// translators: %d: number of minutes since the last update.
+			__( '%dm ago', 'newspack-event-logger-nodes' ),
+			Math.round( diff / 60 )
+		);
 	}
 
 	const date = new Date( timestamp * 1000 );
@@ -135,8 +144,8 @@ function PartitionStatus( { partition, status, now } ) {
 				<div className="aggregator-partition-row">
 					<span className="aggregator-partition-stat-label">
 						{ connectionStatus === 'connected'
-							? 'Connected'
-							: 'Attempt' }
+							? __( 'Connected', 'newspack-event-logger-nodes' )
+							: __( 'Attempt', 'newspack-event-logger-nodes' ) }
 					</span>
 					<span className="aggregator-partition-stat-value">
 						{ formatTime( status.last_connection_attempt, now ) }
@@ -144,7 +153,7 @@ function PartitionStatus( { partition, status, now } ) {
 				</div>
 				<div className="aggregator-partition-row">
 					<span className="aggregator-partition-stat-label">
-						Server HB
+						{ __( 'Server HB', 'newspack-event-logger-nodes' ) }
 					</span>
 					<span className="aggregator-partition-stat-value">
 						{ formatTime( status.last_sse_heartbeat, now ) }
@@ -152,7 +161,7 @@ function PartitionStatus( { partition, status, now } ) {
 				</div>
 				<div className="aggregator-partition-row">
 					<span className="aggregator-partition-stat-label">
-						Client HB
+						{ __( 'Client HB', 'newspack-event-logger-nodes' ) }
 					</span>
 					<span className="aggregator-partition-stat-value">
 						{ rttFormatted && (
@@ -169,7 +178,7 @@ function PartitionStatus( { partition, status, now } ) {
 				</div>
 				<div className="aggregator-partition-row">
 					<span className="aggregator-partition-stat-label">
-						Status
+						{ __( 'Status', 'newspack-event-logger-nodes' ) }
 					</span>
 					<span
 						className={ `aggregator-heartbeat-badge small ${ heartbeatStatus }` }
@@ -234,7 +243,15 @@ function ServerCard( { server, now } ) {
 					{ server.url }
 				</div>
 				<div className="aggregator-server-partition-count">
-					{ connectedPartitions }/{ partitionKeys.length } partitions
+					{ sprintf(
+						// translators: 1: number of connected partitions, 2: total number of partitions.
+						__(
+							'%1$d/%2$d partitions',
+							'newspack-event-logger-nodes'
+						),
+						connectedPartitions,
+						partitionKeys.length
+					) }
 				</div>
 			</div>
 
@@ -288,22 +305,32 @@ export default function AggregatorStatus() {
 		<div className="aggregator-status-dashboard">
 			{ /* Header */ }
 			<div className="aggregator-status-header">
-				<h2>Aggregator Status</h2>
+				<h2>
+					{ __( 'Aggregator Status', 'newspack-event-logger-nodes' ) }
+				</h2>
 				<div className="aggregator-status-meta">
 					<div className="aggregator-status-refresh-indicator">
 						<span className="aggregator-status-refresh-dot" />
 						<span>
 							{ lastRefresh
-								? `Updated ${ formatTime(
-										lastRefresh / 1000
-								  ) }`
-								: 'Loading...' }
+								? sprintf(
+										// translators: %s: formatted time of the last update.
+										__(
+											'Updated %s',
+											'newspack-event-logger-nodes'
+										),
+										formatTime( lastRefresh / 1000 )
+								  )
+								: __(
+										'Loading…',
+										'newspack-event-logger-nodes'
+								  ) }
 						</span>
 					</div>
 					{ servers && (
 						<div className="aggregator-status-server-count">
 							<strong>{ connectedCount }</strong> / { totalCount }{ ' ' }
-							connected
+							{ __( 'connected', 'newspack-event-logger-nodes' ) }
 						</div>
 					) }
 					<select
@@ -312,7 +339,10 @@ export default function AggregatorStatus() {
 						onChange={ ( e ) =>
 							setRefreshInterval( e.target.value )
 						}
-						title="Refresh interval"
+						title={ __(
+							'Refresh interval',
+							'newspack-event-logger-nodes'
+						) }
 					>
 						{ REFRESH_OPTIONS.map( ( opt ) => (
 							<option key={ opt.value } value={ opt.value }>
@@ -327,7 +357,12 @@ export default function AggregatorStatus() {
 			{ loading && (
 				<div className="aggregator-status-loading">
 					<div className="spinner" />
-					<span>Loading server status...</span>
+					<span>
+						{ __(
+							'Loading server status…',
+							'newspack-event-logger-nodes'
+						) }
+					</span>
 				</div>
 			) }
 
@@ -352,8 +387,10 @@ export default function AggregatorStatus() {
 						) )
 					) : (
 						<div className="aggregator-status-empty">
-							No servers configured. Add servers in Event Logger
-							settings.
+							{ __(
+								'No servers configured. Add servers in Event Logger settings.',
+								'newspack-event-logger-nodes'
+							) }
 						</div>
 					) }
 				</div>

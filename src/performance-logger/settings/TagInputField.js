@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { Button } from '@wordpress/components';
 import { closeSmall } from '@wordpress/icons';
 import HookSelectorModal from './HookSelectorModal';
@@ -151,11 +152,19 @@ export default function TagInputField( {
 						variant="secondary"
 						onClick={ () => setIsModalOpen( true ) }
 					>
-						Select Hooks
+						{ __( 'Select Hooks', 'newspack-event-logger-nodes' ) }
 					</Button>
 					<span className="event-logger-selector-count">
-						{ values.length } hook{ values.length !== 1 ? 's' : '' }{ ' ' }
-						selected
+						{ sprintf(
+							// translators: %d: number of selected hooks.
+							_n(
+								'%d hook selected',
+								'%d hooks selected',
+								values.length,
+								'newspack-event-logger-nodes'
+							),
+							values.length
+						) }
 					</span>
 				</div>
 				<HookSelectorModal
@@ -178,11 +187,19 @@ export default function TagInputField( {
 						variant="secondary"
 						onClick={ () => setIsModalOpen( true ) }
 					>
-						Select Events
+						{ __( 'Select Events', 'newspack-event-logger-nodes' ) }
 					</Button>
 					<span className="event-logger-selector-count">
-						{ values.length } event
-						{ values.length !== 1 ? 's' : '' } selected
+						{ sprintf(
+							// translators: %d: number of selected events.
+							_n(
+								'%d event selected',
+								'%d events selected',
+								values.length,
+								'newspack-event-logger-nodes'
+							),
+							values.length
+						) }
 					</span>
 				</div>
 				<CustomEventSelectorModal
@@ -214,7 +231,10 @@ export default function TagInputField( {
 									icon={ closeSmall }
 									iconSize={ 16 }
 									onClick={ () => removeValue( index ) }
-									label="Remove"
+									label={ __(
+										'Remove',
+										'newspack-event-logger-nodes'
+									) }
 									className="event-logger-tag-remove"
 								/>
 							</div>
@@ -229,7 +249,10 @@ export default function TagInputField( {
 					onChange={ ( e ) => setInputValue( e.target.value ) }
 					onKeyDown={ handleKeyDown }
 					onBlur={ addValue }
-					placeholder="Type a value and press Enter..."
+					placeholder={ __(
+						'Type a value and press Enter…',
+						'newspack-event-logger-nodes'
+					) }
 					className="regular-text"
 				/>
 			</div>

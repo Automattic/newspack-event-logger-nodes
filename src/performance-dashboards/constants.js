@@ -2,6 +2,8 @@
  * Shared constants for performance monitoring components.
  */
 
+import { __ } from '@wordpress/i18n';
+
 /**
  * Refresh interval options for dashboard auto-refresh.
  * Values are strings in milliseconds for SelectControl compatibility.
@@ -19,21 +21,39 @@ export const DASHBOARD_REFRESH_OPTIONS = [
  * Metric options for the aggregate time chart dropdown.
  */
 export const CHART_METRIC_OPTIONS = [
-	{ label: 'Request Volume', value: 'volume' },
-	{ label: 'Avg Response Time', value: 'avg' },
-	{ label: 'Cumulative Response Time', value: 'cumulative' },
-	{ label: 'Avg Peak Memory', value: 'memory' },
+	{
+		label: __( 'Request Volume', 'newspack-event-logger-nodes' ),
+		value: 'volume',
+	},
+	{
+		label: __( 'Avg Response Time', 'newspack-event-logger-nodes' ),
+		value: 'avg',
+	},
+	{
+		label: __( 'Cumulative Response Time', 'newspack-event-logger-nodes' ),
+		value: 'cumulative',
+	},
+	{
+		label: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
+		value: 'memory',
+	},
 ];
 
 /**
  * Breakdown options for the aggregate time chart dropdown.
  */
 export const CHART_BREAKDOWN_OPTIONS = [
-	{ label: 'Status Codes', value: 'status' },
-	{ label: 'Method', value: 'method' },
-	{ label: 'Server', value: 'server' },
-	{ label: 'Country', value: 'country' },
-	{ label: 'From', value: 'from' },
-	{ label: 'User Agent', value: 'ua' },
-	{ label: 'JA4 Hash', value: 'ja4' },
+	{
+		label: __( 'Status Codes', 'newspack-event-logger-nodes' ),
+		value: 'status',
+	},
+	{ label: __( 'Method', 'newspack-event-logger-nodes' ), value: 'method' },
+	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
+	{
+		label: __( 'Country', 'newspack-event-logger-nodes' ),
+		value: 'country',
+	},
+	{ label: __( 'From', 'newspack-event-logger-nodes' ), value: 'from' },
+	{ label: __( 'User Agent', 'newspack-event-logger-nodes' ), value: 'ua' },
+	{ label: __( 'JA4 Hash', 'newspack-event-logger-nodes' ), value: 'ja4' },
 ];

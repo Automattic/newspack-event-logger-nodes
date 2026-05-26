@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { getStatusColor, STATUS_COLORS } from '../shared/utils/formatUtils';
 
@@ -84,7 +85,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			.attr( 'dy', '1em' )
 			.style( 'text-anchor', 'middle' )
 			.style( 'font-size', '12px' )
-			.text( 'Response Time' );
+			.text( __( 'Response Time', 'newspack-event-logger-nodes' ) );
 		g.append( 'path' ).attr( 'class', 'trend-line' );
 		g.append( 'line' ).attr( 'class', 'avg-line' );
 		g.append( 'text' ).attr( 'class', 'avg-label' );
@@ -171,7 +172,13 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			.attr( 'text-anchor', 'end' )
 			.style( 'font-size', '11px' )
 			.style( 'fill', '#e57373' )
-			.text( `avg: ${ Math.round( avgDuration ) }ms` );
+			.text(
+				sprintf(
+					// translators: %d: average response time in milliseconds.
+					__( 'avg: %dms', 'newspack-event-logger-nodes' ),
+					Math.round( avgDuration )
+				)
+			);
 
 		// Update dots using enter/update/exit pattern.
 		const dots = g
@@ -215,13 +222,24 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 		g.select( '.dots' )
 			.selectAll( '.dot' )
 			.append( 'title' )
-			.text(
-				( d ) =>
-					`${ d.time.toLocaleString() }\nStatus: ${
-						d.status || 'N/A'
-					}\nDuration: ${ Math.round(
-						d.duration
-					) }ms\nClick to view details`
+			.text( ( d ) =>
+				[
+					d.time.toLocaleString(),
+					sprintf(
+						// translators: %s: HTTP status code.
+						__( 'Status: %s', 'newspack-event-logger-nodes' ),
+						d.status || __( 'N/A', 'newspack-event-logger-nodes' )
+					),
+					sprintf(
+						// translators: %d: duration in milliseconds.
+						__( 'Duration: %dms', 'newspack-event-logger-nodes' ),
+						Math.round( d.duration )
+					),
+					__(
+						'Click to view details',
+						'newspack-event-logger-nodes'
+					),
+				].join( '\n' )
 			);
 
 		// Draw status code legend.
@@ -348,7 +366,12 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 
 	return (
 		<div className="event-logger-response-chart">
-			<h3>Response Times (Recent Requests)</h3>
+			<h3>
+				{ __(
+					'Response Times (Recent Requests)',
+					'newspack-event-logger-nodes'
+				) }
+			</h3>
 			<div
 				ref={ containerRef }
 				style={ { width: '100%', minHeight: '250px' } }

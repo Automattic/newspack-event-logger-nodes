@@ -5,6 +5,7 @@
  */
 
 import { useState, useMemo, useEffect } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { Modal, Button, SearchControl } from '@wordpress/components';
 import '../styles/custom-event-selector.scss';
 
@@ -99,7 +100,10 @@ export default function CustomEventSelectorModal( {
 
 	return (
 		<Modal
-			title="Select Custom Events to Log"
+			title={ __(
+				'Select Custom Events to Log',
+				'newspack-event-logger-nodes'
+			) }
 			onRequestClose={ onClose }
 			className="event-logger-custom-event-modal"
 		>
@@ -107,7 +111,10 @@ export default function CustomEventSelectorModal( {
 				<SearchControl
 					value={ search }
 					onChange={ setSearch }
-					placeholder="Search events..."
+					placeholder={ __(
+						'Search events…',
+						'newspack-event-logger-nodes'
+					) }
 					className="custom-event-search"
 				/>
 				<div className="custom-event-actions">
@@ -116,21 +123,25 @@ export default function CustomEventSelectorModal( {
 						onClick={ selectAll }
 						className="custom-event-btn"
 					>
-						Select All
+						{ __( 'Select All', 'newspack-event-logger-nodes' ) }
 					</Button>
 					<Button
 						variant="tertiary"
 						onClick={ clearAll }
 						className="custom-event-btn"
 					>
-						Clear All
+						{ __( 'Clear All', 'newspack-event-logger-nodes' ) }
 					</Button>
 					<Button
 						variant="primary"
 						onClick={ handleApply }
 						className="custom-event-apply"
 					>
-						Apply ({ totalSelected })
+						{ sprintf(
+							// translators: %d: number of currently selected events.
+							__( 'Apply (%d)', 'newspack-event-logger-nodes' ),
+							totalSelected
+						) }
 					</Button>
 				</div>
 			</div>
@@ -171,7 +182,17 @@ export default function CustomEventSelectorModal( {
 
 			<div className="custom-event-footer">
 				<span className="custom-event-count">
-					{ totalSelected } of { totalEvents } events selected
+					{ sprintf(
+						// translators: 1: number of selected events, 2: total number of events.
+						_n(
+							'%1$d of %2$d event selected',
+							'%1$d of %2$d events selected',
+							totalEvents,
+							'newspack-event-logger-nodes'
+						),
+						totalSelected,
+						totalEvents
+					) }
 				</span>
 			</div>
 		</Modal>

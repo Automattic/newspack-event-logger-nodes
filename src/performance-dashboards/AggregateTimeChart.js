@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from '../shared/utils/formatUtils';
 import {
@@ -229,8 +230,14 @@ export default function AggregateTimeChart( {
 					.style( 'font-size', '12px' )
 					.text(
 						metric === 'memory'
-							? 'Avg Peak Memory (MB)'
-							: 'Avg Response Time (ms)'
+							? __(
+									'Avg Peak Memory (MB)',
+									'newspack-event-logger-nodes'
+							  )
+							: __(
+									'Avg Response Time (ms)',
+									'newspack-event-logger-nodes'
+							  )
 					);
 
 				// Draw overlaid areas.
@@ -320,7 +327,12 @@ export default function AggregateTimeChart( {
 					.style( 'text-anchor', 'middle' )
 					.style( 'font-size', '12px' )
 					.text(
-						metric === 'cumulative' ? 'Cumulative Time' : 'Requests'
+						metric === 'cumulative'
+							? __(
+									'Cumulative Time',
+									'newspack-event-logger-nodes'
+							  )
+							: __( 'Requests', 'newspack-event-logger-nodes' )
 					);
 
 				// Draw stacked areas.
@@ -370,7 +382,10 @@ export default function AggregateTimeChart( {
 							.slice( 0, 10 );
 						return [
 							{
-								label: 'Total',
+								label: __(
+									'Total',
+									'newspack-event-logger-nodes'
+								),
 								value: saFmt( total ),
 							},
 							...entries,
@@ -402,17 +417,28 @@ export default function AggregateTimeChart( {
 	}
 
 	const metricLabels = {
-		volume: 'Request Volume',
-		avg: 'Avg Response Time',
-		cumulative: 'Cumulative Response Time',
-		memory: 'Avg Peak Memory',
+		volume: __( 'Request Volume', 'newspack-event-logger-nodes' ),
+		avg: __( 'Avg Response Time', 'newspack-event-logger-nodes' ),
+		cumulative: __(
+			'Cumulative Response Time',
+			'newspack-event-logger-nodes'
+		),
+		memory: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
 	};
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';
 	const retentionLabel =
 		RETENTION_SECONDS >= 3600
-			? `${ Math.round( RETENTION_SECONDS / 3600 ) } Hours`
-			: `${ Math.round( RETENTION_SECONDS / 60 ) } Minutes`;
+			? sprintf(
+					// translators: %d: number of hours of data retention shown.
+					__( '%d Hours', 'newspack-event-logger-nodes' ),
+					Math.round( RETENTION_SECONDS / 3600 )
+			  )
+			: sprintf(
+					// translators: %d: number of minutes of data retention shown.
+					__( '%d Minutes', 'newspack-event-logger-nodes' ),
+					Math.round( RETENTION_SECONDS / 60 )
+			  );
 
 	return (
 		<div
@@ -420,9 +446,13 @@ export default function AggregateTimeChart( {
 			style={ { position: 'relative' } }
 		>
 			<h3>
-				{ `${
-					metricLabels[ metric ] || 'Chart'
-				} (Last ${ retentionLabel })` }
+				{ sprintf(
+					// translators: 1: metric name (e.g. Request Volume), 2: retention window (e.g. 24 Hours).
+					__( '%1$s (Last %2$s)', 'newspack-event-logger-nodes' ),
+					metricLabels[ metric ] ||
+						__( 'Chart', 'newspack-event-logger-nodes' ),
+					retentionLabel
+				) }
 				{ titleSuffix }
 			</h3>
 			<div
