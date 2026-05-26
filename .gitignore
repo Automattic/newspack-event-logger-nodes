@@ -14,6 +14,9 @@ npm-debug.log*
 /release/
 /.release-staging/
 
+# Local design working docs (specs/plans) — kept local, never committed
+/docs/superpowers/
+
 # OS files
 .DS_Store
 Thumbs.db
