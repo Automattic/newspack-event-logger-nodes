@@ -37,6 +37,7 @@ const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 // setState here notifies subscribers exactly like the real Node.setState.
 function registerViewFixture( {
 	paused = false,
+	connectionError = false,
 	entries = [],
 	rps = 0,
 	lastEventTime = null,
@@ -63,7 +64,7 @@ function registerViewFixture( {
 			);
 		},
 	};
-	node.setState( 'view', { paused } );
+	node.setState( 'view', { paused, connectionError } );
 	Core.nodes.set( 'requestlog/view', node );
 	return node;
 }
@@ -274,6 +275,22 @@ describe( 'RequestStream', () => {
 		);
 		expect( rps ).not.toBeNull();
 		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
+	} );
+
+	it( 'shows the reconnect banner when the view model reports connectionError', () => {
+		registerViewFixture( { connectionError: true } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.newspack-nodes-connection-banner' )
+		).toBeTruthy();
+	} );
+
+	it( 'does not show the reconnect banner when connected', () => {
+		registerViewFixture( { connectionError: false } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.newspack-nodes-connection-banner' )
+		).toBeNull();
 	} );
 
 	it( 'falls back to an empty model when the view node is absent', () => {

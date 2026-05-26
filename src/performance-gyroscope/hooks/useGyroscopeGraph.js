@@ -3,12 +3,13 @@
  * conversion of the old Inflight component). On mount it builds three nodes —
  * `gyroscope/stream` (SSE-in), `gyroscope/transform` (envelope → dispatch),
  * `gyroscope/view` (in-flight model) — and wires the data path
- * stream → transform → view. A second effect owns the live connection: while the
- * page is visible it resets the view map and subscribes the stream to the
- * `gyroscope` feed, otherwise it closes it (this mirrors Inflight's
- * page-visibility connect/close effect + its `onBeforeConnect` map reset). The
- * view publishes its low-frequency model via `setState('view', …)`; the React
- * view reads the high-frequency in-flight model directly via
+ * stream → transform → view, plus `stream.controlSink = view` so connection-status
+ * controls reach the view directly (the transform would drop them). A second effect
+ * owns the live connection: while the page is visible it resets the view map and
+ * subscribes the stream to the `gyroscope` feed, otherwise it closes it (this
+ * mirrors Inflight's page-visibility connect/close effect + its `onBeforeConnect`
+ * map reset). The view publishes its low-frequency model via `setState('view', …)`;
+ * the React view reads the high-frequency in-flight model directly via
  * `Core.node('gyroscope/view').snapshot()` each refresh tick.
  *
  * Torn down on unmount: the stream is closed, then all three nodes are
@@ -75,7 +76,7 @@ export function useGyroscopeGraph( opts = {} ) {
 	// mount effect has built the graph.
 	const [ viewReady, setViewReady ] = useState( false );
 
-	// Mount the graph once: stream → transform → view.
+	// Mount the graph once: stream → transform → view (+ stream.controlSink = view).
 	useEffect( () => {
 		const { connector } = optsRef.current;
 		const stream = createGyroscopeStream( STREAM, { connector } );
@@ -83,6 +84,8 @@ export function useGyroscopeGraph( opts = {} ) {
 		const view = createGyroscopeView( VIEW );
 		stream.sink = transform;
 		transform.sink = view;
+		// Connection-status controls bypass the transform (which would drop them).
+		stream.controlSink = view;
 		streamRef.current = stream;
 		viewRef.current = view;
 

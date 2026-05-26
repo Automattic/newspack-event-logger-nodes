@@ -24,14 +24,15 @@ const urlHash = ( url ) => {
  *   NOT publish. The React view reads these directly off the node each animation
  *   frame so a high-volume stream never re-renders React per request.
  * - LOW frequency (control): only `_control` publishes the small view model via
- *   `setState('view', { paused })` — the pause button + empty-state label,
- *   consumed by `useNodeState('requestlog/view','view')`.
+ *   `setState('view', { paused, connectionError })` — the pause button, the
+ *   empty-state label, and the reconnect banner, consumed by
+ *   `useNodeState('requestlog/view','view')`.
  *
  * `fill()` accepts two TM_STRUCT shapes:
  * - a row (`VALUE` = the mapped completed-request from `requestlog/transform`):
  *   enriched + appended newest-first to a capped buffer (unless paused), updating
  *   requests/second + last-event time.
- * - a control (`VALUE = { action, … }`): `pause`, `clear`.
+ * - a control (`VALUE = { action, … }`): `pause`, `clear`, `connection`.
  *
  * Buffer + RPS + entry-enrichment logic migrated verbatim from `RequestStream.js`.
  */
@@ -45,6 +46,7 @@ class RequestLogViewNode extends Node {
 		this.rps = 0;
 		this.lastEventTime = null;
 		this.paused = false;
+		this.connectionError = false;
 		this._publish();
 	}
 
@@ -100,6 +102,8 @@ class RequestLogViewNode extends Node {
 			this.paused = value.paused;
 		} else if ( 'clear' === value.action ) {
 			this._clear();
+		} else if ( 'connection' === value.action ) {
+			this.connectionError = value.connectionError;
 		}
 	}
 
@@ -131,9 +135,13 @@ class RequestLogViewNode extends Node {
 	// Publish ONLY the low-frequency view model. `entries` / `rps` /
 	// `lastEventTime` are the high-frequency buffer the rAF reads off the node
 	// directly — keeping them out of setState is what stops a busy stream
-	// re-rendering React per request.
+	// re-rendering React per request. `connectionError` is low-frequency (only
+	// flips on connect/disconnect) so it rides setState for the reconnect banner.
 	_publish() {
-		this.setState( 'view', { paused: this.paused } );
+		this.setState( 'view', {
+			paused: this.paused,
+			connectionError: this.connectionError,
+		} );
 	}
 }
 

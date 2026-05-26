@@ -180,9 +180,29 @@ test( 'clear empties the map, history and rps', () => {
 	expect( v.rps ).toBe( 0 );
 } );
 
+test( 'connection control publishes connectionError', () => {
+	const v = createGyroscopeView( 'gyroscope/view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	expect( v.setStateCache.view.connectionError ).toBe( true );
+} );
+
+test( 'a connectionError:false control clears the published flag', () => {
+	const v = createGyroscopeView( 'gyroscope/view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
+	expect( v.setStateCache.view.connectionError ).toBe( false );
+} );
+
+test( 'an unrelated control leaves connectionError untouched', () => {
+	const v = createGyroscopeView( 'gyroscope/view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	v.fill( controlMsg( { action: 'clear' } ) );
+	expect( v.setStateCache.view.connectionError ).toBe( true );
+} );
+
 test( 'publishes an initial view model on construction', () => {
 	const v = createGyroscopeView( 'gyroscope/view' );
-	expect( v.setStateCache.view ).toEqual( {} );
+	expect( v.setStateCache.view ).toEqual( { connectionError: false } );
 } );
 
 test( 'names the node', () => {

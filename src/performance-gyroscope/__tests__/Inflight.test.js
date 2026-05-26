@@ -25,16 +25,38 @@ const { useGyroscopeGraph } = require( '../hooks/useGyroscopeGraph' );
 // A minimal stand-in for the gyroscope/view node: snapshot() returns the render
 // rows (the real node reaps + sorts + caps here), and rps / lastEventTime live on
 // the instance — exactly what the refresh tick reads off Core.node('gyroscope/view').
+// The register/setState/setStateCache machinery backs useNodeState('gyroscope/view',
+// 'view'), which the view reads for the low-frequency { connectionError } model
+// (the reconnect banner). setState here notifies subscribers like the real Node.
 function registerViewFixture( {
 	rows = [],
 	rps = 0,
 	lastEventTime = null,
+	connectionError = false,
 } = {} ) {
 	const node = {
 		rps,
 		lastEventTime,
 		snapshot: jest.fn( () => rows ),
+		registrations: { view: {} },
+		setStateCache: {},
+		register( event, listener, cb ) {
+			this.registrations[ event ][ listener ] = cb;
+			if ( event in this.setStateCache ) {
+				cb( this.setStateCache[ event ] );
+			}
+		},
+		unregister( event, listener ) {
+			delete this.registrations[ event ]?.[ listener ];
+		},
+		setState( event, payload ) {
+			this.setStateCache[ event ] = payload;
+			Object.values( this.registrations[ event ] || {} ).forEach(
+				( cb ) => cb( payload )
+			);
+		},
 	};
+	node.setState( 'view', { connectionError } );
 	Core.nodes.set( 'gyroscope/view', node );
 	return node;
 }
@@ -89,6 +111,22 @@ describe( 'Inflight', () => {
 		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent ).toContain( 'No active requests.' );
+	} );
+
+	it( 'shows the reconnect banner when the view model reports connectionError', () => {
+		registerViewFixture( { connectionError: true } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.newspack-nodes-connection-banner' )
+		).toBeTruthy();
+	} );
+
+	it( 'does not show the reconnect banner when connected', () => {
+		registerViewFixture( { connectionError: false } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.newspack-nodes-connection-banner' )
+		).toBeNull();
 	} );
 
 	it( 'renders rows read from the view node snapshot on a refresh tick', () => {

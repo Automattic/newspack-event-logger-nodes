@@ -143,15 +143,41 @@ test( 'clear empties the buffer, counter and rps', () => {
 	expect( v.entries[ 0 ].isEven ).toBe( false );
 } );
 
-test( 'the published model carries only { paused }', () => {
+test( 'the published model carries paused and connectionError', () => {
 	const v = createRequestLogView( 'requestlog/view' );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
-	expect( Object.keys( v.setStateCache.view ) ).toEqual( [ 'paused' ] );
+	expect( Object.keys( v.setStateCache.view ).sort() ).toEqual( [
+		'connectionError',
+		'paused',
+	] );
+} );
+
+test( 'connection control publishes connectionError', () => {
+	const v = createRequestLogView( 'requestlog/view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	expect( v.setStateCache.view.connectionError ).toBe( true );
+} );
+
+test( 'a connectionError:false control clears the published flag', () => {
+	const v = createRequestLogView( 'requestlog/view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
+	expect( v.setStateCache.view.connectionError ).toBe( false );
+} );
+
+test( 'an unrelated control leaves connectionError untouched', () => {
+	const v = createRequestLogView( 'requestlog/view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	v.fill( controlMsg( { action: 'pause', paused: true } ) );
+	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
 	const v = createRequestLogView( 'requestlog/view' );
-	expect( v.setStateCache.view ).toEqual( { paused: false } );
+	expect( v.setStateCache.view ).toEqual( {
+		paused: false,
+		connectionError: false,
+	} );
 } );
 
 test( 'names the node', () => {

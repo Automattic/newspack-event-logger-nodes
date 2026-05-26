@@ -52,10 +52,6 @@ input.event-logger-error-log-search {
 	}
 }
 
-.event-logger-error-log-error {
-	@include base.dark-error-banner;
-}
-
 .event-logger-error-log-list {
 	flex: 1;
 	overflow-y: scroll;

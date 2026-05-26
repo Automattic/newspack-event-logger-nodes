@@ -28,17 +28,20 @@ beforeEach( () => {
 } );
 
 // A fake connector matching the stream node's seam (connect/close); records the
-// last subscription + close count for the teardown / pause assertions.
+// last subscription + status handler + close count for the teardown / pause /
+// connection-status assertions.
 function makeFakeConnector() {
 	return {
 		closeCount: 0,
 		connectCount: 0,
 		lastSubscription: null,
 		_onEnvelope: null,
-		connect( subscription, onEnvelope ) {
+		_onStatus: null,
+		connect( subscription, onEnvelope, onStatus ) {
 			this.connectCount += 1;
 			this.lastSubscription = subscription;
 			this._onEnvelope = onEnvelope;
+			this._onStatus = onStatus;
 		},
 		close() {
 			this.closeCount += 1;
@@ -47,6 +50,11 @@ function makeFakeConnector() {
 		deliverMessage( envelope ) {
 			if ( this._onEnvelope ) {
 				this._onEnvelope( envelope );
+			}
+		},
+		deliverStatus( status ) {
+			if ( this._onStatus ) {
+				this._onStatus( status );
 			}
 		},
 	};
@@ -60,7 +68,7 @@ function completedEnvelope( req ) {
 }
 
 describe( 'useRequestLogGraph — mount + wiring', () => {
-	test( 'mounts the three nodes wired stream→transform→view', () => {
+	test( 'mounts the three nodes wired stream→transform→view and stream.controlSink=view', () => {
 		const fake = makeFakeConnector();
 		renderHook( () => useRequestLogGraph( { connector: fake } ) );
 		expect( Core.node( 'requestlog/stream' ) ).toBeTruthy();
@@ -72,6 +80,20 @@ describe( 'useRequestLogGraph — mount + wiring', () => {
 		expect( Core.node( 'requestlog/transform' ).sink ).toBe(
 			Core.node( 'requestlog/view' )
 		);
+		expect( Core.node( 'requestlog/stream' ).controlSink ).toBe(
+			Core.node( 'requestlog/view' )
+		);
+	} );
+
+	test( 'a connection status reaches the view (not the transform) and publishes connectionError', () => {
+		const fake = makeFakeConnector();
+		renderHook( () => useRequestLogGraph( { connector: fake } ) );
+		act( () => fake.deliverStatus( { connectionError: true } ) );
+		const view = Core.node( 'requestlog/view' );
+		expect( view.connectionError ).toBe( true );
+		expect( view.setStateCache.view.connectionError ).toBe( true );
+		// The status did NOT produce a row (the transform would have dropped it).
+		expect( view.entries ).toHaveLength( 0 );
 	} );
 
 	test( 'subscribes the stream to the completed feed on mount when visible', () => {

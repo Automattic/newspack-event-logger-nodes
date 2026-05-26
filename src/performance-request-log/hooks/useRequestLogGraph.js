@@ -3,11 +3,13 @@
  * conversion of the old RequestStream component). On mount it builds three nodes —
  * `requestlog/stream` (SSE-in), `requestlog/transform` (envelope → row),
  * `requestlog/view` (view model) — and wires the data path stream → transform →
- * view. A second effect owns the live connection: while the page is visible AND
- * not paused it subscribes the stream to the `completed` feed, otherwise it closes
- * it (this mirrors RequestStream's page-visibility / pause effect). The view
- * publishes its state via `setState('view', …)`; the React view reads it
- * separately with `useNodeState('requestlog/view','view')`.
+ * view, plus `stream.controlSink = view` so connection-status controls reach the
+ * view directly (the transform would drop them). A second effect owns the live
+ * connection: while the page is visible AND not paused it subscribes the stream to
+ * the `completed` feed, otherwise it closes it (this mirrors RequestStream's
+ * page-visibility / pause effect). The view publishes its state via
+ * `setState('view', …)`; the React view reads it separately with
+ * `useNodeState('requestlog/view','view')`.
  *
  * Returns the thin control callbacks the view calls — `setPaused` (flips the
  * hook's paused state, which the view's control fill + the connection effect both
@@ -82,7 +84,7 @@ export function useRequestLogGraph( opts = {} ) {
 	// runs once the mount effect has built the graph.
 	const [ viewReady, setViewReady ] = useState( false );
 
-	// Mount the graph once: stream → transform → view.
+	// Mount the graph once: stream → transform → view (+ stream.controlSink = view).
 	useEffect( () => {
 		const { connector, maxEntries } = optsRef.current;
 		const stream = createRequestLogStream( STREAM, { connector } );
@@ -90,6 +92,8 @@ export function useRequestLogGraph( opts = {} ) {
 		const view = createRequestLogView( VIEW, { maxEntries } );
 		stream.sink = transform;
 		transform.sink = view;
+		// Connection-status controls bypass the transform (which would drop them).
+		stream.controlSink = view;
 		streamRef.current = stream;
 		viewRef.current = view;
 

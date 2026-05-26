@@ -186,7 +186,7 @@ describe( 'ErrorLog', () => {
 		registerViewFixture( { connectionError: true } );
 		const { container } = mount();
 		expect(
-			container.querySelector( '.event-logger-error-log-error' )
+			container.querySelector( '.newspack-nodes-connection-banner' )
 		).toBeTruthy();
 	} );
 
@@ -194,7 +194,7 @@ describe( 'ErrorLog', () => {
 		registerViewFixture( { connectionError: false } );
 		const { container } = mount();
 		expect(
-			container.querySelector( '.event-logger-error-log-error' )
+			container.querySelector( '.newspack-nodes-connection-banner' )
 		).toBeNull();
 	} );
 

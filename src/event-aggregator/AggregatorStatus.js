@@ -18,6 +18,7 @@ import {
 	useAggregatorStatusGraph,
 	REFRESH_OPTIONS,
 } from './hooks/useAggregatorStatusGraph';
+import ConnectionBanner from '../shared/components/ConnectionBanner';
 import './styles/aggregator-status.scss';
 
 // The view model before the first poll publishes one — drives the loading gate.
@@ -331,8 +332,11 @@ export default function AggregatorStatus() {
 			) }
 
 			{ /* Error State */ }
-			{ error && ! loading && (
-				<div className="aggregator-status-error">{ error }</div>
+			{ ! loading && (
+				<ConnectionBanner
+					connectionError={ !! error }
+					message={ error }
+				/>
 			) }
 
 			{ /* Server List */ }

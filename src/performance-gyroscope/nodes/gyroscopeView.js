@@ -12,7 +12,8 @@ const RPS_WINDOW_MS = 10000;
  *   sorted+capped render list (which also reaps completed entries + updates RPS)
  *   so a high-volume stream never re-renders React per message.
  * - LOW frequency (control): only `_control` publishes the small view model via
- *   `setState('view', …)`, consumed by `useNodeState('gyroscope/view','view')`.
+ *   `setState('view', { connectionError })` — the reconnect banner, consumed by
+ *   `useNodeState('gyroscope/view','view')`.
  *
  * `fill()` accepts the TM_STRUCT dispatch shapes from `gyroscope/transform`:
  * - `{ type: 'inflight', requests }`: upsert each request by rid, NEVER over-
@@ -20,7 +21,7 @@ const RPS_WINDOW_MS = 10000;
  *   may already be in the map).
  * - `{ type: 'complete', request }`: merge into the existing entry, mark
  *   state=complete, derive time_ms/est_ms from duration_ms.
- * - a control (`{ action, … }`): `clear`.
+ * - a control (`{ action, … }`): `clear`, `connection`.
  *
  * The map accumulation, the `snapshot()` reaper (delete-completed-after-one-tick,
  * sort by est_ms desc, cap), and the 10s-window RPS are migrated verbatim from
@@ -34,6 +35,7 @@ class GyroscopeViewNode extends Node {
 		this.completedHistory = []; // Completed requests with timestamps for rps.
 		this.rps = 0;
 		this.lastEventTime = null;
+		this.connectionError = false;
 		this._publish();
 	}
 
@@ -84,6 +86,8 @@ class GyroscopeViewNode extends Node {
 	_control( value ) {
 		if ( 'clear' === value.action ) {
 			this._clear();
+		} else if ( 'connection' === value.action ) {
+			this.connectionError = value.connectionError;
 		}
 	}
 
@@ -134,9 +138,10 @@ class GyroscopeViewNode extends Node {
 	// Publish ONLY the low-frequency view model. `requests` / `rps` /
 	// `lastEventTime` are the high-frequency state the refresh tick reads off the
 	// node directly via snapshot() — keeping them out of setState is what stops a
-	// busy stream re-rendering React per message.
+	// busy stream re-rendering React per message. `connectionError` is low-frequency
+	// (only flips on connect/disconnect) so it rides setState for the reconnect banner.
 	_publish() {
-		this.setState( 'view', {} );
+		this.setState( 'view', { connectionError: this.connectionError } );
 	}
 }
 

@@ -28,17 +28,20 @@ beforeEach( () => {
 } );
 
 // A fake connector matching the stream node's seam (connect/close); records the
-// last subscription + counts so teardown / visibility assertions can read them.
+// last subscription + status handler + counts so teardown / visibility /
+// connection-status assertions can read them.
 function makeFakeConnector() {
 	return {
 		closeCount: 0,
 		connectCount: 0,
 		lastSubscription: null,
 		_onEnvelope: null,
-		connect( subscription, onEnvelope ) {
+		_onStatus: null,
+		connect( subscription, onEnvelope, onStatus ) {
 			this.connectCount += 1;
 			this.lastSubscription = subscription;
 			this._onEnvelope = onEnvelope;
+			this._onStatus = onStatus;
 		},
 		close() {
 			this.closeCount += 1;
@@ -47,6 +50,11 @@ function makeFakeConnector() {
 		deliverMessage( envelope ) {
 			if ( this._onEnvelope ) {
 				this._onEnvelope( envelope );
+			}
+		},
+		deliverStatus( status ) {
+			if ( this._onStatus ) {
+				this._onStatus( status );
 			}
 		},
 	};
@@ -61,7 +69,7 @@ function inflightEnvelope( requests ) {
 }
 
 describe( 'useGyroscopeGraph — mount + wiring', () => {
-	test( 'mounts the three nodes wired stream→transform→view', () => {
+	test( 'mounts the three nodes wired stream→transform→view and stream.controlSink=view', () => {
 		const fake = makeFakeConnector();
 		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
 		expect( Core.node( 'gyroscope/stream' ) ).toBeTruthy();
@@ -73,6 +81,20 @@ describe( 'useGyroscopeGraph — mount + wiring', () => {
 		expect( Core.node( 'gyroscope/transform' ).sink ).toBe(
 			Core.node( 'gyroscope/view' )
 		);
+		expect( Core.node( 'gyroscope/stream' ).controlSink ).toBe(
+			Core.node( 'gyroscope/view' )
+		);
+	} );
+
+	test( 'a connection status reaches the view (not the transform) and publishes connectionError', () => {
+		const fake = makeFakeConnector();
+		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
+		act( () => fake.deliverStatus( { connectionError: true } ) );
+		const view = Core.node( 'gyroscope/view' );
+		expect( view.connectionError ).toBe( true );
+		expect( view.setStateCache.view.connectionError ).toBe( true );
+		// The status did NOT enter the in-flight map (the transform would drop it).
+		expect( view.requests.size ).toBe( 0 );
 	} );
 
 	test( 'subscribes the stream to the gyroscope feed on mount when visible', () => {

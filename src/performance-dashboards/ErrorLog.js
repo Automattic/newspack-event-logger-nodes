@@ -31,6 +31,7 @@ import {
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import useVirtualization from '../shared/hooks/useVirtualization';
+import ConnectionBanner from '../shared/components/ConnectionBanner';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -435,11 +436,7 @@ export default function ErrorLog() {
 				</div>
 			</div>
 
-			{ connectionError && (
-				<div className="event-logger-error-log-error">
-					Connection lost. Reconnecting…
-				</div>
-			) }
+			<ConnectionBanner connectionError={ connectionError } />
 
 			<div
 				role="row"
