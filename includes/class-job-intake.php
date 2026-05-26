@@ -89,7 +89,7 @@ class Job_Intake {
 			$config         = \class_exists( '\Newspack_Nodes\Config' )
 				? \Newspack_Nodes\Config::load_config()
 				: [];
-			$base_dir       = $base_dir       ?? (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+			$base_dir       = $base_dir       ?? \Newspack_Nodes\Config::get_base_directory();
 			$num_partitions = $num_partitions ?? (int) ( $config['num_partitions'] ?? 1 );
 		}
 		$this->base_dir       = \rtrim( $base_dir, '/' );

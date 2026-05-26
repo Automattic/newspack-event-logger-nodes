@@ -362,7 +362,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-				$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+				$base_dir       = RuntimeConfig::get_base_directory();
 				$log_base       = $base_dir . '/logs';
 				$scanned        = 0;
 
@@ -398,7 +398,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-				$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+				$base_dir       = RuntimeConfig::get_base_directory();
 				$log_base       = $base_dir . '/logs';
 
 				if ( $partition < 0 || $partition >= $num_partitions ) {
@@ -1435,7 +1435,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function find_recent_requests_for_url( string $url_hash ): array {
 		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$base_dir       = RuntimeConfig::get_base_directory();
 		$log_base       = $base_dir . '/logs';
 
 		$requests      = [];
@@ -1585,7 +1585,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function scan_requests_for_events( string $rid ): array {
 		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$base_dir       = RuntimeConfig::get_base_directory();
 		$log_base       = $base_dir . '/logs';
 
 		$events  = [];
@@ -1649,7 +1649,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function collect_request_list( int $limit ): array {
 		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$base_dir       = RuntimeConfig::get_base_directory();
 		$log_base       = $base_dir . '/logs';
 
 		$entries = [];
@@ -1702,7 +1702,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function find_request_envelope( string $rid ): array {
 		$config         = RuntimeConfig::load_config();
 		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+		$base_dir       = RuntimeConfig::get_base_directory();
 		$log_base       = $base_dir . '/logs';
 
 		$result  = null;

@@ -262,4 +262,34 @@ class JobIntakeTest extends TestCase {
 		// Second call succeeds without contention.
 		$this->assertTrue( Job_Intake::queue( 'b', [], null, $this->tmp, 1 ) );
 	}
+
+	// --- Config fail-loud (no silent /tmp/newspack-nodes default) -----------
+
+	public function test_constructor_propagates_throw_when_base_directory_unconfigured(): void {
+		// With no explicit base_dir AND base_directory unconfigured, the
+		// constructor's config fallback must propagate the strict accessor's
+		// RuntimeException — NOT silently default to `/tmp/newspack-nodes`.
+		$prev_env = \getenv( 'LOCAL_NEWSPACK_NODES_CONF' );
+		$conf     = "{$this->tmp}/empty-base.php";
+		\file_put_contents( $conf, "<?php\nreturn [ 'base_directory' => '' ];\n" );
+		// Whitelist the temp dir on the substrate Config so the override file
+		// validates (Job_Intake reads the substrate's get_base_directory()).
+		$ref    = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'allowed_config_dirs' );
+		$ref->setAccessible( true );
+		$dirs   = $ref->getValue();
+		$dirs[] = $this->tmp;
+		$ref->setValue( null, $dirs );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
+		\update_option( 'newspack_nodes_base_directory', '' );
+		\Newspack_Nodes\Config::reset();
+
+		try {
+			$this->expectException( \RuntimeException::class );
+			$this->expectExceptionMessageMatches( '/base_directory not configured/' );
+			new Job_Intake();
+		} finally {
+			\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . ( false === $prev_env ? '' : $prev_env ) );
+			\Newspack_Nodes\Config::reset();
+		}
+	}
 }

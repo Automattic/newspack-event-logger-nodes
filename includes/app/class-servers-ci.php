@@ -335,8 +335,7 @@ class Servers_CI_Node extends Service_CI_Node {
 	 */
 	private static function request_supervisor_restart(): void {
 		try {
-			$config   = RuntimeConfig::load_config();
-			$base_dir = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+			$base_dir = RuntimeConfig::get_base_directory();
 			$lock_dir = $base_dir . '/locks/supervisor.lock.d';
 			if ( \is_dir( $lock_dir ) ) {
 				\Newspack_Nodes\Lock_Node::request_restart_at( $lock_dir );

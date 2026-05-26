@@ -74,7 +74,7 @@ class Events_CI_Node extends Service_CI_Node {
 						$limit          = \max( 1, \min( 1000, (int) ( $decoded['limit'] ?? 100 ) ) );
 						$config         = RuntimeConfig::load_config();
 						$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-						$base_dir       = (string) ( $config['base_directory'] ?? '/tmp/newspack-nodes' );
+						$base_dir       = RuntimeConfig::get_base_directory();
 						$log_base       = $base_dir . '/logs';
 
 						$entries = [];
