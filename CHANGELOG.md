@@ -125,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Restored read-time type coercion in the WP-option overlay (`Config::load_config`).** A prior simplification removed the per-key coercion, so an `array_strings` option stored as a newline string overlaid the config as a raw string (breaking the `foreach` consumers that need a list) and `int`/`float` options stored as numeric strings overlaid as strings. A minimal `coerce_option_value()` now splits the array type into a trimmed list and casts `int`/`float` (non-numeric → falls back to the file default), restoring the shape consumers expect. Per-element `sanitize_text_field` stays at write time (off the per-request read path), where it moved.
 - **Profiler mu-plugin was silently inert after the `LogManager` → `Log_Manager` rename.**
   `mu-plugins/00-newspack-profiler.php` gated its `plugins_loaded` flush on
   `class_exists( '…\LogManager' )` and called `LogManager::instance()`, but the class is
