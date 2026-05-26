@@ -3,7 +3,19 @@
  * Error Log Component
  *
  * Real-time scrolling log of errors and warnings from errors.log.
- * Modeled after RequestStream — same smooth scroll, virtualization, and layout.
+ *
+ * This is a THIN view over the `perferrors/*` node graph (mounted by
+ * `useErrorLogGraph`). The graph owns all data: `perferrors/stream` holds the
+ * SSE connection, `perferrors/transform` turns envelopes into rows, and
+ * `perferrors/view` holds the buffer + view model. This component only renders.
+ *
+ * Two read paths, matching the view node's two cadences:
+ * - LOW frequency: `useNodeState('perferrors/view','view')` for
+ *   `{ paused, connectionError, lastEventTime }` (the pause button, the reconnect
+ *   banner, the empty-state label, and the "Xs ago" staleness).
+ * - HIGH frequency: the rAF reads `Core.node('perferrors/view').entries` directly
+ *   each frame — a busy stream never re-renders React per error.
+ *
  * Click any request ID to view its full trace in the Performance Dashboard.
  */
 
@@ -16,14 +28,18 @@ import {
 	memo,
 } from '@wordpress/element';
 
-import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useMessageStream from '../shared/hooks/useMessageStream';
+import { Core, useNodeState } from '@newspack-nodes/runtime';
+import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import useVirtualization from '../shared/hooks/useVirtualization';
-import transformErrorLine from './transformErrorLine';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
-const MAX_ENTRIES = 5000;
+const VIEW_NODE = 'perferrors/view';
+const EMPTY_VIEW = {
+	paused: false,
+	connectionError: false,
+	lastEventTime: null,
+};
 
 /**
  * Column definitions for the error log.
@@ -162,14 +178,21 @@ const ErrorRow = memo( function ErrorRow( {
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function ErrorLog() {
-	const [ entries, setEntries ] = useState( [] );
-	const [ filter, setFilter ] = useState( '' );
-	const [ isPaused, setIsPaused ] = useState( false );
+	// Mount the node graph; it returns the thin control callbacks.
+	const { setPaused, clear } = useErrorLogGraph();
 
-	const entriesBufferRef = useRef( [] );
-	const entryCounterRef = useRef( 0 );
-	const lastProcessedCountRef = useRef( 0 );
-	const isPageVisible = usePageVisibility();
+	// Low-frequency view model (pause button + reconnect banner + empty-state).
+	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
+	const { paused: isPaused, connectionError } = view;
+
+	const [ filter, setFilter ] = useState( '' );
+	// The rendered entry buffer, fed from the rAF at frame rate (read straight off
+	// the view node). The original re-rendered via a 100ms setInterval; per-frame
+	// is visually identical and keeps everything in one push.
+	const [ entries, setEntries ] = useState( [] );
+
+	const visibleColumns = DEFAULT_COLUMNS;
+
 	const listRef = useRef( null );
 	const contentRef = useRef( null );
 	const offsetRef = useRef( 0 );
@@ -178,42 +201,19 @@ export default function ErrorLog() {
 	const isAdjustingScrollRef = useRef( false );
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 );
 
-	const visibleColumns = DEFAULT_COLUMNS;
-
-	// Per-Message transform: each envelope on /messages/stream?subscribe=errors
-	// becomes one row in the buffer. Drops envelopes without rid (matches the
-	// legacy server-side filter) and the substrate's `connected` envelope.
-	const handleMessage = useCallback( ( envelope ) => {
-		if ( envelope[ 5 ] === 'connected' ) {
-			return;
-		}
-		const row = transformErrorLine( envelope );
-		if ( ! row ) {
-			return;
-		}
-		entryCounterRef.current += 1;
-		entriesBufferRef.current.unshift( {
-			id: entryCounterRef.current,
-			rid: row.rid,
-			ts: row.ts,
-			k: row.k,
-			m: row.m,
-			isEven: entryCounterRef.current % 2 === 0,
-		} );
-		if ( entriesBufferRef.current.length > MAX_ENTRIES ) {
-			entriesBufferRef.current.length = MAX_ENTRIES;
-		}
-	}, [] );
-
-	const {
-		error,
-		connect,
-		close: closeSource,
-		lastEventTime,
-	} = useMessageStream( {
-		subscriptions: [ 'errors' ],
-		onMessage: handleMessage,
-	} );
+	// Last rendered buffer length — drives the smooth/virtual scroll math each
+	// frame (replaces the old per-batch newCount the SSE handler tracked).
+	const lastRenderedCountRef = useRef( 0 );
+	// Last filtered length seen by the rAF — for scroll compensation.
+	const filteredCountRef = useRef( 0 );
+	// Last state we pushed to React — so idle frames (nothing changed) push no
+	// new refs and don't re-render.
+	const pushedRef = useRef( { count: -1, filter: null } );
+	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
+	const filterRef = useRef( filter );
+	filterRef.current = filter;
+	// Last node lastEventTime the rAF observed — drives the "Xs ago" staleness.
+	const lastEventTimeRef = useRef( null );
 
 	// Ticking "Xs ago" display.
 	const [ now, setNow ] = useState( Date.now() );
@@ -221,35 +221,89 @@ export default function ErrorLog() {
 		const id = setInterval( () => setNow( Date.now() ), 1000 );
 		return () => clearInterval( id );
 	}, [] );
-	const staleSec = lastEventTime
-		? Math.max( 0, Math.floor( ( now - lastEventTime ) / 1000 ) )
+	const staleSec = lastEventTimeRef.current
+		? Math.max( 0, Math.floor( ( now - lastEventTimeRef.current ) / 1000 ) )
 		: null;
 
-	// Smooth scroll animation.
-	useEffect( () => {
-		let lastOffsetRows = 0;
+	// A row matches the filter on keyword, message, or request id.
+	const matchesFilter = ( e, needle ) =>
+		e.k?.toLowerCase().includes( needle ) ||
+		e.m?.toLowerCase().includes( needle ) ||
+		e.rid?.toLowerCase().includes( needle );
 
+	// Animation/read loop. Reads the high-volume buffer (node.entries) directly
+	// every frame, snapshots + filters it, drives the smooth scroll, and pushes
+	// the entries snapshot to React only when changed.
+	useEffect( () => {
 		const animate = () => {
+			const node = Core.node( VIEW_NODE );
+			const buffer = node?.entries ?? [];
+			const filterLower = filterRef.current.toLowerCase();
+
+			// New rows since last frame → drive scroll + staleness.
+			const newCount = Math.max(
+				0,
+				buffer.length - lastRenderedCountRef.current
+			);
+			if ( newCount > 0 && node?.lastEventTime ) {
+				lastEventTimeRef.current = node.lastEventTime;
+			}
+
+			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
+			// what we draw / count.
+			const snapshot = filterRef.current
+				? buffer.filter( ( e ) => matchesFilter( e, filterLower ) )
+				: buffer.slice();
+
+			// Visible-count delta in the filtered view, for scroll compensation.
+			const visibleNewCount = snapshot.length - filteredCountRef.current;
+			const list = listRef.current;
+			const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
+
+			filteredCountRef.current = snapshot.length;
+			lastRenderedCountRef.current = buffer.length;
+
+			if ( visibleNewCount > 0 ) {
+				if ( isAtTop ) {
+					// Compensate offset — decay will smooth-scroll to 0.
+					offsetRef.current -= visibleNewCount * ROW_HEIGHT;
+				} else if ( list ) {
+					// Maintain scroll position when scrolled down.
+					isAdjustingScrollRef.current = true;
+					list.scrollTop += visibleNewCount * ROW_HEIGHT;
+				}
+			}
+
+			// Decay offset toward 0 (smooth scroll), updating virtualization when
+			// the offset crosses row boundaries.
 			const content = contentRef.current;
 			if ( content && Math.abs( offsetRef.current ) > 0.5 ) {
 				offsetRef.current += ( 0 - offsetRef.current ) * 0.01;
 				content.style.transform = `translate3d(0,${ offsetRef.current }px,0)`;
-
-				const currentOffsetRows = Math.floor(
-					Math.abs( offsetRef.current ) / ROW_HEIGHT
-				);
-				if ( currentOffsetRows !== lastOffsetRows ) {
-					lastOffsetRows = currentOffsetRows;
-					setAnimOffsetRows( currentOffsetRows );
-				}
 			} else if ( content && offsetRef.current !== 0 ) {
 				offsetRef.current = 0;
 				content.style.transform = '';
-				if ( lastOffsetRows !== 0 ) {
-					lastOffsetRows = 0;
-					setAnimOffsetRows( 0 );
-				}
 			}
+			const currentOffsetRows = Math.floor(
+				Math.abs( offsetRef.current ) / ROW_HEIGHT
+			);
+
+			// Push the entries snapshot ONLY when it changed — the count (rides the
+			// array identity) or the filter. Skipping unchanged frames keeps idle
+			// frames from re-rendering React.
+			const pushed = pushedRef.current;
+			if (
+				snapshot.length !== pushed.count ||
+				filterRef.current !== pushed.filter
+			) {
+				setEntries( snapshot );
+				pushed.count = snapshot.length;
+				pushed.filter = filterRef.current;
+			}
+			setAnimOffsetRows( ( prev ) =>
+				prev === currentOffsetRows ? prev : currentOffsetRows
+			);
+
 			rafRef.current = requestAnimationFrame( animate );
 		};
 
@@ -257,63 +311,11 @@ export default function ErrorLog() {
 		return () => cancelAnimationFrame( rafRef.current );
 	}, [] );
 
-	// Batch UI updates.
-	useEffect( () => {
-		const timer = setInterval( () => {
-			const currentCount = entryCounterRef.current;
-			const newCount = currentCount - lastProcessedCountRef.current;
-
-			if ( newCount > 0 ) {
-				const buffer = entriesBufferRef.current;
-				const newEntries = buffer.slice( 0, newCount );
-				const filterLower = filter.toLowerCase();
-				const visibleNewCount = filter
-					? newEntries.filter(
-							( e ) =>
-								e.k?.toLowerCase().includes( filterLower ) ||
-								e.m?.toLowerCase().includes( filterLower ) ||
-								e.rid?.toLowerCase().includes( filterLower )
-					  ).length
-					: newCount;
-
-				const list = listRef.current;
-				const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
-
-				if ( visibleNewCount > 0 && isAtTop ) {
-					offsetRef.current -= visibleNewCount * ROW_HEIGHT;
-				}
-
-				setEntries( [ ...buffer ] );
-
-				if ( visibleNewCount > 0 && ! isAtTop ) {
-					isAdjustingScrollRef.current = true;
-					list.scrollTop += visibleNewCount * ROW_HEIGHT;
-					requestAnimationFrame( () => {
-						isAdjustingScrollRef.current = false;
-					} );
-				}
-
-				lastProcessedCountRef.current = currentCount;
-			}
-		}, 100 );
-
-		return () => clearInterval( timer );
-	}, [ filter ] );
-
-	// Page visibility.
-	useEffect( () => {
-		if ( isPageVisible && ! isPaused ) {
-			connect();
-		} else {
-			closeSource();
-		}
-		return () => closeSource();
-	}, [ isPageVisible, isPaused, connect, closeSource ] );
-
 	// Scroll handler for animation save/restore.
 	const wasAtTopRef = useRef( true );
 	const handleScroll = useCallback( ( e ) => {
 		if ( isAdjustingScrollRef.current ) {
+			isAdjustingScrollRef.current = false;
 			return;
 		}
 
@@ -345,12 +347,7 @@ export default function ErrorLog() {
 	const filteredEntries = useMemo(
 		() =>
 			filter
-				? entries.filter(
-						( e ) =>
-							e.k?.toLowerCase().includes( filterLower ) ||
-							e.m?.toLowerCase().includes( filterLower ) ||
-							e.rid?.toLowerCase().includes( filterLower )
-				  )
+				? entries.filter( ( e ) => matchesFilter( e, filterLower ) )
 				: entries,
 		[ entries, filter, filterLower ]
 	);
@@ -374,10 +371,13 @@ export default function ErrorLog() {
 	);
 	const visibleEntries = filteredEntries.slice( startIndex, endIndex );
 
+	// Clear all entries — clears the node buffer via the graph; the next frame
+	// reflects 0 entries.
 	const handleClear = () => {
-		entriesBufferRef.current = [];
-		entryCounterRef.current = 0;
-		lastProcessedCountRef.current = 0;
+		clear();
+		filteredCountRef.current = 0;
+		lastRenderedCountRef.current = 0;
+		pushedRef.current = { count: 0, filter: filterRef.current };
 		setEntries( [] );
 		offsetRef.current = 0;
 	};
@@ -418,7 +418,7 @@ export default function ErrorLog() {
 						className={ `event-logger-error-log-btn ${
 							isPaused ? 'paused' : ''
 						}` }
-						onClick={ () => setIsPaused( ! isPaused ) }
+						onClick={ () => setPaused( ! isPaused ) }
 						title={
 							isPaused ? 'Resume streaming' : 'Pause streaming'
 						}
@@ -435,8 +435,10 @@ export default function ErrorLog() {
 				</div>
 			</div>
 
-			{ error && (
-				<div className="event-logger-error-log-error">{ error }</div>
+			{ connectionError && (
+				<div className="event-logger-error-log-error">
+					Connection lost. Reconnecting…
+				</div>
 			) }
 
 			<div
