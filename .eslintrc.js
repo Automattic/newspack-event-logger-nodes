@@ -4,7 +4,16 @@
 // resolves at runtime (build alias + jest moduleNameMapper handle resolution).
 module.exports = {
 	root: true,
-	extends: [ 'plugin:@wordpress/eslint-plugin/recommended' ],
+	extends: [
+		'plugin:@wordpress/eslint-plugin/recommended',
+		'plugin:@wordpress/eslint-plugin/i18n',
+	],
+	rules: {
+		'@wordpress/i18n-text-domain': [
+			'error',
+			{ allowedTextDomain: [ 'newspack-event-logger-nodes' ] },
+		],
+	},
 	overrides: [
 		{
 			files: [ '**/@(test|__tests__)/**/*.js', '**/?(*.)test.js' ],
