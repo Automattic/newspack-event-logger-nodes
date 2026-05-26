@@ -41,9 +41,10 @@ const isValidRequestId = ( r ) =>
 const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
 
 class PerformanceCommandNode extends Node {
-	constructor( client ) {
+	constructor( client, onError ) {
 		super();
 		this._client = client;
+		this._onError = onError;
 		this._closed = false;
 	}
 
@@ -61,10 +62,7 @@ class PerformanceCommandNode extends Node {
 			const data = await this._send( 'overview', payload );
 			this._emit( { action: 'result', slice: 'overview', data } );
 		} catch ( err ) {
-			this._error(
-				'overview',
-				err.message || 'Failed to fetch overview'
-			);
+			this._fail( 'overview', err, 'Failed to fetch overview' );
 		}
 	}
 
@@ -82,16 +80,21 @@ class PerformanceCommandNode extends Node {
 			const data = await this._send( 'urls', payload );
 			this._emit( { action: 'result', slice: 'urls', data } );
 		} catch ( err ) {
-			this._error( 'urls', err.message || 'Failed to fetch URLs' );
+			this._fail( 'urls', err, 'Failed to fetch URLs' );
 		}
 	}
 
 	// URL detail. `opts.initial` threads through to the result so the view knows
 	// replace-vs-merge (orchestrator sets it on selection, omits on auto-refresh).
 	async fetchUrlDetail( hash, opts = {} ) {
-		this._emit( { action: 'loading', slice: 'urlDetail' } );
+		// Selection passes initial:true (shows loading); auto-refresh omits it
+		// and stays SILENT so an unchanged no-op never sticks loading true.
+		if ( opts.initial ) {
+			this._emit( { action: 'loading', slice: 'urlDetail' } );
+		}
 		if ( ! isValidHash( hash ) ) {
 			this._error( 'urlDetail', 'Invalid URL hash format' );
+			this._onError?.( new Error( 'Invalid URL hash format' ) );
 			return;
 		}
 		const payload = { hash };
@@ -110,10 +113,7 @@ class PerformanceCommandNode extends Node {
 				initial: !! opts.initial,
 			} );
 		} catch ( err ) {
-			this._error(
-				'urlDetail',
-				err.message || 'Failed to fetch URL detail'
-			);
+			this._fail( 'urlDetail', err, 'Failed to fetch URL detail' );
 		}
 	}
 
@@ -122,10 +122,12 @@ class PerformanceCommandNode extends Node {
 		this._emit( { action: 'loading', slice: 'requestDetail' } );
 		if ( ! isValidRequestId( rid ) ) {
 			this._error( 'requestDetail', 'Invalid request ID format' );
+			this._onError?.( new Error( 'Invalid request ID format' ) );
 			return;
 		}
 		if ( ! isValidPartition( partition ) ) {
 			this._error( 'requestDetail', 'Invalid partition number' );
+			this._onError?.( new Error( 'Invalid partition number' ) );
 			return;
 		}
 		try {
@@ -135,9 +137,10 @@ class PerformanceCommandNode extends Node {
 			} );
 			this._emit( { action: 'result', slice: 'requestDetail', data } );
 		} catch ( err ) {
-			this._error(
+			this._fail(
 				'requestDetail',
-				err.message || 'Failed to fetch request detail'
+				err,
+				'Failed to fetch request detail'
 			);
 		}
 	}
@@ -148,6 +151,23 @@ class PerformanceCommandNode extends Node {
 		try {
 			return await this._send( 'request_search', { rid } );
 		} catch ( err ) {
+			return null;
+		}
+	}
+
+	// Per-URL dimensional breakdown. RETURNS data.breakdown_time_series (null on
+	// invalid hash / throw / absent); does NOT emit. Mirrors resolveRequest.
+	async fetchUrlBreakdown( hash, breakdown ) {
+		if ( ! isValidHash( hash ) ) {
+			return null;
+		}
+		try {
+			const data = await this._send( 'url_detail', { hash, breakdown } );
+			return ( data && data.breakdown_time_series ) || null;
+		} catch ( err ) {
+			if ( this._onError ) {
+				this._onError( err );
+			}
 			return null;
 		}
 	}
@@ -173,6 +193,13 @@ class PerformanceCommandNode extends Node {
 		this._emit( { action: 'error', slice, error } );
 	}
 
+	// Catch-site failure: emit the slice error AND fire the global onError seam
+	// (matches usePerformanceApi's onError contract).
+	_fail( slice, err, fallback ) {
+		this._error( slice, err.message || fallback );
+		this._onError?.( err );
+	}
+
 	_emit( value ) {
 		// Checked after the await: swallow late replies on a detached sink.
 		if ( this._closed || ! this.sink ) {
@@ -188,14 +215,16 @@ class PerformanceCommandNode extends Node {
 /**
  * Create and register the Performance Dashboard command-out node.
  *
- * @param {string} name                 Node name.
- * @param {Object} [opts]               Options.
- * @param {Object} [opts.commandClient] Injectable command-client seam (send);
- *                                      defaults to the shared CommandClient.
+ * @param {string}   name                 Node name.
+ * @param {Object}   [opts]               Options.
+ * @param {Object}   [opts.commandClient] Injectable command-client seam (send);
+ *                                        defaults to the shared CommandClient.
+ * @param {Function} [opts.onError]       Global error-toast seam; called at the
+ *                                        same sites usePerformanceApi did.
  * @return {PerformanceCommandNode} The command node.
  */
 export function createPerformanceCommand( name, opts = {} ) {
-	const node = new PerformanceCommandNode( opts.commandClient );
+	const node = new PerformanceCommandNode( opts.commandClient, opts.onError );
 	node.setName( name );
 	return node;
 }

@@ -3,6 +3,13 @@
  * Performance Dashboard Component
  *
  * Main container for performance monitoring UI.
+ *
+ * This is the orchestrator over the `performance/*` node graph (mounted by
+ * `usePerformanceGraph`). The graph owns all data: `performance/command` issues
+ * fetches via the CommandClient and `performance/view` holds the view model.
+ * This component reads the published model via
+ * `useNodeState('performance/view','view')`, derives its render-time slices, and
+ * dispatches control through the hook's returned callbacks. It owns no fetching.
  */
 
 import {
@@ -20,13 +27,11 @@ import {
 	Modal,
 } from '@wordpress/components';
 
-import { getCommandClient } from '../shared/utils/commandClient';
-import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
+import { useNodeState } from '@newspack-nodes/runtime';
 import { computeIndentedEntries } from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
-import usePerformanceApi from './hooks/usePerformanceApi';
+import { usePerformanceGraph } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
-import usePageVisibility from '../shared/hooks/usePageVisibility';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
@@ -40,32 +45,15 @@ import './styles/charts.scss';
 /**
  * Performance Dashboard component.
  *
- * @param {Object}   props         Component props.
- * @param {Function} props.onError Error handler callback.
+ * @param {Object}   props                 Component props.
+ * @param {Function} props.onError         Error handler callback.
+ * @param {Object}   [props.commandClient] Optional CommandClient (the graph
+ *                                         lazily defaults it in production;
+ *                                         tests inject a double).
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function PerformanceDashboard( { onError } ) {
-	// Core data state.
-	const [ loading, setLoading ] = useState( true );
-	const [ overview, setOverview ] = useState( null );
-	const [ urls, setUrls ] = useState( [] );
-	const [ totalUrls, setTotalUrls ] = useState( 0 );
-	const [ urlDetail, setUrlDetail ] = useState( null );
-	const [ categoryData, setCategoryData ] = useState( null );
-
-	const [ requestDetail, setRequestDetail ] = useState( null );
-	const urlDetailLastModifiedRef = useRef( null );
-
-	// Server-side URL table params (search/sort/pagination).
-	const urlParamsRef = useRef( {
-		search: '',
-		sort: 'count',
-		order: 'desc',
-		offset: 0,
-	} );
-	const urlFetchTimerRef = useRef( null );
-
-	// UI state.
+export default function PerformanceDashboard( { onError, commandClient } ) {
+	// UI / control state (no data state — data comes from the view model).
 	const [ requestSort, setRequestSort ] = useState( {
 		field: 'timestamp',
 		dir: 'desc',
@@ -74,21 +62,10 @@ export default function PerformanceDashboard( { onError } ) {
 
 	// Page-wide server filter state (lifted from OverviewSection).
 	const [ serverFilter, setServerFilter ] = useState( '' );
-	const serverFilterRef = useRef( '' );
-	serverFilterRef.current = serverFilter;
-	const [ serverBreakdownData, setServerBreakdownData ] = useState( null );
-	const [ serverNames, setServerNames ] = useState( [] );
 
-	// Breakdown selector state (lifted from OverviewSection so the parent
-	// can include the active dimension in the combined /overview fetch and
-	// avoid a separate `?breakdown=...` round-trip).
+	// Breakdown selector state (lifted from OverviewSection so the active
+	// dimension rides along on the combined /overview fetch).
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
-	const chartBreakdownRef = useRef( 'status' );
-	chartBreakdownRef.current = chartBreakdown;
-	const [ chartBreakdownData, setChartBreakdownData ] = useState( null );
-
-	// Incremented on each main refresh so child components can sync.
-	const [ refreshTick, setRefreshTick ] = useState( 0 );
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchError, setSearchError ] = useState( null );
@@ -105,54 +82,73 @@ export default function PerformanceDashboard( { onError } ) {
 		}
 		return '15000';
 	} );
-	const isPageVisible = usePageVisibility();
 
-	// Custom hooks.
-	const api = usePerformanceApi( onError );
-	const apiRef = useRef( api );
-	apiRef.current = api;
-	const urlsRef = useRef( urls );
-	urlsRef.current = urls;
-	const setRequestPartitionRef = useRef( null );
-	setRequestPartitionRef.current = setRequestPartition;
-
-	// Resolver used by useUrlNavigation when the page loads with `?request=`
-	// but no `?url=`: hits the same request_search verb the search box uses,
-	// then selects both URL + request so the modal opens.
-	const resolveRequestId = useCallback( async ( rid ) => {
-		try {
-			const message = await getCommandClient().send( {
-				to: 'performance',
-				verb: 'request_search',
-				payload: { rid },
-			} );
-			const data = unwrapCommandResponse( message );
-			if ( ! data || ! data.url_hash || data.partition === undefined ) {
-				return;
-			}
-			let urlObj = urlsRef.current.find(
-				( u ) => u.hash === data.url_hash
-			);
-			if ( ! urlObj ) {
-				urlObj = {
-					hash: data.url_hash,
-					url: data.url || 'Unknown URL',
-				};
-			}
-			if ( setRequestPartitionRef.current ) {
-				setRequestPartitionRef.current( data.partition );
-			}
-			selectUrlRef.current( urlObj );
-			selectRequestRef.current( rid );
-		} catch ( err ) {
-			// Swallow — let the page render the empty dashboard.
-		}
-	}, [] );
-
-	// Refs let us call selectUrl/selectRequest from inside resolveRequestId
-	// without a circular dependency on the hook return.
+	// Refs break the resolve/navigation ↔ selection cycle.
+	const commandResolveRef = useRef( null );
 	const selectUrlRef = useRef( () => {} );
 	const selectRequestRef = useRef( () => {} );
+	const urlsRef = useRef( [] );
+	const setRequestPartitionRef = useRef( () => {} );
+
+	// Read the published view model directly (Error Log pattern). Null until the
+	// hook mounts the node; the hook's setViewReady forces a re-render to subscribe.
+	const view = useNodeState( 'performance/view', 'view' );
+
+	// Derive the slices the orchestrator renders/derives from — SAME NAMES as the
+	// deleted state, so every surviving useMemo + the JSX reference them unchanged.
+	const overview = view?.overview?.data ?? null;
+	const urls = useMemo( () => view?.urls?.data ?? [], [ view?.urls?.data ] );
+	const totalUrls = view?.urls?.total ?? 0;
+	const urlDetail = view?.urlDetail?.data ?? null;
+	const requestDetail = view?.requestDetail?.data ?? null;
+	urlsRef.current = urls;
+
+	// Overview fan-out (replaces applyOverviewBreakdowns' setState calls).
+	const categoryData = useMemo(
+		() => overview?.category_time_series ?? null,
+		[ overview ]
+	);
+	const serverBreakdownData = useMemo(
+		() => overview?.breakdowns?.server ?? null,
+		[ overview ]
+	);
+	const chartBreakdownData = useMemo( () => {
+		if ( ! overview?.breakdowns || ! chartBreakdown ) {
+			return null;
+		}
+		return overview.breakdowns[ chartBreakdown ] ?? null;
+	}, [ overview, chartBreakdown ] );
+
+	// serverNames stays STICKY state: when a filter is active the scoped response
+	// collapses to one server, so DON'T overwrite the names list (it would drop the
+	// dropdown below 2 entries and trap the user). Mirrors applyServerBreakdown.
+	const [ serverNames, setServerNames ] = useState( [] );
+	useEffect( () => {
+		if ( ! serverBreakdownData || serverFilter ) {
+			return;
+		}
+		const names = new Set();
+		Object.values( serverBreakdownData ).forEach( ( bucket ) =>
+			Object.keys( bucket ).forEach( ( n ) => names.add( n ) )
+		);
+		setServerNames( Array.from( names ).sort() );
+	}, [ serverBreakdownData, serverFilter ] );
+
+	// resolveRequestId — used by useUrlNavigation for `?request=`-only deep links.
+	// Stable []; reaches the command's resolveRequest via a ref populated post-hook.
+	const resolveRequestId = useCallback( async ( rid ) => {
+		const data = await commandResolveRef.current?.( rid );
+		if ( ! data || ! data.url_hash || data.partition === undefined ) {
+			return;
+		}
+		let urlObj = urlsRef.current.find( ( u ) => u.hash === data.url_hash );
+		if ( ! urlObj ) {
+			urlObj = { hash: data.url_hash, url: data.url || 'Unknown URL' };
+		}
+		setRequestPartitionRef.current( data.partition );
+		selectUrlRef.current( urlObj );
+		selectRequestRef.current( rid );
+	}, [] );
 
 	const {
 		selectedUrl,
@@ -166,6 +162,30 @@ export default function PerformanceDashboard( { onError } ) {
 
 	selectUrlRef.current = selectUrl;
 	selectRequestRef.current = baseSelectRequest;
+	setRequestPartitionRef.current = setRequestPartition;
+
+	// Mount the data graph + own all fetching.
+	const { handleUrlParamsChange, resolveRequest, fetchUrlBreakdown } =
+		usePerformanceGraph( {
+			serverFilter,
+			chartBreakdown,
+			refreshInterval,
+			requestPartition,
+			selectedUrl,
+			selectedRequest,
+			urlDetailData: urlDetail,
+			onError,
+			commandClient,
+		} );
+	commandResolveRef.current = resolveRequest;
+
+	// Reset the search-sourced partition when leaving request detail (the old
+	// request-detail effect did setRequestPartition(null) here).
+	useEffect( () => {
+		if ( ! selectedRequest ) {
+			setRequestPartition( null );
+		}
+	}, [ selectedRequest ] );
 
 	const urlDetailScrollRef = useRef( 0 );
 
@@ -198,48 +218,6 @@ export default function PerformanceDashboard( { onError } ) {
 	}, [] );
 
 	/**
-	 * Handle URL table param changes (search/sort/pagination).
-	 * Debounces search, fetches immediately for sort/page changes.
-	 *
-	 * @param {Object} params New params from UrlTable.
-	 */
-	const handleUrlParamsChange = useCallback( ( params ) => {
-		const prev = urlParamsRef.current;
-		if (
-			prev.search === params.search &&
-			prev.sort === params.sort &&
-			prev.order === params.order &&
-			prev.offset === params.offset
-		) {
-			return;
-		}
-
-		const searchChanged = prev.search !== params.search;
-		urlParamsRef.current = params;
-
-		if ( urlFetchTimerRef.current ) {
-			clearTimeout( urlFetchTimerRef.current );
-		}
-
-		const doFetch = async () => {
-			const result = await apiRef.current.fetchUrls( {
-				...params,
-				server: serverFilterRef.current,
-			} );
-			if ( result ) {
-				setUrls( result.data );
-				setTotalUrls( result.total );
-			}
-		};
-
-		if ( searchChanged ) {
-			urlFetchTimerRef.current = setTimeout( doFetch, 300 );
-		} else {
-			doFetch();
-		}
-	}, [] );
-
-	/**
 	 * Search for a request by ID and open its modal.
 	 *
 	 * @param {string} rid Request ID to search for.
@@ -249,52 +227,30 @@ export default function PerformanceDashboard( { onError } ) {
 			if ( ! rid || ! rid.trim() ) {
 				return;
 			}
-
 			setSearchLoading( true );
 			setSearchError( null );
-
-			try {
-				// Search for request to get partition and URL hash.
-				const message = await getCommandClient().send( {
-					to: 'performance',
-					verb: 'request_search',
-					payload: { rid: rid.trim() },
-				} );
-				const data = unwrapCommandResponse( message );
-
-				if ( data && data.url_hash && data.partition !== undefined ) {
-					// Find or create a URL object for this hash.
-					let urlObj = urls.find( ( u ) => u.hash === data.url_hash );
-					if ( ! urlObj ) {
-						// URL not in current list - create minimal object.
-						urlObj = {
-							hash: data.url_hash,
-							url: data.url || 'Unknown URL',
-						};
-					}
-
-					// Store partition for fetching request detail.
-					setRequestPartition( data.partition );
-
-					// Open the URL detail modal and select the request.
-					selectUrl( urlObj );
-					selectRequest( rid.trim() );
-					setSearchQuery( '' );
-
-					// Update browser URL with search cleared.
-					updateBrowserUrl( {
-						search: null,
-						url: urlObj.hash,
-						request: rid.trim(),
-					} );
-				} else {
-					setSearchError( `Request "${ rid }" not found` );
+			const data = await commandResolveRef.current?.( rid.trim() );
+			if ( data && data.url_hash && data.partition !== undefined ) {
+				let urlObj = urls.find( ( u ) => u.hash === data.url_hash );
+				if ( ! urlObj ) {
+					urlObj = {
+						hash: data.url_hash,
+						url: data.url || 'Unknown URL',
+					};
 				}
-			} catch {
+				setRequestPartition( data.partition );
+				selectUrl( urlObj );
+				selectRequest( rid.trim() );
+				setSearchQuery( '' );
+				updateBrowserUrl( {
+					search: null,
+					url: urlObj.hash,
+					request: rid.trim(),
+				} );
+			} else {
 				setSearchError( `Request "${ rid }" not found` );
-			} finally {
-				setSearchLoading( false );
 			}
+			setSearchLoading( false );
 		},
 		[ urls, selectUrl, selectRequest, updateBrowserUrl ]
 	);
@@ -306,334 +262,6 @@ export default function PerformanceDashboard( { onError } ) {
 			refreshInterval
 		);
 	}, [ refreshInterval ] );
-
-	// Cleanup URL fetch timer on unmount.
-	useEffect( () => {
-		return () => {
-			if ( urlFetchTimerRef.current ) {
-				clearTimeout( urlFetchTimerRef.current );
-			}
-		};
-	}, [] );
-
-	// Apply server breakdown response: cache the time series + extract the
-	// list of server names that have shown up in the recent buckets.
-	//
-	// Only refresh `serverNames` when the request was UNFILTERED (no
-	// serverFilter). A filtered request returns data scoped to that single
-	// server, so its `serverData` keys collapse to one entry — overwriting
-	// the names list with that single entry would make the SERVER dropdown
-	// disappear (it only renders when names.length >= 2), trapping the user
-	// on the chosen server.
-	const applyServerBreakdown = useCallback( ( serverData ) => {
-		if ( ! serverData ) {
-			return;
-		}
-		setServerBreakdownData( serverData );
-		if ( serverFilterRef.current ) {
-			return; // Keep the existing names list; this response is scoped.
-		}
-		const names = new Set();
-		Object.values( serverData ).forEach( ( bucket ) => {
-			Object.keys( bucket ).forEach( ( n ) => names.add( n ) );
-		} );
-		setServerNames( Array.from( names ).sort() );
-	}, [] );
-
-	// Pull both `server` (always — feeds the filter dropdown) and the active
-	// chart breakdown out of the merged response and apply each.
-	const applyOverviewBreakdowns = useCallback(
-		( breakdowns, currentBreakdown ) => {
-			if ( ! breakdowns ) {
-				return;
-			}
-			applyServerBreakdown( breakdowns.server );
-			if ( currentBreakdown && breakdowns[ currentBreakdown ] ) {
-				setChartBreakdownData( breakdowns[ currentBreakdown ] );
-			}
-		},
-		[ applyServerBreakdown ]
-	);
-
-	// `breakdownsFor` deduplicates `server` (always needed for the filter
-	// dropdown) and the active chart dimension into one comma-separated arg.
-	//
-	// We always need at least 2 dims because the controller returns a
-	// different shape for single-dim (`breakdown_time_series`, flat) vs
-	// multi-dim (`breakdowns: { dim => series }`, nested) requests, and
-	// applyOverviewBreakdowns is written for the nested shape. When the
-	// active breakdown IS `server`, the Set would otherwise collapse to one
-	// entry — fall back to `status` as a no-op second dim so the response
-	// shape stays consistent.
-	const breakdownsFor = useCallback( ( currentBreakdown ) => {
-		const set = new Set( [ 'server' ] );
-		if ( currentBreakdown ) {
-			set.add( currentBreakdown );
-		}
-		if ( set.size < 2 ) {
-			set.add( 'status' );
-		}
-		return Array.from( set );
-	}, [] );
-
-	// Fetch overview and URLs on mount. Combined `categories + server +
-	// chartBreakdown` so the server filter dropdown AND the breakdown chart
-	// both populate from the same payload.
-	useEffect( () => {
-		const loadData = async () => {
-			const dims = breakdownsFor( chartBreakdownRef.current );
-			const [ overviewData, urlsResult ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilterRef.current, dims ),
-				apiRef.current.fetchUrls( {
-					...urlParamsRef.current,
-					server: serverFilterRef.current,
-				} ),
-			] );
-			if ( overviewData ) {
-				setOverview( overviewData );
-				if ( overviewData.category_time_series ) {
-					setCategoryData( overviewData.category_time_series );
-				}
-				applyOverviewBreakdowns(
-					overviewData.breakdowns,
-					chartBreakdownRef.current
-				);
-			}
-			if ( urlsResult ) {
-				setUrls( urlsResult.data );
-				setTotalUrls( urlsResult.total );
-			}
-			setLoading( false );
-		};
-
-		loadData();
-	}, [ applyOverviewBreakdowns, breakdownsFor ] ); // eslint-disable-line react-hooks/exhaustive-deps -- refs are stable.
-
-	// Re-fetch URLs and overview when server filter or breakdown dim changes.
-	useEffect( () => {
-		if ( loading ) {
-			return;
-		}
-		( async () => {
-			const dims = breakdownsFor( chartBreakdown );
-			const [ overviewData, result ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilter, dims ),
-				apiRef.current.fetchUrls( {
-					...urlParamsRef.current,
-					server: serverFilter,
-				} ),
-			] );
-			if ( overviewData ) {
-				setOverview( overviewData );
-				if ( overviewData.category_time_series ) {
-					setCategoryData( overviewData.category_time_series );
-				}
-				applyOverviewBreakdowns(
-					overviewData.breakdowns,
-					chartBreakdown
-				);
-			}
-			if ( result ) {
-				setUrls( result.data );
-				setTotalUrls( result.total );
-			}
-		} )();
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- `loading` intentionally excluded; refs are stable.
-	}, [
-		serverFilter,
-		chartBreakdown,
-		applyOverviewBreakdowns,
-		breakdownsFor,
-	] );
-
-	// Auto-refresh dashboard only when modal is closed and page is visible.
-	const lastRefreshRef = useRef( 0 );
-	useEffect( () => {
-		// Skip refreshes when URL detail modal is open or page is hidden.
-		if ( selectedUrl || ! isPageVisible ) {
-			return;
-		}
-
-		const doRefresh = async () => {
-			lastRefreshRef.current = Date.now();
-			// Single overview call (categories + server + active chart
-			// breakdown) plus one urls call. Was three /overview hits per tick.
-			const dims = breakdownsFor( chartBreakdownRef.current );
-			const [ overviewData, urlsResult ] = await Promise.all( [
-				apiRef.current.fetchOverview( serverFilterRef.current, dims ),
-				apiRef.current.fetchUrls( {
-					...urlParamsRef.current,
-					server: serverFilterRef.current,
-				} ),
-			] );
-			if ( overviewData ) {
-				setOverview( overviewData );
-				if ( overviewData.category_time_series ) {
-					setCategoryData( overviewData.category_time_series );
-				}
-				applyOverviewBreakdowns(
-					overviewData.breakdowns,
-					chartBreakdownRef.current
-				);
-			}
-			if ( urlsResult ) {
-				setUrls( urlsResult.data );
-				setTotalUrls( urlsResult.total );
-			}
-			setRefreshTick( ( t ) => t + 1 );
-		};
-
-		const intervalMs = parseInt( refreshInterval, 10 );
-
-		// Refresh immediately if stale (last refresh older than the interval).
-		if ( Date.now() - lastRefreshRef.current >= intervalMs ) {
-			doRefresh();
-		}
-
-		const interval = setInterval( doRefresh, intervalMs );
-
-		return () => clearInterval( interval );
-	}, [
-		refreshInterval,
-		selectedUrl,
-		isPageVisible,
-		applyOverviewBreakdowns,
-		breakdownsFor,
-	] );
-
-	// Merge new requests incrementally to avoid full table re-renders.
-	const mergeUrlDetail = useCallback( ( data, isInitial = false ) => {
-		if ( ! data ) {
-			return;
-		}
-		urlDetailLastModifiedRef.current = data.last_modified;
-
-		if ( isInitial ) {
-			setUrlDetail( data );
-			return;
-		}
-
-		setUrlDetail( ( prev ) => {
-			if ( ! prev?.requests?.length ) {
-				return data;
-			}
-
-			// Build set of existing rids.
-			const existingRids = new Set( prev.requests.map( ( r ) => r.rid ) );
-
-			// Find truly new requests.
-			const newRequests =
-				data.requests?.filter( ( r ) => ! existingRids.has( r.rid ) ) ||
-				[];
-
-			if ( newRequests.length === 0 ) {
-				// No new requests - keep existing array reference, just update stats.
-				return { ...data, requests: prev.requests };
-			}
-
-			// Merge, sort by timestamp descending, take newest 500.
-			const merged = [ ...newRequests, ...prev.requests ]
-				.sort( ( a, b ) => ( b.timestamp || 0 ) - ( a.timestamp || 0 ) )
-				.slice( 0, 500 );
-			return { ...data, requests: merged };
-		} );
-	}, [] );
-
-	// Fetch URL detail when selection changes + auto-refresh.
-	useEffect( () => {
-		if ( selectedUrl ) {
-			const load = async () => {
-				const data = await apiRef.current.fetchUrlDetail(
-					selectedUrl.hash
-				);
-				mergeUrlDetail( data, true );
-			};
-			load();
-
-			// Only auto-refresh URL detail when not viewing a specific request and page is visible.
-			if ( ! selectedRequest && isPageVisible ) {
-				const intervalMs = parseInt( refreshInterval, 10 );
-				const interval = setInterval( async () => {
-					const data = await apiRef.current.fetchUrlDetail(
-						selectedUrl.hash
-					);
-					// Skip if data hasn't changed (compare last_modified via ref).
-					if (
-						data &&
-						data.last_modified !== urlDetailLastModifiedRef.current
-					) {
-						mergeUrlDetail( data );
-					}
-				}, intervalMs );
-
-				return () => clearInterval( interval );
-			}
-		} else {
-			urlDetailLastModifiedRef.current = null;
-			setUrlDetail( null );
-		}
-	}, [
-		selectedUrl,
-		selectedRequest,
-		refreshInterval,
-		isPageVisible,
-		mergeUrlDetail,
-	] );
-
-	// Fetch request detail when selection changes.
-	useEffect( () => {
-		if ( selectedRequest ) {
-			// Use stored partition from search, or look up from urlDetail.requests.
-			let partition = requestPartition;
-			if ( partition === null && urlDetail?.requests ) {
-				const reqInfo = urlDetail.requests.find(
-					( r ) => r.rid === selectedRequest
-				);
-				partition = reqInfo?.partition;
-			}
-
-			if ( partition !== undefined && partition !== null ) {
-				const load = async () => {
-					const data = await apiRef.current.fetchRequestDetail(
-						selectedRequest,
-						partition
-					);
-					if ( data ) {
-						setRequestDetail( data );
-					}
-				};
-				load();
-			}
-		} else {
-			setRequestDetail( null );
-			setRequestPartition( null );
-		}
-	}, [ selectedRequest, urlDetail, requestPartition ] );
-
-	// Manage modal scroll position when switching between URL detail and request detail.
-	useEffect( () => {
-		const modalContent = document.querySelector(
-			'.event-logger-performance-modal .components-modal__content'
-		);
-		if ( ! modalContent ) {
-			return;
-		}
-		if ( selectedRequest ) {
-			modalContent.scrollTop = 0;
-		} else {
-			requestAnimationFrame( () => {
-				modalContent.scrollTop = urlDetailScrollRef.current;
-			} );
-		}
-	}, [ selectedRequest ] );
-
-	// Handle initial search query from URL parameter.
-	useEffect( () => {
-		if ( initialSearchQuery ) {
-			searchRequest( initialSearchQuery );
-			setInitialSearchQuery( null );
-		}
-	}, [ initialSearchQuery, searchRequest, setInitialSearchQuery ] );
 
 	// Sort recent requests.
 	const sortedRequests = useMemo( () => {
@@ -743,7 +371,38 @@ export default function PerformanceDashboard( { onError } ) {
 		return total / ( complete.length * 300 );
 	}, [ urlDetail?.stats?.time_series ] );
 
-	if ( loading && ! overview ) {
+	// Handle initial search query from URL parameter.
+	useEffect( () => {
+		if ( initialSearchQuery ) {
+			searchRequest( initialSearchQuery );
+			setInitialSearchQuery( null );
+		}
+	}, [ initialSearchQuery, searchRequest, setInitialSearchQuery ] );
+
+	// Manage modal scroll position when switching between URL detail and request detail.
+	useEffect( () => {
+		const modalContent = document.querySelector(
+			'.event-logger-performance-modal .components-modal__content'
+		);
+		if ( ! modalContent ) {
+			return;
+		}
+		if ( selectedRequest ) {
+			modalContent.scrollTop = 0;
+		} else {
+			requestAnimationFrame( () => {
+				modalContent.scrollTop = urlDetailScrollRef.current;
+			} );
+		}
+	}, [ selectedRequest ] );
+
+	// "Initial load not done": no view yet, OR no slice has resolved (lastRefresh
+	// null) and overview hasn't errored. true→false once, then stays false — matches
+	// the old `loading` flag (cleared after the first attempt, even null/memcache-down
+	// data, which still stamps lastRefresh via a 'result').
+	const showLoadingScreen =
+		! view || ( null === view.lastRefresh && ! view.overview?.error );
+	if ( showLoadingScreen ) {
 		return (
 			<div className="event-logger-performance-loading">
 				<Spinner />
@@ -768,7 +427,6 @@ export default function PerformanceDashboard( { onError } ) {
 				onSearch={ searchRequest }
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }
-				refreshTick={ refreshTick }
 				chartMetric={ chartMetric }
 				setChartMetric={ setChartMetric }
 				chartBreakdown={ chartBreakdown }
@@ -876,7 +534,7 @@ export default function PerformanceDashboard( { onError } ) {
 							requestSort={ requestSort }
 							onRequestSort={ handleRequestSort }
 							onSelectRequest={ selectRequest }
-							fetchUrlBreakdown={ api.fetchUrlBreakdown }
+							fetchUrlBreakdown={ fetchUrlBreakdown }
 							urlHash={ selectedUrl.hash }
 						/>
 					) }
