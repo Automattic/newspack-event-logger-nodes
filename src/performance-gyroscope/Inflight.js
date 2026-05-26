@@ -16,11 +16,14 @@
  * desc, caps to maxRows — and reads `.rps` / `.lastEventTime` off the node. A busy
  * stream never re-renders React per message; only the cheap snapshot is pushed at
  * the refresh cadence.
+ *
+ * The low-frequency `{ connectionError }` model (the reconnect banner) is read
+ * separately via `useNodeState('gyroscope/view','view')`.
  */
 
 import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
 
-import { Core } from '@newspack-nodes/runtime';
+import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
@@ -30,11 +33,14 @@ import {
 	getStatusClass,
 } from '../shared/utils/formatUtils';
 import fnv1a from '../shared/utils/fnv1a';
+import ConnectionBanner from '../shared/components/ConnectionBanner';
 import './styles/inflight.scss';
 import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
 const VIEW_NODE = 'gyroscope/view';
+// The low-frequency view model before the view node publishes one.
+const EMPTY_VIEW = { connectionError: false };
 
 /**
  * Column definitions with tooltips.
@@ -128,6 +134,10 @@ export default function Inflight( { maxRows = 20 } ) {
 	// Mount the node graph (SSE → transform → in-flight model). It owns the data;
 	// this component only renders the snapshot it reads off the view node.
 	useGyroscopeGraph();
+
+	// Low-frequency view model (the reconnect banner). The high-frequency in-flight
+	// rows / rps are read off the node directly in the refresh tick below.
+	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
 	const [ lastEventTime, setLastEventTime ] = useState( null );
@@ -531,6 +541,8 @@ export default function Inflight( { maxRows = 20 } ) {
 					</button>
 				</span>
 			</div>
+
+			<ConnectionBanner connectionError={ connectionError } />
 
 			{ showColumnPicker && (
 				<div className="event-logger-inflight-column-picker">

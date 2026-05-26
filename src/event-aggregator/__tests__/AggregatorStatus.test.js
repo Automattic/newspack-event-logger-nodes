@@ -164,6 +164,43 @@ describe( 'AggregatorStatus', () => {
 		expect( container.textContent ).toContain( 'aggregator down' );
 	} );
 
+	it( 'renders the shared connection banner with the error message', () => {
+		registerViewFixture( {
+			servers: null,
+			error: 'aggregator down',
+			loading: false,
+		} );
+		const { container } = mount();
+		const banner = container.querySelector(
+			'.newspack-nodes-connection-banner'
+		);
+		expect( banner ).toBeTruthy();
+		expect( banner.textContent ).toContain( 'aggregator down' );
+	} );
+
+	it( 'does not render the connection banner when there is no error', () => {
+		registerViewFixture( { servers: [], loading: false } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.newspack-nodes-connection-banner' )
+		).toBeNull();
+	} );
+
+	it( 'leaves the per-row partition-error markup unchanged', () => {
+		registerViewFixture( {
+			servers: SAMPLE_SERVERS,
+			connectedCount: 1,
+			totalCount: 2,
+			loading: false,
+		} );
+		const { container } = mount();
+		// The per-row partition error (HTTP 504 / timeout) is NOT a connection
+		// banner — it must stay as aggregator-partition-error.
+		expect(
+			container.querySelector( '.aggregator-partition-error' )
+		).toBeTruthy();
+	} );
+
 	it( 'shows the connection error info for a disconnected partition', () => {
 		registerViewFixture( {
 			servers: SAMPLE_SERVERS,

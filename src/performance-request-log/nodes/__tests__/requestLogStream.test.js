@@ -17,6 +17,7 @@ import {
 	KEY,
 	VALUE,
 	TM_INFO,
+	TM_STRUCT,
 	Core,
 } from '@newspack-nodes/runtime';
 import { createRequestLogStream } from '../requestLogStream';
@@ -33,16 +34,19 @@ const { getCommandClient } = require( '../../../shared/utils/commandClient' );
 beforeEach( () => Core.reset() );
 
 // A fake connector matching the seam the node depends on: connect( subscription,
-// onEnvelope ) opens a source (recording the subscription + handler), close()
-// tears it down. deliverMessage() invokes the recorded handler as the wire would.
+// onEnvelope, onStatus ) opens a source (recording the subscription + the envelope
+// handler + the status handler), close() tears it down. deliverMessage() /
+// deliverStatus() invoke the recorded handlers as the wire would.
 function makeFakeConnector() {
 	return {
 		closeCount: 0,
 		lastSubscription: null,
 		_onEnvelope: null,
-		connect( subscription, onEnvelope ) {
+		_onStatus: null,
+		connect( subscription, onEnvelope, onStatus ) {
 			this.lastSubscription = subscription;
 			this._onEnvelope = onEnvelope;
+			this._onStatus = onStatus;
 		},
 		close() {
 			this.closeCount += 1;
@@ -51,6 +55,11 @@ function makeFakeConnector() {
 		deliverMessage( envelope ) {
 			if ( this._onEnvelope ) {
 				this._onEnvelope( envelope );
+			}
+		},
+		deliverStatus( status ) {
+			if ( this._onStatus ) {
+				this._onStatus( status );
 			}
 		},
 	};
@@ -79,6 +88,52 @@ describe( 'requestlog/stream', () => {
 		} );
 		s.subscribe();
 		expect( fake.lastSubscription ).toBe( 'completed' );
+	} );
+
+	test( 'connection status emits a control to controlSink, not sink', () => {
+		const fake = makeFakeConnector();
+		const s = createRequestLogStream( 'requestlog/stream', {
+			connector: fake,
+		} );
+		const data = [];
+		const ctrl = [];
+		s.sink = { fill: ( m ) => data.push( m ) };
+		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+		s.subscribe();
+		fake.deliverStatus( { connectionError: true } );
+		expect( data ).toHaveLength( 0 );
+		expect( ctrl ).toHaveLength( 1 );
+		expect( ctrl[ 0 ][ TYPE ] ).toBe( TM_STRUCT );
+		expect( ctrl[ 0 ][ VALUE ] ).toEqual( {
+			action: 'connection',
+			connectionError: true,
+		} );
+	} );
+
+	test( 'a connectionError:false status clears the banner via controlSink', () => {
+		const fake = makeFakeConnector();
+		const s = createRequestLogStream( 'requestlog/stream', {
+			connector: fake,
+		} );
+		const ctrl = [];
+		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+		s.subscribe();
+		fake.deliverStatus( { connectionError: false } );
+		expect( ctrl[ 0 ][ VALUE ] ).toEqual( {
+			action: 'connection',
+			connectionError: false,
+		} );
+	} );
+
+	test( 'a connection status with no controlSink does not throw', () => {
+		const fake = makeFakeConnector();
+		const s = createRequestLogStream( 'requestlog/stream', {
+			connector: fake,
+		} );
+		s.subscribe();
+		expect( () =>
+			fake.deliverStatus( { connectionError: true } )
+		).not.toThrow();
 	} );
 
 	test( 'the first subscribe does not close anything (nothing open yet)', () => {
@@ -230,6 +285,34 @@ describe( 'requestlog/stream default connector', () => {
 		expect( first.closed ).toBe( true );
 		jest.advanceTimersByTime( 2000 );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( 1 );
+	} );
+
+	test( 'onerror emits connectionError:true to controlSink and reconnects', () => {
+		const ctrl = [];
+		const s = createRequestLogStream( 'requestlog/stream' );
+		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+		s.subscribe();
+		const first = FakeEventSource.last();
+		first.onerror();
+		expect( ctrl[ 0 ][ VALUE ] ).toEqual( {
+			action: 'connection',
+			connectionError: true,
+		} );
+		expect( first.closed ).toBe( true );
+		jest.advanceTimersByTime( 2000 );
+		expect( FakeEventSource.instances.length ).toBeGreaterThan( 1 );
+	} );
+
+	test( 'onopen emits connectionError:false to controlSink', () => {
+		const ctrl = [];
+		const s = createRequestLogStream( 'requestlog/stream' );
+		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+		s.subscribe();
+		FakeEventSource.last().onopen();
+		expect( ctrl[ ctrl.length - 1 ][ VALUE ] ).toEqual( {
+			action: 'connection',
+			connectionError: false,
+		} );
 	} );
 
 	test( 'close() stops the heartbeat poke and the reconnect timer', () => {

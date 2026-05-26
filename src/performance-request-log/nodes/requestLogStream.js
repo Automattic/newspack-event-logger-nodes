@@ -14,12 +14,26 @@
  * tests pass `opts.connector` (a fake) so they never touch a real EventSource;
  * production lazily defaults to the real-EventSource connector below.
  *
+ * Connection-status surface: a connection-status control message would be DROPPED
+ * by the transform (which maps completed-request rows), so the stream routes
+ * connection-status changes to a SEPARATE `controlSink` (→ `requestlog/view`)
+ * distinct from `sink` (→ the transform). This drives the dashboard's reconnect
+ * banner (mirrors perfErrorsStream).
+ *
  * The subscription is the fixed `completed` feed (the topology's `completed:tee`
  * already filters to completion events), so — unlike rawLogsStream's per-log
  * `subscribe(logKey)` — there is no log-switch; `subscribe()` takes no argument.
  */
 
-import { Node, KEY, VALUE, unpack } from '@newspack-nodes/runtime';
+import {
+	Node,
+	KEY,
+	VALUE,
+	TYPE,
+	TM_STRUCT,
+	newMessage,
+	unpack,
+} from '@newspack-nodes/runtime';
 import { getCommandClient } from '../../shared/utils/commandClient';
 
 // The completed-request firehose subscription this dashboard streams.
@@ -42,10 +56,12 @@ const backoffDelay = ( retries ) =>
 /**
  * The default connector — the real-EventSource transport for `requestlog/stream`.
  *
- * `connect( subscription, onEnvelope )` opens an EventSource at `/messages/stream`
- * for the subscription, parses each `msg` into a Message envelope and hands it to
- * `onEnvelope`, starts the slot-heartbeat poke once the `connected` envelope
- * arrives, and reconnects with backoff on error. `close()` tears all three down.
+ * `connect( subscription, onEnvelope, onStatus )` opens an EventSource at
+ * `/messages/stream` for the subscription, parses each `msg` into a Message
+ * envelope and hands it to `onEnvelope`, reports connection-status changes via
+ * `onStatus` (`{ connectionError }` — true on the first `error`, false on `open`),
+ * starts the slot-heartbeat poke once the `connected` envelope arrives, and
+ * reconnects with backoff on error. `close()` tears all three down.
  *
  * Faked in tests by swapping `global.EventSource`; the node-level tests inject
  * their own connector entirely.
@@ -59,6 +75,7 @@ function makeDefaultConnector() {
 	let retries = 0;
 	let current = null;
 	let handler = null;
+	let statusHandler = null;
 
 	const clearReconnect = () => {
 		if ( reconnectTimer ) {
@@ -130,6 +147,9 @@ function makeDefaultConnector() {
 			if ( reconnectTimer ) {
 				return;
 			}
+			if ( statusHandler ) {
+				statusHandler( { connectionError: true } );
+			}
 			source.close();
 			source = null;
 			retries += 1;
@@ -141,13 +161,17 @@ function makeDefaultConnector() {
 
 		source.onopen = () => {
 			retries = 0;
+			if ( statusHandler ) {
+				statusHandler( { connectionError: false } );
+			}
 		};
 	};
 
 	return {
-		connect( subscription, onEnvelope ) {
+		connect( subscription, onEnvelope, onStatus ) {
 			current = subscription;
 			handler = onEnvelope;
+			statusHandler = onStatus;
 			retries = 0;
 			open();
 		},
@@ -160,21 +184,39 @@ class RequestLogStreamNode extends Node {
 		super();
 		this._connector = connector;
 		this._subscribed = false;
+		// The connection-status surface (→ requestlog/view); distinct from `sink`
+		// (→ requestlog/transform) because the transform would drop a control.
+		this.controlSink = null;
 	}
 
 	// (Re)connect the live source for the completed firehose. A re-subscribe
 	// closes the old source first, then opens a new one; each inbound envelope
-	// goes to sink.
+	// goes to sink, while connection-status changes go to controlSink as a control.
 	subscribe() {
 		if ( this._subscribed ) {
 			this._connector.close();
 		}
 		this._subscribed = true;
-		this._connector.connect( SUBSCRIPTION, ( envelope ) => {
-			if ( this.sink ) {
-				this.sink.fill( envelope );
+		this._connector.connect(
+			SUBSCRIPTION,
+			( envelope ) => {
+				if ( this.sink ) {
+					this.sink.fill( envelope );
+				}
+			},
+			( status ) => {
+				if ( ! this.controlSink ) {
+					return;
+				}
+				const m = newMessage();
+				m[ TYPE ] = TM_STRUCT;
+				m[ VALUE ] = {
+					action: 'connection',
+					connectionError: status.connectionError,
+				};
+				this.controlSink.fill( m );
 			}
-		} );
+		);
 	}
 
 	// Tear the connection down. Unconditional so teardown closes a never-yet-

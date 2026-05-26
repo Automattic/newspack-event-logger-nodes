@@ -10,8 +10,9 @@
  * `requestlog/view` holds the buffer + view model. This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
- * - LOW frequency: `useNodeState('requestlog/view','view')` for `{ paused }` (the
- *   pause button + empty-state label).
+ * - LOW frequency: `useNodeState('requestlog/view','view')` for
+ *   `{ paused, connectionError }` (the pause button, empty-state label, and the
+ *   reconnect banner).
  * - HIGH frequency: the rAF reads `Core.node('requestlog/view').entries`, `.rps`
  *   and `.lastEventTime` directly each frame — a busy stream never re-renders
  *   React per request; only the cheap derived state (the snapshot + rps) is pushed
@@ -26,6 +27,7 @@ import { useState, useEffect, useRef, useMemo, memo } from '@wordpress/element';
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import useVirtualization from '../shared/hooks/useVirtualization';
+import ConnectionBanner from '../shared/components/ConnectionBanner';
 import {
 	formatDuration,
 	getDurationClass,
@@ -35,7 +37,7 @@ import './styles/request-stream.scss';
 
 const ROW_HEIGHT = 33; // Fixed row height in pixels.
 const VIEW_NODE = 'requestlog/view';
-const EMPTY_VIEW = { paused: false };
+const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
  * Column definitions for the request log.
@@ -202,9 +204,9 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	// Mount the node graph; it returns the thin control callbacks.
 	const { setPaused, clear } = useRequestLogGraph( { maxEntries } );
 
-	// Low-frequency view model (pause button + empty-state label).
+	// Low-frequency view model (pause button + empty-state label + reconnect banner).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
-	const { paused: isPaused } = view;
+	const { paused: isPaused, connectionError } = view;
 
 	const [ filter, setFilter ] = useState( '' );
 	// The rendered entry buffer + RPS, both fed from the rAF at frame rate (read
@@ -516,6 +518,8 @@ export default function RequestStream( { maxEntries = 500 } ) {
 					</button>
 				</div>
 			</div>
+
+			<ConnectionBanner connectionError={ connectionError } />
 
 			{ showColumnPicker && (
 				<div className="event-logger-request-stream-column-picker">
