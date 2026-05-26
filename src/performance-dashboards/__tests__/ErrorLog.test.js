@@ -1,29 +1,16 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * Tests for ErrorLog — same hook chain as RequestStream, mocked the
- * same way so we can drive onMessage and assert rows appear after the
- * batch flush.
+ * ErrorLog UI-surface tests — the thin view over the perferrors node graph.
+ *
+ * The graph is owned by useErrorLogGraph (tested separately); here we mock it to
+ * hand back spy control callbacks, and we register a fixture `perferrors/view`
+ * node in Core so the view can read its low-frequency model via useNodeState
+ * ({ paused, connectionError, lastEventTime }) and its high-frequency buffer
+ * (entries) directly off the node in the rAF. Mirrors RequestStream.test.js.
  */
 
-const mockConnect = jest.fn();
-const mockClose = jest.fn();
-let lastUseMessageStreamArgs = null;
-
-jest.mock( '../../shared/hooks/usePageVisibility', () => ( {
-	__esModule: true,
-	default: () => true,
-} ) );
-jest.mock( '../../shared/hooks/useMessageStream', () => ( {
-	__esModule: true,
-	default: ( args ) => {
-		lastUseMessageStreamArgs = args;
-		return {
-			error: null,
-			connect: mockConnect,
-			close: mockClose,
-			lastEventTime: null,
-		};
-	},
+jest.mock( '../hooks/useErrorLogGraph', () => ( {
+	useErrorLogGraph: jest.fn(),
 } ) );
 jest.mock( '../../shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
@@ -38,11 +25,88 @@ jest.mock( '../../shared/hooks/useVirtualization', () => ( {
 } ) );
 
 import * as React from 'react';
+import { Core } from '@newspack-nodes/runtime';
 import ErrorLog from '../ErrorLog';
 import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
+const { useErrorLogGraph } = require( '../hooks/useErrorLogGraph' );
+
+// A minimal stand-in for the perferrors/view node: the low-frequency model lives
+// in setStateCache.view (what useNodeState subscribes to) and the high-frequency
+// buffer lives directly on the instance (what the rAF reads). setState here
+// notifies subscribers exactly like the real Node.setState.
+function registerViewFixture( {
+	paused = false,
+	connectionError = false,
+	lastEventTime = null,
+	entries = [],
+} = {} ) {
+	const node = {
+		registrations: { view: {} },
+		setStateCache: {},
+		entries,
+		register( event, listener, cb ) {
+			this.registrations[ event ][ listener ] = cb;
+			if ( event in this.setStateCache ) {
+				cb( this.setStateCache[ event ] );
+			}
+		},
+		unregister( event, listener ) {
+			delete this.registrations[ event ]?.[ listener ];
+		},
+		setState( event, payload ) {
+			this.setStateCache[ event ] = payload;
+			Object.values( this.registrations[ event ] || {} ).forEach(
+				( cb ) => cb( payload )
+			);
+		},
+	};
+	node.setState( 'view', { paused, connectionError, lastEventTime } );
+	Core.nodes.set( 'perferrors/view', node );
+	return node;
+}
+
+function entry( overrides = {} ) {
+	return {
+		seq: 1,
+		id: 1,
+		rid: 'r1',
+		ts: 1748960000,
+		k: 'error',
+		m: 'boom',
+		isEven: false,
+		...overrides,
+	};
+}
+
 describe( 'ErrorLog', () => {
+	let setPaused;
+	let clear;
+	let rafCbs;
 	const mounted = [];
+
+	beforeEach( () => {
+		Core.reset();
+		setPaused = jest.fn();
+		clear = jest.fn();
+		useErrorLogGraph.mockClear();
+		useErrorLogGraph.mockReturnValue( { setPaused, clear } );
+
+		// Capture rAF callbacks so a test can drive exactly one frame (the rAF
+		// reads node.entries and pushes them into React state).
+		rafCbs = [];
+		global.requestAnimationFrame = ( cb ) => {
+			rafCbs.push( cb );
+			return rafCbs.length;
+		};
+		global.cancelAnimationFrame = () => {};
+	} );
+
+	afterEach( () => {
+		while ( mounted.length ) {
+			mounted.pop().unmount();
+		}
+	} );
 
 	function mount( props = {} ) {
 		const r = renderComponent( React.createElement( ErrorLog, props ) );
@@ -50,163 +114,107 @@ describe( 'ErrorLog', () => {
 		return r;
 	}
 
-	beforeEach( () => {
-		mockConnect.mockReset();
-		mockClose.mockReset();
-		lastUseMessageStreamArgs = null;
-		jest.useFakeTimers();
-	} );
+	// Run a single queued animation frame.
+	const tickFrame = () => {
+		const cbs = rafCbs;
+		rafCbs = [];
+		act( () => cbs.forEach( ( cb ) => cb( performance.now() ) ) );
+	};
 
-	afterEach( () => {
-		while ( mounted.length ) {
-			mounted.pop().unmount();
-		}
-		jest.useRealTimers();
-	} );
-
-	it( 'subscribes to the errors firehose', () => {
-		mount();
-		expect( lastUseMessageStreamArgs ).not.toBeNull();
-		expect( lastUseMessageStreamArgs.subscriptions ).toEqual( [
-			'errors',
-		] );
-	} );
-
-	it( 'calls connect() on mount when the page is visible', () => {
-		mount();
-		expect( mockConnect ).toHaveBeenCalled();
-	} );
-
-	it( 'ignores the substrate connected envelope', () => {
+	it( 'renders the Error Log heading', () => {
+		registerViewFixture();
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[ 64, 0, '', '', '', 'connected', { slot: 1 } ],
-				{ type: 64 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 2000 );
-		} );
-		// No row inserted.
-		expect( container.querySelectorAll( '.entry-rid' ).length ).toBe( 0 );
+		expect( container.textContent ).toMatch( /Error Log/i );
 	} );
 
-	it( 'toggles pause/resume on button click', () => {
+	it( 'renders an "empty" message initially', () => {
+		registerViewFixture();
 		const { container } = mount();
-		const pauseBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === '⏸' );
-		expect( pauseBtn ).toBeTruthy();
-		act( () => {
-			pauseBtn.click();
-		} );
-		expect( pauseBtn.textContent ).toContain( '▶' );
+		expect( container.textContent.toLowerCase() ).toMatch(
+			/no|empty|wait/i
+		);
 	} );
 
-	it( 'Clear button empties rendered errors', () => {
+	it( 'renders entries read from the node buffer in the rAF', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { rid: 'rid_xyz', k: 'fatal_error', m: 'boom' } ),
+			],
+		} );
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:0',
-					'rid_xyz',
-					{ ts: 1748960000, k: 'fatal', m: 'boom' },
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 2000 );
-		} );
-		expect( container.textContent ).toContain( 'rid_xyz' );
-		const clearBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Clear' );
-		act( () => {
-			clearBtn.click();
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
-		expect( container.textContent ).not.toContain( 'rid_xyz' );
-	} );
-
-	it( 'forwards an errors envelope into rendered rows', () => {
-		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:0',
-					'rid_xyz',
-					{ ts: 1748960000, k: 'fatal_error', m: 'boom' },
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 2000 );
-		} );
+		tickFrame();
 		expect( container.textContent ).toContain( 'rid_xyz' );
 		expect( container.textContent ).toContain( 'fatal_error' );
 		expect( container.textContent ).toContain( 'boom' );
 	} );
 
-	it( 'filter input narrows rendered entries', () => {
+	it( 'pause button reflects the view model and calls setPaused on click', () => {
+		registerViewFixture( { paused: false } );
 		const { container } = mount();
-		// Insert 3 distinct entries.
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:0',
-					'r1',
-					{ ts: 1, k: 'fatal_error', m: 'first' },
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:1',
-					'r2',
-					{ ts: 2, k: 'warn', m: 'second' },
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:2',
-					'r3',
-					{ ts: 3, k: 'fatal_error', m: 'third' },
-				],
-				{ type: 1 }
-			);
+		const pauseBtn = container.querySelector(
+			'.event-logger-error-log-btn'
+		);
+		expect( pauseBtn.textContent ).toContain( '⏸' );
+		act( () => pauseBtn.click() );
+		expect( setPaused ).toHaveBeenCalledWith( true );
+	} );
+
+	it( 'pause button shows ▶ when the view model is paused', () => {
+		registerViewFixture( { paused: true } );
+		const { container } = mount();
+		const pauseBtn = container.querySelector(
+			'.event-logger-error-log-btn'
+		);
+		expect( pauseBtn.textContent ).toContain( '▶' );
+		act( () => pauseBtn.click() );
+		expect( setPaused ).toHaveBeenCalledWith( false );
+	} );
+
+	it( 'Clear button calls the graph clear callback', () => {
+		registerViewFixture( { entries: [ entry( { rid: 'r-foo' } ) ] } );
+		const { container } = mount();
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-foo' );
+		const clearBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Clear' );
+		act( () => clearBtn.click() );
+		expect( clear ).toHaveBeenCalled();
+	} );
+
+	it( 'shows the reconnect banner when the view model reports connectionError', () => {
+		registerViewFixture( { connectionError: true } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.event-logger-error-log-error' )
+		).toBeTruthy();
+	} );
+
+	it( 'does not show the reconnect banner when connected', () => {
+		registerViewFixture( { connectionError: false } );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.event-logger-error-log-error' )
+		).toBeNull();
+	} );
+
+	it( 'filter input narrows matching entries', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 2, id: 2, rid: 'r2', k: 'warn', m: 'second' } ),
+				entry( {
+					seq: 1,
+					id: 1,
+					rid: 'r1',
+					k: 'fatal_error',
+					m: 'first',
+				} ),
+			],
 		} );
-		act( () => {
-			jest.advanceTimersByTime( 2000 );
-		} );
+		const { container } = mount();
+		tickFrame();
 		expect( container.textContent ).toContain( 'r1' );
 		expect( container.textContent ).toContain( 'r2' );
-		// Now filter by 'warn'.
 		const input = container.querySelector( 'input[type="text"]' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
@@ -216,117 +224,52 @@ describe( 'ErrorLog', () => {
 			setter.call( input, 'warn' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		act( () => {
-			jest.advanceTimersByTime( 200 );
-		} );
-		// Only the warn row should remain.
+		tickFrame();
 		expect( container.textContent ).toContain( 'r2' );
-	} );
-
-	it( 'ignores subsequent connected envelopes after the first', () => {
-		mount();
-		act( () => {
-			// First "connected" passes through ignore branch.
-			lastUseMessageStreamArgs.onMessage(
-				[ 64, 0, '', '', '', 'connected', { slot: 1 } ],
-				{ type: 64 }
-			);
-			// Second one too.
-			lastUseMessageStreamArgs.onMessage(
-				[ 64, 0, '', '', '', 'connected', { slot: 2 } ],
-				{ type: 64 }
-			);
-		} );
-		expect( lastUseMessageStreamArgs ).not.toBeNull();
+		expect( container.textContent ).not.toContain( 'r1' );
 	} );
 
 	it( 'classifies error/warning/info keywords via CSS class', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 1, id: 1, rid: 'r_info', ts: 0, k: 'notice' } ),
+				entry( {
+					seq: 2,
+					id: 2,
+					rid: 'r_warn',
+					ts: 1,
+					k: 'something (warning)',
+				} ),
+				entry( {
+					seq: 3,
+					id: 3,
+					rid: 'r_err',
+					ts: 2,
+					k: 'error',
+				} ),
+			],
+		} );
 		const { container } = mount();
-		act( () => {
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:0',
-					'r_err',
-					{ ts: 0, k: 'error', m: 'msg' },
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:1',
-					'r_warn',
-					{ ts: 1, k: 'something (warning)', m: 'msg' },
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:2',
-					'r_err2',
-					{ ts: 2, k: 'page (error)', m: 'msg' },
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:3',
-					'r_warn2',
-					{ ts: 3, k: 'warning', m: 'msg' },
-				],
-				{ type: 1 }
-			);
-			lastUseMessageStreamArgs.onMessage(
-				[
-					1,
-					0,
-					'errors.p0',
-					'',
-					'1:4',
-					'r_info',
-					{ ts: 0, k: 'notice', m: 'msg' }, // no timestamp → formatTime fallback
-				],
-				{ type: 1 }
-			);
-		} );
-		act( () => {
-			jest.advanceTimersByTime( 2000 );
-		} );
-		// formatTime('0' → falsy) yields the placeholder.
+		tickFrame();
+		expect(
+			container.querySelector( '.entry-keyword--error' )
+		).toBeTruthy();
+		expect(
+			container.querySelector( '.entry-keyword--warning' )
+		).toBeTruthy();
+		expect(
+			container.querySelector( '.entry-keyword--info' )
+		).toBeTruthy();
+		// formatTime(0 → falsy) yields the placeholder.
 		expect( container.textContent ).toContain( '--:--:--' );
 	} );
 
-	it( 'handles malformed envelopes without throwing', () => {
-		mount();
-		expect( () => {
-			act( () => {
-				// Missing payload.
-				lastUseMessageStreamArgs.onMessage( [ 1, 0, 'errors.p0' ], {
-					type: 1,
-				} );
-				// Empty array.
-				lastUseMessageStreamArgs.onMessage( [], { type: 1 } );
-				// null payload.
-				lastUseMessageStreamArgs.onMessage(
-					[ 1, 0, 'errors.p0', '', '1:0', 'rid_z', null ],
-					{ type: 1 }
-				);
-			} );
-		} ).not.toThrow();
+	it( 'falls back to an empty model when the view node is absent', () => {
+		// No fixture registered — useNodeState yields undefined; the view must
+		// still render (Waiting…) without throwing.
+		const { container } = mount();
+		expect( container.textContent.toLowerCase() ).toMatch(
+			/wait|no|empty/i
+		);
 	} );
 } );

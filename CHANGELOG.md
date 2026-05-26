@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Error Log reimplemented as a `perferrors/stream → transform → view` JS-node SSE graph (`useErrorLogGraph`); `ErrorLog` is now a thin consumer; the reconnect banner is preserved via a connection-status surface on the view node. No behavior change.
 - **Performance Logger hook-catalog fetch reimplemented as a `hookcatalog/command → hookcatalog/view`
   JS-node graph (`useHookCatalogGraph`); `HookSelectorModal` is now a thin consumer.** The settings
   page is a form (almost all local UI state), so only its single networked surface — the
