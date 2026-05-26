@@ -924,21 +924,15 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'Configure remote', $out );
 	}
 
-	public function test_configured_servers_callback_renders_empty_state_with_no_servers(): void {
-		// With no ServerRegistry rows, the table renders the "No servers
-		// configured." placeholder + the Add New Server form fields.
+	public function test_configured_servers_callback_renders_react_mount(): void {
+		// M5.2 follow-up moved the whole view to React: the callback now emits
+		// ONLY the mount node. The server list/form + empty state are rendered
+		// and tested in JS (src/aggregator-admin/), not server-side.
 		$admin = new Admin();
 		\ob_start();
 		$admin->configured_servers_callback();
 		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'No servers configured', $out );
-		$this->assertStringContainsString( 'event-aggregator-add-server', $out );
-		$this->assertStringContainsString( 'new-server-id', $out );
-		$this->assertStringContainsString( 'new-server-url', $out );
-		$this->assertStringContainsString( 'new-server-username', $out );
-		$this->assertStringContainsString( 'new-server-password', $out );
-		// Header column labels.
-		$this->assertStringContainsString( 'wp-list-table', $out );
+		$this->assertStringContainsString( '<div id="event-aggregator-servers"></div>', $out );
 	}
 
 	// ---- Field callback: Auto-Tune (combined number inputs) --------------
@@ -1555,9 +1549,12 @@ class AdminTest extends TestCase {
 
 	// ---- configured_servers_callback: seeded servers ----------------------
 
-	public function test_configured_servers_callback_renders_seeded_servers(): void {
-		// Drop a configured server straight into the WP option so ServerRegistry
-		// picks it up. Reset the cached singleton state.
+	public function test_configured_servers_callback_emits_mount_regardless_of_seeded_servers(): void {
+		// Even with configured servers in the WP option, the callback no longer
+		// renders rows server-side — React (<ServersAdmin>) lists them via the
+		// `servers` node graph. So seeded servers must NOT leak into the markup;
+		// the callback still emits only the mount node. Row rendering is covered
+		// in JS, not here.
 		\update_option(
 			\Newspack_Event_Logger_Nodes\Server_Registry::OPTION_KEY,
 			[
@@ -1584,17 +1581,8 @@ class AdminTest extends TestCase {
 		$admin->configured_servers_callback();
 		$out = \ob_get_clean();
 
-		// Both server rows rendered.
-		$this->assertStringContainsString( 'data-server-id="spoke-a"', $out );
-		$this->assertStringContainsString( 'data-server-id="spoke-b"', $out );
-		// Status icons differ — enabled vs disabled.
-		$this->assertStringContainsString( 'dashicons-yes-alt', $out );
-		$this->assertStringContainsString( 'dashicons-no', $out );
-		// Enable/Disable button text reflects current state.
-		$this->assertStringContainsString( 'Disable', $out );  // for spoke-a (currently enabled)
-		$this->assertStringContainsString( 'Enable', $out );   // for spoke-b (currently disabled)
-		// No "No servers configured" placeholder when rows exist.
-		$this->assertStringNotContainsString( 'No servers configured', $out );
+		// Whole-output match, not "not-contains": a not-contains check on a constant literal can never fail; exact-match catches ANY server-side row/table/form leak regardless of markup.
+		$this->assertSame( '<div id="event-aggregator-servers"></div>', \trim( $out ) );
 	}
 
 	// ---- additional edge cases for higher coverage --------------------------
