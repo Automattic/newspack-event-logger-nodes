@@ -1182,7 +1182,7 @@ class Admin {
 		$restarted = 0;
 		try {
 			$workers   = Bootstrap::expand_workers();
-			$base_dir  = (string) ( Substrate_Config::load_config()['base_directory'] ?? '/tmp/newspack-nodes' );
+			$base_dir  = Substrate_Config::get_base_directory();
 			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
 		} catch ( \Throwable $e ) {
 			// Best-effort: the next supervisor pass picks up the new salt
