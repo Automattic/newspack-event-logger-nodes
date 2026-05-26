@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Configured Servers (aggregator-admin) rebuilt as a React node-graph view, replacing the
+  PHP-rendered table + jQuery IIFE.** The only converted dashboard that wasn't already React — a
+  full rewrite: `servers/command` (CRUD command-out — `list`/`add`/`update`/`delete`/`test` on the
+  `servers` CI, injectable seam + `close()` guard) → `servers/view`
+  (`setState('view',{servers,loading,error})`) — wired by `useAggregatorAdminGraph` (list on mount,
+  each mutation awaits then re-`list()`s, `setViewReady`). `index.js` now `createRoot`-mounts a React
+  `<ServersAdmin>` into the `#event-aggregator-servers` div that `configured_servers_callback` emits
+  (the PHP no longer renders the rows). The table / add-form / validation / test-status reuse the
+  exact `wp-list-table` markup + class names; the post-mutation `window.location.reload()` is
+  replaced by a re-`list()`. Capability gating (page-level `manage_options` + the per-verb
+  `require_manage_options` in `Servers_CI`) is unchanged. (Known project-wide gap, not specific to
+  this change: the React dashboards hardcode English; an `@wordpress/i18n` sweep across all of them —
+  plus deleting the now-orphaned `eventAggregatorAdmin` localize — is tracked separately.)
 - **Aggregator Status dashboard reimplemented as a JS-Node graph + thin React view.** First
   command-poll conversion in ELN (mirrors Worker Status, not the SSE dashboards): `aggregator/poll`
   (command-out — sends `{to:'aggregator', verb:'status'}` on the interval, captures the reply's

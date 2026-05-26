@@ -875,104 +875,22 @@ class Admin {
 	}
 
 	/**
-	 * Configured Servers field — table of registered remote spokes plus an
-	 * inline "Add New Server" form. Test/Toggle/Remove/Add buttons are wired
-	 * by `src/aggregator-admin/index.js` (built to
-	 * `build/aggregator-admin/`), which dispatches the 4 CRUD verbs through
-	 * the shared CommandClient against the `servers` service CI on the
-	 * unified `/command` endpoint. Ported from the legacy
-	 * newspack-event-aggregator plugin (assets/admin.js +
-	 * servers_field_callback).
+	 * Configured Servers field — React mount point.
+	 *
+	 * The server table + inline "Add New Server" form are rendered entirely by
+	 * the React <ServersAdmin> app (`src/aggregator-admin/index.js`, built to
+	 * `build/aggregator-admin/`), which mounts into the `#event-aggregator-servers`
+	 * div below and is driven by the `servers/*` node graph. CRUD dispatches the
+	 * four `servers` verbs through the shared CommandClient against the `servers`
+	 * service CI on the unified `/command` endpoint. This callback used to render
+	 * the table server-side from Server_Registry::get_all() + a jQuery glue
+	 * script; M5.2 follow-up moved the whole view to React, so this now emits ONLY
+	 * the mount node (React owns the rows + form, re-listing after each mutation
+	 * instead of reloading the page).
 	 */
 	public function configured_servers_callback(): void {
-		$servers = \Newspack_Event_Logger_Nodes\Server_Registry::get_instance()->get_all();
 		?>
-		<div id="event-aggregator-servers">
-			<table class="wp-list-table widefat fixed striped" style="max-width: 800px;">
-				<thead>
-					<tr>
-						<th><?php \esc_html_e( 'ID', 'newspack-event-logger-nodes' ); ?></th>
-						<th><?php \esc_html_e( 'URL', 'newspack-event-logger-nodes' ); ?></th>
-						<th><?php \esc_html_e( 'Status', 'newspack-event-logger-nodes' ); ?></th>
-						<th><?php \esc_html_e( 'Actions', 'newspack-event-logger-nodes' ); ?></th>
-					</tr>
-				</thead>
-				<tbody>
-					<?php if ( empty( $servers ) ) : ?>
-						<tr>
-							<td colspan="4"><?php \esc_html_e( 'No servers configured.', 'newspack-event-logger-nodes' ); ?></td>
-						</tr>
-					<?php else : ?>
-						<?php foreach ( $servers as $id => $row ) : ?>
-							<tr data-server-id="<?php echo \esc_attr( $id ); ?>">
-								<td><code><?php echo \esc_html( $id ); ?></code></td>
-								<td><?php echo \esc_html( $row['url'] ?? '' ); ?></td>
-								<td>
-									<?php if ( ! empty( $row['enabled'] ) ) : ?>
-										<span class="dashicons dashicons-yes-alt" style="color: green;" title="<?php \esc_attr_e( 'Enabled', 'newspack-event-logger-nodes' ); ?>"></span>
-									<?php else : ?>
-										<span class="dashicons dashicons-no" style="color: gray;" title="<?php \esc_attr_e( 'Disabled', 'newspack-event-logger-nodes' ); ?>"></span>
-									<?php endif; ?>
-									<span class="test-status"></span>
-								</td>
-								<td>
-									<button type="button" class="button button-small event-aggregator-test" data-server-id="<?php echo \esc_attr( $id ); ?>">
-										<?php \esc_html_e( 'Test', 'newspack-event-logger-nodes' ); ?>
-									</button>
-									<button type="button" class="button button-small event-aggregator-toggle" data-server-id="<?php echo \esc_attr( $id ); ?>" data-enabled="<?php echo ! empty( $row['enabled'] ) ? '1' : '0'; ?>">
-										<?php echo ! empty( $row['enabled'] ) ? \esc_html__( 'Disable', 'newspack-event-logger-nodes' ) : \esc_html__( 'Enable', 'newspack-event-logger-nodes' ); ?>
-									</button>
-									<button type="button" class="button button-small button-link-delete event-aggregator-remove" data-server-id="<?php echo \esc_attr( $id ); ?>">
-										<?php \esc_html_e( 'Remove', 'newspack-event-logger-nodes' ); ?>
-									</button>
-								</td>
-							</tr>
-						<?php endforeach; ?>
-					<?php endif; ?>
-				</tbody>
-			</table>
-
-			<h4><?php \esc_html_e( 'Add New Server', 'newspack-event-logger-nodes' ); ?></h4>
-			<table class="form-table" style="max-width: 600px;">
-				<tr>
-					<th><label for="new-server-id"><?php \esc_html_e( 'Server ID', 'newspack-event-logger-nodes' ); ?></label></th>
-					<td>
-						<input type="text" id="new-server-id" class="regular-text" placeholder="prod-web-01" pattern="[a-zA-Z0-9_-]+" />
-						<p class="description"><?php \esc_html_e( 'Unique identifier (alphanumeric, hyphen, underscore).', 'newspack-event-logger-nodes' ); ?></p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="new-server-url"><?php \esc_html_e( 'Server URL', 'newspack-event-logger-nodes' ); ?></label></th>
-					<td>
-						<input type="url" id="new-server-url" class="regular-text" placeholder="https://example.com" />
-						<p class="description"><?php \esc_html_e( 'HTTPS URL of the WordPress site.', 'newspack-event-logger-nodes' ); ?></p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="new-server-username"><?php \esc_html_e( 'Username', 'newspack-event-logger-nodes' ); ?></label></th>
-					<td>
-						<input type="text" id="new-server-username" class="regular-text" />
-						<p class="description"><?php \esc_html_e( 'WordPress username on the remote site.', 'newspack-event-logger-nodes' ); ?></p>
-					</td>
-				</tr>
-				<tr>
-					<th><label for="new-server-password"><?php \esc_html_e( 'Application Password', 'newspack-event-logger-nodes' ); ?></label></th>
-					<td>
-						<input type="password" id="new-server-password" class="regular-text" />
-						<p class="description"><?php \esc_html_e( 'WordPress Application Password (Users → Profile → Application Passwords).', 'newspack-event-logger-nodes' ); ?></p>
-					</td>
-				</tr>
-				<tr>
-					<th></th>
-					<td>
-						<button type="button" class="button button-primary" id="event-aggregator-add-server">
-							<?php \esc_html_e( 'Add Server', 'newspack-event-logger-nodes' ); ?>
-						</button>
-						<span id="add-server-status"></span>
-					</td>
-				</tr>
-			</table>
-		</div>
+		<div id="event-aggregator-servers"></div>
 		<?php
 	}
 
