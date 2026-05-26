@@ -11,8 +11,7 @@
  *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
  *   - class-perf-config-controller.php          (config_get, config_update)
  *   - class-perf-settings-controller.php        (settings_update)
- *   - class-gyroscope-controller.php            (gyroscope_timeline)
- *                                               (SSE method stays as REST controller)
+ *   - class-gyroscope-controller.php            (SSE method stays as REST controller)
  *   - class-request-log-controller.php          (request_log_list, request_log_detail)
  *
  * SSE-style stream controllers (firehose-stream, gyroscope-stream,
@@ -674,42 +673,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				return [
 					'option'  => $option,
 					'updated' => (bool) $ok,
-				];
-					},
-				],
-				[
-					'name'        => 'gyroscope_timeline',
-					'description' => 'Per-request event timeline from requests.log.',
-					'args'        => [
-						[ 'name' => 'request_id', 'type' => 'string', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy GyroscopeController::get_timeline.
-				// Empty rid → canonical initial-state shape (matches the
-				// legacy stub so the React tree mounts cleanly before a
-				// request is selected). Otherwise: walk requests.log,
-				// fan out across partitions, return `events[]` from the
-				// matched envelope (or wrap the whole body as a single
-				// event when no `events` key is present).
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$rid     = (string) ( $decoded['request_id'] ?? '' );
-				if ( '' === $rid ) {
-					return [
-						'data' => [ 'events' => [] ],
-						'meta' => [],
-					];
-				}
-
-				[ $events, $scanned ] = self::scan_requests_for_events( $rid );
-
-				return [
-					'data' => [
-						'request_id' => $rid,
-						'events'     => $events,
-					],
-					'meta' => [ 'scanned' => $scanned ],
 				];
 					},
 				],
@@ -1572,70 +1535,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			$result['flame_data'] = $flame;
 		}
 		return $result;
-	}
-
-	/**
-	 * Walk every requests.log partition looking for the given rid; on hit,
-	 * return its `events[]` (or the body itself wrapped as one event when no
-	 * `events` key exists). Mirrors GyroscopeController::get_timeline.
-	 *
-	 * @param string $rid Request id to look up.
-	 * @return array{0:array<int,mixed>,1:int} Tuple of events array + entries scanned.
-	 */
-	private static function scan_requests_for_events( string $rid ): array {
-		$config         = RuntimeConfig::load_config();
-		$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-		$base_dir       = RuntimeConfig::get_base_directory();
-		$log_base       = $base_dir . '/logs';
-
-		$events  = [];
-		$scanned = 0;
-
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
-				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
-			);
-			$found     = false;
-			$partition->scan_index(
-				static function ( string $line ) use ( &$events, &$scanned, &$found, $partition, $rid ): ?bool {
-					++$scanned;
-					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
-						return false;
-					}
-					$entry = Request_Builder_Node::parse_request_index( $line );
-					if ( ! \is_array( $entry ) || \trim( (string) $entry['rid'] ) !== $rid ) {
-						return null;
-					}
-					$bytes = $partition->read_at(
-						(int) ( $entry['segment_id'] ?? 0 ),
-						(int) ( $entry['offset'] ?? 0 ),
-						(int) ( $entry['length'] ?? 0 )
-					);
-					if ( '' === $bytes ) {
-						return false;
-					}
-					// Bytes are a packed Message; body lives at VALUE.
-					$decoded = \json_decode( \trim( $bytes ), true, 64 );
-					$body    = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
-					if ( \is_array( $body ) ) {
-						if ( isset( $body['events'] ) && \is_array( $body['events'] ) ) {
-							$events = $body['events'];
-						} else {
-							// Treat request as a single envelope.
-							$events[] = $body;
-						}
-					}
-					$found = true;
-					return false;
-				},
-				true
-			);
-			if ( $found || $scanned > self::MAX_INDEX_ENTRIES ) {
-				break;
-			}
-		}
-
-		return [ $events, $scanned ];
 	}
 
 	/**
