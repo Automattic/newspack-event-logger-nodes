@@ -1,0 +1,1448 @@
+# Copyright (C) 2026 
+# This file is distributed under the same license as the Newspack Event Logger Nodes plugin.
+msgid ""
+msgstr ""
+"Project-Id-Version: Newspack Event Logger Nodes 0.4.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-05-26T16:43:21+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.12.0\n"
+"X-Domain: newspack-event-logger-nodes\n"
+
+#. Plugin Name of the plugin
+#: newspack-event-logger-nodes.php
+msgid "Newspack Event Logger Nodes"
+msgstr ""
+
+#. Description of the plugin
+#: newspack-event-logger-nodes.php
+msgid "Event-logger application built on newspack-nodes runtime."
+msgstr ""
+
+#: includes/admin/class-admin.php:223
+#: includes/admin/class-admin.php:257
+msgid "Event Logger Settings"
+msgstr ""
+
+#: includes/admin/class-admin.php:224
+msgid "Event Logger"
+msgstr ""
+
+#: includes/admin/class-admin.php:250
+msgid "You do not have permission to access this page."
+msgstr ""
+
+#. translators: %d = number of workers restarted.
+#: includes/admin/class-admin.php:267
+#, php-format
+msgid "Cache flushed. %d worker restart requested — fresh prefix takes effect on its next graceful exit."
+msgid_plural "Cache flushed. %d workers restart requested — fresh prefix takes effect on their next graceful exit."
+msgstr[0] ""
+msgstr[1] ""
+
+#: includes/admin/class-admin.php:280
+msgid "Settings reset to defaults."
+msgstr ""
+
+#: includes/admin/class-admin.php:290
+msgid "Save Settings"
+msgstr ""
+
+#: includes/admin/class-admin.php:293
+msgid "Reset to Defaults"
+msgstr ""
+
+#: includes/admin/class-admin.php:294
+msgid "Are you sure you want to reset all settings to defaults? This cannot be undone."
+msgstr ""
+
+#: includes/admin/class-admin.php:332
+msgid "General"
+msgstr ""
+
+#: includes/admin/class-admin.php:338
+msgid "Enable Logging"
+msgstr ""
+
+#: includes/admin/class-admin.php:368
+msgid "Instrumentation"
+msgstr ""
+
+#: includes/admin/class-admin.php:374
+msgid "Log URLs"
+msgstr ""
+
+#: includes/admin/class-admin.php:381
+msgid "Skip URLs"
+msgstr ""
+
+#: includes/admin/class-admin.php:388
+msgid "Log Events"
+msgstr ""
+
+#: includes/admin/class-admin.php:395
+msgid "Custom Events"
+msgstr ""
+
+#: includes/admin/class-admin.php:435
+msgid "Performance Workers"
+msgstr ""
+
+#: includes/admin/class-admin.php:441
+msgid "Auto-Tune"
+msgstr ""
+
+#: includes/admin/class-admin.php:448
+msgid "Significant Events"
+msgstr ""
+
+#: includes/admin/class-admin.php:473
+msgid "Remote Servers"
+msgstr ""
+
+#: includes/admin/class-admin.php:479
+msgid "Enable Aggregator"
+msgstr ""
+
+#: includes/admin/class-admin.php:486
+msgid "Configured Servers"
+msgstr ""
+
+#: includes/admin/class-admin.php:523
+msgid "Remote Server Settings"
+msgstr ""
+
+#: includes/admin/class-admin.php:529
+msgid "Remote Segment Count"
+msgstr ""
+
+#: includes/admin/class-admin.php:536
+msgid "Remote Segment Size"
+msgstr ""
+
+#: includes/admin/class-admin.php:543
+msgid "Remote Min Retention"
+msgstr ""
+
+#: includes/admin/class-admin.php:563
+msgid "Debugging"
+msgstr ""
+
+#: includes/admin/class-admin.php:569
+msgid "Log Memory"
+msgstr ""
+
+#: includes/admin/class-admin.php:576
+msgid "Flush Every Line"
+msgstr ""
+
+#: includes/admin/class-admin.php:772
+msgid "Enable or disable event logging."
+msgstr ""
+
+#: includes/admin/class-admin.php:776
+msgid "URL filters and hooks to time. Use Browse Hooks / Browse Events to populate from the recommended set."
+msgstr ""
+
+#: includes/admin/class-admin.php:780
+msgid "Automatically disable noisy events and protect slow ones."
+msgstr ""
+
+#: includes/admin/class-admin.php:784
+msgid "Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed."
+msgstr ""
+
+#: includes/admin/class-admin.php:794
+msgid "Enable event logging"
+msgstr ""
+
+#: includes/admin/class-admin.php:825
+msgid "Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings."
+msgstr ""
+
+#: includes/admin/class-admin.php:833
+msgid "Show the Aggregator status dashboard in the admin menu."
+msgstr ""
+
+#: includes/admin/class-admin.php:838
+msgid "Storage geometry pushed to remote spokes (may differ from hub settings). Blank fields use the config-file default."
+msgstr ""
+
+#: includes/admin/class-admin.php:851
+msgid "Number of log segments on remote servers (2-16)."
+msgstr ""
+
+#: includes/admin/class-admin.php:862
+msgid "Segment size on remote servers in bytes (1MB-256MB)."
+msgstr ""
+
+#: includes/admin/class-admin.php:873
+msgid "Minimum retention on remote servers in seconds. Spokes keep data at least this long for the aggregator to pull."
+msgstr ""
+
+#: includes/admin/class-admin.php:906
+msgid "Only log URLs containing these substrings. Leave empty to log all requests."
+msgstr ""
+
+#: includes/admin/class-admin.php:926
+msgid "Never log URLs containing these substrings. Checked first — always wins over Log URLs."
+msgstr ""
+
+#: includes/admin/class-admin.php:943
+msgid "Hooks to time. Use Select Hooks to browse the registered set, or Reset to restore the file default."
+msgstr ""
+
+#: includes/admin/class-admin.php:958
+msgid "Custom events to time. Use Select Events to choose from the registered custom-event registry."
+msgstr ""
+
+#: includes/admin/class-admin.php:973
+msgid "Events/hooks that exceeded the time threshold at least once. Protected from auto-disable. Remove to allow auto-disabling."
+msgstr ""
+
+#: includes/admin/class-admin.php:999
+msgid "Disable if count >"
+msgstr ""
+
+#: includes/admin/class-admin.php:1007
+msgid "Protect if avg >="
+msgstr ""
+
+#: includes/admin/class-admin.php:1013
+msgid "ms"
+msgstr ""
+
+#: includes/admin/class-admin.php:1016
+msgid "Noisy events (count > N) get disabled. Significant events (avg >= M ms) are protected. Set to 0 to disable."
+msgstr ""
+
+#: includes/admin/class-admin.php:1020
+msgid "Clear (use defaults)"
+msgstr ""
+
+#: includes/admin/class-admin.php:1033
+msgid "Append peak_mb to every complete() log entry so memory growth is visible across the request timeline."
+msgstr ""
+
+#: includes/admin/class-admin.php:1044
+msgid "Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability."
+msgstr ""
+
+#: includes/admin/class-admin.php:1087
+#: includes/admin/class-admin.php:1159
+msgid "Security check failed."
+msgstr ""
+
+#: includes/admin/class-admin.php:1090
+#: includes/admin/class-admin.php:1162
+msgid "You do not have permission to perform this action."
+msgstr ""
+
+#: includes/admin/class-admin.php:1132
+msgid "Maintenance"
+msgstr ""
+
+#: includes/admin/class-admin.php:1135
+msgid "Flush Cache"
+msgstr ""
+
+#: includes/admin/class-admin.php:1136
+msgid "Flush all performance stats from memcache? Hourly stats, leaderboards, and URL data will be orphaned (TTL handles cleanup). request-workers will restart so the new salt takes effect immediately. This cannot be undone."
+msgstr ""
+
+#: includes/admin/class-admin.php:1138
+msgid "Rotates the stats-salt so every existing stats key in memcache orphans instantly. Per-URL flame data expires via TTL."
+msgstr ""
+
+#: includes/admin/class-admin.php:1367
+msgid "Reset to default"
+msgstr ""
+
+#: includes/admin/class-admin.php:1371
+msgid "Examples:"
+msgstr ""
+
+#: includes/admin/class-admin.php:1395
+msgid "Clear (use default)"
+msgstr ""
+
+#: newspack-event-logger-nodes.php:236
+msgid "not active"
+msgstr ""
+
+#. translators: 1: minimum newspack-nodes version, 2: installed version or "not active".
+#: newspack-event-logger-nodes.php:239
+#, php-format
+msgid "Newspack Event Logger Nodes requires the Newspack Nodes plugin (version %1$s or newer, with the register_plugin / config-namespace APIs); found %2$s. The event logger is inactive until that is resolved."
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:39
+msgid "Error"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:62
+msgid "Testing…"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:68
+msgid "Connected!"
+msgstr ""
+
+#. translators: %s: connection error message.
+#: src/aggregator-admin/ServersAdmin.js:75
+#, js-format
+msgid "Failed: %s"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:97
+msgid "Are you sure you want to remove this server?"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:124
+msgid "Enabled"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:130
+msgid "Disabled"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:151
+msgid "Test"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:162
+msgid "Disable"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:163
+msgid "Enable"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:172
+#: src/performance-logger/settings/TagInputField.js:234
+msgid "Remove"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:199
+msgid "Server ID is required"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:210
+msgid "Server URL is required"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:220
+msgid "URL must start with https://"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:231
+msgid "Adding…"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:243
+msgid "Server added!"
+msgstr ""
+
+#. translators: %s: error message.
+#: src/aggregator-admin/ServersAdmin.js:254
+#, js-format
+msgid "Error: %s"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:266
+msgid "Add New Server"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:272
+msgid "Server ID"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:289
+msgid "Unique identifier (alphanumeric, hyphen, underscore)."
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:299
+msgid "Server URL"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:315
+msgid "HTTPS URL of the WordPress site."
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:325
+msgid "Username"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:342
+msgid "WordPress username on the remote site."
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:352
+msgid "Application Password"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:369
+msgid "WordPress Application Password (Users → Profile → Application Passwords)."
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:386
+msgid "Add Server"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:438
+msgid "ID"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:439
+#: src/performance-dashboards/UrlTable.js:377
+#: src/performance-gyroscope/Inflight.js:59
+#: src/performance-request-log/RequestStream.js:61
+msgid "URL"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:441
+#: src/event-aggregator/AggregatorStatus.js:181
+#: src/performance-dashboards/components/UrlDetailView.js:458
+#: src/performance-gyroscope/Inflight.js:67
+#: src/performance-request-log/RequestStream.js:66
+msgid "Status"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:444
+msgid "Actions"
+msgstr ""
+
+#: src/aggregator-admin/ServersAdmin.js:462
+msgid "No servers configured."
+msgstr ""
+
+#. translators: %d: number of seconds since the last update.
+#. translators: %d: seconds since the last error was received.
+#. translators: %d: seconds since the last event was received.
+#. translators: %d: seconds since the last request was received.
+#: src/event-aggregator/AggregatorStatus.js:60
+#: src/performance-dashboards/ErrorLog.js:439
+#: src/performance-gyroscope/Inflight.js:570
+#: src/performance-request-log/RequestStream.js:533
+#, js-format
+msgid "%ds ago"
+msgstr ""
+
+#. translators: %d: number of minutes since the last update.
+#: src/event-aggregator/AggregatorStatus.js:67
+#, js-format
+msgid "%dm ago"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:147
+msgid "Connected"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:148
+msgid "Attempt"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:156
+msgid "Server HB"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:164
+msgid "Client HB"
+msgstr ""
+
+#. translators: 1: number of connected partitions, 2: total number of partitions.
+#: src/event-aggregator/AggregatorStatus.js:248
+#, js-format
+msgid "%1$d/%2$d partitions"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:309
+msgid "Aggregator Status"
+msgstr ""
+
+#. translators: %s: formatted time of the last update.
+#: src/event-aggregator/AggregatorStatus.js:318
+#, js-format
+msgid "Updated %s"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:324
+#: src/performance-dashboards/components/OverviewSection.js:337
+#: src/performance-dashboards/components/UrlDetailView.js:291
+#: src/performance-dashboards/index.js:30
+#: src/performance-dashboards/index.js:140
+msgid "Loading…"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:333
+msgid "connected"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:342
+msgid "Refresh interval"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:361
+msgid "Loading server status…"
+msgstr ""
+
+#: src/event-aggregator/AggregatorStatus.js:390
+msgid "No servers configured. Add servers in Event Logger settings."
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:233
+msgid "Avg Peak Memory (MB)"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:237
+msgid "Avg Response Time (ms)"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:331
+msgid "Cumulative Time"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:335
+msgid "Requests"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:385
+msgid "Total"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:420
+#: src/performance-dashboards/constants.js:25
+msgid "Request Volume"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:421
+#: src/performance-dashboards/constants.js:29
+msgid "Avg Response Time"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:422
+#: src/performance-dashboards/constants.js:33
+msgid "Cumulative Response Time"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:426
+#: src/performance-dashboards/components/OverviewSection.js:268
+#: src/performance-dashboards/constants.js:37
+msgid "Avg Peak Memory"
+msgstr ""
+
+#. translators: %d: number of hours of data retention shown.
+#: src/performance-dashboards/AggregateTimeChart.js:434
+#, js-format
+msgid "%d Hours"
+msgstr ""
+
+#. translators: %d: number of minutes of data retention shown.
+#: src/performance-dashboards/AggregateTimeChart.js:439
+#, js-format
+msgid "%d Minutes"
+msgstr ""
+
+#. translators: 1: metric name (e.g. Request Volume), 2: retention window (e.g. 24 Hours).
+#: src/performance-dashboards/AggregateTimeChart.js:451
+#, js-format
+msgid "%1$s (Last %2$s)"
+msgstr ""
+
+#: src/performance-dashboards/AggregateTimeChart.js:453
+msgid "Chart"
+msgstr ""
+
+#. translators: %d: number of nested log entries hidden inside this collapsed pair.
+#: src/performance-dashboards/components/LogEntriesTable.js:841
+#, js-format
+msgid "[%d entry]"
+msgid_plural "[%d entries]"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %d: number of log entries in the request.
+#: src/performance-dashboards/components/LogEntriesTable.js:922
+#, js-format
+msgid "Log Entries (%d)"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:941
+msgid "Fold All"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:955
+msgid "Unfold All"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:962
+msgid "Search entries…"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1003
+msgid "No matches"
+msgstr ""
+
+#. translators: %d: number of entries matching the search query.
+#: src/performance-dashboards/components/LogEntriesTable.js:1016
+#, js-format
+msgid "%d match"
+msgid_plural "%d matches"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1040
+msgid "Previous match (p)"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1063
+msgid "Next match (n)"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1074
+msgid "Clear search (Esc)"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1091
+#: src/performance-dashboards/components/UrlDetailView.js:448
+#: src/performance-dashboards/ErrorLog.js:51
+#: src/performance-dashboards/RequestProfile.js:152
+#: src/performance-gyroscope/Inflight.js:112
+#: src/performance-request-log/RequestStream.js:48
+msgid "Time"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1094
+#: src/performance-dashboards/ErrorLog.js:64
+msgid "Keyword"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1100
+#: src/performance-dashboards/ErrorLog.js:69
+msgid "Message"
+msgstr ""
+
+#: src/performance-dashboards/components/LogEntriesTable.js:1150
+msgid "Click to highlight pair"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:86
+msgid "All Servers"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:121
+msgid "Overview"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:139
+msgid "Search request ID…"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:165
+msgid "Searching…"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:169
+msgid "Find"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:199
+msgid "Refresh:"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:221
+msgid "Unique URLs"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:232
+msgid "Total Requests"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:244
+msgid "Avg Response"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:255
+msgid "Req/s (last hour)"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:296
+#: src/performance-dashboards/constants.js:51
+msgid "Server"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:308
+#: src/performance-dashboards/components/UrlDetailView.js:262
+msgid "Metric"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:319
+#: src/performance-dashboards/components/UrlDetailView.js:273
+msgid "Breakdown"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:359
+#: src/performance-dashboards/components/UrlDetailView.js:313
+msgid "Time by Category"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:367
+#: src/performance-dashboards/components/UrlDetailView.js:321
+msgid "Events by Category"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:375
+#: src/performance-dashboards/components/UrlDetailView.js:329
+msgid "Average Time per Event"
+msgstr ""
+
+#. translators: %s: the server name being filtered by.
+#: src/performance-dashboards/components/OverviewSection.js:393
+#, js-format
+msgid "Time Breakdown (%s)"
+msgstr ""
+
+#: src/performance-dashboards/components/OverviewSection.js:399
+msgid "Global Time Breakdown"
+msgstr ""
+
+#. translators: 1: number of requests, 2: the server name.
+#: src/performance-dashboards/components/OverviewSection.js:424
+#, js-format
+msgid "Average breakdown across %1$d request on %2$s"
+msgid_plural "Average breakdown across %1$d requests on %2$s"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %d: number of requests.
+#: src/performance-dashboards/components/OverviewSection.js:437
+#: src/performance-dashboards/components/UrlDetailView.js:395
+#, js-format
+msgid "Average breakdown across %d request"
+msgid_plural "Average breakdown across %d requests"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:48
+msgid "URL:"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:57
+msgid "Time:"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:65
+msgid "Duration:"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:73
+msgid "Memory:"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:81
+msgid "Status:"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:89
+msgid "Error:"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:98
+msgid "Timed out (orphaned request)"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:102
+#: src/performance-dashboards/components/UrlDetailView.js:106
+msgid "Fatal error"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:113
+msgid "No log entries available for this request."
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:127
+msgid "Request Trace"
+msgstr ""
+
+#: src/performance-dashboards/components/RequestDetailView.js:132
+#: src/performance-dashboards/components/UrlDetailView.js:361
+msgid "Loading chart…"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:116
+msgid "Timed out"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:353
+msgid "Aggregate Flame Graph"
+msgstr ""
+
+#. translators: %d: number of recent requests shown.
+#: src/performance-dashboards/components/UrlDetailView.js:420
+#, js-format
+msgid "Recent Requests (%d)"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:433
+#: src/performance-dashboards/UrlTable.js:356
+msgid "Showing Errors"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:437
+#: src/performance-dashboards/UrlTable.js:357
+msgid "Errors Only"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:451
+#: src/performance-dashboards/constants.js:50
+msgid "Method"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:454
+#: src/performance-dashboards/ErrorLog.js:56
+#: src/performance-gyroscope/Inflight.js:51
+#: src/performance-request-log/RequestStream.js:53
+msgid "Request ID"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:463
+#: src/performance-request-log/RequestStream.js:84
+msgid "Duration"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:468
+#: src/performance-dashboards/UrlTable.js:440
+msgid "Mem"
+msgstr ""
+
+#: src/performance-dashboards/components/UrlDetailView.js:480
+msgid "No requests to display"
+msgstr ""
+
+#: src/performance-dashboards/constants.js:47
+msgid "Status Codes"
+msgstr ""
+
+#: src/performance-dashboards/constants.js:53
+msgid "Country"
+msgstr ""
+
+#: src/performance-dashboards/constants.js:56
+msgid "From"
+msgstr ""
+
+#: src/performance-dashboards/constants.js:57
+msgid "User Agent"
+msgstr ""
+
+#: src/performance-dashboards/constants.js:58
+msgid "JA4 Hash"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:52
+msgid "Error timestamp"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:57
+msgid "Click to view request trace"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:65
+msgid "Error/warning keyword"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:70
+msgid "Error message"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:147
+#: src/performance-gyroscope/Inflight.js:331
+#: src/performance-request-log/RequestStream.js:195
+msgid "View request trace"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:404
+msgid "Error Log"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:409
+msgid "Filter by keyword, message, or request ID…"
+msgstr ""
+
+#. translators: %d: number of error-log entries shown.
+#: src/performance-dashboards/ErrorLog.js:420
+#, js-format
+msgid "%d entry"
+msgid_plural "%d entries"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-dashboards/ErrorLog.js:455
+#: src/performance-request-log/RequestStream.js:549
+msgid "Resume streaming"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:459
+#: src/performance-request-log/RequestStream.js:553
+msgid "Pause streaming"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:470
+#: src/performance-request-log/RequestStream.js:564
+msgid "Clear all entries"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:475
+#: src/performance-request-log/RequestStream.js:569
+msgid "Clear"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:482
+#: src/performance-gyroscope/Inflight.js:615
+#: src/performance-request-log/RequestStream.js:590
+msgid "Connection lost. Reconnecting…"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:518
+#: src/performance-request-log/RequestStream.js:647
+msgid "Paused - click play to resume"
+msgstr ""
+
+#: src/performance-dashboards/ErrorLog.js:522
+msgid "Waiting for errors…"
+msgstr ""
+
+#. translators: 1: node name, 2: percent of parent, 3: percent of total, 4: duration in milliseconds.
+#: src/performance-dashboards/FlameGraph.js:44
+#, js-format
+msgid "%1$s - %2$s%% of parent, %3$s%% of total, %4$sms"
+msgstr ""
+
+#. translators: 1: node name, 2: percent of total, 3: duration in milliseconds.
+#: src/performance-dashboards/FlameGraph.js:56
+#, js-format
+msgid "%1$s - %2$s%%, %3$sms"
+msgstr ""
+
+#: src/performance-dashboards/FlameGraph.js:409
+msgid "No flame graph data available."
+msgstr ""
+
+#: src/performance-dashboards/index.js:56
+msgid "An error occurred"
+msgstr ""
+
+#: src/performance-dashboards/index.js:73
+msgid "Event Logger - Performance Dashboard"
+msgstr ""
+
+#: src/performance-dashboards/index.js:93
+msgid "Loading dashboard…"
+msgstr ""
+
+#: src/performance-dashboards/PerformanceDashboard.js:151
+#: src/performance-dashboards/PerformanceDashboard.js:246
+msgid "Unknown URL"
+msgstr ""
+
+#. translators: %s: the request ID that was searched for.
+#: src/performance-dashboards/PerformanceDashboard.js:262
+#, js-format
+msgid "Request \"%s\" not found"
+msgstr ""
+
+#: src/performance-dashboards/PerformanceDashboard.js:427
+msgid "Loading performance data…"
+msgstr ""
+
+#: src/performance-dashboards/PerformanceDashboard.js:467
+msgid "URLs by Request Count"
+msgstr ""
+
+#. translators: %s: the request ID.
+#: src/performance-dashboards/PerformanceDashboard.js:494
+#, js-format
+msgid "Request: %s"
+msgstr ""
+
+#: src/performance-dashboards/PerformanceDashboard.js:557
+msgid "Back to URL details"
+msgstr ""
+
+#: src/performance-dashboards/RequestProfile.js:40
+msgid "Time Breakdown"
+msgstr ""
+
+#: src/performance-dashboards/RequestProfile.js:149
+msgid "Category"
+msgstr ""
+
+#: src/performance-dashboards/RequestProfile.js:155
+msgid "% of Total"
+msgstr ""
+
+#: src/performance-dashboards/RequestProfile.js:161
+msgid "Count"
+msgstr ""
+
+#: src/performance-dashboards/RequestProfile.js:294
+msgid "(anonymous)"
+msgstr ""
+
+#. translators: %d: number of additional entries not shown.
+#: src/performance-dashboards/RequestProfile.js:350
+#, js-format
+msgid "… and %d more"
+msgstr ""
+
+#: src/performance-dashboards/RequestProfile.js:386
+msgid "Show less"
+msgstr ""
+
+#. translators: %d: number of additional categories that can be shown.
+#: src/performance-dashboards/RequestProfile.js:392
+#, js-format
+msgid "Show %d more category"
+msgid_plural "Show %d more categories"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-dashboards/RequestProfile.js:406
+msgid "Total Profiled"
+msgstr ""
+
+#: src/performance-dashboards/ResponseTimeChart.js:88
+msgid "Response Time"
+msgstr ""
+
+#. translators: %d: average response time in milliseconds.
+#: src/performance-dashboards/ResponseTimeChart.js:178
+#, js-format
+msgid "avg: %dms"
+msgstr ""
+
+#. translators: %s: HTTP status code.
+#: src/performance-dashboards/ResponseTimeChart.js:230
+#, js-format
+msgid "Status: %s"
+msgstr ""
+
+#: src/performance-dashboards/ResponseTimeChart.js:231
+msgid "N/A"
+msgstr ""
+
+#. translators: %d: duration in milliseconds.
+#: src/performance-dashboards/ResponseTimeChart.js:235
+#, js-format
+msgid "Duration: %dms"
+msgstr ""
+
+#: src/performance-dashboards/ResponseTimeChart.js:238
+msgid "Click to view details"
+msgstr ""
+
+#: src/performance-dashboards/ResponseTimeChart.js:370
+msgid "Response Times (Recent Requests)"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:341
+msgid "Search URLs…"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:369
+msgid "Reqs"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:409
+msgid "Avg"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:417
+msgid "Min"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:425
+msgid "Max"
+msgstr ""
+
+#. translators: %s: the URL search term.
+#: src/performance-dashboards/UrlTable.js:455
+#, js-format
+msgid "No URLs match \"%s\""
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:461
+msgid "No URLs to display"
+msgstr ""
+
+#. translators: %s: total number of URLs.
+#: src/performance-dashboards/UrlTable.js:498
+#, js-format
+msgid "%s URL"
+msgid_plural "%s URLs"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: 1: first row number on the page, 2: last row number on the page, 3: total number of URLs.
+#: src/performance-dashboards/UrlTable.js:517
+#, js-format
+msgid "%1$s–%2$s of %3$s"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:539
+msgid "Prev"
+msgstr ""
+
+#. translators: 1: current page number, 2: total number of pages.
+#: src/performance-dashboards/UrlTable.js:544
+#, js-format
+msgid "Page %1$d of %2$d"
+msgstr ""
+
+#: src/performance-dashboards/UrlTable.js:560
+msgid "Next"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:52
+msgid "Unique request identifier - click to view in Performance Dashboard"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:60
+msgid "Request method and URL - click to view URL stats"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:68
+msgid "HTTP response status code"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:75
+msgid "State"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:76
+msgid "What the request is currently doing"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:83
+msgid "What"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:84
+msgid "Details: query text, template name, hook name, etc."
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:91
+#: src/performance-request-log/RequestStream.js:71
+msgid "IP"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:92
+#: src/performance-request-log/RequestStream.js:72
+msgid "Client IP address"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:96
+#: src/performance-request-log/RequestStream.js:76
+msgid "UA"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:97
+#: src/performance-request-log/RequestStream.js:77
+msgid "Browser/client identifier"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:104
+msgid "Est"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:105
+msgid "Estimated request duration (accounts for display delay)"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:113
+msgid "Request duration from server logs only (ignores display delay)"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:120
+msgid "Age"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:121
+msgid "Display delay - how far behind real-time this view is"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:128
+msgid "Lag"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:129
+msgid "Server processing delay - high values mean the log processor is backed up"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:448
+#: src/performance-request-log/RequestStream.js:178
+msgid "View URL stats"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:494
+msgid "In-Flight Requests"
+msgstr ""
+
+#. translators: %d: number of in-flight requests.
+#. translators: %d: number of requests shown in the log.
+#: src/performance-gyroscope/Inflight.js:538
+#: src/performance-request-log/RequestStream.js:508
+#, js-format
+msgid "%d request"
+msgid_plural "%d requests"
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %s: requests-per-second rate, formatted to one decimal place.
+#: src/performance-gyroscope/Inflight.js:551
+#, js-format
+msgid "%s req/s"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:585
+msgid "Refresh interval (also press 0–9 keys)"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:603
+#: src/performance-request-log/RequestStream.js:578
+msgid "Select columns"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:608
+#: src/performance-request-log/RequestStream.js:583
+msgid "Cols"
+msgstr ""
+
+#: src/performance-gyroscope/Inflight.js:661
+msgid "No active requests."
+msgstr ""
+
+#: src/performance-logger/settings/CustomEventSelectorModal.js:103
+msgid "Select Custom Events to Log"
+msgstr ""
+
+#: src/performance-logger/settings/CustomEventSelectorModal.js:114
+msgid "Search events…"
+msgstr ""
+
+#: src/performance-logger/settings/CustomEventSelectorModal.js:126
+#: src/performance-logger/settings/HookSelectorModal.js:358
+msgid "Select All"
+msgstr ""
+
+#: src/performance-logger/settings/CustomEventSelectorModal.js:133
+#: src/performance-logger/settings/HookSelectorModal.js:372
+msgid "Clear All"
+msgstr ""
+
+#. translators: %d: number of currently selected events.
+#. translators: %d: number of currently selected hooks.
+#: src/performance-logger/settings/CustomEventSelectorModal.js:142
+#: src/performance-logger/settings/HookSelectorModal.js:377
+#, js-format
+msgid "Apply (%d)"
+msgstr ""
+
+#. translators: 1: number of selected events, 2: total number of events.
+#: src/performance-logger/settings/CustomEventSelectorModal.js:187
+#, js-format
+msgid "%1$d of %2$d event selected"
+msgid_plural "%1$d of %2$d events selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:31
+msgid "Core request lifecycle"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:37
+msgid "Block & content output"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:43
+msgid "Database queries & post ops"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:49
+msgid "Categories & tags"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:52
+msgid "Authentication & caps"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:58
+msgid "Options API (high volume)"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:64
+msgid "REST endpoints"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:67
+msgid "Admin screens & updates"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:73
+msgid "Asset loading"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:76
+msgid "Uploads & attachments"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:82
+msgid "Comments & pingbacks"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:88
+msgid "URL generation & links"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:94
+msgid "Scheduled & future posts"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:100
+msgid "Widget areas"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:103
+msgid "Theme & customizer"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:106
+msgid "Translations (noisy)"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:112
+msgid "Input escaping (noisy)"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:118
+msgid "Remote requests & mail"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:124
+msgid "AJAX & heartbeat"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:127
+msgid "Blocks & TinyMCE"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:130
+msgid "Meta operations"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:133
+msgid "RSS, Atom, RDF"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:136
+msgid "Navigation menus"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:139
+msgid "Uncategorized hooks"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:328
+msgid "Select Hooks to Skip"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:332
+msgid "Select Hooks to Log"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:342
+msgid "Search hooks…"
+msgstr ""
+
+#. translators: %d: number of hooks matching the current search filter.
+#: src/performance-logger/settings/HookSelectorModal.js:352
+#, js-format
+msgid "Select Matches (%d)"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:364
+msgid "Recommended"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:368
+msgid "Clear Matches"
+msgstr ""
+
+#: src/performance-logger/settings/HookSelectorModal.js:397
+msgid "Loading registered hooks…"
+msgstr ""
+
+#: src/performance-logger/settings/TagInputField.js:155
+msgid "Select Hooks"
+msgstr ""
+
+#. translators: %d: number of selected hooks.
+#: src/performance-logger/settings/TagInputField.js:160
+#, js-format
+msgid "%d hook selected"
+msgid_plural "%d hooks selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-logger/settings/TagInputField.js:190
+msgid "Select Events"
+msgstr ""
+
+#. translators: %d: number of selected events.
+#: src/performance-logger/settings/TagInputField.js:195
+#, js-format
+msgid "%d event selected"
+msgid_plural "%d events selected"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/performance-logger/settings/TagInputField.js:252
+msgid "Type a value and press Enter…"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:49
+msgid "Request completion time"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:54
+msgid "Unique request identifier - click to view full trace"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:62
+msgid "Request method and URL"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:67
+msgid "HTTP status code"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:85
+msgid "Request duration"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:492
+msgid "Request Log"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:497
+msgid "Filter by URL…"
+msgstr ""
+
+#: src/performance-request-log/RequestStream.js:651
+msgid "Waiting for requests…"
+msgstr ""
