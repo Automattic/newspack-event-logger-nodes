@@ -1,28 +1,35 @@
 /**
  * Aggregator Status Component
  *
- * Real-time view of remote server connection status.
- * Shows connection state, heartbeat timing, and errors.
+ * THIN view over the `aggregator/*` node graph (mounted by
+ * useAggregatorStatusGraph). The graph owns all data: `aggregator/poll` runs the
+ * status command on the hook's interval and `aggregator/view` turns the raw
+ * snapshot into the render model (map→array, connected count, serverNow). This
+ * component only reads that model (via useNodeState) and renders — the pure
+ * presentation helpers below (formatTime / formatRtt / getRttClass /
+ * PartitionStatus / ServerCard) are unchanged. The 1s "ago" tick stays here: it's
+ * pure display, re-rendering the relative timestamps without re-polling.
  */
 
-import { useState, useEffect, useCallback } from '@wordpress/element';
+import { useState, useEffect } from '@wordpress/element';
 
-import { getCommandClient } from '../shared/utils/commandClient';
-import unwrapCommandResponse from '../shared/utils/unwrapCommandResponse';
-import { TIMESTAMP } from '@newspack-nodes/runtime';
+import { useNodeState } from '@newspack-nodes/runtime';
+import {
+	useAggregatorStatusGraph,
+	REFRESH_OPTIONS,
+} from './hooks/useAggregatorStatusGraph';
 import './styles/aggregator-status.scss';
 
-/**
- * Refresh interval options.
- */
-const REFRESH_OPTIONS = [
-	{ label: '1s', value: '1000' },
-	{ label: '2s', value: '2000' },
-	{ label: '5s', value: '5000' },
-	{ label: '10s', value: '10000' },
-];
-
-const DEFAULT_REFRESH_MS = '2000';
+// The view model before the first poll publishes one — drives the loading gate.
+const EMPTY_MODEL = {
+	servers: null,
+	serverNow: null,
+	connectedCount: 0,
+	totalCount: 0,
+	error: null,
+	loading: true,
+	lastRefresh: null,
+};
 
 /**
  * Format a Unix timestamp as relative time or absolute.
@@ -251,95 +258,30 @@ function ServerCard( { server, now } ) {
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function AggregatorStatus() {
-	const [ servers, setServers ] = useState( null );
-	const [ serverNow, setServerNow ] = useState( null );
-	const [ loading, setLoading ] = useState( true );
-	const [ error, setError ] = useState( null );
-	const [ lastRefresh, setLastRefresh ] = useState( null );
-	const [ , setTick ] = useState( 0 );
-	const [ refreshInterval, setRefreshInterval ] = useState( () => {
-		const validValues = REFRESH_OPTIONS.map( ( opt ) => opt.value );
-		const saved = window.localStorage.getItem(
-			'aggregator-status-refresh'
-		);
-		if ( saved && validValues.includes( saved ) ) {
-			return saved;
-		}
-		return DEFAULT_REFRESH_MS;
-	} );
+	// Mount the node graph; it owns the poll, the map→array + connected-count
+	// derivation, and the interval. It returns the thin refresh control + the
+	// current interval.
+	const { setRefreshInterval, refreshInterval } = useAggregatorStatusGraph();
 
-	// Tick every second to update relative timestamps.
+	// The single read surface: the render model the graph publishes.
+	const model = useNodeState( 'aggregator/view', 'view' ) ?? EMPTY_MODEL;
+	const {
+		servers,
+		serverNow,
+		connectedCount,
+		totalCount,
+		error,
+		loading,
+		lastRefresh,
+	} = model;
+
+	const [ , setTick ] = useState( 0 );
+
+	// Tick every second to update relative timestamps (pure display — no poll).
 	useEffect( () => {
 		const timer = setInterval( () => setTick( ( t ) => t + 1 ), 1000 );
 		return () => clearInterval( timer );
 	}, [] );
-
-	// Save refresh interval to localStorage.
-	useEffect( () => {
-		window.localStorage.setItem(
-			'aggregator-status-refresh',
-			refreshInterval
-		);
-	}, [ refreshInterval ] );
-
-	/**
-	 * Fetch server status via the substrate's CommandClient.
-	 *
-	 * Dispatches `aggregator.status` through `/newspack-nodes/v1/command`.
-	 * The response is a raw 7-field Message tuple; `unwrapCommandResponse`
-	 * peels it down to the verb's payload (a `{ server_id: {...} }` map,
-	 * same shape the legacy `/newspack-nodes-aggregator/v1/status` REST
-	 * route returned — confirmed by the M3 schema-parity audit).
-	 */
-	const fetchStatus = useCallback( async () => {
-		try {
-			const client = getCommandClient();
-			const message = await client.send( {
-				to: 'aggregator',
-				verb: 'status',
-			} );
-			const data = unwrapCommandResponse( message );
-
-			// The response Message's TIMESTAMP is the hub's clock when it built
-			// this snapshot. Drive every "ago" off it so the values match what
-			// the aggregator saw and don't drift with the browser clock.
-			setServerNow(
-				Array.isArray( message ) ? message[ TIMESTAMP ] : null
-			);
-
-			// Convert object to array for easier rendering.
-			const serverList = Object.values( data || {} );
-			setServers( serverList );
-			setError( null );
-			setLastRefresh( Date.now() );
-		} catch ( err ) {
-			setError( err.message || 'Failed to fetch status' );
-		} finally {
-			setLoading( false );
-		}
-	}, [] );
-
-	// Initial fetch and auto-refresh.
-	useEffect( () => {
-		fetchStatus();
-
-		const intervalMs = parseInt( refreshInterval, 10 );
-		const interval = setInterval( () => {
-			fetchStatus();
-		}, intervalMs );
-
-		return () => clearInterval( interval );
-	}, [ fetchStatus, refreshInterval ] );
-
-	// Count servers where at least one partition is connected.
-	const connectedCount =
-		servers?.filter( ( s ) => {
-			const partitions = s.partitions || {};
-			return Object.values( partitions ).some(
-				( p ) => p?.last_connection_status === 'connected'
-			);
-		} ).length || 0;
-	const totalCount = servers?.length || 0;
 
 	return (
 		<div className="aggregator-status-dashboard">
