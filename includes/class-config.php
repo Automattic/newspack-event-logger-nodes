@@ -45,18 +45,18 @@ class Config {
 	 * Option schema — every key loaded on every `load_config()` call.
 	 */
 	private static $option_schema = [
+		'allowed_users'               => 'array_strings',
 		'enable_logging'              => 'bool',
-		'log_urls'                    => 'array_strings',
 		'skip_urls'                   => 'array_strings',
+		'log_urls'                    => 'array_strings',
 		'log_events'                  => 'array_strings',
 		'custom_events'               => 'array_strings',
-		'log_memory'                  => 'bool',
-		'flush_every_line'            => 'bool',
 		'significant_events'          => 'array_strings',
-		'hook_start_priority'         => 'int',
-		'allowed_users'               => 'array_strings',
 		'auto_disable_threshold'      => 'int',
 		'auto_protect_time_threshold' => 'float',
+		'log_memory'                  => 'bool',
+		'flush_every_line'            => 'bool',
+		'hook_start_priority'         => 'int',
 		// Gates the Aggregator status dashboard menu entry (admin checkbox) —
 		// must overlay so load_config() reflects the WP option, not just the file.
 		'enable_aggregator'           => 'bool',
@@ -158,9 +158,8 @@ class Config {
 				if ( false === $value || '' === $value ) {
 					continue;
 				}
-				$sanitized = Config_Utils::sanitize_option( $value, $type );
-				if ( null !== $sanitized ) {
-					$config[ $key ] = $sanitized;
+				if ( null !== $value ) {
+					$config[ $key ] = $value;
 				}
 			}
 		}
