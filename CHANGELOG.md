@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Performance Logger hook-catalog fetch reimplemented as a `hookcatalog/command → hookcatalog/view`
+  JS-node graph (`useHookCatalogGraph`); `HookSelectorModal` is now a thin consumer.** The settings
+  page is a form (almost all local UI state), so only its single networked surface — the
+  `{to:'performance', verb:'hooks_registered'}` fetch the modal fired on open — was nodified:
+  `hookcatalog/command` (command-out — emits a synchronous `loading` then a `catalog` with the
+  unwrapped `hooks_by_category`, falling back to an empty map on failure; injectable command seam +
+  `close()` cancel guard) → `hookcatalog/view` (`setState('view',{hooksByCategory,loading})`) — wired
+  by `useHookCatalogGraph`, which fires the fetch on open (not on an interval) and reads the model on
+  the modal's behalf. The modal's search / expand / select-all / recommended / category-toggle / Apply
+  logic and all SCSS are unchanged. The form-state components (`TagInputField`,
+  `CustomEventSelectorModal`, `index.js`) are untouched. No behavior change.
 - **Configured Servers (aggregator-admin) rebuilt as a React node-graph view, replacing the
   PHP-rendered table + jQuery IIFE.** The only converted dashboard that wasn't already React — a
   full rewrite: `servers/command` (CRUD command-out — `list`/`add`/`update`/`delete`/`test` on the

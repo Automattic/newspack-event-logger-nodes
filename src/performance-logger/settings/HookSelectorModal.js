@@ -14,8 +14,7 @@ import {
 	Spinner,
 } from '@wordpress/components';
 
-import { getCommandClient } from '../../shared/utils/commandClient';
-import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
+import { useHookCatalogGraph } from '../hooks/useHookCatalogGraph';
 import '../styles/hook-selector.scss';
 
 /**
@@ -74,23 +73,10 @@ export default function HookSelectorModal( {
 	const [ search, setSearch ] = useState( '' );
 	const [ expandedCategories, setExpandedCategories ] = useState( new Set() );
 	const [ localSelected, setLocalSelected ] = useState( new Set( selected ) );
-	const [ hookCategories, setHookCategories ] = useState( {} );
-	const [ loading, setLoading ] = useState( false );
 
-	// Fetch registered hooks when modal opens.
-	useEffect( () => {
-		if ( isOpen ) {
-			setLoading( true );
-			getCommandClient()
-				.send( { to: 'performance', verb: 'hooks_registered' } )
-				.then( ( message ) => {
-					const data = unwrapCommandResponse( message );
-					setHookCategories( data?.hooks_by_category || {} );
-				} )
-				.catch( () => setHookCategories( {} ) )
-				.finally( () => setLoading( false ) );
-		}
-	}, [ isOpen ] );
+	// The hook-catalog fetch lives in a JS-node graph; the hook fires it on open
+	// and returns the render model (production uses the default command client).
+	const { hooksByCategory, loading } = useHookCatalogGraph( { isOpen } );
 
 	// Reset local state when modal opens.
 	useEffect( () => {
@@ -104,7 +90,7 @@ export default function HookSelectorModal( {
 		const searchLower = search.toLowerCase();
 		const result = {};
 
-		Object.entries( hookCategories ).forEach( ( [ category, hooks ] ) => {
+		Object.entries( hooksByCategory ).forEach( ( [ category, hooks ] ) => {
 			if ( ! Array.isArray( hooks ) ) {
 				return;
 			}
@@ -117,12 +103,12 @@ export default function HookSelectorModal( {
 		} );
 
 		return result;
-	}, [ search, hookCategories ] );
+	}, [ search, hooksByCategory ] );
 
 	// Count selected and recommended in each category.
 	const categoryCounts = useMemo( () => {
 		const counts = {};
-		Object.entries( hookCategories ).forEach( ( [ category, hooks ] ) => {
+		Object.entries( hooksByCategory ).forEach( ( [ category, hooks ] ) => {
 			if ( ! Array.isArray( hooks ) ) {
 				return;
 			}
@@ -139,7 +125,7 @@ export default function HookSelectorModal( {
 			};
 		} );
 		return counts;
-	}, [ localSelected, hookCategories ] );
+	}, [ localSelected, hooksByCategory ] );
 
 	/**
 	 * Toggle a hook selection.
@@ -162,7 +148,7 @@ export default function HookSelectorModal( {
 	 * @param {string} category Category name.
 	 */
 	const toggleCategory = ( category ) => {
-		const hooks = hookCategories[ category ] || [];
+		const hooks = hooksByCategory[ category ] || [];
 		const allSelected = hooks.every( ( h ) => localSelected.has( h ) );
 		const newSelected = new Set( localSelected );
 
