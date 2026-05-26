@@ -3,21 +3,25 @@
  * Inflight Requests Component
  *
  * Real-time view of active (in-flight) requests, similar to Tachikoma's Gyroscope.
- * Receives pre-processed request objects from the server-side InflightTracker.
- * Shows both in-flight and recently completed requests.
+ *
+ * This is a THIN view over the `gyroscope/*` node graph (mounted by
+ * `useGyroscopeGraph`). The graph owns all data: `gyroscope/stream` holds the SSE
+ * connection, `gyroscope/transform` turns envelopes into inflight/complete
+ * dispatches, and `gyroscope/view` holds the in-flight model (the rid-keyed map +
+ * the reap/sort/cap snapshot + RPS). This component only renders.
+ *
+ * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the
+ * render cadence: each tick it calls `Core.node('gyroscope/view').snapshot(maxRows)`
+ * — which reaps completed entries (shown one tick then dropped), sorts by est_ms
+ * desc, caps to maxRows — and reads `.rps` / `.lastEventTime` off the node. A busy
+ * stream never re-renders React per message; only the cheap snapshot is pushed at
+ * the refresh cadence.
  */
 
-import {
-	useState,
-	useEffect,
-	useRef,
-	useCallback,
-	useMemo,
-} from '@wordpress/element';
+import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
 
-import usePageVisibility from '../shared/hooks/usePageVisibility';
-import useMessageStream from '../shared/hooks/useMessageStream';
-import transformGyroscopeLine from './transformGyroscopeLine';
+import { Core } from '@newspack-nodes/runtime';
+import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
 	formatDuration,
@@ -28,6 +32,9 @@ import {
 import fnv1a from '../shared/utils/fnv1a';
 import './styles/inflight.scss';
 import './styles/request-stream.scss';
+
+// The view node the refresh tick reads the in-flight snapshot + rps off of.
+const VIEW_NODE = 'gyroscope/view';
 
 /**
  * Column definitions with tooltips.
@@ -118,7 +125,12 @@ const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function Inflight( { maxRows = 20 } ) {
+	// Mount the node graph (SSE → transform → in-flight model). It owns the data;
+	// this component only renders the snapshot it reads off the view node.
+	useGyroscopeGraph();
+
 	const [ requests, setRequests ] = useState( [] );
+	const [ lastEventTime, setLastEventTime ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
 		// Load from localStorage with validation against allowed dropdown values.
 		const validValues = INFLIGHT_REFRESH_OPTIONS.map(
@@ -152,39 +164,8 @@ export default function Inflight( { maxRows = 20 } ) {
 	} );
 	const [ showColumnPicker, setShowColumnPicker ] = useState( false );
 	const [ requestsPerSecond, setRequestsPerSecond ] = useState( 0 );
-	const completedHistoryRef = useRef( [] ); // Track completed requests with timestamps for rps calculation.
-	const requestsRef = useRef( new Map() ); // All requests keyed by rid.
-	const isPageVisible = usePageVisibility();
 
 	const totalCount = requests.length;
-
-	// Calculate requests per second from completed requests over 10-second window.
-	const updateRequestsPerSecond = useCallback( ( completedCount ) => {
-		const now = Date.now();
-		const windowMs = 10000; // 10-second window.
-
-		// Add current batch to history.
-		if ( completedCount > 0 ) {
-			completedHistoryRef.current.push( {
-				time: now,
-				count: completedCount,
-			} );
-		}
-
-		// Remove entries older than window.
-		completedHistoryRef.current = completedHistoryRef.current.filter(
-			( entry ) => now - entry.time < windowMs
-		);
-
-		// Sum requests in window.
-		const totalInWindow = completedHistoryRef.current.reduce(
-			( sum, entry ) => sum + entry.count,
-			0
-		);
-
-		// Calculate rps (requests per 10s / 10).
-		setRequestsPerSecond( totalInWindow / ( windowMs / 1000 ) );
-	}, [] );
 
 	// Save column selection to localStorage.
 	useEffect( () => {
@@ -211,82 +192,19 @@ export default function Inflight( { maxRows = 20 } ) {
 		[ visibleColumns ]
 	);
 
-	// Render requests and cleanup completed ones (like Gyroscope.pm fire()).
+	// Read the render snapshot off the view node (like Gyroscope.pm fire()): the
+	// node's snapshot() reaps completed entries, sorts by est_ms desc and caps to
+	// maxRows; we also read the node's rps + lastEventTime. The graph owns the
+	// accumulation — this just samples it at the refresh cadence.
 	const renderRequests = useCallback( () => {
-		const allRequests = [];
-		let completedCount = 0;
-
-		// Collect all requests, delete completed ones.
-		for ( const [ rid, req ] of requestsRef.current ) {
-			if ( req.state === 'complete' ) {
-				completedCount++;
-				requestsRef.current.delete( rid );
-			}
-			allRequests.push( req );
-		}
-
-		updateRequestsPerSecond( completedCount );
-
-		// Sort by est_ms descending (longest first) and limit.
-		const sorted = allRequests
-			.sort( ( a, b ) => ( b.est_ms || 0 ) - ( a.est_ms || 0 ) )
-			.slice( 0, maxRows );
-
-		setRequests( sorted );
-	}, [ maxRows, updateRequestsPerSecond ] );
-
-	// Per-Message handler: gyroscope.log carries two record shapes,
-	// dispatched client-side via transformGyroscopeLine.
-	//   * inflight snapshot → upsert each request by rid; never overwrite
-	//     a request already marked complete (the inflight snapshot was
-	//     produced BEFORE the completion that may already be in our map).
-	//   * completion → merge into the existing entry, mark state=complete.
-	const handleMessage = useCallback( ( envelope ) => {
-		const out = transformGyroscopeLine( envelope );
-		if ( ! out ) {
+		const node = Core.node( VIEW_NODE );
+		if ( ! node ) {
 			return;
 		}
-		if ( out.type === 'inflight' ) {
-			for ( const req of out.requests ) {
-				const existing = requestsRef.current.get( req.rid );
-				if ( ! existing || existing.state !== 'complete' ) {
-					requestsRef.current.set( req.rid, req );
-				}
-			}
-			return;
-		}
-		// type === 'complete'
-		const req = out.request;
-		const existing = requestsRef.current.get( req.rid );
-		requestsRef.current.set( req.rid, {
-			...existing,
-			...req,
-			state: 'complete',
-			time_ms: req.duration_ms || 0,
-			est_ms: req.duration_ms || 0,
-		} );
-	}, [] );
-
-	// Reset state on reconnect.
-	const handleBeforeConnect = useCallback( () => {
-		completedHistoryRef.current = [];
-		requestsRef.current.clear();
-	}, [] );
-
-	// Unified message-stream subscription over `gyroscope.log` — the
-	// topology pre-merges inflight snapshots (RequestFlight) and
-	// completion events (`completed:tee`) into one log, so the dashboard
-	// drains a single stream and dispatches by Message KEY shape.
-	const {
-		error,
-		connect,
-		close: closeSource,
-		lastEventTime,
-	} = useMessageStream( {
-		subscriptions: [ 'gyroscope' ],
-		onMessage: handleMessage,
-		onBeforeConnect: handleBeforeConnect,
-	} );
+		setRequests( node.snapshot( maxRows ) );
+		setRequestsPerSecond( node.rps );
+		setLastEventTime( node.lastEventTime );
+	}, [ maxRows ] );
 
 	// Ticking "Xs ago" display.
 	const [ now, setNow ] = useState( Date.now() );
@@ -337,16 +255,6 @@ export default function Inflight( { maxRows = 20 } ) {
 
 		return () => clearInterval( displayTimer );
 	}, [ refreshInterval, renderRequests ] );
-
-	// Handle page visibility - reconnect when tab becomes visible, disconnect when hidden.
-	useEffect( () => {
-		if ( isPageVisible ) {
-			connect();
-		} else {
-			closeSource();
-		}
-		return () => closeSource();
-	}, [ isPageVisible, connect, closeSource ] );
 
 	/**
 	 * Toggle a column's visibility.
@@ -642,10 +550,6 @@ export default function Inflight( { maxRows = 20 } ) {
 						</label>
 					) ) }
 				</div>
-			) }
-
-			{ error && (
-				<div className="event-logger-inflight-error">{ error }</div>
 			) }
 
 			<div

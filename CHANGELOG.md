@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Gyroscope (in-flight requests) dashboard reimplemented as a JS-Node graph + thin React
+  view.** Same SSE pattern as Request Log: `gyroscope/stream` (SSE-in, `subscribe=gyroscope`,
+  replacing the shared `useMessageStream`), `gyroscope/transform` (`transformGyroscopeLine`),
+  `gyroscope/view` (the rid-keyed in-flight model — upsert with a complete-wins guard, the
+  one-refresh-tick-then-reap expiry, and the 10s requests/sec window, all ported verbatim) —
+  wired by `useGyroscopeGraph` (page-visibility pause, reset-on-reconnect, `setViewReady`).
+  `Inflight.js` is now a thin view: `useNodeState('gyroscope/view','view')`, and the refresh
+  tick reads the model's `snapshot(maxRows)` / `rps` off the node. The visualization (renderCell
+  age/lag geometry, legend, column picker, 0-9 refresh shortcuts, "Xs ago" ticker) + SCSS are
+  preserved.
 - **Request Log dashboard reimplemented as a JS-Node graph + thin React view.** Following the
   Raw Logs / Worker Status reference (nodes repo), the live request-stream data flow moved out
   of React effects into a graph that imports the substrate runtime via `@newspack-nodes/runtime`
