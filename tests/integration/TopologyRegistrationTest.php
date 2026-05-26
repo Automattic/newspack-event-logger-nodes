@@ -49,6 +49,14 @@ class TopologyRegistrationTest extends TestCase {
 				return $topologies;
 			}
 		);
+		// The catalog only says what EXISTS; the active set is the substrate
+		// `topologies` config key. Declare both as active via the operator
+		// overlay so Bootstrap::get_topologies()/expand_workers() return them.
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [
+			'firehose-workers-and-jobs',
+			'aggregator',
+		];
+		\Newspack_Nodes\Config::reset();
 	}
 
 	public function test_topologies_filter_exposes_both_topologies(): void {

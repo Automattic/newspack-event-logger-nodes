@@ -26,19 +26,6 @@ return [
 	// fleets run.
 	'enable_logging'              => true,
 
-	// Active topologies (appended to substrate's `topologies`
-	// list). Each entry is a TSL topology name resolvable by
-	// Newspack_Nodes\Topology_Registry. Comment a line out to
-	// disable that fleet.
-	// phpcs:disable Squiz.PHP.CommentedOutCode.Found -- The commented entries are documented alternative topologies; toggle a leading slash-slash to enable.
-	'topologies'                  => [
-		'firehose-workers-only',  // alt: 'firehose-workers-and-jobs', 'firehose-jobs-only'
-		'request-workers',
-		// 'job-workers',
-		// 'aggregator',
-	],
-	// phpcs:enable Squiz.PHP.CommentedOutCode.Found
-
 	// Aggregator spoke list (hubs only; spokes leave empty).
 	'enable_aggregator'           => false,
 	'aggregator_servers'          => [],
