@@ -4,6 +4,8 @@
  * Description: Event-logger application built on newspack-nodes runtime.
  * Version: 0.4.0
  * Requires Plugins: newspack-nodes
+ * Text Domain: newspack-event-logger-nodes
+ * Domain Path: /languages
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -678,21 +680,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 				// aggregator-admin bundle has it when there's no parallel
 				// React dashboard bundle on the page.
 				\wp_localize_script( $agg_handle, 'NewspackNodesData', $localized );
-				\wp_localize_script(
-					$agg_handle,
-					'eventAggregatorAdmin',
-					[
-						'i18n' => [
-							'testing'       => \__( 'Testing...', 'newspack-event-logger-nodes' ),
-							'success'       => \__( 'Connected!', 'newspack-event-logger-nodes' ),
-							'failed'        => \__( 'Failed', 'newspack-event-logger-nodes' ),
-							'adding'        => \__( 'Adding...', 'newspack-event-logger-nodes' ),
-							'added'         => \__( 'Server added! Reloading...', 'newspack-event-logger-nodes' ),
-							'error'         => \__( 'Error', 'newspack-event-logger-nodes' ),
-							'confirmRemove' => \__( 'Are you sure you want to remove this server?', 'newspack-event-logger-nodes' ),
-						],
-					]
-				);
 			}
 		}
 	}
