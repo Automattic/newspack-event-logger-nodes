@@ -96,7 +96,7 @@ test( 'fetchUrlDetail with invalid hash emits error and does NOT send', async ()
 	} );
 	const got = [];
 	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'NOT-HEX!' );
+	await n.fetchUrlDetail( 'NOT-HEX!', { initial: true } );
 	expect( client.calls ).toHaveLength( 0 );
 	expect( got ).toEqual( [
 		{ action: 'loading', slice: 'urlDetail' },
@@ -205,7 +205,7 @@ test( 'fetchUrlDetail (valid hash) surfaces a send rejection as a urlDetail erro
 	} );
 	const got = [];
 	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'abc123' );
+	await n.fetchUrlDetail( 'abc123', { initial: true } );
 	expect( client.calls ).toHaveLength( 1 );
 	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'urlDetail' } );
 	expect( got[ 1 ] ).toEqual( {
@@ -308,4 +308,112 @@ test( 'a send rejecting after close() emits nothing', async () => {
 	rej( new Error( 'boom' ) );
 	await p.catch( () => {} );
 	expect( got ).toEqual( [ { action: 'loading', slice: 'overview' } ] );
+} );
+
+test( 'onError fires on a rejected fetchOverview AND the error slice is emitted', async () => {
+	const errs = [];
+	const client = { send: () => Promise.reject( new Error( 'boom' ) ) };
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: client,
+		onError: ( e ) => errs.push( e ),
+	} );
+	const got = [];
+	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
+	await n.fetchOverview();
+	expect( got ).toEqual( [
+		{ action: 'loading', slice: 'overview' },
+		{ action: 'error', slice: 'overview', error: 'boom' },
+	] );
+	expect( errs ).toHaveLength( 1 );
+	expect( errs[ 0 ].message ).toBe( 'boom' );
+} );
+
+test( 'onError fires on invalid hash with the validation Error', async () => {
+	const errs = [];
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: fakeClient( {} ),
+		onError: ( e ) => errs.push( e ),
+	} );
+	n.sink = { fill: () => {} };
+	await n.fetchUrlDetail( 'NOT-HEX!', { initial: true } );
+	expect( errs[ 0 ].message ).toBe( 'Invalid URL hash format' );
+} );
+
+test( 'onError fires on invalid partition (requestDetail)', async () => {
+	const errs = [];
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: fakeClient( {} ),
+		onError: ( e ) => errs.push( e ),
+	} );
+	n.sink = { fill: () => {} };
+	await n.fetchRequestDetail( 'ok-rid', -1 );
+	expect( errs[ 0 ].message ).toBe( 'Invalid partition number' );
+} );
+
+test( 'resolveRequest throw does NOT call onError (returns null)', async () => {
+	const errs = [];
+	const client = { send: () => Promise.reject( new Error( 'x' ) ) };
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: client,
+		onError: ( e ) => errs.push( e ),
+	} );
+	n.sink = { fill: () => {} };
+	expect( await n.resolveRequest( 'rid' ) ).toBeNull();
+	expect( errs ).toHaveLength( 0 );
+} );
+
+test( 'fetchUrlDetail is SILENT (no loading) on a non-initial fetch', async () => {
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: fakeClient( { requests: [] } ),
+	} );
+	const got = [];
+	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
+	await n.fetchUrlDetail( 'abc123' );
+	expect( got ).toEqual( [
+		{
+			action: 'result',
+			slice: 'urlDetail',
+			data: { requests: [] },
+			initial: false,
+		},
+	] );
+} );
+
+test( 'fetchUrlDetail emits loading on the initial fetch', async () => {
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: fakeClient( { requests: [] } ),
+	} );
+	const got = [];
+	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
+	await n.fetchUrlDetail( 'abc123', { initial: true } );
+	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'urlDetail' } );
+	expect( got[ 1 ] ).toEqual( {
+		action: 'result',
+		slice: 'urlDetail',
+		data: { requests: [] },
+		initial: true,
+	} );
+} );
+
+test( 'fetchUrlBreakdown RETURNS breakdown_time_series and does NOT emit', async () => {
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: fakeClient( { breakdown_time_series: { a: 1 } } ),
+	} );
+	const got = [];
+	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
+	const out = await n.fetchUrlBreakdown( 'aa', 'method' );
+	expect( out ).toEqual( { a: 1 } );
+	expect( got ).toHaveLength( 0 );
+} );
+
+test( 'fetchUrlBreakdown returns null on invalid hash without sending or onError', async () => {
+	const errs = [];
+	const client = fakeClient( {} );
+	const n = createPerformanceCommand( 'performance/command', {
+		commandClient: client,
+		onError: ( e ) => errs.push( e ),
+	} );
+	expect( await n.fetchUrlBreakdown( 'NO', 'method' ) ).toBeNull();
+	expect( client.calls ).toHaveLength( 0 );
+	expect( errs ).toHaveLength( 0 );
 } );
