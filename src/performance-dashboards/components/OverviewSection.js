@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useMemo } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import {
 	Card,
@@ -81,7 +82,10 @@ export default function OverviewSection( {
 			return [];
 		}
 		return [
-			{ label: 'All Servers', value: '' },
+			{
+				label: __( 'All Servers', 'newspack-event-logger-nodes' ),
+				value: '',
+			},
 			...serverNames.map( ( name ) => ( {
 				label: name,
 				value: name,
@@ -114,7 +118,7 @@ export default function OverviewSection( {
 		<div className="event-logger-performance-overview">
 			<Card>
 				<CardHeader>
-					<h2>Overview</h2>
+					<h2>{ __( 'Overview', 'newspack-event-logger-nodes' ) }</h2>
 					<div
 						style={ {
 							marginLeft: 'auto',
@@ -132,7 +136,10 @@ export default function OverviewSection( {
 							} }
 						>
 							<TextControl
-								placeholder="Search request ID..."
+								placeholder={ __(
+									'Search request ID…',
+									'newspack-event-logger-nodes'
+								) }
 								value={ searchQuery }
 								onChange={ setSearchQuery }
 								onKeyDown={ ( e ) => {
@@ -154,7 +161,15 @@ export default function OverviewSection( {
 								}
 								style={ { height: '30px' } }
 							>
-								{ searchLoading ? 'Searching...' : 'Find' }
+								{ searchLoading
+									? __(
+											'Searching…',
+											'newspack-event-logger-nodes'
+									  )
+									: __(
+											'Find',
+											'newspack-event-logger-nodes'
+									  ) }
 							</button>
 						</div>
 						{ searchError && (
@@ -181,7 +196,10 @@ export default function OverviewSection( {
 									color: '#757575',
 								} }
 							>
-								Refresh:
+								{ __(
+									'Refresh:',
+									'newspack-event-logger-nodes'
+								) }
 							</span>
 							<SelectControl
 								value={ refreshInterval }
@@ -200,7 +218,10 @@ export default function OverviewSection( {
 								{ filteredStats.totalUrls }
 							</span>
 							<span className="event-logger-stat-label">
-								Unique URLs
+								{ __(
+									'Unique URLs',
+									'newspack-event-logger-nodes'
+								) }
 							</span>
 						</div>
 						<div className="event-logger-stat">
@@ -208,7 +229,10 @@ export default function OverviewSection( {
 								{ filteredStats.totalRequests.toLocaleString() }
 							</span>
 							<span className="event-logger-stat-label">
-								Total Requests
+								{ __(
+									'Total Requests',
+									'newspack-event-logger-nodes'
+								) }
 							</span>
 						</div>
 						<div className="event-logger-stat">
@@ -217,7 +241,10 @@ export default function OverviewSection( {
 								ms
 							</span>
 							<span className="event-logger-stat-label">
-								Avg Response
+								{ __(
+									'Avg Response',
+									'newspack-event-logger-nodes'
+								) }
 							</span>
 						</div>
 						<div className="event-logger-stat">
@@ -225,7 +252,10 @@ export default function OverviewSection( {
 								{ filteredStats.requestsPerSecond.toFixed( 2 ) }
 							</span>
 							<span className="event-logger-stat-label">
-								Req/s (last hour)
+								{ __(
+									'Req/s (last hour)',
+									'newspack-event-logger-nodes'
+								) }
 							</span>
 						</div>
 						{ overview.global_avg_peak_mb > 0 && (
@@ -235,7 +265,10 @@ export default function OverviewSection( {
 									MB
 								</span>
 								<span className="event-logger-stat-label">
-									Avg Peak Memory
+									{ __(
+										'Avg Peak Memory',
+										'newspack-event-logger-nodes'
+									) }
 								</span>
 							</div>
 						) }
@@ -260,7 +293,10 @@ export default function OverviewSection( {
 								>
 									{ isMultiServer && (
 										<SelectControl
-											label="Server"
+											label={ __(
+												'Server',
+												'newspack-event-logger-nodes'
+											) }
 											value={ serverFilter }
 											options={ serverOptions }
 											onChange={ setServerFilter }
@@ -269,7 +305,10 @@ export default function OverviewSection( {
 										/>
 									) }
 									<SelectControl
-										label="Metric"
+										label={ __(
+											'Metric',
+											'newspack-event-logger-nodes'
+										) }
 										value={ chartMetric }
 										options={ CHART_METRIC_OPTIONS }
 										onChange={ setChartMetric }
@@ -277,7 +316,10 @@ export default function OverviewSection( {
 										style={ { minWidth: '180px' } }
 									/>
 									<SelectControl
-										label="Breakdown"
+										label={ __(
+											'Breakdown',
+											'newspack-event-logger-nodes'
+										) }
 										value={ chartBreakdown }
 										options={ breakdownOptions }
 										onChange={ setChartBreakdown }
@@ -292,7 +334,10 @@ export default function OverviewSection( {
 												paddingBottom: '8px',
 											} }
 										>
-											Loading...
+											{ __(
+												'Loading…',
+												'newspack-event-logger-nodes'
+											) }
 										</span>
 									) }
 								</div>
@@ -311,17 +356,26 @@ export default function OverviewSection( {
 							<CategoryTimeChart
 								data={ categoryData }
 								mode="time"
-								title="Time by Category"
+								title={ __(
+									'Time by Category',
+									'newspack-event-logger-nodes'
+								) }
 							/>
 							<CategoryTimeChart
 								data={ categoryData }
 								mode="count"
-								title="Events by Category"
+								title={ __(
+									'Events by Category',
+									'newspack-event-logger-nodes'
+								) }
 							/>
 							<CategoryTimeChart
 								data={ categoryData }
 								mode="average"
-								title="Average Time per Event"
+								title={ __(
+									'Average Time per Event',
+									'newspack-event-logger-nodes'
+								) }
 							/>
 						</>
 					) }
@@ -334,8 +388,18 @@ export default function OverviewSection( {
 						>
 							<h3>
 								{ serverFilter
-									? `Time Breakdown (${ serverFilter })`
-									: 'Global Time Breakdown' }
+									? sprintf(
+											// translators: %s: the server name being filtered by.
+											__(
+												'Time Breakdown (%s)',
+												'newspack-event-logger-nodes'
+											),
+											serverFilter
+									  )
+									: __(
+											'Global Time Breakdown',
+											'newspack-event-logger-nodes'
+									  ) }
 							</h3>
 							<RequestProfile
 								profiles={
@@ -354,10 +418,32 @@ export default function OverviewSection( {
 									marginTop: '8px',
 								} }
 							>
-								Average breakdown across{ ' ' }
-								{ overview.global_leaderboard.count || 0 }{ ' ' }
-								requests
-								{ serverFilter ? ` on ${ serverFilter }` : '' }
+								{ serverFilter
+									? sprintf(
+											// translators: 1: number of requests, 2: the server name.
+											_n(
+												'Average breakdown across %1$d request on %2$s',
+												'Average breakdown across %1$d requests on %2$s',
+												overview.global_leaderboard
+													.count || 0,
+												'newspack-event-logger-nodes'
+											),
+											overview.global_leaderboard.count ||
+												0,
+											serverFilter
+									  )
+									: sprintf(
+											// translators: %d: number of requests.
+											_n(
+												'Average breakdown across %d request',
+												'Average breakdown across %d requests',
+												overview.global_leaderboard
+													.count || 0,
+												'newspack-event-logger-nodes'
+											),
+											overview.global_leaderboard.count ||
+												0
+									  ) }
 							</p>
 						</div>
 					) }

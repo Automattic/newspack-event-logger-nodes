@@ -16,6 +16,7 @@
  */
 
 import { useState } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
 import { useAggregatorAdminGraph } from './hooks/useAggregatorAdminGraph';
@@ -34,7 +35,9 @@ const EMPTY_MODEL = {
  * @return {string} Display message.
  */
 function errorMessage( err ) {
-	return ( err && err.message ) || 'Error';
+	return (
+		( err && err.message ) || __( 'Error', 'newspack-event-logger-nodes' )
+	);
 }
 
 /**
@@ -55,13 +58,23 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 
 	const handleTest = async () => {
 		setBusy( true );
-		setTestStatus( { text: 'Testing...', color: '' } );
+		setTestStatus( {
+			text: __( 'Testing…', 'newspack-event-logger-nodes' ),
+			color: '',
+		} );
 		try {
 			await onTest( id );
-			setTestStatus( { text: 'Connected!', color: 'green' } );
+			setTestStatus( {
+				text: __( 'Connected!', 'newspack-event-logger-nodes' ),
+				color: 'green',
+			} );
 		} catch ( err ) {
 			setTestStatus( {
-				text: `Failed: ${ errorMessage( err ) }`,
+				text: sprintf(
+					// translators: %s: connection error message.
+					__( 'Failed: %s', 'newspack-event-logger-nodes' ),
+					errorMessage( err )
+				),
 				color: 'red',
 			} );
 		} finally {
@@ -81,7 +94,10 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 	const handleRemove = async () => {
 		// eslint-disable-next-line no-alert
 		const confirmed = window.confirm(
-			'Are you sure you want to remove this server?'
+			__(
+				'Are you sure you want to remove this server?',
+				'newspack-event-logger-nodes'
+			)
 		);
 		if ( ! confirmed ) {
 			return;
@@ -105,13 +121,16 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 					<span
 						className="dashicons dashicons-yes-alt"
 						style={ { color: 'green' } }
-						title="Enabled"
+						title={ __( 'Enabled', 'newspack-event-logger-nodes' ) }
 					/>
 				) : (
 					<span
 						className="dashicons dashicons-no"
 						style={ { color: 'gray' } }
-						title="Disabled"
+						title={ __(
+							'Disabled',
+							'newspack-event-logger-nodes'
+						) }
 					/>
 				) }
 				<span
@@ -129,7 +148,7 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 					disabled={ busy }
 					onClick={ handleTest }
 				>
-					Test
+					{ __( 'Test', 'newspack-event-logger-nodes' ) }
 				</button>{ ' ' }
 				<button
 					type="button"
@@ -139,7 +158,9 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 					disabled={ busy }
 					onClick={ handleToggle }
 				>
-					{ enabled ? 'Disable' : 'Enable' }
+					{ enabled
+						? __( 'Disable', 'newspack-event-logger-nodes' )
+						: __( 'Enable', 'newspack-event-logger-nodes' ) }
 				</button>{ ' ' }
 				<button
 					type="button"
@@ -148,7 +169,7 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 					disabled={ busy }
 					onClick={ handleRemove }
 				>
-					Remove
+					{ __( 'Remove', 'newspack-event-logger-nodes' ) }
 				</button>
 			</td>
 		</tr>
@@ -174,21 +195,42 @@ function AddServerForm( { onAdd } ) {
 	const handleAdd = async () => {
 		const trimmedId = id.trim();
 		if ( ! trimmedId ) {
-			setStatus( { text: 'Server ID is required', color: 'red' } );
+			setStatus( {
+				text: __(
+					'Server ID is required',
+					'newspack-event-logger-nodes'
+				),
+				color: 'red',
+			} );
 			return;
 		}
 		const trimmedUrl = url.trim();
 		if ( ! trimmedUrl ) {
-			setStatus( { text: 'Server URL is required', color: 'red' } );
+			setStatus( {
+				text: __(
+					'Server URL is required',
+					'newspack-event-logger-nodes'
+				),
+				color: 'red',
+			} );
 			return;
 		}
 		if ( ! trimmedUrl.startsWith( 'https://' ) ) {
-			setStatus( { text: 'URL must start with https://', color: 'red' } );
+			setStatus( {
+				text: __(
+					'URL must start with https://',
+					'newspack-event-logger-nodes'
+				),
+				color: 'red',
+			} );
 			return;
 		}
 
 		setBusy( true );
-		setStatus( { text: 'Adding...', color: '' } );
+		setStatus( {
+			text: __( 'Adding…', 'newspack-event-logger-nodes' ),
+			color: '',
+		} );
 		try {
 			await onAdd( {
 				id: trimmedId,
@@ -197,14 +239,21 @@ function AddServerForm( { onAdd } ) {
 				auth_password: password,
 			} );
 			// Success: the hook re-lists and the table re-renders (no reload).
-			setStatus( { text: 'Server added!', color: 'green' } );
+			setStatus( {
+				text: __( 'Server added!', 'newspack-event-logger-nodes' ),
+				color: 'green',
+			} );
 			setId( '' );
 			setUrl( '' );
 			setUsername( '' );
 			setPassword( '' );
 		} catch ( err ) {
 			setStatus( {
-				text: `Error: ${ errorMessage( err ) }`,
+				text: sprintf(
+					// translators: %s: error message.
+					__( 'Error: %s', 'newspack-event-logger-nodes' ),
+					errorMessage( err )
+				),
 				color: 'red',
 			} );
 		} finally {
@@ -214,12 +263,17 @@ function AddServerForm( { onAdd } ) {
 
 	return (
 		<>
-			<h4>Add New Server</h4>
+			<h4>{ __( 'Add New Server', 'newspack-event-logger-nodes' ) }</h4>
 			<table className="form-table" style={ { maxWidth: '600px' } }>
 				<tbody>
 					<tr>
 						<th>
-							<label htmlFor="new-server-id">Server ID</label>
+							<label htmlFor="new-server-id">
+								{ __(
+									'Server ID',
+									'newspack-event-logger-nodes'
+								) }
+							</label>
 						</th>
 						<td>
 							<input
@@ -232,14 +286,21 @@ function AddServerForm( { onAdd } ) {
 								onChange={ ( e ) => setId( e.target.value ) }
 							/>
 							<p className="description">
-								Unique identifier (alphanumeric, hyphen,
-								underscore).
+								{ __(
+									'Unique identifier (alphanumeric, hyphen, underscore).',
+									'newspack-event-logger-nodes'
+								) }
 							</p>
 						</td>
 					</tr>
 					<tr>
 						<th>
-							<label htmlFor="new-server-url">Server URL</label>
+							<label htmlFor="new-server-url">
+								{ __(
+									'Server URL',
+									'newspack-event-logger-nodes'
+								) }
+							</label>
 						</th>
 						<td>
 							<input
@@ -251,14 +312,20 @@ function AddServerForm( { onAdd } ) {
 								onChange={ ( e ) => setUrl( e.target.value ) }
 							/>
 							<p className="description">
-								HTTPS URL of the WordPress site.
+								{ __(
+									'HTTPS URL of the WordPress site.',
+									'newspack-event-logger-nodes'
+								) }
 							</p>
 						</td>
 					</tr>
 					<tr>
 						<th>
 							<label htmlFor="new-server-username">
-								Username
+								{ __(
+									'Username',
+									'newspack-event-logger-nodes'
+								) }
 							</label>
 						</th>
 						<td>
@@ -272,14 +339,20 @@ function AddServerForm( { onAdd } ) {
 								}
 							/>
 							<p className="description">
-								WordPress username on the remote site.
+								{ __(
+									'WordPress username on the remote site.',
+									'newspack-event-logger-nodes'
+								) }
 							</p>
 						</td>
 					</tr>
 					<tr>
 						<th>
 							<label htmlFor="new-server-password">
-								Application Password
+								{ __(
+									'Application Password',
+									'newspack-event-logger-nodes'
+								) }
 							</label>
 						</th>
 						<td>
@@ -293,8 +366,10 @@ function AddServerForm( { onAdd } ) {
 								}
 							/>
 							<p className="description">
-								WordPress Application Password (Users → Profile
-								→ Application Passwords).
+								{ __(
+									'WordPress Application Password (Users → Profile → Application Passwords).',
+									'newspack-event-logger-nodes'
+								) }
 							</p>
 						</td>
 					</tr>
@@ -308,7 +383,10 @@ function AddServerForm( { onAdd } ) {
 								disabled={ busy }
 								onClick={ handleAdd }
 							>
-								Add Server
+								{ __(
+									'Add Server',
+									'newspack-event-logger-nodes'
+								) }
 							</button>{ ' ' }
 							<span
 								id="add-server-status"
@@ -357,10 +435,14 @@ export default function ServersAdmin() {
 			>
 				<thead>
 					<tr>
-						<th>ID</th>
-						<th>URL</th>
-						<th>Status</th>
-						<th>Actions</th>
+						<th>{ __( 'ID', 'newspack-event-logger-nodes' ) }</th>
+						<th>{ __( 'URL', 'newspack-event-logger-nodes' ) }</th>
+						<th>
+							{ __( 'Status', 'newspack-event-logger-nodes' ) }
+						</th>
+						<th>
+							{ __( 'Actions', 'newspack-event-logger-nodes' ) }
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -376,7 +458,12 @@ export default function ServersAdmin() {
 						) )
 					) : (
 						<tr>
-							<td colSpan="4">No servers configured.</td>
+							<td colSpan="4">
+								{ __(
+									'No servers configured.',
+									'newspack-event-logger-nodes'
+								) }
+							</td>
 						</tr>
 					) }
 				</tbody>

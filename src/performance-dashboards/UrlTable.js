@@ -12,6 +12,7 @@ import {
 	useEffect,
 	memo,
 } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { Button, TextControl } from '@wordpress/components';
 import { STATUS_COLORS } from '../shared/utils/formatUtils';
 import useVirtualization from '../shared/hooks/useVirtualization';
@@ -337,7 +338,10 @@ export default function UrlTable( {
 			>
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
 					<TextControl
-						placeholder="Search URLs..."
+						placeholder={ __(
+							'Search URLs…',
+							'newspack-event-logger-nodes'
+						) }
 						value={ searchTerm }
 						onChange={ handleSearchChange }
 						__nextHasNoMarginBottom
@@ -348,7 +352,9 @@ export default function UrlTable( {
 					isSmall
 					onClick={ () => setErrorsOnly( ! errorsOnly ) }
 				>
-					{ errorsOnly ? 'Showing Errors' : 'Errors Only' }
+					{ errorsOnly
+						? __( 'Showing Errors', 'newspack-event-logger-nodes' )
+						: __( 'Errors Only', 'newspack-event-logger-nodes' ) }
 				</Button>
 			</div>
 
@@ -360,14 +366,16 @@ export default function UrlTable( {
 						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'count' ) }
 					>
-						Reqs{ sortIndicator( 'count' ) }
+						{ __( 'Reqs', 'newspack-event-logger-nodes' ) }
+						{ sortIndicator( 'count' ) }
 					</button>
 					<button
 						type="button"
 						className="event-logger-table__header-btn"
 						onClick={ () => handleSort( 'url' ) }
 					>
-						URL{ sortIndicator( 'url' ) }
+						{ __( 'URL', 'newspack-event-logger-nodes' ) }
+						{ sortIndicator( 'url' ) }
 					</button>
 					<span
 						className="event-logger-table__cell event-logger-table__cell--status"
@@ -398,21 +406,24 @@ export default function UrlTable( {
 						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'avg_ms' ) }
 					>
-						Avg{ sortIndicator( 'avg_ms' ) }
+						{ __( 'Avg', 'newspack-event-logger-nodes' ) }
+						{ sortIndicator( 'avg_ms' ) }
 					</button>
 					<button
 						type="button"
 						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'min_ms' ) }
 					>
-						Min{ sortIndicator( 'min_ms' ) }
+						{ __( 'Min', 'newspack-event-logger-nodes' ) }
+						{ sortIndicator( 'min_ms' ) }
 					</button>
 					<button
 						type="button"
 						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'max_ms' ) }
 					>
-						Max{ sortIndicator( 'max_ms' ) }
+						{ __( 'Max', 'newspack-event-logger-nodes' ) }
+						{ sortIndicator( 'max_ms' ) }
 					</button>
 					<button
 						type="button"
@@ -426,7 +437,8 @@ export default function UrlTable( {
 						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'avg_peak_mb' ) }
 					>
-						Mem{ sortIndicator( 'avg_peak_mb' ) }
+						{ __( 'Mem', 'newspack-event-logger-nodes' ) }
+						{ sortIndicator( 'avg_peak_mb' ) }
 					</button>
 				</div>
 
@@ -438,8 +450,18 @@ export default function UrlTable( {
 					{ filteredUrls.length === 0 ? (
 						<div className="event-logger-table__empty">
 							{ searchTerm
-								? `No URLs match "${ searchTerm }"`
-								: 'No URLs to display' }
+								? sprintf(
+										// translators: %s: the URL search term.
+										__(
+											'No URLs match "%s"',
+											'newspack-event-logger-nodes'
+										),
+										searchTerm
+								  )
+								: __(
+										'No URLs to display',
+										'newspack-event-logger-nodes'
+								  ) }
 						</div>
 					) : (
 						visibleUrls.map( ( url ) => (
@@ -471,9 +493,16 @@ export default function UrlTable( {
 						<div className="event-logger-table__pagination">
 							<span className="event-logger-table__pagination-info">
 								{ total > 0
-									? `${ total.toLocaleString() } URL${
-											total !== 1 ? 's' : ''
-									  }`
+									? sprintf(
+											// translators: %s: total number of URLs.
+											_n(
+												'%s URL',
+												'%s URLs',
+												total,
+												'newspack-event-logger-nodes'
+											),
+											total.toLocaleString()
+									  )
 									: '' }
 							</span>
 						</div>
@@ -483,10 +512,19 @@ export default function UrlTable( {
 				return (
 					<div className="event-logger-table__pagination">
 						<span className="event-logger-table__pagination-info">
-							{ `${ ( offset + 1 ).toLocaleString() }–${ Math.min(
-								offset + URLS_PER_PAGE,
-								total
-							).toLocaleString() } of ${ total.toLocaleString() }` }
+							{ sprintf(
+								// translators: 1: first row number on the page, 2: last row number on the page, 3: total number of URLs.
+								__(
+									'%1$s–%2$s of %3$s',
+									'newspack-event-logger-nodes'
+								),
+								( offset + 1 ).toLocaleString(),
+								Math.min(
+									offset + URLS_PER_PAGE,
+									total
+								).toLocaleString(),
+								total.toLocaleString()
+							) }
 						</span>
 						<div className="event-logger-table__pagination-controls">
 							<button
@@ -497,10 +535,19 @@ export default function UrlTable( {
 									setCurrentPage( ( p ) => p - 1 )
 								}
 							>
-								‹ Prev
+								‹{ ' ' }
+								{ __( 'Prev', 'newspack-event-logger-nodes' ) }
 							</button>
 							<span className="event-logger-table__pagination-page">
-								Page { currentPage } of { totalPages }
+								{ sprintf(
+									// translators: 1: current page number, 2: total number of pages.
+									__(
+										'Page %1$d of %2$d',
+										'newspack-event-logger-nodes'
+									),
+									currentPage,
+									totalPages
+								) }
 							</span>
 							<button
 								type="button"
@@ -510,7 +557,8 @@ export default function UrlTable( {
 									setCurrentPage( ( p ) => p + 1 )
 								}
 							>
-								Next ›
+								{ __( 'Next', 'newspack-event-logger-nodes' ) }{ ' ' }
+								›
 							</button>
 						</div>
 					</div>

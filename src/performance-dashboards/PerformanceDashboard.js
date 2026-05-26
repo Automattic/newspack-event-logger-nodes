@@ -26,6 +26,7 @@ import {
 	CardHeader,
 	Modal,
 } from '@wordpress/components';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
 import { computeIndentedEntries } from './utils/logEntryUtils';
@@ -143,7 +144,12 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		}
 		let urlObj = urlsRef.current.find( ( u ) => u.hash === data.url_hash );
 		if ( ! urlObj ) {
-			urlObj = { hash: data.url_hash, url: data.url || 'Unknown URL' };
+			urlObj = {
+				hash: data.url_hash,
+				url:
+					data.url ||
+					__( 'Unknown URL', 'newspack-event-logger-nodes' ),
+			};
 		}
 		setRequestPartitionRef.current( data.partition );
 		selectUrlRef.current( urlObj );
@@ -235,7 +241,9 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 				if ( ! urlObj ) {
 					urlObj = {
 						hash: data.url_hash,
-						url: data.url || 'Unknown URL',
+						url:
+							data.url ||
+							__( 'Unknown URL', 'newspack-event-logger-nodes' ),
 					};
 				}
 				setRequestPartition( data.partition );
@@ -248,7 +256,16 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					request: rid.trim(),
 				} );
 			} else {
-				setSearchError( `Request "${ rid }" not found` );
+				setSearchError(
+					sprintf(
+						// translators: %s: the request ID that was searched for.
+						__(
+							'Request "%s" not found',
+							'newspack-event-logger-nodes'
+						),
+						rid
+					)
+				);
 			}
 			setSearchLoading( false );
 		},
@@ -406,7 +423,12 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return (
 			<div className="event-logger-performance-loading">
 				<Spinner />
-				<p>Loading performance data...</p>
+				<p>
+					{ __(
+						'Loading performance data…',
+						'newspack-event-logger-nodes'
+					) }
+				</p>
 			</div>
 		);
 	}
@@ -441,7 +463,12 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 				<div className="event-logger-performance-urls">
 					<Card>
 						<CardHeader>
-							<h2>URLs by Request Count</h2>
+							<h2>
+								{ __(
+									'URLs by Request Count',
+									'newspack-event-logger-nodes'
+								) }
+							</h2>
 						</CardHeader>
 						<CardBody>
 							<UrlTable
@@ -462,7 +489,14 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 				<Modal
 					title={
 						selectedRequest && requestDetail
-							? `Request: ${ selectedRequest }`
+							? sprintf(
+									// translators: %s: the request ID.
+									__(
+										'Request: %s',
+										'newspack-event-logger-nodes'
+									),
+									selectedRequest
+							  )
 							: selectedUrl.url
 					}
 					onRequestClose={ () => {
@@ -520,7 +554,10 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 							type="button"
 							className="event-logger-modal-back-button"
 							onClick={ () => selectRequest( null ) }
-							aria-label="Back to URL details"
+							aria-label={ __(
+								'Back to URL details',
+								'newspack-event-logger-nodes'
+							) }
 						>
 							&larr;
 						</button>

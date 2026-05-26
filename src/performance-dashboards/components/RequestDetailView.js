@@ -6,6 +6,7 @@
  */
 
 import { lazy, Suspense, useRef } from '@wordpress/element';
+import { __ } from '@wordpress/i18n';
 
 // Lazy load FlameGraph (heaviest component - uses d3-flame-graph).
 const FlameGraph = lazy( () => import( '../FlameGraph' ) );
@@ -43,36 +44,50 @@ export default function RequestDetailView( {
 		<div className="event-logger-request-detail">
 			<div className="event-logger-request-info" style={ SECTION_STYLE }>
 				<p>
-					<strong>URL:</strong>{ ' ' }
+					<strong>
+						{ __( 'URL:', 'newspack-event-logger-nodes' ) }
+					</strong>{ ' ' }
 					{ requestDetail.request_method ||
 						requestDetail.method ||
 						'' }{ ' ' }
 					{ requestDetail.url }
 				</p>
 				<p>
-					<strong>Time:</strong>{ ' ' }
+					<strong>
+						{ __( 'Time:', 'newspack-event-logger-nodes' ) }
+					</strong>{ ' ' }
 					{ new Date(
 						requestDetail.timestamp * 1000
 					).toLocaleString() }
 				</p>
 				<p>
-					<strong>Duration:</strong>{ ' ' }
+					<strong>
+						{ __( 'Duration:', 'newspack-event-logger-nodes' ) }
+					</strong>{ ' ' }
 					{ requestDetail.duration_ms?.toFixed( 2 ) }
 					ms
 				</p>
 				{ requestDetail.peak_mb > 0 && (
 					<p>
-						<strong>Memory:</strong> { requestDetail.peak_mb } MB
+						<strong>
+							{ __( 'Memory:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ requestDetail.peak_mb } MB
 					</p>
 				) }
 				{ requestDetail.status_code > 0 && (
 					<p>
-						<strong>Status:</strong> { requestDetail.status_code }
+						<strong>
+							{ __( 'Status:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ requestDetail.status_code }
 					</p>
 				) }
 				{ ( isTimedOut || isFatal ) && (
 					<p>
-						<strong>Error:</strong>{ ' ' }
+						<strong>
+							{ __( 'Error:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
 						<span
 							style={ {
 								color: isTimedOut ? '#dba617' : '#d63638',
@@ -80,8 +95,14 @@ export default function RequestDetailView( {
 							} }
 						>
 							{ isTimedOut
-								? 'Timed out (orphaned request)'
-								: 'Fatal error' }
+								? __(
+										'Timed out (orphaned request)',
+										'newspack-event-logger-nodes'
+								  )
+								: __(
+										'Fatal error',
+										'newspack-event-logger-nodes'
+								  ) }
 						</span>
 					</p>
 				) }
@@ -89,7 +110,10 @@ export default function RequestDetailView( {
 
 			{ hasNoDetail && (
 				<p style={ { color: '#757575', fontStyle: 'italic' } }>
-					No log entries available for this request.
+					{ __(
+						'No log entries available for this request.',
+						'newspack-event-logger-nodes'
+					) }
 				</p>
 			) }
 
@@ -99,8 +123,19 @@ export default function RequestDetailView( {
 					className="event-logger-flame-container"
 					style={ SECTION_STYLE }
 				>
-					<h3>Request Trace</h3>
-					<Suspense fallback={ <div>Loading chart...</div> }>
+					<h3>
+						{ __( 'Request Trace', 'newspack-event-logger-nodes' ) }
+					</h3>
+					<Suspense
+						fallback={
+							<div>
+								{ __(
+									'Loading chart…',
+									'newspack-event-logger-nodes'
+								) }
+							</div>
+						}
+					>
 						<FlameGraph
 							data={ flameData }
 							onRevealEntry={ ( path ) => {

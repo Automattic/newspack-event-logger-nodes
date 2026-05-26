@@ -5,6 +5,7 @@
  */
 
 import { useState, useMemo, Fragment } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { getStateColor, formatDuration } from '../shared/utils/formatUtils';
 
@@ -36,7 +37,7 @@ export default function RequestProfile( {
 	profiles,
 	totalMs,
 	totalProfiledTime,
-	title = 'Time Breakdown',
+	title = __( 'Time Breakdown', 'newspack-event-logger-nodes' ),
 } ) {
 	const [ expandedState, setExpandedState ] = useState( null );
 	const [ showAll, setShowAll ] = useState( false );
@@ -144,15 +145,20 @@ export default function RequestProfile( {
 			<table className="widefat striped" style={ { fontSize: '13px' } }>
 				<thead>
 					<tr>
-						<th style={ { width: '40%' } }>Category</th>
-						<th style={ { width: '20%', textAlign: 'right' } }>
-							Time
+						<th style={ { width: '40%' } }>
+							{ __( 'Category', 'newspack-event-logger-nodes' ) }
 						</th>
 						<th style={ { width: '20%', textAlign: 'right' } }>
-							% of Total
+							{ __( 'Time', 'newspack-event-logger-nodes' ) }
 						</th>
 						<th style={ { width: '20%', textAlign: 'right' } }>
-							Count
+							{ __(
+								'% of Total',
+								'newspack-event-logger-nodes'
+							) }
+						</th>
+						<th style={ { width: '20%', textAlign: 'right' } }>
+							{ __( 'Count', 'newspack-event-logger-nodes' ) }
 						</th>
 					</tr>
 				</thead>
@@ -285,7 +291,10 @@ export default function RequestProfile( {
 																			}
 																		>
 																			{ name ||
-																				'(anonymous)' }
+																				__(
+																					'(anonymous)',
+																					'newspack-event-logger-nodes'
+																				) }
 																		</td>
 																		<td
 																			style={ {
@@ -336,12 +345,18 @@ export default function RequestProfile( {
 																			'4px 8px',
 																	} }
 																>
-																	... and{ ' ' }
-																	{ Object.keys(
-																		entries
-																	).length -
-																		10 }{ ' ' }
-																	more
+																	{ sprintf(
+																		// translators: %d: number of additional entries not shown.
+																		__(
+																			'… and %d more',
+																			'newspack-event-logger-nodes'
+																		),
+																		Object.keys(
+																			entries
+																		)
+																			.length -
+																			10
+																	) }
 																</td>
 															</tr>
 														) }
@@ -368,14 +383,31 @@ export default function RequestProfile( {
 									} }
 								>
 									{ showAll
-										? 'Show less'
-										: `Show ${ hiddenCount } more categories` }
+										? __(
+												'Show less',
+												'newspack-event-logger-nodes'
+										  )
+										: sprintf(
+												// translators: %d: number of additional categories that can be shown.
+												_n(
+													'Show %d more category',
+													'Show %d more categories',
+													hiddenCount,
+													'newspack-event-logger-nodes'
+												),
+												hiddenCount
+										  ) }
 								</button>
 							</td>
 						</tr>
 					) }
 					<tr style={ { fontWeight: 'bold', background: '#f5f5f5' } }>
-						<td>Total Profiled</td>
+						<td>
+							{ __(
+								'Total Profiled',
+								'newspack-event-logger-nodes'
+							) }
+						</td>
 						<td
 							style={ {
 								textAlign: 'right',
