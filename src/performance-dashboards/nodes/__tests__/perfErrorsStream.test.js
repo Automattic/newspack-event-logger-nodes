@@ -1,9 +1,10 @@
 /**
- * perferrors/stream tests — the SSE-in node that owns the live connection to the
+ * perferrors:stream tests — the SSE-in node that owns the live connection to the
  * errors firehose. `subscribe()` connects an SSE source; each inbound `msg`
- * envelope is emitted to the data sink (→ transform), while connection-status
- * changes are emitted as a control to `controlSink` (→ view) so the reconnect
- * banner survives (a connection control would be DROPPED by the transform).
+ * envelope is emitted through the node's `sink` (the exospine CI) stamped
+ * `TO = target` (→ the route). Connection-status changes are emitted the SAME way,
+ * as a `{ action:'connection' }` TM_STRUCT stamped `KEY = 'connection'` — there is
+ * NO controlSink; the route node does the data/control split keyed on that marker.
  *
  * Two seams are exercised:
  *  - The INJECTED connector (`opts.connector`): a fake whose `connect()` records
@@ -16,6 +17,7 @@ import {
 	newMessage,
 	TYPE,
 	KEY,
+	TO,
 	VALUE,
 	TM_STRUCT,
 	TM_INFO,
@@ -52,12 +54,13 @@ function fakeConnector() {
 	};
 }
 
-describe( 'perferrors/stream', () => {
-	test( 'subscribe() connects the errors feed and forwards envelopes to sink', () => {
+describe( 'perferrors:stream', () => {
+	test( 'subscribe() connects the errors feed and forwards envelopes to sink stamped TO target', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
+		s.target = 'perferrors:route';
 		const got = [];
 		s.sink = { fill: ( m ) => got.push( m ) };
 		s.subscribe();
@@ -68,46 +71,48 @@ describe( 'perferrors/stream', () => {
 		c.lastOnEnvelope( env );
 		expect( got ).toHaveLength( 1 );
 		expect( got[ 0 ][ VALUE ] ).toEqual( { ts: 1 } );
+		expect( got[ 0 ][ TO ] ).toBe( 'perferrors:route' );
 	} );
 
-	test( 'connection status emits a control to controlSink, not sink', () => {
+	test( 'connection status emits a KEY=connection control through the sink (no controlSink)', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
-		const data = [];
-		const ctrl = [];
-		s.sink = { fill: ( m ) => data.push( m ) };
-		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+		s.target = 'perferrors:route';
+		const got = [];
+		s.sink = { fill: ( m ) => got.push( m ) };
 		s.subscribe();
 		c.lastOnStatus( { connectionError: true } );
-		expect( data ).toHaveLength( 0 );
-		expect( ctrl ).toHaveLength( 1 );
-		expect( ctrl[ 0 ][ TYPE ] ).toBe( TM_STRUCT );
-		expect( ctrl[ 0 ][ VALUE ] ).toEqual( {
+		expect( got ).toHaveLength( 1 );
+		expect( got[ 0 ][ TYPE ] ).toBe( TM_STRUCT );
+		expect( got[ 0 ][ KEY ] ).toBe( 'connection' );
+		expect( got[ 0 ][ TO ] ).toBe( 'perferrors:route' );
+		expect( got[ 0 ][ VALUE ] ).toEqual( {
 			action: 'connection',
 			connectionError: true,
 		} );
 	} );
 
-	test( 'a connectionError:false status clears the banner via controlSink', () => {
+	test( 'a connectionError:false status clears the banner through the sink', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
-		const ctrl = [];
-		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+		const got = [];
+		s.sink = { fill: ( m ) => got.push( m ) };
 		s.subscribe();
 		c.lastOnStatus( { connectionError: false } );
-		expect( ctrl[ 0 ][ VALUE ] ).toEqual( {
+		expect( got[ 0 ][ KEY ] ).toBe( 'connection' );
+		expect( got[ 0 ][ VALUE ] ).toEqual( {
 			action: 'connection',
 			connectionError: false,
 		} );
 	} );
 
-	test( 'a connection status with no controlSink does not throw', () => {
+	test( 'a connection status with no sink does not throw', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
 		s.subscribe();
@@ -118,7 +123,7 @@ describe( 'perferrors/stream', () => {
 
 	test( 're-subscribing closes the old source before opening the new one', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
 		s.subscribe();
@@ -128,7 +133,7 @@ describe( 'perferrors/stream', () => {
 
 	test( 'close() tears the connector down', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
 		s.subscribe();
@@ -138,7 +143,7 @@ describe( 'perferrors/stream', () => {
 
 	test( 'envelopes delivered before any subscribe are not emitted', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
 		const got = [];
@@ -149,16 +154,16 @@ describe( 'perferrors/stream', () => {
 
 	test( 'names the node', () => {
 		const c = fakeConnector();
-		const s = createPerfErrorsStream( 'perferrors/stream', {
+		const s = createPerfErrorsStream( 'perferrors:stream', {
 			connector: c,
 		} );
-		expect( s.name ).toBe( 'perferrors/stream' );
+		expect( s.name ).toBe( 'perferrors:stream' );
 	} );
 } );
 
 // The DEFAULT connector (no injected connector): EventSource + heartbeat +
 // backoff + the onStatus wiring (onerror→connectionError:true, onopen→false).
-describe( 'perferrors/stream default connector', () => {
+describe( 'perferrors:stream default connector', () => {
 	class FakeEventSource {
 		constructor( url ) {
 			this.url = url;
@@ -207,7 +212,7 @@ describe( 'perferrors/stream default connector', () => {
 	} );
 
 	test( 'opens a real EventSource at /messages/stream for the errors subscription', () => {
-		const s = createPerfErrorsStream( 'perferrors/stream' );
+		const s = createPerfErrorsStream( 'perferrors:stream' );
 		s.subscribe();
 		const es = FakeEventSource.last();
 		expect( es.url ).toContain( 'newspack-nodes/v1/messages/stream' );
@@ -217,7 +222,7 @@ describe( 'perferrors/stream default connector', () => {
 
 	test( 'forwards each parsed msg envelope to the sink', () => {
 		const got = [];
-		const s = createPerfErrorsStream( 'perferrors/stream' );
+		const s = createPerfErrorsStream( 'perferrors:stream' );
 		s.sink = { fill: ( m ) => got.push( m ) };
 		s.subscribe();
 		FakeEventSource.last().dispatch( 'msg', [
@@ -237,14 +242,15 @@ describe( 'perferrors/stream default connector', () => {
 		} );
 	} );
 
-	test( 'onerror emits connectionError:true to controlSink and reconnects', () => {
-		const ctrl = [];
-		const s = createPerfErrorsStream( 'perferrors/stream' );
-		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+	test( 'onerror emits a KEY=connection control through the sink and reconnects', () => {
+		const got = [];
+		const s = createPerfErrorsStream( 'perferrors:stream' );
+		s.sink = { fill: ( m ) => got.push( m ) };
 		s.subscribe();
 		const first = FakeEventSource.last();
 		first.onerror();
-		expect( ctrl[ 0 ][ VALUE ] ).toEqual( {
+		expect( got[ 0 ][ KEY ] ).toBe( 'connection' );
+		expect( got[ 0 ][ VALUE ] ).toEqual( {
 			action: 'connection',
 			connectionError: true,
 		} );
@@ -253,20 +259,22 @@ describe( 'perferrors/stream default connector', () => {
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( 1 );
 	} );
 
-	test( 'onopen emits connectionError:false to controlSink', () => {
-		const ctrl = [];
-		const s = createPerfErrorsStream( 'perferrors/stream' );
-		s.controlSink = { fill: ( m ) => ctrl.push( m ) };
+	test( 'onopen emits a KEY=connection connectionError:false control through the sink', () => {
+		const got = [];
+		const s = createPerfErrorsStream( 'perferrors:stream' );
+		s.sink = { fill: ( m ) => got.push( m ) };
 		s.subscribe();
 		FakeEventSource.last().onopen();
-		expect( ctrl[ ctrl.length - 1 ][ VALUE ] ).toEqual( {
+		const last = got[ got.length - 1 ];
+		expect( last[ KEY ] ).toBe( 'connection' );
+		expect( last[ VALUE ] ).toEqual( {
 			action: 'connection',
 			connectionError: false,
 		} );
 	} );
 
 	test( 'pokes the slot heartbeat after the connected envelope', () => {
-		const s = createPerfErrorsStream( 'perferrors/stream' );
+		const s = createPerfErrorsStream( 'perferrors:stream' );
 		s.subscribe();
 		const m = newMessage();
 		m[ TYPE ] = TM_INFO;
@@ -282,7 +290,7 @@ describe( 'perferrors/stream default connector', () => {
 	} );
 
 	test( 'close() stops the heartbeat poke and the reconnect timer', () => {
-		const s = createPerfErrorsStream( 'perferrors/stream' );
+		const s = createPerfErrorsStream( 'perferrors:stream' );
 		s.subscribe();
 		const m = newMessage();
 		m[ TYPE ] = TM_INFO;

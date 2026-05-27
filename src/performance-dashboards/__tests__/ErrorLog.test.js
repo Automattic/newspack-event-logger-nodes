@@ -3,7 +3,7 @@
  * ErrorLog UI-surface tests — the thin view over the perferrors node graph.
  *
  * The graph is owned by useErrorLogGraph (tested separately); here we mock it to
- * hand back spy control callbacks, and we register a fixture `perferrors/view`
+ * hand back spy control callbacks, and we register a fixture `perferrors:view`
  * node in Core so the view can read its low-frequency model via useNodeState
  * ({ paused, connectionError, lastEventTime }) and its high-frequency buffer
  * (entries) directly off the node in the rAF. Mirrors RequestStream.test.js.
@@ -31,7 +31,7 @@ import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
 const { useErrorLogGraph } = require( '../hooks/useErrorLogGraph' );
 
-// A minimal stand-in for the perferrors/view node: the low-frequency model lives
+// A minimal stand-in for the perferrors:view node: the low-frequency model lives
 // in setStateCache.view (what useNodeState subscribes to) and the high-frequency
 // buffer lives directly on the instance (what the rAF reads). setState here
 // notifies subscribers exactly like the real Node.setState.
@@ -62,7 +62,7 @@ function registerViewFixture( {
 		},
 	};
 	node.setState( 'view', { paused, connectionError, lastEventTime } );
-	Core.nodes.set( 'perferrors/view', node );
+	Core.nodes.set( 'perferrors:view', node );
 	return node;
 }
 

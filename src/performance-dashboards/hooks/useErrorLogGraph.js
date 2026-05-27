@@ -1,19 +1,26 @@
 /**
  * useErrorLogGraph — mounts the Error Log dashboard node graph (the JS-Node
- * conversion of the old ErrorLog data path). On mount it builds three nodes —
- * `perferrors/stream` (SSE-in), `perferrors/transform` (envelope → row),
- * `perferrors/view` (view model) — and wires the data path stream → transform →
- * view, plus `stream.controlSink = view` so connection-status controls reach the
- * view directly (the transform would drop them). A second effect owns the live
- * connection: while the page is visible AND not paused it subscribes the stream
- * to the `errors` feed, otherwise it closes it (mirrors ErrorLog's page-visibility
- * / pause effect). The view publishes its state via `setState('view', …)`; the
- * React view reads it separately with `useNodeState('perferrors/view','view')`.
+ * conversion of the old ErrorLog data path) clipped onto the exospine (the
+ * canonical rule-#2 backbone `_command_interpreter → _router`).
  *
- * Returns the thin control callbacks the view calls — `setPaused` (flips the
- * hook's paused state, which the view's control fill + the connection effect both
- * key off) and `clear` (empties the view buffer). Torn down on unmount: the stream
- * is closed, then all three nodes are unregistered from Core.
+ * Graph: `perferrors:stream` (SSE-in) → `perferrors:route` (classifier) →
+ * `perferrors:transform` (envelope → row) and/or `perferrors:view` (view model).
+ * EVERY node sinks into the CI; flow is steered ONLY by each node's `target` (the
+ * router peels TO and delivers): the stream targets the route; the route stamps
+ * data → the transform and connection-status control → the view; the transform
+ * targets the view. There is no bespoke `sink`/`controlSink` wiring.
+ *
+ * A second effect owns the live connection: while the page is visible AND not
+ * paused it subscribes the stream to the `errors` feed, otherwise it closes it
+ * (mirrors ErrorLog's page-visibility / pause effect). The view publishes its
+ * low-frequency model via `setState('view', …)`; the React view reads the
+ * high-frequency buffer directly via `Core.node('perferrors:view')`.
+ *
+ * Returns the thin control callbacks the view calls — `setPaused` and `clear`.
+ * These are dispatched HOOK-DIRECT to the view node (`viewRef.current.fill`), an
+ * external bridge: they are NOT routed through the graph (only connection-status
+ * is, via the route). Torn down on unmount: the stream is closed, the graph nodes
+ * are unregistered, then the exospine.
  *
  * The transport boundary is injectable: tests pass `opts.connector` (the stream's
  * seam, mirroring perfErrorsStream) so the hook never touches a real EventSource.
@@ -24,21 +31,26 @@
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
+	mountExospine,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
 import { createPerfErrorsStream } from '../nodes/perfErrorsStream';
+import { createPerfErrorsRoute } from '../nodes/perfErrorsRoute';
 import { createPerfErrorsTransform } from '../nodes/perfErrorsTransform';
 import { createPerfErrorsView } from '../nodes/perfErrorsView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
-// Every named node this graph mounts — unregistered on teardown.
-const STREAM = 'perferrors/stream';
-const TRANSFORM = 'perferrors/transform';
-const VIEW = 'perferrors/view';
-const GRAPH_NODE_NAMES = [ STREAM, TRANSFORM, VIEW ];
+// Every named node this graph mounts — unregistered on teardown (the exospine
+// nodes are removed separately by its own teardown()). Names use a colon, not a
+// slash: the router peels TO on '/', so a '/' in a node name would misroute.
+const STREAM = 'perferrors:stream';
+const ROUTE = 'perferrors:route';
+const TRANSFORM = 'perferrors:transform';
+const VIEW = 'perferrors:view';
+const GRAPH_NODE_NAMES = [ STREAM, ROUTE, TRANSFORM, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -80,16 +92,30 @@ export function useErrorLogGraph( opts = {} ) {
 	// effect has built the graph.
 	const [ viewReady, setViewReady ] = useState( false );
 
-	// Mount the graph once: stream → transform → view (+ stream.controlSink = view).
+	// Mount the graph once onto the exospine: stream → route → transform → view.
 	useEffect( () => {
 		const { connector, maxEntries } = optsRef.current;
+
+		// The canonical backbone every node clips onto: everything → CI → router.
+		const { ci, teardown: teardownSpine } = mountExospine();
+
+		// Build the graph nodes (the factories register them in Core).
 		const stream = createPerfErrorsStream( STREAM, { connector } );
+		const route = createPerfErrorsRoute( ROUTE, {
+			dataTarget: TRANSFORM,
+			controlTarget: VIEW,
+		} );
 		const transform = createPerfErrorsTransform( TRANSFORM );
 		const view = createPerfErrorsView( VIEW, { maxEntries } );
-		stream.sink = transform;
-		transform.sink = view;
-		// Connection-status controls bypass the transform (which would drop them).
-		stream.controlSink = view;
+
+		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		stream.sink = ci;
+		stream.target = ROUTE;
+		route.sink = ci;
+		transform.sink = ci;
+		transform.target = VIEW;
+		view.sink = ci;
+
 		streamRef.current = stream;
 		viewRef.current = view;
 
@@ -98,11 +124,12 @@ export function useErrorLogGraph( opts = {} ) {
 
 		return () => {
 			// Close the connection-owning stream first (its connector close is
-			// idempotent), THEN unregister.
+			// idempotent), unregister the graph nodes, THEN tear the exospine down.
 			stream.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
+			teardownSpine();
 			streamRef.current = null;
 			viewRef.current = null;
 		};

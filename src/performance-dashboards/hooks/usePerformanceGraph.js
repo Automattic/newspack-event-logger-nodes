@@ -1,12 +1,15 @@
 /**
  * usePerformanceGraph — mounts the Performance Dashboard's data graph
- * (`performance/command` → `performance/view`) and owns every fetch. Mirrors
- * useErrorLogGraph: a mount effect builds the two nodes, wires command.sink =
- * view, flips `viewReady` (so the consumer's useNodeState re-subscribes to the
- * freshly-registered view node), and on teardown closes the command (cancel
- * guard) then unregisters both nodes.
+ * (`performance:command` → `performance:view`) clipped onto the exospine (the
+ * canonical rule-#2 backbone `_command_interpreter → _router`) and owns every
+ * fetch. Mirrors useAggregatorAdminGraph: a mount effect mounts the backbone,
+ * builds the two nodes, sinks BOTH into the CI and targets the command at the
+ * view (the router peels TO and delivers — no bespoke `command.sink=view`), flips
+ * `viewReady` (so the consumer's useNodeState re-subscribes to the freshly-
+ * registered view node), and on teardown closes the command (cancel guard),
+ * unregisters both graph nodes, THEN tears down the exospine.
  *
- * The CONSUMER reads the model itself via useNodeState('performance/view',
+ * The CONSUMER reads the model itself via useNodeState('performance:view',
  * 'view') — this hook returns ONLY control callbacks, exactly like
  * useErrorLogGraph returns { setPaused, clear }. Reading the model in the
  * consumer (not here) lets the orchestrator derive `urls` for useUrlNavigation
@@ -41,6 +44,7 @@
 import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
+	mountExospine,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
@@ -52,8 +56,10 @@ import usePageVisibility from '../../shared/hooks/usePageVisibility';
 import { getCommandClient } from '../../shared/utils/commandClient';
 import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
 
-const COMMAND = 'performance/command';
-const VIEW = 'performance/view';
+// Names use a colon, not a slash: the router peels TO on '/', so a '/' in a node
+// name would misroute.
+const COMMAND = 'performance:command';
+const VIEW = 'performance:view';
 
 // Build a TM_STRUCT control the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -110,14 +116,22 @@ export function usePerformanceGraph( opts = {} ) {
 	const [ viewReady, setViewReady ] = useState( false );
 	const isPageVisible = usePageVisibility();
 
-	// Mount the graph once.
+	// Mount the graph once onto the exospine: command → view.
 	useEffect( () => {
+		// The canonical backbone every node clips onto: everything → CI → router.
+		const { ci, teardown: teardownSpine } = mountExospine();
+
 		const command = createPerformanceCommand( COMMAND, {
 			commandClient: optsRef.current.commandClient,
 			onError: optsRef.current.onError,
 		} );
 		const view = createPerformanceView( VIEW );
-		command.sink = view;
+
+		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		command.sink = ci;
+		command.target = VIEW;
+		view.sink = ci;
+
 		commandRef.current = command;
 		viewRef.current = view;
 		setViewReady( true );
@@ -126,9 +140,12 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( urlFetchTimerRef.current ) {
 				clearTimeout( urlFetchTimerRef.current );
 			}
+			// Close the in-flight-cancel-owning command first, unregister the
+			// graph nodes, THEN tear the exospine down (removes the CI + router).
 			command.close();
 			Core.unregisterNode( COMMAND );
 			Core.unregisterNode( VIEW );
+			teardownSpine();
 			commandRef.current = null;
 			viewRef.current = null;
 		};

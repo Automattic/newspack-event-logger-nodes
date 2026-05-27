@@ -18,18 +18,43 @@ function fakeClient( payload = {} ) {
 }
 beforeEach( () => Core.reset() );
 
-test( 'mounts command + view and fires the initial overview + urls', async () => {
+test( 'mounts the backbone + command + view onto the exospine and fires the initial overview + urls', async () => {
 	const client = fakeClient( { total_requests: 1 } );
 	const { unmount } = renderHook( ( p ) => usePerformanceGraph( p ), {
 		initialProps: { commandClient: client },
 	} );
 	await Promise.resolve();
 	await Promise.resolve();
-	expect( Core.node( 'performance/command' ) ).toBeTruthy();
-	expect( Core.node( 'performance/view' ) ).toBeTruthy();
+	const ci = Core.node( '_command_interpreter' );
+	expect( ci ).toBeTruthy();
+	expect( Core.node( '_router' ) ).toBeTruthy();
+	expect( Core.node( 'performance:command' ) ).toBeTruthy();
+	expect( Core.node( 'performance:view' ) ).toBeTruthy();
+	// Rule #2: both nodes sink into the CI; flow is steered by target.
+	expect( Core.node( 'performance:command' ).sink ).toBe( ci );
+	expect( Core.node( 'performance:command' ).target ).toBe(
+		'performance:view'
+	);
+	expect( Core.node( 'performance:view' ).sink ).toBe( ci );
 	const verbs = client.calls.map( ( c ) => c.verb );
 	expect( verbs ).toContain( 'overview' );
 	expect( verbs ).toContain( 'urls' );
+	unmount();
+} );
+
+test( 'an overview result routes command → router → view (end-to-end through the spine)', async () => {
+	const client = fakeClient( { total_requests: 7 } );
+	const { unmount } = renderHook( ( p ) => usePerformanceGraph( p ), {
+		initialProps: { commandClient: client },
+	} );
+	await Promise.resolve();
+	await Promise.resolve();
+	// The initial fetchOverview's result must have actually reached the view
+	// model via the real router (not a bespoke command.sink=view edge).
+	const view = Core.node( 'performance:view' );
+	expect( view.setStateCache.view.overview.data ).toEqual( {
+		total_requests: 7,
+	} );
 	unmount();
 } );
 
@@ -168,16 +193,22 @@ test( 'resolveRequest resolves via the client when the node is not mounted (deep
 	);
 } );
 
-test( 'unmount closes the command and unregisters both nodes', async () => {
+test( 'unmount closes the command and unregisters the graph + the backbone', async () => {
 	const client = fakeClient();
 	const { unmount } = renderHook( ( p ) => usePerformanceGraph( p ), {
 		initialProps: { commandClient: client },
 	} );
 	await Promise.resolve();
-	const command = Core.node( 'performance/command' );
+	const command = Core.node( 'performance:command' );
 	const spy = jest.spyOn( command, 'close' );
 	unmount();
 	expect( spy ).toHaveBeenCalled();
-	expect( Core.node( 'performance/command' ) ).toBeFalsy();
-	expect( Core.node( 'performance/view' ) ).toBeFalsy();
+	for ( const n of [
+		'performance:command',
+		'performance:view',
+		'_command_interpreter',
+		'_router',
+	] ) {
+		expect( Core.node( n ) ).toBeFalsy();
+	}
 } );

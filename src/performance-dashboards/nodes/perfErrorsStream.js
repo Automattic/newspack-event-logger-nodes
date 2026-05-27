@@ -1,11 +1,15 @@
 /* global EventSource */
 /**
- * `perferrors/stream` — the SSE-in node that owns the live connection to the
+ * `perferrors:stream` — the SSE-in node that owns the live connection to the
  * errors firehose.
  *
  * `subscribe()` (re)connects an SSE source for the `errors` subscription; each
- * inbound `msg` event is parsed into a Message envelope and emitted to the data
- * sink (→ `perferrors/transform`). `close()` tears the connection down.
+ * inbound `msg` event is parsed into a Message envelope and emitted through the
+ * node's `sink` (the exospine CI) stamped `TO = target` (→ `perferrors:route`).
+ * Connection-status changes are emitted the same way, as a `{ action:
+ * 'connection' }` TM_STRUCT stamped `KEY = 'connection'` — there is NO
+ * controlSink; the route node does the data/control split keyed on that marker.
+ * `close()` tears the connection down.
  *
  * The connection itself — EventSource open, `msg` parse, the slot-heartbeat poke
  * that keeps `Sse_Slot_Pool`'s TTL alive, and the reconnect backoff — is the
@@ -14,12 +18,6 @@
  * tests pass `opts.connector` (a fake) so they never touch a real EventSource;
  * production lazily defaults to the real-EventSource connector below.
  *
- * Connection-status surface: a connection-status control message would be DROPPED
- * by the transform (`transformErrorLine` returns null for it), so the stream
- * routes connection-status changes to a SEPARATE `controlSink` (→ `perferrors/view`)
- * distinct from `sink` (→ the transform). This preserves the reconnect banner the
- * dashboard previously showed via `useMessageStream`'s `error`.
- *
  * The subscription is the fixed `errors` feed, so — unlike rawLogsStream's per-log
  * `subscribe(logKey)` — there is no log-switch; `subscribe()` takes no argument.
  */
@@ -27,6 +25,7 @@
 import {
 	Node,
 	KEY,
+	TO,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -53,7 +52,7 @@ const backoffDelay = ( retries ) =>
 	Math.min( 30000, 1000 * Math.pow( 2, retries ) );
 
 /**
- * The default connector — the real-EventSource transport for `perferrors/stream`.
+ * The default connector — the real-EventSource transport for `perferrors:stream`.
  *
  * `connect( subscription, onEnvelope, onStatus )` opens an EventSource at
  * `/messages/stream` for the subscription, parses each `msg` into a Message
@@ -183,14 +182,13 @@ class PerfErrorsStreamNode extends Node {
 		super();
 		this._connector = connector;
 		this._subscribed = false;
-		// The connection-status surface (→ perferrors/view); distinct from `sink`
-		// (→ perferrors/transform) because the transform would drop a control.
-		this.controlSink = null;
 	}
 
 	// (Re)connect the live source for the errors firehose. A re-subscribe closes
-	// the old source first, then opens a new one; each inbound envelope goes to
-	// sink, while connection-status changes go to controlSink as a control.
+	// the old source first, then opens a new one. Both inbound envelopes AND
+	// connection-status changes emit through the one sink (the CI), stamped TO the
+	// route; the route node classifies them (data → transform, control → view) —
+	// rule #2: flow steered by target, not a bespoke controlSink.
 	subscribe() {
 		if ( this._subscribed ) {
 			this._connector.close();
@@ -198,24 +196,31 @@ class PerfErrorsStreamNode extends Node {
 		this._subscribed = true;
 		this._connector.connect(
 			SUBSCRIPTION,
-			( envelope ) => {
-				if ( this.sink ) {
-					this.sink.fill( envelope );
-				}
-			},
+			( envelope ) => this._emit( envelope ),
 			( status ) => {
-				if ( ! this.controlSink ) {
-					return;
-				}
 				const m = newMessage();
 				m[ TYPE ] = TM_STRUCT;
+				// KEY marks this a connection-status control so the route
+				// classifies on the stream-set marker, not VALUE content (an
+				// errors-feed envelope may legitimately carry VALUE.action).
+				m[ KEY ] = 'connection';
 				m[ VALUE ] = {
 					action: 'connection',
 					connectionError: status.connectionError,
 				};
-				this.controlSink.fill( m );
+				this._emit( m );
 			}
 		);
+	}
+
+	// Stamp TO the route (this is the SSE ingress — the local target overrides
+	// any wire-origin TO) and forward through the sink (the CI).
+	_emit( message ) {
+		message[ TO ] = this.target;
+		this.counter += 1;
+		if ( this.sink ) {
+			this.sink.fill( message );
+		}
 	}
 
 	// Tear the connection down. Unconditional so teardown closes a never-yet-
