@@ -5,7 +5,7 @@
  *
  * The graph is owned by useGyroscopeGraph (tested separately); here we mock it so
  * the view never touches a real EventSource, and we register a fixture
- * `gyroscope/view` node in Core whose `snapshot()` returns the render rows and
+ * `gyroscope:view` node in Core whose `snapshot()` returns the render rows and
  * whose `rps` / `lastEventTime` the refresh tick reads. The view samples the node
  * on its refresh-interval timer (the gyroscope analog of RequestStream's rAF), so
  * tests advance fake timers to drive a render pass.
@@ -22,10 +22,10 @@ import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
 const { useGyroscopeGraph } = require( '../hooks/useGyroscopeGraph' );
 
-// A minimal stand-in for the gyroscope/view node: snapshot() returns the render
+// A minimal stand-in for the gyroscope:view node: snapshot() returns the render
 // rows (the real node reaps + sorts + caps here), and rps / lastEventTime live on
-// the instance — exactly what the refresh tick reads off Core.node('gyroscope/view').
-// The register/setState/setStateCache machinery backs useNodeState('gyroscope/view',
+// the instance — exactly what the refresh tick reads off Core.node('gyroscope:view').
+// The register/setState/setStateCache machinery backs useNodeState('gyroscope:view',
 // 'view'), which the view reads for the low-frequency { connectionError } model
 // (the reconnect banner). setState here notifies subscribers like the real Node.
 function registerViewFixture( {
@@ -57,7 +57,7 @@ function registerViewFixture( {
 		},
 	};
 	node.setState( 'view', { connectionError } );
-	Core.nodes.set( 'gyroscope/view', node );
+	Core.nodes.set( 'gyroscope:view', node );
 	return node;
 }
 

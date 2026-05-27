@@ -1,19 +1,24 @@
 /**
  * useGyroscopeGraph — mounts the Gyroscope dashboard node graph (the JS-Node
- * conversion of the old Inflight component). On mount it builds three nodes —
- * `gyroscope/stream` (SSE-in), `gyroscope/transform` (envelope → dispatch),
- * `gyroscope/view` (in-flight model) — and wires the data path
- * stream → transform → view, plus `stream.controlSink = view` so connection-status
- * controls reach the view directly (the transform would drop them). A second effect
- * owns the live connection: while the page is visible it resets the view map and
- * subscribes the stream to the `gyroscope` feed, otherwise it closes it (this
- * mirrors Inflight's page-visibility connect/close effect + its `onBeforeConnect`
- * map reset). The view publishes its low-frequency model via `setState('view', …)`;
- * the React view reads the high-frequency in-flight model directly via
- * `Core.node('gyroscope/view').snapshot()` each refresh tick.
+ * conversion of the old Inflight component) clipped onto the exospine (the
+ * canonical rule-#2 backbone `_command_interpreter → _router`).
  *
- * Torn down on unmount: the stream is closed, then all three nodes are
- * unregistered from Core.
+ * Graph: `gyroscope:stream` (SSE-in) → `gyroscope:route` (classifier) →
+ * `gyroscope:transform` (envelope → dispatch) and/or `gyroscope:view` (in-flight
+ * model). EVERY node sinks into the CI; flow is steered ONLY by each node's
+ * `target` (the router peels TO and delivers): the stream targets the route; the
+ * route stamps data → the transform and connection-status control → the view; the
+ * transform targets the view. There is no bespoke `sink`/`controlSink` wiring.
+ *
+ * A second effect owns the live connection: while the page is visible it resets
+ * the view map and subscribes the stream to the `gyroscope` feed, otherwise it
+ * closes it (this mirrors Inflight's page-visibility connect/close effect + its
+ * `onBeforeConnect` map reset). The view publishes its low-frequency model via
+ * `setState('view', …)`; the React view reads the high-frequency in-flight model
+ * directly via `Core.node('gyroscope:view').snapshot()` each refresh tick.
+ *
+ * Torn down on unmount: the stream is closed, the graph nodes are unregistered,
+ * then the exospine.
  *
  * The transport boundary is injectable: tests pass `opts.connector` (the stream's
  * seam, mirroring gyroscopeStream) so the hook never touches a real EventSource.
@@ -24,21 +29,25 @@
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
+	mountExospine,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
 import { createGyroscopeStream } from '../nodes/gyroscopeStream';
+import { createGyroscopeRoute } from '../nodes/gyroscopeRoute';
 import { createGyroscopeTransform } from '../nodes/gyroscopeTransform';
 import { createGyroscopeView } from '../nodes/gyroscopeView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
-// Every named node this graph mounts — unregistered on teardown.
-const STREAM = 'gyroscope/stream';
-const TRANSFORM = 'gyroscope/transform';
-const VIEW = 'gyroscope/view';
-const GRAPH_NODE_NAMES = [ STREAM, TRANSFORM, VIEW ];
+// Every named node this graph mounts — unregistered on teardown (the exospine
+// nodes are removed separately by its own teardown()).
+const STREAM = 'gyroscope:stream';
+const ROUTE = 'gyroscope:route';
+const TRANSFORM = 'gyroscope:transform';
+const VIEW = 'gyroscope:view';
+const GRAPH_NODE_NAMES = [ STREAM, ROUTE, TRANSFORM, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -76,16 +85,30 @@ export function useGyroscopeGraph( opts = {} ) {
 	// mount effect has built the graph.
 	const [ viewReady, setViewReady ] = useState( false );
 
-	// Mount the graph once: stream → transform → view (+ stream.controlSink = view).
+	// Mount the graph once onto the exospine: stream → route → transform → view.
 	useEffect( () => {
 		const { connector } = optsRef.current;
+
+		// The canonical backbone every node clips onto: everything → CI → router.
+		const { ci, teardown: teardownSpine } = mountExospine();
+
+		// Build the graph nodes (the factories register them in Core).
 		const stream = createGyroscopeStream( STREAM, { connector } );
+		const route = createGyroscopeRoute( ROUTE, {
+			dataTarget: TRANSFORM,
+			controlTarget: VIEW,
+		} );
 		const transform = createGyroscopeTransform( TRANSFORM );
 		const view = createGyroscopeView( VIEW );
-		stream.sink = transform;
-		transform.sink = view;
-		// Connection-status controls bypass the transform (which would drop them).
-		stream.controlSink = view;
+
+		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		stream.sink = ci;
+		stream.target = ROUTE;
+		route.sink = ci;
+		transform.sink = ci;
+		transform.target = VIEW;
+		view.sink = ci;
+
 		streamRef.current = stream;
 		viewRef.current = view;
 
@@ -94,12 +117,12 @@ export function useGyroscopeGraph( opts = {} ) {
 
 		return () => {
 			// Close the connection-owning stream first (its connector close is
-			// idempotent), THEN unregister — mirrors useRequestLogGraph's
-			// stream.close() before unregister.
+			// idempotent), unregister the graph nodes, THEN tear the exospine down.
 			stream.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
+			teardownSpine();
 			streamRef.current = null;
 			viewRef.current = null;
 		};

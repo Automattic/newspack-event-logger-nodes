@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Aggregator Status** (`aggregator:poll` → `aggregator:view`): poll-driven, no route node.
   - **Configured Servers** (`servers:command` → `servers:view`): command-driven, no route node.
   - **Hook Catalog** (`hookcatalog:command` → `hookcatalog:view`): command-driven, no route node.
+  - **Gyroscope** (`gyroscope:stream` → `gyroscope:route` → `gyroscope:transform`/`gyroscope:view`): SSE-driven; the `controlSink` is replaced by a `gyroscope:route` classifier keyed on the stream-set `KEY='connection'` marker (data → transform, connection-status → view).
 
 ## [0.5.0] - 2026-05-27
 

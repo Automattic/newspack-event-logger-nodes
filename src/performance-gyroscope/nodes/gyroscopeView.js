@@ -3,7 +3,7 @@ import { Node, VALUE } from '@newspack-nodes/runtime';
 const RPS_WINDOW_MS = 10000;
 
 /**
- * `gyroscope/view` — owns the in-flight request model.
+ * `gyroscope:view` — owns the in-flight request model.
  *
  * Two cadences, deliberately split for performance (mirrors requestlog/view):
  * - HIGH frequency (the gyroscope stream): `_inflight` / `_complete` mutate the
@@ -13,9 +13,9 @@ const RPS_WINDOW_MS = 10000;
  *   so a high-volume stream never re-renders React per message.
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { connectionError })` — the reconnect banner, consumed by
- *   `useNodeState('gyroscope/view','view')`.
+ *   `useNodeState('gyroscope:view','view')`.
  *
- * `fill()` accepts the TM_STRUCT dispatch shapes from `gyroscope/transform`:
+ * `fill()` accepts the TM_STRUCT dispatch shapes from `gyroscope:transform`:
  * - `{ type: 'inflight', requests }`: upsert each request by rid, NEVER over-
  *   writing one already marked complete (the snapshot predates a completion that
  *   may already be in the map).
