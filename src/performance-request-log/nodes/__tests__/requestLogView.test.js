@@ -1,5 +1,5 @@
 /**
- * requestlog/view tests — owns the Request Log view model.
+ * requestlog:view tests — owns the Request Log view model.
  *
  * Two cadences (matching rawLogsView): the HIGH-frequency request buffer
  * (node.entries) + RPS (node.rps) live on the instance and are NOT published —
@@ -19,7 +19,7 @@ import { createRequestLogView } from '../requestLogView';
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// A row message from requestlog/transform: TM_STRUCT carrying the mapped row.
+// A row message from requestlog:transform: TM_STRUCT carrying the mapped row.
 function rowMsg( req ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -50,7 +50,7 @@ function row( overrides = {} ) {
 }
 
 test( 'appends rows newest-first to node.entries (no publish)', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'a' } ) ) );
 	v.fill( rowMsg( row( { rid: 'b' } ) ) );
 	v.fill( rowMsg( row( { rid: 'c' } ) ) );
@@ -59,7 +59,7 @@ test( 'appends rows newest-first to node.entries (no publish)', () => {
 } );
 
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	const spy = jest.spyOn( v, 'setState' );
 	v.fill( rowMsg( row() ) );
 	v.fill( rowMsg( row() ) );
@@ -67,7 +67,7 @@ test( 'appending rows does NOT publish setState (no per-row React re-render)', (
 } );
 
 test( 'caps the buffer at maxEntries (newest kept)', () => {
-	const v = createRequestLogView( 'requestlog/view', { maxEntries: 3 } );
+	const v = createRequestLogView( 'requestlog:view', { maxEntries: 3 } );
 	for ( let i = 0; i < 5; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
@@ -77,7 +77,7 @@ test( 'caps the buffer at maxEntries (newest kept)', () => {
 } );
 
 test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'first', url: '/a', end_time: 111 } ) ) );
 	v.fill( rowMsg( row( { rid: 'second', url: '/b', end_time: 222 } ) ) );
 	expect( v.entries[ 0 ] ).toMatchObject( {
@@ -97,21 +97,21 @@ test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () 
 } );
 
 test( 'exposes a numeric rps on the node instance', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( rowMsg( row() ) );
 	expect( typeof v.rps ).toBe( 'number' );
 	expect( v.rps ).toBeGreaterThan( 0 );
 } );
 
 test( 'touches lastEventTime on each appended row', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	expect( v.lastEventTime ).toBeNull();
 	v.fill( rowMsg( row() ) );
 	expect( typeof v.lastEventTime ).toBe( 'number' );
 } );
 
 test( 'pause stops appends and the published model reflects paused', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'ignored' } ) ) );
 	expect( v.entries ).toHaveLength( 0 );
@@ -119,7 +119,7 @@ test( 'pause stops appends and the published model reflects paused', () => {
 } );
 
 test( 'resume after pause lets rows through again', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'dropped' } ) ) );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
@@ -130,7 +130,7 @@ test( 'resume after pause lets rows through again', () => {
 } );
 
 test( 'clear empties the buffer, counter and rps', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	for ( let i = 0; i < 10; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
@@ -144,7 +144,7 @@ test( 'clear empties the buffer, counter and rps', () => {
 } );
 
 test( 'the published model carries paused and connectionError', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
 	expect( Object.keys( v.setStateCache.view ).sort() ).toEqual( [
 		'connectionError',
@@ -153,27 +153,27 @@ test( 'the published model carries paused and connectionError', () => {
 } );
 
 test( 'connection control publishes connectionError', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( false );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
-	const v = createRequestLogView( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
@@ -181,6 +181,6 @@ test( 'publishes an initial view model on construction', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createRequestLogView( 'requestlog/view' );
-	expect( v.name ).toBe( 'requestlog/view' );
+	const v = createRequestLogView( 'requestlog:view' );
+	expect( v.name ).toBe( 'requestlog:view' );
 } );

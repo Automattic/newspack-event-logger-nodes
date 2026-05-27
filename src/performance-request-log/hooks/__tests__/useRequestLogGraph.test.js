@@ -1,11 +1,17 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * useRequestLogGraph tests — the Request Log dashboard graph. The three nodes
- * (`requestlog/stream`, `requestlog/transform`, `requestlog/view`) are REAL
- * (their factories register them in Core); only the stream's connector is
- * injected so the hook never touches a real EventSource. The hook owns the
- * page-visibility pause/resume of the stream and the control callbacks. Mirrors
- * useRawLogsGraph's tests (real graph, faked I/O boundary).
+ * useRequestLogGraph tests — the Request Log dashboard graph clipped onto the
+ * exospine (`mountExospine`: _command_interpreter → _router). The four graph nodes
+ * (`requestlog:stream`, `requestlog:route`, `requestlog:transform`,
+ * `requestlog:view`) are REAL; only the stream's connector is injected so the hook
+ * never touches a real EventSource. EVERY node sinks into the CI and steers via
+ * target; the end-to-end tests deliver an envelope/status through the fake
+ * connector and assert it actually routes through the real router — data flows
+ * stream → route → transform → view, a connection-status control flows stream →
+ * route → view (skipping the transform). The hook also owns the page-visibility /
+ * pause subscribe/close of the stream + the hook-direct pause/clear callbacks
+ * (those dispatch straight to the view node, an external bridge — they are NOT
+ * routed through the graph).
  *
  * usePageVisibility is mocked to a controllable value so the visibility effect is
  * deterministic under jsdom.
@@ -27,9 +33,11 @@ beforeEach( () => {
 	mockPageVisible = true;
 } );
 
+const CI = '_command_interpreter';
+
 // A fake connector matching the stream node's seam (connect/close); records the
-// last subscription + status handler + close count for the teardown / pause /
-// connection-status assertions.
+// last subscription + status handler + counts for the teardown / visibility /
+// pause / connection-status assertions.
 function makeFakeConnector() {
 	return {
 		closeCount: 0,
@@ -67,33 +75,37 @@ function completedEnvelope( req ) {
 	return m;
 }
 
-describe( 'useRequestLogGraph — mount + wiring', () => {
-	test( 'mounts the three nodes wired stream→transform→view and stream.controlSink=view', () => {
+describe( 'useRequestLogGraph — exospine wiring', () => {
+	test( 'mounts the backbone + four nodes, each sinking into the CI', () => {
 		const fake = makeFakeConnector();
 		renderHook( () => useRequestLogGraph( { connector: fake } ) );
-		expect( Core.node( 'requestlog/stream' ) ).toBeTruthy();
-		expect( Core.node( 'requestlog/transform' ) ).toBeTruthy();
-		expect( Core.node( 'requestlog/view' ) ).toBeTruthy();
-		expect( Core.node( 'requestlog/stream' ).sink ).toBe(
-			Core.node( 'requestlog/transform' )
-		);
-		expect( Core.node( 'requestlog/transform' ).sink ).toBe(
-			Core.node( 'requestlog/view' )
-		);
-		expect( Core.node( 'requestlog/stream' ).controlSink ).toBe(
-			Core.node( 'requestlog/view' )
-		);
+		const ci = Core.node( CI );
+		expect( ci ).toBeTruthy();
+		expect( Core.node( '_router' ) ).toBeTruthy();
+		for ( const n of [
+			'requestlog:stream',
+			'requestlog:route',
+			'requestlog:transform',
+			'requestlog:view',
+		] ) {
+			expect( Core.node( n ) ).toBeTruthy();
+			expect( Core.node( n ).sink ).toBe( ci );
+		}
 	} );
 
-	test( 'a connection status reaches the view (not the transform) and publishes connectionError', () => {
+	test( 'steers flow with targets, not bespoke sinks (no controlSink)', () => {
 		const fake = makeFakeConnector();
 		renderHook( () => useRequestLogGraph( { connector: fake } ) );
-		act( () => fake.deliverStatus( { connectionError: true } ) );
-		const view = Core.node( 'requestlog/view' );
-		expect( view.connectionError ).toBe( true );
-		expect( view.setStateCache.view.connectionError ).toBe( true );
-		// The status did NOT produce a row (the transform would have dropped it).
-		expect( view.entries ).toHaveLength( 0 );
+		expect( Core.node( 'requestlog:stream' ).target ).toBe(
+			'requestlog:route'
+		);
+		expect( Core.node( 'requestlog:route' ).target ).toBe(
+			'requestlog:transform'
+		);
+		expect( Core.node( 'requestlog:transform' ).target ).toBe(
+			'requestlog:view'
+		);
+		expect( Core.node( 'requestlog:stream' ).controlSink ).toBeUndefined();
 	} );
 
 	test( 'subscribes the stream to the completed feed on mount when visible', () => {
@@ -103,7 +115,16 @@ describe( 'useRequestLogGraph — mount + wiring', () => {
 		expect( fake.lastSubscription ).toBe( 'completed' );
 	} );
 
-	test( 'a delivered completed envelope flows stream→transform→view as an entry', () => {
+	test( 'does not subscribe on mount when the page is hidden', () => {
+		mockPageVisible = false;
+		const fake = makeFakeConnector();
+		renderHook( () => useRequestLogGraph( { connector: fake } ) );
+		expect( fake.connectCount ).toBe( 0 );
+	} );
+} );
+
+describe( 'useRequestLogGraph — end-to-end routing through the exospine', () => {
+	test( 'a delivered completed envelope routes stream → route → transform → view', () => {
 		const fake = makeFakeConnector();
 		renderHook( () => useRequestLogGraph( { connector: fake } ) );
 		act( () => {
@@ -118,16 +139,20 @@ describe( 'useRequestLogGraph — mount + wiring', () => {
 				} )
 			);
 		} );
-		const view = Core.node( 'requestlog/view' );
+		const view = Core.node( 'requestlog:view' );
 		expect( view.entries ).toHaveLength( 1 );
 		expect( view.entries[ 0 ].rid ).toBe( 'r-flow' );
 	} );
 
-	test( 'does not subscribe on mount when the page is hidden', () => {
-		mockPageVisible = false;
+	test( 'a connection-status control routes stream → route → view (skips transform)', () => {
 		const fake = makeFakeConnector();
 		renderHook( () => useRequestLogGraph( { connector: fake } ) );
-		expect( fake.connectCount ).toBe( 0 );
+		act( () => fake.deliverStatus( { connectionError: true } ) );
+		const view = Core.node( 'requestlog:view' );
+		expect( view.connectionError ).toBe( true );
+		expect( view.setStateCache.view.connectionError ).toBe( true );
+		// The status did NOT produce a row (the transform would have dropped it).
+		expect( view.entries ).toHaveLength( 0 );
 	} );
 } );
 
@@ -160,7 +185,7 @@ describe( 'useRequestLogGraph — control callbacks', () => {
 		);
 		const closesBefore = fake.closeCount;
 		act( () => result.current.setPaused( true ) );
-		expect( Core.node( 'requestlog/view' ).setStateCache.view.paused ).toBe(
+		expect( Core.node( 'requestlog:view' ).setStateCache.view.paused ).toBe(
 			true
 		);
 		expect( fake.closeCount ).toBeGreaterThan( closesBefore );
@@ -175,7 +200,7 @@ describe( 'useRequestLogGraph — control callbacks', () => {
 		const connectsWhilePaused = fake.connectCount;
 		act( () => result.current.setPaused( false ) );
 		expect( fake.connectCount ).toBeGreaterThan( connectsWhilePaused );
-		expect( Core.node( 'requestlog/view' ).setStateCache.view.paused ).toBe(
+		expect( Core.node( 'requestlog:view' ).setStateCache.view.paused ).toBe(
 			false
 		);
 	} );
@@ -196,22 +221,29 @@ describe( 'useRequestLogGraph — control callbacks', () => {
 				} )
 			);
 		} );
-		expect( Core.node( 'requestlog/view' ).entries ).toHaveLength( 1 );
+		expect( Core.node( 'requestlog:view' ).entries ).toHaveLength( 1 );
 		act( () => result.current.clear() );
-		expect( Core.node( 'requestlog/view' ).entries ).toHaveLength( 0 );
+		expect( Core.node( 'requestlog:view' ).entries ).toHaveLength( 0 );
 	} );
 } );
 
 describe( 'useRequestLogGraph — teardown', () => {
-	test( 'unmount unregisters all three and closes the stream', () => {
+	test( 'unmount unregisters the graph + the backbone and closes the stream', () => {
 		const fake = makeFakeConnector();
 		const { unmount } = renderHook( () =>
 			useRequestLogGraph( { connector: fake } )
 		);
 		unmount();
-		expect( Core.node( 'requestlog/stream' ) ).toBeNull();
-		expect( Core.node( 'requestlog/transform' ) ).toBeNull();
-		expect( Core.node( 'requestlog/view' ) ).toBeNull();
+		for ( const n of [
+			'requestlog:stream',
+			'requestlog:route',
+			'requestlog:transform',
+			'requestlog:view',
+			'_command_interpreter',
+			'_router',
+		] ) {
+			expect( Core.node( n ) ).toBeNull();
+		}
 		expect( fake.closeCount ).toBeGreaterThanOrEqual( 1 );
 	} );
 

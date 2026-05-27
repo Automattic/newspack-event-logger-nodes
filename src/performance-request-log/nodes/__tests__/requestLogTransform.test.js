@@ -1,11 +1,12 @@
 /**
- * requestlog/transform tests — wraps transformCompletedLine, dropping the
+ * requestlog:transform tests — wraps transformCompletedLine, dropping the
  * `connected` sentinel and any envelope the transform rejects (no url), and
- * emits a fresh TM_STRUCT row to its sink.
+ * emits a fresh TM_STRUCT row to its sink stamped TO the node target.
  */
 
 import {
 	KEY,
+	TO,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -33,7 +34,7 @@ function completedEnvelope( req ) {
 
 test( 'emits one row message for a completed-request envelope', () => {
 	const sink = capture();
-	const t = createRequestLogTransform( 'requestlog/transform' );
+	const t = createRequestLogTransform( 'requestlog:transform' );
 	t.sink = sink.node;
 	t.fill(
 		completedEnvelope( {
@@ -54,7 +55,7 @@ test( 'emits one row message for a completed-request envelope', () => {
 
 test( 'emitted row message is TM_STRUCT carrying the mapped row', () => {
 	const sink = capture();
-	const t = createRequestLogTransform( 'requestlog/transform' );
+	const t = createRequestLogTransform( 'requestlog:transform' );
 	t.sink = sink.node;
 	t.fill(
 		completedEnvelope( {
@@ -77,9 +78,18 @@ test( 'emitted row message is TM_STRUCT carrying the mapped row', () => {
 	} );
 } );
 
+test( 'the emitted row message is stamped TO the node target', () => {
+	const sink = capture();
+	const t = createRequestLogTransform( 'requestlog:transform' );
+	t.sink = sink.node;
+	t.target = 'requestlog:view';
+	t.fill( completedEnvelope( { rid: 'r3', url: '/x' } ) );
+	expect( sink.got[ 0 ][ TO ] ).toBe( 'requestlog:view' );
+} );
+
 test( 'drops the connected sentinel', () => {
 	const sink = capture();
-	const t = createRequestLogTransform( 'requestlog/transform' );
+	const t = createRequestLogTransform( 'requestlog:transform' );
 	t.sink = sink.node;
 	const env = newMessage();
 	env[ KEY ] = 'connected';
@@ -90,20 +100,20 @@ test( 'drops the connected sentinel', () => {
 
 test( 'drops a malformed envelope whose transform returns null (no url)', () => {
 	const sink = capture();
-	const t = createRequestLogTransform( 'requestlog/transform' );
+	const t = createRequestLogTransform( 'requestlog:transform' );
 	t.sink = sink.node;
 	t.fill( completedEnvelope( { rid: 'no-url' } ) );
 	expect( sink.got ).toHaveLength( 0 );
 } );
 
 test( 'does not throw when sink is unset', () => {
-	const t = createRequestLogTransform( 'requestlog/transform' );
+	const t = createRequestLogTransform( 'requestlog:transform' );
 	expect( () =>
 		t.fill( completedEnvelope( { rid: 'r', url: '/x' } ) )
 	).not.toThrow();
 } );
 
 test( 'names the node', () => {
-	const t = createRequestLogTransform( 'requestlog/transform' );
-	expect( t.name ).toBe( 'requestlog/transform' );
+	const t = createRequestLogTransform( 'requestlog:transform' );
+	expect( t.name ).toBe( 'requestlog:transform' );
 } );
