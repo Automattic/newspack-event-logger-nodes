@@ -1,10 +1,11 @@
 /**
- * `servers/command` — the command-out node that owns the Configured-Servers admin
+ * `servers:command` — the command-out node that owns the Configured-Servers admin
  * traffic, behind an injectable command-client seam.
  *
  * `list()` sends `{ to:'servers', verb:'list' }` (the `servers list` verb's
  * `{ id:public_shape }` map), unwraps the reply, and emits it as a TM_STRUCT
- * `{ action:'servers', servers }` to its sink (→ `servers/view`). Failures surface
+ * `{ action:'servers', servers }` to its sink — the exospine CI — stamped with
+ * TO=target (the router peels TO and delivers to `servers:view`). Failures surface
  * as a TM_STRUCT `{ action:'error', error }` control so the view can show them —
  * never swallowed.
  *
@@ -14,14 +15,15 @@
  * this is what replaces the old jQuery `window.location.reload()`.
  *
  * The shared CommandClient is reached ONLY through the `client` seam, lazily
- * defaulted to `getCommandClient()`; tests inject a fake. Mirrors aggregator/poll +
- * workerstatus/poll (transport boundary + close() in-flight cancel).
+ * defaulted to `getCommandClient()`; tests inject a fake. Mirrors aggregator:poll +
+ * workerstatus:poll (transport boundary + close() in-flight cancel).
  */
 
 import {
 	Node,
 	VALUE,
 	TYPE,
+	TO,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
@@ -91,6 +93,8 @@ class ServersCommandNode extends Node {
 		}
 		const out = newMessage();
 		out[ TYPE ] = TM_STRUCT;
+		// Rule #2: stamp TO=target so the exospine router routes it (→ view).
+		out[ TO ] = this.target;
 		out[ VALUE ] = value;
 		this.sink.fill( out );
 	}

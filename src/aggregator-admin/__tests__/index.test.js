@@ -4,7 +4,7 @@
  * node graph (the full-React replacement for the old jQuery aggregator-admin).
  *
  * The graph is owned by useAggregatorAdminGraph (tested separately); here we mock
- * it to hand back spy CRUD callbacks, and we register a fixture `servers/view` node
+ * it to hand back spy CRUD callbacks, and we register a fixture `servers:view` node
  * in Core so the view can read its model via useNodeState. The rendered DOM reuses
  * the exact class names + ids the old PHP table used (`wp-list-table`,
  * `#new-server-id`, `.event-aggregator-test`, …) so the styled result matches.
@@ -48,7 +48,7 @@ const SAMPLE_SERVERS = [
 	},
 ];
 
-// A minimal stand-in for the servers/view node: the model lives in
+// A minimal stand-in for the servers:view node: the model lives in
 // setStateCache.view (what useNodeState subscribes to). setState here notifies
 // subscribers exactly like the real Node.setState. Mirrors AggregatorStatus's
 // registerViewFixture.
@@ -79,7 +79,7 @@ function registerViewFixture( overrides = {} ) {
 		},
 	};
 	node.setState( 'view', model );
-	Core.nodes.set( 'servers/view', node );
+	Core.nodes.set( 'servers:view', node );
 	return node;
 }
 
