@@ -83,14 +83,6 @@ class Request_Builder_Node extends Node {
 			);
 		$this->state_callbacks = $this->build_state_callbacks();
 
-		// Sibling CommandInterpreter for runtime config verbs. See
-		// Partition's ctor for the contract; A1 declares one verb
-		// (set_errors_target) on the patron's :config CI.
-		$ci = new Command_Interpreter_Node();
-		$ci->patron( $this );
-		$ci->commands( self::config_verbs() );
-		$this->attach_interpreter( $ci );
-
 		// Hidden Flight sibling — patron filter hides it from the canvas.
 		// Naming happens in the overridden name() setter so the sibling
 		// adopts `{patron}:flight` when the patron is named (mirroring the
@@ -98,6 +90,10 @@ class Request_Builder_Node extends Node {
 		// Sink wiring also propagates from the overridden sink() setter.
 		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
+
+		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
+		parent::__construct();
 	}
 
 	public function flight(): Request_Flight_Node {
@@ -932,60 +928,6 @@ class Request_Builder_Node extends Node {
 	}
 
 	/**
-	 * Per-class verb table for the sibling `:config` CI. Resolved
-	 * per-instance via `$ci->patron()` at dispatch time.
-	 *
-	 * @return array<string,callable>
-	 */
-	private static function config_verbs(): array {
-		static $verbs = null;
-		if ( null === $verbs ) {
-			$verbs = [
-				'set_errors_target' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \trim( $args );
-					// Empty arg clears the target (disables the secondary emit).
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_errors_target( $args );
-					$patron->mark_verb_invoked( 'set_errors_target', $args );
-					return 'ok';
-				},
-				'set_completed_target' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \trim( $args );
-					// Empty arg clears the target (disables the secondary emit).
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_completed_target( $args );
-					$patron->mark_verb_invoked( 'set_completed_target', $args );
-					return 'ok';
-				},
-				'set_inflight_target' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \trim( $args );
-					// Empty arg clears Flight's target — its fire_cb early-returns
-					// on the target check, disabling the periodic snapshot emit.
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->flight()->target( $args );
-					$patron->mark_verb_invoked( 'set_inflight_target', $args );
-					return 'ok';
-				},
-				'set_inflight_interval' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \trim( $args );
-					if ( ! \ctype_digit( $args ) ) {
-						return 'usage: set_inflight_interval <ms>';
-					}
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->flight()->set_interval( (int) $args );
-					$patron->mark_verb_invoked( 'set_inflight_interval', $args );
-					return 'ok';
-				},
-			];
-		}
-		return $verbs;
-	}
-
-	/**
 	 * Manifest for the topology console's palette + form rendering.
 	 * See Node::node_schema() for the shape contract.
 	 */
@@ -1046,6 +988,15 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \trim( $args );
+						// Empty arg clears the target (disables the secondary emit).
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_errors_target( $args );
+						$patron->mark_verb_invoked( 'set_errors_target', $args );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'set_completed_target',
@@ -1053,6 +1004,15 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \trim( $args );
+						// Empty arg clears the target (disables the secondary emit).
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_completed_target( $args );
+						$patron->mark_verb_invoked( 'set_completed_target', $args );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'set_inflight_target',
@@ -1060,6 +1020,16 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \trim( $args );
+						// Empty arg clears Flight's target — its fire_cb early-returns
+						// on the target check, disabling the periodic snapshot emit.
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->flight()->target( $args );
+						$patron->mark_verb_invoked( 'set_inflight_target', $args );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'set_inflight_interval',
@@ -1067,6 +1037,17 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'ms', 'type' => 'int', 'required' => true ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \trim( $args );
+						if ( ! \ctype_digit( $args ) ) {
+							return 'usage: set_inflight_interval <ms>';
+						}
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->flight()->set_interval( (int) $args );
+						$patron->mark_verb_invoked( 'set_inflight_interval', $args );
+						return 'ok';
+					},
 				],
 			],
 			'requests'    => [

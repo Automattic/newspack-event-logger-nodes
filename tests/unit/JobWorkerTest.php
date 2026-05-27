@@ -436,11 +436,12 @@ class JobWorkerTest extends TestCase {
 
 	// ── Sibling CI + eager handler loading ─────────────────────
 
-	public function test_job_worker_constructs_sibling_ci(): void {
+	public function test_job_worker_has_no_sibling_ci(): void {
+		// JobWorker declares no node_schema config verbs, so the base-ctor
+		// auto-wire creates no sibling :config CI.
 		$jw = new Job_Worker_Node();
 		$jw->name( 'jw' );
-		$this->assertNotNull( $jw->interpreter() );
-		$this->assertSame( 'jw:config', $jw->interpreter()->name() );
+		$this->assertNull( $jw->interpreter() );
 	}
 
 	public function test_job_worker_ctor_eager_loads_handlers_from_filters(): void {

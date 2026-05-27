@@ -53,13 +53,11 @@ class Health_Check_Tick_Node extends Node {
 	protected int $last_check = 0;
 
 	public function __construct() {
-		// Sibling CommandInterpreter — TSL aggregator topology
-		// invokes `cmd health-check-tick:config start_periodic_tick`
-		// to register with _router's TIMER event.
-		$ci = new Command_Interpreter_Node();
-		$ci->patron( $this );
-		$ci->commands( self::config_verbs() );
-		$this->attach_interpreter( $ci );
+		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// handlers — TSL aggregator topology invokes
+		// `cmd health-check-tick:config start_periodic_tick` to register with
+		// _router's TIMER event.
+		parent::__construct();
 	}
 
 	/**
@@ -145,22 +143,6 @@ class Health_Check_Tick_Node extends Node {
 	// Sibling-CI verb table + node_schema (A3).
 	// -------------------------------------------------------------------------
 
-	private static function config_verbs(): array {
-		static $verbs = null;
-		if ( null === $verbs ) {
-			$verbs = [
-				'start_periodic_tick' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->start_periodic_tick();
-					$patron->mark_verb_invoked( 'start_periodic_tick', '' );
-					return 'ok';
-				},
-			];
-		}
-		return $verbs;
-	}
-
 	public static function node_schema(): array {
 		// Hidden: HealthCheckTick is instantiated as an owned sibling
 		// of StreamMerger (patron-linked in StreamMerger's constructor),
@@ -177,6 +159,13 @@ class Health_Check_Tick_Node extends Node {
 					'name'        => 'start_periodic_tick',
 					'description' => 'Register with _router TIMER for periodic ticks.',
 					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->start_periodic_tick();
+						$patron->mark_verb_invoked( 'start_periodic_tick', '' );
+						return 'ok';
+					},
 				],
 			],
 		];

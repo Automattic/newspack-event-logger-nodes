@@ -106,21 +106,16 @@ class Flame_Builder_Node extends Node {
 		$this->last_flush_time = \microtime( true );
 		$this->reset_pending();
 
-		// Sibling CommandInterpreter — TSL topology files configure
-		// FlameBuilder via verbs (set_is_hub, set_auto_tune,
-		// set_significant_events, configure_stats) instead of
-		// PHP-side setter calls.
-		$ci = new Command_Interpreter_Node();
-		$ci->patron( $this );
-		$ci->commands( self::config_verbs() );
-		$this->attach_interpreter( $ci );
-
 		// Owned auto-tuner sibling. Patron-linked so dump_metadata
 		// hides it from the canvas — it's plumbing for FlameBuilder,
 		// not a graph node operators interact with. Named on first
 		// patron name() (see name() override below).
 		$this->auto_tuner = new Auto_Tuner_Node();
 		$this->auto_tuner->patron( $this );
+
+		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
+		parent::__construct();
 	}
 
 	/**
@@ -1644,72 +1639,6 @@ class Flame_Builder_Node extends Node {
 	// Sibling-CI verb table + node_schema (A3).
 	// -------------------------------------------------------------------------
 
-	/**
-	 * Verbs the TSL `cmd flame-builder:config <verb>` invocations
-	 * dispatch through. Resolved per-instance via $ci->patron().
-	 *
-	 * @return array<string,callable>
-	 */
-	private static function config_verbs(): array {
-		static $verbs = null;
-		if ( null === $verbs ) {
-			$verbs = [
-				'set_is_hub'             => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \strtolower( \trim( $args ) );
-					$bool = ( 'true' === $args || '1' === $args );
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_is_hub( $bool );
-					$patron->mark_verb_invoked( 'set_is_hub', $bool ? 'true' : 'false' );
-					return 'ok';
-				},
-				'set_auto_tune'          => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$parts = \preg_split( '/\s+/', \trim( $args ) );
-					if ( \count( $parts ) < 2 ) {
-						return 'usage: set_auto_tune <count_threshold> <time_threshold>';
-					}
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_auto_tune( (int) $parts[0], (float) $parts[1] );
-					$patron->mark_verb_invoked( 'set_auto_tune', $args );
-					return 'ok';
-				},
-				'set_significant_events' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \trim( $args );
-					$list = '' === $args
-						? []
-						: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ) ) );
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_significant_events( $list );
-					$patron->mark_verb_invoked( 'set_significant_events', $args );
-					return 'ok';
-				},
-				'configure_stats'        => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$parts = \preg_split( '/\s+/', \trim( $args ) );
-					if ( \count( $parts ) < 1 || '' === $parts[0] ) {
-						return 'usage: configure_stats <partition>';
-					}
-					$partition = (int) $parts[0];
-
-					// Read current substrate config for retention; the store reads
-					// the shared Core::$memd handle directly.
-					$config       = \Newspack_Event_Logger_Nodes\Config::load_config();
-					$max_lifespan = (int) ( $config['max_lifespan'] ?? 86400 );
-
-					$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $partition, $max_lifespan );
-
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_stats_store( $stats_store );
-					$patron->mark_verb_invoked( 'configure_stats', (string) $partition );
-					return 'ok';
-				},
-			];
-		}
-		return $verbs;
-	}
-
 	private function handle_request( array $message ): void {
 		$value = (string) $message[ Message::VALUE ];
 		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
@@ -1755,6 +1684,15 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<config:is_hub>' ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \strtolower( \trim( $args ) );
+						$bool = ( 'true' === $args || '1' === $args );
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_is_hub( $bool );
+						$patron->mark_verb_invoked( 'set_is_hub', $bool ? 'true' : 'false' );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'set_auto_tune',
@@ -1763,6 +1701,17 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'count_threshold', 'type' => 'int',   'required' => true, 'default' => '<config:auto_disable_threshold>' ],
 						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true, 'default' => '<config:auto_protect_time_threshold>' ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$parts = \preg_split( '/\s+/', \trim( $args ) );
+						if ( \count( $parts ) < 2 ) {
+							return 'usage: set_auto_tune <count_threshold> <time_threshold>';
+						}
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_auto_tune( (int) $parts[0], (float) $parts[1] );
+						$patron->mark_verb_invoked( 'set_auto_tune', $args );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'set_significant_events',
@@ -1770,6 +1719,17 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'names', 'type' => 'string', 'required' => false, 'default' => '<config:significant_events_csv>' ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \trim( $args );
+						$list = '' === $args
+							? []
+							: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ) ) );
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_significant_events( $list );
+						$patron->mark_verb_invoked( 'set_significant_events', $args );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'configure_stats',
@@ -1777,6 +1737,26 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$parts = \preg_split( '/\s+/', \trim( $args ) );
+						if ( \count( $parts ) < 1 || '' === $parts[0] ) {
+							return 'usage: configure_stats <partition>';
+						}
+						$partition = (int) $parts[0];
+
+						// Read current substrate config for retention; the store reads
+						// the shared Core::$memd handle directly.
+						$config       = \Newspack_Event_Logger_Nodes\Config::load_config();
+						$max_lifespan = (int) ( $config['max_lifespan'] ?? 86400 );
+
+						$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $partition, $max_lifespan );
+
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_stats_store( $stats_store );
+						$patron->mark_verb_invoked( 'configure_stats', (string) $partition );
+						return 'ok';
+					},
 				],
 			],
 			'requests'    => [

@@ -2142,6 +2142,9 @@ class StreamMergerTest extends TestCase {
 
 		$health_name = 'test-stream-merger:health-check';
 		$this->assertNotNull( Core::node( $health_name ), 'health_check sibling must be registered after name()' );
+		// Health_Check_Tick has a handler-bearing verb, so it auto-wires its own
+		// :config CI; naming the sibling cascades the CI name. Teardown must free it.
+		$this->assertNotNull( Core::node( $health_name . ':config' ), 'health_check sibling CI registered after name()' );
 
 		$sm->remove_node();
 
@@ -2149,6 +2152,9 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 0, $sm->remote_count() );
 		// Health check sibling unregistered (name is free for re-use).
 		$this->assertNull( Core::node( $health_name ) );
+		// ...and its sibling :config CI cascaded too, so a same-process rebuild
+		// (or test re-register) doesn't collide on the orphaned CI name.
+		$this->assertNull( Core::node( $health_name . ':config' ) );
 		// Parent::remove_node() unregisters the merger itself.
 		$this->assertNull( Core::node( 'test-stream-merger' ) );
 	}
@@ -2478,21 +2484,13 @@ class StreamMergerTest extends TestCase {
 	}
 
 	// =========================================================================
-	// Coverage: config_verbs() body + each verb closure body.
-	// The static $verbs_cache is populated once per process; reset it here so
-	// the populate path runs during the coverage capture window and so each
-	// verb closure is invoked directly (the existing make_merger() path goes
-	// through the instance methods, leaving the closure-wrapper bodies dark).
+	// Coverage: each node_schema verb-handler closure body. The auto-wired
+	// :config CI exposes them via commands(); invoke each directly (the
+	// make_merger() path goes through instance methods, leaving the
+	// closure-wrapper bodies dark).
 	// =========================================================================
 
-	private function reset_stream_merger_verbs_cache(): void {
-		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'verbs_cache' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, [] );
-	}
-
 	public function test_set_verify_ssl_verb_closure_dispatches_to_patron(): void {
-		$this->reset_stream_merger_verbs_cache();
 		$sm = $this->make_merger();
 		$ci = $sm->interpreter();
 		$verbs = $ci->commands();
@@ -2514,7 +2512,6 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_set_require_https_verb_closure_dispatches_to_patron(): void {
-		$this->reset_stream_merger_verbs_cache();
 		$sm = new Stream_Merger_Node( 'firehose', 0 );
 		$sm->name( 'sm-require-https' );
 		$ci = $sm->interpreter();
@@ -2534,7 +2531,6 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_load_remotes_from_registry_verb_closure_iterates_enabled_servers(): void {
-		$this->reset_stream_merger_verbs_cache();
 		// Seed two enabled servers + one disabled. ServerRegistry pulls from
 		// WP options; populate them directly so the verb iterates over our
 		// fixture set.
@@ -2575,25 +2571,15 @@ class StreamMergerTest extends TestCase {
 		unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
 	}
 
-	public function test_config_verbs_populates_static_cache_on_first_call(): void {
-		// After resetting the cache, the very next StreamMerger construction
-		// populates it. Subsequent constructions reuse the cached array
-		// (the `if ( empty( $verbs_cache ) )` short-circuit).
-		$this->reset_stream_merger_verbs_cache();
-		$first  = new Stream_Merger_Node( 'firehose', 0 );
-		$ref    = new \ReflectionProperty( Stream_Merger_Node::class, 'verbs_cache' );
-		$ref->setAccessible( true );
-		$cache1 = $ref->getValue();
-
-		$this->assertNotEmpty( $cache1, 'first construction populates verbs_cache' );
-
-		$second = new Stream_Merger_Node( 'firehose', 1 );
-		$cache2 = $ref->getValue();
-		$this->assertSame(
-			$cache1,
-			$cache2,
-			'verbs_cache is shared across instances — same array, same closures'
-		);
+	public function test_auto_wired_ci_exposes_all_config_verbs(): void {
+		// The base-ctor auto-wire builds the :config CI from the
+		// node_schema()['verbs'] handler entries.
+		$sm    = new Stream_Merger_Node( 'firehose', 0 );
+		$sm->name( 'sm-verb-table' );
+		$verbs = $sm->interpreter()->commands();
+		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
+		$this->assertArrayHasKey( 'set_require_https', $verbs );
+		$this->assertArrayHasKey( 'load_remotes_from_registry', $verbs );
 	}
 
 	public function test_position_skips_unparseable_offsetlog_entry(): void {
