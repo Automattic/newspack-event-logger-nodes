@@ -4,7 +4,7 @@
  * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
  *
  * After the Phase-3 rework the orchestrator no longer fetches anything itself.
- * It reads the published view model via `useNodeState('performance/view','view')`
+ * It reads the published view model via `useNodeState('performance:view','view')`
  * and dispatches every command through `usePerformanceGraph` (which returns the
  * control callbacks `{ handleUrlParamsChange, resolveRequest, fetchUrlBreakdown }`).
  *

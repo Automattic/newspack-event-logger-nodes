@@ -4,11 +4,11 @@
  *
  * Main container for performance monitoring UI.
  *
- * This is the orchestrator over the `performance/*` node graph (mounted by
- * `usePerformanceGraph`). The graph owns all data: `performance/command` issues
- * fetches via the CommandClient and `performance/view` holds the view model.
+ * This is the orchestrator over the `performance:*` node graph (mounted by
+ * `usePerformanceGraph`). The graph owns all data: `performance:command` issues
+ * fetches via the CommandClient and `performance:view` holds the view model.
  * This component reads the published model via
- * `useNodeState('performance/view','view')`, derives its render-time slices, and
+ * `useNodeState('performance:view','view')`, derives its render-time slices, and
  * dispatches control through the hook's returned callbacks. It owns no fetching.
  */
 
@@ -93,7 +93,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 
 	// Read the published view model directly (Error Log pattern). Null until the
 	// hook mounts the node; the hook's setViewReady forces a re-render to subscribe.
-	const view = useNodeState( 'performance/view', 'view' );
+	const view = useNodeState( 'performance:view', 'view' );
 
 	// Derive the slices the orchestrator renders/derives from — SAME NAMES as the
 	// deleted state, so every surviving useMemo + the JSX reference them unchanged.

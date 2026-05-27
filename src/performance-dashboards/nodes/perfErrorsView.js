@@ -4,7 +4,7 @@ const DEFAULT_MAX_ENTRIES = 5000;
 const RPS_WINDOW_MS = 10000;
 
 /**
- * `perferrors/view` — owns the Error Log view model.
+ * `perferrors:view` — owns the Error Log view model.
  *
  * Two cadences, deliberately split for performance (mirrors requestLogView):
  * - HIGH frequency (the error stream): `_appendRow` pushes each enriched entry
@@ -14,10 +14,10 @@ const RPS_WINDOW_MS = 10000;
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError, lastEventTime })` — the pause
  *   button, the reconnect banner, and the "Xs ago" staleness label, consumed by
- *   `useNodeState('perferrors/view','view')`.
+ *   `useNodeState('perferrors:view','view')`.
  *
  * `fill()` accepts two TM_STRUCT shapes:
- * - a row (`VALUE` = the mapped error from `perferrors/transform`): enriched +
+ * - a row (`VALUE` = the mapped error from `perferrors:transform`): enriched +
  *   appended newest-first to a capped buffer (unless paused), updating
  *   errors/second + last-event time.
  * - a control (`VALUE = { action, … }`): `pause`, `clear`, `connection`.

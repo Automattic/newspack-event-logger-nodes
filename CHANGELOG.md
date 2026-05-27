@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Hook Catalog** (`hookcatalog:command` → `hookcatalog:view`): command-driven, no route node.
   - **Gyroscope** (`gyroscope:stream` → `gyroscope:route` → `gyroscope:transform`/`gyroscope:view`): SSE-driven; the `controlSink` is replaced by a `gyroscope:route` classifier keyed on the stream-set `KEY='connection'` marker (data → transform, connection-status → view).
   - **Request Log** (`requestlog:stream` → `requestlog:route` → `requestlog:transform`/`requestlog:view`): SSE-driven; same `requestlog:route` classifier on the `KEY='connection'` marker. `pause`/`clear` stay hook-direct to the view.
+  - **Error Log** (`perferrors:stream` → `perferrors:route` → `perferrors:transform`/`perferrors:view`): SSE-driven; `perferrors:route` classifier on the `KEY='connection'` marker; `pause`/`clear` hook-direct.
+  - **Performance** (`performance:command` → `performance:view`): command-driven, no route node. (Error Log and Performance are separate admin pages; each mounts its own exospine.)
 
 ## [0.5.0] - 2026-05-27
 

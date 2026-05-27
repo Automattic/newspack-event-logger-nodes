@@ -4,16 +4,16 @@
  *
  * Real-time scrolling log of errors and warnings from errors.log.
  *
- * This is a THIN view over the `perferrors/*` node graph (mounted by
- * `useErrorLogGraph`). The graph owns all data: `perferrors/stream` holds the
- * SSE connection, `perferrors/transform` turns envelopes into rows, and
- * `perferrors/view` holds the buffer + view model. This component only renders.
+ * This is a THIN view over the `perferrors:*` node graph (mounted by
+ * `useErrorLogGraph`). The graph owns all data: `perferrors:stream` holds the
+ * SSE connection, `perferrors:transform` turns envelopes into rows, and
+ * `perferrors:view` holds the buffer + view model. This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
- * - LOW frequency: `useNodeState('perferrors/view','view')` for
+ * - LOW frequency: `useNodeState('perferrors:view','view')` for
  *   `{ paused, connectionError, lastEventTime }` (the pause button, the reconnect
  *   banner, the empty-state label, and the "Xs ago" staleness).
- * - HIGH frequency: the rAF reads `Core.node('perferrors/view').entries` directly
+ * - HIGH frequency: the rAF reads `Core.node('perferrors:view').entries` directly
  *   each frame — a busy stream never re-renders React per error.
  *
  * Click any request ID to view its full trace in the Performance Dashboard.
@@ -36,7 +36,7 @@ import ConnectionBanner from '../shared/components/ConnectionBanner';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
-const VIEW_NODE = 'perferrors/view';
+const VIEW_NODE = 'perferrors:view';
 const EMPTY_VIEW = {
 	paused: false,
 	connectionError: false,
