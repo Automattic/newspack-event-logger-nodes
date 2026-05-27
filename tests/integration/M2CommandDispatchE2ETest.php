@@ -63,7 +63,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$body = (string) \ob_get_clean();
 
 		$this->assertNotEmpty( $body, "verb '{$verb}' on '{$to}' produced no response" );
-		$msg            = Message::unpacked( $body );
+		$msg            = self::response_for( $body, $verb );
 		$response_flags = Message::TM_COMMAND | Message::TM_RESPONSE;
 		$this->assertSame(
 			"e2e-{$verb}",
@@ -109,7 +109,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$ctrl->dispatch( $this->build_request( 'events', 'recent', '{"limit":1}' ) );
 		$body = (string) \ob_get_clean();
 
-		$msg     = Message::unpacked( $body );
+		$msg     = self::response_for( $body, 'recent' );
 		$payload = $msg[ Message::VALUE ]['payload'] ?? null;
 		$this->assertIsArray( $payload, 'events.recent must return a structured payload' );
 		$this->assertSame(
@@ -125,6 +125,31 @@ class M2CommandDispatchE2ETest extends TestCase {
 	 * so we subclass to add that. set_header is a no-op — the controller
 	 * doesn't read headers but real callers always set Content-Type.
 	 */
+	/**
+	 * Extract a verb's response Message from a dispatch body. The `/command`
+	 * body is JSONL — one packed Message per line — because a verb may emit
+	 * stderr/log lines alongside its response. Pick the line carrying THIS
+	 * command's correlation id (`e2e-{verb}`) rather than `Message::unpacked()`
+	 * on the whole body (which would choke on the multi-line JSONL).
+	 *
+	 * @param string $body Raw JSONL dispatch body.
+	 * @param string $verb The dispatched verb (its reply echoes ID `e2e-{verb}`).
+	 * @return array The 7-element response Message.
+	 */
+	private static function response_for( string $body, string $verb ): array {
+		foreach ( \explode( "\n", $body ) as $line ) {
+			$line = \trim( $line );
+			if ( '' === $line ) {
+				continue;
+			}
+			$msg = Message::unpacked( $line );
+			if ( "e2e-{$verb}" === ( $msg[ Message::ID ] ?? '' ) ) {
+				return $msg;
+			}
+		}
+		throw new \RuntimeException( "no response with id e2e-{$verb} in JSONL body: {$body}" );
+	}
+
 	private function build_request( string $to, string $verb, string $args ): \WP_REST_Request {
 		$req = new class() extends \WP_REST_Request {
 			private string $body = '';
