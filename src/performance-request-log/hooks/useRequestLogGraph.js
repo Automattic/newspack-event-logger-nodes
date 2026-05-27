@@ -1,20 +1,26 @@
 /**
  * useRequestLogGraph — mounts the Request Log dashboard node graph (the JS-Node
- * conversion of the old RequestStream component). On mount it builds three nodes —
- * `requestlog/stream` (SSE-in), `requestlog/transform` (envelope → row),
- * `requestlog/view` (view model) — and wires the data path stream → transform →
- * view, plus `stream.controlSink = view` so connection-status controls reach the
- * view directly (the transform would drop them). A second effect owns the live
- * connection: while the page is visible AND not paused it subscribes the stream to
- * the `completed` feed, otherwise it closes it (this mirrors RequestStream's
- * page-visibility / pause effect). The view publishes its state via
- * `setState('view', …)`; the React view reads it separately with
- * `useNodeState('requestlog/view','view')`.
+ * conversion of the old RequestStream component) clipped onto the exospine (the
+ * canonical rule-#2 backbone `_command_interpreter → _router`).
  *
- * Returns the thin control callbacks the view calls — `setPaused` (flips the
- * hook's paused state, which the view's control fill + the connection effect both
- * key off) and `clear` (empties the view buffer). Torn down on unmount: the stream
- * is closed, then all three nodes are unregistered from Core.
+ * Graph: `requestlog:stream` (SSE-in) → `requestlog:route` (classifier) →
+ * `requestlog:transform` (envelope → row) and/or `requestlog:view` (view model).
+ * EVERY node sinks into the CI; flow is steered ONLY by each node's `target` (the
+ * router peels TO and delivers): the stream targets the route; the route stamps
+ * data → the transform and connection-status control → the view; the transform
+ * targets the view. There is no bespoke `sink`/`controlSink` wiring.
+ *
+ * A second effect owns the live connection: while the page is visible AND not
+ * paused it subscribes the stream to the `completed` feed, otherwise it closes it
+ * (this mirrors RequestStream's page-visibility / pause effect). The view
+ * publishes its low-frequency model via `setState('view', …)`; the React view
+ * reads the high-frequency buffer directly via `Core.node('requestlog:view')`.
+ *
+ * Returns the thin control callbacks the view calls — `setPaused` and `clear`.
+ * These are dispatched HOOK-DIRECT to the view node (`viewRef.current.fill`), an
+ * external bridge: they are NOT routed through the graph (only connection-status
+ * is, via the route). Torn down on unmount: the stream is closed, the graph nodes
+ * are unregistered, then the exospine.
  *
  * The transport boundary is injectable: tests pass `opts.connector` (the stream's
  * seam, mirroring requestLogStream) so the hook never touches a real EventSource.
@@ -25,21 +31,25 @@
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
+	mountExospine,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
 import { createRequestLogStream } from '../nodes/requestLogStream';
+import { createRequestLogRoute } from '../nodes/requestLogRoute';
 import { createRequestLogTransform } from '../nodes/requestLogTransform';
 import { createRequestLogView } from '../nodes/requestLogView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
-// Every named node this graph mounts — unregistered on teardown.
-const STREAM = 'requestlog/stream';
-const TRANSFORM = 'requestlog/transform';
-const VIEW = 'requestlog/view';
-const GRAPH_NODE_NAMES = [ STREAM, TRANSFORM, VIEW ];
+// Every named node this graph mounts — unregistered on teardown (the exospine
+// nodes are removed separately by its own teardown()).
+const STREAM = 'requestlog:stream';
+const ROUTE = 'requestlog:route';
+const TRANSFORM = 'requestlog:transform';
+const VIEW = 'requestlog:view';
+const GRAPH_NODE_NAMES = [ STREAM, ROUTE, TRANSFORM, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -84,16 +94,30 @@ export function useRequestLogGraph( opts = {} ) {
 	// runs once the mount effect has built the graph.
 	const [ viewReady, setViewReady ] = useState( false );
 
-	// Mount the graph once: stream → transform → view (+ stream.controlSink = view).
+	// Mount the graph once onto the exospine: stream → route → transform → view.
 	useEffect( () => {
 		const { connector, maxEntries } = optsRef.current;
+
+		// The canonical backbone every node clips onto: everything → CI → router.
+		const { ci, teardown: teardownSpine } = mountExospine();
+
+		// Build the graph nodes (the factories register them in Core).
 		const stream = createRequestLogStream( STREAM, { connector } );
+		const route = createRequestLogRoute( ROUTE, {
+			dataTarget: TRANSFORM,
+			controlTarget: VIEW,
+		} );
 		const transform = createRequestLogTransform( TRANSFORM );
 		const view = createRequestLogView( VIEW, { maxEntries } );
-		stream.sink = transform;
-		transform.sink = view;
-		// Connection-status controls bypass the transform (which would drop them).
-		stream.controlSink = view;
+
+		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		stream.sink = ci;
+		stream.target = ROUTE;
+		route.sink = ci;
+		transform.sink = ci;
+		transform.target = VIEW;
+		view.sink = ci;
+
 		streamRef.current = stream;
 		viewRef.current = view;
 
@@ -102,12 +126,12 @@ export function useRequestLogGraph( opts = {} ) {
 
 		return () => {
 			// Close the connection-owning stream first (its connector close is
-			// idempotent), THEN unregister — mirrors useRawLogsGraph's
-			// stream.close() before unregister.
+			// idempotent), unregister the graph nodes, THEN tear the exospine down.
 			stream.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
+			teardownSpine();
 			streamRef.current = null;
 			viewRef.current = null;
 		};

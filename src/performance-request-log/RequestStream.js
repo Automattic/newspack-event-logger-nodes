@@ -4,16 +4,16 @@
  *
  * Real-time scrolling log of completed requests.
  *
- * This is a THIN view over the `requestlog/*` node graph (mounted by
- * `useRequestLogGraph`). The graph owns all data: `requestlog/stream` holds the
- * SSE connection, `requestlog/transform` turns envelopes into rows, and
- * `requestlog/view` holds the buffer + view model. This component only renders.
+ * This is a THIN view over the `requestlog:*` node graph (mounted by
+ * `useRequestLogGraph`). The graph owns all data: `requestlog:stream` holds the
+ * SSE connection, `requestlog:transform` turns envelopes into rows, and
+ * `requestlog:view` holds the buffer + view model. This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
- * - LOW frequency: `useNodeState('requestlog/view','view')` for
+ * - LOW frequency: `useNodeState('requestlog:view','view')` for
  *   `{ paused, connectionError }` (the pause button, empty-state label, and the
  *   reconnect banner).
- * - HIGH frequency: the rAF reads `Core.node('requestlog/view').entries`, `.rps`
+ * - HIGH frequency: the rAF reads `Core.node('requestlog:view').entries`, `.rps`
  *   and `.lastEventTime` directly each frame — a busy stream never re-renders
  *   React per request; only the cheap derived state (the snapshot + rps) is pushed
  *   when it changes.
@@ -37,7 +37,7 @@ import {
 import './styles/request-stream.scss';
 
 const ROW_HEIGHT = 33; // Fixed row height in pixels.
-const VIEW_NODE = 'requestlog/view';
+const VIEW_NODE = 'requestlog:view';
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**

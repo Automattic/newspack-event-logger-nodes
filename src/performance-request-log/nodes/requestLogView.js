@@ -16,7 +16,7 @@ const urlHash = ( url ) => {
 };
 
 /**
- * `requestlog/view` — owns the Request Log view model.
+ * `requestlog:view` — owns the Request Log view model.
  *
  * Two cadences, deliberately split for performance (mirrors rawLogsView):
  * - HIGH frequency (the request stream): `_appendRow` pushes each enriched entry
@@ -26,10 +26,10 @@ const urlHash = ( url ) => {
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError })` — the pause button, the
  *   empty-state label, and the reconnect banner, consumed by
- *   `useNodeState('requestlog/view','view')`.
+ *   `useNodeState('requestlog:view','view')`.
  *
  * `fill()` accepts two TM_STRUCT shapes:
- * - a row (`VALUE` = the mapped completed-request from `requestlog/transform`):
+ * - a row (`VALUE` = the mapped completed-request from `requestlog:transform`):
  *   enriched + appended newest-first to a capped buffer (unless paused), updating
  *   requests/second + last-event time.
  * - a control (`VALUE = { action, … }`): `pause`, `clear`, `connection`.
