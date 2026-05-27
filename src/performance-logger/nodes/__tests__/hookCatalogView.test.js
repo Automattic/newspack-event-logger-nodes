@@ -1,5 +1,5 @@
 /**
- * hookCatalogView tests — the `hookcatalog/view` render-model node. It holds the
+ * hookCatalogView tests — the `hookcatalog:view` render-model node. It holds the
  * `{ hooksByCategory, loading }` model the modal reads via useNodeState. `fill()`
  * accepts the two TM_STRUCT controls the command node emits: `loading` (flips
  * loading true, preserves the prior map) and `catalog` (stores the map, clears
@@ -22,7 +22,7 @@ beforeEach( () => {
 
 describe( 'createHookCatalogView', () => {
 	test( 'publishes the initial model { hooksByCategory:{}, loading:false }', () => {
-		const node = createHookCatalogView( 'hookcatalog/view' );
+		const node = createHookCatalogView( 'hookcatalog:view' );
 		expect( node.setStateCache.view ).toEqual( {
 			hooksByCategory: {},
 			loading: false,
@@ -30,7 +30,7 @@ describe( 'createHookCatalogView', () => {
 	} );
 
 	test( 'a loading control publishes loading:true and preserves the prior map', () => {
-		const node = createHookCatalogView( 'hookcatalog/view' );
+		const node = createHookCatalogView( 'hookcatalog:view' );
 		const hooks = { Lifecycle: [ 'init' ] };
 		node.fill( control( { action: 'catalog', hooksByCategory: hooks } ) );
 		node.fill( control( { action: 'loading' } ) );
@@ -41,7 +41,7 @@ describe( 'createHookCatalogView', () => {
 	} );
 
 	test( 'a catalog control publishes the map and clears loading', () => {
-		const node = createHookCatalogView( 'hookcatalog/view' );
+		const node = createHookCatalogView( 'hookcatalog:view' );
 		const hooks = {
 			Lifecycle: [ 'init' ],
 			'REST API': [ 'rest_api_init' ],
@@ -55,7 +55,7 @@ describe( 'createHookCatalogView', () => {
 	} );
 
 	test( 'a malformed message (no VALUE / no action) is ignored', () => {
-		const node = createHookCatalogView( 'hookcatalog/view' );
+		const node = createHookCatalogView( 'hookcatalog:view' );
 		const before = node.setStateCache.view;
 		node.fill( newMessage() );
 		node.fill( control( { foo: 'bar' } ) );
@@ -63,7 +63,7 @@ describe( 'createHookCatalogView', () => {
 	} );
 
 	test( 'registers under the given name', () => {
-		const node = createHookCatalogView( 'hookcatalog/view' );
-		expect( Core.node( 'hookcatalog/view' ) ).toBe( node );
+		const node = createHookCatalogView( 'hookcatalog:view' );
+		expect( Core.node( 'hookcatalog:view' ) ).toBe( node );
 	} );
 } );
