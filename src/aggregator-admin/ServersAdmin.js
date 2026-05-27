@@ -3,7 +3,7 @@
  *
  * Full-React replacement for the old PHP-rendered `<table>` + jQuery IIFE. The
  * graph (useAggregatorAdminGraph) owns all data + the CRUD transport; this
- * component reads the published view model via `useNodeState('servers/view','view')`
+ * component reads the published view model via `useNodeState('servers:view','view')`
  * and renders the same markup the PHP `configured_servers_callback` emitted — same
  * class names + ids (`wp-list-table`, `.event-aggregator-test/-toggle/-remove`,
  * `#new-server-id`, …) so it inherits WordPress's core admin styling unchanged.
@@ -416,7 +416,7 @@ export default function ServersAdmin() {
 		useAggregatorAdminGraph();
 
 	// The single read surface: the render model the graph publishes.
-	const model = useNodeState( 'servers/view', 'view' ) ?? EMPTY_MODEL;
+	const model = useNodeState( 'servers:view', 'view' ) ?? EMPTY_MODEL;
 	const { servers, error } = model;
 
 	const onToggle = ( id, nextEnabled ) =>

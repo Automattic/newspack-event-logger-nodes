@@ -1,11 +1,11 @@
 /**
- * servers/view tests — owns the Configured-Servers admin view model.
+ * servers:view tests — owns the Configured-Servers admin view model.
  *
  * The command node emits TM_STRUCT controls; this node turns the raw
  * `{ server_id:{} }` map into the render model — `servers` (array via
  * Object.values), `loading`, `error` — and publishes it via
  * `setState('view', model)`. The React `<ServersAdmin>` reads it with
- * `useNodeState('servers/view','view')`. Mirrors aggregator/view.
+ * `useNodeState('servers:view','view')`. Mirrors aggregator:view.
  */
 
 import {
@@ -48,7 +48,7 @@ const SAMPLE = {
 };
 
 test( 'publishes an initial loading model on construction', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	expect( v.setStateCache.view ).toMatchObject( {
 		servers: null,
 		loading: true,
@@ -57,7 +57,7 @@ test( 'publishes an initial loading model on construction', () => {
 } );
 
 test( 'a servers control converts the server map to an array of servers', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	v.fill( controlMsg( { action: 'servers', servers: SAMPLE } ) );
 	const model = v.setStateCache.view;
 	expect( Array.isArray( model.servers ) ).toBe( true );
@@ -69,7 +69,7 @@ test( 'a servers control converts the server map to an array of servers', () => 
 } );
 
 test( 'a servers control clears loading and any prior error', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	v.fill( controlMsg( { action: 'error', error: 'boom' } ) );
 	expect( v.setStateCache.view.error ).toBe( 'boom' );
 	v.fill( controlMsg( { action: 'servers', servers: SAMPLE } ) );
@@ -78,20 +78,20 @@ test( 'a servers control clears loading and any prior error', () => {
 } );
 
 test( 'an empty servers map yields an empty servers array (not null)', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	v.fill( controlMsg( { action: 'servers', servers: {} } ) );
 	expect( v.setStateCache.view.servers ).toEqual( [] );
 	expect( v.setStateCache.view.loading ).toBe( false );
 } );
 
 test( 'a null servers payload yields an empty servers array', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	v.fill( controlMsg( { action: 'servers', servers: null } ) );
 	expect( v.setStateCache.view.servers ).toEqual( [] );
 } );
 
 test( 'an error control sets the error and clears loading (servers untouched)', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	v.fill( controlMsg( { action: 'servers', servers: SAMPLE } ) );
 	v.fill( controlMsg( { action: 'error', error: 'registry down' } ) );
 	const model = v.setStateCache.view;
@@ -102,14 +102,14 @@ test( 'an error control sets the error and clears loading (servers untouched)', 
 } );
 
 test( 'an error control defaults the message when none is supplied', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	v.fill( controlMsg( { action: 'error' } ) );
 	expect( typeof v.setStateCache.view.error ).toBe( 'string' );
 	expect( v.setStateCache.view.error.length ).toBeGreaterThan( 0 );
 } );
 
 test( 'ignores a message with no action', () => {
-	const v = createServersView( 'servers/view' );
+	const v = createServersView( 'servers:view' );
 	const initial = v.setStateCache.view;
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -120,6 +120,6 @@ test( 'ignores a message with no action', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createServersView( 'servers/view' );
-	expect( v.name ).toBe( 'servers/view' );
+	const v = createServersView( 'servers:view' );
+	expect( v.name ).toBe( 'servers:view' );
 } );

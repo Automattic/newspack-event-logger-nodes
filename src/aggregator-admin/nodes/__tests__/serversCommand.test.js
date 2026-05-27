@@ -1,15 +1,16 @@
 /**
- * servers/command tests — the command-out node that owns the Configured-Servers
+ * servers:command tests — the command-out node that owns the Configured-Servers
  * admin traffic, behind an injectable command-client seam.
  *
  * `list()` sends `{ to:'servers', verb:'list' }`, unwraps the reply (the
  * `{ id:public_shape }` map), and emits a TM_STRUCT `{ action:'servers', servers }`
- * to its sink (→ servers/view). Failures surface as `{ action:'error', error }`
+ * to its sink (the exospine CI) stamped with TO=target (the router peels TO and
+ * delivers to servers:view). Failures surface as `{ action:'error', error }`
  * (never swallowed). The mutation methods `add/update/remove/test` delegate to the
  * api.js wrappers with the node's client and return their result — they do NOT
  * emit; the hook re-`list()`s after a mutation to refresh the table.
  * `close()` drops a late list reply so an in-flight list resolving post-unmount
- * never fills a detached sink. Mirrors aggregator/poll + workerstatus/poll.
+ * never fills a detached sink. Mirrors aggregator:poll + workerstatus:poll.
  *
  * The api.js wrappers are mocked so the test asserts delegation (which wrapper,
  * which client, which args) without re-testing api.js. The unwrap helper used by
@@ -19,6 +20,7 @@
 import {
 	newMessage,
 	TYPE,
+	TO,
 	VALUE,
 	TM_STRUCT,
 	Core,
@@ -70,10 +72,10 @@ function makeFakeClient() {
 	};
 }
 
-describe( 'servers/command — list', () => {
+describe( 'servers:command — list', () => {
 	test( 'sends the list command to the servers CI', async () => {
 		const client = makeFakeClient();
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		await node.list();
@@ -89,7 +91,7 @@ describe( 'servers/command — list', () => {
 		const client = makeFakeClient();
 		client.reply = newMessage();
 		unwrap.mockReturnValue( { 'spoke-01': { id: 'spoke-01' } } );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -102,12 +104,26 @@ describe( 'servers/command — list', () => {
 		} );
 	} );
 
+	test( 'stamps the emitted message TO with its target (rule #2 routing)', async () => {
+		const got = [];
+		const client = makeFakeClient();
+		client.reply = newMessage();
+		unwrap.mockReturnValue( {} );
+		const node = createServersCommand( 'servers:command', {
+			commandClient: client,
+		} );
+		node.target = 'servers:view';
+		node.sink = { fill: ( m ) => got.push( m ) };
+		await node.list();
+		expect( got[ 0 ][ TO ] ).toBe( 'servers:view' );
+	} );
+
 	test( 'a null/empty unwrap yields an empty servers map (not undefined)', async () => {
 		const got = [];
 		const client = makeFakeClient();
 		client.reply = newMessage();
 		unwrap.mockReturnValue( null );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -119,7 +135,7 @@ describe( 'servers/command — list', () => {
 		const got = [];
 		const client = makeFakeClient();
 		client.reply = Promise.reject( new Error( 'registry down' ) );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -137,7 +153,7 @@ describe( 'servers/command — list', () => {
 		unwrap.mockImplementation( () => {
 			throw new Error( 'command failed' );
 		} );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -154,7 +170,7 @@ describe( 'servers/command — list', () => {
 			resolveReply = res;
 		} );
 		unwrap.mockReturnValue( {} );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -172,7 +188,7 @@ describe( 'servers/command — list', () => {
 		client.reply = new Promise( ( _res, rej ) => {
 			rejectReply = rej;
 		} );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -184,11 +200,11 @@ describe( 'servers/command — list', () => {
 	} );
 } );
 
-describe( 'servers/command — mutations delegate to api.js with the node client', () => {
+describe( 'servers:command — mutations delegate to api.js with the node client', () => {
 	test( 'add() calls api.addServer with the node client + fields and returns its result', async () => {
 		const client = makeFakeClient();
 		api.addServer.mockResolvedValue( { id: 'spoke-01' } );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		const fields = { id: 'spoke-01', url: 'https://x' };
@@ -200,7 +216,7 @@ describe( 'servers/command — mutations delegate to api.js with the node client
 	test( 'update() calls api.updateServer with the node client + id + partial', async () => {
 		const client = makeFakeClient();
 		api.updateServer.mockResolvedValue( { id: 'spoke-01' } );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		await node.update( 'spoke-01', { enabled: false } );
@@ -212,7 +228,7 @@ describe( 'servers/command — mutations delegate to api.js with the node client
 	test( 'remove() calls api.removeServer with the node client + id', async () => {
 		const client = makeFakeClient();
 		api.removeServer.mockResolvedValue( { id: 'spoke-01' } );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		await node.remove( 'spoke-01' );
@@ -223,7 +239,7 @@ describe( 'servers/command — mutations delegate to api.js with the node client
 		const client = makeFakeClient();
 		const probe = { id: 'spoke-01', status: 'connected', response: {} };
 		api.testServer.mockResolvedValue( probe );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		const result = await node.test( 'spoke-01' );
@@ -234,7 +250,7 @@ describe( 'servers/command — mutations delegate to api.js with the node client
 	test( 'a mutation rejection propagates to the caller (the hook surfaces it)', async () => {
 		const client = makeFakeClient();
 		api.addServer.mockRejectedValue( new Error( 'duplicate' ) );
-		const node = createServersCommand( 'servers/command', {
+		const node = createServersCommand( 'servers:command', {
 			commandClient: client,
 		} );
 		await expect( node.add( { id: 'x' } ) ).rejects.toThrow( 'duplicate' );
@@ -243,8 +259,8 @@ describe( 'servers/command — mutations delegate to api.js with the node client
 
 test( 'names the node', () => {
 	const client = makeFakeClient();
-	const node = createServersCommand( 'servers/command', {
+	const node = createServersCommand( 'servers:command', {
 		commandClient: client,
 	} );
-	expect( node.name ).toBe( 'servers/command' );
+	expect( node.name ).toBe( 'servers:command' );
 } );
