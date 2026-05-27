@@ -201,6 +201,14 @@ async function makeContext( entry, outDir ) {
 			'@newspack-nodes/runtime':
 				process.env.NEWSPACK_NODES_RUNTIME ||
 				path.resolve( ROOT, '../newspack-nodes/src/runtime/index.js' ),
+			// Universal debugger overlay: CI sets NEWSPACK_NODES_DEBUG_OVERLAY;
+			// local dev falls back to the sibling checkout's DebugOverlay.
+			'@newspack-nodes/debug-overlay':
+				process.env.NEWSPACK_NODES_DEBUG_OVERLAY ||
+				path.resolve(
+					ROOT,
+					'../newspack-nodes/src/debug-overlay/DebugOverlay.js'
+				),
 		},
 		plugins: [
 			wpExternalsPlugin( usedHandles ),

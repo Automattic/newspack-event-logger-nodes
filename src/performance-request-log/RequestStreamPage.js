@@ -6,6 +6,7 @@
 
 import RequestStream from './RequestStream';
 import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
+import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 /**
  * Request Stream page - dedicated view for real-time request log.
@@ -34,6 +35,7 @@ export default function RequestStreamPage() {
 			} }
 		>
 			<RequestStream maxEntries={ 1000 } />
+			<DebugOverlay storageKey="newspack-nodes:debug:request-stream" />
 		</div>
 	);
 }
