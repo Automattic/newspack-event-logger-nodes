@@ -7,6 +7,7 @@
 
 import Inflight from './Inflight';
 import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
+import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 /**
  * Gyroscope page - dedicated view for real-time request monitoring.
@@ -35,6 +36,7 @@ export default function GyroscopePage() {
 			} }
 		>
 			<Inflight maxRows={ 100 } />
+			<DebugOverlay storageKey="newspack-nodes:debug:gyroscope" />
 		</div>
 	);
 }

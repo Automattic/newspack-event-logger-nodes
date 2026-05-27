@@ -13,6 +13,7 @@ import {
 } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { Notice, Spinner } from '@wordpress/components';
+import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 // Lazy load heavy performance components for code splitting.
 const PerformanceDashboard = lazy( () => import( './PerformanceDashboard' ) );
@@ -100,6 +101,7 @@ function AdminApp() {
 					<PerformanceDashboard onError={ handleError } />
 				</Suspense>
 			</div>
+			<DebugOverlay storageKey="newspack-nodes:debug:performance" />
 		</div>
 	);
 }
@@ -146,6 +148,7 @@ function ErrorLogPage() {
 			>
 				<ErrorLog />
 			</Suspense>
+			<DebugOverlay storageKey="newspack-nodes:debug:error-log" />
 		</div>
 	);
 }

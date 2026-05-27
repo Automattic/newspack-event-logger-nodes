@@ -13,10 +13,16 @@
 
 import { createRoot } from '@wordpress/element';
 import ServersAdmin from './ServersAdmin';
+import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 // Mount into the PHP-emitted container (Admin::configured_servers_callback).
 const mount = document.getElementById( 'event-aggregator-servers' );
 if ( mount ) {
 	const root = createRoot( mount );
-	root.render( <ServersAdmin /> );
+	root.render(
+		<>
+			<ServersAdmin />
+			<DebugOverlay storageKey="newspack-nodes:debug:aggregator-admin" />
+		</>
+	);
 }
