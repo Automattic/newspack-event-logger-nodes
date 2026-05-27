@@ -55,6 +55,11 @@ class StatusCITest extends TestCase {
 	protected function tearDown(): void {
 		VerbHarness::reset();
 		$this->rmdir_recursive( $this->tmp );
+		// activate_topologies() caches a substrate config snapshot; the base
+		// setUp wipes the wp-option but not the RuntimeConfig cache, so reset it
+		// here lest topologies=[] (or the activated set) bleed into a later test
+		// class that reads substrate Config without first calling use_base_dir().
+		RuntimeConfig::reset();
 		parent::tearDown();
 	}
 
@@ -107,9 +112,10 @@ class StatusCITest extends TestCase {
 
 	public function test_num_partitions_defaults_to_one_when_missing(): void {
 		// use_base_dir() with no extras seeds only base_directory, leaving
-		// num_partitions to default to 1. With no active topologies declared
-		// (no substrate overlay, empty config-file default), the substrate's
-		// active set — and thus the reported list — is empty.
+		// num_partitions to default to 1. Declare an explicitly EMPTY active set
+		// (empty overlay) so the reported list is empty regardless of the
+		// deployment's substrate config-file default for `topologies`.
+		$this->activate_topologies( [] );
 		$ci = new Status_CI_Node();
 
 		$result = VerbHarness::fire( $ci, 'status', 'get' );
