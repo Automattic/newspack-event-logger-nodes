@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboards are being wired onto the newspack-nodes "exospine" (rule #2).** Each dashboard's JS-Node graph now clips onto the shared `mountExospine()` backbone (`_command_interpreter → _router`) imported from `@newspack-nodes/runtime`: every node sinks into the CI and steers flow purely with `target`/`TO` through the router — no bespoke `x.sink = <node>` chains, no `controlSink` side-channels. Node names moved from `name/leaf` to `name:leaf` (the router peels TO on `/`). Dashboards render identically; substrate-conformance only.
   - **Aggregator Status** (`aggregator:poll` → `aggregator:view`): poll-driven, no route node.
   - **Configured Servers** (`servers:command` → `servers:view`): command-driven, no route node.
+  - **Hook Catalog** (`hookcatalog:command` → `hookcatalog:view`): command-driven, no route node.
 
 ## [0.5.0] - 2026-05-27
 
