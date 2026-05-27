@@ -154,19 +154,20 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertSame( 'gyroscope:partition', $rb->flight()->target() );
 	}
 
-	public function test_set_inflight_interval_verb_was_invoked_from_topology(): void {
+	public function test_dump_config_round_trips_topology_targets(): void {
 		$this->load_topology( 'firehose-workers-and-jobs' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
-		// The default interval matches the spec value (1000ms), so the
-		// `interval()` getter alone can't tell us whether the topology
-		// line fired. dump_config replays mark_verb_invoked entries —
-		// if the TSL ran `cmd request-builder:config set_inflight_interval 1000`,
-		// the dump should contain that line verbatim.
-		$this->assertStringContainsString(
-			'cmd request-builder:config set_inflight_interval 1000',
-			$rb->dump_config()
-		);
+		// dump_config emits one line per setting that differs from its default,
+		// straight from the node's state. The topology wires three non-default
+		// targets, so the round-trip must reproduce each `cmd` line. The
+		// interval is left at its 1000ms default, so it is deliberately NOT
+		// emitted (only non-default settings dump).
+		$dump = $rb->dump_config();
+		$this->assertStringContainsString( 'cmd request-builder:config set_errors_target errors:partition', $dump );
+		$this->assertStringContainsString( 'cmd request-builder:config set_completed_target completed:tee', $dump );
+		$this->assertStringContainsString( 'cmd request-builder:config set_inflight_target gyroscope:partition', $dump );
+		$this->assertStringNotContainsString( 'set_inflight_interval', $dump );
 	}
 }

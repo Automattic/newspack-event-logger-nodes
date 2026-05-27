@@ -1849,9 +1849,10 @@ class StreamMergerTest extends TestCase {
 	public function test_stream_merger_set_require_https_verb_round_trips(): void {
 		$sm = new Stream_Merger_Node( "firehose" );
 		$sm->name( 'sm' );
-		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'true' ) );
+		// Default is true; dump_config emits only the non-default (false) value.
+		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'false' ) );
 		$dump = $sm->dump_config();
-		$this->assertStringContainsString( 'cmd sm:config set_require_https true', $dump );
+		$this->assertStringContainsString( 'cmd sm:config set_require_https false', $dump );
 	}
 
 	public function test_stream_merger_node_schema_declares_verbs(): void {
@@ -1860,7 +1861,10 @@ class StreamMergerTest extends TestCase {
 		$verb_names = \array_column( $schema['verbs'], 'name' );
 		$this->assertContains( 'set_verify_ssl', $verb_names );
 		$this->assertContains( 'set_require_https', $verb_names );
-		$this->assertContains( 'load_remotes_from_registry', $verb_names );
+		// `load_remotes_from_registry` is no longer a verb — it's a one-shot
+		// action fired from connect_node() once the target is wired, so it
+		// re-loads on every worker restart without a TSL verb line.
+		$this->assertNotContains( 'load_remotes_from_registry', $verb_names );
 		// `start_periodic_tick` is no longer a verb — it fires automatically
 		// from name() on first name set (mandatory, zero-arg, always needed
 		// in the aggregator topology, so the verb was pure boilerplate).
@@ -2004,10 +2008,10 @@ class StreamMergerTest extends TestCase {
 	}
 
 	// =========================================================================
-	// load_remotes_from_registry verb body.
+	// load_remotes_from_registry: now a one-shot action fired from connect_node.
 	// =========================================================================
 
-	public function test_load_remotes_from_registry_verb_loads_enabled_entries(): void {
+	public function test_load_remotes_from_registry_loads_enabled_entries(): void {
 		// Seed the WP option directly (bypasses encryption — get_all() tolerates
 		// legacy plaintext) so ServerRegistry::get_enabled() returns the entry.
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
@@ -2047,27 +2051,56 @@ class StreamMergerTest extends TestCase {
 
 		$sm = $this->make_merger();
 		try {
-			$result = $sm->interpreter()->dispatch( 'load_remotes_from_registry' );
+			$sm->load_remotes_from_registry();
 
-			$this->assertSame( 'ok', $result );
 			$this->assertSame( 2, $sm->remote_count(), 'only enabled entries must be loaded' );
 			$nodes = $sm->remote_nodes();
 			$this->assertArrayHasKey( 'site-enabled-a', $nodes );
 			$this->assertArrayHasKey( 'site-enabled-b', $nodes );
 			$this->assertArrayNotHasKey( 'site-disabled', $nodes );
-
-			// dump_config round-trips the invoked verb so a worker restart can
-			// rebuild the StreamMerger's runtime state.
-			$dump = $sm->dump_config();
-			$this->assertStringContainsString( 'cmd test-stream-merger:config load_remotes_from_registry', $dump );
 		} finally {
 			unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
 		}
 	}
 
-	public function test_load_remotes_from_registry_verb_with_empty_registry_succeeds(): void {
-		// Empty registry → the foreach loop is skipped but the verb still
-		// returns 'ok' + marks itself invoked. Confirms the no-entry path.
+	public function test_connect_node_loads_remotes_from_registry_once(): void {
+		// The lifecycle replacement for the old verb: connect_node (the
+		// topology's `connect_node stream-merger firehose:topic` line) loads
+		// registry remotes exactly once, so a worker restart rebuilds state
+		// without a TSL verb.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+			'site-enabled-a' => [
+				'url'           => 'http://site-enabled-a.test/',
+				'auth_username' => '',
+				'auth_password' => '',
+				'enabled'       => true,
+				'logs'          => [ 'firehose.log' ],
+			],
+		];
+		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' ) ) {
+			$reg = new \ReflectionClass( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' );
+			if ( $reg->hasProperty( 'instance' ) ) {
+				$prop = $reg->getProperty( 'instance' );
+				$prop->setAccessible( true );
+				$prop->setValue( null, null );
+			}
+		}
+
+		$sm = $this->make_merger();
+		try {
+			$this->assertSame( 0, $sm->remote_count(), 'no remotes before connect_node' );
+			$sm->connect_node( 'firehose:topic' );
+			$this->assertSame( 1, $sm->remote_count(), 'connect_node loads enabled remotes' );
+			// Idempotent: a second connect_node must not re-load.
+			$sm->connect_node( 'firehose:topic' );
+			$this->assertSame( 1, $sm->remote_count(), 'connect_node loads remotes only once' );
+		} finally {
+			unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
+		}
+	}
+
+	public function test_load_remotes_from_registry_with_empty_registry_succeeds(): void {
+		// Empty registry → the foreach loop is skipped; no remotes loaded.
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [];
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' ) ) {
 			$reg = new \ReflectionClass( '\\Newspack_Event_Logger_Nodes\\ServerRegistry' );
@@ -2078,11 +2111,9 @@ class StreamMergerTest extends TestCase {
 			}
 		}
 
-		$sm     = $this->make_merger();
+		$sm = $this->make_merger();
 		try {
-			$result = $sm->interpreter()->dispatch( 'load_remotes_from_registry' );
-
-			$this->assertSame( 'ok', $result );
+			$sm->load_remotes_from_registry();
 			$this->assertSame( 0, $sm->remote_count() );
 		} finally {
 			unset( $GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] );
@@ -2142,9 +2173,8 @@ class StreamMergerTest extends TestCase {
 
 		$health_name = 'test-stream-merger:health-check';
 		$this->assertNotNull( Core::node( $health_name ), 'health_check sibling must be registered after name()' );
-		// Health_Check_Tick has a handler-bearing verb, so it auto-wires its own
-		// :config CI; naming the sibling cascades the CI name. Teardown must free it.
-		$this->assertNotNull( Core::node( $health_name . ':config' ), 'health_check sibling CI registered after name()' );
+		// Health_Check_Tick has no config verbs, so it auto-wires no :config CI.
+		$this->assertNull( Core::node( $health_name . ':config' ), 'health_check sibling has no :config CI (no verbs)' );
 
 		$sm->remove_node();
 
@@ -2152,9 +2182,6 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 0, $sm->remote_count() );
 		// Health check sibling unregistered (name is free for re-use).
 		$this->assertNull( Core::node( $health_name ) );
-		// ...and its sibling :config CI cascaded too, so a same-process rebuild
-		// (or test re-register) doesn't collide on the orphaned CI name.
-		$this->assertNull( Core::node( $health_name . ':config' ) );
 		// Parent::remove_node() unregisters the merger itself.
 		$this->assertNull( Core::node( 'test-stream-merger' ) );
 	}
@@ -2530,9 +2557,9 @@ class StreamMergerTest extends TestCase {
 		$this->assertFalse( $ref->getValue( $sm ) );
 	}
 
-	public function test_load_remotes_from_registry_verb_closure_iterates_enabled_servers(): void {
+	public function test_load_remotes_from_registry_iterates_enabled_servers(): void {
 		// Seed two enabled servers + one disabled. ServerRegistry pulls from
-		// WP options; populate them directly so the verb iterates over our
+		// WP options; populate them directly so the action iterates over our
 		// fixture set.
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
 			'site_alpha' => [
@@ -2557,11 +2584,7 @@ class StreamMergerTest extends TestCase {
 		// keep on so add_remote can actually proceed via the https URLs.
 		$sm->set_require_https( true );
 
-		$ci    = $sm->interpreter();
-		$verbs = $ci->commands();
-		$this->assertArrayHasKey( 'load_remotes_from_registry', $verbs );
-
-		$this->assertSame( 'ok', $verbs['load_remotes_from_registry']( $ci, '' ) );
+		$sm->load_remotes_from_registry();
 		// Only the two enabled servers — site_off skipped.
 		$this->assertSame( 2, $sm->remote_count() );
 		$this->assertArrayHasKey( 'site_alpha', $sm->remote_nodes() );
@@ -2579,7 +2602,7 @@ class StreamMergerTest extends TestCase {
 		$verbs = $sm->interpreter()->commands();
 		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
 		$this->assertArrayHasKey( 'set_require_https', $verbs );
-		$this->assertArrayHasKey( 'load_remotes_from_registry', $verbs );
+		$this->assertArrayNotHasKey( 'load_remotes_from_registry', $verbs );
 	}
 
 	public function test_position_skips_unparseable_offsetlog_entry(): void {

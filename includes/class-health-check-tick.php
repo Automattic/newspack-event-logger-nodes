@@ -30,7 +30,6 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -53,10 +52,9 @@ class Health_Check_Tick_Node extends Node {
 	protected int $last_check = 0;
 
 	public function __construct() {
-		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
-		// handlers — TSL aggregator topology invokes
-		// `cmd health-check-tick:config start_periodic_tick` to register with
-		// _router's TIMER event.
+		// No config verbs: this node is an owned sibling of StreamMerger and its
+		// periodic tick is started from StreamMerger's name() lifecycle, not a
+		// TSL verb. parent::__construct() with empty verbs attaches no CI.
 		parent::__construct();
 	}
 
@@ -146,28 +144,14 @@ class Health_Check_Tick_Node extends Node {
 	public static function node_schema(): array {
 		// Hidden: HealthCheckTick is instantiated as an owned sibling
 		// of StreamMerger (patron-linked in StreamMerger's constructor),
-		// not built directly in TSL. Aggregator topology has a single
-		// `cmd stream-merger:config start_periodic_tick` line that
-		// kicks off both periodic ticks. Class stays usable for direct
-		// instantiation in tests.
+		// not built directly in TSL. Its periodic tick starts from
+		// StreamMerger's name() lifecycle — no config verbs. Class stays
+		// usable for direct instantiation in tests.
 		return [
 			'category'    => 'Hidden',
 			'description' => 'Drives the aggregator periodic discovery + sync sweep (5-min debounce).',
 			'ctor'        => [],
-			'verbs'       => [
-				[
-					'name'        => 'start_periodic_tick',
-					'description' => 'Register with _router TIMER for periodic ticks.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
-						/** @var self $patron */
-						$patron = $ci->patron();
-						$patron->start_periodic_tick();
-						$patron->mark_verb_invoked( 'start_periodic_tick', '' );
-						return 'ok';
-					},
-				],
-			],
+			'verbs'       => [],
 		];
 	}
 }

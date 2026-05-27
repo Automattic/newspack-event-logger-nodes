@@ -253,6 +253,29 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 */
+	public function dump_config(): string {
+		$out = parent::dump_config();
+		if ( $this->is_hub ) {
+			$out .= "cmd {$this->name}:config set_is_hub true\n";
+		}
+		if ( 0 !== $this->auto_disable_threshold || 0.0 !== $this->auto_protect_time_threshold ) {
+			$out .= "cmd {$this->name}:config set_auto_tune {$this->auto_disable_threshold} {$this->auto_protect_time_threshold}\n";
+		}
+		if ( ! empty( $this->significant_events ) ) {
+			$csv  = \implode( ',', \array_keys( $this->significant_events ) );
+			$out .= "cmd {$this->name}:config set_significant_events {$csv}\n";
+		}
+		if ( null !== $this->stats_store ) {
+			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
+		}
+		return $out;
+	}
+
+	/**
 	 * Maintenance hook — drives periodic flush even with no inbound traffic.
 	 */
 	public function maintenance(): void {
@@ -1690,7 +1713,6 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_is_hub( $bool );
-						$patron->mark_verb_invoked( 'set_is_hub', $bool ? 'true' : 'false' );
 						return 'ok';
 					},
 				],
@@ -1709,7 +1731,6 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_auto_tune( (int) $parts[0], (float) $parts[1] );
-						$patron->mark_verb_invoked( 'set_auto_tune', $args );
 						return 'ok';
 					},
 				],
@@ -1727,7 +1748,6 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_significant_events( $list );
-						$patron->mark_verb_invoked( 'set_significant_events', $args );
 						return 'ok';
 					},
 				],
@@ -1754,7 +1774,6 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_stats_store( $stats_store );
-						$patron->mark_verb_invoked( 'configure_stats', (string) $partition );
 						return 'ok';
 					},
 				],

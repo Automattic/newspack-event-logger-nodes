@@ -77,6 +77,9 @@ class Stream_Merger_Node extends Node {
 	/** @var Health_Check_Tick_Node|null Owned sibling — drives aggregator's periodic health-check sweep. */
 	private ?Health_Check_Tick_Node $health_check = null;
 
+	/** @var bool One-shot guard so connect_node() loads registry remotes only once. */
+	private bool $remotes_loaded = false;
+
 	public function __construct( string $remote_topic, int $partition = 0 ) {
 		$this->remote_topic = $remote_topic;
 		$this->partition    = \max( 0, $partition );
@@ -195,6 +198,52 @@ class Stream_Merger_Node extends Node {
 		foreach ( $this->remote_nodes as $remote ) {
 			$remote->set_verify_ssl( $verify );
 		}
+	}
+
+	/**
+	 * Instantiate a RemoteSource child for every enabled spoke in ServerRegistry.
+	 *
+	 * One-shot action (formerly the `load_remotes_from_registry` verb). Fired
+	 * from the connect_node() lifecycle hook once the target is wired, so a
+	 * worker restart re-loads remotes from current registry state without a TSL
+	 * verb line. add_remote() reads $this->sink / $this->target, both set by the
+	 * time connect_node() runs (make_node sets the CI sink; connect_node sets the
+	 * target), so children inherit the merger's downstream wiring.
+	 */
+	public function load_remotes_from_registry(): void {
+		$registry = new Server_Registry();
+		foreach ( $registry->get_enabled() as $server_id => $entry ) {
+			$this->add_remote( (string) $server_id );
+		}
+	}
+
+	/**
+	 * Lifecycle hook: once the target is wired (the topology's
+	 * `connect_node stream-merger firehose:topic` line), load the registry
+	 * remotes once. Guarded so a later re-connect doesn't re-load.
+	 */
+	public function connect_node( string $target ): void {
+		parent::connect_node( $target );
+		if ( ! $this->remotes_loaded ) {
+			$this->remotes_loaded = true;
+			$this->load_remotes_from_registry();
+		}
+	}
+
+	/**
+	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * default (both default true), for dump_config introspection (REPL/GUI).
+	 */
+	public function dump_config(): string {
+		$out = parent::dump_config();
+		if ( ! $this->verify_ssl ) {
+			$out .= "cmd {$this->name}:config set_verify_ssl false\n";
+		}
+		if ( ! $this->require_https ) {
+			$out .= "cmd {$this->name}:config set_require_https false\n";
+		}
+		return $out;
 	}
 
 	// =========================================================================
@@ -617,7 +666,6 @@ class Stream_Merger_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_verify_ssl( $bool );
-						$patron->mark_verb_invoked( 'set_verify_ssl', $bool ? 'true' : 'false' );
 						return 'ok';
 					},
 				],
@@ -633,22 +681,6 @@ class Stream_Merger_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_require_https( $bool );
-						$patron->mark_verb_invoked( 'set_require_https', $bool ? 'true' : 'false' );
-						return 'ok';
-					},
-				],
-				[
-					'name'        => 'load_remotes_from_registry',
-					'description' => 'Iterate ServerRegistry::get_enabled() and instantiate a RemoteSource child for each.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
-						/** @var self $patron */
-						$patron   = $ci->patron();
-						$registry = new Server_Registry();
-						foreach ( $registry->get_enabled() as $server_id => $entry ) {
-							$patron->add_remote( (string) $server_id );
-						}
-						$patron->mark_verb_invoked( 'load_remotes_from_registry', '' );
 						return 'ok';
 					},
 				],
