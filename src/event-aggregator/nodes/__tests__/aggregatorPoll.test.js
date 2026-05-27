@@ -1,10 +1,10 @@
 /**
- * aggregator/poll tests — the command-out node that owns the aggregator status
+ * aggregator:poll tests — the command-out node that owns the aggregator status
  * traffic, behind an injectable command-client seam.
  *
  * `poll()` sends `{ to:'aggregator', verb:'status' }`, unwraps the reply, and
  * emits a TM_STRUCT `{ action:'status', status, now }` to its sink (→
- * aggregator/view). `now` is the response Message's TIMESTAMP — the hub's serve
+ * aggregator:view). `now` is the response Message's TIMESTAMP — the hub's serve
  * clock, which the view drives "ago" off. Failures surface as a TM_STRUCT
  * `{ action:'error', error }` (never swallowed). `close()` drops a late reply so
  * an in-flight poll resolving post-unmount never fills a detached sink.
@@ -17,6 +17,7 @@ import {
 	newMessage,
 	TYPE,
 	TIMESTAMP,
+	TO,
 	VALUE,
 	TM_STRUCT,
 	Core,
@@ -58,10 +59,10 @@ function makeFakeClient() {
 	};
 }
 
-describe( 'aggregator/poll', () => {
+describe( 'aggregator:poll', () => {
 	test( 'sends the status command to the aggregator', async () => {
 		const client = makeFakeClient();
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		await node.poll();
@@ -77,7 +78,7 @@ describe( 'aggregator/poll', () => {
 		const client = makeFakeClient();
 		client.reply = newMessage();
 		unwrap.mockReturnValue( { server1: { id: 'server1' } } );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -90,6 +91,20 @@ describe( 'aggregator/poll', () => {
 		} );
 	} );
 
+	test( 'stamps the emitted message TO with its target (rule #2 routing)', async () => {
+		const got = [];
+		const client = makeFakeClient();
+		client.reply = newMessage();
+		unwrap.mockReturnValue( {} );
+		const node = createAggregatorPoll( 'aggregator:poll', {
+			commandClient: client,
+		} );
+		node.target = 'aggregator:view';
+		node.sink = { fill: ( m ) => got.push( m ) };
+		await node.poll();
+		expect( got[ 0 ][ TO ] ).toBe( 'aggregator:view' );
+	} );
+
 	test( 'passes the response Message TIMESTAMP as `now` for ago-calc', async () => {
 		const got = [];
 		const client = makeFakeClient();
@@ -97,7 +112,7 @@ describe( 'aggregator/poll', () => {
 		message[ TIMESTAMP ] = 2000;
 		client.reply = message;
 		unwrap.mockReturnValue( {} );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -110,7 +125,7 @@ describe( 'aggregator/poll', () => {
 		const client = makeFakeClient();
 		client.reply = newMessage();
 		unwrap.mockReturnValue( null );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -122,7 +137,7 @@ describe( 'aggregator/poll', () => {
 		const got = [];
 		const client = makeFakeClient();
 		client.reply = Promise.reject( new Error( 'aggregator down' ) );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -140,7 +155,7 @@ describe( 'aggregator/poll', () => {
 		unwrap.mockImplementation( () => {
 			throw new Error( 'command failed' );
 		} );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -157,7 +172,7 @@ describe( 'aggregator/poll', () => {
 			resolveReply = res;
 		} );
 		unwrap.mockReturnValue( {} );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -175,7 +190,7 @@ describe( 'aggregator/poll', () => {
 		client.reply = new Promise( ( _res, rej ) => {
 			rejectReply = rej;
 		} );
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
 		node.sink = { fill: ( m ) => got.push( m ) };
@@ -188,9 +203,9 @@ describe( 'aggregator/poll', () => {
 
 	test( 'names the node', () => {
 		const client = makeFakeClient();
-		const node = createAggregatorPoll( 'aggregator/poll', {
+		const node = createAggregatorPoll( 'aggregator:poll', {
 			commandClient: client,
 		} );
-		expect( node.name ).toBe( 'aggregator/poll' );
+		expect( node.name ).toBe( 'aggregator:poll' );
 	} );
 } );
