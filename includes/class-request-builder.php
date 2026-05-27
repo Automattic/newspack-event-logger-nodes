@@ -146,6 +146,32 @@ class Request_Builder_Node extends Node {
 		$this->errors_target = $target;
 	}
 
+	/** Flight's default snapshot interval (ms); a non-default value is dumped. */
+	private const DEFAULT_INFLIGHT_INTERVAL_MS = 1000;
+
+	/**
+	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 */
+	public function dump_config(): string {
+		$out = parent::dump_config();
+		if ( '' !== $this->errors_target ) {
+			$out .= "cmd {$this->name}:config set_errors_target {$this->errors_target}\n";
+		}
+		if ( '' !== $this->completed_target ) {
+			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
+		}
+		$inflight_target = $this->flight->target();
+		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
+			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
+		}
+		if ( self::DEFAULT_INFLIGHT_INTERVAL_MS !== $this->flight->interval() ) {
+			$out .= "cmd {$this->name}:config set_inflight_interval {$this->flight->interval()}\n";
+		}
+		return $out;
+	}
+
 	/**
 	 * Expose every named destination this node actually writes to so
 	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
@@ -994,7 +1020,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_errors_target( $args );
-						$patron->mark_verb_invoked( 'set_errors_target', $args );
 						return 'ok';
 					},
 				],
@@ -1010,7 +1035,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_completed_target( $args );
-						$patron->mark_verb_invoked( 'set_completed_target', $args );
 						return 'ok';
 					},
 				],
@@ -1027,7 +1051,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->flight()->target( $args );
-						$patron->mark_verb_invoked( 'set_inflight_target', $args );
 						return 'ok';
 					},
 				],
@@ -1045,7 +1068,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->flight()->set_interval( (int) $args );
-						$patron->mark_verb_invoked( 'set_inflight_interval', $args );
 						return 'ok';
 					},
 				],

@@ -14,7 +14,8 @@
  * The Flight verbs proxy through `$patron->flight()` (the hidden sibling
  * attached in RequestBuilder's ctor) rather than touching $patron state
  * directly — that keeps the Timer's interval as the single source of
- * truth and lets `dump_config` round-trip via mark_verb_invoked.
+ * truth, and `dump_config` round-trips each setting straight from that
+ * state (no generic verb recording).
  *
  * @package Newspack_Event_Logger_Nodes
  */

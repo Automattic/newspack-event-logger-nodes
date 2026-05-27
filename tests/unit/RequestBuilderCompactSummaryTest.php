@@ -193,7 +193,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$this->assertCount( 0, $compact );
 	}
 
-	public function test_dump_config_round_trips_new_verb_invocations(): void {
+	public function test_dump_config_round_trips_configured_state(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$ci    = $rb->interpreter();

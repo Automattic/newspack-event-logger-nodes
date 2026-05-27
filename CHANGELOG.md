@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Nodes migrated off the substrate's removed `mark_verb_invoked` recorder.** `Flame_Builder`, `Request_Builder`, and `Stream_Merger` now override `dump_config()` to emit their `cmd {node}:config set_X <value>` lines **from their own setter state** (only when non-default), matching the substrate's new pattern. The two verbs that were one-shot *actions* rather than config — `Stream_Merger`'s `load_remotes_from_registry` and `Health_Check_Tick`'s `start_periodic_tick` — are no longer verbs: they fire unconditionally from a lifecycle hook (`Stream_Merger::connect_node()` loads remotes once the sink+target are wired; the periodic tick rides the existing `name()` cascade). The corresponding `cmd …:config` lines were removed from `aggregator.tsl`.
 - **Dashboards are being wired onto the newspack-nodes "exospine" (rule #2).** Each dashboard's JS-Node graph now clips onto the shared `mountExospine()` backbone (`_command_interpreter → _router`) imported from `@newspack-nodes/runtime`: every node sinks into the CI and steers flow purely with `target`/`TO` through the router — no bespoke `x.sink = <node>` chains, no `controlSink` side-channels. Node names moved from `name/leaf` to `name:leaf` (the router peels TO on `/`). Dashboards render identically; substrate-conformance only.
   - **Aggregator Status** (`aggregator:poll` → `aggregator:view`): poll-driven, no route node.
   - **Configured Servers** (`servers:command` → `servers:view`): command-driven, no route node.

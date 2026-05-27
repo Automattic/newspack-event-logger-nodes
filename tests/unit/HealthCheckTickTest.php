@@ -78,30 +78,40 @@ class HealthCheckTickTest extends TestCase {
 	// Construction + sibling CI wiring.
 	// -------------------------------------------------------------------------
 
-	public function test_health_check_tick_constructs_sibling_ci(): void {
+	public function test_health_check_tick_has_no_sibling_ci(): void {
+		// No config verbs — the periodic tick starts from StreamMerger's
+		// name() lifecycle, not a TSL verb — so the base ctor attaches no
+		// sibling :config CI.
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
-		$this->assertNotNull( $h->interpreter() );
-		$this->assertSame( 'h:config', $h->interpreter()->name() );
+		$this->assertNull( $h->interpreter() );
 	}
 
-	public function test_health_check_tick_start_periodic_tick_verb_round_trips(): void {
-		$h = new Health_Check_Tick_Node();
-		$h->name( 'h' );
-		$result = $h->interpreter()->dispatch( 'start_periodic_tick' );
-		$this->assertSame( 'ok', $result );
+	public function test_health_check_tick_starts_periodic_tick_from_lifecycle(): void {
+		// Lifecycle replacement for the old verb: when HealthCheckTick is the
+		// owned sibling of a named StreamMerger (with a real _router present),
+		// StreamMerger::name() cascades start_periodic_tick() to the sibling,
+		// registering it on the Router TIMER event.
+		$router = new Router_Node();
+		$router->name( '_router' );
 
-		$dump = $h->dump_config();
-		$this->assertStringContainsString( 'cmd h:config start_periodic_tick', $dump );
+		$sm = new \Newspack_Event_Logger_Nodes\Stream_Merger_Node( 'firehose', 0 );
+		$sm->set_require_https( false );
+		$sm->name( 'sm' );
+
+		$ref = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
+		$ref->setAccessible( true );
+		$regs = $ref->getValue( $router );
+		$this->assertArrayHasKey( 'TIMER', $regs );
+		$this->assertArrayHasKey( 'sm:health-check', $regs['TIMER'] );
 	}
 
-	public function test_health_check_tick_node_schema_declares_verb(): void {
+	public function test_health_check_tick_node_schema_declares_no_verbs(): void {
 		$schema = Health_Check_Tick_Node::node_schema();
 		// Hidden from the topology console — instantiated as a
 		// patron-linked sibling of StreamMerger, not built from TSL.
 		$this->assertSame( 'Hidden', $schema['category'] );
-		$verb_names = \array_column( $schema['verbs'], 'name' );
-		$this->assertContains( 'start_periodic_tick', $verb_names );
+		$this->assertSame( [], $schema['verbs'] );
 	}
 
 	// -------------------------------------------------------------------------
