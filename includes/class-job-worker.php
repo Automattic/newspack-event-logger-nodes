@@ -32,7 +32,6 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
@@ -96,13 +95,9 @@ class Job_Worker_Node extends Node {
 		$this->stale_timeout        = \max( 1, $stale_timeout );
 		$this->max_runtime          = \max( 1, $max_runtime );
 
-		// Sibling CommandInterpreter — kept for `mark_verb_invoked()`
-		// metadata hooks even though there are no operator-facing
-		// config verbs today.
-		$ci = new Command_Interpreter_Node();
-		$ci->patron( $this );
-		$ci->commands( self::config_verbs() );
-		$this->attach_interpreter( $ci );
+		// Base ctor auto-wires a sibling :config CI from node_schema()['verbs']
+		// handlers — JobWorker declares none, so no sibling is created.
+		parent::__construct();
 
 		// Handler maps are eager init, not config — a JobWorker with
 		// no handlers is dead weight. By the time a worker's TSL is
@@ -395,18 +390,8 @@ class Job_Worker_Node extends Node {
 	}
 
 	// -------------------------------------------------------------------------
-	// Sibling-CI verb table + node_schema (A3).
+	// Requests + node_schema (A3).
 	// -------------------------------------------------------------------------
-
-	/**
-	 * Verbs the TSL `cmd job-worker:config <verb>` invocations
-	 * dispatch through. Resolved per-instance via $ci->patron().
-	 *
-	 * @return array<string,callable>
-	 */
-	private static function config_verbs(): array {
-		return [];
-	}
 
 	private function handle_request( array $message ): void {
 		$value = (string) $message[ Message::VALUE ];

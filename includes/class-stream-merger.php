@@ -85,19 +85,15 @@ class Stream_Merger_Node extends Node {
 			(string) $this->partition,
 		] );
 
-		// Sibling CommandInterpreter — TSL aggregator topology configures
-		// StreamMerger via verbs (set_verify_ssl, set_require_https,
-		// load_remotes_from_registry).
-		$ci = new Command_Interpreter_Node();
-		$ci->patron( $this );
-		$ci->commands( self::config_verbs() );
-		$this->attach_interpreter( $ci );
-
 		// Owned HealthCheckTick sibling — TIMER-driven, hub-only, never
 		// independently configurable. Patron-linked so dump_metadata hides it
 		// and so its name tracks the StreamMerger's automatically.
 		$this->health_check = new Health_Check_Tick_Node();
 		$this->health_check->patron( $this );
+
+		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
+		parent::__construct();
 	}
 
 	/**
@@ -134,8 +130,12 @@ class Stream_Merger_Node extends Node {
 			$remote->remove_node();
 		}
 		$this->remote_nodes = [];
+		// Full remove_node (not a bare unregister): Health_Check_Tick auto-wires
+		// its own :config CI from node_schema, and only remove_node() cascades
+		// that sibling CI's Core registration — a bare unregister would orphan it
+		// and collide on a same-process name-recycle.
 		if ( null !== $this->health_check && '' !== $this->health_check->name() ) {
-			\Newspack_Nodes\Core::unregister_node( $this->health_check->name() );
+			$this->health_check->remove_node();
 		}
 		$this->health_check = null;
 		parent::remove_node();
@@ -596,44 +596,6 @@ class Stream_Merger_Node extends Node {
 	// Verb table + node_schema
 	// =========================================================================
 
-	private static array $verbs_cache = [];
-
-	private static function config_verbs(): array {
-		if ( empty( self::$verbs_cache ) ) {
-			self::$verbs_cache = [
-				'set_verify_ssl'             => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \strtolower( \trim( $args ) );
-					$bool = ( 'true' === $args || '1' === $args );
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_verify_ssl( $bool );
-					$patron->mark_verb_invoked( 'set_verify_ssl', $bool ? 'true' : 'false' );
-					return 'ok';
-				},
-				'set_require_https'          => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					$args = \strtolower( \trim( $args ) );
-					$bool = ( 'true' === $args || '1' === $args );
-					/** @var self $patron */
-					$patron = $ci->patron();
-					$patron->set_require_https( $bool );
-					$patron->mark_verb_invoked( 'set_require_https', $bool ? 'true' : 'false' );
-					return 'ok';
-				},
-				'load_remotes_from_registry' => static function ( Command_Interpreter_Node $ci, string $args ): string {
-					/** @var self $patron */
-					$patron   = $ci->patron();
-					$registry = new Server_Registry();
-					foreach ( $registry->get_enabled() as $server_id => $entry ) {
-						$patron->add_remote( (string) $server_id );
-					}
-					$patron->mark_verb_invoked( 'load_remotes_from_registry', '' );
-					return 'ok';
-				},
-			];
-		}
-		return self::$verbs_cache;
-	}
-
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',
@@ -649,6 +611,15 @@ class Stream_Merger_Node extends Node {
 					'args'        => [
 						[ 'name' => 'verify', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_verify_ssl>' ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \strtolower( \trim( $args ) );
+						$bool = ( 'true' === $args || '1' === $args );
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_verify_ssl( $bool );
+						$patron->mark_verb_invoked( 'set_verify_ssl', $bool ? 'true' : 'false' );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'set_require_https',
@@ -656,11 +627,30 @@ class Stream_Merger_Node extends Node {
 					'args'        => [
 						[ 'name' => 'require', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_require_https>' ],
 					],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						$args = \strtolower( \trim( $args ) );
+						$bool = ( 'true' === $args || '1' === $args );
+						/** @var self $patron */
+						$patron = $ci->patron();
+						$patron->set_require_https( $bool );
+						$patron->mark_verb_invoked( 'set_require_https', $bool ? 'true' : 'false' );
+						return 'ok';
+					},
 				],
 				[
 					'name'        => 'load_remotes_from_registry',
 					'description' => 'Iterate ServerRegistry::get_enabled() and instantiate a RemoteSource child for each.',
 					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+						/** @var self $patron */
+						$patron   = $ci->patron();
+						$registry = new Server_Registry();
+						foreach ( $registry->get_enabled() as $server_id => $entry ) {
+							$patron->add_remote( (string) $server_id );
+						}
+						$patron->mark_verb_invoked( 'load_remotes_from_registry', '' );
+						return 'ok';
+					},
 				],
 			],
 			'requests'     => [
