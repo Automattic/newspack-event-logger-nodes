@@ -187,6 +187,11 @@ async function makeContext( entry, outDir ) {
 		entryPoints: [ path.resolve( ROOT, entry ) ],
 		bundle: true,
 		minify: true,
+		// dump_metadata reads node.constructor.name to label classes on the
+		// canvas — without keepNames, minify mangles them to two-letter ids.
+		// Same fix the substrate bundle uses; the overlay imports node classes
+		// from the substrate so we need it here too.
+		keepNames: true,
 		format: 'iife',
 		target: [ 'es2020' ],
 		jsx: 'automatic',
