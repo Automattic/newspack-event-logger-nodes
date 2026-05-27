@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-27
+
 ### Fixed
 
 - **`Stream_Merger_Node::remove_node()` now cascades its owned `Health_Check_Tick` sibling's `:config` CI.** It did a bare `Core::unregister_node()` on the child's name, leaving the child's auto-wired `{name}:health-check:config` interpreter orphaned in `Core` — a same-process name-recycle (in-process topology rebuild) would then collide on the orphaned name. Now calls `$this->health_check->remove_node()`, which cascade-unregisters the sibling CI. (Pre-existing leak — the child always had a CI — surfaced while reviewing the node_schema-handler migration.)
