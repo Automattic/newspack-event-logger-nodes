@@ -987,7 +987,7 @@ class Remote_Source_Node extends Node {
 		return [
 			'category'     => 'I/O',
 			'description'  => 'One SSE-pulled spoke topic. Instantiated by StreamMerger from ServerRegistry.',
-			'ctor'         => [
+			'arguments'         => [
 				[ 'name' => 'server_id',     'type' => 'string', 'required' => true ],
 				[ 'name' => 'url',           'type' => 'string', 'required' => true ],
 				[ 'name' => 'auth_username', 'type' => 'string' ],

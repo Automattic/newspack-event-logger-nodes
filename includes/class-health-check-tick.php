@@ -150,7 +150,7 @@ class Health_Check_Tick_Node extends Node {
 		return [
 			'category'    => 'Hidden',
 			'description' => 'Drives the aggregator periodic discovery + sync sweep (5-min debounce).',
-			'ctor'        => [],
+			'arguments'        => [],
 			'commands'       => [],
 		];
 	}

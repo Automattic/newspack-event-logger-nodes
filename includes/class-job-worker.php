@@ -428,7 +428,7 @@ class Job_Worker_Node extends Node {
 		return [
 			'category'    => 'Control',
 			'description' => 'Consumes jobs.log entries and dispatches to registered handlers.',
-			'ctor'        => [
+			'arguments'        => [
 				[ 'name' => 'cache_flush_interval', 'type' => 'int', 'default' => self::CACHE_FLUSH_INTERVAL ],
 				[ 'name' => 'stale_timeout',        'type' => 'int', 'default' => self::DEFAULT_STALE_TIMEOUT ],
 				[ 'name' => 'max_runtime',          'type' => 'int', 'default' => self::DEFAULT_MAX_RUNTIME ],

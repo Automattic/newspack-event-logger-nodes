@@ -1699,7 +1699,7 @@ class Flame_Builder_Node extends Node {
 		return [
 			'category'    => 'Transform',
 			'description' => 'Aggregates per-event count + sum_time into the 9-namespace memcache schema; emits flame JSONL.',
-			'ctor'        => [],
+			'arguments'        => [],
 			'commands'       => [
 				[
 					'name'        => 'set_is_hub',

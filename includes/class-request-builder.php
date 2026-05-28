@@ -1003,7 +1003,7 @@ class Request_Builder_Node extends Node {
 		return [
 			'category'    => 'Transform',
 			'description' => 'Assembles per-request firehose lines into completed-request docs; emits errors to a named partition.',
-			'ctor'        => [
+			'arguments'        => [
 				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE ],
 				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS ],
 			],
