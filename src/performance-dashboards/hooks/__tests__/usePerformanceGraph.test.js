@@ -2,10 +2,9 @@
 /* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * usePerformanceGraph tests — the Performance Dashboard graph clipped onto the
- * substrate's I/O boundary nodes (exospine + `_http` + `_output` / `_uptime` /
- * `_completion` / `_cwd`), plus the application's `performance:command` (the
- * slice-tagging command-builder) and `performance:view` (the render model +
- * pending-Promise registry).
+ * substrate's I/O boundary node (exospine + `_http`), plus the application's
+ * `performance:command` (the slice-tagging command-builder) and
+ * `performance:view` (the render model + pending-Promise registry).
  *
  * Post-migration: `performance:command` no longer owns the network. Each
  * fetch* dispatches a TM_COMMAND through the CI (FROM=`performance:view`,
@@ -38,21 +37,9 @@ import { usePerformanceGraph } from '../usePerformanceGraph';
 const CI = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 const COMMAND = 'performance:command';
 const VIEW = 'performance:view';
-const ALL_GRAPH_NAMES = [
-	HTTP,
-	OUTPUT,
-	UPTIME,
-	COMPLETION,
-	CWD,
-	COMMAND,
-	VIEW,
-];
+const ALL_GRAPH_NAMES = [ HTTP, COMMAND, VIEW ];
 
 // A fake CommandClient matching HttpOut's seam: postBatch returns reply
 // Messages addressed back along FROM (the server's reply pivot). The payload
@@ -121,7 +108,7 @@ function countVerbs( batches, verb ) {
 }
 
 describe( 'usePerformanceGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the I/O boundary nodes + the command + view, each sinking into the CI', () => {
+	test( 'mounts the backbone + _http + the command + view, each sinking into the CI', () => {
 		const client = makeFakeClient();
 		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
 		const ci = Core.node( CI );
@@ -131,6 +118,14 @@ describe( 'usePerformanceGraph — exospine + I/O boundary wiring', () => {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( ci );
+		}
+	} );
+
+	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
+		const client = makeFakeClient();
+		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
