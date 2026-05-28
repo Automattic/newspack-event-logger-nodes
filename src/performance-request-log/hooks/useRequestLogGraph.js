@@ -93,7 +93,7 @@ export function useRequestLogGraph( opts = {} ) {
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
 		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, teardown: teardownSpine } = mountExospine();
+		const { ci, router, teardown: teardownSpine } = mountExospine();
 
 		// I/O boundary nodes — the same ones useConsoleGraph mounts.
 		// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
@@ -152,6 +152,9 @@ export function useRequestLogGraph( opts = {} ) {
 			}
 			return true;
 		} );
+
+		// Heartbeat hitchhikes the backbone's TIMER (started in mountExospine).
+		router.register( 'TIMER', HEARTBEAT, () => heartbeat.onTimer() );
 
 		sseRef.current = sse;
 		heartbeatRef.current = heartbeat;

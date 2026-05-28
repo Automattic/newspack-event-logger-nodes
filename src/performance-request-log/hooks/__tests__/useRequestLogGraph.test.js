@@ -165,6 +165,33 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
+
+	test( 'the Router TIMER drives heartbeat.onTimer so the slot keep-alive actually fires', () => {
+		jest.useFakeTimers();
+		try {
+			renderHook( () => useRequestLogGraph() );
+			// Spy on _http.client.postBatch instead of fetch().
+			const http = Core.node( HTTP );
+			const postBatch = jest.fn().mockResolvedValue( [] );
+			http.client = { buildMessage: () => newMessage(), postBatch };
+			act( () => {
+				FakeEventSource.last.dispatch(
+					'msg',
+					pack(
+						connectedEnvelope( { pid: 7, slot: 5, partition: 0 } )
+					)
+				);
+			} );
+			// 1s Router TIMER × 5 = past the 5s throttle in Heartbeat.onTimer.
+			act( () => {
+				jest.advanceTimersByTime( 5000 );
+			} );
+			expect( Core.node( HEARTBEAT ).lastFired ).toBeGreaterThan( 0 );
+			expect( postBatch ).toHaveBeenCalled();
+		} finally {
+			jest.useRealTimers();
+		}
+	} );
 } );
 
 describe( 'useRequestLogGraph — end-to-end routing through the exospine', () => {
