@@ -5,7 +5,7 @@
  * / Performance / Aggregator / Servers).
  *
  * Each now extends Service_CI_Node, whose ctor builds its dispatch table from
- * `node_schema()['verbs']` via `commands_from_schema()`. That helper emits a
+ * `node_schema()['commands']` via `commands_from_schema()`. That helper emits a
  * rate-limited "no callable handler; skipping" warning (through
  * Core::print_less_often → the stderr handler) for any named verb that lost its
  * handler in the migration. `test_migrated_ci_emits_no_handlerless_warning`
@@ -19,7 +19,7 @@
  *     catalog with `category === 'Service'`. A future typo dropping a category
  *     back to ''/'Hidden' would silently re-hide the CI; this fails loudly.
  *   - test_every_schema_verb_installs_as_a_command: for each CI, asserts every
- *     verb in its node_schema()['verbs'] is a key in `commands()` — the
+ *     verb in its node_schema()['commands'] is a key in `commands()` — the
  *     schema→commands derivation actually installed each verb (symmetry with the
  *     substrate's ServiceCiSchemaCommandsTest install guard).
  *
@@ -133,7 +133,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 
 	/**
 	 * Install-as-command guard: for each migrated CI, every verb declared in its
-	 * node_schema()['verbs'] is present as a key in `commands()`. The
+	 * node_schema()['commands'] is present as a key in `commands()`. The
 	 * schema→commands derivation (Service_CI_Node::commands_from_schema) must
 	 * actually install each verb — this catches a verb that lists in the schema
 	 * but gets filtered out of dispatch.
@@ -153,7 +153,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 
 		$schema = $ci::node_schema();
 		$verbs  = \array_filter(
-			$schema['verbs'] ?? [],
+			$schema['commands'] ?? [],
 			static fn ( $v ): bool => \is_array( $v ) && '' !== (string) ( $v['name'] ?? '' )
 		);
 		$this->assertNotEmpty(
@@ -180,8 +180,20 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			'Events_CI'      => [ static fn () => new Events_CI_Node() ],
 			'Settings_CI'    => [ static fn () => new Settings_CI_Node() ],
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
-			'Aggregator_CI'  => [ static fn () => new Aggregator_CI_Node( new Server_Registry() ) ],
-			'Servers_CI'     => [ static fn () => new Servers_CI_Node( new Server_Registry() ) ],
+			'Aggregator_CI'  => [
+				static function (): Aggregator_CI_Node {
+					$ci           = new Aggregator_CI_Node();
+					$ci->registry = new Server_Registry();
+					return $ci;
+				},
+			],
+			'Servers_CI'     => [
+				static function (): Servers_CI_Node {
+					$ci           = new Servers_CI_Node();
+					$ci->registry = new Server_Registry();
+					return $ci;
+				},
+			],
 		];
 	}
 }

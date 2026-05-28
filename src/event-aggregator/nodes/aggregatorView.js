@@ -1,7 +1,7 @@
 import { Node, VALUE } from '@newspack-nodes/runtime';
 
 /**
- * `aggregator/view` — owns the Aggregator Status view model.
+ * `aggregator:view` — owns the Aggregator Status view model.
  *
  * `fill()` accepts the two TM_STRUCT controls the poll node emits:
  * - `{ action:'status', status, now }`: the raw `{ server_id:{} }` snapshot. The
@@ -15,7 +15,7 @@ import { Node, VALUE } from '@newspack-nodes/runtime';
  *
  * The map→array + connected-count derivation migrated verbatim from
  * AggregatorStatus's render. Every change publishes via `setState('view', model)`,
- * consumed by `useNodeState('aggregator/view','view')` — this is a low-frequency
+ * consumed by `useNodeState('aggregator:view','view')` — this is a low-frequency
  * poll (1–10s), so there's no per-message React concern like the request stream.
  */
 class AggregatorViewNode extends Node {

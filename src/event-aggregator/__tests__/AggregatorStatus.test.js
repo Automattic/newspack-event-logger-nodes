@@ -5,7 +5,7 @@
  *
  * The graph is owned by useAggregatorStatusGraph (tested separately); here we mock
  * it to hand back spy control callbacks, and we register a fixture
- * `aggregator/view` node in Core so the view can read its model via useNodeState.
+ * `aggregator:view` node in Core so the view can read its model via useNodeState.
  * Mirrors how RequestStream.test.js was rewritten against its graph.
  */
 
@@ -56,7 +56,7 @@ const SAMPLE_SERVERS = [
 	},
 ];
 
-// A minimal stand-in for the aggregator/view node: the model lives in
+// A minimal stand-in for the aggregator:view node: the model lives in
 // setStateCache.view (what useNodeState subscribes to). setState here notifies
 // subscribers exactly like the real Node.setState.
 function registerViewFixture( overrides = {} ) {
@@ -90,7 +90,7 @@ function registerViewFixture( overrides = {} ) {
 		},
 	};
 	node.setState( 'view', model );
-	Core.nodes.set( 'aggregator/view', node );
+	Core.nodes.set( 'aggregator:view', node );
 	return node;
 }
 

@@ -47,7 +47,8 @@ class RequestBuilderRoundTripTest extends TestCase {
 	}
 
 	public function test_topic_to_consumer_to_request_builder_assembles_request(): void {
-		$topic = new Topic_Node( "{$this->tmp}/firehose.log", 1 );
+		$topic = new Topic_Node();
+		$topic->arguments( "{$this->tmp}/firehose.log {1}" );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
@@ -56,7 +57,8 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$rb      = new Request_Builder_Node();
 		$rb->sink( $capture );
 
-		$consumer = new Consumer_Node( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/rb/p0" );
+		$consumer = new Consumer_Node();
+		$consumer->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/rb/p0" );
 		$consumer->sink( $rb );
 		$consumer->poll();
 

@@ -3,7 +3,7 @@
  * RequestStream UI-surface tests — the thin view over the requestlog node graph.
  *
  * The graph is owned by useRequestLogGraph (tested separately); here we mock it to
- * hand back spy control callbacks, and we register a fixture `requestlog/view`
+ * hand back spy control callbacks, and we register a fixture `requestlog:view`
  * node in Core so the view can read its low-frequency model via useNodeState and
  * its high-frequency buffer (entries/rps/lastEventTime) directly off the node in
  * the rAF.
@@ -31,7 +31,7 @@ import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
 
 const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 
-// A minimal stand-in for the requestlog/view node: the low-frequency model lives
+// A minimal stand-in for the requestlog:view node: the low-frequency model lives
 // in setStateCache.view (what useNodeState subscribes to) and the high-frequency
 // buffer / rps / lastEventTime live directly on the instance (what the rAF reads).
 // setState here notifies subscribers exactly like the real Node.setState.
@@ -65,7 +65,7 @@ function registerViewFixture( {
 		},
 	};
 	node.setState( 'view', { paused, connectionError } );
-	Core.nodes.set( 'requestlog/view', node );
+	Core.nodes.set( 'requestlog:view', node );
 	return node;
 }
 

@@ -7,6 +7,7 @@
 
 import AggregatorStatus from './AggregatorStatus';
 import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
+import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 /**
  * Aggregator Status page - dedicated view for monitoring remote servers.
@@ -35,6 +36,7 @@ export default function AggregatorStatusPage() {
 			} }
 		>
 			<AggregatorStatus />
+			<DebugOverlay storageKey="newspack-nodes:debug:aggregator-status" />
 		</div>
 	);
 }

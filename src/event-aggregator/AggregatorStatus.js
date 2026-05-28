@@ -1,9 +1,9 @@
 /**
  * Aggregator Status Component
  *
- * THIN view over the `aggregator/*` node graph (mounted by
- * useAggregatorStatusGraph). The graph owns all data: `aggregator/poll` runs the
- * status command on the hook's interval and `aggregator/view` turns the raw
+ * THIN view over the `aggregator:*` node graph (mounted by
+ * useAggregatorStatusGraph). The graph owns all data: `aggregator:poll` runs the
+ * status command on the hook's interval and `aggregator:view` turns the raw
  * snapshot into the render model (map→array, connected count, serverNow). This
  * component only reads that model (via useNodeState) and renders — the pure
  * presentation helpers below (formatTime / formatRtt / getRttClass /
@@ -282,7 +282,7 @@ export default function AggregatorStatus() {
 	const { setRefreshInterval, refreshInterval } = useAggregatorStatusGraph();
 
 	// The single read surface: the render model the graph publishes.
-	const model = useNodeState( 'aggregator/view', 'view' ) ?? EMPTY_MODEL;
+	const model = useNodeState( 'aggregator:view', 'view' ) ?? EMPTY_MODEL;
 	const {
 		servers,
 		serverNow,

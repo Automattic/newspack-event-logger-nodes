@@ -63,8 +63,8 @@ class Events_CI_Node extends Service_CI_Node {
 		return [
 			'category'    => 'Service',
 			'description' => 'Recent-firehose / hourly-stats surface for the event-dashboards tree.',
-			'ctor'        => [],
-			'verbs'       => [
+			'arguments'        => [],
+			'commands'       => [
 				[
 					'name'        => 'recent',
 					'description' => 'Newest-first walk of the firehose index across all partitions.',
@@ -81,7 +81,8 @@ class Events_CI_Node extends Service_CI_Node {
 						$scanned = 0;
 
 						for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
-							$partition = new Partition_Node( "{$log_base}/firehose.log", $p );
+							$partition = new Partition_Node();
+							$partition->arguments( "{$log_base}/firehose.log {$p}" );
 							$partition->scan_index(
 								function ( $seg, $off ) use ( &$entries, &$scanned, $limit, $partition, $p ) {
 									++$scanned;

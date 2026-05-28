@@ -1,13 +1,15 @@
 /* global localStorage */
 /**
  * useAggregatorStatusGraph — mounts the Aggregator Status dashboard node graph
- * (the JS-Node conversion of the old AggregatorStatus component). On mount it
- * builds two nodes — `aggregator/poll` (the status-command transport) and
- * `aggregator/view` (the render model React reads) — wires the data path
- * poll → view directly (the view node does the map→array + connected-count
- * derivation, so no separate transform node is needed), and fires one immediate
- * `poll()`. The view publishes its state via `setState('view', …)`; the React
- * view reads it separately with `useNodeState('aggregator/view','view')`.
+ * clipped onto the exospine (the canonical rule-#2 backbone `_command_interpreter
+ * → _router`). On mount it builds two nodes — `aggregator:poll` (the status-command
+ * transport) and `aggregator:view` (the render model React reads). EVERY node sinks
+ * into the CI; flow is steered ONLY by each node's `target` (the router peels TO
+ * and delivers): the poll targets the view (the view node does the map→array +
+ * connected-count derivation, so no separate transform node is needed). There is
+ * no bespoke `poll.sink=view` wiring. It fires one immediate `poll()`. The view
+ * publishes its state via `setState('view', …)`; the React view reads it separately
+ * with `useNodeState('aggregator:view','view')`.
  *
  * The hook OWNS the poll interval: a setInterval at the current refresh ms that
  * fires `poll.poll()`. It is NOT gated on page visibility — the old
@@ -28,7 +30,7 @@
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
-import { Core } from '@newspack-nodes/runtime';
+import { Core, mountExospine } from '@newspack-nodes/runtime';
 import { createAggregatorPoll } from '../nodes/aggregatorPoll';
 import { createAggregatorView } from '../nodes/aggregatorView';
 
@@ -43,9 +45,11 @@ export const REFRESH_OPTIONS = [
 export const DEFAULT_REFRESH_MS = '2000';
 const REFRESH_KEY = 'aggregator-status-refresh';
 
-// Every named node this graph mounts — unregistered on teardown.
-const POLL = 'aggregator/poll';
-const VIEW = 'aggregator/view';
+// Every named node this graph mounts — unregistered on teardown (the exospine
+// nodes are removed separately by its own teardown()). Names use a colon, not a
+// slash: the router peels TO on '/', so a '/' in a node name would misroute.
+const POLL = 'aggregator:poll';
+const VIEW = 'aggregator:view';
 const GRAPH_NODE_NAMES = [ POLL, VIEW ];
 
 /**
@@ -93,13 +97,20 @@ export function useAggregatorStatusGraph( opts = {} ) {
 	// stuck on the loading placeholder. Mirrors useWorkerStatusGraph's setViewReady.
 	const [ , setViewReady ] = useState( false );
 
-	// Mount the graph once: poll → view, then fire one immediate poll.
+	// Mount the graph once: clip it onto the exospine, then fire one immediate poll.
 	useEffect( () => {
+		// The canonical backbone every node clips onto: everything → CI → router.
+		const { ci, teardown: teardownSpine } = mountExospine();
+
 		const poll = createAggregatorPoll( POLL, {
 			commandClient: commandClientRef.current,
 		} );
 		const view = createAggregatorView( VIEW );
-		poll.sink = view;
+
+		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		poll.sink = ci;
+		poll.target = VIEW;
+		view.sink = ci;
 		pollRef.current = poll;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
@@ -109,11 +120,13 @@ export function useAggregatorStatusGraph( opts = {} ) {
 		return () => {
 			// Close the in-flight-cancel-owning poll node first BEFORE
 			// unregistering — mirrors useWorkerStatusGraph calling poll.close()
-			// before unregister.
+			// before unregister. Unregister the graph nodes, THEN tear down the
+			// exospine (which removes the CI + router).
 			poll.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
+			teardownSpine();
 			pollRef.current = null;
 			setViewReady( false );
 		};

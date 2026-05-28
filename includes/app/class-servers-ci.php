@@ -66,36 +66,31 @@ class Servers_CI_Node extends Service_CI_Node {
 	public static ?\Closure $http_call = null;
 
 	/**
-	 * Hub-side server registry the six verb handlers reach via `$self->registry`.
-	 * node_schema() is static and can't `use` the ctor arg, so the handlers read
-	 * it off the dispatched instance (legal: defined inside this class, so they
-	 * may touch its private props on any instance — same shape Workers_CI uses).
+	 * Hub-side server registry the six verb handlers reach via
+	 * `$self->registry`. Public so the bootstrap (or test) assigns it AFTER
+	 * `new Servers_CI_Node()` — the Tachikoma uniform-construction pattern
+	 * (`make_node` calls a no-arg ctor; programmatic deps come in via public
+	 * properties, not constructor args, since `arguments()` only handles
+	 * scalar config). node_schema() is static and can't `use` an instance
+	 * field, so handlers read the assigned value off `$self` at dispatch
+	 * time (legal: they're defined inside this class and so may touch its
+	 * props on any instance).
 	 *
-	 * @var Server_Registry
-	 */
-	private Server_Registry $registry;
-
-	/**
-	 * Build a Servers_CI bound to the supplied registry.
+	 * Nullable + default null so a freshly-constructed CI is in a known
+	 * state until the bootstrap wires up the dep; verb handlers that
+	 * dereference `$self->registry` will fail loud if the bootstrap forgot
+	 * to assign it, rather than constructing into uninitialised-property UB.
 	 *
-	 * @param Server_Registry $registry Hub-side server registry. Tests pass a
-	 *                                  fresh instance per test so they don't
-	 *                                  share state.
+	 * @var Server_Registry|null
 	 */
-	public function __construct( Server_Registry $registry ) {
-		// Prop set before parent builds commands from node_schema(). Handlers
-		// are closures (not invoked until dispatch), so order doesn't affect
-		// correctness; props-first keeps intent obvious.
-		$this->registry = $registry;
-		parent::__construct();
-	}
+	public ?Server_Registry $registry = null;
 
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Service',
 			'description' => 'Hub-side server registry: list / get / add / update / delete / test spokes.',
-			'ctor'        => [],
-			'verbs'       => [
+			'arguments'        => [],
+			'commands'       => [
 				[
 					'name'        => 'list',
 					'description' => 'All registered servers as a map keyed by id.',

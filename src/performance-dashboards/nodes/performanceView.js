@@ -1,7 +1,7 @@
 import { Node, VALUE } from '@newspack-nodes/runtime';
 
 /**
- * `performance/view` — owns the Performance Dashboard view model.
+ * `performance:view` — owns the Performance Dashboard view model.
  *
  * Holds four data slices — `overview`, `urls`, `urlDetail`, `requestDetail` —
  * each a `{ data, loading, error }` (urls also carries `total`), plus a
@@ -20,7 +20,7 @@ import { Node, VALUE } from '@newspack-nodes/runtime';
  * new requests are deduped by rid, merged newest-first, and capped at 500.
  *
  * Every change publishes via `setState('view', model)`, consumed by
- * `useNodeState('performance/view','view')`. This is a low-frequency
+ * `useNodeState('performance:view','view')`. This is a low-frequency
  * poll/selection model — no per-message React concern like the request stream.
  */
 class PerformanceViewNode extends Node {

@@ -1,7 +1,7 @@
 import { Node, VALUE } from '@newspack-nodes/runtime';
 
 /**
- * `hookcatalog/view` — owns the Performance Logger hook-catalog view model.
+ * `hookcatalog:view` — owns the Performance Logger hook-catalog view model.
  *
  * `fill()` accepts the two TM_STRUCT controls the command node emits:
  * - `{ action:'loading' }`: flips `loading` true, preserving the prior
@@ -9,9 +9,10 @@ import { Node, VALUE } from '@newspack-nodes/runtime';
  * - `{ action:'catalog', hooksByCategory }`: stores the map and clears `loading`.
  *
  * Every change publishes via `setState('view', model)`, consumed by
- * `useNodeState('hookcatalog/view','view')` (read on the modal's behalf inside
+ * `useNodeState('hookcatalog:view','view')` (read on the modal's behalf inside
  * useHookCatalogGraph). This is a fire-on-open one-shot, not a stream, so there's
- * no per-message React concern. No timers → no close() (matches aggregatorView).
+ * no per-message React concern. View terminal (sink=ci, setState); matches
+ * servers:view. No timers → no close().
  */
 class HookCatalogViewNode extends Node {
 	constructor() {

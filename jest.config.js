@@ -16,6 +16,10 @@ module.exports = {
 			__dirname,
 			'../newspack-nodes/src/runtime'
 		),
+		'^@newspack-nodes/debug-overlay$': path.resolve(
+			__dirname,
+			'../newspack-nodes/src/debug-overlay/DebugOverlay.js'
+		),
 		// Force ONE copy of React + @wordpress/element across both plugins. The
 		// runtime's react hooks (useNodeState/useNodeFill) live in the sibling
 		// newspack-nodes checkout, which has its own node_modules; without this,

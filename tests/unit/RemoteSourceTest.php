@@ -56,7 +56,8 @@ class RemoteSourceTest extends TestCase {
 	 * driven via test seams without HTTPS plumbing.
 	 */
 	private function make_remote( string $server_id = 'siteA', string $url = 'http://siteA.test', int $partition = 0 ): Remote_Source_Node {
-		$remote = new Remote_Source_Node( $server_id, $url, '', '', 'tok', 'firehose', $partition );
+		$remote = new Remote_Source_Node();
+		$remote->configure( $server_id, $url, '', '', 'tok', 'firehose', $partition );
 		$remote->name( "remote:{$server_id}" );
 		$remote->set_require_https( false );
 		return $remote;
@@ -103,17 +104,20 @@ class RemoteSourceTest extends TestCase {
 	// =========================================================================
 
 	public function test_constructor_strips_trailing_slash_from_url(): void {
-		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test/', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteA', 'https://siteA.test/', '', '', 'tok', 'firehose', 0 );
 		$this->assertSame( 'https://siteA.test', $remote->url() );
 	}
 
 	public function test_constructor_stores_server_id(): void {
-		$remote = new Remote_Source_Node( 'siteB', 'https://siteB.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteB', 'https://siteB.test', '', '', 'tok', 'firehose', 0 );
 		$this->assertSame( 'siteB', $remote->server_id() );
 	}
 
 	public function test_constructor_clamps_negative_partition_to_zero(): void {
-		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', -7 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', -7 );
 		// Negative partition -> 0; we can read it through current_status's URL params,
 		// but here just confirm the constructor accepted it and didn't crash.
 		$this->assertSame( 'siteA', $remote->server_id() );
@@ -125,7 +129,8 @@ class RemoteSourceTest extends TestCase {
 		// the make_node line. Verify all six positional args are joined,
 		// with the two credential slots scrubbed to `[REDACTED]` so a
 		// saved topology TSL never contains live passwords.
-		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', 'admin', 'pw', 'tok', 'firehose', 3 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteA', 'https://siteA.test', 'admin', 'pw', 'tok', 'firehose', 3 );
 		$args   = $remote->arguments();
 		$this->assertStringContainsString( 'siteA', $args );
 		$this->assertStringContainsString( 'https://siteA.test', $args );
@@ -142,7 +147,8 @@ class RemoteSourceTest extends TestCase {
 		// overrides it to scrub the two credential slots; both must
 		// survive in `[REDACTED]` form so the operator can tell whether
 		// they were set, but the raw secret must NOT leak.
-		$remote   = new Remote_Source_Node( 'siteA', 'https://siteA.test', 'admin', 'secret-pw', 'secret-tok', 'firehose', 0 );
+		$remote   = new Remote_Source_Node();
+		$remote->configure( 'siteA', 'https://siteA.test', 'admin', 'secret-pw', 'secret-tok', 'firehose', 0 );
 		$snapshot = $remote->dump_node();
 		$this->assertSame( '[REDACTED]', $snapshot['auth_password'] );
 		$this->assertSame( '[REDACTED]', $snapshot['auth_token'] );
@@ -154,7 +160,8 @@ class RemoteSourceTest extends TestCase {
 	public function test_dump_node_leaves_empty_credentials_alone(): void {
 		// Empty-string credentials stay empty (not redacted to "[REDACTED]")
 		// so the operator can tell at a glance which auth mode is in use.
-		$remote   = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', '', 'firehose', 0 );
+		$remote   = new Remote_Source_Node();
+		$remote->configure( 'siteA', 'https://siteA.test', '', '', '', 'firehose', 0 );
 		$snapshot = $remote->dump_node();
 		$this->assertSame( '', $snapshot['auth_password'] );
 		$this->assertSame( '', $snapshot['auth_token'] );
@@ -205,7 +212,9 @@ class RemoteSourceTest extends TestCase {
 			$captured[] = $msg;
 		} );
 
-		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+
+		$remote->configure( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
 		$remote->set_require_https( false );
 
 		$concat = \implode( ' ', $captured );
@@ -219,7 +228,9 @@ class RemoteSourceTest extends TestCase {
 			$captured[] = $msg;
 		} );
 
-		$remote = new Remote_Source_Node( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+
+		$remote->configure( 'siteA', 'https://siteA.test', '', '', 'tok', 'firehose', 0 );
 		$remote->set_require_https( false );
 		$first_count = \count( $captured );
 		$remote->set_require_https( false );
@@ -290,7 +301,8 @@ class RemoteSourceTest extends TestCase {
 	public function test_maybe_connect_refuses_non_https_when_required(): void {
 		Core::$now = 1000.0;
 		// Default require_https=true and a plain http:// URL.
-		$remote = new Remote_Source_Node( 'insecure', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'insecure', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
 		$opened = $this->invoke( $remote, 'maybe_connect' );
 
 		$this->assertFalse( $opened );
@@ -348,7 +360,8 @@ class RemoteSourceTest extends TestCase {
 		Core::$now = 1000.0;
 		// We can't introspect cURL headers directly without a real transfer,
 		// but we can verify the path runs cleanly with credentials.
-		$remote = new Remote_Source_Node( 'siteAuth', 'http://siteAuth.test', 'admin', 'pw', '', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteAuth', 'http://siteAuth.test', 'admin', 'pw', '', 'firehose', 0 );
 		$remote->set_require_https( false );
 		$opened = $this->invoke( $remote, 'maybe_connect' );
 		$this->assertTrue( $opened );
@@ -356,7 +369,8 @@ class RemoteSourceTest extends TestCase {
 
 	public function test_maybe_connect_with_bearer_token_only(): void {
 		Core::$now = 1000.0;
-		$remote = new Remote_Source_Node( 'siteTok', 'http://siteTok.test', '', '', 'tok-only', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteTok', 'http://siteTok.test', '', '', 'tok-only', 'firehose', 0 );
 		$remote->set_require_https( false );
 		$opened = $this->invoke( $remote, 'maybe_connect' );
 		$this->assertTrue( $opened );
@@ -790,7 +804,9 @@ class RemoteSourceTest extends TestCase {
 			}
 		);
 
-		$remote = new Remote_Source_Node( 'siteX', 'http://siteX.test', '', '', 'tok', 'firehose', 4 );
+		$remote = new Remote_Source_Node();
+
+		$remote->configure( 'siteX', 'http://siteX.test', '', '', 'tok', 'firehose', 4 );
 		$remote->name( 'remote:siteX' );
 		$remote->set_require_https( false );
 		$capture = new Capture_Sink_Node();
@@ -1158,7 +1174,8 @@ class RemoteSourceTest extends TestCase {
 	public function test_maybe_send_heartbeat_refuses_non_https_when_required(): void {
 		// require_https=true + http:// URL: the heartbeat endpoint check fails.
 		$cache = new InMemoryMemcached();
-		$remote = new Remote_Source_Node( 'http-remote', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'http-remote', 'http://insecure.test', '', '', 'tok', 'firehose', 0 );
 		$remote->name( 'remote:http-remote' );
 		$remote->set_require_https( true );
 		Core::$memd = $cache;
@@ -1173,7 +1190,8 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_maybe_send_heartbeat_posts_with_basic_auth(): void {
-		$remote = new Remote_Source_Node( 'siteHB', 'http://siteHB.test', 'admin', 'pw', '', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteHB', 'http://siteHB.test', 'admin', 'pw', '', 'firehose', 0 );
 		$remote->name( 'remote:siteHB' );
 		$remote->set_require_https( false );
 		$this->poke( $remote, 'connected', true );
@@ -1220,7 +1238,8 @@ class RemoteSourceTest extends TestCase {
 	}
 
 	public function test_maybe_send_heartbeat_posts_with_bearer_token(): void {
-		$remote = new Remote_Source_Node( 'siteTok', 'http://siteTok.test', '', '', 'bearer-tok', 'firehose', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'siteTok', 'http://siteTok.test', '', '', 'bearer-tok', 'firehose', 0 );
 		$remote->name( 'remote:siteTok' );
 		$remote->set_require_https( false );
 		$this->poke( $remote, 'connected', true );
@@ -1285,19 +1304,19 @@ class RemoteSourceTest extends TestCase {
 		$this->assertIsArray( $schema );
 		$this->assertSame( 'I/O', $schema['category'] );
 		$this->assertNotEmpty( $schema['description'] );
-		$this->assertIsArray( $schema['ctor'] );
+		$this->assertIsArray( $schema['arguments'] );
 		// 7 ctor params: server_id, url, auth_username, auth_password, auth_token, remote_topic, partition.
-		$this->assertCount( 7, $schema['ctor'] );
-		$names = \array_column( $schema['ctor'], 'name' );
+		$this->assertCount( 7, $schema['arguments'] );
+		$names = \array_column( $schema['arguments'], 'name' );
 		$this->assertSame(
 			[ 'server_id', 'url', 'auth_username', 'auth_password', 'auth_token', 'remote_topic', 'partition' ],
 			$names
 		);
 		// server_id and url are required.
-		$this->assertTrue( $schema['ctor'][0]['required'] );
-		$this->assertTrue( $schema['ctor'][1]['required'] );
+		$this->assertTrue( $schema['arguments'][0]['required'] );
+		$this->assertTrue( $schema['arguments'][1]['required'] );
 		// partition has default.
-		$this->assertSame( 0, $schema['ctor'][6]['default'] );
+		$this->assertSame( 0, $schema['arguments'][6]['default'] );
 	}
 
 	// =========================================================================
@@ -1514,5 +1533,58 @@ class RemoteSourceTest extends TestCase {
 		$this->assertCount( 1, $capture->captured );
 		$this->assertSame( 'just a string', $capture->captured[0][ Message::VALUE ] );
 		$this->assertSame( 'rid-2', $capture->captured[0][ Message::KEY ] );
+	}
+
+	// ------------------------------------------------------------------------
+	// Tachikoma-parity arguments() migration (Task 9).
+	// ------------------------------------------------------------------------
+
+	/**
+	 * No-arg ctor leaves every field at schema defaults; arguments() walks
+	 * node_schema and assigns server_id / url / auth_username / auth_password /
+	 * auth_token / remote_topic / partition from positional tokens. The
+	 * override rtrim's the URL and clamps partition to >= 0.
+	 */
+	public function test_constructible_via_no_arg_ctor_and_arguments_setter(): void {
+		$remote = new Remote_Source_Node();
+		$remote->arguments( 'siteA https://siteA.test/ admin pw tok firehose 2' );
+		$this->assertSame( 'siteA', $remote->server_id() );
+		$this->assertSame( 'https://siteA.test', $remote->url() );
+		$ref = new \ReflectionClass( $remote );
+		$this->assertSame( 'admin',    $ref->getProperty( 'auth_username' )->getValue( $remote ) );
+		$this->assertSame( 'pw',       $ref->getProperty( 'auth_password' )->getValue( $remote ) );
+		$this->assertSame( 'tok',      $ref->getProperty( 'auth_token' )->getValue( $remote ) );
+		$this->assertSame( 'firehose', $ref->getProperty( 'remote_topic' )->getValue( $remote ) );
+		$this->assertSame( 2,          $ref->getProperty( 'partition' )->getValue( $remote ) );
+	}
+
+	/**
+	 * Required tokens (server_id, url) only: optional tokens take schema
+	 * defaults (empty strings, partition 0). Override still clamps partition
+	 * and rtrims URL.
+	 */
+	public function test_arguments_setter_applies_schema_defaults_for_missing_optional_tokens(): void {
+		$remote = new Remote_Source_Node();
+		$remote->arguments( 'siteB https://siteB.test' );
+		$this->assertSame( 'siteB', $remote->server_id() );
+		$this->assertSame( 'https://siteB.test', $remote->url() );
+		$ref = new \ReflectionClass( $remote );
+		$this->assertSame( '', $ref->getProperty( 'auth_username' )->getValue( $remote ) );
+		$this->assertSame( '', $ref->getProperty( 'auth_password' )->getValue( $remote ) );
+		$this->assertSame( '', $ref->getProperty( 'auth_token' )->getValue( $remote ) );
+		$this->assertSame( '', $ref->getProperty( 'remote_topic' )->getValue( $remote ) );
+		$this->assertSame( 0,  $ref->getProperty( 'partition' )->getValue( $remote ) );
+	}
+
+	/**
+	 * arguments() override clamps partition to >= 0 and rtrims trailing
+	 * slashes from URL — mirrors the legacy ctor.
+	 */
+	public function test_arguments_setter_clamps_partition_and_rtrims_url(): void {
+		$remote = new Remote_Source_Node();
+		$remote->arguments( 'siteC https://siteC.test/ a b c topic -7' );
+		$this->assertSame( 'https://siteC.test', $remote->url() );
+		$ref = new \ReflectionClass( $remote );
+		$this->assertSame( 0, $ref->getProperty( 'partition' )->getValue( $remote ) );
 	}
 }

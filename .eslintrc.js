@@ -1,7 +1,7 @@
 // ESLint config — standalone (no @wordpress/scripts dependency).
 //
-// `import/core-modules` tells eslint-plugin-import that `@newspack-nodes/runtime`
-// resolves at runtime (build alias + jest moduleNameMapper handle resolution).
+// `import/core-modules` tells eslint-plugin-import that `@newspack-nodes/*`
+// aliases resolve at runtime (build alias + jest moduleNameMapper handle resolution).
 module.exports = {
 	root: true,
 	extends: [
@@ -21,6 +21,9 @@ module.exports = {
 		},
 	],
 	settings: {
-		'import/core-modules': [ '@newspack-nodes/runtime' ],
+		'import/core-modules': [
+			'@newspack-nodes/runtime',
+			'@newspack-nodes/debug-overlay',
+		],
 	},
 };

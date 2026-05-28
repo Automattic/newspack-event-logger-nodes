@@ -1,12 +1,12 @@
 /**
- * performance/view tests — the sliced data model for the Performance Dashboard.
+ * performance:view tests — the sliced data model for the Performance Dashboard.
  *
  * Holds four slices (overview, urls, urlDetail, requestDetail) each with its own
  * { data, loading, error }, plus lastRefresh. `fill` routes loading|result|error|
  * clear by `slice`; errors are per-slice isolated; the view owns the stateful
  * `urlDetail` incremental merge + `last_modified` dedup (moved from the
  * orchestrator's mergeUrlDetail). Every change publishes via setState('view', …),
- * read here off Core.node('performance/view').setStateCache.view.
+ * read here off Core.node('performance:view').setStateCache.view.
  */
 
 import {
@@ -29,10 +29,10 @@ const ctrl = ( value ) => {
 };
 
 // The published view model.
-const view = () => Core.node( 'performance/view' ).setStateCache.view;
+const view = () => Core.node( 'performance:view' ).setStateCache.view;
 
 test( 'publishes an initial model with four empty slices + lastRefresh null', () => {
-	createPerformanceView( 'performance/view' );
+	createPerformanceView( 'performance:view' );
 	expect( view() ).toEqual( {
 		overview: { data: null, loading: false, error: null },
 		urls: { data: [], total: 0, loading: false, error: null },
@@ -43,7 +43,7 @@ test( 'publishes an initial model with four empty slices + lastRefresh null', ()
 } );
 
 test( 'loading sets the slice loading:true and leaves the others', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill( ctrl( { action: 'loading', slice: 'overview' } ) );
 	expect( view().overview ).toEqual( {
 		data: null,
@@ -54,7 +54,7 @@ test( 'loading sets the slice loading:true and leaves the others', () => {
 } );
 
 test( 'overview result stores data, clears loading, stamps lastRefresh', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill( ctrl( { action: 'loading', slice: 'overview' } ) );
 	v.fill(
 		ctrl( {
@@ -72,7 +72,7 @@ test( 'overview result stores data, clears loading, stamps lastRefresh', () => {
 } );
 
 test( 'urls result stores data + total from the reply', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -89,7 +89,7 @@ test( 'urls result stores data + total from the reply', () => {
 } );
 
 test( 'requestDetail result stores data', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -105,7 +105,7 @@ test( 'requestDetail result stores data', () => {
 } );
 
 test( 'error on a slice sets error + clears loading, preserving prior data on OTHER slices', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -123,7 +123,7 @@ test( 'error on a slice sets error + clears loading, preserving prior data on OT
 } );
 
 test( 'urlDetail initial:true replaces and records last_modified', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -142,7 +142,7 @@ test( 'urlDetail initial:true replaces and records last_modified', () => {
 } );
 
 test( 'urlDetail non-initial with a NEW last_modified merges new rids newest-first', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -173,7 +173,7 @@ test( 'urlDetail non-initial with a NEW last_modified merges new rids newest-fir
 } );
 
 test( 'urlDetail merge caps the requests list at 500 newest-first', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	const prev = [];
 	for ( let i = 0; i < 500; i++ ) {
 		prev.push( { rid: `old-${ i }`, timestamp: i } );
@@ -203,7 +203,7 @@ test( 'urlDetail merge caps the requests list at 500 newest-first', () => {
 } );
 
 test( 'urlDetail non-initial with the SAME last_modified is a no-op (model reference unchanged)', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -232,7 +232,7 @@ test( 'urlDetail non-initial with the SAME last_modified is a no-op (model refer
 } );
 
 test( 'clear of urlDetail resets it and clears stored last_modified (next non-initial is fresh)', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -269,7 +269,7 @@ test( 'clear of urlDetail resets it and clears stored last_modified (next non-in
 } );
 
 test( 'urlDetail initial result with null data is a safe no-op (does not crash)', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	const before = view();
 	expect( () =>
 		v.fill(
@@ -286,7 +286,7 @@ test( 'urlDetail initial result with null data is a safe no-op (does not crash)'
 } );
 
 test( 'urlDetail non-initial result with null data is a safe no-op (does not crash)', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	// Seed a prior urlDetail so we can assert it survives the null payload.
 	v.fill(
 		ctrl( {
@@ -318,7 +318,7 @@ test( 'urlDetail non-initial result with null data is a safe no-op (does not cra
 } );
 
 test( 'a malformed message (no VALUE/action) is ignored', () => {
-	const v = createPerformanceView( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
 	const before = view();
 	v.fill( ctrl( undefined ) );
 	v.fill( ctrl( { slice: 'overview' } ) );
@@ -326,6 +326,6 @@ test( 'a malformed message (no VALUE/action) is ignored', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createPerformanceView( 'performance/view' );
-	expect( v.name ).toBe( 'performance/view' );
+	const v = createPerformanceView( 'performance:view' );
+	expect( v.name ).toBe( 'performance:view' );
 } );

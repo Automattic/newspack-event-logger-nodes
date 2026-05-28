@@ -757,7 +757,8 @@ class ReqgrepCommandTest extends TestCase {
 	 */
 	private function seed_partition( string $base_dir, int $partition, array $entries ): void {
 		\mkdir( "{$base_dir}/p{$partition}", 0755, true );
-		$p = new \Newspack_Nodes\Partition_Node( $base_dir, $partition );
+		$p = new \Newspack_Nodes\Partition_Node();
+		$p->arguments( "{$base_dir} {$partition}" );
 		foreach ( $entries as $entry ) {
 			$msg                       = \Newspack_Nodes\Message::new_message();
 			$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
@@ -898,7 +899,9 @@ class ReqgrepCommandTest extends TestCase {
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
 			$ref_method->setAccessible( true );
 
-			$partition = new \Newspack_Nodes\Partition_Node( $tmp, 0 );
+			$partition = new \Newspack_Nodes\Partition_Node();
+
+			$partition->arguments( "{$tmp} 0" );
 			$consumed  = $ref_method->invoke( $cmd, $partition, 0, 0, 0 );
 			$this->assertSame( 0, $consumed );
 
@@ -929,7 +932,9 @@ class ReqgrepCommandTest extends TestCase {
 			};
 			$set( 'base_dir', $tmp );
 
-			$partition  = new \Newspack_Nodes\Partition_Node( $tmp, 0 );
+			$partition = new \Newspack_Nodes\Partition_Node();
+
+			$partition->arguments( "{$tmp} 0" );
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
 			$ref_method->setAccessible( true );
 
