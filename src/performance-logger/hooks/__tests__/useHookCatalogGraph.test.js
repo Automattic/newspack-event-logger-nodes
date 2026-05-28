@@ -2,8 +2,8 @@
 /* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * useHookCatalogGraph tests — the Performance Logger hook-catalog graph clipped
- * onto the substrate's I/O boundary nodes (exospine + `_http` + `_output`,
- * `_uptime`, `_completion`, `_cwd`), plus the `hookcatalog:view` model node.
+ * onto the substrate's I/O boundary node (exospine + `_http`), plus the
+ * `hookcatalog:view` model node.
  *
  * Migrated from the bespoke `hookcatalog:command` Node to the substrate's
  * HttpOut: the hook dispatches the `hooks_registered` verb as a TM_COMMAND
@@ -36,12 +36,8 @@ import { useHookCatalogGraph } from '../useHookCatalogGraph';
 const CI = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 const VIEW = 'hookcatalog:view';
-const ALL_GRAPH_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
 // A fake CommandClient matching HttpOut's seam: postBatch returns reply
 // Messages addressed back along FROM (the server's reply pivot). The payload
@@ -90,7 +86,7 @@ beforeEach( () => {
 } );
 
 describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the I/O boundary nodes + the view, each sinking into the CI', () => {
+	test( 'mounts the backbone + _http + the view, each sinking into the CI', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useHookCatalogGraph( { isOpen: false, commandClient: client } )
@@ -102,6 +98,16 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( ci );
+		}
+	} );
+
+	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
+		const client = makeFakeClient();
+		renderHook( () =>
+			useHookCatalogGraph( { isOpen: false, commandClient: client } )
+		);
+		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 

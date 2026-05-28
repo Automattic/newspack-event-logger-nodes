@@ -2,18 +2,19 @@
 /**
  * useAggregatorAdminGraph — mounts the Configured-Servers admin node graph
  * onto the canonical rule-#2 backbone (`_command_interpreter → _router`) using
- * the substrate's I/O boundary nodes — the same ones the topology console uses,
- * minus the SSE pieces this CRUD-on-demand admin doesn't need:
+ * the substrate's HTTP I/O boundary node — the minimal mount surface a
+ * CRUD-on-demand dashboard needs:
  *
  *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
- *   _output     (Dumper — terminal output / log lines)
- *   _uptime     (uptime reply receiver)
- *   _completion (tab-completion receiver)
- *   _cwd        (current-working-directory indirection)
  *
  * Plus the application's render-model node:
  *
  *   servers:view (the view-model node React reads + the hook's pending-Promise registry)
+ *
+ * Dashboards aren't REPLs: no transcript window, no tab-completion input, no
+ * uptime display, no `cd` navigation. So `_output` / `_completion` / `_uptime` /
+ * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
+ * the debug-overlay's REPL when it opens on this page.
  *
  * Every node sinks into the CI; flow is steered by each node's `target`. The
  * hook owns the CRUD dispatch — on each call it builds a TM_COMMAND
@@ -39,11 +40,7 @@ import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	Node,
 	HttpOut,
-	Dumper,
-	Uptime,
-	Completion,
 	CommandClient,
 	newMessage,
 	TYPE,
@@ -56,12 +53,8 @@ import {
 import { createServersView } from '../nodes/serversView';
 
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 const VIEW = 'servers:view';
-const GRAPH_NODE_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+const GRAPH_NODE_NAMES = [ HTTP, VIEW ];
 
 // Monotonic per-hook-instance ID counter — message[ID] is what the view uses
 // to match a reply back to a pending Promise resolver.
@@ -119,7 +112,8 @@ export function useAggregatorAdminGraph( opts = {} ) {
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary nodes — the same ones useAggregatorStatusGraph mounts.
+		// I/O boundary node — HttpOut is the only one this CRUD-on-demand
+		// dashboard needs.
 		const http = new HttpOut();
 		http.client =
 			optsRef.current.commandClient ||
@@ -129,24 +123,6 @@ export function useAggregatorAdminGraph( opts = {} ) {
 			} );
 		http.setName( HTTP );
 		http.sink = ci;
-
-		const output = new Dumper();
-		output.setName( OUTPUT );
-		output.sink = ci;
-
-		const uptime = new Uptime();
-		uptime.setName( UPTIME );
-		uptime.sink = ci;
-
-		const completion = new Completion();
-		completion.setName( COMPLETION );
-		completion.sink = ci;
-
-		// `_cwd` is mounted for substrate uniformity (matches useAggregatorStatusGraph).
-		const cwd = new Node();
-		cwd.setName( CWD );
-		cwd.sink = ci;
-		cwd.target = `${ HTTP }/servers`;
 
 		// The application view-model node — receiver of every reply via TO=FROM pivot.
 		const view = createServersView( VIEW );
