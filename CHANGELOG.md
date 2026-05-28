@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-28
+
+### Changed
+
+- **Request Log dashboard piloted onto the substrate's `HttpOut` + `SseIn` + `Heartbeat` triad.** The bespoke `requestlog:stream` Node is deleted; `useRequestLogGraph` mounts the runtime spine (`_sse`, `_http`, `_heartbeat`, `_completion`, `_metadata`, `_uptime`, `_cwd`, `_output`) + `requestlog:route` / `requestlog:transform` / `requestlog:view`. `_sse` subscribes to `completed`; `_heartbeat` keeps the slot alive against `_http/workers` (request-scope path that bypasses the SSE demux); `requestlog:route` classifies on the connection-status marker. The pattern is Tachikoma rule #2: every node sinks into `_command_interpreter → _router` and steers flow through `target`. This is the first of seven dashboards to migrate; remaining dashboards (aggregator-admin, performance-dashboards, performance-gyroscope, performance-logger, and the Nodes-side useRawLogsGraph / useWorkerStatusGraph) are planned for the next release.
+- **Event Aggregator dashboard migrated to the same pattern (poll-only shape).** The bespoke `aggregator:poll` Node is deleted; `useAggregatorStatusGraph` mounts spine + `_http` + `aggregator:view`. Hook owns the `setInterval` that fills a `TM_COMMAND` (FROM=`aggregator:view`, TO=`_http/aggregator`) into the CI; HttpOut POSTs; the server's reply routes back via the TO=FROM pivot. No SSE since there's no subscription. Template for the remaining poll-only dashboards.
+
+### Fixed
+
+- **`tests/run-coverage.sh` guards against running as root.** `Log_Manager` refuses to run as root (Atomic permission contract); the suite was silently producing 37 false `LogManagerTest` failures when invoked via `docker exec` (default root). The script now hard-fails with a usage hint (`docker exec -u bend …`) when `id -u` is 0, and cleans the actual test artifact dir `/tmp/event-logger-nodes-test` (the old line cleaned the wrong path).
+
 ## [0.6.0] - 2026-05-27
 
 ### Changed

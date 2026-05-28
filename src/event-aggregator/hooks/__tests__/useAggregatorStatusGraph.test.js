@@ -1,42 +1,82 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * useAggregatorStatusGraph tests — the Aggregator Status dashboard graph clipped
- * onto the exospine (`mountExospine`: _command_interpreter → _router). The two
- * graph nodes (`aggregator:poll`, `aggregator:view`) are REAL (their factories
- * register them in Core); only the poll's command client is injected so the hook
- * never touches the network. EVERY node sinks into the CI and steers via `target`
- * (the router peels TO and delivers); an end-to-end poll reply routes
- * poll → view through the real router into the view model. The hook owns the poll
- * interval (NO page-visibility gating — the old AggregatorStatus didn't have any)
- * and the refresh-interval control. Mirrors useWorkerStatusGraph's tests (real
- * graph, faked command boundary).
+ * onto the substrate's I/O boundary nodes (exospine + `_http` + `_output`,
+ * `_metadata`, `_uptime`, `_completion`, `_cwd`), plus the `aggregator:view`
+ * model node. Migrated from the bespoke `aggregator:poll` Node to the
+ * substrate's HttpOut: the hook owns the setInterval and dispatches a
+ * TM_COMMAND through the CI (FROM=`aggregator:view`, TO=`_http/aggregator`,
+ * verb=`status`); the reply routes via TO=FROM back into the view node, which
+ * unwraps `value.payload` for the render model.
+ *
+ * Every node sinks into the CI (rule #2); flow is steered ONLY by each node's
+ * `target` (the router peels TO and delivers). _http.client is injected via
+ * `opts.commandClient` so the hook never touches the network. NO page-visibility
+ * gating — the old AggregatorStatus polled unconditionally.
  */
 
 import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
-import { newMessage, TIMESTAMP, VALUE, Core } from '@newspack-nodes/runtime';
+import {
+	newMessage,
+	pack,
+	TIMESTAMP,
+	TO,
+	FROM,
+	VALUE,
+	TYPE,
+	TM_COMMAND,
+	TM_RESPONSE,
+	Core,
+} from '@newspack-nodes/runtime';
 import { useAggregatorStatusGraph } from '../useAggregatorStatusGraph';
 
 const CI = '_command_interpreter';
-const POLL = 'aggregator:poll';
+const ROUTER = '_router';
+const HTTP = '_http';
+const OUTPUT = '_output';
+const UPTIME = '_uptime';
+const COMPLETION = '_completion';
+const CWD = '_cwd';
 const VIEW = 'aggregator:view';
+const ALL_GRAPH_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
 
-// A fake command client matching the poll node's seam (send → resolves a canned
-// reply); records every send + how many times it was called so we can assert the
-// immediate poll + interval ticks. The reply VALUE is a { name, payload } envelope
-// so the real unwrapCommandResponse extracts the payload as the status map.
-function makeFakeClient( payload = {}, now = null ) {
-	return {
-		calls: [],
-		send( args ) {
-			this.calls.push( args );
+// A fake CommandClient: records each batch its postBatch is given, and
+// returns a canned reply Message (or a deferred promise tests resolve later).
+// buildMessage is the real shape used by HttpOut to mint a
+// connect_worker_input — but the aggregator never targets a worker reader,
+// so it isn't exercised here; we still expose it for the seam.
+function makeFakeClient( replyPayload = {}, now = null ) {
+	const client = {
+		batches: [],
+		buildMessage( { to, verb, args = '', payload = null } ) {
 			const m = newMessage();
-			m[ VALUE ] = { name: args.verb, payload };
-			if ( null !== now ) {
-				m[ TIMESTAMP ] = now;
-			}
-			return Promise.resolve( m );
+			m[ TYPE ] = TM_COMMAND;
+			m[ TO ] = to;
+			m[ VALUE ] = { name: verb, arguments: args, payload };
+			return m;
+		},
+		postBatch( messages ) {
+			client.batches.push( messages );
+			// Mint one reply per outbound message addressed back along FROM
+			// (matches the server's reply pivot).
+			const replies = messages.map( ( m ) => {
+				const reply = newMessage();
+				reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+				reply[ TO ] = m[ FROM ];
+				reply[ VALUE ] = {
+					name: m[ VALUE ]?.name,
+					payload: replyPayload,
+				};
+				if ( null !== now ) {
+					reply[ TIMESTAMP ] = now;
+				}
+				return reply;
+			} );
+			return Promise.resolve( replies );
 		},
 	};
+	return client;
 }
 
 beforeEach( () => {
@@ -44,41 +84,42 @@ beforeEach( () => {
 	window.localStorage.clear();
 } );
 
-describe( 'useAggregatorStatusGraph — exospine wiring', () => {
-	test( 'mounts the backbone + two nodes, each sinking into the CI', () => {
+describe( 'useAggregatorStatusGraph — exospine + I/O boundary wiring', () => {
+	test( 'mounts the backbone + the six graph nodes, each sinking into the CI', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
 		const ci = Core.node( CI );
 		expect( ci ).toBeTruthy();
-		expect( Core.node( '_router' ) ).toBeTruthy();
-		for ( const n of [ POLL, VIEW ] ) {
-			expect( Core.node( n ) ).toBeTruthy();
-			expect( Core.node( n ).sink ).toBe( ci );
+		expect( Core.node( ROUTER ) ).toBeTruthy();
+		for ( const name of ALL_GRAPH_NAMES ) {
+			const node = Core.node( name );
+			expect( node ).toBeTruthy();
+			expect( node.sink ).toBe( ci );
 		}
 	} );
 
-	test( 'steers flow with the poll target, not a bespoke sink', () => {
+	test( '_http has the injected CommandClient as its client', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
-		expect( Core.node( POLL ).target ).toBe( VIEW );
-		// The poll does NOT sink directly into the view (rule #2: sink=ci only).
-		expect( Core.node( POLL ).sink ).not.toBe( Core.node( VIEW ) );
+		expect( Core.node( HTTP ).client ).toBe( client );
 	} );
 
-	test( 'fires one immediate poll on mount (status command)', () => {
+	test( 'fires one immediate poll on mount (status command via _http)', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
-		expect( client.calls.length ).toBeGreaterThanOrEqual( 1 );
-		expect( client.calls[ 0 ] ).toEqual( {
-			to: 'aggregator',
-			verb: 'status',
-		} );
+		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
+		// One Message per batch (no batching of connect_worker_input here —
+		// `_http/aggregator` is a server-CI target, not a worker reader).
+		const msg = client.batches[ 0 ][ 0 ];
+		expect( msg[ TO ] ).toBe( 'aggregator' );
+		expect( msg[ FROM ] ).toBe( VIEW );
+		expect( msg[ VALUE ].name ).toBe( 'status' );
 	} );
 
 	test( 'returns the current refresh interval (defaults to 2000)', () => {
@@ -91,7 +132,7 @@ describe( 'useAggregatorStatusGraph — exospine wiring', () => {
 } );
 
 describe( 'useAggregatorStatusGraph — end-to-end routing through the exospine', () => {
-	test( 'an immediate poll reply routes poll → view through the real router and lands in the view model', async () => {
+	test( 'an immediate poll reply routes _http → CI → router → aggregator:view and lands in the view model', async () => {
 		const status = {
 			server1: {
 				id: 'server1',
@@ -124,16 +165,14 @@ describe( 'useAggregatorStatusGraph — poll interval', () => {
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
-		const afterMount = client.calls.length;
+		const afterMount = client.batches.length;
 		act( () => {
 			jest.advanceTimersByTime( 2000 );
 		} );
-		expect( client.calls.length ).toBeGreaterThan( afterMount );
+		expect( client.batches.length ).toBeGreaterThan( afterMount );
 	} );
 
 	test( 'does NOT gate the interval on page visibility (always polls)', () => {
-		// The hook must keep polling regardless of document.hidden — the old
-		// AggregatorStatus had no visibility gating, so we must not add it.
 		Object.defineProperty( document, 'hidden', {
 			configurable: true,
 			get: () => true,
@@ -142,11 +181,11 @@ describe( 'useAggregatorStatusGraph — poll interval', () => {
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
-		const afterMount = client.calls.length;
+		const afterMount = client.batches.length;
 		act( () => {
 			jest.advanceTimersByTime( 2000 );
 		} );
-		expect( client.calls.length ).toBeGreaterThan( afterMount );
+		expect( client.batches.length ).toBeGreaterThan( afterMount );
 		delete document.hidden;
 	} );
 } );
@@ -184,34 +223,58 @@ describe( 'useAggregatorStatusGraph — refresh interval control', () => {
 } );
 
 describe( 'useAggregatorStatusGraph — teardown', () => {
-	test( 'unmount closes the poll, then unregisters the graph + the backbone', () => {
+	test( 'unmount unregisters every graph node + the backbone', () => {
 		const client = makeFakeClient();
 		const { unmount } = renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
-		const poll = Core.node( POLL );
-		const closeSpy = jest.spyOn( poll, 'close' );
 		unmount();
-		expect( closeSpy ).toHaveBeenCalled();
-		for ( const n of [ POLL, VIEW, CI, '_router' ] ) {
-			expect( Core.node( n ) ).toBeNull();
+		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
-	test( 'a poll resolving after unmount does not throw (poll closed)', async () => {
-		const client = makeFakeClient();
+	test( 'a reply resolving after unmount does not throw (sink may be gone)', async () => {
 		let resolveReply;
-		client.send = ( args ) => {
-			client.calls.push( args );
-			return new Promise( ( res ) => {
-				resolveReply = res;
-			} );
+		const client = {
+			batches: [],
+			buildMessage: ( { to, verb } ) => {
+				const m = newMessage();
+				m[ TYPE ] = TM_COMMAND;
+				m[ TO ] = to;
+				m[ VALUE ] = { name: verb, arguments: '', payload: null };
+				return m;
+			},
+			postBatch( messages ) {
+				client.batches.push( messages );
+				return new Promise( ( res ) => {
+					resolveReply = ( replies ) => res( replies );
+				} );
+			},
 		};
 		const { unmount } = renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
 		unmount();
-		expect( () => resolveReply( newMessage() ) ).not.toThrow();
+		// Resolve AFTER unmount; if the resolution path tries to fill() a
+		// detached CI it should NOT throw (HttpOut tolerates a null sink).
+		expect( () => {
+			const reply = newMessage();
+			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+			reply[ VALUE ] = { name: 'status', payload: {} };
+			resolveReply( [ reply ] );
+		} ).not.toThrow();
 		await Promise.resolve();
 	} );
+} );
+
+// Reference-only: a packed reply (the wire shape) round-trips so tests doing
+// JSONL replay (none yet for this dashboard) wouldn't need adjustment.
+test( 'pack/unpack of a TM_COMMAND reply Message preserves TO + VALUE', () => {
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+	m[ TO ] = VIEW;
+	m[ VALUE ] = { name: 'status', payload: { a: 1 } };
+	const wire = pack( m );
+	expect( typeof wire ).toBe( 'string' );
 } );

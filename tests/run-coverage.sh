@@ -12,6 +12,22 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Log_Manager refuses to run as root (permission problems for www-data
+# workers). Tests instantiate Log_Manager, so the suite fails with
+# "enabled is false" when invoked via `docker exec` (root by default).
+# Bail loudly here instead of silently running 37 false failures.
+if [ "$(id -u)" -eq 0 ]; then
+	echo "ERROR: tests/run-coverage.sh must run as a non-root user." >&2
+	echo "       Log_Manager refuses to run as root; invoke via:" >&2
+	echo "         docker exec -u bend <container> bash tests/run-coverage.sh" >&2
+	exit 1
+fi
+
+# Also clean up the directory the tests actually use. The earlier line at
+# the bottom of this script cleaned /tmp/newspack-event-logger-nodes-test,
+# but LogManagerTest writes to /tmp/event-logger-nodes-test (different).
+rm -rf /tmp/event-logger-nodes-test 2>/dev/null
+
 # Pin phpunit to the project's vendor binary rather than whatever
 # /usr/bin/phpunit happens to be. The container's system phpunit is
 # 11.x; the project pins 10.5.x in composer.json. Mixing them causes
