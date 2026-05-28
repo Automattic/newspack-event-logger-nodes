@@ -1,48 +1,45 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * Tests for HookSelectorModal — fetches hooks via the substrate
- * CommandClient and renders a category-grouped checkbox tree.
+ * Tests for HookSelectorModal — renders a category-grouped checkbox tree from
+ * the render model published by useHookCatalogGraph. Post-migration the modal
+ * is purely presentational over the hook's `{ hooksByCategory, loading }`
+ * shape, so these tests mock the hook directly. The hook's own tests
+ * (../../hooks/__tests__/useHookCatalogGraph.test.js) cover the graph wiring.
  */
 
-jest.mock( '../../../shared/utils/commandClient', () => {
-	const send = jest.fn();
-	return {
-		__esModule: true,
-		getCommandClient: jest.fn( () => ( { send } ) ),
-		__send: send,
-	};
-} );
-jest.mock( '../../../shared/utils/unwrapCommandResponse', () => ( {
+// Mock useHookCatalogGraph so the modal tests stay focused on UI behavior.
+// The hook's own tests (../../hooks/__tests__/useHookCatalogGraph.test.js)
+// cover the graph wiring. The mock stores state on `globalThis` so the
+// jest.mock factory (which cannot close over file-local variables) can read
+// it; tests update the slot before mounting.
+jest.mock( '../../hooks/useHookCatalogGraph', () => ( {
 	__esModule: true,
-	default: jest.fn( ( msg ) => msg ),
+	useHookCatalogGraph: jest.fn( ( opts ) => {
+		global.__hookcatalogLastIsOpen = opts ? opts.isOpen : undefined;
+		return (
+			global.__hookcatalogMockModel || {
+				hooksByCategory: {},
+				loading: false,
+			}
+		);
+	} ),
 } ) );
 
-// RECOMMENDED_HOOKS is captured at module load — set the global first,
-// then require() the SUT.
 beforeAll( () => {
 	window.newspackNodesRecommendedHooks = [ 'init', 'shutdown' ];
 } );
 
 let React;
 let HookSelectorModal;
-let mockSend;
-let unwrap;
 beforeAll( () => {
 	React = require( 'react' );
 	HookSelectorModal = require( '../HookSelectorModal' ).default;
-	mockSend = require( '../../../shared/utils/commandClient' ).__send;
-	unwrap = require( '../../../shared/utils/unwrapCommandResponse' ).default;
 } );
 
 const HOOKS = {
 	Lifecycle: [ 'init', 'shutdown', 'wp_loaded' ],
 	'REST API': [ 'rest_api_init' ],
 };
-
-async function flush() {
-	const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
-	await act( async () => {} );
-}
 
 describe( 'HookSelectorModal', () => {
 	const mounted = [];
@@ -59,9 +56,8 @@ describe( 'HookSelectorModal', () => {
 	}
 
 	beforeEach( () => {
-		mockSend.mockReset();
-		unwrap.mockReset();
-		unwrap.mockImplementation( ( msg ) => msg );
+		global.__hookcatalogMockModel = { hooksByCategory: {}, loading: false };
+		global.__hookcatalogLastIsOpen = undefined;
 	} );
 
 	afterEach( () => {
@@ -78,53 +74,55 @@ describe( 'HookSelectorModal', () => {
 			onSelect: jest.fn(),
 		} );
 		expect( container.textContent ).toBe( '' );
-		expect( mockSend ).not.toHaveBeenCalled();
 	} );
 
-	it( 'fetches hooks via performance.hooks_registered when opened', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'passes isOpen through to useHookCatalogGraph', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		mount( {
 			isOpen: true,
 			onClose: jest.fn(),
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		expect( mockSend ).toHaveBeenCalledWith( {
-			to: 'performance',
-			verb: 'hooks_registered',
+		expect( global.__hookcatalogLastIsOpen ).toBe( true );
+	} );
+
+	it( 'renders categories from the hook model', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect: jest.fn(),
 		} );
-		await flush();
-		// Categories render after the fetch resolves.
 		expect( document.body.textContent ).toContain( 'Lifecycle' );
 		expect( document.body.textContent ).toContain( 'REST API' );
 	} );
 
-	it( 'shows a spinner while loading', async () => {
-		let resolveSend;
-		mockSend.mockReturnValue(
-			new Promise( ( resolve ) => {
-				resolveSend = resolve;
-			} )
-		);
+	it( 'shows a spinner while loading', () => {
+		global.__hookcatalogMockModel = { hooksByCategory: {}, loading: true };
 		mount( {
 			isOpen: true,
 			onClose: jest.fn(),
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		// Before resolution the spinner copy is visible.
 		expect( document.body.textContent ).toContain(
-			'Loading registered hooks'
-		);
-		resolveSend( { hooks_by_category: HOOKS } );
-		await flush();
-		expect( document.body.textContent ).not.toContain(
 			'Loading registered hooks'
 		);
 	} );
 
-	it( 'pre-selects passed-in hooks (Apply emits exactly them)', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'pre-selects passed-in hooks (Apply emits exactly them)', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		const onSelect = jest.fn();
 		const onClose = jest.fn();
 		mount( {
@@ -133,7 +131,6 @@ describe( 'HookSelectorModal', () => {
 			selected: [ 'init' ],
 			onSelect,
 		} );
-		await flush();
 		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
 			( b ) => b.textContent.includes( 'Apply' )
 		);
@@ -145,8 +142,11 @@ describe( 'HookSelectorModal', () => {
 		expect( onClose ).toHaveBeenCalled();
 	} );
 
-	it( 'Recommended button replaces selection with recommended set', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'Recommended button replaces selection with recommended set', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		const onSelect = jest.fn();
 		mount( {
 			isOpen: true,
@@ -154,7 +154,6 @@ describe( 'HookSelectorModal', () => {
 			selected: [ 'rest_api_init' ],
 			onSelect,
 		} );
-		await flush();
 		const rec = Array.from( document.querySelectorAll( 'button' ) ).find(
 			( b ) => b.textContent === 'Recommended'
 		);
@@ -173,8 +172,11 @@ describe( 'HookSelectorModal', () => {
 		);
 	} );
 
-	it( 'expands a category and toggles individual hook checkboxes', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'expands a category and toggles individual hook checkboxes', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		const onSelect = jest.fn();
 		mount( {
 			isOpen: true,
@@ -182,8 +184,6 @@ describe( 'HookSelectorModal', () => {
 			selected: [],
 			onSelect,
 		} );
-		await flush();
-		// Click the Lifecycle category header to expand.
 		const categoryHeader = Array.from(
 			document.querySelectorAll( '.hook-selector-category-header' )
 		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
@@ -191,7 +191,6 @@ describe( 'HookSelectorModal', () => {
 		act( () => {
 			categoryHeader.click();
 		} );
-		// Inner hook checkboxes appear.
 		const initCheckbox = document.querySelector( '#hook-init' );
 		expect( initCheckbox ).toBeTruthy();
 		act( () => {
@@ -206,8 +205,11 @@ describe( 'HookSelectorModal', () => {
 		expect( onSelect ).toHaveBeenCalledWith( [ 'init' ] );
 	} );
 
-	it( 'Select All adds visible hooks; Clear Matches removes filtered subset', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'Select All adds visible hooks; Clear Matches removes filtered subset', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		const onSelect = jest.fn();
 		mount( {
 			isOpen: true,
@@ -215,9 +217,7 @@ describe( 'HookSelectorModal', () => {
 			selected: [],
 			onSelect,
 		} );
-		await flush();
 		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
-		// Click "Select All" → selects every hook.
 		const selectAll = Array.from(
 			document.querySelectorAll( 'button' )
 		).find( ( b ) => /Select All|Select Matches/.test( b.textContent ) );
@@ -230,7 +230,6 @@ describe( 'HookSelectorModal', () => {
 		act( () => {
 			apply.click();
 		} );
-		// Order may differ; check membership.
 		const args = onSelect.mock.calls[ 0 ][ 0 ];
 		expect( args ).toEqual(
 			expect.arrayContaining( [
@@ -242,8 +241,11 @@ describe( 'HookSelectorModal', () => {
 		);
 	} );
 
-	it( 'unchecks a pre-selected hook on click; Clear All wipes everything', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'unchecks a pre-selected hook on click; Clear All wipes everything', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		const onSelect = jest.fn();
 		mount( {
 			isOpen: true,
@@ -251,21 +253,17 @@ describe( 'HookSelectorModal', () => {
 			selected: [ 'init', 'shutdown', 'wp_loaded' ],
 			onSelect,
 		} );
-		await flush();
 		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
-		// Expand Lifecycle.
 		const header = Array.from(
 			document.querySelectorAll( '.hook-selector-category-header' )
 		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
 		act( () => {
 			header.click();
 		} );
-		// Uncheck "init" by clicking its checkbox.
 		const initCheckbox = document.querySelector( '#hook-init' );
 		act( () => {
 			initCheckbox.click();
 		} );
-		// Click "Clear All" → empties selection.
 		const clearAll = Array.from(
 			document.querySelectorAll( 'button' )
 		).find( ( b ) => /Clear All|Clear Matches/.test( b.textContent ) );
@@ -281,15 +279,17 @@ describe( 'HookSelectorModal', () => {
 		expect( onSelect ).toHaveBeenCalledWith( [] );
 	} );
 
-	it( 'collapses an expanded category when its header is clicked twice', async () => {
-		mockSend.mockResolvedValue( { hooks_by_category: HOOKS } );
+	it( 'collapses an expanded category when its header is clicked twice', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
 		mount( {
 			isOpen: true,
 			onClose: jest.fn(),
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		await flush();
 		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
 		const header = Array.from(
 			document.querySelectorAll( '.hook-selector-category-header' )
@@ -304,15 +304,14 @@ describe( 'HookSelectorModal', () => {
 		expect( document.querySelector( '#hook-init' ) ).toBeNull();
 	} );
 
-	it( 'falls back to an empty category map when fetch rejects', async () => {
-		mockSend.mockRejectedValue( new Error( 'boom' ) );
+	it( 'renders an empty modal when the hook returns an empty map', () => {
+		global.__hookcatalogMockModel = { hooksByCategory: {}, loading: false };
 		mount( {
 			isOpen: true,
 			onClose: jest.fn(),
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		await flush();
 		// No category names from HOOKS appear.
 		expect( document.body.textContent ).not.toContain( 'Lifecycle' );
 	} );
