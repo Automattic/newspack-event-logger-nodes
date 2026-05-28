@@ -1,19 +1,27 @@
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * aggregator:view tests — owns the Aggregator Status view model.
  *
- * The poll node emits a TM_STRUCT `{ action:'status', status, now }` (or
- * `{ action:'error', error }`); this node turns the raw `{ server_id:{} }` status
- * map into the render model — `servers` (array via Object.values), `serverNow`,
- * `connectedCount` / `totalCount`, `error`, `loading`, `lastRefresh` — and
- * publishes it via `setState('view', model)`. The React view reads it with
- * `useNodeState('aggregator:view','view')`. The map→array + connected-count
- * derivation moved here verbatim from AggregatorStatus's render.
+ * Post-migration to `_http`/CI routing, the view's `fill()` receives the raw
+ * reply Message directly from the substrate's router (TO=FROM pivot from the
+ * server): TM_COMMAND|TM_RESPONSE carrying `{ name, payload }` in VALUE and
+ * the server's snapshot clock in TIMESTAMP. The view unwraps `value.payload`
+ * (the same pattern Metadata uses), derives `servers` (Object.values),
+ * `connectedCount`, `totalCount`, and stamps `serverNow` from TIMESTAMP +
+ * `lastRefresh` from the browser clock. TM_ERROR replies surface as an
+ * `error` on the model and clear `loading` (prior `servers` preserved).
+ *
+ * The render model is published via `setState('view', model)`; the React view
+ * reads it with `useNodeState('aggregator:view','view')`.
  */
 
 import {
+	TIMESTAMP,
 	VALUE,
 	TYPE,
-	TM_STRUCT,
+	TM_COMMAND,
+	TM_RESPONSE,
+	TM_ERROR,
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
@@ -22,11 +30,23 @@ import { createAggregatorView } from '../aggregatorView';
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// A control message: TM_STRUCT carrying { action, ... }.
-function controlMsg( payload ) {
+// A reply Message as the server emits one (the format HttpOut feeds back into
+// the CI: TM_COMMAND|TM_RESPONSE carrying `{ name, payload }` in VALUE).
+function replyMsg( payload, now = null ) {
 	const m = newMessage();
-	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = payload;
+	m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+	m[ VALUE ] = { name: 'status', payload };
+	if ( null !== now ) {
+		m[ TIMESTAMP ] = now;
+	}
+	return m;
+}
+
+// A TM_ERROR reply Message (the substrate emits this when a verb throws).
+function errorMsg( errorString ) {
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND | TM_RESPONSE | TM_ERROR;
+	m[ VALUE ] = { name: 'status', payload: errorString };
 	return m;
 }
 
@@ -57,9 +77,9 @@ test( 'publishes an initial loading model on construction', () => {
 	} );
 } );
 
-test( 'a status control converts the server map to an array of servers', () => {
+test( 'a reply Message converts the server map (value.payload) to an array of servers', () => {
 	const v = createAggregatorView( 'aggregator:view' );
-	v.fill( controlMsg( { action: 'status', status: SAMPLE, now: 100 } ) );
+	v.fill( replyMsg( SAMPLE, 100 ) );
 	const model = v.setStateCache.view;
 	expect( Array.isArray( model.servers ) ).toBe( true );
 	expect( model.servers ).toHaveLength( 2 );
@@ -69,70 +89,75 @@ test( 'a status control converts the server map to an array of servers', () => {
 	] );
 } );
 
-test( 'a status control stores serverNow from the poll', () => {
+test( 'a reply Message stores serverNow from its TIMESTAMP', () => {
 	const v = createAggregatorView( 'aggregator:view' );
-	v.fill(
-		controlMsg( { action: 'status', status: SAMPLE, now: 1748960000 } )
-	);
+	v.fill( replyMsg( SAMPLE, 1748960000 ) );
 	expect( v.setStateCache.view.serverNow ).toBe( 1748960000 );
 } );
 
 test( 'computes connectedCount (servers with >=1 connected partition) and totalCount', () => {
 	const v = createAggregatorView( 'aggregator:view' );
-	v.fill( controlMsg( { action: 'status', status: SAMPLE, now: 1 } ) );
+	v.fill( replyMsg( SAMPLE, 1 ) );
 	const model = v.setStateCache.view;
-	// Only server1 has a connected partition.
 	expect( model.connectedCount ).toBe( 1 );
 	expect( model.totalCount ).toBe( 2 );
 } );
 
-test( 'a status control clears loading and any prior error', () => {
+test( 'a reply Message clears loading and any prior error', () => {
 	const v = createAggregatorView( 'aggregator:view' );
-	v.fill( controlMsg( { action: 'error', error: 'boom' } ) );
+	v.fill( errorMsg( 'boom' ) );
 	expect( v.setStateCache.view.error ).toBe( 'boom' );
-	v.fill( controlMsg( { action: 'status', status: SAMPLE, now: 1 } ) );
+	v.fill( replyMsg( SAMPLE, 1 ) );
 	expect( v.setStateCache.view.loading ).toBe( false );
 	expect( v.setStateCache.view.error ).toBeNull();
 } );
 
-test( 'a status control sets lastRefresh (a browser-clock ms number)', () => {
+test( 'a reply Message sets lastRefresh (a browser-clock ms number)', () => {
 	const v = createAggregatorView( 'aggregator:view' );
 	const before = Date.now();
-	v.fill( controlMsg( { action: 'status', status: SAMPLE, now: 1 } ) );
+	v.fill( replyMsg( SAMPLE, 1 ) );
 	const { lastRefresh } = v.setStateCache.view;
 	expect( typeof lastRefresh ).toBe( 'number' );
 	expect( lastRefresh ).toBeGreaterThanOrEqual( before );
 } );
 
-test( 'an empty status map yields an empty servers array, connected 0 / total 0', () => {
+test( 'an empty payload yields an empty servers array, connected 0 / total 0', () => {
 	const v = createAggregatorView( 'aggregator:view' );
-	v.fill( controlMsg( { action: 'status', status: {}, now: 1 } ) );
+	v.fill( replyMsg( {}, 1 ) );
 	const model = v.setStateCache.view;
 	expect( model.servers ).toEqual( [] );
 	expect( model.connectedCount ).toBe( 0 );
 	expect( model.totalCount ).toBe( 0 );
 } );
 
-test( 'an error control sets the error and clears loading (servers untouched)', () => {
+test( 'a TM_ERROR reply sets the error string and clears loading (servers untouched)', () => {
 	const v = createAggregatorView( 'aggregator:view' );
-	v.fill( controlMsg( { action: 'status', status: SAMPLE, now: 1 } ) );
-	v.fill( controlMsg( { action: 'error', error: 'aggregator down' } ) );
+	v.fill( replyMsg( SAMPLE, 1 ) );
+	v.fill( errorMsg( 'aggregator down' ) );
 	const model = v.setStateCache.view;
 	expect( model.error ).toBe( 'aggregator down' );
 	expect( model.loading ).toBe( false );
-	// Prior servers are preserved across a transient error (matches the old
+	// Prior servers preserved across a transient error (parity with the old
 	// fetchStatus catch, which only set error and never cleared servers).
 	expect( model.servers ).toHaveLength( 2 );
 } );
 
-test( 'ignores a message with no action', () => {
+test( 'a TM_ERROR reply with no payload uses a default error string', () => {
+	const v = createAggregatorView( 'aggregator:view' );
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND | TM_RESPONSE | TM_ERROR;
+	m[ VALUE ] = { name: 'status', payload: null };
+	v.fill( m );
+	expect( v.setStateCache.view.error ).toMatch( /Failed|error/i );
+	expect( v.setStateCache.view.loading ).toBe( false );
+} );
+
+test( 'ignores a message with no VALUE', () => {
 	const v = createAggregatorView( 'aggregator:view' );
 	const initial = v.setStateCache.view;
 	const m = newMessage();
-	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = { status: SAMPLE };
+	// No VALUE / TYPE — pure noise.
 	v.fill( m );
-	// Unchanged: still the initial loading model.
 	expect( v.setStateCache.view ).toBe( initial );
 } );
 

@@ -1,38 +1,70 @@
 /* global localStorage */
 /**
  * useAggregatorStatusGraph — mounts the Aggregator Status dashboard node graph
- * clipped onto the exospine (the canonical rule-#2 backbone `_command_interpreter
- * → _router`). On mount it builds two nodes — `aggregator:poll` (the status-command
- * transport) and `aggregator:view` (the render model React reads). EVERY node sinks
- * into the CI; flow is steered ONLY by each node's `target` (the router peels TO
- * and delivers): the poll targets the view (the view node does the map→array +
- * connected-count derivation, so no separate transform node is needed). There is
- * no bespoke `poll.sink=view` wiring. It fires one immediate `poll()`. The view
- * publishes its state via `setState('view', …)`; the React view reads it separately
- * with `useNodeState('aggregator:view','view')`.
+ * onto the canonical rule-#2 backbone (`_command_interpreter → _router`) using
+ * the substrate's I/O boundary nodes — the same ones the topology console uses,
+ * minus the SSE pieces this poll-only dashboard doesn't need:
  *
- * The hook OWNS the poll interval: a setInterval at the current refresh ms that
- * fires `poll.poll()`. It is NOT gated on page visibility — the old
- * AggregatorStatus polled unconditionally, so this preserves that exactly. It
- * re-times when the interval changes and clears on unmount. (The 1s "ago" tick
- * that refreshes relative timestamps stays in the thin view — pure display.)
+ *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _output     (Dumper — terminal output / log lines)
+ *   _uptime     (uptime reply receiver)
+ *   _completion (tab-completion receiver)
+ *   _cwd        (current-working-directory indirection)
  *
- * Returns the thin control callbacks the view calls — `setRefreshInterval`
- * (persists to localStorage + re-times the interval) and the current
- * `refreshInterval`. There are NO action verbs (the old AggregatorStatus had no
- * restart/refresh buttons — only the cadence selector). Torn down on unmount: the
- * interval is cleared, the poll node is closed (cancel any in-flight poll) BEFORE
- * both nodes are unregistered from Core.
+ * (`_metadata` is omitted: it's only used by the topology console for dump_metadata
+ * replies, isn't exported from the substrate's runtime index, and this dashboard
+ * doesn't emit dump_metadata.)
  *
- * The command boundary is injectable: tests pass `opts.commandClient` (threaded
- * to the poll node) so the hook never touches the network. Production lazily
- * defaults to the shared CommandClient singleton inside the poll node.
+ * Plus the application's render-model node:
+ *
+ *   aggregator:view (the view-model node the React view reads)
+ *
+ * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * hook owns the poll setInterval — on every tick it builds a TM_COMMAND
+ * (FROM=`aggregator:view`, TO=`_http/aggregator`, verb=`status`) and fills it
+ * into the CI. The router peels `_http`, HttpOut POSTs the command, the server
+ * pivots the reply TO=FROM, the router peels `aggregator:view`, and the view
+ * unwraps the payload into its render model. No bespoke `aggregator:poll` node.
+ *
+ * NOT gated on page visibility — the old AggregatorStatus polled
+ * unconditionally, so the migration preserves that exactly. The 1s "ago" tick
+ * that refreshes relative timestamps stays in the thin view — pure display.
+ *
+ * The command boundary is injectable: tests pass `opts.commandClient` (assigned
+ * to `_http.client`) so the hook never touches the network. Production lazily
+ * defaults to the shared CommandClient singleton.
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
-import { Core, mountExospine } from '@newspack-nodes/runtime';
-import { createAggregatorPoll } from '../nodes/aggregatorPoll';
+import {
+	Core,
+	mountExospine,
+	Node,
+	HttpOut,
+	Dumper,
+	Uptime,
+	Completion,
+	CommandClient,
+	newMessage,
+	TYPE,
+	TO,
+	FROM,
+	VALUE,
+	TM_COMMAND,
+} from '@newspack-nodes/runtime';
 import { createAggregatorView } from '../nodes/aggregatorView';
+
+// The I/O boundary nodes mounted from the substrate runtime.
+const HTTP = '_http';
+const OUTPUT = '_output';
+const UPTIME = '_uptime';
+const COMPLETION = '_completion';
+const CWD = '_cwd';
+// The application's render-model node.
+const VIEW = 'aggregator:view';
+// Every named node this graph mounts — unregistered on teardown (the exospine
+// nodes are removed separately by teardownSpine()).
+const GRAPH_NODE_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
 
 // Refresh-interval options offered to the user (the select in the dashboard).
 export const REFRESH_OPTIONS = [
@@ -44,13 +76,6 @@ export const REFRESH_OPTIONS = [
 
 export const DEFAULT_REFRESH_MS = '2000';
 const REFRESH_KEY = 'aggregator-status-refresh';
-
-// Every named node this graph mounts — unregistered on teardown (the exospine
-// nodes are removed separately by its own teardown()). Names use a colon, not a
-// slash: the router peels TO on '/', so a '/' in a node name would misroute.
-const POLL = 'aggregator:poll';
-const VIEW = 'aggregator:view';
-const GRAPH_NODE_NAMES = [ POLL, VIEW ];
 
 /**
  * Resolve the initial refresh interval from localStorage (matches the old
@@ -68,67 +93,107 @@ function initialRefresh() {
 }
 
 /**
+ * Build the poll TM_COMMAND: FROM=`aggregator:view` so the server's reply pivot
+ * lands on the view; TO=`_http/aggregator` so the router peels `_http` and
+ * HttpOut POSTs the bare `aggregator.status` command (no worker indirection).
+ *
+ * @return {Array} A 7-field positional Message.
+ */
+function buildPollMessage() {
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND;
+	m[ FROM ] = VIEW;
+	m[ TO ] = `${ HTTP }/aggregator`;
+	m[ VALUE ] = { name: 'status', arguments: '', payload: null };
+	return m;
+}
+
+/**
  * @param {Object} [opts]               Options (testing seams).
- * @param {Object} [opts.commandClient] Command-client seam threaded to the poll
- *                                      node; defaults to the shared singleton.
+ * @param {Object} [opts.commandClient] CommandClient seam assigned to `_http.client`;
+ *                                      defaults to a freshly-constructed CommandClient.
  * @return {{ setRefreshInterval: Function, refreshInterval: string }} Control
  *   callbacks for the thin React view (the model is read via useNodeState).
  */
 export function useAggregatorStatusGraph( opts = {} ) {
-	const { commandClient } = opts;
+	const optsRef = useRef( opts );
+	optsRef.current = opts;
 
 	// The persisted refresh interval (string ms); seeds from localStorage.
 	const [ refreshInterval, setRefreshIntervalState ] =
 		useState( initialRefresh );
 
-	// Stash the latest command client so the mount effect reads it without
-	// re-subscribing (it only runs once).
-	const commandClientRef = useRef( commandClient );
-	commandClientRef.current = commandClient;
+	// Live CI handle for the poll-interval effect.
+	const ciRef = useRef( null );
 
-	// Live poll-node handle for the interval effect.
-	const pollRef = useRef( null );
-
-	// Flipped true once the graph (and its view node) is mounted. The mount
-	// effect runs AFTER the first render, by which point useNodeState has already
-	// captured a null view node and bailed; setting this state forces the
-	// consumer to re-render so useNodeState re-subscribes to the now-registered
-	// view node and reads the published model. Without it the dashboard stays
-	// stuck on the loading placeholder. Mirrors useWorkerStatusGraph's setViewReady.
+	// Flipped true once the graph (and its view node) is mounted, so the React
+	// view's useNodeState re-subscribes to the now-registered view node.
 	const [ , setViewReady ] = useState( false );
 
 	// Mount the graph once: clip it onto the exospine, then fire one immediate poll.
 	useEffect( () => {
+		const data =
+			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		const poll = createAggregatorPoll( POLL, {
-			commandClient: commandClientRef.current,
-		} );
-		const view = createAggregatorView( VIEW );
+		// I/O boundary nodes — the same ones useConsoleGraph mounts (minus _sse /
+		// _heartbeat, which this poll-only dashboard doesn't need).
+		const http = new HttpOut();
+		http.client =
+			optsRef.current.commandClient ||
+			new CommandClient( {
+				baseUrl: data.restUrl || '/wp-json/',
+				nonce: data.nonce || '',
+			} );
+		http.setName( HTTP );
+		http.sink = ci;
 
-		// Rule #2: every node sinks into the CI; flow is steered by `target`.
-		poll.sink = ci;
-		poll.target = VIEW;
+		const output = new Dumper();
+		output.setName( OUTPUT );
+		output.sink = ci;
+
+		const uptime = new Uptime();
+		uptime.setName( UPTIME );
+		uptime.sink = ci;
+
+		const completion = new Completion();
+		completion.setName( COMPLETION );
+		completion.sink = ci;
+
+		// `_cwd` is a plain Node — when a poll addresses it, base Node.fill
+		// re-stamps `_cwd.target` into TO (or leaves it empty for the local root).
+		// Not exercised by this dashboard's poll, but mounted for substrate
+		// uniformity (the topology console's pattern). Default cwd points at the
+		// aggregator endpoint so the substrate convention "polls target _cwd" still
+		// resolves to a real address even if a future caller leans on it.
+		const cwd = new Node();
+		cwd.setName( CWD );
+		cwd.sink = ci;
+		cwd.target = `${ HTTP }/aggregator`;
+
+		// The application view-model node — the receiver of the poll reply via the
+		// server's TO=FROM pivot.
+		const view = createAggregatorView( VIEW );
 		view.sink = ci;
-		pollRef.current = poll;
+
+		ciRef.current = ci;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
 		setViewReady( true );
-		poll.poll();
+
+		// Fire one immediate poll: the canonical "everything sinks into the CI"
+		// path — CI forwards (non-command, non-empty-TO) to router → router peels
+		// `_http` → HttpOut.fill POSTs the command.
+		ci.fill( buildPollMessage() );
 
 		return () => {
-			// Close the in-flight-cancel-owning poll node first BEFORE
-			// unregistering — mirrors useWorkerStatusGraph calling poll.close()
-			// before unregister. Unregister the graph nodes, THEN tear down the
-			// exospine (which removes the CI + router).
-			poll.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
 			teardownSpine();
-			pollRef.current = null;
-			setViewReady( false );
+			ciRef.current = null;
 		};
 	}, [] );
 
@@ -142,8 +207,8 @@ export function useAggregatorStatusGraph( opts = {} ) {
 	useEffect( () => {
 		const intervalMs = parseInt( refreshInterval, 10 );
 		const id = setInterval( () => {
-			if ( pollRef.current ) {
-				pollRef.current.poll();
+			if ( ciRef.current ) {
+				ciRef.current.fill( buildPollMessage() );
 			}
 		}, intervalMs );
 		return () => clearInterval( id );
