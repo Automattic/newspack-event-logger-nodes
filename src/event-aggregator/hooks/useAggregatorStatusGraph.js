@@ -2,22 +2,19 @@
 /**
  * useAggregatorStatusGraph — mounts the Aggregator Status dashboard node graph
  * onto the canonical rule-#2 backbone (`_command_interpreter → _router`) using
- * the substrate's I/O boundary nodes — the same ones the topology console uses,
- * minus the SSE pieces this poll-only dashboard doesn't need:
+ * the substrate's HTTP I/O boundary node — the minimal mount surface a
+ * poll-only dashboard needs:
  *
  *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
- *   _output     (Dumper — terminal output / log lines)
- *   _uptime     (uptime reply receiver)
- *   _completion (tab-completion receiver)
- *   _cwd        (current-working-directory indirection)
- *
- * (`_metadata` is omitted: it's only used by the topology console for dump_metadata
- * replies, isn't exported from the substrate's runtime index, and this dashboard
- * doesn't emit dump_metadata.)
  *
  * Plus the application's render-model node:
  *
  *   aggregator:view (the view-model node the React view reads)
+ *
+ * Dashboards aren't REPLs: no transcript window, no tab-completion input, no
+ * uptime display, no `cd` navigation. So `_output` / `_completion` / `_uptime` /
+ * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
+ * the debug-overlay's REPL when it opens on this page.
  *
  * Every node sinks into the CI; flow is steered by each node's `target`. The
  * hook owns the poll setInterval — on every tick it builds a TM_COMMAND
@@ -39,11 +36,7 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	Node,
 	HttpOut,
-	Dumper,
-	Uptime,
-	Completion,
 	CommandClient,
 	newMessage,
 	TYPE,
@@ -54,17 +47,13 @@ import {
 } from '@newspack-nodes/runtime';
 import { createAggregatorView } from '../nodes/aggregatorView';
 
-// The I/O boundary nodes mounted from the substrate runtime.
+// The I/O boundary node mounted from the substrate runtime.
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 // The application's render-model node.
 const VIEW = 'aggregator:view';
 // Every named node this graph mounts — unregistered on teardown (the exospine
 // nodes are removed separately by teardownSpine()).
-const GRAPH_NODE_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+const GRAPH_NODE_NAMES = [ HTTP, VIEW ];
 
 // Refresh-interval options offered to the user (the select in the dashboard).
 export const REFRESH_OPTIONS = [
@@ -138,8 +127,8 @@ export function useAggregatorStatusGraph( opts = {} ) {
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary nodes — the same ones useConsoleGraph mounts (minus _sse /
-		// _heartbeat, which this poll-only dashboard doesn't need).
+		// I/O boundary node — HttpOut is the only one this poll-only dashboard
+		// needs.
 		const http = new HttpOut();
 		http.client =
 			optsRef.current.commandClient ||
@@ -149,29 +138,6 @@ export function useAggregatorStatusGraph( opts = {} ) {
 			} );
 		http.setName( HTTP );
 		http.sink = ci;
-
-		const output = new Dumper();
-		output.setName( OUTPUT );
-		output.sink = ci;
-
-		const uptime = new Uptime();
-		uptime.setName( UPTIME );
-		uptime.sink = ci;
-
-		const completion = new Completion();
-		completion.setName( COMPLETION );
-		completion.sink = ci;
-
-		// `_cwd` is a plain Node — when a poll addresses it, base Node.fill
-		// re-stamps `_cwd.target` into TO (or leaves it empty for the local root).
-		// Not exercised by this dashboard's poll, but mounted for substrate
-		// uniformity (the topology console's pattern). Default cwd points at the
-		// aggregator endpoint so the substrate convention "polls target _cwd" still
-		// resolves to a real address even if a future caller leans on it.
-		const cwd = new Node();
-		cwd.setName( CWD );
-		cwd.sink = ci;
-		cwd.target = `${ HTTP }/aggregator`;
 
 		// The application view-model node — the receiver of the poll reply via the
 		// server's TO=FROM pivot.

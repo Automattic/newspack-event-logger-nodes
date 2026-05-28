@@ -2,18 +2,18 @@
 /**
  * usePerformanceGraph — mounts the Performance Dashboard's data graph onto the
  * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
- * substrate's I/O boundary nodes — the same ones useAggregatorAdminGraph
- * mounts, plus the application's `performance:command` (slice-tagging
- * command-builder) and `performance:view` (render model + pending-Promise
- * registry):
+ * substrate's HTTP I/O boundary node, plus the application's
+ * `performance:command` (slice-tagging command-builder) and `performance:view`
+ * (render model + pending-Promise registry):
  *
  *   _http              (HttpOut — POST /command boundary; .client = CommandClient)
- *   _output            (Dumper — terminal output / log lines)
- *   _uptime            (uptime reply receiver)
- *   _completion        (tab-completion receiver)
- *   _cwd               (cwd indirection — substrate uniformity)
  *   performance:command (slice-tagging command-builder)
  *   performance:view    (the view-model node React reads + pending Map)
+ *
+ * Dashboards aren't REPLs: no transcript window, no tab-completion input, no
+ * uptime display, no `cd` navigation. So `_output` / `_completion` / `_uptime` /
+ * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
+ * the debug-overlay's REPL when it opens on this page.
  *
  * Every node sinks into the CI (rule #2); flow is steered by each node's
  * `target`. The hook owns the orchestration effects (initial load, refresh
@@ -45,11 +45,7 @@ import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	Node,
 	HttpOut,
-	Dumper,
-	Uptime,
-	Completion,
 	CommandClient,
 	newMessage,
 	TYPE,
@@ -62,25 +58,13 @@ import usePageVisibility from '../../shared/hooks/usePageVisibility';
 import { getCommandClient } from '../../shared/utils/commandClient';
 import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
 
-// I/O boundary nodes.
+// I/O boundary node.
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 // Application nodes. Names use a colon, not a slash: the router peels TO on
 // '/', so a '/' in a node name would misroute.
 const COMMAND = 'performance:command';
 const VIEW = 'performance:view';
-const GRAPH_NODE_NAMES = [
-	HTTP,
-	OUTPUT,
-	UPTIME,
-	COMPLETION,
-	CWD,
-	COMMAND,
-	VIEW,
-];
+const GRAPH_NODE_NAMES = [ HTTP, COMMAND, VIEW ];
 
 // Dedup `server` (always — feeds the filter dropdown) with the active chart
 // dimension into one comma arg. < 2 dims collapses the controller's nested
@@ -137,7 +121,7 @@ export function usePerformanceGraph( opts = {} ) {
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary nodes — the same ones useAggregatorAdminGraph mounts.
+		// I/O boundary node — HttpOut is the only one this dashboard needs.
 		const http = new HttpOut();
 		http.client =
 			optsRef.current.commandClient ||
@@ -147,24 +131,6 @@ export function usePerformanceGraph( opts = {} ) {
 			} );
 		http.setName( HTTP );
 		http.sink = ci;
-
-		const output = new Dumper();
-		output.setName( OUTPUT );
-		output.sink = ci;
-
-		const uptime = new Uptime();
-		uptime.setName( UPTIME );
-		uptime.sink = ci;
-
-		const completion = new Completion();
-		completion.setName( COMPLETION );
-		completion.sink = ci;
-
-		// `_cwd` is mounted for substrate uniformity (matches useAggregatorAdminGraph).
-		const cwd = new Node();
-		cwd.setName( CWD );
-		cwd.sink = ci;
-		cwd.target = `${ HTTP }/performance`;
 
 		// The application view-model node — receiver of every reply via TO=FROM pivot.
 		const view = createPerformanceView( VIEW );
