@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-28
+
+### Tests
+
+- **Two under-80% files lifted above the coverage floor.** `aggregator-admin/index.js` (0% → 100%) via mount-entrypoint tests in the shared `mount-entrypoints` suite (verifies mount-on-container + no-op-without-container). `performance-request-log/RequestStream.js` (78.3% → 97.5%) via 7 real-branch tests covering `formatTime` falsy-timestamp, `toggleColumn` add/remove, rAF `lastEventTime` propagation, `handleScroll` save/restore branches, the rAF scroll-position maintain branch, and the rAF offset snap-to-zero threshold. All exercise observable DOM/state changes through real scroll/click events — no mock-only assertions. Two architecturally-unreachable defensive branches left uncovered (StreamRow switch default; handleScroll `isAdjustingScrollRef` early-return — both flagged with rationales).
+
+### Notes
+
+- CI workflow infrastructure changes only — no runtime behavior change in this plugin's own code. The debug overlay it inlines from `@newspack-nodes/runtime` picks up that runtime's v0.8.1 fixes (atomic `sync-shared`, z-index bump, debug overlay drops dead `_uptime`).
+
 ## [0.8.0] - 2026-05-28
 
 ### Changed
