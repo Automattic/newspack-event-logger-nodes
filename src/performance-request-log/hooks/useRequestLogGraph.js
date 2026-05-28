@@ -116,11 +116,10 @@ export function useRequestLogGraph( opts = {} ) {
 		const heartbeat = new Heartbeat();
 		heartbeat.setName( HEARTBEAT );
 		heartbeat.sink = ci;
-		// `_sse/workers` — outgoing routes via _sse for the pid-pivot
-		// (REPLY_NODES wraps FROM=`_heartbeat` into `_sse:{pid}/_heartbeat` and
-		// prepends `_http/` to TO so the server's HTTP_Filter can demux the
-		// reply back to this session). Matches useConsoleGraph.js exactly.
-		heartbeat.target = `${ SSE }/workers`;
+		// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
+		// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
+		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
+		heartbeat.target = `${ HTTP }/workers`;
 
 		// Dashboard chain — unchanged factories.
 		const route = createRequestLogRoute( ROUTE, {
