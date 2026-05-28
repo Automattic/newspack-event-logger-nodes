@@ -81,7 +81,8 @@ class Events_CI_Node extends Service_CI_Node {
 						$scanned = 0;
 
 						for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
-							$partition = new Partition_Node( "{$log_base}/firehose.log", $p );
+							$partition = new Partition_Node();
+							$partition->arguments( "{$log_base}/firehose.log {$p}" );
 							$partition->scan_index(
 								function ( $seg, $off ) use ( &$entries, &$scanned, $limit, $partition, $p ) {
 									++$scanned;

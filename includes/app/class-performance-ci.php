@@ -1404,7 +1404,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		$requests      = [];
 		$entries_count = 0;
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+			$partition = new Partition_Node();
+			$partition->arguments( "{$log_base}/requests.log {$p}" );
+			$partition->with_index(
 				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$partition->scan_index(
@@ -1460,7 +1462,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function find_request_index_entry( string $log_base, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
-		$requests = ( new Partition_Node( "{$log_base}/requests.log", $partition ) )->with_index(
+		$requests = new Partition_Node();
+		$requests->arguments( "{$log_base}/requests.log {$partition}" );
+		$requests->with_index(
 			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 		);
 		$requests->scan_index(
@@ -1493,7 +1497,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function find_request_in_partition( string $log_base, int $partition, string $rid, int $num_partitions ): ?array {
 		$result        = null;
 		$entries_count = 0;
-		$requests      = ( new Partition_Node( "{$log_base}/requests.log", $partition ) )->with_index(
+		$requests = new Partition_Node();
+		$requests->arguments( "{$log_base}/requests.log {$partition}" );
+		$requests->with_index(
 			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 		);
 		$requests->scan_index(
@@ -1555,7 +1561,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		$scanned = 0;
 
 		for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
-			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+			$partition = new Partition_Node();
+			$partition->arguments( "{$log_base}/requests.log {$p}" );
+			$partition->with_index(
 				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$partition->scan_index(
@@ -1608,7 +1616,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		$scanned = 0;
 
 		for ( $p = 0; $p < $num_partitions && null === $result; $p++ ) {
-			$partition = ( new Partition_Node( "{$log_base}/requests.log", $p ) )->with_index(
+			$partition = new Partition_Node();
+			$partition->arguments( "{$log_base}/requests.log {$p}" );
+			$partition->with_index(
 				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$partition->scan_index(
@@ -1652,7 +1662,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function find_flame_for_rid( string $log_base, string $rid, int $num_partitions ): ?array {
 		$entries_count = 0;
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$flames = ( new Partition_Node( "{$log_base}/flames.log", $p ) )->with_index(
+			$flames = new Partition_Node();
+			$flames->arguments( "{$log_base}/flames.log {$p}" );
+			$flames->with_index(
 				static fn ( $line, $position, &$data = null ) => Flame_Builder_Node::format_index_entry( $line, $position, $data )
 			);
 			$result = null;
