@@ -202,7 +202,8 @@ class Log_Manager {
 		$segment_size = (int) ( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
 		$num_segments = (int) ( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
 		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
-		$this->topic  = new Topic_Node( $base_dir, $num_partitions, $segment_size, $num_segments, $max_lifespan );
+		$this->topic  = new Topic_Node();
+		$this->topic->arguments( "{$base_dir} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
 	}
 
 	/**

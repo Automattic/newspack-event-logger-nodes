@@ -75,27 +75,17 @@ class Job_Worker_Node extends Node {
 	/** Latched true when a per-job memory check crossed the watermark. */
 	private bool $memory_pressure = false;
 
-	private int $cache_flush_interval;
-	private int $stale_timeout;
-	private int $max_runtime;
+	protected int $cache_flush_interval = self::CACHE_FLUSH_INTERVAL;
+	protected int $stale_timeout        = self::DEFAULT_STALE_TIMEOUT;
+	protected int $max_runtime          = self::DEFAULT_MAX_RUNTIME;
 
 	/**
-	 * Constructor.
-	 *
-	 * @param int $cache_flush_interval Run wp_cache_flush() every N jobs.
-	 * @param int $stale_timeout        Stale-timeout hint (seconds) — exposed for topology config.
-	 * @param int $max_runtime          Max-runtime hint (seconds) — exposed for topology config.
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
+	 * which the base setter parses against `node_schema()['arguments']`. The
+	 * override below re-normalizes after that walk.
 	 */
-	public function __construct(
-		int $cache_flush_interval = self::CACHE_FLUSH_INTERVAL,
-		int $stale_timeout = self::DEFAULT_STALE_TIMEOUT,
-		int $max_runtime = self::DEFAULT_MAX_RUNTIME
-	) {
-		$this->cache_flush_interval = \max( 1, $cache_flush_interval );
-		$this->stale_timeout        = \max( 1, $stale_timeout );
-		$this->max_runtime          = \max( 1, $max_runtime );
-
-		// Base ctor auto-wires a sibling :config CI from node_schema()['verbs']
+	public function __construct() {
+		// Base ctor auto-wires a sibling :config CI from node_schema()['commands']
 		// handlers — JobWorker declares none, so no sibling is created.
 		parent::__construct();
 
@@ -107,6 +97,29 @@ class Job_Worker_Node extends Node {
 		// `cmd job-worker:config load_handlers` line in every TSL
 		// file that uses JobWorker.
 		$this->load_handlers_from_filters();
+	}
+
+	/**
+	 * Setter chains through the base schema walker (which assigns
+	 * cache_flush_interval / stale_timeout / max_runtime from positional
+	 * tokens or schema defaults), then normalizes each knob to >= 1 to
+	 * match the legacy ctor's `max(1, ...)` clamp.
+	 *
+	 * @param string|null $args
+	 * @return string
+	 */
+	public function arguments( ?string $args = null ): string {
+		if ( null === $args ) {
+			return parent::arguments();
+		}
+		$result = parent::arguments( $args );
+		if ( '' === $args ) {
+			return $result;
+		}
+		$this->cache_flush_interval = \max( 1, $this->cache_flush_interval );
+		$this->stale_timeout        = \max( 1, $this->stale_timeout );
+		$this->max_runtime          = \max( 1, $this->max_runtime );
+		return $result;
 	}
 
 	private function validate_handler_name( string $name ): void {
@@ -428,12 +441,12 @@ class Job_Worker_Node extends Node {
 		return [
 			'category'    => 'Control',
 			'description' => 'Consumes jobs.log entries and dispatches to registered handlers.',
-			'ctor'        => [
+			'arguments'        => [
 				[ 'name' => 'cache_flush_interval', 'type' => 'int', 'default' => self::CACHE_FLUSH_INTERVAL ],
 				[ 'name' => 'stale_timeout',        'type' => 'int', 'default' => self::DEFAULT_STALE_TIMEOUT ],
 				[ 'name' => 'max_runtime',          'type' => 'int', 'default' => self::DEFAULT_MAX_RUNTIME ],
 			],
-			'verbs'       => [],
+			'commands'       => [],
 			'requests'    => [
 				[
 					'name'        => 'GET_HEALTH',

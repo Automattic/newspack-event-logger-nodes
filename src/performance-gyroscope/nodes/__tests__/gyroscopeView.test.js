@@ -1,5 +1,5 @@
 /**
- * gyroscope/view tests — owns the in-flight request model.
+ * gyroscope:view tests — owns the in-flight request model.
  *
  * Like rawLogsView / requestlog/view, two cadences: the HIGH-frequency in-flight
  * map (node.requests) + RPS (node.rps) live on the instance and are NOT published
@@ -28,7 +28,7 @@ import { createGyroscopeView } from '../gyroscopeView';
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// An inflight dispatch message from gyroscope/transform.
+// An inflight dispatch message from gyroscope:transform.
 function inflightMsg( requests ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -36,7 +36,7 @@ function inflightMsg( requests ) {
 	return m;
 }
 
-// A completion dispatch message from gyroscope/transform.
+// A completion dispatch message from gyroscope:transform.
 function completeMsg( request ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -53,7 +53,7 @@ function controlMsg( payload ) {
 }
 
 test( 'upserts inflight requests into node.requests keyed by rid (no publish)', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill(
 		inflightMsg( [
 			{ rid: 'a', url: '/a', state: 'process' },
@@ -65,7 +65,7 @@ test( 'upserts inflight requests into node.requests keyed by rid (no publish)', 
 } );
 
 test( 'appending inflight rows does NOT publish setState (no per-row re-render)', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	const spy = jest.spyOn( v, 'setState' );
 	v.fill( inflightMsg( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	v.fill( completeMsg( { rid: 'a', url: '/a', duration_ms: 5 } ) );
@@ -73,14 +73,14 @@ test( 'appending inflight rows does NOT publish setState (no per-row re-render)'
 } );
 
 test( 'a later inflight snapshot updates an in-flight request', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( inflightMsg( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	v.fill( inflightMsg( [ { rid: 'a', url: '/a', state: 'render' } ] ) );
 	expect( v.requests.get( 'a' ).state ).toBe( 'render' );
 } );
 
 test( 'an inflight snapshot never overwrites a request already marked complete', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( completeMsg( { rid: 'a', url: '/a', duration_ms: 7 } ) );
 	// A late snapshot (produced before the completion) must not resurrect it.
 	v.fill( inflightMsg( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
@@ -88,7 +88,7 @@ test( 'an inflight snapshot never overwrites a request already marked complete',
 } );
 
 test( 'completion merges into an existing entry and sets time_ms/est_ms', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill(
 		inflightMsg( [
 			{ rid: 'a', url: '/a', method: 'GET', state: 'process' },
@@ -105,21 +105,21 @@ test( 'completion merges into an existing entry and sets time_ms/est_ms', () => 
 } );
 
 test( 'completion with no prior inflight entry still records the request', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( completeMsg( { rid: 'z', url: '/z', duration_ms: 10 } ) );
 	expect( v.requests.get( 'z' ).state ).toBe( 'complete' );
 	expect( v.requests.get( 'z' ).est_ms ).toBe( 10 );
 } );
 
 test( 'completion missing duration_ms defaults time_ms/est_ms to 0', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( completeMsg( { rid: 'z', url: '/z' } ) );
 	expect( v.requests.get( 'z' ).time_ms ).toBe( 0 );
 	expect( v.requests.get( 'z' ).est_ms ).toBe( 0 );
 } );
 
 test( 'snapshot() reaps complete entries (shown one tick then deleted)', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( inflightMsg( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	v.fill( completeMsg( { rid: 'b', url: '/b', duration_ms: 5 } ) );
 	// First snapshot still includes the completed request.
@@ -133,7 +133,7 @@ test( 'snapshot() reaps complete entries (shown one tick then deleted)', () => {
 } );
 
 test( 'snapshot() sorts by est_ms descending and caps to maxRows', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill(
 		inflightMsg( [
 			{ rid: 'a', url: '/a', state: 'process', est_ms: 10 },
@@ -148,7 +148,7 @@ test( 'snapshot() sorts by est_ms descending and caps to maxRows', () => {
 } );
 
 test( 'snapshot() updates rps from the reaped completed count', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	expect( v.rps ).toBe( 0 );
 	v.fill( completeMsg( { rid: 'a', url: '/a', duration_ms: 5 } ) );
 	v.fill( completeMsg( { rid: 'b', url: '/b', duration_ms: 5 } ) );
@@ -157,14 +157,14 @@ test( 'snapshot() updates rps from the reaped completed count', () => {
 } );
 
 test( 'touches lastEventTime on each processed envelope', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	expect( v.lastEventTime ).toBeNull();
 	v.fill( inflightMsg( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	expect( typeof v.lastEventTime ).toBe( 'number' );
 } );
 
 test( 'clear empties the map, history and rps', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill(
 		inflightMsg( [
 			{ rid: 'a', url: '/a', state: 'process' },
@@ -181,31 +181,31 @@ test( 'clear empties the map, history and rps', () => {
 } );
 
 test( 'connection control publishes connectionError', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( false );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'clear' } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
 	expect( v.setStateCache.view ).toEqual( { connectionError: false } );
 } );
 
 test( 'names the node', () => {
-	const v = createGyroscopeView( 'gyroscope/view' );
-	expect( v.name ).toBe( 'gyroscope/view' );
+	const v = createGyroscopeView( 'gyroscope:view' );
+	expect( v.name ).toBe( 'gyroscope:view' );
 } );

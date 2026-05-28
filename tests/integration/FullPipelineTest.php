@@ -55,7 +55,8 @@ class FullPipelineTest extends TestCase {
 
 	public function test_full_pipeline_topic_consumer_tee_request_builder_flame_builder_job_router(): void {
 		// Producer: write firehose lines mixing a request lifecycle and a job.
-		$topic = new Topic_Node( "{$this->tmp}/firehose.log", 1 );
+		$topic = new Topic_Node();
+		$topic->arguments( "{$this->tmp}/firehose.log {1}" );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );
@@ -116,7 +117,8 @@ class FullPipelineTest extends TestCase {
 		$tee->connect_node( 'job-router' );
 
 		// Consumer must be named so JobRouter recognizes the source via FROM.
-		$consumer = new Consumer_Node( "{$this->tmp}/firehose.log", 0, "{$this->tmp}/offsets/r/p0" );
+		$consumer = new Consumer_Node();
+		$consumer->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/r/p0" );
 		$consumer->name( 'firehose:consumer' );
 		$consumer->sink( $tee );
 		$consumer->poll();

@@ -55,34 +55,30 @@ class Aggregator_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Hub-side server registry the `status`/`servers` handlers reach via
-	 * `$self->registry`. node_schema() is static and can't `use` a ctor arg,
-	 * so the handlers read it off the dispatched instance (legal: they're
-	 * defined inside this class and so may touch its private props on any
-	 * instance — same shape Workers_CI uses).
+	 * `$self->registry`. Public so the bootstrap (or test) assigns it AFTER
+	 * `new Aggregator_CI_Node()` — the Tachikoma uniform-construction
+	 * pattern (`make_node` calls a no-arg ctor; programmatic deps come in
+	 * via public properties, not constructor args, since `arguments()` only
+	 * handles scalar config). node_schema() is static and can't `use` an
+	 * instance field, so handlers read the assigned value off `$self` at
+	 * dispatch time (legal: they're defined inside this class and so may
+	 * touch its props on any instance).
 	 *
-	 * @var Server_Registry
+	 * Nullable + default null so a freshly-constructed CI is in a known
+	 * state until the bootstrap wires up the dep; the `health` verb is
+	 * registry-free and works regardless, while `status`/`servers` will
+	 * fail loud if the bootstrap forgot to assign it.
+	 *
+	 * @var Server_Registry|null
 	 */
-	private Server_Registry $registry;
-
-	/**
-	 * @param Server_Registry $registry Hub-side server registry. Tests pass a
-	 *                                  fresh instance per test so they don't
-	 *                                  share state.
-	 */
-	public function __construct( Server_Registry $registry ) {
-		// Prop set before parent builds commands from node_schema(). Handlers
-		// are closures (not invoked until dispatch), so order doesn't affect
-		// correctness; props-first keeps intent obvious.
-		$this->registry = $registry;
-		parent::__construct();
-	}
+	public ?Server_Registry $registry = null;
 
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Service',
 			'description' => 'Hub-side aggregator dashboards: per-server status, cache health, registered servers.',
-			'ctor'        => [],
-			'verbs'       => [
+			'arguments'        => [],
+			'commands'       => [
 				[
 					'name'        => 'status',
 					'description' => 'Per-server partition snapshot keyed by server id.',

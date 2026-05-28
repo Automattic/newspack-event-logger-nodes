@@ -4,21 +4,21 @@
  *
  * Real-time view of active (in-flight) requests, similar to Tachikoma's Gyroscope.
  *
- * This is a THIN view over the `gyroscope/*` node graph (mounted by
- * `useGyroscopeGraph`). The graph owns all data: `gyroscope/stream` holds the SSE
- * connection, `gyroscope/transform` turns envelopes into inflight/complete
- * dispatches, and `gyroscope/view` holds the in-flight model (the rid-keyed map +
+ * This is a THIN view over the `gyroscope:*` node graph (mounted by
+ * `useGyroscopeGraph`). The graph owns all data: `gyroscope:stream` holds the SSE
+ * connection, `gyroscope:transform` turns envelopes into inflight/complete
+ * dispatches, and `gyroscope:view` holds the in-flight model (the rid-keyed map +
  * the reap/sort/cap snapshot + RPS). This component only renders.
  *
  * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the
- * render cadence: each tick it calls `Core.node('gyroscope/view').snapshot(maxRows)`
+ * render cadence: each tick it calls `Core.node('gyroscope:view').snapshot(maxRows)`
  * — which reaps completed entries (shown one tick then dropped), sorts by est_ms
  * desc, caps to maxRows — and reads `.rps` / `.lastEventTime` off the node. A busy
  * stream never re-renders React per message; only the cheap snapshot is pushed at
  * the refresh cadence.
  *
  * The low-frequency `{ connectionError }` model (the reconnect banner) is read
- * separately via `useNodeState('gyroscope/view','view')`.
+ * separately via `useNodeState('gyroscope:view','view')`.
  */
 
 import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
@@ -39,7 +39,7 @@ import './styles/inflight.scss';
 import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
-const VIEW_NODE = 'gyroscope/view';
+const VIEW_NODE = 'gyroscope:view';
 // The low-frequency view model before the view node publishes one.
 const EMPTY_VIEW = { connectionError: false };
 

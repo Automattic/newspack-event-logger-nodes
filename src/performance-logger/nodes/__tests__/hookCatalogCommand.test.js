@@ -1,14 +1,22 @@
 /**
- * hookCatalogCommand tests — the `hookcatalog/command` transport node. It owns the
+ * hookCatalogCommand tests — the `hookcatalog:command` transport node. It owns the
  * single `performance.hooks_registered` fetch behind an injectable command-client
  * seam; `fetch()` emits a synchronous `loading` control then a `catalog` control
- * with the unwrapped `hooks_by_category` map. A rejected send falls back to an
- * empty catalog (NOT an error state — matches the old modal's `.catch(() => {})`).
- * After `close()` a late-resolving send emits nothing. Mirrors aggregatorPoll's
+ * with the unwrapped `hooks_by_category` map, each stamped TO=target so the exospine
+ * router delivers them to `hookcatalog:view` (rule #2). A rejected send falls back
+ * to an empty catalog (NOT an error state — matches the old modal's `.catch(() => {})`).
+ * After `close()` a late-resolving send emits nothing. Mirrors servers:command's
  * tests (fake sink, faked command boundary).
  */
 
-import { Core, VALUE, newMessage } from '@newspack-nodes/runtime';
+import {
+	Core,
+	TYPE,
+	TO,
+	VALUE,
+	TM_STRUCT,
+	newMessage,
+} from '@newspack-nodes/runtime';
 import { createHookCatalogCommand } from '../hookCatalogCommand';
 
 // A sink that records every message it's filled with (action lives at VALUE).
@@ -55,7 +63,7 @@ describe( 'createHookCatalogCommand', () => {
 		const client = makeFakeClient(
 			replyWith( { hooks_by_category: hooks } )
 		);
-		const node = createHookCatalogCommand( 'hookcatalog/command', {
+		const node = createHookCatalogCommand( 'hookcatalog:command', {
 			commandClient: client,
 		} );
 		const sink = makeSink();
@@ -76,11 +84,30 @@ describe( 'createHookCatalogCommand', () => {
 		expect( sink.fills[ 1 ][ VALUE ].hooksByCategory ).toEqual( hooks );
 	} );
 
+	test( 'stamps each emitted message TO with its target (rule #2 routing)', async () => {
+		const client = makeFakeClient( replyWith( { hooks_by_category: {} } ) );
+		const node = createHookCatalogCommand( 'hookcatalog:command', {
+			commandClient: client,
+		} );
+		node.target = 'hookcatalog:view';
+		const sink = makeSink();
+		node.sink = sink;
+
+		node.fetch();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// Both the synchronous loading and the resolved catalog carry TO=target.
+		expect( sink.fills ).toHaveLength( 2 );
+		expect( sink.fills[ 0 ][ TO ] ).toBe( 'hookcatalog:view' );
+		expect( sink.fills[ 1 ][ TO ] ).toBe( 'hookcatalog:view' );
+	} );
+
 	test( 'reject falls back to a catalog with an empty map (still clears loading)', async () => {
 		const client = {
 			send: () => Promise.reject( new Error( 'boom' ) ),
 		};
-		const node = createHookCatalogCommand( 'hookcatalog/command', {
+		const node = createHookCatalogCommand( 'hookcatalog:command', {
 			commandClient: client,
 		} );
 		const sink = makeSink();
@@ -94,6 +121,22 @@ describe( 'createHookCatalogCommand', () => {
 		expect( sink.fills[ 1 ][ VALUE ].hooksByCategory ).toEqual( {} );
 	} );
 
+	test( 'emits TM_STRUCT controls', async () => {
+		const client = makeFakeClient( replyWith( { hooks_by_category: {} } ) );
+		const node = createHookCatalogCommand( 'hookcatalog:command', {
+			commandClient: client,
+		} );
+		const sink = makeSink();
+		node.sink = sink;
+
+		node.fetch();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect( sink.fills[ 0 ][ TYPE ] ).toBe( TM_STRUCT );
+		expect( sink.fills[ 1 ][ TYPE ] ).toBe( TM_STRUCT );
+	} );
+
 	test( 'a send resolving after close() emits nothing', async () => {
 		let resolveSend;
 		const client = {
@@ -102,7 +145,7 @@ describe( 'createHookCatalogCommand', () => {
 					resolveSend = resolve;
 				} ),
 		};
-		const node = createHookCatalogCommand( 'hookcatalog/command', {
+		const node = createHookCatalogCommand( 'hookcatalog:command', {
 			commandClient: client,
 		} );
 		const sink = makeSink();
@@ -128,7 +171,7 @@ describe( 'createHookCatalogCommand', () => {
 				Promise.resolve( replyWith( { hooks_by_category: {} } ) )
 			),
 		} );
-		const node = createHookCatalogCommand( 'hookcatalog/command' );
+		const node = createHookCatalogCommand( 'hookcatalog:command' );
 		const sink = makeSink();
 		node.sink = sink;
 
@@ -141,9 +184,9 @@ describe( 'createHookCatalogCommand', () => {
 	} );
 
 	test( 'registers under the given name', () => {
-		const node = createHookCatalogCommand( 'hookcatalog/command', {
+		const node = createHookCatalogCommand( 'hookcatalog:command', {
 			commandClient: makeFakeClient( {} ),
 		} );
-		expect( Core.node( 'hookcatalog/command' ) ).toBe( node );
+		expect( Core.node( 'hookcatalog:command' ) ).toBe( node );
 	} );
 } );

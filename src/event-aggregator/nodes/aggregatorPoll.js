@@ -1,10 +1,11 @@
 /**
- * `aggregator/poll` — the command-out node that owns the aggregator status
+ * `aggregator:poll` — the command-out node that owns the aggregator status
  * traffic, behind an injectable command-client seam.
  *
  * `poll()` sends `{ to:'aggregator', verb:'status' }` (the same command the old
  * AggregatorStatus fetched directly), unwraps the reply, and emits it as a
- * TM_STRUCT `{ action:'status', status, now }` to its sink (→ `aggregator/view`).
+ * TM_STRUCT `{ action:'status', status, now }` to its sink — the exospine CI —
+ * stamped with TO=target (the router peels TO and delivers to `aggregator:view`).
  * `now` is the response Message's TIMESTAMP — the hub's clock when it built the
  * snapshot, which the view drives "ago" off (matching the old `serverNow`).
  * Failures surface as a TM_STRUCT `{ action:'error', error }` control so the view
@@ -20,6 +21,7 @@
 import {
 	Node,
 	TIMESTAMP,
+	TO,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -69,6 +71,8 @@ class AggregatorPollNode extends Node {
 		}
 		const out = newMessage();
 		out[ TYPE ] = TM_STRUCT;
+		// Rule #2: stamp TO=target so the exospine router routes it (→ view).
+		out[ TO ] = this.target;
 		out[ VALUE ] = value;
 		this.sink.fill( out );
 	}

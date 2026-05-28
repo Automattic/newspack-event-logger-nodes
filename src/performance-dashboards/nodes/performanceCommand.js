@@ -1,5 +1,5 @@
 /**
- * `performance/command` — the multi-verb command-out node for the Performance
+ * `performance:command` — the multi-verb command-out node for the Performance
  * Dashboard, behind an injectable command-client seam.
  *
  * One method per data slice (`fetchOverview`, `fetchUrls`, `fetchUrlDetail`,
@@ -7,15 +7,16 @@
  * control, then awaits `client.send({ to:'performance', verb, payload })`, then
  * emits `{ action:'result', slice, data }` — or `{ action:'error', slice, error }`
  * on a throw OR an invalid argument (in which case nothing is sent). The
- * slice-tagged controls go to the sink (→ `performance/view`), which keys its
- * model off `slice`. The verbs/args/validators migrated verbatim from
- * `usePerformanceApi`.
+ * slice-tagged controls go through the sink (the exospine CI) stamped `TO =
+ * target` so the router delivers them to `performance:view`, which keys its model
+ * off `slice` (rule #2: flow steered by target, not bespoke `command.sink=view`).
+ * The verbs/args/validators migrated verbatim from `usePerformanceApi`.
  *
  * `resolveRequest` is the exception: it RETURNS the unwrapped reply (or null on
  * throw) and does NOT emit — it drives navigation (URL → request selection), not
  * a display slice.
  *
- * Mirrors aggregatorPoll/hookCatalogCommand: the shared CommandClient is reached
+ * Mirrors servers:command/aggregator:poll: the shared CommandClient is reached
  * ONLY through the `client` seam, lazily defaulted to `getCommandClient()`; a
  * `close()` cancel guard drops any reply that resolves after unmount so we never
  * fill a detached sink. The interval/timing lives in the HOOK, not here — this
@@ -25,6 +26,7 @@
 import {
 	Node,
 	VALUE,
+	TO,
 	TYPE,
 	TM_STRUCT,
 	newMessage,
@@ -207,6 +209,8 @@ class PerformanceCommandNode extends Node {
 		}
 		const out = newMessage();
 		out[ TYPE ] = TM_STRUCT;
+		// Rule #2: stamp TO=target so the exospine router routes it (→ view).
+		out[ TO ] = this.target;
 		out[ VALUE ] = value;
 		this.sink.fill( out );
 	}

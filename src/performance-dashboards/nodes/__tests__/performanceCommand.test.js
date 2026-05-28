@@ -1,5 +1,5 @@
 /**
- * performance/command tests — the multi-verb command-out node behind an
+ * performance:command tests — the multi-verb command-out node behind an
  * injectable command-client seam. Each fetch* emits a synchronous `loading`
  * control then a `result`/`error`, tagged with its slice id; `resolveRequest`
  * RETURNS the unwrapped reply (navigation, no emit). The fake client resolves a
@@ -7,7 +7,7 @@
  * hookCatalogCommand.test.js — only the network boundary is faked).
  */
 
-import { Core, newMessage, VALUE } from '@newspack-nodes/runtime';
+import { Core, newMessage, VALUE, TO } from '@newspack-nodes/runtime';
 import { createPerformanceCommand } from '../performanceCommand';
 
 beforeEach( () => Core.reset() );
@@ -41,7 +41,7 @@ function rejectingClient( error ) {
 
 test( 'fetchOverview emits loading then overview result with the right verb/args', async () => {
 	const client = fakeClient( { total_requests: 3 } );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -64,6 +64,19 @@ test( 'fetchOverview emits loading then overview result with the right verb/args
 	} );
 } );
 
+test( 'emitted controls are stamped TO the node target (router routes → view)', async () => {
+	const client = fakeClient( { total_requests: 3 } );
+	const n = createPerformanceCommand( 'performance:command', {
+		commandClient: client,
+	} );
+	n.target = 'performance:view';
+	const tos = [];
+	n.sink = { fill: ( m ) => tos.push( m[ TO ] ) };
+	await n.fetchOverview();
+	expect( tos.length ).toBeGreaterThanOrEqual( 2 );
+	expect( tos.every( ( to ) => to === 'performance:view' ) ).toBe( true );
+} );
+
 test( 'fetchUrls forwards only present params + limit, result carries the full reply', async () => {
 	const client = fakeClient( {
 		data: [ { hash: 'a' } ],
@@ -71,7 +84,7 @@ test( 'fetchUrls forwards only present params + limit, result carries the full r
 		limit: 100,
 		offset: 0,
 	} );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -91,7 +104,7 @@ test( 'fetchUrls forwards only present params + limit, result carries the full r
 
 test( 'fetchUrlDetail with invalid hash emits error and does NOT send', async () => {
 	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -110,7 +123,7 @@ test( 'fetchUrlDetail with invalid hash emits error and does NOT send', async ()
 
 test( 'fetchUrlDetail threads the initial flag', async () => {
 	const client = fakeClient( { requests: [] } );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -130,7 +143,7 @@ test( 'fetchUrlDetail threads the initial flag', async () => {
 
 test( 'fetchRequestDetail validates rid and partition', async () => {
 	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -146,7 +159,7 @@ test( 'fetchRequestDetail validates rid and partition', async () => {
 
 test( 'resolveRequest RETURNS the unwrapped reply and does NOT emit', async () => {
 	const client = fakeClient( { url_hash: 'abc', partition: 2, url: '/x' } );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -166,7 +179,7 @@ test( 'resolveRequest RETURNS the unwrapped reply and does NOT emit', async () =
 // in the catch block. Args are valid so the send is actually attempted.
 test( 'fetchOverview surfaces a send rejection as an overview error', async () => {
 	const client = rejectingClient( new Error( 'overview down' ) );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -183,7 +196,7 @@ test( 'fetchOverview surfaces a send rejection as an overview error', async () =
 
 test( 'fetchUrls surfaces a send rejection as a urls error', async () => {
 	const client = rejectingClient( new Error( 'urls down' ) );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -200,7 +213,7 @@ test( 'fetchUrls surfaces a send rejection as a urls error', async () => {
 
 test( 'fetchUrlDetail (valid hash) surfaces a send rejection as a urlDetail error', async () => {
 	const client = rejectingClient( new Error( 'detail down' ) );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -217,7 +230,7 @@ test( 'fetchUrlDetail (valid hash) surfaces a send rejection as a urlDetail erro
 
 test( 'fetchRequestDetail (valid rid+partition) surfaces a send rejection as a requestDetail error', async () => {
 	const client = rejectingClient( new Error( 'req down' ) );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -237,7 +250,7 @@ test( 'fetchRequestDetail (valid rid+partition) surfaces a send rejection as a r
 
 test( 'fetchRequestDetail with an invalid rid emits error and does NOT send', async () => {
 	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -256,7 +269,7 @@ test( 'fetchRequestDetail with an invalid rid emits error and does NOT send', as
 
 test( 'fetchRequestDetail success sends { rid, partition } and emits the result (partition 0 accepted)', async () => {
 	const client = fakeClient( { rid: 'ok-rid', url: '/x' } );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -280,7 +293,7 @@ test( 'fetchRequestDetail success sends { rid, partition } and emits the result 
 
 test( 'resolveRequest returns null on a send rejection and emits nothing', async () => {
 	const client = rejectingClient( new Error( 'search down' ) );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -298,7 +311,7 @@ test( 'a send rejecting after close() emits nothing', async () => {
 				rej = r;
 			} ),
 	};
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 	} );
 	const got = [];
@@ -313,7 +326,7 @@ test( 'a send rejecting after close() emits nothing', async () => {
 test( 'onError fires on a rejected fetchOverview AND the error slice is emitted', async () => {
 	const errs = [];
 	const client = { send: () => Promise.reject( new Error( 'boom' ) ) };
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 		onError: ( e ) => errs.push( e ),
 	} );
@@ -330,7 +343,7 @@ test( 'onError fires on a rejected fetchOverview AND the error slice is emitted'
 
 test( 'onError fires on invalid hash with the validation Error', async () => {
 	const errs = [];
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: fakeClient( {} ),
 		onError: ( e ) => errs.push( e ),
 	} );
@@ -341,7 +354,7 @@ test( 'onError fires on invalid hash with the validation Error', async () => {
 
 test( 'onError fires on invalid partition (requestDetail)', async () => {
 	const errs = [];
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: fakeClient( {} ),
 		onError: ( e ) => errs.push( e ),
 	} );
@@ -353,7 +366,7 @@ test( 'onError fires on invalid partition (requestDetail)', async () => {
 test( 'resolveRequest throw does NOT call onError (returns null)', async () => {
 	const errs = [];
 	const client = { send: () => Promise.reject( new Error( 'x' ) ) };
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 		onError: ( e ) => errs.push( e ),
 	} );
@@ -363,7 +376,7 @@ test( 'resolveRequest throw does NOT call onError (returns null)', async () => {
 } );
 
 test( 'fetchUrlDetail is SILENT (no loading) on a non-initial fetch', async () => {
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: fakeClient( { requests: [] } ),
 	} );
 	const got = [];
@@ -380,7 +393,7 @@ test( 'fetchUrlDetail is SILENT (no loading) on a non-initial fetch', async () =
 } );
 
 test( 'fetchUrlDetail emits loading on the initial fetch', async () => {
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: fakeClient( { requests: [] } ),
 	} );
 	const got = [];
@@ -396,7 +409,7 @@ test( 'fetchUrlDetail emits loading on the initial fetch', async () => {
 } );
 
 test( 'fetchUrlBreakdown RETURNS breakdown_time_series and does NOT emit', async () => {
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: fakeClient( { breakdown_time_series: { a: 1 } } ),
 	} );
 	const got = [];
@@ -409,7 +422,7 @@ test( 'fetchUrlBreakdown RETURNS breakdown_time_series and does NOT emit', async
 test( 'fetchUrlBreakdown returns null on invalid hash without sending or onError', async () => {
 	const errs = [];
 	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance/command', {
+	const n = createPerformanceCommand( 'performance:command', {
 		commandClient: client,
 		onError: ( e ) => errs.push( e ),
 	} );

@@ -1,7 +1,7 @@
 import { Node, VALUE } from '@newspack-nodes/runtime';
 
 /**
- * `servers/view` — owns the Configured-Servers admin view model.
+ * `servers:view` — owns the Configured-Servers admin view model.
  *
  * `fill()` accepts the two TM_STRUCT controls the command node emits:
  * - `{ action:'servers', servers }`: the raw `{ server_id:{} }` map (the
@@ -12,8 +12,8 @@ import { Node, VALUE } from '@newspack-nodes/runtime';
  *   the table).
  *
  * Every change publishes via `setState('view', model)`, consumed by
- * `useNodeState('servers/view','view')` — admin CRUD is low-frequency, so there's
- * no per-message React concern. Mirrors aggregator/view.
+ * `useNodeState('servers:view','view')` — admin CRUD is low-frequency, so there's
+ * no per-message React concern. Mirrors aggregator:view.
  */
 class ServersViewNode extends Node {
 	constructor() {

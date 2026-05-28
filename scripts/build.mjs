@@ -187,6 +187,11 @@ async function makeContext( entry, outDir ) {
 		entryPoints: [ path.resolve( ROOT, entry ) ],
 		bundle: true,
 		minify: true,
+		// dump_metadata reads node.constructor.name to label classes on the
+		// canvas — without keepNames, minify mangles them to two-letter ids.
+		// Same fix the substrate bundle uses; the overlay imports node classes
+		// from the substrate so we need it here too.
+		keepNames: true,
 		format: 'iife',
 		target: [ 'es2020' ],
 		jsx: 'automatic',
@@ -201,6 +206,14 @@ async function makeContext( entry, outDir ) {
 			'@newspack-nodes/runtime':
 				process.env.NEWSPACK_NODES_RUNTIME ||
 				path.resolve( ROOT, '../newspack-nodes/src/runtime/index.js' ),
+			// Universal debugger overlay: CI sets NEWSPACK_NODES_DEBUG_OVERLAY;
+			// local dev falls back to the sibling checkout's DebugOverlay.
+			'@newspack-nodes/debug-overlay':
+				process.env.NEWSPACK_NODES_DEBUG_OVERLAY ||
+				path.resolve(
+					ROOT,
+					'../newspack-nodes/src/debug-overlay/DebugOverlay.js'
+				),
 		},
 		plugins: [
 			wpExternalsPlugin( usedHandles ),

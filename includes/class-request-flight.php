@@ -25,6 +25,19 @@ class Request_Flight_Node extends Timer_Node {
 
 	private int $interval_ms = self::DEFAULT_INTERVAL_MS;
 
+	/**
+	 * Hidden from the palette: this is a patron-linked sibling Request_Builder
+	 * mounts at runtime, not a node you'd drag onto a topology. The patron
+	 * filter in dump_metadata hides it from the LIVE canvas; this hides it
+	 * from the palette (whose source is the static class catalog, not the
+	 * live registry).
+	 */
+	public static function node_schema(): array {
+		return \array_merge( parent::node_schema(), [
+			'category' => 'Hidden',
+		] );
+	}
+
 	public function set_interval( int $ms ): void {
 		$this->interval_ms = $ms;
 		$this->set_timer( $ms );

@@ -52,8 +52,11 @@ class Request_Builder_Node extends Node {
 	private const BUCKET_ROTATION_S = 200;
 
 	/** Default LRU cache capacity. */
-	private const DEFAULT_BUCKET_SIZE = 100;
-	private const DEFAULT_NUM_BUCKETS = 3;
+	public const DEFAULT_BUCKET_SIZE = 100;
+	public const DEFAULT_NUM_BUCKETS = 3;
+
+	protected int $bucket_size = self::DEFAULT_BUCKET_SIZE;
+	protected int $num_buckets = self::DEFAULT_NUM_BUCKETS;
 
 	/** @var LRU_Cache In-flight requests, keyed by rid. */
 	public $cache;
@@ -73,14 +76,20 @@ class Request_Builder_Node extends Node {
 	/** @var int Process line counter (for tests/debug). */
 	private $line_counter = 0;
 
-	public function __construct( int $bucket_size = self::DEFAULT_BUCKET_SIZE, int $num_buckets = self::DEFAULT_NUM_BUCKETS ) {
-		$this->cache = ( new LRU_Cache( $bucket_size, $num_buckets ) )
-			->with_timed_rotation(
-				self::BUCKET_ROTATION_S,
-				function ( string $rid, $request ): void {
-					$this->evict_request( $rid, $request );
-				}
-			);
+	/**
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
+	 * which the base setter parses against `node_schema()['arguments']`. The
+	 * override below rebuilds the LRU_Cache with the schema-walked dimensions.
+	 *
+	 * The Flight sibling and state_callbacks DO NOT depend on the positional
+	 * args, so they're set up here in the no-arg ctor — present on every
+	 * Request_Builder instance, regardless of whether arguments() is ever
+	 * called.
+	 */
+	public function __construct() {
+		// Initial cache uses schema defaults so the no-arg ctor produces a
+		// working instance; arguments() rebuilds with caller-supplied sizes.
+		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
 
 		// Hidden Flight sibling — patron filter hides it from the canvas.
@@ -91,9 +100,45 @@ class Request_Builder_Node extends Node {
 		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
 		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
 		parent::__construct();
+	}
+
+	/**
+	 * Setter chains through the base schema walker (which assigns
+	 * bucket_size / num_buckets from positional tokens or schema defaults),
+	 * then rebuilds the LRU_Cache with the new dimensions. The cache builds
+	 * here — not in the ctor — because it depends on the positional args.
+	 *
+	 * @param string|null $args
+	 * @return string
+	 */
+	public function arguments( ?string $args = null ): string {
+		if ( null === $args ) {
+			return parent::arguments();
+		}
+		$result = parent::arguments( $args );
+		if ( '' === $args ) {
+			return $result;
+		}
+		$this->cache = $this->build_cache();
+		return $result;
+	}
+
+	/**
+	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
+	 * wired with the eviction callback. Shared between the ctor (defaults)
+	 * and arguments() (post-schema-walk).
+	 */
+	private function build_cache(): LRU_Cache {
+		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
+			->with_timed_rotation(
+				self::BUCKET_ROTATION_S,
+				function ( string $rid, $request ): void {
+					$this->evict_request( $rid, $request );
+				}
+			);
 	}
 
 	public function flight(): Request_Flight_Node {
@@ -144,6 +189,32 @@ class Request_Builder_Node extends Node {
 	 */
 	public function set_errors_target( string $target ): void {
 		$this->errors_target = $target;
+	}
+
+	/** Flight's default snapshot interval (ms); a non-default value is dumped. */
+	private const DEFAULT_INFLIGHT_INTERVAL_MS = 1000;
+
+	/**
+	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 */
+	public function dump_config(): string {
+		$out = parent::dump_config();
+		if ( '' !== $this->errors_target ) {
+			$out .= "cmd {$this->name}:config set_errors_target {$this->errors_target}\n";
+		}
+		if ( '' !== $this->completed_target ) {
+			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
+		}
+		$inflight_target = $this->flight->target();
+		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
+			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
+		}
+		if ( self::DEFAULT_INFLIGHT_INTERVAL_MS !== $this->flight->interval() ) {
+			$out .= "cmd {$this->name}:config set_inflight_interval {$this->flight->interval()}\n";
+		}
+		return $out;
 	}
 
 	/**
@@ -977,11 +1048,11 @@ class Request_Builder_Node extends Node {
 		return [
 			'category'    => 'Transform',
 			'description' => 'Assembles per-request firehose lines into completed-request docs; emits errors to a named partition.',
-			'ctor'        => [
+			'arguments'        => [
 				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE ],
 				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS ],
 			],
-			'verbs'       => [
+			'commands'       => [
 				[
 					'name'        => 'set_errors_target',
 					'description' => 'Forward error/warning keywords to a named partition.',
@@ -994,7 +1065,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_errors_target( $args );
-						$patron->mark_verb_invoked( 'set_errors_target', $args );
 						return 'ok';
 					},
 				],
@@ -1010,7 +1080,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->set_completed_target( $args );
-						$patron->mark_verb_invoked( 'set_completed_target', $args );
 						return 'ok';
 					},
 				],
@@ -1027,7 +1096,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->flight()->target( $args );
-						$patron->mark_verb_invoked( 'set_inflight_target', $args );
 						return 'ok';
 					},
 				],
@@ -1045,7 +1113,6 @@ class Request_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $ci->patron();
 						$patron->flight()->set_interval( (int) $args );
-						$patron->mark_verb_invoked( 'set_inflight_interval', $args );
 						return 'ok';
 					},
 				],

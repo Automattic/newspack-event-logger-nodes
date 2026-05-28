@@ -1,11 +1,12 @@
 /**
- * perferrors/transform tests — wraps transformErrorLine, dropping the
+ * perferrors:transform tests — wraps transformErrorLine, dropping the
  * `connected` sentinel and any envelope the transform rejects (no rid), and
- * emits a fresh TM_STRUCT row to its sink.
+ * emits a fresh TM_STRUCT row to its sink (the CI) stamped TO = target (→ view).
  */
 
 import {
 	KEY,
+	TO,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -26,20 +27,22 @@ const env = ( rid, value ) => {
 };
 
 test( 'drops the connected sentinel', () => {
-	const t = createPerfErrorsTransform( 'perferrors/transform' );
+	const t = createPerfErrorsTransform( 'perferrors:transform' );
 	const got = [];
 	t.sink = { fill: ( m ) => got.push( m ) };
 	t.fill( env( 'connected', { slot: 0 } ) );
 	expect( got ).toHaveLength( 0 );
 } );
 
-test( 'emits a TM_STRUCT row for a valid error envelope', () => {
-	const t = createPerfErrorsTransform( 'perferrors/transform' );
+test( 'emits a TM_STRUCT row stamped TO target for a valid error envelope', () => {
+	const t = createPerfErrorsTransform( 'perferrors:transform' );
+	t.target = 'perferrors:view';
 	const got = [];
 	t.sink = { fill: ( m ) => got.push( m ) };
 	t.fill( env( 'rid-1', { ts: 5, k: 'error', m: 'boom', n: 2 } ) );
 	expect( got ).toHaveLength( 1 );
 	expect( got[ 0 ][ TYPE ] ).toBe( TM_STRUCT );
+	expect( got[ 0 ][ TO ] ).toBe( 'perferrors:view' );
 	expect( got[ 0 ][ VALUE ] ).toEqual( {
 		rid: 'rid-1',
 		ts: 5,
@@ -50,7 +53,7 @@ test( 'emits a TM_STRUCT row for a valid error envelope', () => {
 } );
 
 test( 'drops an envelope transformErrorLine rejects (no rid)', () => {
-	const t = createPerfErrorsTransform( 'perferrors/transform' );
+	const t = createPerfErrorsTransform( 'perferrors:transform' );
 	const got = [];
 	t.sink = { fill: ( m ) => got.push( m ) };
 	t.fill( env( '', { ts: 1 } ) );
@@ -58,13 +61,13 @@ test( 'drops an envelope transformErrorLine rejects (no rid)', () => {
 } );
 
 test( 'does not throw when sink is unset', () => {
-	const t = createPerfErrorsTransform( 'perferrors/transform' );
+	const t = createPerfErrorsTransform( 'perferrors:transform' );
 	expect( () =>
 		t.fill( env( 'rid-2', { ts: 1, k: 'error', m: 'x' } ) )
 	).not.toThrow();
 } );
 
 test( 'names the node', () => {
-	const t = createPerfErrorsTransform( 'perferrors/transform' );
-	expect( t.name ).toBe( 'perferrors/transform' );
+	const t = createPerfErrorsTransform( 'perferrors:transform' );
+	expect( t.name ).toBe( 'perferrors:transform' );
 } );

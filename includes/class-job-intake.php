@@ -128,7 +128,8 @@ class Job_Intake {
 		// instantiated mid-process (e.g. during tests, or after a close) doesn't
 		// clash with stale Core registrations from the previous instance.
 		$instance_token = \getmypid() . '-' . \spl_object_id( $this );
-		$p              = new Partition_Node( $log_base, $partition );
+		$p              = new Partition_Node();
+		$p->arguments( "{$log_base} {$partition}" );
 		$p->name( "jobintake.{$instance_token}.p{$partition}" );
 		$p->allow_large_writes();
 		$this->partitions[ $partition ] = $p;

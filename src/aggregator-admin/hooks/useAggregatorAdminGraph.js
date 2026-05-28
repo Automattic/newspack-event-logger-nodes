@@ -1,29 +1,34 @@
 /**
- * useAggregatorAdminGraph — mounts the Configured-Servers admin node graph (the
- * full-React replacement for the old jQuery `aggregator-admin/index.js`). On mount
- * it builds two nodes — `servers/command` (the CRUD command transport) and
- * `servers/view` (the render model React reads) — wires the data path command →
- * view directly (the view node does the map→array derivation), and fires one
- * immediate `list()`. The view publishes its state via `setState('view', …)`; the
- * React view reads it separately with `useNodeState('servers/view','view')`.
+ * useAggregatorAdminGraph — mounts the Configured-Servers admin node graph clipped
+ * onto the exospine (the canonical rule-#2 backbone `_command_interpreter →
+ * _router`). On mount it builds two nodes — `servers:command` (the CRUD command
+ * transport) and `servers:view` (the render model React reads). EVERY node sinks
+ * into the CI; flow is steered ONLY by each node's `target` (the router peels TO
+ * and delivers): the command targets the view (the view node does the map→array
+ * derivation, so no separate transform node is needed). There is no bespoke
+ * `command.sink=view` wiring. It fires one immediate `list()`. The view publishes
+ * its state via `setState('view', …)`; the React view reads it separately with
+ * `useNodeState('servers:view','view')`.
  *
  * The hook exposes the four CRUD callbacks the view calls. add/update/remove each
  * await the node mutation then re-`list()` — this re-list is what REPLACES the old
  * jQuery `window.location.reload()`. test() returns its probe result to the caller
  * (per-row status) and does NOT re-list (a probe doesn't change the registry). A
  * mutation rejection is surfaced into the view model (an error control filled into
- * `servers/view`) AND re-thrown so the calling component can also react per-field.
+ * `servers:view`) AND re-thrown so the calling component can also react per-field.
  *
  * Torn down on unmount: the command node is closed (cancel any in-flight list)
- * BEFORE both nodes are unregistered from Core. The command boundary is injectable:
- * tests pass `opts.commandClient` (threaded to the command node) so the hook never
- * touches the network. Production lazily defaults to the shared CommandClient
- * singleton inside the command node. Mirrors useAggregatorStatusGraph.
+ * BEFORE the graph nodes are unregistered from Core, THEN the exospine is torn down
+ * (which removes the CI + router). The command boundary is injectable: tests pass
+ * `opts.commandClient` (threaded to the command node) so the hook never touches the
+ * network. Production lazily defaults to the shared CommandClient singleton inside
+ * the command node. Mirrors useAggregatorStatusGraph.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
+	mountExospine,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -32,9 +37,11 @@ import {
 import { createServersCommand } from '../nodes/serversCommand';
 import { createServersView } from '../nodes/serversView';
 
-// Every named node this graph mounts — unregistered on teardown.
-const COMMAND = 'servers/command';
-const VIEW = 'servers/view';
+// Every named node this graph mounts — unregistered on teardown (the exospine
+// nodes are removed separately by its own teardown()). Names use a colon, not a
+// slash: the router peels TO on '/', so a '/' in a node name would misroute.
+const COMMAND = 'servers:command';
+const VIEW = 'servers:view';
 const GRAPH_NODE_NAMES = [ COMMAND, VIEW ];
 
 /**
@@ -63,13 +70,20 @@ export function useAggregatorAdminGraph( opts = {} ) {
 	// useAggregatorStatusGraph's setViewReady.
 	const [ , setViewReady ] = useState( false );
 
-	// Mount the graph once: command → view, then fire one immediate list.
+	// Mount the graph once: clip it onto the exospine, then fire one immediate list.
 	useEffect( () => {
+		// The canonical backbone every node clips onto: everything → CI → router.
+		const { ci, teardown: teardownSpine } = mountExospine();
+
 		const command = createServersCommand( COMMAND, {
 			commandClient: commandClientRef.current,
 		} );
 		const view = createServersView( VIEW );
-		command.sink = view;
+
+		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		command.sink = ci;
+		command.target = VIEW;
+		view.sink = ci;
 		commandRef.current = command;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
@@ -79,11 +93,13 @@ export function useAggregatorAdminGraph( opts = {} ) {
 		return () => {
 			// Close the in-flight-cancel-owning command node first BEFORE
 			// unregistering — mirrors useAggregatorStatusGraph calling poll.close()
-			// before unregister.
+			// before unregister. Unregister the graph nodes, THEN tear down the
+			// exospine (which removes the CI + router).
 			command.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
+			teardownSpine();
 			commandRef.current = null;
 			setViewReady( false );
 		};
@@ -91,7 +107,7 @@ export function useAggregatorAdminGraph( opts = {} ) {
 
 	// Push a mutation failure into the view model so the table shows it, then
 	// re-throw so the calling component can also react per-field. Fills an error
-	// control directly into servers/view (whose fill() handles `action:'error'`).
+	// control directly into servers:view (whose fill() handles `action:'error'`).
 	const surfaceError = useCallback( ( err ) => {
 		const view = Core.node( VIEW );
 		if ( view ) {

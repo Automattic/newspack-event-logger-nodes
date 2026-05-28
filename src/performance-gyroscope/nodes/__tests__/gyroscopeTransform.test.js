@@ -1,5 +1,5 @@
 /**
- * gyroscope/transform tests — wraps transformGyroscopeLine, dropping the
+ * gyroscope:transform tests — wraps transformGyroscopeLine, dropping the
  * `connected` sentinel and any envelope the transform rejects (returns null for
  * non-gyroscope / unrecognized shapes), and emits a fresh TM_STRUCT message
  * carrying the dispatch object ({type:'inflight',requests} | {type:'complete',
@@ -8,6 +8,7 @@
 
 import {
 	KEY,
+	TO,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -35,7 +36,7 @@ function envelope( key, value ) {
 
 test( 'emits an inflight dispatch for a KEY="inflight" + array-VALUE envelope', () => {
 	const sink = capture();
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	t.sink = sink.node;
 	t.fill(
 		envelope( 'inflight', [
@@ -51,7 +52,7 @@ test( 'emits an inflight dispatch for a KEY="inflight" + array-VALUE envelope', 
 
 test( 'emits a complete dispatch for a single-object VALUE with rid', () => {
 	const sink = capture();
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	t.sink = sink.node;
 	t.fill(
 		envelope( 'rid-1', {
@@ -69,15 +70,24 @@ test( 'emits a complete dispatch for a single-object VALUE with rid', () => {
 
 test( 'the emitted message is TM_STRUCT', () => {
 	const sink = capture();
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	t.sink = sink.node;
 	t.fill( envelope( 'rid-2', { rid: 'rid-2', url: '/x' } ) );
 	expect( sink.got[ 0 ][ TYPE ] ).toBe( TM_STRUCT );
 } );
 
+test( 'the emitted message is stamped TO the node target', () => {
+	const sink = capture();
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
+	t.sink = sink.node;
+	t.target = 'gyroscope:view';
+	t.fill( envelope( 'rid-2', { rid: 'rid-2', url: '/x' } ) );
+	expect( sink.got[ 0 ][ TO ] ).toBe( 'gyroscope:view' );
+} );
+
 test( 'drops the connected sentinel', () => {
 	const sink = capture();
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	t.sink = sink.node;
 	t.fill( envelope( 'connected', { slot: 0 } ) );
 	expect( sink.got ).toHaveLength( 0 );
@@ -85,7 +95,7 @@ test( 'drops the connected sentinel', () => {
 
 test( 'drops an unrecognized envelope whose transform returns null', () => {
 	const sink = capture();
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	t.sink = sink.node;
 	t.fill( envelope( 'x', 'a-string' ) );
 	expect( sink.got ).toHaveLength( 0 );
@@ -93,20 +103,20 @@ test( 'drops an unrecognized envelope whose transform returns null', () => {
 
 test( 'drops an object VALUE missing rid', () => {
 	const sink = capture();
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	t.sink = sink.node;
 	t.fill( envelope( 'x', { method: 'GET', url: '/y' } ) );
 	expect( sink.got ).toHaveLength( 0 );
 } );
 
 test( 'does not throw when sink is unset', () => {
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
 	expect( () =>
 		t.fill( envelope( 'rid', { rid: 'rid', url: '/x' } ) )
 	).not.toThrow();
 } );
 
 test( 'names the node', () => {
-	const t = createGyroscopeTransform( 'gyroscope/transform' );
-	expect( t.name ).toBe( 'gyroscope/transform' );
+	const t = createGyroscopeTransform( 'gyroscope:transform' );
+	expect( t.name ).toBe( 'gyroscope:transform' );
 } );
