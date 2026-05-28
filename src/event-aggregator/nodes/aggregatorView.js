@@ -1,22 +1,27 @@
-import { Node, VALUE } from '@newspack-nodes/runtime';
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
+import {
+	Node,
+	TIMESTAMP,
+	TYPE,
+	VALUE,
+	TM_ERROR,
+} from '@newspack-nodes/runtime';
 
 /**
  * `aggregator:view` — owns the Aggregator Status view model.
  *
- * `fill()` accepts the two TM_STRUCT controls the poll node emits:
- * - `{ action:'status', status, now }`: the raw `{ server_id:{} }` snapshot. The
- *   node turns it into the render model — `servers` (Object.values → array),
- *   `serverNow` (the hub's serve clock for "ago"), `connectedCount` (servers with
- *   ≥1 connected partition) / `totalCount`, clears `loading` + `error`, and
- *   stamps `lastRefresh` (browser-clock ms).
- * - `{ action:'error', error }`: stores the error and clears `loading`; the prior
- *   `servers` are preserved (matches the old fetchStatus catch, which set error
- *   only).
+ * Post-migration to substrate-canonical wiring, `fill()` receives the raw
+ * reply Message that HttpOut feeds back from POST /command: the router peels
+ * the reply's TO (=`aggregator:view`, stamped from the outbound FROM by the
+ * server's reply pivot) and delivers it here. VALUE is the `{ name, payload }`
+ * envelope; `payload` is the raw `{ server_id: {} }` snapshot the aggregator
+ * verb produced, and TIMESTAMP is the hub's serve clock — the "ago" reference
+ * the dashboard renders against. TM_ERROR on TYPE surfaces an error and clears
+ * loading; the prior `servers` are preserved (mirrors the old fetchStatus catch).
  *
  * The map→array + connected-count derivation migrated verbatim from
  * AggregatorStatus's render. Every change publishes via `setState('view', model)`,
- * consumed by `useNodeState('aggregator:view','view')` — this is a low-frequency
- * poll (1–10s), so there's no per-message React concern like the request stream.
+ * consumed by `useNodeState('aggregator:view','view')`.
  */
 class AggregatorViewNode extends Node {
 	constructor() {
@@ -34,23 +39,37 @@ class AggregatorViewNode extends Node {
 	}
 
 	fill( message ) {
+		const type = message[ TYPE ] || 0;
 		const value = message[ VALUE ];
-		if ( ! value || ! value.action ) {
+		// TM_ERROR reply — surface the error string and clear loading.
+		if ( type & TM_ERROR ) {
+			const payload =
+				value && typeof value === 'object' ? value.payload : value;
+			this._applyError(
+				typeof payload === 'string' && payload.length > 0
+					? payload
+					: 'Failed to fetch status'
+			);
+			this._publish();
 			return;
 		}
-		if ( 'status' === value.action ) {
-			this._applyStatus( value );
-			this._publish();
-		} else if ( 'error' === value.action ) {
-			this._applyError( value );
-			this._publish();
+		// Need a structured envelope to do anything useful.
+		if ( ! value || typeof value !== 'object' ) {
+			return;
 		}
+		// Unwrap `{ name, payload }` (the substrate command-reply shape).
+		const status = value.payload ?? {};
+		if ( ! status || typeof status !== 'object' ) {
+			return;
+		}
+		this._applyStatus( status, message[ TIMESTAMP ] ?? null );
+		this._publish();
 	}
 
 	// Turn the raw status map into the render model (matches the old fetchStatus
 	// success path + the render-time connected-count computation).
-	_applyStatus( { status, now } ) {
-		const servers = Object.values( status || {} );
+	_applyStatus( status, now ) {
+		const servers = Object.values( status );
 		const connectedCount = servers.filter( ( s ) => {
 			const partitions = s.partitions || {};
 			return Object.values( partitions ).some(
@@ -60,7 +79,7 @@ class AggregatorViewNode extends Node {
 		this.model = {
 			...this.model,
 			servers,
-			serverNow: now ?? null,
+			serverNow: now,
 			connectedCount,
 			totalCount: servers.length,
 			error: null,
@@ -70,10 +89,10 @@ class AggregatorViewNode extends Node {
 	}
 
 	// Store the error + clear loading; keep prior servers (old catch behavior).
-	_applyError( { error } ) {
+	_applyError( error ) {
 		this.model = {
 			...this.model,
-			error: error || 'Failed to fetch status',
+			error,
 			loading: false,
 		};
 	}
