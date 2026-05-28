@@ -996,7 +996,7 @@ class Remote_Source_Node extends Node {
 				[ 'name' => 'remote_topic',  'type' => 'string' ],
 				[ 'name' => 'partition',     'type' => 'int',    'default' => 0 ],
 			],
-			'verbs'        => [
+			'commands'        => [
 				[
 					'name'        => 'set_verify_ssl',
 					'description' => 'Toggle SSL certificate verification on outbound SSE connections.',

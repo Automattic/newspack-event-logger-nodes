@@ -73,7 +73,7 @@ class Settings_CI_Node extends Service_CI_Node {
 			'category'    => 'Service',
 			'description' => 'Substrate-level integer settings: get / update num_partitions, num_segments, segment_size, max_lifespan.',
 			'ctor'        => [],
-			'verbs'       => [
+			'commands'       => [
 				[
 					'name'        => 'get',
 					'description' => 'Return the four substrate-owned integer settings as a snapshot.',

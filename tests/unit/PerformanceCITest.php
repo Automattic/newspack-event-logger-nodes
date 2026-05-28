@@ -2037,7 +2037,7 @@ class PerformanceCITest extends TestCase {
 		];
 
 		$verbs = [];
-		foreach ( Performance_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Performance_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 
@@ -2183,13 +2183,13 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * node_schema()['verbs'] indexed by verb name.
+	 * node_schema()['commands'] indexed by verb name.
 	 *
 	 * @return array<string,array<string,mixed>>
 	 */
 	private static function verbs_by_name(): array {
 		$verbs = [];
-		foreach ( Performance_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Performance_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 		return $verbs;

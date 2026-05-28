@@ -113,7 +113,7 @@ class Flame_Builder_Node extends Node {
 		$this->auto_tuner = new Auto_Tuner_Node();
 		$this->auto_tuner->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
 		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
 		parent::__construct();
 	}
@@ -1700,7 +1700,7 @@ class Flame_Builder_Node extends Node {
 			'category'    => 'Transform',
 			'description' => 'Aggregates per-event count + sum_time into the 9-namespace memcache schema; emits flame JSONL.',
 			'ctor'        => [],
-			'verbs'       => [
+			'commands'       => [
 				[
 					'name'        => 'set_is_hub',
 					'description' => 'Toggle hub mode (per-server tracking).',

@@ -1858,7 +1858,7 @@ class StreamMergerTest extends TestCase {
 	public function test_stream_merger_node_schema_declares_verbs(): void {
 		$schema = Stream_Merger_Node::node_schema();
 		$this->assertSame( 'I/O', $schema['category'] );
-		$verb_names = \array_column( $schema['verbs'], 'name' );
+		$verb_names = \array_column( $schema['commands'], 'name' );
 		$this->assertContains( 'set_verify_ssl', $verb_names );
 		$this->assertContains( 'set_require_https', $verb_names );
 		// `load_remotes_from_registry` is no longer a verb — it's a one-shot
@@ -2596,7 +2596,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_auto_wired_ci_exposes_all_config_verbs(): void {
 		// The base-ctor auto-wire builds the :config CI from the
-		// node_schema()['verbs'] handler entries.
+		// node_schema()['commands'] handler entries.
 		$sm    = new Stream_Merger_Node( 'firehose', 0 );
 		$sm->name( 'sm-verb-table' );
 		$verbs = $sm->interpreter()->commands();

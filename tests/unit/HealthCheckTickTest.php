@@ -111,7 +111,7 @@ class HealthCheckTickTest extends TestCase {
 		// Hidden from the topology console — instantiated as a
 		// patron-linked sibling of StreamMerger, not built from TSL.
 		$this->assertSame( 'Hidden', $schema['category'] );
-		$this->assertSame( [], $schema['verbs'] );
+		$this->assertSame( [], $schema['commands'] );
 	}
 
 	// -------------------------------------------------------------------------
