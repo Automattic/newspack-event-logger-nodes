@@ -1,22 +1,29 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * useGyroscopeGraph tests — the Gyroscope dashboard graph clipped onto the
- * exospine (`mountExospine`: _command_interpreter → _router). The four graph
- * nodes (`gyroscope:stream`, `gyroscope:route`, `gyroscope:transform`,
- * `gyroscope:view`) are REAL; only the stream's connector is injected so the hook
- * never touches a real EventSource. EVERY node sinks into the CI and steers via
- * target; the end-to-end tests deliver an envelope/status through the fake
- * connector and assert it actually routes through the real router — data flows
- * stream → route → transform → view, a connection-status control flows stream →
- * route → view (skipping the transform). The hook also owns the page-visibility
- * subscribe/close of the stream + the reset-on-(re)connect of the view map.
+ * useGyroscopeGraph tests — post-migration: the Gyroscope dashboard graph now
+ * clips onto the substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes
+ * (the same I/O boundary the topology console and request-log mount) plus the
+ * existing `gyroscope:route` / `gyroscope:transform` / `gyroscope:view` chain,
+ * all on the exospine backbone (`_command_interpreter` → `_router`). The
+ * bespoke `gyroscope:stream` Node and its inlined slot-heartbeat loop are gone.
  *
- * usePageVisibility is mocked to a controllable value so the visibility effect is
- * deterministic under jsdom.
+ * EventSource is faked via `global.EventSource`; SseIn's connection logic
+ * (already covered by the substrate's `sse_connector.test.js`) is unmocked here
+ * — we drive a `msg` event through the fake EventSource and assert it actually
+ * routes _sse → route → transform → view. usePageVisibility is mocked to a
+ * controllable value so the visibility effect is deterministic under jsdom.
  */
 
 import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
-import { newMessage, KEY, VALUE, Core } from '@newspack-nodes/runtime';
+import {
+	newMessage,
+	pack,
+	VALUE,
+	KEY,
+	TYPE,
+	TM_INFO,
+	Core,
+} from '@newspack-nodes/runtime';
 
 let mockPageVisible = true;
 jest.mock( '../../../shared/hooks/usePageVisibility', () => ( {
@@ -26,47 +33,55 @@ jest.mock( '../../../shared/hooks/usePageVisibility', () => ( {
 
 import { useGyroscopeGraph } from '../useGyroscopeGraph';
 
+// Minimal FakeEventSource — same shape as the substrate's `sse_connector.test.js`.
+class FakeEventSource {
+	constructor( url ) {
+		this.url = url;
+		this.listeners = {};
+		this.closed = false;
+		FakeEventSource.last = this;
+		FakeEventSource.instances.push( this );
+	}
+	addEventListener( name, cb ) {
+		( this.listeners[ name ] ||= [] ).push( cb );
+	}
+	close() {
+		this.closed = true;
+	}
+	dispatch( name, data ) {
+		( this.listeners[ name ] || [] ).forEach( ( cb ) => cb( { data } ) );
+	}
+}
+
 beforeEach( () => {
 	Core.reset();
 	mockPageVisible = true;
+	FakeEventSource.last = null;
+	FakeEventSource.instances = [];
+	global.EventSource = FakeEventSource;
+	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 } );
 
 const CI = '_command_interpreter';
+const ROUTER = '_router';
+const SSE = '_sse';
+const HTTP = '_http';
+const HEARTBEAT = '_heartbeat';
+const ROUTE = 'gyroscope:route';
+const TRANSFORM = 'gyroscope:transform';
+const VIEW = 'gyroscope:view';
+const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
 
-// A fake connector matching the stream node's seam (connect/close); records the
-// last subscription + status handler + counts so teardown / visibility /
-// connection-status assertions can read them.
-function makeFakeConnector() {
-	return {
-		closeCount: 0,
-		connectCount: 0,
-		lastSubscription: null,
-		_onEnvelope: null,
-		_onStatus: null,
-		connect( subscription, onEnvelope, onStatus ) {
-			this.connectCount += 1;
-			this.lastSubscription = subscription;
-			this._onEnvelope = onEnvelope;
-			this._onStatus = onStatus;
-		},
-		close() {
-			this.closeCount += 1;
-			this._onEnvelope = null;
-		},
-		deliverMessage( envelope ) {
-			if ( this._onEnvelope ) {
-				this._onEnvelope( envelope );
-			}
-		},
-		deliverStatus( status ) {
-			if ( this._onStatus ) {
-				this._onStatus( status );
-			}
-		},
-	};
+// A `connected` envelope as SseConnector recognizes it.
+function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
+	const m = newMessage();
+	m[ TYPE ] = TM_INFO;
+	m[ KEY ] = 'connected';
+	m[ VALUE ] = { pid, slot, partition };
+	return m;
 }
 
-// A gyroscope inflight-snapshot envelope as the wire would deliver it.
+// A gyroscope inflight-snapshot envelope as the wire delivers it.
 function inflightEnvelope( requests ) {
 	const m = newMessage();
 	m[ KEY ] = 'inflight';
@@ -74,155 +89,217 @@ function inflightEnvelope( requests ) {
 	return m;
 }
 
-describe( 'useGyroscopeGraph — exospine wiring', () => {
-	test( 'mounts the backbone + four nodes, each sinking into the CI', () => {
-		const fake = makeFakeConnector();
-		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
+describe( 'useGyroscopeGraph — exospine + I/O boundary wiring', () => {
+	test( 'mounts the backbone + the six graph nodes, each sinking into the CI', () => {
+		renderHook( () => useGyroscopeGraph() );
 		const ci = Core.node( CI );
 		expect( ci ).toBeTruthy();
-		expect( Core.node( '_router' ) ).toBeTruthy();
-		for ( const n of [
-			'gyroscope:stream',
-			'gyroscope:route',
-			'gyroscope:transform',
-			'gyroscope:view',
-		] ) {
-			expect( Core.node( n ) ).toBeTruthy();
-			expect( Core.node( n ).sink ).toBe( ci );
+		expect( Core.node( ROUTER ) ).toBeTruthy();
+		for ( const name of ALL_GRAPH_NAMES ) {
+			const node = Core.node( name );
+			expect( node ).toBeTruthy();
+			expect( node.sink ).toBe( ci );
 		}
 	} );
 
-	test( 'steers flow with targets, not bespoke sinks (no controlSink)', () => {
-		const fake = makeFakeConnector();
-		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
-		expect( Core.node( 'gyroscope:stream' ).target ).toBe(
-			'gyroscope:route'
-		);
-		expect( Core.node( 'gyroscope:route' ).target ).toBe(
-			'gyroscope:transform'
-		);
-		expect( Core.node( 'gyroscope:transform' ).target ).toBe(
-			'gyroscope:view'
-		);
-		expect( Core.node( 'gyroscope:stream' ).controlSink ).toBeUndefined();
+	test( 'steers flow with targets: _sse → route → transform → view (and heartbeat → _http/workers)', () => {
+		renderHook( () => useGyroscopeGraph() );
+		expect( Core.node( SSE ).target ).toBe( ROUTE );
+		expect( Core.node( ROUTE ).target ).toBe( TRANSFORM );
+		expect( Core.node( TRANSFORM ).target ).toBe( VIEW );
+		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
 	} );
 
-	test( 'subscribes the stream to the gyroscope feed on mount when visible', () => {
-		const fake = makeFakeConnector();
-		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
-		expect( fake.connectCount ).toBeGreaterThanOrEqual( 1 );
-		expect( fake.lastSubscription ).toBe( 'gyroscope' );
+	test( 'opens an EventSource against /messages/stream?subscribe=gyroscope when visible', () => {
+		renderHook( () => useGyroscopeGraph() );
+		expect( FakeEventSource.last ).toBeTruthy();
+		expect( FakeEventSource.last.url ).toBe(
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=gyroscope&_wpnonce=NONCE'
+		);
 	} );
 
-	test( 'does not subscribe on mount when the page is hidden', () => {
+	test( 'does not open an EventSource on mount when the page is hidden', () => {
 		mockPageVisible = false;
-		const fake = makeFakeConnector();
-		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
-		expect( fake.connectCount ).toBe( 0 );
+		renderHook( () => useGyroscopeGraph() );
+		expect( FakeEventSource.last ).toBeNull();
+	} );
+
+	test( '_http has a CommandClient client wired (the POST boundary is constructable)', () => {
+		renderHook( () => useGyroscopeGraph() );
+		const http = Core.node( HTTP );
+		expect( http.client ).toBeTruthy();
+		expect( typeof http.client.buildMessage ).toBe( 'function' );
+		expect( typeof http.client.postBatch ).toBe( 'function' );
+	} );
+} );
+
+describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
+	test( 'a `connected` envelope populates heartbeat.slot and heartbeat.partition', () => {
+		renderHook( () => useGyroscopeGraph() );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+			);
+		} );
+		const heartbeat = Core.node( HEARTBEAT );
+		expect( heartbeat.slot ).toBe( 5 );
+		expect( heartbeat.partition ).toBe( 2 );
+	} );
+
+	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
+		renderHook( () => useGyroscopeGraph() );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					connectedEnvelope( { pid: 7, slot: null, partition: 2 } )
+				)
+			);
+		} );
+		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
+	} );
+
+	test( 'the Router TIMER drives heartbeat.onTimer so the slot keep-alive actually fires', () => {
+		jest.useFakeTimers();
+		try {
+			renderHook( () => useGyroscopeGraph() );
+			const http = Core.node( HTTP );
+			const postBatch = jest.fn().mockResolvedValue( [] );
+			http.client = { buildMessage: () => newMessage(), postBatch };
+			act( () => {
+				FakeEventSource.last.dispatch(
+					'msg',
+					pack(
+						connectedEnvelope( { pid: 7, slot: 5, partition: 0 } )
+					)
+				);
+			} );
+			act( () => {
+				jest.advanceTimersByTime( 5000 );
+			} );
+			expect( Core.node( HEARTBEAT ).lastFired ).toBeGreaterThan( 0 );
+			expect( postBatch ).toHaveBeenCalled();
+		} finally {
+			jest.useRealTimers();
+		}
 	} );
 } );
 
 describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () => {
-	test( 'a delivered inflight envelope routes stream → route → transform → view', () => {
-		const fake = makeFakeConnector();
-		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
+	test( 'an inflight envelope from the EventSource flows into gyroscope:view', () => {
+		renderHook( () => useGyroscopeGraph() );
 		act( () => {
-			fake.deliverMessage(
-				inflightEnvelope( [
-					{ rid: 'r-flow', url: '/x', state: 'process' },
-				] )
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					inflightEnvelope( [
+						{ rid: 'r-flow', url: '/x', state: 'process' },
+					] )
+				)
 			);
 		} );
-		const view = Core.node( 'gyroscope:view' );
+		const view = Core.node( VIEW );
 		expect( view.requests.has( 'r-flow' ) ).toBe( true );
 	} );
 
-	test( 'a connection-status control routes stream → route → view (skips transform)', () => {
-		const fake = makeFakeConnector();
-		renderHook( () => useGyroscopeGraph( { connector: fake } ) );
-		act( () => fake.deliverStatus( { connectionError: true } ) );
-		const view = Core.node( 'gyroscope:view' );
-		expect( view.connectionError ).toBe( true );
-		expect( view.setStateCache.view.connectionError ).toBe( true );
-		// The status did NOT enter the in-flight map (the transform would drop it).
-		expect( view.requests.size ).toBe( 0 );
+	test( 'a completion envelope flows through transform into gyroscope:view', () => {
+		renderHook( () => useGyroscopeGraph() );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					( () => {
+						const m = newMessage();
+						m[ KEY ] = 'rid-done';
+						m[ VALUE ] = {
+							rid: 'rid-done',
+							url: '/done',
+							duration_ms: 42,
+						};
+						return m;
+					} )()
+				)
+			);
+		} );
+		const view = Core.node( VIEW );
+		expect( view.requests.get( 'rid-done' ).state ).toBe( 'complete' );
 	} );
 } );
 
-describe( 'useGyroscopeGraph — page visibility', () => {
-	test( 'closes the stream when the page becomes hidden, re-subscribes when visible', () => {
-		const fake = makeFakeConnector();
-		// The local renderHook bails on identical props, so pass a fresh nonce
-		// each rerender to force the wrapper to re-invoke the (mocked) hook.
-		const { rerender } = renderHook( () =>
-			useGyroscopeGraph( { connector: fake } )
-		);
-		const afterMount = fake.connectCount;
-		expect( afterMount ).toBeGreaterThanOrEqual( 1 );
-		// Hide the page and re-render → the visibility effect closes the stream.
+describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
+	test( 'hiding the page closes the EventSource AND clears the heartbeat slot', () => {
+		const { rerender } = renderHook( () => useGyroscopeGraph() );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+			);
+		} );
+		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
+		const beforeHide = FakeEventSource.last;
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
-		expect( fake.closeCount ).toBeGreaterThanOrEqual( 1 );
-		// Show again → it re-subscribes.
+		expect( beforeHide.closed ).toBe( true );
+		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
+	} );
+
+	test( 'showing the page reopens the EventSource', () => {
+		const { rerender } = renderHook( () => useGyroscopeGraph() );
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		const before = FakeEventSource.instances.length;
 		mockPageVisible = true;
 		act( () => rerender( { n: 2 } ) );
-		expect( fake.connectCount ).toBeGreaterThan( afterMount );
+		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
 	} );
 
 	test( 'resets the view map on (re)connect', () => {
-		const fake = makeFakeConnector();
-		const { rerender } = renderHook( () =>
-			useGyroscopeGraph( { connector: fake } )
-		);
+		const { rerender } = renderHook( () => useGyroscopeGraph() );
 		// Seed the map with an in-flight request.
 		act( () => {
-			fake.deliverMessage(
-				inflightEnvelope( [
-					{ rid: 'old', url: '/x', state: 'process' },
-				] )
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					inflightEnvelope( [
+						{ rid: 'old', url: '/x', state: 'process' },
+					] )
+				)
 			);
 		} );
-		expect( Core.node( 'gyroscope:view' ).requests.size ).toBe( 1 );
+		expect( Core.node( VIEW ).requests.size ).toBe( 1 );
 		// Hide then show → the re-subscribe path clears the map first.
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
 		act( () => rerender( { n: 2 } ) );
-		expect( Core.node( 'gyroscope:view' ).requests.size ).toBe( 0 );
+		expect( Core.node( VIEW ).requests.size ).toBe( 0 );
 	} );
 } );
 
 describe( 'useGyroscopeGraph — teardown', () => {
-	test( 'unmount unregisters the graph + the backbone and closes the stream', () => {
-		const fake = makeFakeConnector();
-		const { unmount } = renderHook( () =>
-			useGyroscopeGraph( { connector: fake } )
-		);
+	test( 'unmount unregisters all graph nodes + the backbone and closes the EventSource', () => {
+		const { unmount } = renderHook( () => useGyroscopeGraph() );
+		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const n of [
-			'gyroscope:stream',
-			'gyroscope:route',
-			'gyroscope:transform',
-			'gyroscope:view',
-			'_command_interpreter',
-			'_router',
-		] ) {
-			expect( Core.node( n ) ).toBeNull();
+		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
-		expect( fake.closeCount ).toBeGreaterThanOrEqual( 1 );
+		expect( sourceAtMount.closed ).toBe( true );
 	} );
 
-	test( 'envelopes delivered after unmount do not throw (stream closed)', () => {
-		const fake = makeFakeConnector();
-		const { unmount } = renderHook( () =>
-			useGyroscopeGraph( { connector: fake } )
-		);
+	test( 'late envelopes after unmount do not throw', () => {
+		const { unmount } = renderHook( () => useGyroscopeGraph() );
+		const source = FakeEventSource.last;
 		unmount();
 		expect( () =>
-			fake.deliverMessage(
-				inflightEnvelope( [
-					{ rid: 'late', url: '/x', state: 'process' },
-				] )
+			source.dispatch(
+				'msg',
+				pack(
+					inflightEnvelope( [
+						{ rid: 'late', url: '/x', state: 'process' },
+					] )
+				)
 			)
 		).not.toThrow();
 	} );
