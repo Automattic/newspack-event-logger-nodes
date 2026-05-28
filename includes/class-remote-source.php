@@ -68,13 +68,13 @@ class Remote_Source_Node extends Node {
 	/** Memcache TTL for aggregator status keys (seconds). */
 	public const STATUS_TTL = 300;
 
-	private string $server_id;
-	private string $url;
-	private string $auth_username;
-	private string $auth_password;
-	private string $auth_token;
-	private string $remote_topic;
-	private int    $partition;
+	protected string $server_id     = '';
+	protected string $url           = '';
+	protected string $auth_username = '';
+	protected string $auth_password = '';
+	protected string $auth_token    = '';
+	protected string $remote_topic  = '';
+	protected int    $partition     = 0;
 
 	private bool $verify_ssl    = true;
 	private bool $require_https = true;
@@ -98,10 +98,51 @@ class Remote_Source_Node extends Node {
 	private int     $last_heartbeat  = 0;
 
 	/**
-	 * Constructor.
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
+	 * which the base setter parses against `node_schema()['arguments']`.
 	 *
 	 * Credentials and URL come from the ServerRegistry entry that StreamMerger
 	 * looked up — RemoteSource doesn't read the registry itself.
+	 */
+	public function __construct() {
+		parent::__construct();
+	}
+
+	/**
+	 * Setter chains through the base schema walker (which assigns server_id /
+	 * url / auth_username / auth_password / auth_token / remote_topic /
+	 * partition from positional tokens or schema defaults), then rtrims the
+	 * URL and clamps partition to >= 0 to match the legacy ctor.
+	 *
+	 * Note: this positional-string path can't represent middle-empty values
+	 * (whitespace tokenization collapses empties). Production callers
+	 * (StreamMerger::add_remote) use `configure()` instead, which sets each
+	 * field independently and writes a redacted summary string for
+	 * `dump_config()`. This setter is exercised primarily by tests and any
+	 * fully-populated TSL-style line.
+	 *
+	 * @param string|null $args
+	 * @return string
+	 */
+	public function arguments( ?string $args = null ): string {
+		if ( null === $args ) {
+			return parent::arguments();
+		}
+		$result = parent::arguments( $args );
+		if ( '' === $args ) {
+			return $result;
+		}
+		$this->url       = \rtrim( $this->url, '/' );
+		$this->partition = \max( 0, $this->partition );
+		return $result;
+	}
+
+	/**
+	 * Programmatic configuration entry point for StreamMerger. Sets every
+	 * field directly (so middle-empty values round-trip correctly) and
+	 * writes a redacted summary string into `$this->arguments` so
+	 * `dump_config()` reflects the configured state without disclosing
+	 * secrets.
 	 *
 	 * @param string $server_id     Identifier — also the memcache status key fragment.
 	 * @param string $url           Base URL (no trailing slash).
@@ -111,7 +152,7 @@ class Remote_Source_Node extends Node {
 	 * @param string $remote_topic  Topic for the subscribe / heartbeat URL params.
 	 * @param int    $partition     Partition for the subscribe / heartbeat URL params.
 	 */
-	public function __construct(
+	public function configure(
 		string $server_id,
 		string $url,
 		string $auth_username = '',
@@ -119,7 +160,7 @@ class Remote_Source_Node extends Node {
 		string $auth_token    = '',
 		string $remote_topic  = '',
 		int $partition        = 0
-	) {
+	): void {
 		$this->server_id     = $server_id;
 		$this->url           = \rtrim( $url, '/' );
 		$this->auth_username = $auth_username;
@@ -127,7 +168,8 @@ class Remote_Source_Node extends Node {
 		$this->auth_token    = $auth_token;
 		$this->remote_topic  = $remote_topic;
 		$this->partition     = \max( 0, $partition );
-		$this->arguments     = \implode( ' ', [
+		// Redacted summary string for dump_config — never echoes secrets.
+		$this->arguments = \implode( ' ', [
 			$server_id,
 			$this->url,
 			$auth_username,

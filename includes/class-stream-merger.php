@@ -60,10 +60,10 @@ class Stream_Merger_Node extends Node {
 	private ?Partition_Node $offsetlog = null;
 
 	/** @var string Topic name to pull from + heartbeat URL params. */
-	private string $remote_topic;
+	protected string $remote_topic = '';
 
 	/** @var int Partition number for the offsetlog directory + heartbeat URL params. */
-	private int $partition;
+	protected int $partition = 0;
 
 	/** @var float Last commit_all timestamp. */
 	private float $last_commit_time = 0.0;
@@ -80,14 +80,16 @@ class Stream_Merger_Node extends Node {
 	/** @var bool One-shot guard so connect_node() loads registry remotes only once. */
 	private bool $remotes_loaded = false;
 
-	public function __construct( string $remote_topic, int $partition = 0 ) {
-		$this->remote_topic = $remote_topic;
-		$this->partition    = \max( 0, $partition );
-		$this->arguments    = \implode( ' ', [
-			$remote_topic,
-			(string) $this->partition,
-		] );
-
+	/**
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
+	 * which the base setter parses against `node_schema()['arguments']`. The
+	 * override below clamps partition to >= 0.
+	 *
+	 * The owned HealthCheckTick sibling is mounted here because its construction
+	 * doesn't depend on the positional args — it's a structural part of every
+	 * StreamMerger regardless of remote_topic/partition.
+	 */
+	public function __construct() {
 		// Owned HealthCheckTick sibling — TIMER-driven, hub-only, never
 		// independently configurable. Patron-linked so dump_metadata hides it
 		// and so its name tracks the StreamMerger's automatically.
@@ -97,6 +99,26 @@ class Stream_Merger_Node extends Node {
 		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
 		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
 		parent::__construct();
+	}
+
+	/**
+	 * Setter chains through the base schema walker (which assigns remote_topic
+	 * and partition from positional tokens or schema defaults), then clamps
+	 * partition to >= 0 to match the legacy ctor's `max(0, ...)`.
+	 *
+	 * @param string|null $args
+	 * @return string
+	 */
+	public function arguments( ?string $args = null ): string {
+		if ( null === $args ) {
+			return parent::arguments();
+		}
+		$result = parent::arguments( $args );
+		if ( '' === $args ) {
+			return $result;
+		}
+		$this->partition = \max( 0, $this->partition );
+		return $result;
 	}
 
 	/**
@@ -361,7 +383,8 @@ class Stream_Merger_Node extends Node {
 			unset( $this->remote_nodes[ $server_id ] );
 		}
 
-		$remote = new Remote_Source_Node( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->remote_topic, $this->partition );
+		$remote = new Remote_Source_Node();
+		$remote->configure( $server_id, $url, $auth_username, $auth_password, $auth_token, $this->remote_topic, $this->partition );
 		// Propagate global policy so children inherit current hub config
 		// (operator toggles set_verify_ssl/set_require_https at runtime; new
 		// children must reflect those without needing a respawn). Memcache is
@@ -504,7 +527,8 @@ class Stream_Merger_Node extends Node {
 	 */
 	public function process_sse_chunk( string $chunk ): void {
 		if ( ! isset( $this->remote_nodes['__test__'] ) ) {
-			$remote = new Remote_Source_Node( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
+			$remote = new Remote_Source_Node();
+			$remote->configure( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
 			$remote->set_verify_ssl( $this->verify_ssl );
 			$remote->set_require_https( $this->require_https );
 			if ( null !== $this->sink ) {

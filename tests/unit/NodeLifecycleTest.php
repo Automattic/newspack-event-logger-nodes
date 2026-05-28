@@ -44,8 +44,16 @@ class NodeLifecycleTest extends TestCase {
 			'JobRouter'       => [ static fn () => new Job_Router_Node() ],
 			'JobWorker'       => [ static fn () => new Job_Worker_Node() ],
 			'RequestBuilder'  => [ static fn () => new Request_Builder_Node() ],
-			'RemoteSource'    => [ static fn () => new Remote_Source_Node( 'site', 'https://example.test' ) ],
-			'StreamMerger'    => [ static fn () => new Stream_Merger_Node( "firehose" ) ],
+			'RemoteSource'    => [ static fn () => ( static function () {
+				$r = new Remote_Source_Node();
+				$r->configure( 'site', 'https://example.test' );
+				return $r;
+			} )() ],
+			'StreamMerger'    => [ static fn () => ( static function () {
+				$sm = new Stream_Merger_Node();
+				$sm->arguments( 'firehose' );
+				return $sm;
+			} )() ],
 		];
 	}
 

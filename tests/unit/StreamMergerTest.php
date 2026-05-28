@@ -66,7 +66,8 @@ class StreamMergerTest extends TestCase {
 	}
 
 	private function make_merger(): Stream_Merger_Node {
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->name( 'test-stream-merger' );
 		$sm->set_require_https( false );  // back-compat: most legacy tests use http://
 		return $sm;
@@ -416,7 +417,8 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_https_only_default_refuses_http(): void {
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		// require_https defaults to true.
 		$sm->add_remote( 'insecure', 'http://insecure.test/', 'tok' );
 		// add_remote refuses non-HTTPS — no entry stored, no handle opened.
@@ -425,7 +427,8 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_https_only_default_accepts_https(): void {
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		// HTTPS URL: registration succeeds even with require_https=true. The
 		// connect attempt itself will fail (no real server) but the entry is
 		// stored and a connect attempt is made.
@@ -434,7 +437,8 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_require_https_opt_out_permits_http(): void {
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 		$sm->add_remote( 'plain', 'http://plain.test/', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
@@ -636,7 +640,8 @@ class StreamMergerTest extends TestCase {
 	// =========================================================================
 
 	public function test_add_remote_registers_curl_handle_with_event_framework(): void {
-		$sm = new Stream_Merger_Node( "firehose" );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose' );
 		$sm->set_require_https( false );
 		$sm->add_remote( 'site-a', 'http://localhost:9999/stream', 'tok' );
 		$this->assertSame( 1, $sm->remote_count() );
@@ -766,7 +771,9 @@ class StreamMergerTest extends TestCase {
 			$captured[] = $msg;
 		} );
 
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 
 		$concat = \implode( ' ', $captured );
@@ -1057,10 +1064,12 @@ class StreamMergerTest extends TestCase {
 		// HTTPS-only mode rejects http heartbeats too. add_remote refuses
 		// http URLs at registration, so we construct a RemoteSource directly
 		// and add it to the merger's ref list so the helper can reach it.
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$cache = new InMemoryMemcached();
 		Core::$memd = $cache;
-		$remote = new Remote_Source_Node( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
+		$remote = new Remote_Source_Node();
+		$remote->configure( 'http-remote', 'http://insecure.test', '', '', 'tok', 0 );
 		$remote->set_require_https( true );
 		Core::$memd = $cache;
 		$this->poke_merger_remote_nodes( $sm, [ 'http-remote' => $remote ] );
@@ -1835,14 +1844,16 @@ class StreamMergerTest extends TestCase {
 	// ── A3: sibling-CI + verbs ─────────────────────────────────
 
 	public function test_stream_merger_constructs_sibling_ci(): void {
-		$sm = new Stream_Merger_Node( "firehose" );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
 		$this->assertNotNull( $sm->interpreter() );
 		$this->assertSame( 'sm:config', $sm->interpreter()->name() );
 	}
 
 	public function test_stream_merger_set_verify_ssl_verb_round_trips(): void {
-		$sm = new Stream_Merger_Node( "firehose" );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
 		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_verify_ssl', 'false' ) );
 		$dump = $sm->dump_config();
@@ -1850,7 +1861,8 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_stream_merger_set_require_https_verb_round_trips(): void {
-		$sm = new Stream_Merger_Node( "firehose" );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
 		// Default is true; dump_config emits only the non-default (false) value.
 		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'false' ) );
@@ -2136,7 +2148,9 @@ class StreamMergerTest extends TestCase {
 		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 		$sm->name( 'sm-with-router' );
 
@@ -2300,7 +2314,9 @@ class StreamMergerTest extends TestCase {
 		$ref->setAccessible( true );
 		$ref->setValue( null, null );
 
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+
+		$sm->arguments( 'firehose 0' );
 		$sm->name( 'test-reg-sm' );
 		$sm->add_remote( 'site-reg' );
 
@@ -2346,7 +2362,8 @@ class StreamMergerTest extends TestCase {
 
 	public function test_namespaced_remote_name_uses_default_prefix_when_unnamed(): void {
 		// Without a name set, the namespaced child name uses 'stream-merger'.
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 		// Don't call name().
 		$sm->add_remote( 'siteNoName', 'http://siteNoName.test/', 'tok' );
@@ -2412,8 +2429,9 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_constructor_clamps_negative_partition_to_zero(): void {
-		// `partition = max(0, $partition)` in __construct.
-		$sm = new Stream_Merger_Node( -5 );
+		// `partition = max(0, $partition)` in arguments() override.
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose -5' );
 		$sm->set_require_https( false );
 
 		// Reflect to verify the clamp.
@@ -2425,7 +2443,8 @@ class StreamMergerTest extends TestCase {
 	public function test_name_setter_propagates_to_health_check_sibling(): void {
 		// Naming the merger names the health_check sibling
 		// "{name}:health-check".
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 		$sm->name( 'parent-merger' );
 
@@ -2437,7 +2456,9 @@ class StreamMergerTest extends TestCase {
 		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 		$sm->name( 'sm-twice' );
 		$sm->name( 'sm-twice' );
@@ -2454,7 +2475,8 @@ class StreamMergerTest extends TestCase {
 		// returns false the second time, so no new warning is emitted. Only the
 		// SECOND-call (no-op) assertion is robust here, because the first call may
 		// be suppressed by the print_less_often rate limiter from a previous test.
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false ); // first call; may or may not log (rate-limited)
 
 		// Second call → require_https already false → the warn-branch guard fails.
@@ -2470,7 +2492,8 @@ class StreamMergerTest extends TestCase {
 
 	public function test_set_require_https_enabling_again_does_not_warn(): void {
 		// Going from `true` to `true` → no warning (the warn branch guards on the transition).
-		$sm = new Stream_Merger_Node( "firehose", 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 
 		$captured = [];
 		\Newspack_Nodes\Core::set_stderr_handler( function ( string $msg ) use ( &$captured ): void {
@@ -2542,7 +2565,8 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_set_require_https_verb_closure_dispatches_to_patron(): void {
-		$sm = new Stream_Merger_Node( 'firehose', 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->name( 'sm-require-https' );
 		$ci = $sm->interpreter();
 		$verbs = $ci->commands();
@@ -2600,7 +2624,8 @@ class StreamMergerTest extends TestCase {
 	public function test_auto_wired_ci_exposes_all_config_verbs(): void {
 		// The base-ctor auto-wire builds the :config CI from the
 		// node_schema()['commands'] handler entries.
-		$sm    = new Stream_Merger_Node( 'firehose', 0 );
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
 		$sm->name( 'sm-verb-table' );
 		$verbs = $sm->interpreter()->commands();
 		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
@@ -2649,4 +2674,43 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 0, $pos['offset'] );
 	}
 
+	// ------------------------------------------------------------------------
+	// Tachikoma-parity arguments() migration (Task 9).
+	// ------------------------------------------------------------------------
+
+	/**
+	 * No-arg ctor leaves remote_topic and partition at their schema defaults;
+	 * arguments() walks node_schema and assigns them from positional tokens.
+	 * The override clamps partition to >= 0.
+	 */
+	public function test_constructible_via_no_arg_ctor_and_arguments_setter(): void {
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 3' );
+		$ref = new \ReflectionClass( $sm );
+		$this->assertSame( 'firehose', $ref->getProperty( 'remote_topic' )->getValue( $sm ) );
+		$this->assertSame( 3,          $ref->getProperty( 'partition' )->getValue( $sm ) );
+	}
+
+	/**
+	 * Empty-string arguments() no-ops (matches Partition/Topic behavior).
+	 * Negative partition is clamped to 0 by the override.
+	 */
+	public function test_arguments_setter_clamps_partition_to_non_negative(): void {
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose -7' );
+		$ref = new \ReflectionClass( $sm );
+		$this->assertSame( 0, $ref->getProperty( 'partition' )->getValue( $sm ) );
+	}
+
+	/**
+	 * No-arg ctor still mounts the owned HealthCheckTick sibling. Its
+	 * construction doesn't depend on the positional args, so the sibling
+	 * must exist immediately — before any arguments() call.
+	 */
+	public function test_no_arg_ctor_still_mounts_health_check_tick_sibling(): void {
+		$sm = new Stream_Merger_Node();
+		$ref = new \ReflectionClass( $sm );
+		$hc  = $ref->getProperty( 'health_check' )->getValue( $sm );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Health_Check_Tick_Node::class, $hc );
+	}
 }
