@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-27
+
 ### Changed
 
 - **`Aggregator_CI_Node` and `Servers_CI_Node` migrated to no-arg ctor + public-property dep injection.** Their `Server_Registry $registry` ctor dependency becomes a public nullable property assigned by the bootstrap (`$ci->registry = $registry;`) immediately after `make_node` returns the constructed instance. Last two app CIs with programmatic-dep positional ctors — they were the reason the substrate's `make_node` carried a ctor-param-count conditional through Tasks 7-10. With this change, every `make_node` call across both repos goes through the uniform Tachikoma sequence and the conditional is gone (substrate side).
