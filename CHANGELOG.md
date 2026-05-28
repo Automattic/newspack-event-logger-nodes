@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-28
+
+### Changed
+
+- **All four remaining dashboards migrated onto the substrate I/O backbone.** Closes the dashboard-migration sweep started in v0.7.0: every dashboard now rides the substrate's `_http` / `_sse` / `_heartbeat` pattern. The legacy `getCommandClient` / `unwrapCommandResponse` / per-dashboard `*Command` / `*Stream` Node pattern is fully retired in this plugin.
+- **`useAggregatorAdminGraph` (Configured Servers admin)** migrated to the substrate `_http` pattern. Drops `serversCommand`. Hook mounts spine + `_http` + `servers:view`. CRUD callbacks build TM_COMMANDs (TO=`_http/servers`, unique `message[ID]`) and fill into the CI; the view's `fill()` matches `message[ID]` against `pending` to resolve/reject the hook's Promise. Mutations chain a fire-and-forget re-list on success (replaces the legacy `window.location.reload()`). Also drops the now-dead `api.js` + its tests.
+- **`useHookCatalogGraph` (Performance Logger settings)** migrated to the substrate `_http` pattern. Drops `hookCatalogCommand`. Hook fires one `hooks_registered` TM_COMMAND on `isOpen` transition. On rejection the hook routes a synthetic empty-catalog reply THROUGH the CI (canonical path — router peels TO=`hookcatalog:view` and delivers) so the substrate boundary stays clean.
+- **`useGyroscopeGraph`** migrated to the substrate `_sse` pattern. Drops `gyroscopeStream`. Hook mounts spine + `_sse` + `_http` + `_heartbeat` + the existing `gyroscope:route`/`transform`/`view` chain. `_sse` subscribes to `gyroscope`; `_heartbeat.target = '_http/workers'`. Page-visibility drives `sse.start()` / `sse.close()` + `heartbeat.clearSlot()` on close. The connection-status banner (`gyroscopeView.connectionError`) stays dormant — `_sse` / SseConnector emits `connected` on open but has no parallel error signal, matching the v0.7.0 request-log dashboard behavior.
+- **`usePerformanceGraph` (Performance Dashboards)** migrated to the substrate `_http` pattern. The `performance:command` Node is kept as the **slice-tagging command-builder** (emits `{action:'loading', slice}` controls before each TM_COMMAND so the view treats different verb slices independently); it no longer owns the transport. TM_COMMANDs go through the CI (TO=`_http/performance`, FROM=`performance:view`); the reply pivots TO=FROM; the view's `fill()` matches `message[ID]` against `pending` to apply the result to its slice (or resolve a `resolveOnly` Promise for ad-hoc lookups). `performance:view` gains the canonical pending-Map gate + `_errorMessage()` helper. A pre-mount `client.send` fallback for `request_search` is retained for `?request=` deep-link timing (the `useUrlNavigation` mount fires before `usePerformanceGraph`'s mount populates the command ref).
+- **`useErrorLogGraph` (Performance Error Log)** migrated to the substrate `_sse` pattern. Drops `perfErrorsStream`. Hook mounts spine + `_sse` + `_http` + `_heartbeat` + the existing `perferrors:route`/`transform`/`view` chain.
+- **The canonical view contract from `servers:view` is now consistent across all command-driven dashboards:** pending-matched TM_ERROR rejects the Promise without polluting global view.error (per-call surface is the caller's catch — a row-level snackbar or in-form notice, not a table-wide banner); `_errorMessage()` helper handles both string and structured `{ message }` TM_ERROR payloads; `updateServer` and similar id+partial verbs spread the partial FIRST so the positional id wins (`{ ...partial, id }`).
+
 ## [0.7.0] - 2026-05-28
 
 ### Changed
