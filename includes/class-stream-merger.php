@@ -637,7 +637,8 @@ class Stream_Merger_Node extends Node {
 		// partition is encoded in the dir name (`aggregator.p{N}`), so the
 		// inner Partition's own partition axis is always 0. Matches the
 		// pattern Consumer uses for its offsetlog.
-		$this->offsetlog = new Partition_Node( $dir, 0 );
+		$this->offsetlog = new Partition_Node();
+		$this->offsetlog->arguments( "{$dir} 0" );
 		return $this->offsetlog;
 	}
 

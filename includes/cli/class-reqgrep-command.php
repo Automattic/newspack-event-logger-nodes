@@ -490,7 +490,9 @@ class Reqgrep_Command {
 	 */
 	private function get_partition( int $partition ): Partition_Node {
 		if ( ! isset( $this->partition_cache[ $partition ] ) ) {
-			$this->partition_cache[ $partition ] = new Partition_Node( $this->base_dir, $partition );
+			$p = new Partition_Node();
+			$p->arguments( "{$this->base_dir} {$partition}" );
+			$this->partition_cache[ $partition ] = $p;
 		}
 		return $this->partition_cache[ $partition ];
 	}

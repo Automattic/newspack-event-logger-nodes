@@ -458,7 +458,8 @@ class StreamMergerTest extends TestCase {
 		if ( ! is_dir( $dir ) ) {
 			mkdir( $dir, 0755, true );
 		}
-		$offsetlog = new Partition_Node( $dir, 0 );
+		$offsetlog = new Partition_Node();
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
@@ -1546,7 +1547,8 @@ class StreamMergerTest extends TestCase {
 		// Pre-seed the offsetlog with a Message whose VALUE is a scalar (not an array).
 		$dir = "{$this->tmp_dir}/remote_firehose.log";
 		@\mkdir( $dir, 0755, true );
-		$offsetlog = new Partition_Node( $dir, 0 );
+		$offsetlog = new Partition_Node();
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-bad-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
@@ -1574,7 +1576,8 @@ class StreamMergerTest extends TestCase {
 		// for a DIFFERENT server. That second server should NOT find its key.
 		$dir = "{$this->tmp_dir}/remote_firehose.log";
 		@\mkdir( $dir, 0755, true );
-		$offsetlog = new Partition_Node( $dir, 0 );
+		$offsetlog = new Partition_Node();
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-mixed-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
@@ -2615,7 +2618,8 @@ class StreamMergerTest extends TestCase {
 		if ( ! is_dir( $dir ) ) {
 			mkdir( $dir, 0755, true );
 		}
-		$offsetlog = new Partition_Node( $dir, 0 );
+		$offsetlog = new Partition_Node();
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->allow_large_writes();
 		$msg                   = Message::new_message();
