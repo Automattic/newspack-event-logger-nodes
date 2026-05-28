@@ -104,11 +104,11 @@ describe( 'useRequestLogGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → route → transform → view (and heartbeat → _sse/workers)', () => {
+	test( 'steers flow with targets: _sse → route → transform → view (and heartbeat → _http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
 		expect( Core.node( SSE ).target ).toBe( ROUTE );
 		expect( Core.node( TRANSFORM ).target ).toBe( VIEW );
-		expect( Core.node( HEARTBEAT ).target ).toBe( '_sse/workers' );
+		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=completed when visible', () => {
