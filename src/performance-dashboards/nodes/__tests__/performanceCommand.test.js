@@ -1,432 +1,323 @@
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
- * performance:command tests — the multi-verb command-out node behind an
- * injectable command-client seam. Each fetch* emits a synchronous `loading`
- * control then a `result`/`error`, tagged with its slice id; `resolveRequest`
- * RETURNS the unwrapped reply (navigation, no emit). The fake client resolves a
- * real Message-shaped reply so the production unwrapCommandResponse runs (mirrors
- * hookCatalogCommand.test.js — only the network boundary is faked).
+ * performance:command tests — the slice-tagging command-builder Node.
+ *
+ * Post-migration to substrate-canonical wiring, this Node does NOT own the
+ * network. Each fetch* method:
+ *  - emits a `{action:'loading', slice}` (or `error` for validation failures)
+ *    TM_STRUCT control through `sink` stamped `TO = target` (→ `performance:view`),
+ *  - registers a pending entry `{slice, initial?}` on the view's `pending` Map
+ *    keyed by `message[ID]`,
+ *  - builds a TM_COMMAND (FROM=`performance:view`, TO=`_http/performance`, ID,
+ *    VALUE={name,arguments,payload}) and fills it into `sink` (the CI).
+ *
+ * `resolveRequest` and `fetchUrlBreakdown` register a `resolveOnly` pending
+ * entry that the view's reply path resolves with the payload (transformed for
+ * breakdown). On a TM_ERROR reply, the view rejects the pending Promise.
+ *
+ * Validation failures (invalid hash / partition / request id) emit an error
+ * control and skip sending — no message, no pending entry.
  */
 
-import { Core, newMessage, VALUE, TO } from '@newspack-nodes/runtime';
+import {
+	Core,
+	TYPE,
+	TO,
+	FROM,
+	ID,
+	VALUE,
+	TM_COMMAND,
+	TM_STRUCT,
+} from '@newspack-nodes/runtime';
 import { createPerformanceCommand } from '../performanceCommand';
+import { createPerformanceView } from '../performanceView';
 
 beforeEach( () => Core.reset() );
 
-const reply = ( payload ) => {
-	const m = newMessage();
-	m[ VALUE ] = { payload };
-	return m;
-};
-
-function fakeClient( payload ) {
-	return {
-		calls: [],
-		send( a ) {
-			this.calls.push( a );
-			return Promise.resolve( reply( payload ) );
-		},
-	};
+// Mount a command+view pair sharing a recording sink so we can inspect every
+// outbound message in order.
+function mount( opts = {} ) {
+	const outbox = [];
+	const sink = { fill: ( m ) => outbox.push( m ) };
+	const view = createPerformanceView( 'performance:view' );
+	view.sink = sink;
+	const command = createPerformanceCommand( 'performance:command', opts );
+	command.sink = sink;
+	command.target = 'performance:view';
+	command.viewName = 'performance:view';
+	return { outbox, view, command };
 }
 
-// A client whose send() always rejects — drives the open-state catch → error.
-function rejectingClient( error ) {
-	return {
-		calls: [],
-		send( a ) {
-			this.calls.push( a );
-			return Promise.reject( error );
-		},
-	};
-}
-
-test( 'fetchOverview emits loading then overview result with the right verb/args', async () => {
-	const client = fakeClient( { total_requests: 3 } );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+describe( 'performance:command — control emissions (loading)', () => {
+	test( 'fetchOverview emits a loading control TO=target', () => {
+		const { outbox, command } = mount();
+		command.fetchOverview();
+		const control = outbox.find(
+			( m ) => m[ TYPE ] === TM_STRUCT && m[ VALUE ].action === 'loading'
+		);
+		expect( control ).toBeTruthy();
+		expect( control[ VALUE ] ).toEqual( {
+			action: 'loading',
+			slice: 'overview',
+		} );
+		expect( control[ TO ] ).toBe( 'performance:view' );
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchOverview( 'web1', [ 'server', 'status' ] );
-	expect( client.calls[ 0 ] ).toEqual( {
-		to: 'performance',
-		verb: 'overview',
-		payload: {
+
+	test( 'fetchUrls emits a urls loading control', () => {
+		const { outbox, command } = mount();
+		command.fetchUrls();
+		const control = outbox.find(
+			( m ) => m[ TYPE ] === TM_STRUCT && m[ VALUE ].action === 'loading'
+		);
+		expect( control[ VALUE ] ).toEqual( {
+			action: 'loading',
+			slice: 'urls',
+		} );
+	} );
+
+	test( 'fetchUrlDetail with initial:true emits loading; without initial it is SILENT', () => {
+		const { outbox, command } = mount();
+		command.fetchUrlDetail( 'abc123', { initial: true } );
+		const initialLoadings = outbox.filter(
+			( m ) =>
+				m[ TYPE ] === TM_STRUCT &&
+				m[ VALUE ] &&
+				m[ VALUE ].action === 'loading'
+		);
+		expect( initialLoadings ).toHaveLength( 1 );
+		outbox.length = 0;
+		command.fetchUrlDetail( 'abc123' );
+		const silentLoadings = outbox.filter(
+			( m ) =>
+				m[ TYPE ] === TM_STRUCT &&
+				m[ VALUE ] &&
+				m[ VALUE ].action === 'loading'
+		);
+		expect( silentLoadings ).toHaveLength( 0 );
+	} );
+
+	test( 'fetchRequestDetail emits a requestDetail loading control', () => {
+		const { outbox, command } = mount();
+		command.fetchRequestDetail( 'ok-rid', 0 );
+		const control = outbox.find(
+			( m ) => m[ TYPE ] === TM_STRUCT && m[ VALUE ].action === 'loading'
+		);
+		expect( control[ VALUE ] ).toEqual( {
+			action: 'loading',
+			slice: 'requestDetail',
+		} );
+	} );
+} );
+
+describe( 'performance:command — TM_COMMAND build', () => {
+	test( 'fetchOverview emits a TM_COMMAND TO=_http/performance FROM=performance:view with overview verb', () => {
+		const { outbox, command } = mount();
+		command.fetchOverview( 'web1', [ 'server', 'status' ] );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd ).toBeTruthy();
+		expect( cmd[ TO ] ).toBe( '_http/performance' );
+		expect( cmd[ FROM ] ).toBe( 'performance:view' );
+		expect( cmd[ VALUE ].name ).toBe( 'overview' );
+		expect( cmd[ VALUE ].payload ).toEqual( {
 			categories: true,
 			server: 'web1',
 			breakdown: 'server,status',
-		},
+		} );
+		expect( typeof cmd[ ID ] ).toBe( 'string' );
+		expect( cmd[ ID ].length ).toBeGreaterThan( 0 );
 	} );
-	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'overview' } );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'result',
-		slice: 'overview',
-		data: { total_requests: 3 },
+
+	test( 'fetchOverview without server or dims omits both keys but keeps categories:true', () => {
+		const { outbox, command } = mount();
+		command.fetchOverview();
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].payload ).toEqual( { categories: true } );
+	} );
+
+	test( 'fetchUrls forwards only present params plus limit:100', () => {
+		const { outbox, command } = mount();
+		command.fetchUrls( { search: 'x', offset: 20 } );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].name ).toBe( 'urls' );
+		expect( cmd[ VALUE ].payload ).toEqual( {
+			limit: 100,
+			search: 'x',
+			offset: 20,
+		} );
+	} );
+
+	test( 'fetchUrlDetail builds a url_detail TM_COMMAND with {hash, categories?, breakdown?}', () => {
+		const { outbox, command } = mount();
+		command.fetchUrlDetail( 'abc123', { categories: true, initial: true } );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].name ).toBe( 'url_detail' );
+		expect( cmd[ VALUE ].payload ).toEqual( {
+			hash: 'abc123',
+			categories: true,
+		} );
+	} );
+
+	test( 'fetchRequestDetail builds a request_detail TM_COMMAND with {rid, partition}', () => {
+		const { outbox, command } = mount();
+		command.fetchRequestDetail( 'ok-rid', 0 );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].name ).toBe( 'request_detail' );
+		expect( cmd[ VALUE ].payload ).toEqual( {
+			rid: 'ok-rid',
+			partition: 0,
+		} );
 	} );
 } );
 
-test( 'emitted controls are stamped TO the node target (router routes → view)', async () => {
-	const client = fakeClient( { total_requests: 3 } );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+describe( 'performance:command — pending registration on the view', () => {
+	test( 'fetchOverview registers a pending entry on the view keyed by the command ID', () => {
+		const { outbox, view, command } = mount();
+		command.fetchOverview();
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( view.pending.has( cmd[ ID ] ) ).toBe( true );
+		expect( view.pending.get( cmd[ ID ] ) ).toMatchObject( {
+			slice: 'overview',
+		} );
 	} );
-	n.target = 'performance:view';
-	const tos = [];
-	n.sink = { fill: ( m ) => tos.push( m[ TO ] ) };
-	await n.fetchOverview();
-	expect( tos.length ).toBeGreaterThanOrEqual( 2 );
-	expect( tos.every( ( to ) => to === 'performance:view' ) ).toBe( true );
-} );
 
-test( 'fetchUrls forwards only present params + limit, result carries the full reply', async () => {
-	const client = fakeClient( {
-		data: [ { hash: 'a' } ],
-		total: 1,
-		limit: 100,
-		offset: 0,
+	test( 'fetchUrlDetail registers slice + initial in the pending entry', () => {
+		const { outbox, view, command } = mount();
+		command.fetchUrlDetail( 'abc123', { initial: true } );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( view.pending.get( cmd[ ID ] ) ).toMatchObject( {
+			slice: 'urlDetail',
+			initial: true,
+		} );
 	} );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrls( { search: 'x', offset: 20 } );
-	expect( client.calls[ 0 ].payload ).toEqual( {
-		limit: 100,
-		search: 'x',
-		offset: 20,
-	} );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'result',
-		slice: 'urls',
-		data: { data: [ { hash: 'a' } ], total: 1, limit: 100, offset: 0 },
+
+	test( 'fetchUrlDetail non-initial registers initial:false', () => {
+		const { outbox, view, command } = mount();
+		command.fetchUrlDetail( 'abc123' );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( view.pending.get( cmd[ ID ] ) ).toMatchObject( {
+			slice: 'urlDetail',
+			initial: false,
+		} );
 	} );
 } );
 
-test( 'fetchUrlDetail with invalid hash emits error and does NOT send', async () => {
-	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'NOT-HEX!', { initial: true } );
-	expect( client.calls ).toHaveLength( 0 );
-	expect( got ).toEqual( [
-		{ action: 'loading', slice: 'urlDetail' },
-		{
+describe( 'performance:command — validation errors emit + skip sending', () => {
+	test( 'fetchUrlDetail with invalid hash emits error and does NOT build a TM_COMMAND', () => {
+		const errs = [];
+		const { outbox, view, command } = mount( {
+			onError: ( e ) => errs.push( e ),
+		} );
+		command.fetchUrlDetail( 'NOT-HEX!', { initial: true } );
+		const cmds = outbox.filter( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmds ).toHaveLength( 0 );
+		const err = outbox.find(
+			( m ) => m[ TYPE ] === TM_STRUCT && m[ VALUE ].action === 'error'
+		);
+		expect( err[ VALUE ] ).toEqual( {
 			action: 'error',
 			slice: 'urlDetail',
 			error: 'Invalid URL hash format',
-		},
-	] );
-} );
+		} );
+		expect( view.pending.size ).toBe( 0 );
+		expect( errs[ 0 ].message ).toBe( 'Invalid URL hash format' );
+	} );
 
-test( 'fetchUrlDetail threads the initial flag', async () => {
-	const client = fakeClient( { requests: [] } );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+	test( 'fetchRequestDetail with invalid rid emits error and does NOT send', () => {
+		const errs = [];
+		const { outbox, command } = mount( {
+			onError: ( e ) => errs.push( e ),
+		} );
+		command.fetchRequestDetail( 'bad rid!', 0 );
+		const cmds = outbox.filter( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmds ).toHaveLength( 0 );
+		expect( errs[ 0 ].message ).toBe( 'Invalid request ID format' );
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'abc123', { categories: true, initial: true } );
-	expect( client.calls[ 0 ].payload ).toEqual( {
-		hash: 'abc123',
-		categories: true,
-	} );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'result',
-		slice: 'urlDetail',
-		data: { requests: [] },
-		initial: true,
-	} );
-} );
 
-test( 'fetchRequestDetail validates rid and partition', async () => {
-	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchRequestDetail( 'ok-rid', -1 );
-	expect( client.calls ).toHaveLength( 0 );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'error',
-		slice: 'requestDetail',
-		error: 'Invalid partition number',
+	test( 'fetchRequestDetail with invalid partition emits error and does NOT send', () => {
+		const errs = [];
+		const { outbox, command } = mount( {
+			onError: ( e ) => errs.push( e ),
+		} );
+		command.fetchRequestDetail( 'ok-rid', -1 );
+		const cmds = outbox.filter( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmds ).toHaveLength( 0 );
+		expect( errs[ 0 ].message ).toBe( 'Invalid partition number' );
 	} );
 } );
 
-test( 'resolveRequest RETURNS the unwrapped reply and does NOT emit', async () => {
-	const client = fakeClient( { url_hash: 'abc', partition: 2, url: '/x' } );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+describe( 'performance:command — resolveRequest & fetchUrlBreakdown via pending', () => {
+	test( 'resolveRequest builds a request_search TM_COMMAND and registers a resolveOnly pending', () => {
+		const { outbox, view, command } = mount();
+		command.resolveRequest( 'rid-9' );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].name ).toBe( 'request_search' );
+		expect( cmd[ VALUE ].payload ).toEqual( { rid: 'rid-9' } );
+		const entry = view.pending.get( cmd[ ID ] );
+		expect( entry ).toMatchObject( { resolveOnly: true } );
+		expect( typeof entry.resolve ).toBe( 'function' );
+		expect( typeof entry.reject ).toBe( 'function' );
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	const out = await n.resolveRequest( 'rid-9' );
-	expect( client.calls[ 0 ] ).toEqual( {
-		to: 'performance',
-		verb: 'request_search',
-		payload: { rid: 'rid-9' },
-	} );
-	expect( out ).toEqual( { url_hash: 'abc', partition: 2, url: '/x' } );
-	expect( got ).toHaveLength( 0 );
-} );
 
-// Each emitting fetch* must, on a rejected send, emit loading then an error
-// tagged with ITS OWN slice id — this is what catches a wrong-slice copy-paste
-// in the catch block. Args are valid so the send is actually attempted.
-test( 'fetchOverview surfaces a send rejection as an overview error', async () => {
-	const client = rejectingClient( new Error( 'overview down' ) );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+	test( 'resolveRequest does NOT emit any TM_STRUCT loading control', () => {
+		const { outbox, command } = mount();
+		command.resolveRequest( 'rid-9' );
+		const controls = outbox.filter( ( m ) => m[ TYPE ] === TM_STRUCT );
+		expect( controls ).toHaveLength( 0 );
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchOverview();
-	expect( client.calls ).toHaveLength( 1 );
-	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'overview' } );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'error',
-		slice: 'overview',
-		error: 'overview down',
-	} );
-} );
 
-test( 'fetchUrls surfaces a send rejection as a urls error', async () => {
-	const client = rejectingClient( new Error( 'urls down' ) );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+	test( 'fetchUrlBreakdown returns null on invalid hash without sending', async () => {
+		const errs = [];
+		const { outbox, command } = mount( {
+			onError: ( e ) => errs.push( e ),
+		} );
+		const result = await command.fetchUrlBreakdown( 'NO', 'method' );
+		expect( result ).toBeNull();
+		expect( outbox ).toHaveLength( 0 );
+		expect( errs ).toHaveLength( 0 );
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrls();
-	expect( client.calls ).toHaveLength( 1 );
-	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'urls' } );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'error',
-		slice: 'urls',
-		error: 'urls down',
+
+	test( 'fetchUrlBreakdown with valid hash sends url_detail TM_COMMAND with a transform pending', () => {
+		const { outbox, view, command } = mount();
+		command.fetchUrlBreakdown( 'abc123', 'method' );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].name ).toBe( 'url_detail' );
+		expect( cmd[ VALUE ].payload ).toEqual( {
+			hash: 'abc123',
+			breakdown: 'method',
+		} );
+		const entry = view.pending.get( cmd[ ID ] );
+		expect( entry ).toMatchObject( { resolveOnly: true } );
+		expect( typeof entry.transform ).toBe( 'function' );
+		// Transform extracts breakdown_time_series.
+		expect(
+			entry.transform( { breakdown_time_series: { a: 1 } } )
+		).toEqual( { a: 1 } );
+		expect( entry.transform( {} ) ).toBeNull();
 	} );
 } );
 
-test( 'fetchUrlDetail (valid hash) surfaces a send rejection as a urlDetail error', async () => {
-	const client = rejectingClient( new Error( 'detail down' ) );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'abc123', { initial: true } );
-	expect( client.calls ).toHaveLength( 1 );
-	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'urlDetail' } );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'error',
-		slice: 'urlDetail',
-		error: 'detail down',
+describe( 'performance:command — close() guard', () => {
+	test( 'a fetch after close() emits nothing and does not register pending', () => {
+		const { outbox, view, command } = mount();
+		command.close();
+		command.fetchOverview();
+		expect( outbox ).toHaveLength( 0 );
+		expect( view.pending.size ).toBe( 0 );
 	} );
 } );
 
-test( 'fetchRequestDetail (valid rid+partition) surfaces a send rejection as a requestDetail error', async () => {
-	const client = rejectingClient( new Error( 'req down' ) );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+describe( 'performance:command — node identity', () => {
+	test( 'createPerformanceCommand names the node', () => {
+		Core.reset();
+		const n = createPerformanceCommand( 'performance:command', {} );
+		expect( n.name ).toBe( 'performance:command' );
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchRequestDetail( 'ok-rid', 1 );
-	expect( client.calls ).toHaveLength( 1 );
-	expect( got[ 0 ] ).toEqual( {
-		action: 'loading',
-		slice: 'requestDetail',
-	} );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'error',
-		slice: 'requestDetail',
-		error: 'req down',
-	} );
-} );
 
-test( 'fetchRequestDetail with an invalid rid emits error and does NOT send', async () => {
-	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
+	test( 'no longer requires a commandClient (no client.send path)', () => {
+		// The factory accepts no opts.commandClient — passing one MUST not throw,
+		// but the command no longer consults it.
+		expect( () =>
+			createPerformanceCommand( 'performance:command', {} )
+		).not.toThrow();
 	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchRequestDetail( 'bad rid!', 0 );
-	expect( client.calls ).toHaveLength( 0 );
-	expect( got ).toEqual( [
-		{ action: 'loading', slice: 'requestDetail' },
-		{
-			action: 'error',
-			slice: 'requestDetail',
-			error: 'Invalid request ID format',
-		},
-	] );
-} );
-
-test( 'fetchRequestDetail success sends { rid, partition } and emits the result (partition 0 accepted)', async () => {
-	const client = fakeClient( { rid: 'ok-rid', url: '/x' } );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchRequestDetail( 'ok-rid', 0 );
-	expect( client.calls[ 0 ] ).toEqual( {
-		to: 'performance',
-		verb: 'request_detail',
-		payload: { rid: 'ok-rid', partition: 0 },
-	} );
-	expect( got[ 0 ] ).toEqual( {
-		action: 'loading',
-		slice: 'requestDetail',
-	} );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'result',
-		slice: 'requestDetail',
-		data: { rid: 'ok-rid', url: '/x' },
-	} );
-} );
-
-test( 'resolveRequest returns null on a send rejection and emits nothing', async () => {
-	const client = rejectingClient( new Error( 'search down' ) );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	const out = await n.resolveRequest( 'rid-9' );
-	expect( out ).toBeNull();
-	expect( got ).toHaveLength( 0 );
-} );
-
-test( 'a send rejecting after close() emits nothing', async () => {
-	let rej;
-	const client = {
-		send: () =>
-			new Promise( ( _, r ) => {
-				rej = r;
-			} ),
-	};
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	const p = n.fetchOverview();
-	n.close();
-	rej( new Error( 'boom' ) );
-	await p.catch( () => {} );
-	expect( got ).toEqual( [ { action: 'loading', slice: 'overview' } ] );
-} );
-
-test( 'onError fires on a rejected fetchOverview AND the error slice is emitted', async () => {
-	const errs = [];
-	const client = { send: () => Promise.reject( new Error( 'boom' ) ) };
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-		onError: ( e ) => errs.push( e ),
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchOverview();
-	expect( got ).toEqual( [
-		{ action: 'loading', slice: 'overview' },
-		{ action: 'error', slice: 'overview', error: 'boom' },
-	] );
-	expect( errs ).toHaveLength( 1 );
-	expect( errs[ 0 ].message ).toBe( 'boom' );
-} );
-
-test( 'onError fires on invalid hash with the validation Error', async () => {
-	const errs = [];
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: fakeClient( {} ),
-		onError: ( e ) => errs.push( e ),
-	} );
-	n.sink = { fill: () => {} };
-	await n.fetchUrlDetail( 'NOT-HEX!', { initial: true } );
-	expect( errs[ 0 ].message ).toBe( 'Invalid URL hash format' );
-} );
-
-test( 'onError fires on invalid partition (requestDetail)', async () => {
-	const errs = [];
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: fakeClient( {} ),
-		onError: ( e ) => errs.push( e ),
-	} );
-	n.sink = { fill: () => {} };
-	await n.fetchRequestDetail( 'ok-rid', -1 );
-	expect( errs[ 0 ].message ).toBe( 'Invalid partition number' );
-} );
-
-test( 'resolveRequest throw does NOT call onError (returns null)', async () => {
-	const errs = [];
-	const client = { send: () => Promise.reject( new Error( 'x' ) ) };
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-		onError: ( e ) => errs.push( e ),
-	} );
-	n.sink = { fill: () => {} };
-	expect( await n.resolveRequest( 'rid' ) ).toBeNull();
-	expect( errs ).toHaveLength( 0 );
-} );
-
-test( 'fetchUrlDetail is SILENT (no loading) on a non-initial fetch', async () => {
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: fakeClient( { requests: [] } ),
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'abc123' );
-	expect( got ).toEqual( [
-		{
-			action: 'result',
-			slice: 'urlDetail',
-			data: { requests: [] },
-			initial: false,
-		},
-	] );
-} );
-
-test( 'fetchUrlDetail emits loading on the initial fetch', async () => {
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: fakeClient( { requests: [] } ),
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	await n.fetchUrlDetail( 'abc123', { initial: true } );
-	expect( got[ 0 ] ).toEqual( { action: 'loading', slice: 'urlDetail' } );
-	expect( got[ 1 ] ).toEqual( {
-		action: 'result',
-		slice: 'urlDetail',
-		data: { requests: [] },
-		initial: true,
-	} );
-} );
-
-test( 'fetchUrlBreakdown RETURNS breakdown_time_series and does NOT emit', async () => {
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: fakeClient( { breakdown_time_series: { a: 1 } } ),
-	} );
-	const got = [];
-	n.sink = { fill: ( m ) => got.push( m[ VALUE ] ) };
-	const out = await n.fetchUrlBreakdown( 'aa', 'method' );
-	expect( out ).toEqual( { a: 1 } );
-	expect( got ).toHaveLength( 0 );
-} );
-
-test( 'fetchUrlBreakdown returns null on invalid hash without sending or onError', async () => {
-	const errs = [];
-	const client = fakeClient( {} );
-	const n = createPerformanceCommand( 'performance:command', {
-		commandClient: client,
-		onError: ( e ) => errs.push( e ),
-	} );
-	expect( await n.fetchUrlBreakdown( 'NO', 'method' ) ).toBeNull();
-	expect( client.calls ).toHaveLength( 0 );
-	expect( errs ).toHaveLength( 0 );
 } );

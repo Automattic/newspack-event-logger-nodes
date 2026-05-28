@@ -1,112 +1,202 @@
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
- * useHookCatalogGraph — mounts the Performance Logger hook-catalog node graph
- * clipped onto the exospine (the canonical rule-#2 backbone `_command_interpreter →
- * _router`). On mount it builds two nodes — `hookcatalog:command` (the
- * hooks_registered-command transport) and `hookcatalog:view` (the render model React
- * reads). EVERY node sinks into the CI; flow is steered ONLY by each node's `target`
- * (the router peels TO and delivers): the command targets the view. There is no
- * bespoke `command.sink=view` wiring. Hook Catalog is command-driven with no live
- * data/control split, so there's no route node — straight command → view.
+ * useHookCatalogGraph — mounts the Performance Logger hook-catalog graph onto
+ * the canonical rule-#2 backbone (`_command_interpreter → _router`) using the
+ * substrate's I/O boundary nodes — the same ones useAggregatorAdminGraph mounts:
  *
- * The trigger is fire-on-OPEN, not an interval: a separate effect keyed on
- * `isOpen` fires one `command.fetch()` whenever isOpen flips true (re-fetching on
- * every re-open, exactly like the old modal's `useEffect([isOpen])`). There is NO
- * polling — the catalog is read once per open. Loading starts false (a closed modal
- * shows no spinner); the sole caller opens from closed, so a mount-while-already-open
- * — which would paint one no-spinner frame before the fetch fires — is unreached.
+ *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _output     (Dumper — terminal output / log lines)
+ *   _uptime     (uptime reply receiver)
+ *   _completion (tab-completion receiver)
+ *   _cwd        (current-working-directory indirection)
  *
- * The hook returns the model itself — `{ hooksByCategory, loading }` — rather than
- * leaving the component to call useNodeState. HookSelectorModal is a leaf consumer
- * that IS the thin view (its render is already pure presentation), so encapsulating
- * the useNodeState read here keeps the modal presentational; it's the same
- * node-graph contract, just read on the component's behalf.
+ * Plus the application's render-model node:
  *
- * The command boundary is injectable: tests pass `opts.commandClient` (threaded to
- * the command node) so the hook never touches the network. Production lazily
- * defaults to the shared CommandClient singleton inside the command node. Torn down
- * on unmount: the command node is closed (cancel any in-flight fetch) BEFORE the
- * graph nodes are unregistered from Core, THEN the exospine is torn down (which
- * removes the CI + router). Mirrors useAggregatorAdminGraph.
+ *   hookcatalog:view (the view-model node React reads + the pending-Promise registry)
+ *
+ * The trigger is fire-on-OPEN: an effect keyed on `isOpen` builds a TM_COMMAND
+ * (FROM=`hookcatalog:view`, TO=`_http/performance`, VALUE.name=`hooks_registered`)
+ * with a unique `message[ID]`, stashes a Promise resolver in the view's `pending`
+ * Map, and fills the message into the CI. The router peels `_http`, HttpOut
+ * POSTs, the server pivots the reply TO=FROM, the router peels
+ * `hookcatalog:view`, and the view's `fill()` matches `message[ID]` to settle
+ * the Promise + extract hooks_by_category for the render model.
+ *
+ * Error contract: the legacy modal's `.catch(() => setHookCategories({}))`
+ * meant a failure cleared the spinner with an empty catalog (HookSelectorModal
+ * has no error UI). Pending-matched TM_ERROR rejects the Promise without
+ * polluting view.error; this hook's catch synthesizes a fake empty-catalog
+ * reply into the view to clear loading.
+ *
+ * The command boundary is injectable: tests pass `opts.commandClient` (assigned
+ * to `_http.client`) so the hook never touches the network. Production lazily
+ * defaults to a freshly-constructed CommandClient.
  */
 
-import { useEffect, useRef, useState } from '@wordpress/element';
-import { Core, mountExospine, useNodeState } from '@newspack-nodes/runtime';
-import { createHookCatalogCommand } from '../nodes/hookCatalogCommand';
+import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
+import {
+	Core,
+	mountExospine,
+	Node,
+	HttpOut,
+	Dumper,
+	Uptime,
+	Completion,
+	CommandClient,
+	useNodeState,
+	newMessage,
+	TYPE,
+	TO,
+	FROM,
+	ID,
+	VALUE,
+	TM_COMMAND,
+	TM_RESPONSE,
+} from '@newspack-nodes/runtime';
 import { createHookCatalogView } from '../nodes/hookCatalogView';
 
-// Every named node this graph mounts — unregistered on teardown (the exospine
-// nodes are removed separately by its own teardown()). Names use a colon, not a
-// slash: the router peels TO on '/', so a '/' in a node name would misroute.
-const COMMAND = 'hookcatalog:command';
+const HTTP = '_http';
+const OUTPUT = '_output';
+const UPTIME = '_uptime';
+const COMPLETION = '_completion';
+const CWD = '_cwd';
 const VIEW = 'hookcatalog:view';
-const GRAPH_NODE_NAMES = [ COMMAND, VIEW ];
+const GRAPH_NODE_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+
+// Monotonic per-hook-instance ID counter — message[ID] is what the view uses
+// to match a reply back to a pending Promise resolver.
+let nextOpId = 0;
+function makeOpId() {
+	nextOpId += 1;
+	return `hookcatalog-op-${ Date.now() }-${ nextOpId }`;
+}
+
+// Build the TM_COMMAND addressed at the `performance` CI.
+function buildCommand( verb, id ) {
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND;
+	m[ FROM ] = VIEW;
+	m[ TO ] = `${ HTTP }/performance`;
+	m[ ID ] = id;
+	m[ VALUE ] = { name: verb, arguments: '', payload: null };
+	return m;
+}
 
 /**
- * @param {Object}  [opts]               Options (testing seams).
+ * @param {Object}  [opts]               Options.
  * @param {boolean} [opts.isOpen]        When true, fires one hook-catalog fetch.
- * @param {Object}  [opts.commandClient] Command-client seam threaded to the command
- *                                       node; defaults to the shared singleton.
+ * @param {Object}  [opts.commandClient] CommandClient seam assigned to `_http.client`;
+ *                                       defaults to a freshly-constructed CommandClient.
  * @return {{ hooksByCategory: Object, loading: boolean }} The render model.
  */
 export function useHookCatalogGraph( opts = {} ) {
-	const { isOpen, commandClient } = opts;
+	const { isOpen } = opts;
 
-	// Stash the latest command client so the mount effect reads it without
-	// re-subscribing (it only runs once).
-	const commandClientRef = useRef( commandClient );
-	commandClientRef.current = commandClient;
+	const optsRef = useRef( opts );
+	optsRef.current = opts;
 
-	// Live command-node handle for the fire-on-open effect.
-	const commandRef = useRef( null );
+	// Live CI handle for the dispatch callback.
+	const ciRef = useRef( null );
 
-	// Flipped true once the graph (and its view node) is mounted. The mount
-	// effect runs AFTER the first render, by which point useNodeState has already
-	// captured a null view node and bailed; setting this state forces the
-	// consumer to re-render so useNodeState re-subscribes to the now-registered
-	// view node and reads the published model. Without it the dashboard stays
-	// stuck on the loading placeholder. Mirrors useAggregatorAdminGraph's setViewReady.
+	// Flipped true once the graph (and its view node) is mounted, so the React
+	// view's useNodeState re-subscribes to the now-registered view node.
 	const [ , setViewReady ] = useState( false );
 
-	// Mount the graph once: clip it onto the exospine, then command → view via target.
+	// Mount the graph once: clip it onto the exospine.
 	useEffect( () => {
+		const data =
+			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		const command = createHookCatalogCommand( COMMAND, {
-			commandClient: commandClientRef.current,
-		} );
-		const view = createHookCatalogView( VIEW );
+		const http = new HttpOut();
+		http.client =
+			optsRef.current.commandClient ||
+			new CommandClient( {
+				baseUrl: data.restUrl || '/wp-json/',
+				nonce: data.nonce || '',
+			} );
+		http.setName( HTTP );
+		http.sink = ci;
 
-		// Rule #2: every node sinks into the CI; flow is steered by `target`.
-		command.sink = ci;
-		command.target = VIEW;
+		const output = new Dumper();
+		output.setName( OUTPUT );
+		output.sink = ci;
+
+		const uptime = new Uptime();
+		uptime.setName( UPTIME );
+		uptime.sink = ci;
+
+		const completion = new Completion();
+		completion.setName( COMPLETION );
+		completion.sink = ci;
+
+		// `_cwd` is mounted for substrate uniformity.
+		const cwd = new Node();
+		cwd.setName( CWD );
+		cwd.sink = ci;
+		cwd.target = `${ HTTP }/performance`;
+
+		// The application view-model node — receiver of every reply via TO=FROM pivot.
+		const view = createHookCatalogView( VIEW );
 		view.sink = ci;
-		commandRef.current = command;
+
+		ciRef.current = ci;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
 		setViewReady( true );
 
 		return () => {
-			// Close the in-flight-cancel-owning command node first BEFORE
-			// unregistering — mirrors useAggregatorAdminGraph calling command.close()
-			// before unregister. Unregister the graph nodes, THEN tear down the
-			// exospine (which removes the CI + router).
-			command.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
 			teardownSpine();
-			commandRef.current = null;
-			setViewReady( false );
+			ciRef.current = null;
 		};
 	}, [] );
 
-	// Fire one fetch whenever the modal opens (re-fetches on every re-open).
-	useEffect( () => {
-		if ( isOpen && commandRef.current ) {
-			commandRef.current.fetch();
+	// Dispatch a verb and return a Promise the view settles via message[ID].
+	const dispatch = useCallback( ( verb ) => {
+		const ci = ciRef.current;
+		if ( ! ci ) {
+			return Promise.reject( new Error( 'graph not mounted' ) );
 		}
-	}, [ isOpen ] );
+		const view = Core.node( VIEW );
+		if ( ! view ) {
+			return Promise.reject( new Error( 'view not mounted' ) );
+		}
+		const id = makeOpId();
+		const promise = new Promise( ( resolve, reject ) => {
+			view.pending.set( id, { resolve, reject } );
+		} );
+		ci.fill( buildCommand( verb, id ) );
+		return promise;
+	}, [] );
+
+	// Fire one hooks_registered fetch whenever the modal opens. On failure
+	// route a synthetic empty-catalog reply THROUGH the CI (canonical path —
+	// router peels TO=`hookcatalog:view` and delivers) so the spinner clears
+	// (legacy modal had no error UI).
+	useEffect( () => {
+		if ( ! isOpen ) {
+			return;
+		}
+		dispatch( 'hooks_registered' ).catch( () => {
+			const ci = ciRef.current;
+			if ( ! ci ) {
+				return;
+			}
+			const fake = newMessage();
+			fake[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+			fake[ TO ] = VIEW;
+			fake[ VALUE ] = {
+				name: 'hooks_registered',
+				payload: { hooks_by_category: {} },
+			};
+			ci.fill( fake );
+		} );
+	}, [ isOpen, dispatch ] );
 
 	// Read the published model on the modal's behalf (keeps the modal presentational).
 	const view = useNodeState( VIEW, 'view' );

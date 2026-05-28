@@ -1,94 +1,128 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
- * useAggregatorAdminGraph tests — the Configured-Servers admin graph clipped onto
- * the exospine (`mountExospine`: _command_interpreter → _router). The two graph
- * nodes (`servers:command`, `servers:view`) are REAL (their factories register
- * them in Core); only the command's client is injected so the hook never touches
- * the network. EVERY node sinks into the CI and steers via `target` (the router
- * peels TO and delivers); an end-to-end list reply routes command → view through
- * the real router into the view model. The hook fires one `list()` on mount,
- * exposes the four CRUD callbacks (each awaits the mutation then re-lists), surfaces
- * mutation errors into the view model, and tears down close()-then-unregister.
- * Mirrors useAggregatorStatusGraph's tests (real graph, faked command boundary).
+ * useAggregatorAdminGraph tests — the Configured-Servers admin graph clipped
+ * onto the substrate's I/O boundary nodes (exospine + `_http` + `_output`,
+ * `_uptime`, `_completion`, `_cwd`), plus the `servers:view` model node.
+ * Migrated from the bespoke `servers:command` Node to the substrate's HttpOut:
+ * the hook dispatches each verb as a TM_COMMAND through the CI
+ * (FROM=`servers:view`, TO=`_http/servers`, verb in VALUE.name); the reply
+ * routes via TO=FROM back into the view node, which unwraps `value.payload`.
+ *
+ * Every node sinks into the CI (rule #2); flow is steered ONLY by each node's
+ * `target` (the router peels TO and delivers). _http.client is injected via
+ * `opts.commandClient` so the hook never touches the network. Each CRUD
+ * callback returns a Promise the view resolves by matching `message[ID]`
+ * against `servers:view`'s `pending` map. Mirrors useAggregatorStatusGraph.
  */
 
 import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
-import { newMessage, VALUE, Core } from '@newspack-nodes/runtime';
+import {
+	newMessage,
+	TIMESTAMP,
+	ID,
+	TO,
+	FROM,
+	VALUE,
+	TYPE,
+	TM_COMMAND,
+	TM_RESPONSE,
+	TM_ERROR,
+	Core,
+} from '@newspack-nodes/runtime';
 import { useAggregatorAdminGraph } from '../useAggregatorAdminGraph';
 
 const CI = '_command_interpreter';
-const COMMAND = 'servers:command';
+const ROUTER = '_router';
+const HTTP = '_http';
+const OUTPUT = '_output';
+const UPTIME = '_uptime';
+const COMPLETION = '_completion';
+const CWD = '_cwd';
 const VIEW = 'servers:view';
+const ALL_GRAPH_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
 
-// The api.js wrappers are mocked so the hook's CRUD callbacks resolve/reject
-// deterministically without exercising the command protocol again.
-jest.mock( '../../api', () => ( {
-	addServer: jest.fn(),
-	updateServer: jest.fn(),
-	removeServer: jest.fn(),
-	testServer: jest.fn(),
-} ) );
-const api = require( '../../api' );
-
-// A fake command client matching the command node's seam (send → resolves a
-// canned reply); records every send + how many times so we can assert the
-// immediate list + the re-list after a mutation. The reply VALUE is a
-// { name, payload } envelope so the real unwrapCommandResponse extracts the
-// payload as the servers map.
-function makeFakeClient( payload = {} ) {
-	return {
-		calls: [],
-		send( args ) {
-			this.calls.push( args );
+// A fake CommandClient matching HttpOut's seam: postBatch returns reply
+// Messages addressed back along FROM (the server's reply pivot). The payload
+// can be looked up by verb so a list reply yields a server map while a mutation
+// reply yields { id }.
+function makeFakeClient( payloadByVerb = {}, opts = {} ) {
+	const client = {
+		batches: [],
+		buildMessage( { to, verb, args = '', payload = null } ) {
 			const m = newMessage();
-			m[ VALUE ] = { name: args.verb, payload };
-			return Promise.resolve( m );
+			m[ TYPE ] = TM_COMMAND;
+			m[ TO ] = to;
+			m[ VALUE ] = { name: verb, arguments: args, payload };
+			return m;
+		},
+		postBatch( messages ) {
+			client.batches.push( messages );
+			const replies = messages.map( ( m ) => {
+				const reply = newMessage();
+				reply[ TYPE ] =
+					opts.errorVerbs &&
+					opts.errorVerbs.includes( m[ VALUE ]?.name )
+						? TM_COMMAND | TM_RESPONSE | TM_ERROR
+						: TM_COMMAND | TM_RESPONSE;
+				reply[ TO ] = m[ FROM ];
+				reply[ ID ] = m[ ID ];
+				reply[ VALUE ] = {
+					name: m[ VALUE ]?.name,
+					payload:
+						payloadByVerb[ m[ VALUE ]?.name ] ??
+						payloadByVerb._default ??
+						null,
+				};
+				if ( opts.now ) {
+					reply[ TIMESTAMP ] = opts.now;
+				}
+				return reply;
+			} );
+			return Promise.resolve( replies );
 		},
 	};
+	return client;
 }
 
 beforeEach( () => {
 	Core.reset();
-	api.addServer.mockReset().mockResolvedValue( { id: 'x' } );
-	api.updateServer.mockReset().mockResolvedValue( { id: 'x' } );
-	api.removeServer.mockReset().mockResolvedValue( { id: 'x' } );
-	api.testServer
-		.mockReset()
-		.mockResolvedValue( { id: 'x', status: 'connected', response: {} } );
 } );
 
-describe( 'useAggregatorAdminGraph — exospine wiring', () => {
-	test( 'mounts the backbone + two nodes, each sinking into the CI', () => {
+describe( 'useAggregatorAdminGraph — exospine + I/O boundary wiring', () => {
+	test( 'mounts the backbone + the I/O boundary nodes + the view, each sinking into the CI', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
 		const ci = Core.node( CI );
 		expect( ci ).toBeTruthy();
-		expect( Core.node( '_router' ) ).toBeTruthy();
-		for ( const n of [ COMMAND, VIEW ] ) {
-			expect( Core.node( n ) ).toBeTruthy();
-			expect( Core.node( n ).sink ).toBe( ci );
+		expect( Core.node( ROUTER ) ).toBeTruthy();
+		for ( const name of ALL_GRAPH_NAMES ) {
+			const node = Core.node( name );
+			expect( node ).toBeTruthy();
+			expect( node.sink ).toBe( ci );
 		}
 	} );
 
-	test( 'steers flow with the command target, not a bespoke sink', () => {
+	test( '_http has the injected CommandClient as its client', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		expect( Core.node( COMMAND ).target ).toBe( VIEW );
-		// The command does NOT sink directly into the view (rule #2: sink=ci only).
-		expect( Core.node( COMMAND ).sink ).not.toBe( Core.node( VIEW ) );
+		expect( Core.node( HTTP ).client ).toBe( client );
 	} );
 
-	test( 'fires one immediate list() on mount (list command)', () => {
+	test( 'fires one immediate list() on mount (list command via _http)', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		expect( client.calls.length ).toBeGreaterThanOrEqual( 1 );
-		expect( client.calls[ 0 ] ).toEqual( { to: 'servers', verb: 'list' } );
+		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
+		const msg = client.batches[ 0 ][ 0 ];
+		expect( msg[ TO ] ).toBe( 'servers' );
+		expect( msg[ FROM ] ).toBe( VIEW );
+		expect( msg[ VALUE ].name ).toBe( 'list' );
 	} );
 
 	test( 'returns the four CRUD callbacks', () => {
@@ -104,12 +138,12 @@ describe( 'useAggregatorAdminGraph — exospine wiring', () => {
 } );
 
 describe( 'useAggregatorAdminGraph — end-to-end routing through the exospine', () => {
-	test( 'an immediate list reply routes command → view through the real router and lands in the view model', async () => {
+	test( 'an immediate list reply routes _http → CI → router → servers:view and lands in the view model', async () => {
 		const servers = {
 			'spoke-01': { id: 'spoke-01', url: 'https://a' },
 			'spoke-02': { id: 'spoke-02', url: 'https://b' },
 		};
-		const client = makeFakeClient( servers );
+		const client = makeFakeClient( { list: servers } );
 		renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
@@ -126,153 +160,254 @@ describe( 'useAggregatorAdminGraph — end-to-end routing through the exospine',
 	} );
 } );
 
-describe( 'useAggregatorAdminGraph — CRUD callbacks fire the verb then re-list', () => {
-	test( 'addServer dispatches the add then re-lists', async () => {
-		const client = makeFakeClient();
+describe( 'useAggregatorAdminGraph — CRUD callbacks dispatch the verb then re-list', () => {
+	test( 'addServer dispatches an add command then re-lists', async () => {
+		const client = makeFakeClient( {
+			list: {},
+			add: { id: 'spoke-01' },
+		} );
 		const { result } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		const listsAfterMount = client.calls.filter(
-			( c ) => 'list' === c.verb
-		).length;
+		// Drain the immediate list before counting.
+		await act( async () => {} );
+		const listsBefore = countVerbs( client.batches, 'list' );
+
+		let returned;
 		await act( async () => {
-			await result.current.addServer( {
+			returned = await result.current.addServer( {
 				id: 'spoke-01',
 				url: 'https://x',
+				auth_username: 'u',
+				auth_password: 'p',
 			} );
 		} );
-		expect( api.addServer ).toHaveBeenCalledWith( client, {
+
+		// Mutation resolves to the verb's payload.
+		expect( returned ).toEqual( { id: 'spoke-01' } );
+
+		// An `add` was dispatched with the fields in the payload + enabled:true.
+		const add = findVerb( client.batches, 'add' );
+		expect( add ).toBeTruthy();
+		expect( add[ TO ] ).toBe( 'servers' );
+		expect( add[ FROM ] ).toBe( VIEW );
+		expect( add[ VALUE ].payload ).toMatchObject( {
 			id: 'spoke-01',
 			url: 'https://x',
+			auth_username: 'u',
+			auth_password: 'p',
+			enabled: true,
 		} );
+
 		// A re-list ran after the mutation (replaces window.location.reload()).
-		const listsAfter = client.calls.filter(
-			( c ) => 'list' === c.verb
-		).length;
-		expect( listsAfter ).toBeGreaterThan( listsAfterMount );
+		const listsAfter = countVerbs( client.batches, 'list' );
+		expect( listsAfter ).toBeGreaterThan( listsBefore );
 	} );
 
-	test( 'updateServer dispatches the update then re-lists', async () => {
-		const client = makeFakeClient();
+	test( 'updateServer dispatches an update command then re-lists', async () => {
+		const client = makeFakeClient( {
+			list: {},
+			update: { id: 'spoke-01' },
+		} );
 		const { result } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		const before = client.calls.filter( ( c ) => 'list' === c.verb ).length;
+		await act( async () => {} );
+		const listsBefore = countVerbs( client.batches, 'list' );
+
 		await act( async () => {
 			await result.current.updateServer( 'spoke-01', { enabled: false } );
 		} );
-		expect( api.updateServer ).toHaveBeenCalledWith( client, 'spoke-01', {
+
+		const update = findVerb( client.batches, 'update' );
+		expect( update ).toBeTruthy();
+		expect( update[ VALUE ].payload ).toEqual( {
+			id: 'spoke-01',
 			enabled: false,
 		} );
-		const after = client.calls.filter( ( c ) => 'list' === c.verb ).length;
-		expect( after ).toBeGreaterThan( before );
+		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+			listsBefore
+		);
 	} );
 
-	test( 'removeServer dispatches the delete then re-lists', async () => {
-		const client = makeFakeClient();
+	test( 'removeServer dispatches a delete command then re-lists', async () => {
+		const client = makeFakeClient( {
+			list: {},
+			delete: { id: 'spoke-01' },
+		} );
 		const { result } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		const before = client.calls.filter( ( c ) => 'list' === c.verb ).length;
+		await act( async () => {} );
+		const listsBefore = countVerbs( client.batches, 'list' );
+
 		await act( async () => {
 			await result.current.removeServer( 'spoke-01' );
 		} );
-		expect( api.removeServer ).toHaveBeenCalledWith( client, 'spoke-01' );
-		const after = client.calls.filter( ( c ) => 'list' === c.verb ).length;
-		expect( after ).toBeGreaterThan( before );
+
+		const del = findVerb( client.batches, 'delete' );
+		expect( del ).toBeTruthy();
+		expect( del[ VALUE ].payload ).toEqual( { id: 'spoke-01' } );
+		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+			listsBefore
+		);
 	} );
 
-	test( 'testServer returns the probe result to the caller (per-row status)', async () => {
-		const client = makeFakeClient();
+	test( 'testServer dispatches a test command and resolves to the probe result (no re-list)', async () => {
 		const probe = { id: 'spoke-01', status: 'connected', response: {} };
-		api.testServer.mockResolvedValue( probe );
+		const client = makeFakeClient( {
+			list: {},
+			test: probe,
+		} );
 		const { result } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
+		await act( async () => {} );
+		const listsBefore = countVerbs( client.batches, 'list' );
+
 		let returned;
 		await act( async () => {
 			returned = await result.current.testServer( 'spoke-01' );
 		} );
-		expect( api.testServer ).toHaveBeenCalledWith( client, 'spoke-01' );
-		expect( returned ).toEqual( probe );
-	} );
 
-	test( 'testServer does NOT re-list (a probe is read-only, no registry change)', async () => {
-		const client = makeFakeClient();
-		const { result } = renderHook( () =>
-			useAggregatorAdminGraph( { commandClient: client } )
-		);
-		const before = client.calls.filter( ( c ) => 'list' === c.verb ).length;
-		await act( async () => {
-			await result.current.testServer( 'spoke-01' );
-		} );
-		const after = client.calls.filter( ( c ) => 'list' === c.verb ).length;
-		expect( after ).toBe( before );
+		const t = findVerb( client.batches, 'test' );
+		expect( t ).toBeTruthy();
+		expect( t[ VALUE ].payload ).toEqual( { id: 'spoke-01' } );
+		expect( returned ).toEqual( probe );
+		// The test verb is read-only — no re-list expected.
+		expect( countVerbs( client.batches, 'list' ) ).toBe( listsBefore );
 	} );
 } );
 
-describe( 'useAggregatorAdminGraph — mutation errors surface into the view model', () => {
-	test( 'a failed addServer surfaces the error message into servers:view', async () => {
-		const client = makeFakeClient();
-		api.addServer.mockRejectedValue( new Error( 'duplicate id' ) );
+describe( 'useAggregatorAdminGraph — mutation errors reject to the caller', () => {
+	// Pending-matched TM_ERROR replies reject the Promise the caller is
+	// awaiting; the global view.error is reserved for un-correlated failures
+	// (initial list, broadcasts). The CRUD UIs catch per-call and surface
+	// locally — a row-level snackbar or in-form notice — so a single failed
+	// mutation doesn't repaint a table-wide red banner.
+	test( 'a failed addServer rejects without polluting global view.error', async () => {
+		const client = makeFakeClient(
+			{ list: {}, add: 'duplicate id' },
+			{ errorVerbs: [ 'add' ] }
+		);
 		const { result } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
+		await act( async () => {} );
+
 		await act( async () => {
 			await expect(
-				result.current.addServer( { id: 'dup' } )
+				result.current.addServer( {
+					id: 'dup',
+					url: 'https://x',
+					auth_username: 'u',
+					auth_password: 'p',
+				} )
 			).rejects.toThrow( 'duplicate id' );
 		} );
-		const view = Core.node( VIEW );
-		expect( view.setStateCache.view.error ).toContain( 'duplicate id' );
+		expect( Core.node( VIEW ).setStateCache.view.error ).toBeNull();
 	} );
 
-	test( 'a failed removeServer surfaces the error into servers:view', async () => {
-		const client = makeFakeClient();
-		api.removeServer.mockRejectedValue( new Error( 'in-use' ) );
+	test( 'a failed removeServer rejects without polluting global view.error', async () => {
+		const client = makeFakeClient(
+			{ list: {}, delete: 'in-use' },
+			{ errorVerbs: [ 'delete' ] }
+		);
 		const { result } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
+		await act( async () => {} );
+
 		await act( async () => {
 			await expect(
 				result.current.removeServer( 'spoke-01' )
 			).rejects.toThrow( 'in-use' );
 		} );
-		expect( Core.node( VIEW ).setStateCache.view.error ).toContain(
-			'in-use'
+		expect( Core.node( VIEW ).setStateCache.view.error ).toBeNull();
+	} );
+
+	test( 'a failed testServer rejects (per-row status surface)', async () => {
+		const client = makeFakeClient(
+			{ list: {}, test: 'unauthorized' },
+			{ errorVerbs: [ 'test' ] }
 		);
+		const { result } = renderHook( () =>
+			useAggregatorAdminGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+
+		await act( async () => {
+			await expect(
+				result.current.testServer( 'spoke-01' )
+			).rejects.toThrow( 'unauthorized' );
+		} );
 	} );
 } );
 
 describe( 'useAggregatorAdminGraph — teardown', () => {
-	test( 'unmount closes the command node then unregisters the graph + the backbone', () => {
+	test( 'unmount unregisters every graph node + the backbone', () => {
 		const client = makeFakeClient();
 		const { unmount } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		const command = Core.node( COMMAND );
-		const closeSpy = jest.spyOn( command, 'close' );
 		unmount();
-		expect( closeSpy ).toHaveBeenCalled();
-		for ( const n of [ COMMAND, VIEW, CI, '_router' ] ) {
-			expect( Core.node( n ) ).toBeNull();
+		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
-	test( 'a list resolving after unmount does not throw (command closed)', async () => {
-		const client = makeFakeClient();
+	test( 'a reply resolving after unmount does not throw (sink may be gone)', async () => {
 		let resolveReply;
-		client.send = ( args ) => {
-			client.calls.push( args );
-			return new Promise( ( res ) => {
-				resolveReply = res;
-			} );
+		const client = {
+			batches: [],
+			buildMessage: ( { to, verb } ) => {
+				const m = newMessage();
+				m[ TYPE ] = TM_COMMAND;
+				m[ TO ] = to;
+				m[ VALUE ] = { name: verb, arguments: '', payload: null };
+				return m;
+			},
+			postBatch( messages ) {
+				client.batches.push( messages );
+				return new Promise( ( res ) => {
+					resolveReply = ( replies ) => res( replies );
+				} );
+			},
 		};
 		const { unmount } = renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
 		unmount();
-		expect( () => resolveReply( newMessage() ) ).not.toThrow();
+		expect( () => {
+			const reply = newMessage();
+			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+			reply[ VALUE ] = { name: 'list', payload: {} };
+			resolveReply( [ reply ] );
+		} ).not.toThrow();
 		await Promise.resolve();
 	} );
 } );
+
+// Helpers — iterate the recorded batches for a verb-bearing message.
+function findVerb( batches, verb ) {
+	for ( const batch of batches ) {
+		for ( const m of batch ) {
+			if ( m[ VALUE ]?.name === verb ) {
+				return m;
+			}
+		}
+	}
+	return null;
+}
+
+function countVerbs( batches, verb ) {
+	let count = 0;
+	for ( const batch of batches ) {
+		for ( const m of batch ) {
+			if ( m[ VALUE ]?.name === verb ) {
+				count += 1;
+			}
+		}
+	}
+	return count;
+}
