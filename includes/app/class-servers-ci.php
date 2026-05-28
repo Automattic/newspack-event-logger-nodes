@@ -94,7 +94,7 @@ class Servers_CI_Node extends Service_CI_Node {
 		return [
 			'category'    => 'Service',
 			'description' => 'Hub-side server registry: list / get / add / update / delete / test spokes.',
-			'ctor'        => [],
+			'arguments'        => [],
 			'commands'       => [
 				[
 					'name'        => 'list',

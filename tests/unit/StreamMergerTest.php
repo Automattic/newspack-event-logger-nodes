@@ -2495,8 +2495,8 @@ class StreamMergerTest extends TestCase {
 		// The constructor's `partition` arg must be advertised.
 		$schema = Stream_Merger_Node::node_schema();
 
-		$this->assertArrayHasKey( 'ctor', $schema );
-		$ctor_args = \array_column( $schema['ctor'], 'name' );
+		$this->assertArrayHasKey( 'arguments', $schema );
+		$ctor_args = \array_column( $schema['arguments'], 'name' );
 		$this->assertContains( 'partition', $ctor_args );
 	}
 

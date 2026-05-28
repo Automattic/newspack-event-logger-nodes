@@ -1285,19 +1285,19 @@ class RemoteSourceTest extends TestCase {
 		$this->assertIsArray( $schema );
 		$this->assertSame( 'I/O', $schema['category'] );
 		$this->assertNotEmpty( $schema['description'] );
-		$this->assertIsArray( $schema['ctor'] );
+		$this->assertIsArray( $schema['arguments'] );
 		// 7 ctor params: server_id, url, auth_username, auth_password, auth_token, remote_topic, partition.
-		$this->assertCount( 7, $schema['ctor'] );
-		$names = \array_column( $schema['ctor'], 'name' );
+		$this->assertCount( 7, $schema['arguments'] );
+		$names = \array_column( $schema['arguments'], 'name' );
 		$this->assertSame(
 			[ 'server_id', 'url', 'auth_username', 'auth_password', 'auth_token', 'remote_topic', 'partition' ],
 			$names
 		);
 		// server_id and url are required.
-		$this->assertTrue( $schema['ctor'][0]['required'] );
-		$this->assertTrue( $schema['ctor'][1]['required'] );
+		$this->assertTrue( $schema['arguments'][0]['required'] );
+		$this->assertTrue( $schema['arguments'][1]['required'] );
 		// partition has default.
-		$this->assertSame( 0, $schema['ctor'][6]['default'] );
+		$this->assertSame( 0, $schema['arguments'][6]['default'] );
 	}
 
 	// =========================================================================

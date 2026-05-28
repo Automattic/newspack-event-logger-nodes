@@ -649,7 +649,7 @@ class Stream_Merger_Node extends Node {
 		return [
 			'category'     => 'I/O',
 			'description'  => 'Owns and supervises RemoteSource children — one per enabled spoke in ServerRegistry.',
-			'ctor'         => [
+			'arguments'         => [
 				[ 'name' => 'remote_topic', 'type' => 'string', 'default' => '' ],
 				[ 'name' => 'partition', 'type' => 'int', 'default' => 0 ],
 			],

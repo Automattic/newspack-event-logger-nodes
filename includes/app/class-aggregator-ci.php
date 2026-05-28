@@ -81,7 +81,7 @@ class Aggregator_CI_Node extends Service_CI_Node {
 		return [
 			'category'    => 'Service',
 			'description' => 'Hub-side aggregator dashboards: per-server status, cache health, registered servers.',
-			'ctor'        => [],
+			'arguments'        => [],
 			'commands'       => [
 				[
 					'name'        => 'status',
