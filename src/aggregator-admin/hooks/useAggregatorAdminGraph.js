@@ -1,171 +1,239 @@
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
- * useAggregatorAdminGraph — mounts the Configured-Servers admin node graph clipped
- * onto the exospine (the canonical rule-#2 backbone `_command_interpreter →
- * _router`). On mount it builds two nodes — `servers:command` (the CRUD command
- * transport) and `servers:view` (the render model React reads). EVERY node sinks
- * into the CI; flow is steered ONLY by each node's `target` (the router peels TO
- * and delivers): the command targets the view (the view node does the map→array
- * derivation, so no separate transform node is needed). There is no bespoke
- * `command.sink=view` wiring. It fires one immediate `list()`. The view publishes
- * its state via `setState('view', …)`; the React view reads it separately with
- * `useNodeState('servers:view','view')`.
+ * useAggregatorAdminGraph — mounts the Configured-Servers admin node graph
+ * onto the canonical rule-#2 backbone (`_command_interpreter → _router`) using
+ * the substrate's I/O boundary nodes — the same ones the topology console uses,
+ * minus the SSE pieces this CRUD-on-demand admin doesn't need:
  *
- * The hook exposes the four CRUD callbacks the view calls. add/update/remove each
- * await the node mutation then re-`list()` — this re-list is what REPLACES the old
- * jQuery `window.location.reload()`. test() returns its probe result to the caller
- * (per-row status) and does NOT re-list (a probe doesn't change the registry). A
- * mutation rejection is surfaced into the view model (an error control filled into
- * `servers:view`) AND re-thrown so the calling component can also react per-field.
+ *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _output     (Dumper — terminal output / log lines)
+ *   _uptime     (uptime reply receiver)
+ *   _completion (tab-completion receiver)
+ *   _cwd        (current-working-directory indirection)
  *
- * Torn down on unmount: the command node is closed (cancel any in-flight list)
- * BEFORE the graph nodes are unregistered from Core, THEN the exospine is torn down
- * (which removes the CI + router). The command boundary is injectable: tests pass
- * `opts.commandClient` (threaded to the command node) so the hook never touches the
- * network. Production lazily defaults to the shared CommandClient singleton inside
- * the command node. Mirrors useAggregatorStatusGraph.
+ * Plus the application's render-model node:
+ *
+ *   servers:view (the view-model node React reads + the hook's pending-Promise registry)
+ *
+ * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * hook owns the CRUD dispatch — on each call it builds a TM_COMMAND
+ * (FROM=`servers:view`, TO=`_http/servers`, verb in VALUE.name) with a unique
+ * `message[ID]`, stashes a `{ resolve, reject }` resolver in `servers:view`'s
+ * `pending` Map under that ID, and fills the message into the CI. The router
+ * peels `_http`, HttpOut POSTs, the server pivots the reply TO=FROM, the router
+ * peels `servers:view`, and the view's `fill()` matches `message[ID]` against
+ * `pending`, resolving or rejecting the Promise (and updating the render model
+ * for `list` replies + surfacing TM_ERROR into the view's `error`).
+ *
+ * Mutations (add/update/delete) re-list on success to refresh the table —
+ * replaces the legacy `window.location.reload()`. test() is read-only and does
+ * NOT re-list. Mutation rejections also surface into the view model (via the
+ * view's TM_ERROR path) so the table shows them, AND re-throw to the caller.
+ *
+ * The command boundary is injectable: tests pass `opts.commandClient` (assigned
+ * to `_http.client`) so the hook never touches the network. Production lazily
+ * defaults to the shared CommandClient singleton.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	VALUE,
-	TYPE,
-	TM_STRUCT,
+	Node,
+	HttpOut,
+	Dumper,
+	Uptime,
+	Completion,
+	CommandClient,
 	newMessage,
+	TYPE,
+	TO,
+	FROM,
+	ID,
+	VALUE,
+	TM_COMMAND,
 } from '@newspack-nodes/runtime';
-import { createServersCommand } from '../nodes/serversCommand';
 import { createServersView } from '../nodes/serversView';
 
-// Every named node this graph mounts — unregistered on teardown (the exospine
-// nodes are removed separately by its own teardown()). Names use a colon, not a
-// slash: the router peels TO on '/', so a '/' in a node name would misroute.
-const COMMAND = 'servers:command';
+const HTTP = '_http';
+const OUTPUT = '_output';
+const UPTIME = '_uptime';
+const COMPLETION = '_completion';
+const CWD = '_cwd';
 const VIEW = 'servers:view';
-const GRAPH_NODE_NAMES = [ COMMAND, VIEW ];
+const GRAPH_NODE_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+
+// Monotonic per-hook-instance ID counter — message[ID] is what the view uses
+// to match a reply back to a pending Promise resolver.
+let nextOpId = 0;
+function makeOpId() {
+	nextOpId += 1;
+	return `servers-op-${ Date.now() }-${ nextOpId }`;
+}
+
+/**
+ * Build a TM_COMMAND addressed at the `servers` CI: FROM=`servers:view` so the
+ * server's reply pivot lands on the view; TO=`_http/servers` so the router peels
+ * `_http` and HttpOut POSTs the bare command. `id` is the correlator the view
+ * uses to resolve the hook's Promise.
+ *
+ * @param {string} verb    Verb name (list / add / update / delete / test).
+ * @param {*}      payload Verb payload (the structured-data slot).
+ * @param {string} id      Correlator stamped into message[ID].
+ * @return {Array} A 7-field positional Message.
+ */
+function buildCommand( verb, payload, id ) {
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND;
+	m[ FROM ] = VIEW;
+	m[ TO ] = `${ HTTP }/servers`;
+	m[ ID ] = id;
+	m[ VALUE ] = { name: verb, arguments: '', payload };
+	return m;
+}
 
 /**
  * @param {Object} [opts]               Options (testing seams).
- * @param {Object} [opts.commandClient] Command-client seam threaded to the command
- *                                      node; defaults to the shared singleton.
+ * @param {Object} [opts.commandClient] CommandClient seam assigned to `_http.client`;
+ *                                      defaults to a freshly-constructed CommandClient.
  * @return {{ addServer: Function, updateServer: Function, removeServer: Function,
  *   testServer: Function }} CRUD callbacks for the thin React view (the model is
  *   read via useNodeState).
  */
 export function useAggregatorAdminGraph( opts = {} ) {
-	const { commandClient } = opts;
+	const optsRef = useRef( opts );
+	optsRef.current = opts;
 
-	// Stash the latest command client so the mount effect reads it without
-	// re-subscribing (it only runs once).
-	const commandClientRef = useRef( commandClient );
-	commandClientRef.current = commandClient;
+	// Live CI handle for the CRUD callbacks.
+	const ciRef = useRef( null );
 
-	// Live command-node handle for the CRUD callbacks.
-	const commandRef = useRef( null );
-
-	// Flipped true once the graph (and its view node) is mounted. The mount effect
-	// runs AFTER the first render, by which point useNodeState has captured a null
-	// view node and bailed; setting this state forces the consumer to re-render so
-	// useNodeState re-subscribes to the now-registered view node. Mirrors
-	// useAggregatorStatusGraph's setViewReady.
+	// Flipped true once the graph (and its view node) is mounted, so the React
+	// view's useNodeState re-subscribes to the now-registered view node.
 	const [ , setViewReady ] = useState( false );
 
 	// Mount the graph once: clip it onto the exospine, then fire one immediate list.
 	useEffect( () => {
+		const data =
+			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		const command = createServersCommand( COMMAND, {
-			commandClient: commandClientRef.current,
-		} );
-		const view = createServersView( VIEW );
+		// I/O boundary nodes — the same ones useAggregatorStatusGraph mounts.
+		const http = new HttpOut();
+		http.client =
+			optsRef.current.commandClient ||
+			new CommandClient( {
+				baseUrl: data.restUrl || '/wp-json/',
+				nonce: data.nonce || '',
+			} );
+		http.setName( HTTP );
+		http.sink = ci;
 
-		// Rule #2: every node sinks into the CI; flow is steered by `target`.
-		command.sink = ci;
-		command.target = VIEW;
+		const output = new Dumper();
+		output.setName( OUTPUT );
+		output.sink = ci;
+
+		const uptime = new Uptime();
+		uptime.setName( UPTIME );
+		uptime.sink = ci;
+
+		const completion = new Completion();
+		completion.setName( COMPLETION );
+		completion.sink = ci;
+
+		// `_cwd` is mounted for substrate uniformity (matches useAggregatorStatusGraph).
+		const cwd = new Node();
+		cwd.setName( CWD );
+		cwd.sink = ci;
+		cwd.target = `${ HTTP }/servers`;
+
+		// The application view-model node — receiver of every reply via TO=FROM pivot.
+		const view = createServersView( VIEW );
 		view.sink = ci;
-		commandRef.current = command;
+
+		ciRef.current = ci;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
 		setViewReady( true );
-		command.list();
+
+		// Fire one immediate list (the canonical "everything sinks into the CI"
+		// path — CI forwards to router → router peels `_http` → HttpOut POSTs).
+		// Fire-and-forget: the view updates render state on the reply.
+		ci.fill( buildCommand( 'list', null, makeOpId() ) );
 
 		return () => {
-			// Close the in-flight-cancel-owning command node first BEFORE
-			// unregistering — mirrors useAggregatorStatusGraph calling poll.close()
-			// before unregister. Unregister the graph nodes, THEN tear down the
-			// exospine (which removes the CI + router).
-			command.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
 			teardownSpine();
-			commandRef.current = null;
-			setViewReady( false );
+			ciRef.current = null;
 		};
 	}, [] );
 
-	// Push a mutation failure into the view model so the table shows it, then
-	// re-throw so the calling component can also react per-field. Fills an error
-	// control directly into servers:view (whose fill() handles `action:'error'`).
-	const surfaceError = useCallback( ( err ) => {
-		const view = Core.node( VIEW );
-		if ( view ) {
-			const control = newMessage();
-			control[ TYPE ] = TM_STRUCT;
-			control[ VALUE ] = {
-				action: 'error',
-				error: err?.message || 'Operation failed',
-			};
-			view.fill( control );
+	// Dispatch a verb and return a Promise that resolves with the unwrapped
+	// payload (or rejects with a TM_ERROR). The view matches `message[ID]`
+	// against its `pending` Map to settle the Promise.
+	const dispatch = useCallback( ( verb, payload ) => {
+		const ci = ciRef.current;
+		if ( ! ci ) {
+			return Promise.reject( new Error( 'graph not mounted' ) );
 		}
+		const view = Core.node( VIEW );
+		if ( ! view ) {
+			return Promise.reject( new Error( 'view not mounted' ) );
+		}
+		const id = makeOpId();
+		const promise = new Promise( ( resolve, reject ) => {
+			view.pending.set( id, { resolve, reject } );
+		} );
+		ci.fill( buildCommand( verb, payload, id ) );
+		return promise;
 	}, [] );
 
-	// Run a registry-mutating verb, re-list on success (replaces reload), and
-	// surface a failure into the view model before re-throwing.
+	// Run a registry-mutating verb, then re-list to refresh the table. A failure
+	// rejects to the caller; the view already surfaced the error into its model
+	// via the TM_ERROR reply path (no extra control fill needed).
 	const runMutation = useCallback(
-		async ( fn ) => {
-			const command = commandRef.current;
-			if ( ! command ) {
-				return undefined;
-			}
-			try {
-				const result = await fn( command );
-				await command.list();
-				return result;
-			} catch ( err ) {
-				surfaceError( err );
-				throw err;
-			}
+		async ( verb, payload ) => {
+			const result = await dispatch( verb, payload );
+			// Fire-and-forget re-list (replaces window.location.reload()).
+			dispatch( 'list', null ).catch( () => {} );
+			return result;
 		},
-		[ surfaceError ]
+		[ dispatch ]
 	);
 
 	const addServer = useCallback(
-		( fields ) => runMutation( ( command ) => command.add( fields ) ),
+		( fields ) =>
+			runMutation( 'add', {
+				id: fields.id,
+				url: fields.url,
+				auth_username: fields.auth_username,
+				auth_password: fields.auth_password,
+				enabled: true,
+			} ),
 		[ runMutation ]
 	);
 
+	// Spread partial FIRST so the positional `id` always wins — a partial that
+	// happens to carry an `id` key can't silently retarget the row.
 	const updateServer = useCallback(
-		( id, partial ) =>
-			runMutation( ( command ) => command.update( id, partial ) ),
+		( id, partial ) => runMutation( 'update', { ...partial, id } ),
 		[ runMutation ]
 	);
 
 	const removeServer = useCallback(
-		( id ) => runMutation( ( command ) => command.remove( id ) ),
+		( id ) => runMutation( 'delete', { id } ),
 		[ runMutation ]
 	);
 
-	// test() is read-only: return its probe result to the caller for per-row
+	// test() is read-only — return its probe result to the caller for per-row
 	// status; no re-list (a probe doesn't change the registry).
-	const testServer = useCallback( ( id ) => {
-		const command = commandRef.current;
-		if ( ! command ) {
-			return undefined;
-		}
-		return command.test( id );
-	}, [] );
+	const testServer = useCallback(
+		( id ) => dispatch( 'test', { id } ),
+		[ dispatch ]
+	);
 
 	return { addServer, updateServer, removeServer, testServer };
 }

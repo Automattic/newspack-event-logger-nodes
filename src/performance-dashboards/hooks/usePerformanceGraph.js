@@ -1,54 +1,60 @@
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
- * usePerformanceGraph — mounts the Performance Dashboard's data graph
- * (`performance:command` → `performance:view`) clipped onto the exospine (the
- * canonical rule-#2 backbone `_command_interpreter → _router`) and owns every
- * fetch. Mirrors useAggregatorAdminGraph: a mount effect mounts the backbone,
- * builds the two nodes, sinks BOTH into the CI and targets the command at the
- * view (the router peels TO and delivers — no bespoke `command.sink=view`), flips
- * `viewReady` (so the consumer's useNodeState re-subscribes to the freshly-
- * registered view node), and on teardown closes the command (cancel guard),
- * unregisters both graph nodes, THEN tears down the exospine.
+ * usePerformanceGraph — mounts the Performance Dashboard's data graph onto the
+ * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
+ * substrate's I/O boundary nodes — the same ones useAggregatorAdminGraph
+ * mounts, plus the application's `performance:command` (slice-tagging
+ * command-builder) and `performance:view` (render model + pending-Promise
+ * registry):
  *
- * The CONSUMER reads the model itself via useNodeState('performance:view',
- * 'view') — this hook returns ONLY control callbacks, exactly like
- * useErrorLogGraph returns { setPaused, clear }. Reading the model in the
- * consumer (not here) lets the orchestrator derive `urls` for useUrlNavigation
- * BEFORE this hook consumes the resulting selection.
+ *   _http              (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _output            (Dumper — terminal output / log lines)
+ *   _uptime            (uptime reply receiver)
+ *   _completion        (tab-completion receiver)
+ *   _cwd               (cwd indirection — substrate uniformity)
+ *   performance:command (slice-tagging command-builder)
+ *   performance:view    (the view-model node React reads + pending Map)
  *
- * Effects owned here (each gated on `viewReady`):
- *  - initial load + server-filter/breakdown re-fetch: one effect keyed on
- *    [viewReady, serverFilter, chartBreakdown] fires fetchOverview + fetchUrls.
- *    Runs once on mount (initial load) and again on filter/breakdown change.
- *  - refresh interval: localStorage-cadence setInterval, stale-immediate,
- *    gated `!selectedUrl && isPageVisible`.
- *  - selection-driven url-detail: fetchUrlDetail(hash,{categories,initial:true})
- *    on select; a non-initial SILENT auto-refresh interval while !selectedRequest
- *    && visible; clears the slice on deselect.
- *  - selection-driven request-detail: fetchRequestDetail on select (partition
- *    from requestPartition or looked up in urlDetailData.requests); clears on deselect.
+ * Every node sinks into the CI (rule #2); flow is steered by each node's
+ * `target`. The hook owns the orchestration effects (initial load, refresh
+ * interval, selection-driven fetches, debounced URL-params change). Each
+ * fetch flows `performance:command` → CI → router → `_http` → POST → server
+ * pivots TO=FROM → router → `performance:view`, which matches `message[ID]`
+ * to its pending Map and applies the result to the registered slice.
  *
- * The debounced URL-params fetch is a returned CALLBACK (handleUrlParamsChange).
+ * The consumer reads the model itself via `useNodeState('performance:view',
+ * 'view')` — this hook returns ONLY control callbacks
+ * (`handleUrlParamsChange`, `resolveRequest`, `fetchUrlBreakdown`), exactly
+ * like useErrorLogGraph returns `{ setPaused, clear }`.
  *
- * @param {Object}   opts
- * @param {string}   [opts.serverFilter]
- * @param {string}   [opts.chartBreakdown]
- * @param {string}   [opts.refreshInterval]
- * @param {number}   [opts.requestPartition]
- * @param {Object}   [opts.selectedUrl]
- * @param {string}   [opts.selectedRequest]
- * @param {Object}   [opts.urlDetailData]
- * @param {Function} [opts.onError]
- * @param {Object}   [opts.commandClient]
- * @return {{ handleUrlParamsChange: Function, resolveRequest: Function, fetchUrlBreakdown: Function }}
+ * The command boundary is injectable: tests pass `opts.commandClient`
+ * (assigned to `_http.client`) so the hook never touches the network.
+ * Production lazily defaults to a freshly-constructed CommandClient.
+ *
+ * Exospine isolation: this hook calls `mountExospine()` for its own React
+ * tree root. `PerformanceDashboard` and `ErrorLog` are mounted into
+ * SEPARATE DOM containers (`event-logger-admin` vs `event-logger-errors`),
+ * so each hook's exospine is naturally isolated by React-root scope. A page
+ * that ever rendered both would still get one exospine per hook instance —
+ * `Core` is a per-page singleton, but each `mountExospine` registers the
+ * canonical `_command_interpreter`/`_router` names by design; the matching
+ * teardown removes them. The two performance-dashboards hooks aren't used on
+ * the same page in this plugin.
  */
 import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
+	Node,
+	HttpOut,
+	Dumper,
+	Uptime,
+	Completion,
+	CommandClient,
+	newMessage,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
-	newMessage,
 } from '@newspack-nodes/runtime';
 import { createPerformanceCommand } from '../nodes/performanceCommand';
 import { createPerformanceView } from '../nodes/performanceView';
@@ -56,18 +62,25 @@ import usePageVisibility from '../../shared/hooks/usePageVisibility';
 import { getCommandClient } from '../../shared/utils/commandClient';
 import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
 
-// Names use a colon, not a slash: the router peels TO on '/', so a '/' in a node
-// name would misroute.
+// I/O boundary nodes.
+const HTTP = '_http';
+const OUTPUT = '_output';
+const UPTIME = '_uptime';
+const COMPLETION = '_completion';
+const CWD = '_cwd';
+// Application nodes. Names use a colon, not a slash: the router peels TO on
+// '/', so a '/' in a node name would misroute.
 const COMMAND = 'performance:command';
 const VIEW = 'performance:view';
-
-// Build a TM_STRUCT control the view's fill() routes on its `action`.
-const controlMsg = ( value ) => {
-	const m = newMessage();
-	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = value;
-	return m;
-};
+const GRAPH_NODE_NAMES = [
+	HTTP,
+	OUTPUT,
+	UPTIME,
+	COMPLETION,
+	CWD,
+	COMMAND,
+	VIEW,
+];
 
 // Dedup `server` (always — feeds the filter dropdown) with the active chart
 // dimension into one comma arg. < 2 dims collapses the controller's nested
@@ -116,21 +129,56 @@ export function usePerformanceGraph( opts = {} ) {
 	const [ viewReady, setViewReady ] = useState( false );
 	const isPageVisible = usePageVisibility();
 
-	// Mount the graph once onto the exospine: command → view.
+	// Mount the graph once onto the exospine: I/O boundary + command + view.
 	useEffect( () => {
+		const data =
+			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+
 		// The canonical backbone every node clips onto: everything → CI → router.
 		const { ci, teardown: teardownSpine } = mountExospine();
 
-		const command = createPerformanceCommand( COMMAND, {
-			commandClient: optsRef.current.commandClient,
-			onError: optsRef.current.onError,
-		} );
-		const view = createPerformanceView( VIEW );
+		// I/O boundary nodes — the same ones useAggregatorAdminGraph mounts.
+		const http = new HttpOut();
+		http.client =
+			optsRef.current.commandClient ||
+			new CommandClient( {
+				baseUrl: data.restUrl || '/wp-json/',
+				nonce: data.nonce || '',
+			} );
+		http.setName( HTTP );
+		http.sink = ci;
 
-		// Rule #2: every node sinks into the CI; flow is steered by `target`.
+		const output = new Dumper();
+		output.setName( OUTPUT );
+		output.sink = ci;
+
+		const uptime = new Uptime();
+		uptime.setName( UPTIME );
+		uptime.sink = ci;
+
+		const completion = new Completion();
+		completion.setName( COMPLETION );
+		completion.sink = ci;
+
+		// `_cwd` is mounted for substrate uniformity (matches useAggregatorAdminGraph).
+		const cwd = new Node();
+		cwd.setName( CWD );
+		cwd.sink = ci;
+		cwd.target = `${ HTTP }/performance`;
+
+		// The application view-model node — receiver of every reply via TO=FROM pivot.
+		const view = createPerformanceView( VIEW );
+		view.sink = ci;
+
+		// The slice-tagging command-builder. sink = CI (rule #2); target = view
+		// so `loading`/`error` controls route to the view via the router peeling
+		// TO. viewName = VIEW so the command can stash pending entries there.
+		const command = createPerformanceCommand( COMMAND, {
+			onError: optsRef.current.onError,
+			viewName: VIEW,
+		} );
 		command.sink = ci;
 		command.target = VIEW;
-		view.sink = ci;
 
 		commandRef.current = command;
 		viewRef.current = view;
@@ -140,11 +188,13 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( urlFetchTimerRef.current ) {
 				clearTimeout( urlFetchTimerRef.current );
 			}
-			// Close the in-flight-cancel-owning command first, unregister the
-			// graph nodes, THEN tear the exospine down (removes the CI + router).
+			// Close the command (cancel guard) first so a late reply doesn't fire
+			// emissions against a torn-down view; unregister the graph nodes; THEN
+			// tear the exospine down (removes the CI + router).
 			command.close();
-			Core.unregisterNode( COMMAND );
-			Core.unregisterNode( VIEW );
+			for ( const name of GRAPH_NODE_NAMES ) {
+				Core.unregisterNode( name );
+			}
 			teardownSpine();
 			commandRef.current = null;
 			viewRef.current = null;
@@ -188,9 +238,16 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// Clear a view slice (resets urlDetail / requestDetail to empty).
 	const clearSlice = useCallback( ( slice ) => {
-		if ( viewRef.current ) {
-			viewRef.current.fill( controlMsg( { action: 'clear', slice } ) );
+		if ( ! viewRef.current ) {
+			return;
 		}
+		// Fire a TM_STRUCT control directly into the view's fill — no router
+		// hop, but the canonical view fill() handles the action. This is the
+		// same pattern useErrorLogGraph uses for hook-direct view control
+		// (setPaused / clear).
+		viewRef.current.fill(
+			buildControlMessage( { action: 'clear', slice } )
+		);
 	}, [] );
 
 	// Selection-driven url-detail: initial fetch + silent auto-refresh.
@@ -284,9 +341,12 @@ export function usePerformanceGraph( opts = {} ) {
 	}, [] );
 
 	// resolveRequest drives deep-link navigation (`?request=` without `?url=`),
-	// which fires from useUrlNavigation's mount effect — BEFORE this hook's mount
-	// effect populates commandRef. When the node isn't mounted yet, resolve via the
-	// client directly (request_search is a stateless pass-through, no sink/view emit).
+	// which fires from useUrlNavigation's mount effect — BEFORE this hook's
+	// mount effect populates commandRef. When the node isn't mounted yet, fall
+	// back to the shared CommandClient directly: request_search is a
+	// stateless lookup with no view-model side effects, so the substrate hop is
+	// just plumbing in that pre-mount window. Once mounted, the substrate path
+	// owns it.
 	const resolveRequest = useCallback( async ( rid ) => {
 		if ( commandRef.current ) {
 			return commandRef.current.resolveRequest( rid );
@@ -313,4 +373,13 @@ export function usePerformanceGraph( opts = {} ) {
 	);
 
 	return { handleUrlParamsChange, resolveRequest, fetchUrlBreakdown };
+}
+
+// Build a TM_STRUCT control message — used for the hook-direct view clear()
+// pattern. Mirrors useErrorLogGraph's controlMsg helper.
+function buildControlMessage( value ) {
+	const m = newMessage();
+	m[ TYPE ] = TM_STRUCT;
+	m[ VALUE ] = value;
+	return m;
 }
