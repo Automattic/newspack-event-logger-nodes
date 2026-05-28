@@ -579,7 +579,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_request_builder_node_schema_declares_verb(): void {
 		$schema = Request_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
-		$verb_names = \array_column( $schema['verbs'], 'name' );
+		$verb_names = \array_column( $schema['commands'], 'name' );
 		$this->assertContains( 'set_errors_target', $verb_names );
 	}
 

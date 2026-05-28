@@ -459,7 +459,7 @@ class ServersCITest extends TestCase {
 	// ---------------------------------------------------------------------
 	// schema-driven dispatch + stateful-registry reach
 	//
-	// After the schema migration the six verbs live in node_schema()['verbs']
+	// After the schema migration the six verbs live in node_schema()['commands']
 	// with handlers, and the ctor-injected registry is reached via
 	// $self->registry. The fake-registry test proves the dispatched handler
 	// actually read THE INJECTED instance.
@@ -467,7 +467,7 @@ class ServersCITest extends TestCase {
 
 	public function test_node_schema_lists_all_verbs_with_handlers(): void {
 		$verbs = [];
-		foreach ( Servers_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Servers_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 
@@ -550,13 +550,13 @@ class ServersCITest extends TestCase {
 	}
 
 	/**
-	 * node_schema()['verbs'] indexed by verb name.
+	 * node_schema()['commands'] indexed by verb name.
 	 *
 	 * @return array<string,array<string,mixed>>
 	 */
 	private static function verbs_by_name(): array {
 		$verbs = [];
-		foreach ( Servers_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Servers_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 		return $verbs;

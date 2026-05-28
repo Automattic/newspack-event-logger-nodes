@@ -213,7 +213,7 @@ class EventsCITest extends TestCase {
 
 	public function test_node_schema_lists_both_verbs_with_handlers(): void {
 		$verbs = [];
-		foreach ( Events_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Events_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 
@@ -241,13 +241,13 @@ class EventsCITest extends TestCase {
 	}
 
 	/**
-	 * node_schema()['verbs'] indexed by verb name.
+	 * node_schema()['commands'] indexed by verb name.
 	 *
 	 * @return array<string,array<string,mixed>>
 	 */
 	private static function verbs_by_name(): array {
 		$verbs = [];
-		foreach ( Events_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Events_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 		return $verbs;

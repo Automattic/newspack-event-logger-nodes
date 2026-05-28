@@ -64,7 +64,7 @@ class Events_CI_Node extends Service_CI_Node {
 			'category'    => 'Service',
 			'description' => 'Recent-firehose / hourly-stats surface for the event-dashboards tree.',
 			'ctor'        => [],
-			'verbs'       => [
+			'commands'       => [
 				[
 					'name'        => 'recent',
 					'description' => 'Newest-first walk of the firehose index across all partitions.',

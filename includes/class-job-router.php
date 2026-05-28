@@ -140,7 +140,7 @@ class Job_Router_Node extends Node {
 			'category'    => 'Routing',
 			'description' => 'Splits firehose entries by `k` field; routes job entries to jobs:partition.',
 			'ctor'        => [],
-			'verbs'       => [],
+			'commands'       => [],
 		];
 	}
 }

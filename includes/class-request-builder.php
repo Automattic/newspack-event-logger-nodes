@@ -91,7 +91,7 @@ class Request_Builder_Node extends Node {
 		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
 		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
 		parent::__construct();
 	}
@@ -1007,7 +1007,7 @@ class Request_Builder_Node extends Node {
 				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE ],
 				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS ],
 			],
-			'verbs'       => [
+			'commands'       => [
 				[
 					'name'        => 'set_errors_target',
 					'description' => 'Forward error/warning keywords to a named partition.',

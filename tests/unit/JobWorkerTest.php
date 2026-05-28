@@ -461,7 +461,7 @@ class JobWorkerTest extends TestCase {
 	public function test_job_worker_node_schema_no_verbs(): void {
 		$schema = Job_Worker_Node::node_schema();
 		$this->assertSame( 'Control', $schema['category'] );
-		$this->assertSame( [], $schema['verbs'] );
+		$this->assertSame( [], $schema['commands'] );
 	}
 
 	public function test_job_worker_node_schema_declares_get_health_request(): void {

@@ -573,7 +573,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flame_builder_node_schema_declares_verbs(): void {
 		$schema = Flame_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
-		$verb_names = \array_column( $schema['verbs'], 'name' );
+		$verb_names = \array_column( $schema['commands'], 'name' );
 		$this->assertContains( 'set_is_hub', $verb_names );
 		$this->assertContains( 'set_auto_tune', $verb_names );
 		$this->assertContains( 'set_significant_events', $verb_names );

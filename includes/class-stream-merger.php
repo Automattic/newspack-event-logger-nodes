@@ -94,7 +94,7 @@ class Stream_Merger_Node extends Node {
 		$this->health_check = new Health_Check_Tick_Node();
 		$this->health_check->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['verbs']
+		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
 		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
 		parent::__construct();
 	}
@@ -653,7 +653,7 @@ class Stream_Merger_Node extends Node {
 				[ 'name' => 'remote_topic', 'type' => 'string', 'default' => '' ],
 				[ 'name' => 'partition', 'type' => 'int', 'default' => 0 ],
 			],
-			'verbs'        => [
+			'commands'        => [
 				[
 					'name'        => 'set_verify_ssl',
 					'description' => 'Toggle SSL certificate verification on outbound SSE connections.',

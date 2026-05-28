@@ -182,7 +182,7 @@ class Auto_Tuner_Node extends Node {
 			'category'    => 'Hidden',
 			'description' => 'Receives FlameBuilder auto-tune decisions and applies them via WP options.',
 			'ctor'        => [],
-			'verbs'       => [],
+			'commands'       => [],
 		];
 	}
 }

@@ -157,7 +157,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			'category'    => 'Service',
 			'description' => 'Performance-dashboard surface: overview, URLs, requests, hooks, config, settings.',
 			'ctor'        => [],
-			'verbs'       => [
+			'commands'       => [
 				[
 					'name'        => 'overview',
 					'description' => 'High-level performance stats across all partitions.',

@@ -249,7 +249,7 @@ class AggregatorCITest extends TestCase {
 	// ---------------------------------------------------------------------
 	// schema-driven dispatch + stateful-registry reach
 	//
-	// After the schema migration the three verbs live in node_schema()['verbs']
+	// After the schema migration the three verbs live in node_schema()['commands']
 	// with handlers, and the ctor-injected registry is reached via $self->registry
 	// (node_schema is static and can't `use` the ctor arg). The fake-registry test
 	// proves the dispatched handler actually read THE INJECTED instance, not a
@@ -258,7 +258,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_node_schema_lists_all_verbs_with_handlers(): void {
 		$verbs = [];
-		foreach ( Aggregator_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Aggregator_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 
@@ -272,7 +272,7 @@ class AggregatorCITest extends TestCase {
 		// status/health/servers read no $payload/$args — none of their handlers
 		// even declare a $payload param, so each verb stays args => [].
 		$verbs = [];
-		foreach ( Aggregator_CI_Node::node_schema()['verbs'] as $verb ) {
+		foreach ( Aggregator_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 

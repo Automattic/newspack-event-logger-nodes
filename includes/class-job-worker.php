@@ -95,7 +95,7 @@ class Job_Worker_Node extends Node {
 		$this->stale_timeout        = \max( 1, $stale_timeout );
 		$this->max_runtime          = \max( 1, $max_runtime );
 
-		// Base ctor auto-wires a sibling :config CI from node_schema()['verbs']
+		// Base ctor auto-wires a sibling :config CI from node_schema()['commands']
 		// handlers — JobWorker declares none, so no sibling is created.
 		parent::__construct();
 
@@ -433,7 +433,7 @@ class Job_Worker_Node extends Node {
 				[ 'name' => 'stale_timeout',        'type' => 'int', 'default' => self::DEFAULT_STALE_TIMEOUT ],
 				[ 'name' => 'max_runtime',          'type' => 'int', 'default' => self::DEFAULT_MAX_RUNTIME ],
 			],
-			'verbs'       => [],
+			'commands'       => [],
 			'requests'    => [
 				[
 					'name'        => 'GET_HEALTH',
