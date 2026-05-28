@@ -2,8 +2,8 @@
 /* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * useAggregatorAdminGraph tests — the Configured-Servers admin graph clipped
- * onto the substrate's I/O boundary nodes (exospine + `_http` + `_output`,
- * `_uptime`, `_completion`, `_cwd`), plus the `servers:view` model node.
+ * onto the substrate's I/O boundary node (exospine + `_http`), plus the
+ * `servers:view` model node.
  * Migrated from the bespoke `servers:command` Node to the substrate's HttpOut:
  * the hook dispatches each verb as a TM_COMMAND through the CI
  * (FROM=`servers:view`, TO=`_http/servers`, verb in VALUE.name); the reply
@@ -35,12 +35,8 @@ import { useAggregatorAdminGraph } from '../useAggregatorAdminGraph';
 const CI = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 const VIEW = 'servers:view';
-const ALL_GRAPH_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
 // A fake CommandClient matching HttpOut's seam: postBatch returns reply
 // Messages addressed back along FROM (the server's reply pivot). The payload
@@ -102,6 +98,16 @@ describe( 'useAggregatorAdminGraph — exospine + I/O boundary wiring', () => {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( ci );
+		}
+	} );
+
+	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
+		const client = makeFakeClient();
+		renderHook( () =>
+			useAggregatorAdminGraph( { commandClient: client } )
+		);
+		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 

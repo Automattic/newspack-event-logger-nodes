@@ -2,9 +2,8 @@
 /* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * useAggregatorStatusGraph tests — the Aggregator Status dashboard graph clipped
- * onto the substrate's I/O boundary nodes (exospine + `_http` + `_output`,
- * `_metadata`, `_uptime`, `_completion`, `_cwd`), plus the `aggregator:view`
- * model node. Migrated from the bespoke `aggregator:poll` Node to the
+ * onto the substrate's I/O boundary node (exospine + `_http`), plus the
+ * `aggregator:view` model node. Migrated from the bespoke `aggregator:poll` Node to the
  * substrate's HttpOut: the hook owns the setInterval and dispatches a
  * TM_COMMAND through the CI (FROM=`aggregator:view`, TO=`_http/aggregator`,
  * verb=`status`); the reply routes via TO=FROM back into the view node, which
@@ -34,12 +33,8 @@ import { useAggregatorStatusGraph } from '../useAggregatorStatusGraph';
 const CI = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const OUTPUT = '_output';
-const UPTIME = '_uptime';
-const COMPLETION = '_completion';
-const CWD = '_cwd';
 const VIEW = 'aggregator:view';
-const ALL_GRAPH_NAMES = [ HTTP, OUTPUT, UPTIME, COMPLETION, CWD, VIEW ];
+const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
 // A fake CommandClient: records each batch its postBatch is given, and
 // returns a canned reply Message (or a deferred promise tests resolve later).
@@ -85,7 +80,7 @@ beforeEach( () => {
 } );
 
 describe( 'useAggregatorStatusGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the six graph nodes, each sinking into the CI', () => {
+	test( 'mounts the backbone + the two graph nodes, each sinking into the CI', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
@@ -97,6 +92,16 @@ describe( 'useAggregatorStatusGraph — exospine + I/O boundary wiring', () => {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( ci );
+		}
+	} );
+
+	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
+		const client = makeFakeClient();
+		renderHook( () =>
+			useAggregatorStatusGraph( { commandClient: client } )
+		);
+		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
+			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
