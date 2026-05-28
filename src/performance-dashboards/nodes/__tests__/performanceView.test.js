@@ -329,3 +329,177 @@ test( 'names the node', () => {
 	const v = createPerformanceView( 'performance:view' );
 	expect( v.name ).toBe( 'performance:view' );
 } );
+
+// Below: the substrate-canonical reply path. The view now also receives raw
+// TM_COMMAND|TM_RESPONSE replies pivoted via TO=FROM by HttpOut. It matches
+// `message[ID]` against `pending` and applies the result to the registered
+// slice (or resolves a resolveOnly promise).
+
+const { TM_COMMAND, TM_RESPONSE, TM_ERROR, ID, FROM, TO } = jest.requireActual(
+	'@newspack-nodes/runtime'
+);
+
+// Build a reply Message: TM_COMMAND|TM_RESPONSE (optionally |TM_ERROR).
+function reply( id, name, payload, opts = {} ) {
+	const m = newMessage();
+	/* eslint-disable-next-line no-bitwise */
+	m[ TYPE ] =
+		// eslint-disable-next-line no-bitwise
+		TM_COMMAND | TM_RESPONSE | ( opts.error ? TM_ERROR : 0 );
+	m[ ID ] = id;
+	m[ VALUE ] = { name, payload };
+	return m;
+}
+
+describe( 'performance:view — pending-matched reply routing', () => {
+	test( 'an overview reply matched against pending applies the result to the overview slice', () => {
+		const v = createPerformanceView( 'performance:view' );
+		v.pending.set( 'op-1', { slice: 'overview' } );
+		v.fill( reply( 'op-1', 'overview', { total_requests: 9 } ) );
+		expect( view().overview ).toEqual( {
+			data: { total_requests: 9 },
+			loading: false,
+			error: null,
+		} );
+		expect( v.pending.has( 'op-1' ) ).toBe( false );
+	} );
+
+	test( 'a urls reply matched against pending applies data + total to the urls slice', () => {
+		const v = createPerformanceView( 'performance:view' );
+		v.pending.set( 'op-2', { slice: 'urls' } );
+		v.fill(
+			reply( 'op-2', 'urls', {
+				data: [ { hash: 'a' } ],
+				total: 3,
+				limit: 100,
+				offset: 0,
+			} )
+		);
+		expect( view().urls ).toEqual( {
+			data: [ { hash: 'a' } ],
+			total: 3,
+			loading: false,
+			error: null,
+		} );
+	} );
+
+	test( 'a urlDetail reply with initial:true replaces and records last_modified', () => {
+		const v = createPerformanceView( 'performance:view' );
+		v.pending.set( 'op-3', { slice: 'urlDetail', initial: true } );
+		v.fill(
+			reply( 'op-3', 'url_detail', {
+				last_modified: 50,
+				requests: [ { rid: 'a', timestamp: 1 } ],
+			} )
+		);
+		expect( view().urlDetail.data.requests.map( ( r ) => r.rid ) ).toEqual(
+			[ 'a' ]
+		);
+	} );
+
+	test( 'a urlDetail reply non-initial with NEW last_modified merges newest-first', () => {
+		const v = createPerformanceView( 'performance:view' );
+		v.pending.set( 'op-3a', { slice: 'urlDetail', initial: true } );
+		v.fill(
+			reply( 'op-3a', 'url_detail', {
+				last_modified: 50,
+				requests: [ { rid: 'a', timestamp: 1 } ],
+			} )
+		);
+		v.pending.set( 'op-3b', { slice: 'urlDetail', initial: false } );
+		v.fill(
+			reply( 'op-3b', 'url_detail', {
+				last_modified: 60,
+				requests: [ { rid: 'b', timestamp: 5 } ],
+			} )
+		);
+		expect( view().urlDetail.data.requests.map( ( r ) => r.rid ) ).toEqual(
+			[ 'b', 'a' ]
+		);
+	} );
+
+	test( 'a requestDetail reply applies the data to the requestDetail slice', () => {
+		const v = createPerformanceView( 'performance:view' );
+		v.pending.set( 'op-4', { slice: 'requestDetail' } );
+		v.fill( reply( 'op-4', 'request_detail', { rid: 'r1', url: '/x' } ) );
+		expect( view().requestDetail ).toEqual( {
+			data: { rid: 'r1', url: '/x' },
+			loading: false,
+			error: null,
+		} );
+	} );
+
+	test( 'a TM_ERROR reply matched against pending applies an error to the slice', () => {
+		const v = createPerformanceView( 'performance:view' );
+		v.pending.set( 'op-5', { slice: 'overview' } );
+		v.fill(
+			reply( 'op-5', 'overview', 'something failed', { error: true } )
+		);
+		expect( view().overview ).toMatchObject( {
+			loading: false,
+			error: 'something failed',
+		} );
+	} );
+
+	test( 'a resolveOnly pending resolves the Promise with the raw payload (no view-model update)', async () => {
+		const v = createPerformanceView( 'performance:view' );
+		const p = new Promise( ( resolve, reject ) => {
+			v.pending.set( 'op-6', { resolveOnly: true, resolve, reject } );
+		} );
+		const before = view();
+		v.fill(
+			reply( 'op-6', 'request_search', {
+				url_hash: 'h',
+				partition: 2,
+			} )
+		);
+		const resolved = await p;
+		expect( resolved ).toEqual( { url_hash: 'h', partition: 2 } );
+		// View model unchanged — resolveOnly doesn't update a slice.
+		expect( view() ).toBe( before );
+	} );
+
+	test( 'a resolveOnly pending with a transform pipes the payload through it', async () => {
+		const v = createPerformanceView( 'performance:view' );
+		const transform = ( d ) => ( d && d.breakdown_time_series ) || null;
+		const p = new Promise( ( resolve, reject ) => {
+			v.pending.set( 'op-7', {
+				resolveOnly: true,
+				resolve,
+				reject,
+				transform,
+			} );
+		} );
+		v.fill(
+			reply( 'op-7', 'url_detail', {
+				breakdown_time_series: { a: 1 },
+			} )
+		);
+		expect( await p ).toEqual( { a: 1 } );
+	} );
+
+	test( 'a resolveOnly TM_ERROR rejects the Promise without updating any slice', async () => {
+		const v = createPerformanceView( 'performance:view' );
+		const before = view();
+		const p = new Promise( ( resolve, reject ) => {
+			v.pending.set( 'op-8', { resolveOnly: true, resolve, reject } );
+		} );
+		v.fill(
+			reply( 'op-8', 'request_search', 'not found', { error: true } )
+		);
+		await expect( p ).rejects.toThrow( 'not found' );
+		expect( view() ).toBe( before );
+	} );
+
+	test( 'an unmatched-ID reply is ignored (no pending entry → no slice update)', () => {
+		const v = createPerformanceView( 'performance:view' );
+		const before = view();
+		v.fill( reply( 'op-unknown', 'overview', { total_requests: 1 } ) );
+		expect( view() ).toBe( before );
+	} );
+} );
+
+// Suppress unused-warning for FROM/TO if linter complains; they're imported for
+// symmetry with the canonical view tests.
+void FROM;
+void TO;

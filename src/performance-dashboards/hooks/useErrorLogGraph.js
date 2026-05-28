@@ -1,56 +1,71 @@
+/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
- * useErrorLogGraph — mounts the Error Log dashboard node graph (the JS-Node
- * conversion of the old ErrorLog data path) clipped onto the exospine (the
- * canonical rule-#2 backbone `_command_interpreter → _router`).
+ * useErrorLogGraph — mounts the Error Log dashboard node graph onto the
+ * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
+ * substrate's I/O boundary nodes — the same ones useRequestLogGraph mounts:
  *
- * Graph: `perferrors:stream` (SSE-in) → `perferrors:route` (classifier) →
- * `perferrors:transform` (envelope → row) and/or `perferrors:view` (view model).
- * EVERY node sinks into the CI; flow is steered ONLY by each node's `target` (the
- * router peels TO and delivers): the stream targets the route; the route stamps
- * data → the transform and connection-status control → the view; the transform
- * targets the view. There is no bespoke `sink`/`controlSink` wiring.
+ *   _sse        (SseIn — EventSource ingress, args `'errors {restUrl} {nonce}'`)
+ *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _heartbeat  (Heartbeat — slot keep-alive; target = `_http/workers`)
  *
- * A second effect owns the live connection: while the page is visible AND not
- * paused it subscribes the stream to the `errors` feed, otherwise it closes it
- * (mirrors ErrorLog's page-visibility / pause effect). The view publishes its
- * low-frequency model via `setState('view', …)`; the React view reads the
- * high-frequency buffer directly via `Core.node('perferrors:view')`.
+ * Plus the existing dashboard chain (unchanged factories, only retargeted):
  *
- * Returns the thin control callbacks the view calls — `setPaused` and `clear`.
- * These are dispatched HOOK-DIRECT to the view node (`viewRef.current.fill`), an
- * external bridge: they are NOT routed through the graph (only connection-status
- * is, via the route). Torn down on unmount: the stream is closed, the graph nodes
+ *   perferrors:route       (data → transform, control → view)
+ *   perferrors:transform   (target = view)
+ *   perferrors:view        (the view-model node the React view reads)
+ *
+ * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * bespoke `perferrors:stream` Node and its inlined slot-heartbeat loop are
+ * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke.
+ *
+ * The slot bridge mirrors useRequestLogGraph (and useConsoleGraph): a
+ * `connected`-event subscriber on `_sse` reads `payload.slot` / `.partition`
+ * and pushes them into `_heartbeat`. The page-visibility / pause effect drives
+ * `sse.start()` / `sse.close()` (and `heartbeat.clearSlot()` on close).
+ *
+ * Returns the thin control callbacks the view calls — `setPaused` and
+ * `clear`. These are dispatched HOOK-DIRECT to the view node
+ * (`viewRef.current.fill`), an external bridge: they are NOT routed through
+ * the graph (only connection-status would be, via the route — and `_sse` no
+ * longer synthesizes a connection-status control, so that vestigial route is
+ * dormant). Torn down on unmount: the SSE source is closed, the graph nodes
  * are unregistered, then the exospine.
  *
- * The transport boundary is injectable: tests pass `opts.connector` (the stream's
- * seam, mirroring perfErrorsStream) so the hook never touches a real EventSource.
- * Production lazily defaults the connector to the real-EventSource transport
- * inside `createPerfErrorsStream`.
+ * Exospine isolation: this hook calls `mountExospine()` for its own React
+ * tree root. `ErrorLog` and `PerformanceDashboard` are mounted into SEPARATE
+ * DOM containers (`event-logger-errors` vs `event-logger-admin`), so each
+ * hook's exospine is naturally isolated by React-root scope.
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
+	SseIn,
+	HttpOut,
+	Heartbeat,
+	CommandClient,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createPerfErrorsStream } from '../nodes/perfErrorsStream';
 import { createPerfErrorsRoute } from '../nodes/perfErrorsRoute';
 import { createPerfErrorsTransform } from '../nodes/perfErrorsTransform';
 import { createPerfErrorsView } from '../nodes/perfErrorsView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
-// Every named node this graph mounts — unregistered on teardown (the exospine
-// nodes are removed separately by its own teardown()). Names use a colon, not a
-// slash: the router peels TO on '/', so a '/' in a node name would misroute.
-const STREAM = 'perferrors:stream';
+// I/O boundary nodes mounted from the substrate runtime.
+const SSE = '_sse';
+const HTTP = '_http';
+const HEARTBEAT = '_heartbeat';
+// Dashboard chain.
 const ROUTE = 'perferrors:route';
 const TRANSFORM = 'perferrors:transform';
 const VIEW = 'perferrors:view';
-const GRAPH_NODE_NAMES = [ STREAM, ROUTE, TRANSFORM, VIEW ];
+// Every named node this graph mounts — unregistered on teardown (exospine
+// nodes are removed separately by `teardownSpine()`).
+const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -61,94 +76,139 @@ const controlMsg = ( value ) => {
 };
 
 /**
- * @param {Object} [opts]            Options (testing seams).
- * @param {Object} [opts.connector]  Stream transport seam (connect/close);
- *                                   defaults to the real-EventSource connector.
+ * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View buffer cap (default 5000).
  * @return {{ setPaused: Function, clear: Function }} Control callbacks for the
  *   thin React view (the view's own state is read via useNodeState).
  */
 export function useErrorLogGraph( opts = {} ) {
-	// Stash the latest opts so the mount effect reads them without re-subscribing.
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
 	// Live node handles for the connection effect + control callbacks.
-	const streamRef = useRef( null );
+	const sseRef = useRef( null );
+	const heartbeatRef = useRef( null );
 	const viewRef = useRef( null );
 
-	// Paused state drives BOTH the view control (published for the button/label)
-	// and the connection effect below (paused closes the stream). Mirrors
-	// ErrorLog's isPaused.
+	// Paused state drives BOTH the view control (published for the button /
+	// empty-state label) and the connection effect below (paused closes the SSE
+	// stream).
 	const [ isPaused, setIsPaused ] = useState( false );
 	const isPageVisible = usePageVisibility();
 
-	// Flipped true once the graph (and its view node) is mounted. The mount effect
-	// runs AFTER the first render, by which point useNodeState has already captured
-	// a null view node and bailed; setting this state forces the consumer to
-	// re-render so useNodeState re-subscribes to the now-registered view node and
-	// reads the published model. It is ALSO a dependency of the connection effect
-	// below so that effect (which needs streamRef populated) runs once the mount
-	// effect has built the graph.
+	// Flipped true once the graph (and its view node) is mounted, so the
+	// connection effect runs once the mount effect has built the graph and so a
+	// consumer using useNodeState re-subscribes to the now-registered view node.
 	const [ viewReady, setViewReady ] = useState( false );
 
-	// Mount the graph once onto the exospine: stream → route → transform → view.
+	// Mount the graph once onto the exospine.
 	useEffect( () => {
-		const { connector, maxEntries } = optsRef.current;
+		const { maxEntries } = optsRef.current;
+		const data =
+			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
 		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, teardown: teardownSpine } = mountExospine();
+		const { ci, router, teardown: teardownSpine } = mountExospine();
 
-		// Build the graph nodes (the factories register them in Core).
-		const stream = createPerfErrorsStream( STREAM, { connector } );
+		// I/O boundary nodes — the same ones useRequestLogGraph mounts.
+		// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
+		const sse = new SseIn();
+		sse.arguments = `errors ${ data.restUrl || '/wp-json/' } ${
+			data.nonce || ''
+		}`;
+		sse.setName( SSE );
+		sse.sink = ci;
+		sse.target = ROUTE;
+
+		const http = new HttpOut();
+		http.client = new CommandClient( {
+			baseUrl: data.restUrl || '/wp-json/',
+			nonce: data.nonce || '',
+		} );
+		http.setName( HTTP );
+		http.sink = ci;
+
+		const heartbeat = new Heartbeat();
+		heartbeat.setName( HEARTBEAT );
+		heartbeat.sink = ci;
+		// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
+		// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
+		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
+		heartbeat.target = `${ HTTP }/workers`;
+
+		// Dashboard chain — unchanged factories (controlTarget points at the view
+		// even though `_sse` no longer synthesizes a connection-status control;
+		// the dormant route stays wired for substrate uniformity).
 		const route = createPerfErrorsRoute( ROUTE, {
 			dataTarget: TRANSFORM,
 			controlTarget: VIEW,
 		} );
 		const transform = createPerfErrorsTransform( TRANSFORM );
 		const view = createPerfErrorsView( VIEW, { maxEntries } );
-
-		// Rule #2: every node sinks into the CI; flow is steered by `target`.
-		stream.sink = ci;
-		stream.target = ROUTE;
 		route.sink = ci;
 		transform.sink = ci;
 		transform.target = VIEW;
 		view.sink = ci;
 
-		streamRef.current = stream;
+		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
+		// slot into `_heartbeat`. Mirrors useRequestLogGraph.js.
+		sse.register( 'connected', 'useErrorLogGraph', ( payload ) => {
+			const slot =
+				payload && Number.isInteger( payload.slot )
+					? payload.slot
+					: null;
+			const partition =
+				payload && Number.isInteger( payload.partition )
+					? payload.partition
+					: -1;
+			if ( null !== slot && slot >= 0 ) {
+				heartbeat.setSlot( slot, partition );
+			} else {
+				heartbeat.clearSlot();
+			}
+			return true;
+		} );
+
+		// Heartbeat hitchhikes the backbone's TIMER (started in mountExospine).
+		router.register( 'TIMER', HEARTBEAT, () => heartbeat.onTimer() );
+
+		sseRef.current = sse;
+		heartbeatRef.current = heartbeat;
 		viewRef.current = view;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
 		setViewReady( true );
 
 		return () => {
-			// Close the connection-owning stream first (its connector close is
-			// idempotent), unregister the graph nodes, THEN tear the exospine down.
-			stream.close();
+			heartbeat.clearSlot();
+			sse.unregister( 'connected', 'useErrorLogGraph' );
+			sse.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
 			teardownSpine();
-			streamRef.current = null;
+			sseRef.current = null;
+			heartbeatRef.current = null;
 			viewRef.current = null;
 		};
 	}, [] );
 
-	// Own the live connection: subscribe while visible AND not paused, else close.
-	// Re-runs when the graph mounts (viewReady) or visibility / paused flips.
-	// Cleanup closes the stream (matches ErrorLog's `return () => closeSource()`).
+	// Own the live SSE connection: open while visible AND not paused, else close.
+	// On close, clear the heartbeat slot so timer firings (if any subscriber is
+	// driving them) become no-ops.
 	useEffect( () => {
-		const stream = streamRef.current;
-		if ( ! viewReady || ! stream ) {
+		const sse = sseRef.current;
+		const heartbeat = heartbeatRef.current;
+		if ( ! viewReady || ! sse ) {
 			return undefined;
 		}
 		if ( isPageVisible && ! isPaused ) {
-			stream.subscribe();
+			sse.start();
 		} else {
-			stream.close();
+			sse.close();
+			heartbeat?.clearSlot();
 		}
-		return () => stream.close();
+		return undefined;
 	}, [ viewReady, isPageVisible, isPaused ] );
 
 	// setPaused: flip the hook state (re-runs the connection effect) AND publish
