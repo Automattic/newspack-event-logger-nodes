@@ -253,7 +253,8 @@ class JobWorkerTest extends TestCase {
 	public function test_constructor_overrides_stale_and_runtime(): void {
 		// Per-spec: long-running JobWorker variants tune via constructor, not by
 		// modifying global defaults.
-		$jw = new Job_Worker_Node( cache_flush_interval: 10, stale_timeout: 1200, max_runtime: 1200 );
+		$jw = new Job_Worker_Node();
+		$jw->arguments( '10 1200 1200' );
 		$this->assertSame( 1200, $jw->get_stale_timeout() );
 		$this->assertSame( 1200, $jw->get_max_runtime() );
 	}
@@ -482,7 +483,8 @@ class JobWorkerTest extends TestCase {
 		// would otherwise produce a 0-jobs-cache-flush-interval (division-by-
 		// zero in some downstream codepath) or stale_timeout=0 (immediate
 		// staleness, supervisor would force-respawn on every spawn).
-		$jw = new Job_Worker_Node( cache_flush_interval: 0, stale_timeout: 0, max_runtime: -5 );
+		$jw = new Job_Worker_Node();
+		$jw->arguments( '0 0 -5' );
 		$this->assertSame( 1, $jw->get_stale_timeout() );
 		$this->assertSame( 1, $jw->get_max_runtime() );
 
@@ -785,7 +787,8 @@ class JobWorkerTest extends TestCase {
 		// Every cache_flush_interval jobs, JobWorker calls set_state('CACHE_FLUSH').
 		// Register a closure listener via Node::register so we can observe the
 		// event without needing wp_cache_flush to exist.
-		$jw = new Job_Worker_Node( cache_flush_interval: 3 );
+		$jw = new Job_Worker_Node();
+		$jw->arguments( '3' );
 		$jw->register_handler( 'noop', fn () => null );
 
 		// Inject a CACHE_FLUSH event into the registrations table via reflection
@@ -820,5 +823,62 @@ class JobWorkerTest extends TestCase {
 		$msg = $this->job_message( 'noop' );
 		$jw->fill( $msg );
 		$this->assertCount( 2, $flush_observed );
+	}
+
+	// ------------------------------------------------------------------------
+	// Tachikoma-parity arguments() migration (Task 9).
+	// ------------------------------------------------------------------------
+
+	/**
+	 * No-arg ctor leaves all three knobs at their schema defaults; arguments()
+	 * walks node_schema and assigns cache_flush_interval / stale_timeout /
+	 * max_runtime from positional tokens; the override re-normalizes (>= 1).
+	 */
+	public function test_constructible_via_no_arg_ctor_and_arguments_setter(): void {
+		$jw = new Job_Worker_Node();
+		$jw->arguments( '7 120 480' );
+		$ref = new \ReflectionClass( $jw );
+		$this->assertSame( 7,   $ref->getProperty( 'cache_flush_interval' )->getValue( $jw ) );
+		$this->assertSame( 120, $ref->getProperty( 'stale_timeout' )->getValue( $jw ) );
+		$this->assertSame( 480, $ref->getProperty( 'max_runtime' )->getValue( $jw ) );
+		$this->assertSame( 120, $jw->get_stale_timeout() );
+		$this->assertSame( 480, $jw->get_max_runtime() );
+	}
+
+	/**
+	 * Schema defaults are real int constants — `arguments()` with no tokens
+	 * (or with fewer than 3) leaves the omitted positions at their DEFAULT_*
+	 * values, NOT at a string placeholder that would TypeError the typed
+	 * `int` property assignment.
+	 */
+	public function test_arguments_setter_applies_schema_defaults_for_missing_optional_tokens(): void {
+		$jw = new Job_Worker_Node();
+		// Empty string → setter no-ops (matches Partition behavior).
+		$jw->arguments( '' );
+		$ref = new \ReflectionClass( $jw );
+		$this->assertSame( Job_Worker_Node::CACHE_FLUSH_INTERVAL,   $ref->getProperty( 'cache_flush_interval' )->getValue( $jw ) );
+		$this->assertSame( Job_Worker_Node::DEFAULT_STALE_TIMEOUT,  $ref->getProperty( 'stale_timeout' )->getValue( $jw ) );
+		$this->assertSame( Job_Worker_Node::DEFAULT_MAX_RUNTIME,    $ref->getProperty( 'max_runtime' )->getValue( $jw ) );
+
+		// Single token sets cache_flush_interval, schema-defaults the rest.
+		$jw2 = new Job_Worker_Node();
+		$jw2->arguments( '5' );
+		$ref2 = new \ReflectionClass( $jw2 );
+		$this->assertSame( 5,                                       $ref2->getProperty( 'cache_flush_interval' )->getValue( $jw2 ) );
+		$this->assertSame( Job_Worker_Node::DEFAULT_STALE_TIMEOUT,  $ref2->getProperty( 'stale_timeout' )->getValue( $jw2 ) );
+		$this->assertSame( Job_Worker_Node::DEFAULT_MAX_RUNTIME,    $ref2->getProperty( 'max_runtime' )->getValue( $jw2 ) );
+	}
+
+	/**
+	 * arguments() override re-normalizes after the base walker — every knob
+	 * is clamped to >= 1 to match the legacy ctor.
+	 */
+	public function test_arguments_setter_normalizes_to_minimum_one(): void {
+		$jw = new Job_Worker_Node();
+		$jw->arguments( '0 -3 -5' );
+		$ref = new \ReflectionClass( $jw );
+		$this->assertSame( 1, $ref->getProperty( 'cache_flush_interval' )->getValue( $jw ) );
+		$this->assertSame( 1, $ref->getProperty( 'stale_timeout' )->getValue( $jw ) );
+		$this->assertSame( 1, $ref->getProperty( 'max_runtime' )->getValue( $jw ) );
 	}
 }

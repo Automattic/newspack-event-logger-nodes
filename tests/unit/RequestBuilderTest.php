@@ -404,7 +404,8 @@ class RequestBuilderTest extends TestCase {
 	public function test_lru_eviction_emits_orphan_with_error_status_t(): void {
 		// bucket_size=1, num_buckets=2: one item per bucket, two buckets retained.
 		// After r2's set, r1's bucket is the oldest and gets evicted.
-		$rb      = new Request_Builder_Node( bucket_size: 1, num_buckets: 2 );
+		$rb      = new Request_Builder_Node();
+		$rb->arguments( "1 2" );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -693,7 +694,8 @@ class RequestBuilderTest extends TestCase {
 	public function test_lru_eviction_skips_request_with_empty_url(): void {
 		// Open r1 with NO `request` keyword → url stays empty → evict_request
 		// hits the `empty( $request->url )` early return.
-		$rb      = new Request_Builder_Node( bucket_size: 1, num_buckets: 2 );
+		$rb      = new Request_Builder_Node();
+		$rb->arguments( "1 2" );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -710,7 +712,8 @@ class RequestBuilderTest extends TestCase {
 		// before LRU could evict it, but evict_request still gates on state to
 		// guard the path. Stuff a complete-state stdClass directly into the
 		// cache via restore_state and force a rotation.
-		$rb      = new Request_Builder_Node( bucket_size: 1, num_buckets: 2 );
+		$rb      = new Request_Builder_Node();
+		$rb->arguments( "1 2" );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -1275,5 +1278,40 @@ class RequestBuilderTest extends TestCase {
 		$req = $this->captured_request( $capture );
 		// remote_addr never set because the line was skipped before the regex.
 		$this->assertArrayNotHasKey( 'remote_addr', $req );
+	}
+
+	// ------------------------------------------------------------------------
+	// Tachikoma-parity arguments() migration (Task 9).
+	// ------------------------------------------------------------------------
+
+	/**
+	 * No-arg ctor leaves bucket_size / num_buckets at their schema defaults
+	 * and builds the LRU_Cache with those defaults; arguments() walks
+	 * node_schema and reassigns the knobs from positional tokens, then the
+	 * override rebuilds the cache with the new values.
+	 */
+	public function test_constructible_via_no_arg_ctor_and_arguments_setter(): void {
+		$rb = new Request_Builder_Node();
+		$rb->arguments( '7 5' );
+		$ref = new \ReflectionClass( $rb );
+		$this->assertSame( 7, $ref->getProperty( 'bucket_size' )->getValue( $rb ) );
+		$this->assertSame( 5, $ref->getProperty( 'num_buckets' )->getValue( $rb ) );
+		// Cache rebuilt with the new dimensions.
+		$cache = $rb->cache;
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\LRU_Cache::class, $cache );
+		$cref = new \ReflectionClass( $cache );
+		$this->assertSame( 7, $cref->getProperty( 'bucket_size' )->getValue( $cache ) );
+		$this->assertSame( 5, $cref->getProperty( 'num_buckets' )->getValue( $cache ) );
+	}
+
+	/**
+	 * Empty-string arguments() no-ops: the cache stays as the no-arg-ctor
+	 * cache (DEFAULT_BUCKET_SIZE × DEFAULT_NUM_BUCKETS). Flight sibling
+	 * mounted regardless of args.
+	 */
+	public function test_no_arg_ctor_builds_cache_with_defaults_and_mounts_flight(): void {
+		$rb = new Request_Builder_Node();
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\LRU_Cache::class, $rb->cache );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Request_Flight_Node::class, $rb->flight );
 	}
 }
