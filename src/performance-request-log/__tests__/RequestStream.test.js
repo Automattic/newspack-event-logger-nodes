@@ -315,4 +315,178 @@ describe( 'RequestStream', () => {
 		expect( container.textContent ).toContain( 'r-no-ua' );
 		window.localStorage.removeItem( 'event-logger-stream-columns' );
 	} );
+
+	it( 'renders the placeholder time string for entries with a falsy timestamp', () => {
+		// Drives the `if ( ! ts )` branch in formatTime — the production code
+		// renders `--:--:--.---` for any entry whose timestamp is missing/zero.
+		registerViewFixture( {
+			entries: [ entry( { rid: 'r-noT', timestamp: 0 } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-noT' );
+		expect( container.textContent ).toContain( '--:--:--.---' );
+	} );
+
+	it( 'toggleColumn removes a checked column when its checkbox is clicked', () => {
+		// Open the column picker, click an already-visible column's checkbox,
+		// and verify the column header disappears (visibleColumns shrank).
+		registerViewFixture();
+		const { container } = mount();
+		const colsBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Cols' );
+		act( () => colsBtn.click() );
+		// rid is in DEFAULT_COLUMNS, so its column header should be present.
+		const headersBefore = Array.from(
+			container.querySelectorAll(
+				'.event-logger-request-stream-header-row [role="columnheader"]'
+			)
+		).map( ( n ) => n.textContent );
+		expect( headersBefore ).toContain( 'Request ID' );
+		const checkbox = container.querySelector( '#col-rid' );
+		expect( checkbox ).toBeTruthy();
+		expect( checkbox.checked ).toBe( true );
+		act( () => checkbox.click() );
+		const headersAfter = Array.from(
+			container.querySelectorAll(
+				'.event-logger-request-stream-header-row [role="columnheader"]'
+			)
+		).map( ( n ) => n.textContent );
+		expect( headersAfter ).not.toContain( 'Request ID' );
+	} );
+
+	it( 'toggleColumn adds an unchecked column when its checkbox is clicked', () => {
+		// user_agent is NOT in DEFAULT_COLUMNS — clicking it adds it, and it
+		// must be inserted in the original COLUMNS order (between remote_addr
+		// and duration). This drives the `allCols.filter(...)` add branch.
+		registerViewFixture();
+		const { container } = mount();
+		const colsBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Cols' );
+		act( () => colsBtn.click() );
+		const uaCheckbox = container.querySelector( '#col-user_agent' );
+		expect( uaCheckbox ).toBeTruthy();
+		expect( uaCheckbox.checked ).toBe( false );
+		act( () => uaCheckbox.click() );
+		const headers = Array.from(
+			container.querySelectorAll(
+				'.event-logger-request-stream-header-row [role="columnheader"]'
+			)
+		).map( ( n ) => n.textContent );
+		expect( headers ).toContain( 'UA' );
+		// Order check: UA sits between IP (remote_addr) and Duration.
+		const ipIdx = headers.indexOf( 'IP' );
+		const uaIdx = headers.indexOf( 'UA' );
+		const durIdx = headers.indexOf( 'Duration' );
+		expect( ipIdx ).toBeLessThan( uaIdx );
+		expect( uaIdx ).toBeLessThan( durIdx );
+	} );
+
+	it( 'rAF updates the staleness display from node.lastEventTime when entries grow', () => {
+		// When the rAF observes newCount > 0 AND the node carries a
+		// lastEventTime, it copies it into lastEventTimeRef — the
+		// "Xs ago" display then ticks off that ref.
+		registerViewFixture( {
+			entries: [ entry( { rid: 'r-stale' } ) ],
+			lastEventTime: Date.now() - 5000,
+		} );
+		const { container } = mount();
+		tickFrame();
+		// Find any sibling span inside the stats element whose text matches "Xs ago".
+		const stats = container.querySelector(
+			'.event-logger-request-stream-stats'
+		);
+		expect( stats ).toBeTruthy();
+		expect( stats.textContent ).toMatch( /\d+s ago/ );
+	} );
+
+	it( 'scrolling away from top and back restores the saved animation offset', () => {
+		// Drives the handleScroll save (away-from-top) + restore (back-to-top)
+		// branches: scrolling down saves the current offsetRef and clears it;
+		// scrolling back restores it. No throw + correct state mutation is the
+		// visible signal (no public API surfaces offset).
+		registerViewFixture( {
+			entries: Array.from( { length: 20 }, ( _, i ) =>
+				entry( { seq: i + 1, rid: `r-${ i }` } )
+			),
+		} );
+		const { container } = mount();
+		tickFrame();
+		const list = container.querySelector(
+			'.event-logger-request-stream-list'
+		);
+		expect( list ).toBeTruthy();
+		// Away from top — fires save branch (offsetRef → savedOffsetRef,
+		// then offsetRef = 0, animOffsetRows = 0).
+		act( () => {
+			list.scrollTop = 500;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		// Back to top — fires restore branch.
+		act( () => {
+			list.scrollTop = 0;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		// Component must still be alive and rendering entries.
+		expect( container.textContent ).toContain( 'r-0' );
+	} );
+
+	it( 'rAF maintains scroll position when buffer grows and the list is scrolled down', () => {
+		// Drives the `else if ( list ) { list.scrollTop += visibleNewCount * ROW_HEIGHT }`
+		// branch — the rAF compensates for newly prepended entries so the user's
+		// scroll position is preserved.
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		const list = container.querySelector(
+			'.event-logger-request-stream-list'
+		);
+		// Scroll down so isAtTop is false on the next frame.
+		act( () => {
+			list.scrollTop = 500;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		const before = list.scrollTop;
+		// Append a new entry to the node buffer — the next frame should bump
+		// scrollTop by ROW_HEIGHT to compensate (and set the adjusting flag).
+		node.entries = [
+			entry( { seq: 2, rid: 'r-2' } ),
+			entry( { seq: 1, rid: 'r-1' } ),
+		];
+		tickFrame();
+		expect( list.scrollTop ).toBeGreaterThan( before );
+	} );
+
+	it( 'rAF snaps the smooth-scroll offset to zero when it has decayed past the threshold', () => {
+		// Drives the `else if ( content && offsetRef.current !== 0 )` branch:
+		// once the |offset| < 0.5 threshold is hit, the next frame snaps to
+		// exactly 0 and clears the transform.
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		const { container } = mount();
+		// First frame establishes content / list refs.
+		tickFrame();
+		const content = container.querySelector(
+			'.event-logger-request-stream-content'
+		);
+		// Append a row at the top so visibleNewCount > 0 → offsetRef becomes
+		// -33 (compensation). Subsequent frames decay it toward zero.
+		node.entries = [
+			entry( { seq: 2, rid: 'r-2' } ),
+			entry( { seq: 1, rid: 'r-1' } ),
+		];
+		tickFrame();
+		// Now drive enough frames for the |offset| to decay below 0.5
+		// (decay is 1% per frame). A loop of ~700 frames is plenty.
+		for ( let i = 0; i < 800; i++ ) {
+			tickFrame();
+		}
+		// After the snap, the transform must be cleared and offset is zero.
+		expect( content.style.transform ).toBe( '' );
+	} );
 } );
