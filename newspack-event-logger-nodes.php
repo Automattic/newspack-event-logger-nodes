@@ -385,8 +385,19 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 	$base_ci->make_node( 'Settings_CI',    'settings' );
 	$base_ci->make_node( 'Logger_CI',      'logger' );
 	$base_ci->make_node( 'Events_CI',      'events' );
-	$base_ci->make_node( 'Servers_CI',     'servers',     $registry );
-	$base_ci->make_node( 'Aggregator_CI',  'aggregator',  $registry );
+	// Service CIs that need programmatic deps (the hub-side Server_Registry)
+	// use the Tachikoma uniform-construction pattern: `make_node` calls a
+	// no-arg ctor + `arguments()` for scalar config; the registry comes in
+	// via public-property assignment immediately after, since `arguments()`
+	// only handles round-trippable scalar tokens.
+	$servers_ci = $base_ci->make_node( 'Servers_CI', 'servers' );
+	if ( $servers_ci instanceof \Newspack_Event_Logger_Nodes\App\Servers_CI_Node ) {
+		$servers_ci->registry = $registry;
+	}
+	$aggregator_ci = $base_ci->make_node( 'Aggregator_CI', 'aggregator' );
+	if ( $aggregator_ci instanceof \Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node ) {
+		$aggregator_ci->registry = $registry;
+	}
 	$base_ci->make_node( 'Performance_CI', 'performance' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );

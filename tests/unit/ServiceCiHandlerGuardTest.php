@@ -180,8 +180,20 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			'Events_CI'      => [ static fn () => new Events_CI_Node() ],
 			'Settings_CI'    => [ static fn () => new Settings_CI_Node() ],
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
-			'Aggregator_CI'  => [ static fn () => new Aggregator_CI_Node( new Server_Registry() ) ],
-			'Servers_CI'     => [ static fn () => new Servers_CI_Node( new Server_Registry() ) ],
+			'Aggregator_CI'  => [
+				static function (): Aggregator_CI_Node {
+					$ci           = new Aggregator_CI_Node();
+					$ci->registry = new Server_Registry();
+					return $ci;
+				},
+			],
+			'Servers_CI'     => [
+				static function (): Servers_CI_Node {
+					$ci           = new Servers_CI_Node();
+					$ci->registry = new Server_Registry();
+					return $ci;
+				},
+			],
 		];
 	}
 }

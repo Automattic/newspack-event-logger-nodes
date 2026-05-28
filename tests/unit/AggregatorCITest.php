@@ -57,7 +57,8 @@ class AggregatorCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_status_verb_returns_empty_map_when_no_servers(): void {
-		$ci     = new Aggregator_CI_Node( new Server_Registry() );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertSame( [], $result );
@@ -74,7 +75,8 @@ class AggregatorCITest extends TestCase {
 
 		Core::$memd->set( 'aggregator_status:spoke1:p0', [ 'state' => 'connected', 'lag' => 1234 ], 60 );
 
-		$ci     = new Aggregator_CI_Node( $registry );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $registry;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertIsArray( $result );
@@ -97,7 +99,8 @@ class AggregatorCITest extends TestCase {
 		] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI_Node( $registry );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $registry;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertArrayHasKey( 'spoke2', $result );
@@ -111,7 +114,8 @@ class AggregatorCITest extends TestCase {
 		$registry->add( 'spoke3', [ 'url' => 'https://x.example/', 'enabled' => true ] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI_Node( $registry );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $registry;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertArrayHasKey( 'spoke3', $result );
@@ -124,7 +128,8 @@ class AggregatorCITest extends TestCase {
 		$registry->add( 'sp', [ 'url' => 'https://x.example/', 'enabled' => true ] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI_Node( $registry );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $registry;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertCount( 1, $result['sp']['partitions'] );
@@ -136,7 +141,8 @@ class AggregatorCITest extends TestCase {
 
 	public function test_health_verb_reports_cache_available(): void {
 		// Core::$memd seeded in setUp().
-		$ci = new Aggregator_CI_Node( new Server_Registry() );
+		$ci = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 
 		$before = \time();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
@@ -152,7 +158,8 @@ class AggregatorCITest extends TestCase {
 
 	public function test_health_verb_reports_cache_unavailable_when_memd_null(): void {
 		Core::$memd = null;
-		$ci         = new Aggregator_CI_Node( new Server_Registry() );
+		$ci         = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 
 		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
 
@@ -165,7 +172,8 @@ class AggregatorCITest extends TestCase {
 	// ---------------------------------------------------------------------
 
 	public function test_servers_verb_returns_empty_sequential_array(): void {
-		$ci     = new Aggregator_CI_Node( new Server_Registry() );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertSame( [], $result );
@@ -181,7 +189,8 @@ class AggregatorCITest extends TestCase {
 		] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI_Node( $registry );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $registry;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertIsArray( $result );
@@ -203,7 +212,8 @@ class AggregatorCITest extends TestCase {
 		$registry->add( 'plain', [ 'url' => 'https://plain.example.com' ] );
 		$registry->reset_cache();
 
-		$ci     = new Aggregator_CI_Node( $registry );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $registry;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertCount( 1, $result );
@@ -221,7 +231,8 @@ class AggregatorCITest extends TestCase {
 
 	public function test_status_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci    = new Aggregator_CI_Node( new Server_Registry() );
+		$ci    = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'status' );
 
 		$this->assertIsString( $result );
@@ -230,7 +241,8 @@ class AggregatorCITest extends TestCase {
 
 	public function test_health_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci    = new Aggregator_CI_Node( new Server_Registry() );
+		$ci    = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'health' );
 
 		$this->assertIsString( $result );
@@ -239,7 +251,8 @@ class AggregatorCITest extends TestCase {
 
 	public function test_servers_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
-		$ci    = new Aggregator_CI_Node( new Server_Registry() );
+		$ci    = new Aggregator_CI_Node();
+		$ci->registry = new Server_Registry();
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertIsString( $result );
@@ -298,11 +311,44 @@ class AggregatorCITest extends TestCase {
 			}
 		};
 
-		$ci     = new Aggregator_CI_Node( $fake );
+		$ci     = new Aggregator_CI_Node();
+		$ci->registry = $fake;
 		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
 
 		$this->assertTrue( $fake->reached, 'handler must reach the injected registry via $self->registry' );
 		$this->assertCount( 1, $result );
+		$this->assertSame( 'sentinel', $result[0]['id'] );
+	}
+
+	/**
+	 * Tachikoma uniform-construction parity: the substrate `make_node` no
+	 * longer forwards positional ctor args (it filters to scalar-only and
+	 * the simplified path calls `new $fqcn()` then `arguments()`). The
+	 * hub-side server registry — a programmatic object dep — must therefore
+	 * reach the CI via public-property assignment AFTER construction.
+	 *
+	 * This pins that contract: a bare `new Aggregator_CI_Node()` succeeds,
+	 * and `$ci->registry = $reg` plus a verb dispatch threads the assigned
+	 * registry into the handler exactly as the ctor used to.
+	 */
+	public function test_constructible_via_no_arg_ctor_and_public_property_assignment(): void {
+		$registry = new class() extends Server_Registry {
+			public bool $reached = false;
+			public function reset_cache(): void {}
+			public function get_all(): array {
+				$this->reached = true;
+				return [ 'sentinel' => [ 'url' => 'https://s.example/', 'enabled' => true, 'logs' => [] ] ];
+			}
+			public function is_config_server( string $id ): bool { return false; }
+		};
+
+		$ci           = new Aggregator_CI_Node();
+		$ci->registry = $registry;
+
+		$this->assertSame( $registry, $ci->registry );
+
+		$result = VerbHarness::fire( $ci, 'aggregator', 'servers' );
+		$this->assertTrue( $registry->reached );
 		$this->assertSame( 'sentinel', $result[0]['id'] );
 	}
 }
