@@ -16,7 +16,7 @@ After any diff touching files under `newspack-event-logger-nodes/`. Run BEFORE p
 
 ### 1. Remote-activity gate
 
-`enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Strict polarity — read with `true === ( Config::load_config()['enable_aggregator'] ?? false )`. Default OFF; hubs opt in explicitly. Fresh installs are spokes / standalone.
+`enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Typed `bool` in the Config schema, persisted by `register_setting` as `0`/`1`, default OFF; hubs opt in explicitly. Fresh installs are spokes / standalone. Read with a truthy check (`! empty( $cfg['enable_aggregator'] )` — what the admin-menu gate uses), NOT a coerced-string `=== true` match.
 
 Push-side fanout (`Settings_Sync::maybe_queue_static_sync`, `Auto_Tuner_Node::persist`) is INTENTIONALLY ungated — both always queue a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops; missing consumers ARE the structural gate. A diff that adds a polarity check around the push-side fanout regresses to the legacy `enable_workers` design — push back. Pull-side activation (`Stream_Merger_Node`) and admin submenu visibility ARE gated on `enable_aggregator`.
 
@@ -81,7 +81,7 @@ A diff that introduces running-mean storage (the EMA we explicitly fixed) regres
 
 The plugin's main file calls `\Newspack_Nodes\Command_Interpreter_Node::register_namespace('Newspack_Event_Logger_Nodes\\')` (+ the `App\` sub-namespace). `make_node Flame_Builder` then resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix; there's no per-class registration to keep in sync.
 
-A new application node subclass MUST register itself the same way; otherwise topology PHP can't construct it via `$interpreter->make_node('Foo', 'foo')`.
+A new application node subclass picks up the existing namespace registration for free as long as it lives under `Newspack_Event_Logger_Nodes\\` (or `App\\`) and a `composer dump-autoload -o` runs; otherwise a `.tsl` `make_node Foo foo` can't resolve the class.
 
 ### 11. No `class_exists()` guards for in-plugin classes
 
@@ -103,7 +103,7 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 
 ## Service CI specifics
 
-Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs (`Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`). The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` (under `includes/rest/`) is a tested REST helper class kept for any future REST shim — **no current service CI extends or uses it**, so a diff that adds an `extends Performance_Controller_Base` to a CI is reviving a pattern the cutover dropped; push back unless there's an explicit reason.
+Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs (`Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`). The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` (under `includes/rest/`) is an orphaned helper class with no callers outside its own tests — slated for review/deletion. A diff that adds `extends Performance_Controller_Base`, calls `check_rate_limit()`, or invokes any of its helpers is reviving dead code; push back.
 
 - Verb declaration: in `node_schema()['commands']` — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field.
 - Per-verb capability gate: every handler calls `self::require_manage_options()` (the `Service_CI_Node` static helper) at the top; worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag set pre-dispatch.

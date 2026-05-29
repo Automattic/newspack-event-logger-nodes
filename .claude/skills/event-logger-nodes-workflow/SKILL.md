@@ -17,7 +17,7 @@ Read AGENTS.md for the application's architecture decisions and key files; this 
 - Touching the React dashboards (any tree under `src/`)
 - Adding an application Node subclass (RequestBuilder-style processor)
 - Modifying topology files under `topologies/`
-- Changes to LogManager, JobIntake, StreamMerger, StatsAggregator, SettingsSync, RemoteManager
+- Changes to LogManager, JobIntake, StreamMerger, FlameBuilder, Stats_Store, SettingsSync, RemoteManager
 
 ## Phases
 
@@ -41,12 +41,12 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 
 #### Adding a service CI verb
 
-Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/command` (POST one or more envelopes per request, dispatched against the addressed node) and `/wp-json/newspack-nodes/v1/messages/stream` (GET SSE). There are no per-plugin REST controllers anymore; `Performance_Controller_Base` survives in `includes/rest/` as a tested base for any future REST shim but is not extended by any current CI.
+Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/command` (POST one or more envelopes per request, dispatched against the addressed node) and `/wp-json/newspack-nodes/v1/messages/stream` (GET SSE). There are no per-plugin REST controllers anymore. `Performance_Controller_Base` survives in `includes/rest/` as an orphaned helper with no callers outside its own tests — slated for review/deletion; do NOT extend or call it in new code.
 
 1. Pick the right service CI class (files under `includes/app/class-*-ci.php`): `Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`.
 2. Add a new verb entry in that CI's `node_schema()['commands']` array — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field; gate inside the handler instead (see step 4).
 3. Handler signature is the substrate's `static function ( <ConcreteCI>_Node $self, string $args, array $envelope = [], mixed $payload = null ): mixed` — `$self` is concretely typed to the dispatching CI so the closure can read injected dependencies (registries, stores) off it; `node_schema()` is static so anything stateful comes through `$self`.
-4. Capability gate: call `self::require_manage_options()` at the top of the handler — it's a `Service_CI_Node` static helper that throws `TM_COMMAND|TM_ERROR` for non-admins. Worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag the substrate sets pre-dispatch. `Performance_Controller_Base` (in `includes/rest/`) is a REST helper class kept as a tested base for future REST shims; **no current service CI extends it**, so don't reach for it in new code.
+4. Capability gate: call `self::require_manage_options()` at the top of the handler — it's a `Service_CI_Node` static helper that throws `TM_COMMAND|TM_ERROR` for non-admins. Worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag the substrate sets pre-dispatch. (Don't reach for `Performance_Controller_Base` in `includes/rest/` — it's orphaned dead code; see above.)
 5. Throw freely — the substrate wraps thrown errors as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument validation.
 6. Stats reads are fail-soft (`null` / `[]` / `false`). Slot-pool ops are fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
 
@@ -82,7 +82,7 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 
 1. Create `includes/class-{name}.php` with `class Foo_Node extends \Newspack_Nodes\Node` (every node class ends in `_Node`; shell-name = class minus `_Node`). Override `fill()`.
 2. **No registration** — the plugin registers the `Newspack_Event_Logger_Nodes\` namespace once, so `make_node('Foo')` resolves `\Newspack_Event_Logger_Nodes\Foo_Node` and the palette scans the classmap. Just `composer dump-autoload -o` after adding the file.
-3. Topology PHP wires it: `$interpreter->make_node('Foo', 'foo'); $foo->connect_node('next-step');`.
+3. A `.tsl` topology wires it: `make_node Foo foo` instantiates the node, `connect_node foo next-step` wires the sink, `cmd foo:config <verb> [args…]` runs a config verb. The substrate's Topology_Loader interprets the script per partition.
 
 #### Adding a CLI command (`wp nodes <verb>`)
 
@@ -131,7 +131,7 @@ wp nodes restart all --all-partitions
 wp nodes restart firehose-workers-and-jobs --all-partitions
 wp nodes restart request-workers           --all-partitions
 wp nodes restart job-workers               --all-partitions
-wp nodes restart aggregator                --all-partitions   # hub-only; no-op on spokes
+wp nodes restart aggregator                --all-partitions   # hub-only; errors out on spokes (substrate validates against active topologies)
 ```
 
 ### Phase 5: Live-verify
@@ -155,11 +155,11 @@ For job handler changes: queue a job (via the legitimate caller), wait, check `w
 
 ## Patterns That Trip People Up
 
-- **Hub vs spoke**: `enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Strict polarity: read as `true === ( Config::load_config()['enable_aggregator'] ?? false )`. Default OFF — fresh installs are spokes/standalone; hubs opt in explicitly by checking the box in Event Logger Settings → Remote Servers. Push-side fanout (`Settings_Sync`, `Auto_Tuner_Node`) is ungated; missing consumers are the structural gate. The legacy `enable_workers` toggle was retired in v0.5.0.
+- **Hub vs spoke**: `enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Typed bool in the Config schema, persisted by `register_setting` as `0`/`1`, default OFF — fresh installs are spokes/standalone; hubs opt in explicitly by checking the box in Event Logger Settings → Remote Servers. Read with a truthy check (`! empty( $cfg['enable_aggregator'] )`). Push-side fanout (`Settings_Sync`, `Auto_Tuner_Node`) is ungated; missing consumers are the structural gate. The legacy `enable_workers` toggle was retired in v0.5.0.
 - **`outputs` (plural) for log reader registration**, not `output` (singular). Easy typo, silent failure.
-- **Memcache is required** for the application — Stats_Store, slot rate limiting, stats aggregator, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards).
+- **Memcache is required** for the application — Stats_Store (driven by Flame_Builder_Node), SSE slot rate limiting, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards); the SSE slot pool fails closed (429).
 - **Salt rotation orphans keys but doesn't flush them** — workers keep writing to the OLD salt until they respawn. After `Stats_Store::flush_all()`, restart workers to take effect immediately.
-- **Application nodes resolve by namespace prefix** (no registry): `make_node('Flame_Builder')` → `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` via the registered `Newspack_Event_Logger_Nodes\` prefix. Topology files use `$interpreter->make_node(...)`; the `.tsl` shell-name is the class minus `_Node` (`make_node Flame_Builder`, `Job_Router`, `Request_Builder`, …).
+- **Application nodes resolve by namespace prefix** (no registry): `make_node Flame_Builder` (in a `.tsl` topology) → `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` via the registered `Newspack_Event_Logger_Nodes\` prefix. The `.tsl` shell-name is the class minus `_Node` (`make_node Flame_Builder`, `Job_Router`, `Request_Builder`, …).
 
 ## After You Land
 

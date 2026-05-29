@@ -127,14 +127,14 @@ If clients reconnect every few seconds: the SSE slot might be expiring. The slot
 
 ## Hub / spoke routing
 
-A node is a hub when `enable_aggregator` is strictly `=== true` in the merged Config (the single operator switch for remote-server activity — strict polarity, default OFF; hubs opt in explicitly). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally pulls remote firehoses via StreamMerger; the `newspack_nodes/aggregator_ingest_line` filter rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map.
+A node is a hub when `enable_aggregator` is truthy in the merged Config (the single operator switch for remote-server activity — typed bool, default OFF; hubs opt in explicitly). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally pulls remote firehoses via StreamMerger; the `newspack_nodes/aggregator_ingest_line` filter rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map.
 
 Diagnostic flow:
 
 ```bash
-# Is this node a hub? (strict === true; default OFF). The legacy
-# enable_workers gate was retired in v0.5.0 — enable_aggregator is the
-# single operator switch now.
+# Is this node a hub? Stored as 0/1 by register_setting; default OFF.
+# The legacy enable_workers gate was retired in v0.5.0 — enable_aggregator
+# is the single operator switch now.
 wp option get newspack_event_logger_nodes_enable_aggregator
 
 # Aggregator status / health / servers — there is no standalone REST
@@ -153,7 +153,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 ## Common failure modes
 
-**Dashboard rate-limit hit immediately.** `RATE_LIMIT_REQUESTS=600` per minute. If you're getting 429s from a single browser, multiple panels are fanning out. Check if a recent change duplicated a `/performance/overview` call (one panel = one call, ideally).
+**Dashboard rate-limit hit immediately.** The Service-CI verbs are NOT rate-limited at the CI layer — the only 429s you should see come from the substrate's SSE slot pool (concurrent `/messages/stream` connections, not commands). A 429 on a `/command` POST means something inside the substrate's `HTTP_In_Node` rejected it, not a per-CI throttle. (`Performance_Controller_Base::RATE_LIMIT_REQUESTS = 600/60s` exists in `includes/rest/` but is dead — no CI uses it.)
 
 **`reqgrep --recent` shows nothing but the firehose is being written.** Two possibilities: the LogManager early-returned (e.g., running as root), so no entries are being written; OR the firehose path doesn't match (check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`).
 
@@ -161,7 +161,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at 4KB and the handler saw `{"truncated": true}`. Use `JobIntake::queue()` instead.
 
-**SettingsSync silently doing nothing.** SettingsSync ITSELF is ungated and always queues a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check whether the hub side actually has an aggregator topology live (`enable_aggregator === true` in the merged Config, default OFF) and remotes registered. The legacy `enable_workers` toggle was retired in v0.5.0.
+**SettingsSync silently doing nothing.** SettingsSync ITSELF is ungated and always queues a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check whether the hub side actually has an aggregator topology live (`enable_aggregator` truthy in the merged Config, default OFF) and remotes registered. The legacy `enable_workers` toggle was retired in v0.5.0.
 
 **`outputs` log-reader filter array.** Plural, not singular. Singular is silent failure.
 

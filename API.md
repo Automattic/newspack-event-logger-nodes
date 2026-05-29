@@ -15,7 +15,7 @@ See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the wire shape of
 
 The substrate enforces `current_user_can( 'manage_options' )` on `/command` and `/messages/stream`; insufficient permissions return `403 Forbidden`. Each verb handler that needs a capability check also calls `self::require_manage_options()` at the top, so a misconfigured substrate-side gate still rejects writes.
 
-There is no rate-limit gate on `/command` itself; the per-verb cost (memcache reads, partition index walks, filesystem scans) is the budget. `Performance_Controller_Base::check_rate_limit()` (`RATE_LIMIT_REQUESTS = 600` / `RATE_LIMIT_WINDOW = 60`s, fail-open on memcache outage) survives in the codebase as a helper any CI can call, but no current verb invokes it.
+There is no rate-limit gate on `/command` itself; the per-verb cost (memcache reads, partition index walks, filesystem scans) is the budget. (`Performance_Controller_Base::check_rate_limit()` survives in `includes/rest/` as an orphaned helper with no callers outside its own tests — slated for review/deletion. Don't reach for it.)
 
 SSE rate-limiting is independent and **fail-closed**: the substrate's `SSE_Out_Node` consults the substrate's `\Newspack_Nodes\SSE_Slot_Pool` before opening headers, and memcache down means HTTP 429. The slot pool IS the rate limit and cannot fall through silently.
 
@@ -49,7 +49,7 @@ Each subsection below lists the verbs the corresponding `includes/app/class-<nam
 |------|------|---------|
 | `get` | — | `{ registered_hooks: string[], custom_events: string[] }` — `log_events` ∪ filter-supplied keys, with `custom_events` filtered out of `registered_hooks`. |
 
-Read by hub aggregators probing each spoke; no auth check (rate-limited at transport).
+Read by hub aggregators probing each spoke. The CI handler itself doesn't call `require_manage_options()`; the substrate `/command` endpoint still gates the route on `current_user_can('manage_options')`, which the spoke's stored Basic Auth credentials satisfy.
 
 ### `status` — health probe
 
