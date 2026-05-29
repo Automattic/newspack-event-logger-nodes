@@ -537,7 +537,7 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               +-----------------------------+
 ```
 
-**Hub identification**: a site is acting as a hub when `enable_aggregator` is true AND it has at least one spoke registered. The toggle is a single operator switch — strict polarity, default OFF (fresh installs are not hubs). It gates the Aggregator admin submenu visibility. Push-side fan-out listeners (`Settings_Sync`, `Auto_Tuner_Node`) are themselves ungated — they always queue a `remote_manager` job; without an aggregator topology running there's no consumer, and the queued job silently no-ops. Pull-side activation (whether the Stream_Merger_Node worker actually spawns) is decoupled — driven by whether `aggregator` is in the substrate's Topologies multi-select.
+**Hub identification**: a site is acting as a hub when `enable_aggregator` is truthy AND it has at least one spoke registered. The toggle is a single operator switch — typed bool, default OFF (fresh installs are not hubs); persisted by `register_setting` as `0`/`1` with a truthy admin-side read (`! empty( $cfg['enable_aggregator'] )`). It gates the Aggregator admin submenu visibility. Push-side fan-out listeners (`Settings_Sync`, `Auto_Tuner_Node`) are themselves ungated — they always queue a `remote_manager` job; without an aggregator topology running there's no consumer, and the queued job silently no-ops. Pull-side activation (whether the Stream_Merger_Node worker actually spawns) is decoupled — driven by whether `aggregator` is in the substrate's Topologies multi-select.
 
 **`k:"job"` vs `k:"remote_job"`**:
 
@@ -681,29 +681,36 @@ Three storage tiers, layered in this order (later wins):
 3. **Filter `newspack_event_logger_nodes/config`**: last-call override. Plugins can layer in computed values (per-server tuning, dynamic feature flags) that win over both files and options.
 
 ```php
-$config = \Newspack_Event_Logger_Nodes\Config::load_config();          // core keys only
-$config = \Newspack_Event_Logger_Nodes\Config::load_config( 'full' );  // includes performance + tuning keys
+$config = \Newspack_Event_Logger_Nodes\Config::load_config();          // every schema key, file + WP option overlay + substrate merge
+$config = \Newspack_Event_Logger_Nodes\Config::load_config_defaults(); // file-only (no WP option overlay, no substrate merge)
 ```
 
-The `'full'` mode loads every key including `auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events`, `aggregator_servers` (admin-side tuning that workers don't all need). The `request-workers` topology calls `load_config('full')` because Flame_Builder_Node needs the auto-tune thresholds; other call sites use the cheaper default load.
+`load_config()` is the single zero-arg entry point — every key in the `$option_schema` whitelist is loaded on every call, including `auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events`, and the substrate keys merged in from `RuntimeConfig::load_config()`. The result is cached in a static for the rest of the request, so the cost is one round of `get_option` per schema key on first call. `load_config_defaults()` is the file-only escape hatch used by `Server_Registry` to read `aggregator_servers` defaults without the circular WP-option merge (`aggregator_servers` is intentionally not in the per-request schema — admin/hub-only, read lazily).
 
 ### Application option keys
 
-| Option | Type | Mode | Default | Use |
-|--------|------|------|---------|-----|
-| `enable_logging` | bool | core | `true` | Master switch for the firehose write path |
-| `enable_aggregator` | bool | core | `false` | Gates the Aggregator admin submenu (operator-visible side of hub-mode); push-side fanout listeners are themselves ungated and rely on no-consumer-as-no-op |
-| `log_urls` | array of strings | core | `[]` | URL substring allowlist (empty = log everything) |
-| `skip_urls` | array of strings | core | substrate-command paths | URL substring denylist; wins over `log_urls` |
-| `log_events` | array of strings | core | `[]` | Hook names to instrument (start/complete pairs at priority 1 / MAX-1) |
-| `custom_events` | array of strings | core | `[]` | Custom event names to log |
-| `discovered_events` | array of strings | extended | `[]` | Custom events discovered from spokes — merged in via `Health_Check_Extensions` |
-| `aggregator_servers` | array | extended | `[]` | Spoke registry (`Server_Registry` storage); per-server `{url, auth_username, auth_password, enabled}` |
-| `auto_disable_threshold` | int | extended | `0` (off) | Per-hook count threshold for auto-disable |
-| `auto_protect_time_threshold` | float | extended | `0.0` (off) | Per-hook mean-time threshold (seconds) for auto-promote-to-significant |
-| `significant_events` | array of strings | extended | `[]` | Events protected from auto-disable |
-| `flush_every_line` | bool | extended | `false` | Debug: flush buffer after every line (survives OOM, slower) |
-| `log_memory` | bool | extended | `false` | Debug: append peak_mb to every complete entry |
+| Option | Type | Loaded by | Default | Use |
+|--------|------|-----------|---------|-----|
+| `enable_logging` | bool | `load_config()` | `true` | Master switch for the firehose write path |
+| `enable_aggregator` | bool | `load_config()` | `false` | Gates the Aggregator admin submenu (operator-visible side of hub-mode); push-side fanout listeners are themselves ungated and rely on no-consumer-as-no-op |
+| `log_urls` | array of strings | `load_config()` | `[]` | URL substring allowlist (empty = log everything) |
+| `skip_urls` | array of strings | `load_config()` | substrate-command paths | URL substring denylist; wins over `log_urls` |
+| `log_events` | array of strings | `load_config()` | `[]` | Hook names to instrument (start/complete pairs at priority 1 / MAX-1) |
+| `custom_events` | array of strings | `load_config()` | `[]` | Custom event names to log |
+| `auto_disable_threshold` | int | `load_config()` | `0` (off) | Per-hook count threshold for auto-disable |
+| `auto_protect_time_threshold` | float | `load_config()` | `0.0` (off) | Per-hook mean-time threshold (seconds) for auto-promote-to-significant |
+| `significant_events` | array of strings | `load_config()` | `[]` | Events protected from auto-disable |
+| `flush_every_line` | bool | `load_config()` | `false` | Debug: flush buffer after every line (survives OOM, slower) |
+| `log_memory` | bool | `load_config()` | `false` | Debug: append peak_mb to every complete entry |
+| `allowed_users` | array of strings | `load_config()` | `[]` | Deployment override: restrict admin UI to these usernames |
+| `hook_start_priority` | int | `load_config()` | `-10000` | Action priority for the `hook_start` instrumentation hook |
+| `discovered_events` | array of strings | lazy (admin/health-check only) | `[]` | Custom events discovered from spokes — merged via `Health_Check_Extensions`. Not in the per-request schema; non-autoloaded |
+| `aggregator_servers` | array | lazy (`Server_Registry`) | `[]` | Spoke registry storage; per-server `{url, auth_username, auth_password, enabled}`. Not in the per-request schema — encrypted-credential blob read lazily |
+| `aggregator_verify_ssl` | bool | file-only | `true` | Hub-side cURL `CURLOPT_SSL_VERIFYPEER` for the SSE pull. File-only — no WP-option overlay, no admin form |
+| `aggregator_require_https` | bool | file-only | `true` | Hub-side scheme enforcement on registered spoke URLs. File-only |
+| `remote_num_segments` | int | file-only | `2` | Hub-side default segment count for remote-pull partitions |
+| `remote_segment_size` | int | file-only | `10485760` (10MB) | Hub-side default segment size for remote-pull partitions |
+| `remote_max_lifespan` | int | file-only | `3600` | Minimum spoke-side retention the hub expects to be able to seek into |
 
 ### Substrate option keys (read but not owned here)
 
@@ -730,7 +737,7 @@ Most config keys read through `Config::load_config()` which has a 5s in-process 
 
 There is no per-endpoint controller hierarchy anymore. The dashboards and admin tooling reach the application through the substrate's **command protocol**: one `POST /wp-json/newspack-nodes/v1/command` endpoint that routes a TM_COMMAND envelope to a named service CI node (`performance`, `events`, `status`, `logger`, `settings`, `servers`, `aggregator`, `discovery`). Each verb's request/response shape is documented in [API.md](API.md) (still expressed under the legacy `newspack-nodes/v1/*` and `newspack-nodes-aggregator/v1/*` paths for the reader's mental model — those are the verbs each CI exposes, not standalone routes). The CIs mount on `newspack_nodes/request_graph_ready`.
 
-`Performance_Controller_Base` survives in `includes/rest/` as the shared REST helper (capability check, partition validation, fixed-window rate limit at 600req/60s with memcache-fail-open, `not_found_error()` shape) but no production CI currently depends on it — the verb handlers call `require_manage_options()` directly and pull config off `Newspack_Nodes\Config`. Kept as a tested helper for any future REST-shim that needs the same shape; safe to wire in when adding a new endpoint that wants the rate-limit gate.
+`Performance_Controller_Base` survives in `includes/rest/` as an orphaned REST helper class (capability check, partition validation, fixed-window rate limit at 600req/60s with memcache-fail-open, `not_found_error()` shape). No production CI extends or calls it; its only callers are its own unit tests. The class is slated for review/deletion — don't extend it in new code, and don't treat its rate-limit constants as live policy.
 
 ### Real-time path: `/messages/stream` + slot pool
 
