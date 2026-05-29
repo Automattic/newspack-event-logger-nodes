@@ -1059,8 +1059,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					$entry['sum_peak_mb'] += (float) ( $stats['sum_peak_mb'] ?? 0 );
 					// `min_ms` is optional on the entry — only seeded once a
 					// stat-with-min_ms arrives, so the missing-key path stays
-					// distinguishable from a legitimate 0.0 min.
-					if ( isset( $stats['min_ms'] ) ) {
+					// distinguishable from a legitimate 0.0 min. Mirror the write
+					// side: fold only from buckets that actually have timing.
+					// Untimed-only buckets (timed_count 0, min_ms 0 or a poisoned
+					// PHP_INT_MAX) are skipped, so neither clamps the merged min
+					// and old poison heals to 0 at display.
+					if ( isset( $stats['min_ms'] ) && ( $stats['timed_count'] ?? 0 ) > 0 ) {
 						$stat_min        = (float) $stats['min_ms'];
 						$entry['min_ms'] = isset( $entry['min_ms'] )
 							? \min( (float) $entry['min_ms'], $stat_min )
