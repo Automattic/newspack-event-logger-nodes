@@ -223,7 +223,18 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_performance_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerformanceController' ),
-			'Legacy PerformanceController must be deleted; its /performance/dashboard + /performance/timing routes had no JS callers and it delegated to PerfOverviewController + PerfUrlsController (deleted in the same batch). PerformanceControllerBase (the abstract base) stays.'
+			'Legacy PerformanceController must be deleted; its /performance/dashboard + /performance/timing routes had no JS callers and it delegated to PerfOverviewController + PerfUrlsController (deleted in the same batch).'
+		);
+	}
+
+	public function test_legacy_performance_controller_base_class_is_gone(): void {
+		// Orphaned helper (capability check, partition validation, fixed-window
+		// rate limit, not_found_error shape) with no production callers — all
+		// service CIs use Service_CI_Node::require_manage_options() instead.
+		// The whole includes/rest/ directory was removed with it.
+		$this->assertFalse(
+			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\Performance_Controller_Base' ),
+			'Orphaned Performance_Controller_Base must be deleted; service CIs use Service_CI_Node helpers instead.'
 		);
 	}
 

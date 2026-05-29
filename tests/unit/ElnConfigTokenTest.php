@@ -16,6 +16,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -29,12 +30,14 @@ class ElnConfigTokenTest extends TestCase {
 		$this->saved_resolvers  = Core::$config_resolvers;
 		$GLOBALS['_wp_options'] = [];
 		Config::reset();
+		Server_Registry::get_instance()->reset_cache();
 	}
 
 	protected function tearDown(): void {
 		Core::$config_resolvers = $this->saved_resolvers;
 		$GLOBALS['_wp_options'] = [];
 		Config::reset();
+		Server_Registry::get_instance()->reset_cache();
 		parent::tearDown();
 	}
 
@@ -50,5 +53,50 @@ class ElnConfigTokenTest extends TestCase {
 		// logs_dir is substrate-owned (the `config` namespace), not ELN's —
 		// resolving it through the `eln` namespace yields ''.
 		$this->assertSame( '', Core::resolve_config_token( 'eln', 'logs_dir' ) );
+	}
+
+	// --- is_hub resolver ----------------------------------------------------
+
+	public function test_is_hub_false_when_aggregator_disabled(): void {
+		// enable_aggregator off → not a hub even if remotes are registered.
+		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '' );
+		Config::reset();
+		Server_Registry::get_instance()->reset_cache();
+		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	public function test_is_hub_true_when_aggregator_enabled(): void {
+		// enable_aggregator on → is a hub (the operator switch IS hub-mode).
+		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '1' );
+		Config::reset();
+		Server_Registry::get_instance()->reset_cache();
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	// --- significant_events_csv resolver -----------------------------------
+
+	public function test_significant_events_csv_imploded_from_array(): void {
+		// The schema stores significant_events as a string array; the topology
+		// token MUST expose the comma-joined CSV the flame builder expects.
+		\update_option(
+			'newspack_event_logger_nodes_significant_events',
+			[ 'foo', 'bar', 'baz' ]
+		);
+		Config::reset();
+		$this->assertSame(
+			'foo,bar,baz',
+			Core::resolve_config_token( 'eln', 'significant_events_csv' )
+		);
+	}
+
+	public function test_significant_events_csv_empty_when_no_events(): void {
+		// Empty array → empty string (NOT null — the substrate command
+		// argument must be a string for the worker to receive it).
+		\update_option( 'newspack_event_logger_nodes_significant_events', [] );
+		Config::reset();
+		$this->assertSame(
+			'',
+			Core::resolve_config_token( 'eln', 'significant_events_csv' )
+		);
 	}
 }

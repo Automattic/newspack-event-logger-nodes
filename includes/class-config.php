@@ -370,4 +370,53 @@ class Config {
 		RuntimeConfig::kill_readers( $groups );
 	}
 
+	/**
+	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
+	 * derivation. Used both by the plugin's `register_config_namespace`
+	 * call and by `tests/bootstrap.php` so both paths resolve identically.
+	 *
+	 * Returns null for keys this plugin doesn't own (substrate keys fall
+	 * back to the `<config:KEY>` namespace). The substrate wraps the
+	 * return in `(string) ($value ?? '')`, so bools surface as '1' / ''
+	 * and arrays must be flattened here (no `(string) array`).
+	 *
+	 * @param string $key Token key after the `eln:` prefix.
+	 * @return mixed|null Resolved value, or null if not owned by `eln`.
+	 */
+	public static function resolve_eln_token( string $key ) {
+		static $own = [
+			'is_hub'                     => true,
+			'auto_disable_threshold'     => true,
+			'auto_protect_time_threshold' => true,
+			'aggregator_require_https'   => true,
+			'aggregator_verify_ssl'      => true,
+			'significant_events_csv'     => true,
+		];
+		if ( ! isset( $own[ $key ] ) ) {
+			return null;
+		}
+		$config = self::load_config();
+
+		if ( 'is_hub' === $key ) {
+			// Hub-mode is the single operator switch `enable_aggregator`
+			// (architecture decision #4 / README). `enable_aggregator`
+			// passes through coerce_option_value as either the file-default
+			// bool or the raw WP-option string ('1' / ''); cast to bool so
+			// the substrate's `(string)` wrap surfaces it as '1' / ''.
+			return ! empty( $config['enable_aggregator'] );
+		}
+
+		if ( 'significant_events_csv' === $key ) {
+			// Schema key is `significant_events` (string array); the flame
+			// builder consumes the CSV form.
+			$events = $config['significant_events'] ?? [];
+			if ( ! \is_array( $events ) ) {
+				return '';
+			}
+			return \implode( ',', $events );
+		}
+
+		return $config[ $key ] ?? null;
+	}
+
 }

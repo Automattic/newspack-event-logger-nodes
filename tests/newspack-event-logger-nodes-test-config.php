@@ -18,7 +18,6 @@ return [
 	'max_lifespan'     => 0,
 	'memcache_servers' => [],
 	'enable_logging'   => false,
-	'enable_workers'   => false,
 	'enable_jobs'      => false,
 	'enable_aggregator' => false,
 ];
