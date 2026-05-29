@@ -184,3 +184,67 @@ test( 'names the node', () => {
 	const v = createRequestLogView( 'requestlog:view' );
 	expect( v.name ).toBe( 'requestlog:view' );
 } );
+
+// --- Defensive shaping inlined from the dropped requestlog:transform node. ---
+// The view now consumes the raw envelope VALUE (a completed-request blob)
+// directly from `_sse`, so the per-field defaults + url/user-agent clip live
+// here. Mirrors what `transformCompletedLine` used to do.
+
+test( 'drops a raw envelope whose VALUE has no url (defensive)', () => {
+	const v = createRequestLogView( 'requestlog:view' );
+	v.fill( rowMsg( { rid: 'no-url' } ) );
+	expect( v.entries ).toHaveLength( 0 );
+} );
+
+test( 'drops a raw envelope whose VALUE is not an object', () => {
+	const v = createRequestLogView( 'requestlog:view' );
+	v.fill( rowMsg( 'string' ) );
+	v.fill( rowMsg( [ 1, 2, 3 ] ) );
+	expect( v.entries ).toHaveLength( 0 );
+} );
+
+test( 'clips url at 2000 chars + ellipsis when appending', () => {
+	const v = createRequestLogView( 'requestlog:view' );
+	const longUrl = 'https://x/' + 'a'.repeat( 5000 );
+	v.fill(
+		rowMsg( {
+			rid: 'r-long',
+			method: 'GET',
+			url: longUrl,
+			duration_ms: 1,
+		} )
+	);
+	expect( v.entries ).toHaveLength( 1 );
+	expect( v.entries[ 0 ].url.length ).toBe( 2003 );
+	expect( v.entries[ 0 ].url.endsWith( '...' ) ).toBe( true );
+} );
+
+test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
+	const v = createRequestLogView( 'requestlog:view' );
+	const longUA = 'a'.repeat( 1000 );
+	v.fill(
+		rowMsg( {
+			rid: 'r-ua',
+			method: 'GET',
+			url: 'https://x',
+			user_agent: longUA,
+		} )
+	);
+	expect( v.entries ).toHaveLength( 1 );
+	expect( v.entries[ 0 ].user_agent.length ).toBe( 503 );
+	expect( v.entries[ 0 ].user_agent.endsWith( '...' ) ).toBe( true );
+} );
+
+test( 'fills sensible defaults for missing fields on the appended entry', () => {
+	const v = createRequestLogView( 'requestlog:view' );
+	v.fill( rowMsg( { url: 'https://x' } ) );
+	expect( v.entries ).toHaveLength( 1 );
+	const e = v.entries[ 0 ];
+	expect( e.rid ).toBe( '' );
+	expect( e.method ).toBe( 'GET' );
+	expect( e.duration_ms ).toBe( 0 );
+	expect( e.status_code ).toBe( 0 );
+	expect( e.remote_addr ).toBe( '' );
+	expect( e.user_agent ).toBe( '' );
+	expect( e.timestamp ).toBe( 0 );
+} );

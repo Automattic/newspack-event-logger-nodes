@@ -1,26 +1,34 @@
-import { Node, VALUE } from '@newspack-nodes/runtime';
+import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
 
 const DEFAULT_MAX_ENTRIES = 5000;
 const RPS_WINDOW_MS = 10000;
+const MAX_M_LENGTH = 1000;
 
 /**
  * `perferrors:view` — owns the Error Log view model.
  *
+ * The chain collapsed in v0.x: `_sse` now targets the view directly. fill()
+ * receives raw 7-field envelopes (KEY=rid, VALUE={ts, k, m, n}) and shapes them
+ * into rows inline — what `perferrors:transform` used to do is now a tiny
+ * dispatch in `_appendEnvelope`.
+ *
  * Two cadences, deliberately split for performance (mirrors requestLogView):
- * - HIGH frequency (the error stream): `_appendRow` pushes each enriched entry
- *   onto `this.entries` and recomputes `this.rps` / `this.lastEventTime`, but does
- *   NOT publish. The React view reads these directly off the node each animation
- *   frame so a high-volume stream never re-renders React per error.
+ * - HIGH frequency (the error stream): `_appendEnvelope` validates + enriches
+ *   each envelope, pushes onto `this.entries`, and recomputes `this.rps` /
+ *   `this.lastEventTime`, but does NOT publish. The React view reads these
+ *   directly off the node each animation frame so a high-volume stream never
+ *   re-renders React per error.
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError, lastEventTime })` — the pause
  *   button, the reconnect banner, and the "Xs ago" staleness label, consumed by
  *   `useNodeState('perferrors:view','view')`.
  *
- * `fill()` accepts two TM_STRUCT shapes:
- * - a row (`VALUE` = the mapped error from `perferrors:transform`): enriched +
- *   appended newest-first to a capped buffer (unless paused), updating
- *   errors/second + last-event time.
- * - a control (`VALUE = { action, … }`): `pause`, `clear`, `connection`.
+ * `fill()` distinguishes its two inputs by `VALUE.action`:
+ * - control (`VALUE = { action, … }`, KEY empty) comes HOOK-DIRECT from
+ *   `useErrorLogGraph` (pause / clear / connection-status).
+ * - everything else is treated as a stream envelope and routed through
+ *   `_appendEnvelope`, which drops envelopes with no rid, non-object/array
+ *   VALUE, or the `connected` sentinel, and clips `m` at 1000 chars.
  *
  * Buffer + entry-enrichment logic migrated verbatim from `ErrorLog.js`.
  */
@@ -40,35 +48,54 @@ class PerfErrorsViewNode extends Node {
 
 	fill( message ) {
 		const value = message[ VALUE ];
-		if ( value && value.action ) {
+		if ( value && typeof value === 'object' && value.action ) {
 			// Control changes are the LOW-frequency path — publish so the pause
 			// button / banner / empty-state label re-render.
 			this._control( value );
 			this._publish();
-		} else if ( value ) {
-			// An error row is the HIGH-frequency path — update node.entries only;
-			// the rAF reads them directly. Publishing here would re-render React
-			// per error and defeat the whole point.
-			this._appendRow( value );
+		} else {
+			// Otherwise treat as a raw stream envelope: validate, enrich, append.
+			// The rAF reads the buffer directly, so this is the HIGH-frequency
+			// path and deliberately does NOT publish.
+			this._appendEnvelope( message );
 		}
 	}
 
-	// A mapped error row: enrich into the render entry shape, newest-first, capped.
-	// Mirrors ErrorLog's handleMessage.
-	_appendRow( row ) {
+	// A raw stream envelope: KEY=rid, VALUE={ts, k, m, n}. Validate + enrich +
+	// append newest-first, capped. Mirrors the dispatch the retired
+	// `perferrors:transform` Callback used to do.
+	_appendEnvelope( message ) {
+		const rid = message[ KEY ];
+		if ( ! rid ) {
+			return;
+		}
+		// SseIn streams a `connected` sentinel envelope too; it's not an error.
+		if ( 'connected' === rid ) {
+			return;
+		}
+		const value = message[ VALUE ];
+		if ( ! value || typeof value !== 'object' || Array.isArray( value ) ) {
+			return;
+		}
 		if ( this.paused ) {
 			return;
 		}
+
+		let m = value.m || '';
+		if ( typeof m === 'string' && m.length > MAX_M_LENGTH ) {
+			m = m.substring( 0, MAX_M_LENGTH ) + '...';
+		}
+
 		this.entryCounter += 1;
 		this.entries.unshift( {
 			// Monotonic per-mount counter — used as the React list key (id) so two
 			// entries with the same rid get distinct DOM nodes.
 			seq: this.entryCounter,
 			id: this.entryCounter,
-			rid: row.rid,
-			ts: row.ts,
-			k: row.k,
-			m: row.m,
+			rid,
+			ts: value.ts || 0,
+			k: value.k || '',
+			m,
 			isEven: this.entryCounter % 2 === 0,
 		} );
 		if ( this.entries.length > this.maxEntries ) {

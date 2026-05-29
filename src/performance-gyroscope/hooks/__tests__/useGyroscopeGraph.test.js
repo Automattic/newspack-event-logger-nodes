@@ -1,17 +1,20 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * useGyroscopeGraph tests — post-migration: the Gyroscope dashboard graph now
+ * useGyroscopeGraph tests — post-collapse: the Gyroscope dashboard graph now
  * clips onto the substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes
- * (the same I/O boundary the topology console and request-log mount) plus the
- * existing `gyroscope:route` / `gyroscope:transform` / `gyroscope:view` chain,
- * all on the exospine backbone (`_command_interpreter` → `_router`). The
- * bespoke `gyroscope:stream` Node and its inlined slot-heartbeat loop are gone.
+ * (the same I/O boundary the topology console and request-log mount) plus a
+ * single `gyroscope:view` node, all on the exospine backbone
+ * (`_command_interpreter` → `_router`). The bespoke `gyroscope:stream` Node and
+ * its inlined slot-heartbeat loop were retired earlier; the `gyroscope:route`
+ * and `gyroscope:transform` hops were collapsed into `gyroscope:view.fill()`
+ * directly (route was dead, transform was an envelope-shape dispatcher the view
+ * can do itself).
  *
  * EventSource is faked via `global.EventSource`; SseIn's connection logic
  * (already covered by the substrate's `sse_connector.test.js`) is unmocked here
  * — we drive a `msg` event through the fake EventSource and assert it actually
- * routes _sse → route → transform → view. usePageVisibility is mocked to a
- * controllable value so the visibility effect is deterministic under jsdom.
+ * routes _sse → view. usePageVisibility is mocked to a controllable value so
+ * the visibility effect is deterministic under jsdom.
  */
 
 import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
@@ -67,10 +70,8 @@ const ROUTER = '_router';
 const SSE = '_sse';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-const ROUTE = 'gyroscope:route';
-const TRANSFORM = 'gyroscope:transform';
 const VIEW = 'gyroscope:view';
-const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
+const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
 
 // A `connected` envelope as SseConnector recognizes it.
 function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
@@ -90,7 +91,7 @@ function inflightEnvelope( requests ) {
 }
 
 describe( 'useGyroscopeGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the six graph nodes, each sinking into the CI', () => {
+	test( 'mounts the backbone + the four graph nodes, each sinking into the CI', () => {
 		renderHook( () => useGyroscopeGraph() );
 		const ci = Core.node( CI );
 		expect( ci ).toBeTruthy();
@@ -102,12 +103,16 @@ describe( 'useGyroscopeGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → route → transform → view (and heartbeat → _http/workers)', () => {
+	test( 'steers flow with targets: _sse → view directly (and heartbeat → _http/workers)', () => {
 		renderHook( () => useGyroscopeGraph() );
-		expect( Core.node( SSE ).target ).toBe( ROUTE );
-		expect( Core.node( ROUTE ).target ).toBe( TRANSFORM );
-		expect( Core.node( TRANSFORM ).target ).toBe( VIEW );
+		expect( Core.node( SSE ).target ).toBe( VIEW );
 		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
+	} );
+
+	test( 'does not mount the retired route/transform nodes', () => {
+		renderHook( () => useGyroscopeGraph() );
+		expect( Core.node( 'gyroscope:route' ) ).toBeNull();
+		expect( Core.node( 'gyroscope:transform' ) ).toBeNull();
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=gyroscope when visible', () => {

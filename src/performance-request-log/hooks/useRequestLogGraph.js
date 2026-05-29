@@ -7,15 +7,18 @@
  *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
  *   _heartbeat  (Heartbeat — slot keep-alive; target = `_sse/workers`)
  *
- * Plus the existing dashboard chain (unchanged factories, only retargeted):
+ * Plus the single view node:
  *
- *   requestlog:route       (data → transform, control → view)
- *   requestlog:transform   (target = view)
  *   requestlog:view        (the view-model node the React view reads)
  *
  * Every node sinks into the CI; flow is steered by each node's `target`. The
- * bespoke `requestlog:stream` Node and its inlined slot-heartbeat loop are
- * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke.
+ * chain collapsed in May 2026 from `_sse → requestlog:route →
+ * requestlog:transform → requestlog:view` to a direct `_sse → requestlog:view`.
+ * The route node was a pass-through (the substrate's SseConnector snoops the
+ * `connected` envelope off before routing, so the control branch was
+ * unreachable), and the transform's defensive shaping (drop missing-url, clip
+ * url@2000 + UA@500, default-fill) moved into the view's `_appendRow()` — the
+ * single place that knows envelope → render-entry mapping.
  *
  * The slot bridge mirrors topology-console's `useConsoleGraph.js`: a
  * `connected`-event subscriber on `_sse` reads `payload.slot` / `.partition` and
@@ -36,8 +39,6 @@ import {
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createRequestLogRoute } from '../nodes/requestLogRoute';
-import { createRequestLogTransform } from '../nodes/requestLogTransform';
 import { createRequestLogView } from '../nodes/requestLogView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
@@ -45,13 +46,11 @@ import usePageVisibility from '../../shared/hooks/usePageVisibility';
 const SSE = '_sse';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-// The dashboard chain.
-const ROUTE = 'requestlog:route';
-const TRANSFORM = 'requestlog:transform';
+// The view-model node the React view reads.
 const VIEW = 'requestlog:view';
 // Every named node this graph mounts — unregistered on teardown (exospine
 // nodes are removed separately by `teardownSpine()`).
-const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
+const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -103,7 +102,7 @@ export function useRequestLogGraph( opts = {} ) {
 		}`;
 		sse.setName( SSE );
 		sse.sink = ci;
-		sse.target = ROUTE;
+		sse.target = VIEW;
 
 		const http = new HttpOut();
 		http.client = new CommandClient( {
@@ -121,16 +120,8 @@ export function useRequestLogGraph( opts = {} ) {
 		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
 		heartbeat.target = `${ HTTP }/workers`;
 
-		// Dashboard chain — unchanged factories.
-		const route = createRequestLogRoute( ROUTE, {
-			dataTarget: TRANSFORM,
-			controlTarget: VIEW,
-		} );
-		const transform = createRequestLogTransform( TRANSFORM );
+		// The view node — the single dashboard consumer of `_sse`.
 		const view = createRequestLogView( VIEW, { maxEntries } );
-		route.sink = ci;
-		transform.sink = ci;
-		transform.target = VIEW;
 		view.sink = ci;
 
 		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live

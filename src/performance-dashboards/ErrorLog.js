@@ -4,10 +4,11 @@
  *
  * Real-time scrolling log of errors and warnings from errors.log.
  *
- * This is a THIN view over the `perferrors:*` node graph (mounted by
- * `useErrorLogGraph`). The graph owns all data: `perferrors:stream` holds the
- * SSE connection, `perferrors:transform` turns envelopes into rows, and
- * `perferrors:view` holds the buffer + view model. This component only renders.
+ * This is a THIN view over the `perferrors:view` node graph (mounted by
+ * `useErrorLogGraph`). The graph owns all data: the substrate's `_sse` holds
+ * the EventSource connection and streams envelopes directly into
+ * `perferrors:view`, which shapes them into rows and owns the buffer + view
+ * model. This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
  * - LOW frequency: `useNodeState('perferrors:view','view')` for

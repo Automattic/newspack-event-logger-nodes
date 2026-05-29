@@ -1,17 +1,18 @@
 /* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
- * useRequestLogGraph tests — Task 13 pilot: the Request Log dashboard graph now
- * clips onto the substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes
- * (the same I/O boundary the topology console mounts) plus the existing
- * `requestlog:route` / `requestlog:transform` / `requestlog:view` chain, all on
- * the exospine backbone (`_command_interpreter` → `_router`). The bespoke
- * `requestlog:stream` Node and inlined slot-heartbeat loop are gone.
+ * useRequestLogGraph tests — the Request Log dashboard graph now clips onto the
+ * substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes (the same I/O
+ * boundary the topology console mounts) plus a single `requestlog:view` node,
+ * all on the exospine backbone (`_command_interpreter` → `_router`). The dead
+ * `requestlog:route` (the substrate snoops the `connected` envelope off so the
+ * controlTarget branch was unreachable) and `requestlog:transform` (defensive
+ * shaping inlined into the view) intermediate nodes were removed.
  *
  * EventSource is faked via `global.EventSource`; SseIn's connection logic
  * (already covered by the substrate's `sse_connector.test.js`) is unmocked here
  * — we drive a `msg` event through the fake EventSource and assert it actually
- * routes stream → route → transform → view. usePageVisibility is mocked to a
- * controllable value so the visibility effect is deterministic under jsdom.
+ * routes _sse → view directly. usePageVisibility is mocked to a controllable
+ * value so the visibility effect is deterministic under jsdom.
  */
 
 import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
@@ -69,10 +70,8 @@ const ROUTER = '_router';
 const SSE = '_sse';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-const ROUTE = 'requestlog:route';
-const TRANSFORM = 'requestlog:transform';
 const VIEW = 'requestlog:view';
-const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
+const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
 
 // Build a `connected` envelope as the SseConnector recognizes it.
 function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
@@ -92,7 +91,7 @@ function completedEnvelope( req ) {
 }
 
 describe( 'useRequestLogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the six graph nodes, each sinking into the CI', () => {
+	test( 'mounts the backbone + the four graph nodes, each sinking into the CI', () => {
 		renderHook( () => useRequestLogGraph() );
 		const ci = Core.node( CI );
 		expect( ci ).toBeTruthy();
@@ -104,11 +103,16 @@ describe( 'useRequestLogGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → route → transform → view (and heartbeat → _http/workers)', () => {
+	test( 'steers flow with targets: _sse → view directly (and heartbeat → _http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
-		expect( Core.node( SSE ).target ).toBe( ROUTE );
-		expect( Core.node( TRANSFORM ).target ).toBe( VIEW );
+		expect( Core.node( SSE ).target ).toBe( VIEW );
 		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
+	} );
+
+	test( 'does not mount the dropped route or transform intermediate nodes', () => {
+		renderHook( () => useRequestLogGraph() );
+		expect( Core.node( 'requestlog:route' ) ).toBeNull();
+		expect( Core.node( 'requestlog:transform' ) ).toBeNull();
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=completed when visible', () => {

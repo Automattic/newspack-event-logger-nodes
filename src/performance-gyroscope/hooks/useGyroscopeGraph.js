@@ -8,15 +8,18 @@
  *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
  *   _heartbeat  (Heartbeat — slot keep-alive; target = `_http/workers`)
  *
- * Plus the existing dashboard chain (unchanged factories, only retargeted):
+ * Plus the single dashboard node:
  *
- *   gyroscope:route       (data → transform, control → view)
- *   gyroscope:transform   (target = view)
- *   gyroscope:view        (the in-flight model the React view samples)
+ *   gyroscope:view        (the in-flight model the React view samples; consumes
+ *                          wire envelopes directly — KEY/VALUE dispatch inlined)
  *
  * Every node sinks into the CI; flow is steered by each node's `target`. The
  * bespoke `gyroscope:stream` Node and its inlined slot-heartbeat loop are
- * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke.
+ * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke. The
+ * `gyroscope:route` + `gyroscope:transform` hops were collapsed into
+ * `gyroscope:view.fill()` directly: route was dead (KEY='connection' check,
+ * substrate uses 'connected' AND snoops it off before routing) and transform
+ * was just an envelope-shape dispatcher the view can now do itself.
  *
  * The slot bridge mirrors useRequestLogGraph: a `connected`-event subscriber on
  * `_sse` reads `payload.slot` / `.partition` and pushes them into `_heartbeat`.
@@ -38,8 +41,6 @@ import {
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createGyroscopeRoute } from '../nodes/gyroscopeRoute';
-import { createGyroscopeTransform } from '../nodes/gyroscopeTransform';
 import { createGyroscopeView } from '../nodes/gyroscopeView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
@@ -47,13 +48,11 @@ import usePageVisibility from '../../shared/hooks/usePageVisibility';
 const SSE = '_sse';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-// The dashboard chain.
-const ROUTE = 'gyroscope:route';
-const TRANSFORM = 'gyroscope:transform';
+// The dashboard node.
 const VIEW = 'gyroscope:view';
 // Every named node this graph mounts — unregistered on teardown (exospine
 // nodes are removed separately by `teardownSpine()`).
-const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
+const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -96,7 +95,7 @@ export function useGyroscopeGraph() {
 		}`;
 		sse.setName( SSE );
 		sse.sink = ci;
-		sse.target = ROUTE;
+		sse.target = VIEW;
 
 		const http = new HttpOut();
 		http.client = new CommandClient( {
@@ -114,16 +113,8 @@ export function useGyroscopeGraph() {
 		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
 		heartbeat.target = `${ HTTP }/workers`;
 
-		// Dashboard chain — unchanged factories.
-		const route = createGyroscopeRoute( ROUTE, {
-			dataTarget: TRANSFORM,
-			controlTarget: VIEW,
-		} );
-		const transform = createGyroscopeTransform( TRANSFORM );
+		// Dashboard view — consumes wire envelopes directly.
 		const view = createGyroscopeView( VIEW );
-		route.sink = ci;
-		transform.sink = ci;
-		transform.target = VIEW;
 		view.sink = ci;
 
 		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live

@@ -1,4 +1,4 @@
-import { Node, VALUE } from '@newspack-nodes/runtime';
+import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
 
 const RPS_WINDOW_MS = 10000;
 
@@ -15,13 +15,18 @@ const RPS_WINDOW_MS = 10000;
  *   `setState('view', { connectionError })` — the reconnect banner, consumed by
  *   `useNodeState('gyroscope:view','view')`.
  *
- * `fill()` accepts the TM_STRUCT dispatch shapes from `gyroscope:transform`:
- * - `{ type: 'inflight', requests }`: upsert each request by rid, NEVER over-
- *   writing one already marked complete (the snapshot predates a completion that
- *   may already be in the map).
- * - `{ type: 'complete', request }`: merge into the existing entry, mark
- *   state=complete, derive time_ms/est_ms from duration_ms.
- * - a control (`{ action, … }`): `clear`, `connection`.
+ * `fill()` dispatches directly on the wire envelope shape (no upstream
+ * transform — _sse delivers raw envelopes):
+ * - `KEY === 'inflight'` + array VALUE: upsert each request by rid, NEVER
+ *   overwriting one already marked complete (the snapshot predates a completion
+ *   that may already be in the map). `RequestFlight` emits these periodically.
+ * - VALUE is an object with `rid`: a completion. Merge into the existing entry,
+ *   mark state=complete, derive time_ms/est_ms from duration_ms.
+ *   `RequestBuilder`'s `completed:tee` fans these out at request-complete.
+ * - `KEY === 'connected'` (substrate sentinel) and any unrecognized shape are
+ *   dropped.
+ * - A local TM_STRUCT control message (VALUE.action: `clear` / `connection`):
+ *   dispatched + published (low-frequency path).
  *
  * The map accumulation, the `snapshot()` reaper (delete-completed-after-one-tick,
  * sort by est_ms desc, cap), and the 10s-window RPS are migrated verbatim from
@@ -40,17 +45,31 @@ class GyroscopeViewNode extends Node {
 	}
 
 	fill( message ) {
+		const key = message[ KEY ];
 		const value = message[ VALUE ];
 		if ( ! value ) {
 			return;
 		}
-		if ( 'inflight' === value.type ) {
-			this._inflight( value.requests );
-		} else if ( 'complete' === value.type ) {
-			this._complete( value.request );
-		} else if ( value.action ) {
-			// Control changes are the LOW-frequency path — publish so any
-			// control-driven view state re-renders.
+		// Wire envelope: inflight snapshot.
+		if ( 'inflight' === key && Array.isArray( value ) ) {
+			this._inflight( value );
+			return;
+		}
+		// Substrate sentinel — never a gyroscope record.
+		if ( 'connected' === key ) {
+			return;
+		}
+		// Wire envelope: completion (single object with rid).
+		if (
+			typeof value === 'object' &&
+			! Array.isArray( value ) &&
+			value.rid
+		) {
+			this._complete( value );
+			return;
+		}
+		// Local control (TM_STRUCT { action, … }) — LOW-frequency path; publish.
+		if ( value.action ) {
 			this._control( value );
 			this._publish();
 		}
