@@ -1,6 +1,6 @@
 ---
 name: event-logger-nodes-workflow
-description: Implementation workflow for the newspack-event-logger-nodes application — adding job handlers, REST controllers, dashboard React trees, topology files, and application Node subclasses. Use whenever the change lives under newspack-event-logger-nodes/ rather than the substrate runtime.
+description: Implementation workflow for the newspack-event-logger-nodes application — adding job handlers, service CI verbs, dashboard React trees, topology files, and application Node subclasses. Use whenever the change lives under newspack-event-logger-nodes/ rather than the substrate runtime.
 argument-hint: "[handler / endpoint / dashboard / node]"
 ---
 
@@ -13,7 +13,7 @@ Read AGENTS.md for the application's architecture decisions and key files; this 
 ## When to Use
 
 - Adding or changing a job handler (anything filtered onto `newspack_nodes/job_handlers` or `newspack_nodes/remote_job_handlers`)
-- Adding a REST controller / endpoint
+- Adding a service CI verb / endpoint (per-namespace verbs on `App\*_CI_Node` classes — REST is now the substrate's command-protocol surface)
 - Touching the React dashboards (any tree under `src/`)
 - Adding an application Node subclass (RequestBuilder-style processor)
 - Modifying topology files under `topologies/`
@@ -39,20 +39,36 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 3. Validate inputs at the handler boundary; the substrate rate-limits you on size (10MB cap per job) but doesn't validate content.
 4. **Size discipline**: if the payload could exceed 4KB, write via `JobIntake::queue($handler_name, $payload)` instead of LogManager. JobIntake is the auto-locked large-write path.
 
-#### Adding a REST controller
+#### Adding a service CI verb
 
-1. Extend `PerformanceControllerBase` if you need rate-limiting, capability checks, partition-validation, and the standard `not_found_error()` helper.
-2. Capability gate is `manage_options` by default. Cron-spawned worker requests are tagged via `NEWSPACK_NODES_WORKER_TYPE` env and excluded from the rate limit.
-3. Register routes in `register_routes()` per WordPress REST conventions.
-4. Return `WP_Error` for failures so the framework formats responses consistently.
-5. If the endpoint reads memcache stats: it's fail-soft (return `null` / `[]` / `false` rather than throwing). If the endpoint manages SSE slots: it's fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
+Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/messages` — one envelope per request, dispatched against the addressed node. There are no per-plugin REST controllers anymore (the only one left is the `Performance_Controller_Base` helper).
+
+1. Pick the right service CI: `Discovery_CI`, `Status_CI`, `Settings_CI`, `Logger_CI`, `Events_CI`, `Servers_CI`, `Aggregator_CI`, `Performance_CI` (under `includes/app/`).
+2. Add a new verb entry in that CI's `node_schema()['commands']` array — `name`, `description`, `args`, optional `permission_callback`.
+3. Implement the verb method on the same class; signature follows the substrate's `(Command_Interpreter_Node $self, string $args, array $envelope = [])` convention.
+4. Capability gate defaults to `manage_options`; rate-limit and worker-tag exclusion are inherited from `Performance_Controller_Base` if your CI uses it.
+5. Throw freely — the substrate wraps thrown errors as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument validation.
+6. Stats reads are fail-soft (`null` / `[]` / `false`). Slot-pool ops are fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
 
 #### Adding a React dashboard / page
 
+The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's exospine, builds its node graph from substrate JS primitives, and exposes a view node that React subscribes to.
+
 1. Source under `src/{tree-name}/`. Build via wp-scripts (`npm run build`).
-2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the menu hookup.
-3. Use `@wordpress/element` (not direct React import) and `@wordpress/api-fetch` (not `fetch`).
-4. Shared hooks live in `src/shared/`. Import directly from `../shared/hooks/...` (one level up from the tree). One canonical copy; no per-tree duplication.
+2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the `page_to_tree` map.
+3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`).
+4. Hook layout per dashboard:
+   - `const { ci, router, teardown: teardownSpine } = mountExospine();` — exospine returns the request-scope CI, the `_router`, and a teardown.
+   - Build the substrate boundary nodes once: `_sse` (`SseIn` — EventSource ingress), `_http` (`HttpOut` — POST /command boundary; `.client = CommandClient`), `_heartbeat` (`Heartbeat` — slot keep-alive; `target = '_http/workers'`).
+   - All nodes set `sink = ci`. Flow direction is steered with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
+   - The view node owns the React render-state and a `pending` Map for command Promises. Reply handler matches incoming envelopes against `pending` by ID, resolves/rejects, then partial-spreads onto state.
+5. View contract (canonical, enforced in `event-logger-nodes-review`):
+   - `pending` is a `Map` keyed by command ID for Promise settlement.
+   - TM_ERROR envelopes route through a single `_errorMessage()` helper — never thrown inline.
+   - State updates use id-wins partial spread (`{ ...prev, [id]: { ...prev[id], ...patch } }`); never `{ ...prev, [id]: patch }`.
+   - No dead REPL mounts on a production dashboard tree (the CommandInterpreter mount is for the console tree only).
+6. Reference implementations: `src/performance-request-log/hooks/useRequestLogGraph.js`, `src/event-aggregator/hooks/useAggregatorStatusGraph.js`, `src/aggregator-admin/hooks/useAggregatorAdminGraph.js`.
+7. Shared hooks live in `src/shared/` (synced copies; canonical source is `newspack-nodes/src/shared/`). Import via `../shared/hooks/...`.
 
 #### Adding an application Node subclass
 
@@ -81,10 +97,13 @@ The deferred-loader pattern in `newspack-event-logger-nodes.php` (require_once c
 
 ```bash
 # Unit + integration tests (require newspack-nodes activated too).
-cd tests && phpunit
+# Always pass --enforce-time-limit so a hung test (readline without a TTY,
+# infinite drain loop) aborts at the per-test budget instead of stalling the
+# whole suite. Tests that legitimately sleep mark their class `#[Medium]`.
+cd tests && ../vendor/bin/phpunit --enforce-time-limit
 
 # Filter to a specific test file or method.
-cd tests && phpunit --filter RequestBuilderTest
+cd tests && ../vendor/bin/phpunit --enforce-time-limit --filter RequestBuilderTest
 
 # Coverage HTML/Clover.
 tests/run-coverage.sh
@@ -95,10 +114,14 @@ tests/run-coverage.sh
 Workers cache loaded classes for the duration of their process lifetime (~595s default). After deploying new code, restart the relevant worker groups so the new bytecode lands:
 
 ```bash
-wp nodes restart firehose-workers --all-partitions
-wp nodes restart request-workers  --all-partitions
-wp nodes restart job-workers      --all-partitions
-wp nodes restart aggregator       --all-partitions   # hub-only; no-op on spokes
+# Restart all worker types in one shot.
+wp nodes restart all --all-partitions
+
+# Or per topology (run `wp nodes types` first to discover what's live).
+wp nodes restart firehose-workers-and-jobs --all-partitions
+wp nodes restart request-workers           --all-partitions
+wp nodes restart job-workers               --all-partitions
+wp nodes restart aggregator                --all-partitions   # hub-only; no-op on spokes
 ```
 
 ### Phase 5: Live-verify
@@ -122,7 +145,7 @@ For job handler changes: queue a job (via the legitimate caller), wait, check `w
 
 ## Patterns That Trip People Up
 
-- **Hub vs spoke**: `newspack_event_logger_nodes_enable_aggregator` is the single operator gate for remote-server activity (both StreamMerger pull and `remote_manager` push fan-out). Default ON; OFF only when explicitly 0. `enable_workers` is unrelated — it just gates the `request-workers` topology (FlameBuilder).
+- **Hub vs spoke**: `enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Strict polarity: read as `true === ( Config::load_config()['enable_aggregator'] ?? false )`. Default OFF — fresh installs are spokes/standalone; hubs opt in explicitly by checking the box in Event Logger Settings → Remote Servers. Push-side fanout (`Settings_Sync`, `Auto_Tuner_Node`) is ungated; missing consumers are the structural gate. The legacy `enable_workers` toggle was retired in v0.5.0.
 - **`outputs` (plural) for log reader registration**, not `output` (singular). Easy typo, silent failure.
 - **Memcache is required** for the application — Stats_Store, slot rate limiting, stats aggregator, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards).
 - **Salt rotation orphans keys but doesn't flush them** — workers keep writing to the OLD salt until they respawn. After `Stats_Store::flush_all()`, restart workers to take effect immediately.

@@ -1,453 +1,170 @@
-# Newspack Event Logger Nodes REST API
+# Newspack Event Logger Nodes API
 
-REST endpoints registered by the application plugin. The runtime substrate (`newspack-nodes`) only ships the worker spawn endpoint — see [`../newspack-nodes/API.md`](../newspack-nodes/API.md).
+The application has **two** REST endpoints. Everything else is a verb on a service Command_Interpreter (CI) node, addressed by name through the command endpoint.
 
-Two namespaces:
+| Endpoint | Owner | Purpose |
+|----------|-------|---------|
+| `POST /wp-json/newspack-nodes/v1/command` | substrate (`HTTP_In_Node`) | Routes a TM_COMMAND envelope to a named CI node and returns the reply. |
+| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate (`SSE_Out_Node`) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. |
 
-- `newspack-nodes/v1/*` — core dashboards, status, performance, events, gyroscope, logger, request-log, request CRUD, workers, servers, settings, discovery. Real-time SSE is the substrate's unified `/messages/stream` (the per-feed `/firehose/*` SSE routes were removed in M6).
-- `newspack-nodes-aggregator/v1/*` — hub-side aggregator status, server registry, health.
+Both endpoints are owned by the **substrate** (`newspack-nodes`). The application contributes the verbs each CI exposes; nothing in this plugin registers its own REST routes.
 
-## Authentication
+See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the wire shape of both endpoints (TM_COMMAND envelope layout, SSE event format, slot-pool 429 semantics, HMAC for the worker spawn endpoint).
 
-All endpoints inherit `Performance_Controller_Base::read_permissions_check()` which requires `current_user_can( 'manage_options' )`. Returns `403 Forbidden` (`rest_forbidden`) on insufficient permissions.
+## Authentication and Rate Limiting
 
-## Rate Limiting
+The substrate enforces `current_user_can( 'manage_options' )` on `/command` and `/messages/stream`; insufficient permissions return `403 Forbidden`.
 
-`Performance_Controller_Base::check_rate_limit()` provides fixed-window rate limiting backed by memcache:
+Fixed-window rate limiting (default 600 req / 60s) is provided by `Performance_Controller_Base::check_rate_limit()` for the verbs that opt in (all application CIs do). Identity key: logged-in users key on user id; anonymous fall back to a hashed `REMOTE_ADDR`. Returns `429 Too Many Requests` (`rate_limit_exceeded`) when exceeded. **Fail-open** if memcache is unreachable — the system stays reachable rather than blocking on a degraded sidecar.
 
-- Default: 600 requests per 60-second window.
-- Window edges floor `time()` to the window length, so all callers in the same wall-clock window share a counter.
-- Identity key: logged-in users key on user id; anonymous fall back to a hashed `REMOTE_ADDR`.
-- Returns `429 Too Many Requests` (`rate_limit_exceeded`) with `Retry-After`-style hint when exceeded.
-- **Fail-open** if memcache is unreachable — the system stays reachable rather than blocking on a degraded sidecar.
+SSE rate-limiting is independent and **fail-closed**: the `Sse_Slot_Pool` gates new connections; memcache down means HTTP 429. The slot pool IS the rate limit and cannot fall through silently.
 
-## Status
+## Sending a Command
 
-```
-GET  /wp-json/newspack-nodes/v1/status
-```
+```http
+POST /wp-json/newspack-nodes/v1/command HTTP/1.1
+Content-Type: application/json
 
-Health probe. Returns `200` with the active plugin version, runtime version, partition count, hub flag, and cache reachability.
-
-### Response
-
-```json
 {
-  "status": "ok",
-  "version": "0.1.0",
-  "runtime_version": "0.1.0",
-  "num_partitions": 4,
-  "enable_workers": false,
-  "cache_available": true,
-  "timestamp": 1715300000
+  "TYPE": "TM_COMMAND",
+  "TO":   "performance",
+  "KEY":  "overview",
+  "VALUE": { "categories": true }
 }
 ```
 
-## Performance
+- `TO` is the service CI name (`performance`, `events`, `status`, `logger`, `settings`, `servers`, `aggregator`, `discovery`). Sub-paths address a child node (rare in this plugin); most callers just name the CI.
+- `KEY` is the verb name on that CI.
+- `VALUE` is the verb arguments (JSON object). The substrate validates each argument against the CI's `node_schema()['commands'][*]['args']` declaration before dispatching.
+
+The reply is a TM_COMMAND-shaped envelope routed back via `TO=FROM` pivot, with the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see ARCHITECTURE.md → "Canonical view contract").
+
+## Service CIs
+
+Each subsection below lists the verbs in the corresponding `includes/app/class-<name>-ci.php` file's `node_schema()['commands']` declaration. **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
+
+### `discovery` — spoke-side hook + event roster
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `get` | — | `{ registered_hooks: string[], custom_events: string[] }` — `log_events` ∪ filter-supplied keys, with `custom_events` filtered out of `registered_hooks`. |
+
+Read by hub aggregators probing each spoke; no auth check (rate-limited at transport).
+
+### `status` — health probe
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `get` | — | `{ status: 'ok', version, runtime_version, num_partitions, topologies: string[], cache_available: bool, timestamp }` |
+
+`topologies` lists the substrate's active topology set (`array_keys( Bootstrap::get_topologies() )`).
+
+### `settings` — substrate-owned integer settings (4-key whitelist)
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `get` | — | Snapshot of `{ num_partitions, num_segments, segment_size, max_lifespan }`. |
+| `update` | `{ num_partitions?, num_segments?, segment_size?, max_lifespan? }` (all int, optional) | Post-update snapshot. Suppresses Settings_Sync fan-out around each `update_option` so applying a remotely-synced setting on a spoke doesn't bounce back as a re-sync. |
+
+Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings down to spokes; also the admin UI.
+
+### `logger` — performance-logger settings read
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `config` | — | Full filterable config (`Config::load_config()` result). |
+| `hooks` | — | `{ hooks: [{name, category}], categories: {…} }` flattened via `Hook_Categorizer`. |
+
+Read-only — settings WRITES live on the `performance` CI (`config_update`, `settings_update`, `hooks_configure`).
+
+### `events` — raw firehose viewer
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `recent` | `{ limit?: int = 100 (1..1000) }` | `{ data: entries[], meta: { limit, scanned } }` — newest-first walk of the firehose `.idx` across all partitions; capped at `MAX_INDEX_ENTRIES = 100000`. |
+| `stats` | — | Merged hourly time series across partitions (same shape as `performance.timing`). |
+
+### `servers` — remote-spoke registry CRUD
+
+| Verb | Args | Returns / Behavior |
+|------|------|--------------------|
+| `list` | — | All servers keyed by id. |
+| `get` | `{ id }` | A single server record. |
+| `add` | `{ id, url, auth_username?, auth_password?, enabled?, logs? }` | Add a new server (manage_options). IDs match `[a-zA-Z0-9_-]{1,64}`; URLs must be HTTPS; logs default to `[ 'firehose.log' ]`. |
+| `update` | `{ id, url?, auth_username?, auth_password?, enabled?, logs? }` | Partial update of an existing server (manage_options). Config-file overlay servers can only toggle `enabled`. |
+| `delete` | `{ id }` | Remove a server (manage_options). No-op on config-supplied entries. |
+| `test` | `{ id }` | Probe `/discovery` on the remote with stored Basic Auth; returns the remote's registered hooks / custom events / lag fields (whitelisted; never proxies arbitrary JSON). |
+
+Storage is sodium-secretbox encrypted at rest (keyed on `wp_salt('auth')`).
+
+### `aggregator` — hub-side status
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `status` | — | Per-server per-partition snapshot pulled from `aggregator_status:{id}:p{N}` in memcache. Keyed by server id. |
+| `health` | — | `{ healthy: bool, cache: bool, timestamp }`. |
+| `servers` | — | Registered servers as a sequential array (legacy aggregator-tree contract). |
+
+These are read-only; spoke CRUD lives on the `servers` CI.
+
+### `performance` — the omnibus dashboard CI
+
+The largest CI; every Performance-tree dashboard verb lives here.
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `overview` | `{ server?, breakdown?, categories?: bool }` | High-level performance stats across all partitions. Single-dim `breakdown` returns `breakdown_time_series` flat; multi-dim returns `breakdowns` keyed by dim. |
+| `urls` | `{ sort? = 'count', order? = 'desc', limit?: int = 50, offset?: int = 0, search?, server? }` | Paginated / sortable URL leaderboard. |
+| `url_detail` | `{ hash (required, `[a-f0-9]{8,64}`), breakdown?, categories?: bool }` | Single-URL detail incl. aggregate flame data. |
+| `request_search` | `{ rid (required, `[a-zA-Z0-9_-]{1,128}`) }` | `{ rid, partition, url_hash }` so the dashboard can deep-link without scanning every partition. |
+| `request_detail` | `{ rid (required), partition?: int = 0 }` | Full request body + merged flame data. |
+| `timing` | — | Merged hourly timing buckets across partitions. |
+| `dashboard` | — | Composite of `overview` + `urls` in one round-trip. |
+| `hooks_registered` | — | Registered hooks grouped by category. |
+| `hooks_categories` | — | Hook categories + merged config. |
+| `hooks_available` | — | All runtime hooks for the picker UI. |
+| `hooks_configure` | `{ hooks?: json, custom_events?: json }` | Persist selected hooks / custom events; triggers `Config::reset()`. |
+| `config_get` | — | The 9 performance-tuning options as a flat `config` block. |
+| `config_update` | (partial 9-option payload) | Writes any subset in one round-trip. |
+| `settings_update` | (single-option payload) | Single-option writer for the same 9-option set; suppresses `Settings_Sync` fan-out around `update_option`. |
+| `request_log_list` | `{ limit?: int = 100 (1..1000) }` | Walks the requests index across all partitions; returns per-entry summary fields (`rid`, `url_hash`, `timestamp`, `duration_ms`, `status_code`, `peak_mb`, `method`, `error_status`, `partition`). |
+| `request_log_detail` | `{ id (required) }` | `{ request_id, entries: [] }` — events for the rid. Empty id is `404 Not Found`; a non-empty id that doesn't resolve returns an empty `entries` array (200) for legacy parity. |
+
+## Substrate verbs the dashboards use
+
+The dashboards also call into substrate-owned CIs over the same `/command` endpoint. They're listed here for orientation — see `../newspack-nodes/API.md` for full schemas.
+
+| TO | Verb examples | Used by |
+|----|---------------|---------|
+| `workers` | `list`, `restart`, `spawn` | Workers dashboard, performance dashboards' restart action |
+| `_http/<ci-name>` | (transport wrapper) | All dashboards — the React graphs target `_http/<ci-name>` so the substrate's `Http_Out_Node` pivots the reply back to FROM |
+
+`_http/workers` is the canonical heartbeat target used by every SSE dashboard's `_heartbeat` node to keep the slot alive.
+
+## SSE: `/messages/stream`
+
+The substrate's single SSE surface. A client subscribes to one or more `<log>.p<N>` partitions; the server emits a 7-field message envelope per data line plus an idle `heartbeat` event.
 
 ```
-GET  /wp-json/newspack-nodes/v1/performance/dashboard
-GET  /wp-json/newspack-nodes/v1/performance/timing
-GET  /wp-json/newspack-nodes/v1/performance/overview
-GET  /wp-json/newspack-nodes/v1/performance/urls
-GET  /wp-json/newspack-nodes/v1/performance/urls/{hash}
-GET  /wp-json/newspack-nodes/v1/performance/requests/{rid}?partition=...
-GET  /wp-json/newspack-nodes/v1/performance/requests/search/{rid}
-GET  /wp-json/newspack-nodes/v1/performance/workers
-POST /wp-json/newspack-nodes/v1/performance/workers/restart
-GET  /wp-json/newspack-nodes/v1/performance/registered-hooks
-GET  /wp-json/newspack-nodes/v1/performance/hook-categories
-GET  /wp-json/newspack-nodes/v1/performance/hooks/available
-POST /wp-json/newspack-nodes/v1/performance/hooks/configure
-GET  /wp-json/newspack-nodes/v1/performance/config
-POST /wp-json/newspack-nodes/v1/performance/config
-POST /wp-json/newspack-nodes/v1/performance/settings
+GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...]
 ```
 
-Performance-dashboards tree. These are verbs on the `performance` service CI (`Performance_CI_Node`), reached through the substrate command protocol (`POST /command` → `TO=performance/<verb>`); the paths here are the verbs, not standalone REST routes. `/performance/dashboard` and `/performance/timing` are kept as the backward-compatible composite shape consumed by older dashboard code.
+Per-line transforms live in the browser (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …); the shared browser hook is `useMessageStream`. Hub-side aggregator connections (`Remote_Source_Node` cURL pulls) get a longer slot TTL than browsers.
 
-### `/performance/dashboard` response
-
-Composed from the `overview` verb + the `urls` verb (top URLs).
-
-```json
-{
-  "data": {
-    "overview": { /* performance `overview` verb body */ },
-    "urls":     [ /* performance `urls` verb data[] */ ]
-  },
-  "meta": []
-}
-```
-
-### `/performance/timing` response
-
-Hourly time series merged across partitions.
-
-```json
-{
-  "data": {
-    "time_series": [
-      { "hour": "2026-05-08-12", "count": 12345, "sum_ms": 67890.5, "sum_peak_mb": 1234.5 }
-    ]
-  },
-  "meta": []
-}
-```
-
-### `/performance/overview` request
-
-| Param | Type | Default |
-|-------|------|---------|
-| `breakdown` | string (comma-separated `status,method,server,country,from,ua,ja4`) | — |
-| `server` | string | — |
-| `categories` | bool | false |
-
-Single-dim `breakdown` returns `breakdown_time_series` flat; multi-dim returns `breakdowns` keyed by dim.
-
-### `/performance/overview` response (shape)
-
-```json
-{
-  "total_urls": 200,
-  "total_requests": 12345,
-  "global_avg_ms": 45.2,
-  "global_avg_peak_mb": 8.1,
-  "slowest_urls": [ /* top 10 by p95_ms */ ],
-  "most_requested": [ /* top 10 by count */ ],
-  "aggregate_time_series": [ /* hourly across partitions */ ],
-  "global_leaderboard": { /* category sums */ }
-}
-```
-
-### `/performance/urls/{hash}` response
-
-Path param: `hash` matches `[a-f0-9]{8,64}`. Returns per-URL flame/profile data plus dimensional breakdowns when `?categories=1` or `?breakdown=...` is set.
-
-### `/performance/requests/{rid}` response
-
-Path param: `rid` matches `[a-zA-Z0-9_-]{1,128}`. Required query: `partition` (must be valid for the configured `num_partitions`). Scans the requests index for the rid, reads the full request body, merges flame data when found.
-
-`/performance/requests/search/{rid}` returns just `{rid, partition, url_hash}` so the dashboard can deep-link without scanning every partition.
-
-### `/performance/workers` response
-
-Per-worker status from `Bootstrap::expand_workers()` plus live cursor positions (memcache `np:pos:{path}:p{N}` → on-disk offsetlog fallback). Includes segments, total size, bytes-behind, started_at, heartbeat age, restart_pending flag, and per-input / per-output segment status. The supervisor (a singleton, not a partition fleet) is returned in its own top-level `supervisor` field.
-
-### `/performance/workers/restart` request
-
-POST with `manage_options` capability + valid `nonce` (action `newspack_nodes_restart_worker`). Trips `Lock::request_restart_at()` on the target lock dir — workers see the flag on their next 250ms tick and exit cleanly.
-
-| Param | Type | Default |
-|-------|------|---------|
-| `type` | string | `all` |
-| `partition` | int | 0 |
-| `all_partitions` | bool | false |
-| `nonce` | string (required) | — |
-
-### `/performance/config` (GET / POST)
-
-GET returns the 9 performance-tuning options as a flat `config` block. POST writes any subset of them in one round-trip.
-
-### `/performance/settings` (POST)
-
-Single-option writer for the same 9-option set. Suppresses `Settings_Sync` fan-out around the underlying `update_option()` so applying a remotely-synced setting on a spoke doesn't bounce back as a re-sync.
-
-### `/performance/hooks/available` (GET)
-
-Sweeps `$wp_actions` + `$wp_filter` and returns the categorized hook list (via `Hook_Categorizer`). Custom events are filtered out of the list since they live on a separate config key.
-
-### `/performance/hooks/configure` (POST)
-
-Persists `log_events` and `custom_events` in one call. Triggers `Config::reset()` so the next read sees the new values.
-
-## Events
-
-```
-GET  /wp-json/newspack-nodes/v1/events/recent
-GET  /wp-json/newspack-nodes/v1/events/stats
-```
-
-Event-dashboards tree (Raw Logs viewer).
-
-### `/events/recent` request
-
-| Param | Type | Default | Range |
-|-------|------|---------|-------|
-| `limit` | int | 100 | 1..1000 |
-
-Walks the firehose `.idx` newest-first across all partitions, capped at `MAX_INDEX_ENTRIES = 100000` so a missing-rid scan can't escalate into a partition-wide segment walk.
-
-### `/events/recent` response
-
-```json
-{
-  "data": [
-    { /* entry hash from VALUE; "_partition" key added per entry */ }
-  ],
-  "meta": { "limit": 100, "scanned": 4321 }
-}
-```
-
-### `/events/stats` response
-
-Hourly time series merged across partitions (same shape as `/performance/timing`).
-
-## Real-time SSE (substrate `/messages/stream`)
-
-The application no longer registers any per-feed SSE routes. The old `/firehose/stream`, `/firehose/rawlogs`, `/firehose/errors`, `/firehose/gyroscope`, `/firehose/requests`, `/firehose/logs`, `/firehose/status`, and `/firehose/heartbeat` routes (and their controller classes) were all deleted in the M6 consolidation. Every dashboard SSE need — plus the hub-side `Remote_Source_Node` cross-server pull — now goes through the substrate's single unified surface:
-
-```
-GET  /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[&positions=...]   (SSE)
-```
-
-`SSE_Out` (substrate) serves it: subscribe to one or more `<log>.p<N>` partitions, receive a 7-field message envelope per line plus an idle `heartbeat` event. Per-line transforms moved from server PHP to browser JS (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`); the browser hook is `useMessageStream`. See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the request/response shape and subscription syntax.
-
-### SSE operational discipline
-
-- Memcache slot pool gates connections; new connections fail with **HTTP 429** when the pool is full or memcache is unreachable (fail-closed). The application supplies the slot pool (`Sse_Slot_Pool`) through the substrate's slot-check seam.
-- TWO heartbeats: server-to-client SSE `heartbeat` events when no data flows; client-to-server keepalive that refreshes the slot. **Only the client refreshes a slot's TTL** — the server-side check is check-only. Each client's TTL must outlive its own heartbeat interval; hub-side aggregator connections get a longer TTL than browsers.
+Operational discipline:
+- Memcache slot pool gates connections; new connections fail with **HTTP 429** when the pool is full or memcache is unreachable (fail-closed).
+- Two heartbeats: server→client SSE `heartbeat` events when no data flows; client→server keepalive that refreshes the slot. **Only the client refreshes a slot's TTL** — the server-side check is check-only. Each client's TTL must outlive its own heartbeat interval.
 - Flush before the framework sleeps, NOT per-event. Per-event flushing tanks throughput on TLS/proxy paths.
 - A bounded per-connection runtime cap; the client reconnects after timeout.
 
-## Gyroscope
-
-```
-GET  /wp-json/newspack-nodes/v1/gyroscope/timeline?request_id=...
-```
-
-Performance-gyroscope tree. Synchronous timeline-snapshot fetch (used when a client wants the current state of an explicit request id). The SSE streaming counterpart is the substrate's `/messages/stream?subscribe=gyroscope.p<N>`.
-
-### Request
-
-| Param | Type | Required |
-|-------|------|----------|
-| `request_id` | string | no |
-
-### Response
-
-When `request_id` provided, walks the requests index for the rid, reads the body, returns its `events` field:
-
-```json
-{
-  "data": {
-    "request_id": "abc123",
-    "events": [ /* lifecycle events for this rid */ ]
-  },
-  "meta": { "scanned": 42 }
-}
-```
-
-When not provided (empty initial shape):
-
-```json
-{
-  "data": { "events": [] },
-  "meta": []
-}
-```
-
-## Logger
-
-```
-GET  /wp-json/newspack-nodes/v1/logger/config
-GET  /wp-json/newspack-nodes/v1/logger/hooks
-```
-
-Performance-logger settings tree. `/logger/config` returns the full filterable config (via `newspack_nodes/config`); `/logger/hooks` returns a flat list of categorized hooks via `Hook_Categorizer`. Settings POST + hook configuration live on `/performance/config`, `/performance/settings`, and `/performance/hooks/configure`.
-
-### `/logger/config` response
-
-Echoes `Performance_Controller_Base::load_config()` (the result of the `newspack_nodes/config` filter):
-
-```json
-{
-  "data": {
-    "num_partitions": 1,
-    "num_segments": 8,
-    "segment_size": 16777216,
-    "max_lifespan": 86400,
-    "memcache_servers": ["127.0.0.1:11211"],
-    "base_directory": "/tmp/newspack-nodes",
-    "enable_workers": false,
-    "aggregator_servers": []
-  },
-  "meta": []
-}
-```
-
-### `/logger/hooks` response
-
-```json
-{
-  "data": {
-    "hooks": [
-      { "name": "wp_loaded", "category": "core" }
-    ],
-    "categories": { /* category metadata */ }
-  },
-  "meta": []
-}
-```
-
-## Request Log
-
-```
-GET  /wp-json/newspack-nodes/v1/request-log/list
-GET  /wp-json/newspack-nodes/v1/request-log/detail/{id}
-```
-
-Performance-request-log tree.
-
-### `/request-log/list` request
-
-| Param | Type | Default | Range |
-|-------|------|---------|-------|
-| `limit` | int | 100 | 1..1000 |
-
-Walks the requests index across all partitions, returns each entry's summary fields (`rid`, `url_hash`, `timestamp`, `duration_ms`, `status_code`, `peak_mb`, `method`, `error_status`, `partition`). Capped at `MAX_INDEX_ENTRIES = 100000`.
-
-### `/request-log/list` response
-
-```json
-{
-  "data": [ /* entries */ ],
-  "meta": { "limit": 100, "scanned": 4321 }
-}
-```
-
-### `/request-log/detail/{id}` response
-
-Path param: `id` matches `[A-Za-z0-9_-]+`. Walks the index for the rid; on hit, reads the request body and returns its events.
-
-```json
-{
-  "data": {
-    "request_id": "abc123",
-    "entries": [ /* lifecycle events */ ]
-  },
-  "meta": { "scanned": 42 }
-}
-```
-
-Empty `id` returns `404 Not Found` via `not_found_error()`:
-
-```json
-{
-  "code": "rest_not_found",
-  "message": "Not found: request id missing",
-  "data": { "status": 404 }
-}
-```
-
-A non-empty `id` that doesn't resolve returns an empty `entries` array (200) for backward compatibility with the legacy stub.
-
-## Servers
-
-```
-GET    /wp-json/newspack-nodes/v1/servers
-POST   /wp-json/newspack-nodes/v1/servers
-GET    /wp-json/newspack-nodes/v1/servers/{id}
-PUT    /wp-json/newspack-nodes/v1/servers/{id}
-DELETE /wp-json/newspack-nodes/v1/servers/{id}
-POST   /wp-json/newspack-nodes/v1/servers/{id}/test
-```
-
-CRUD for remote spokes registered via `Server_Registry`. IDs match `[a-zA-Z0-9_-]{1,64}`, URLs must be HTTPS, credentials cap at 256 bytes, log filenames must match `[a-zA-Z0-9_.-]+\.log$`. Storage is sodium-secretbox encrypted at rest (keyed on `wp_salt('auth')`); config-file overlay servers can only toggle `enabled` via PUT.
-
-`POST /servers/{id}/test` probes `/wp-json/newspack-nodes/v1/discovery` on the remote with the stored Basic Auth credentials, returning the remote's registered hooks / custom events / lag fields (whitelisted; never proxies arbitrary JSON).
-
-## Discovery
-
-```
-GET  /wp-json/newspack-nodes/v1/discovery
-```
-
-Spoke-side endpoint that hub aggregators probe. Returns `registered_hooks`, `custom_events`, and (when readers are registered) `lag` in bytes — max reader-lag across registered `log_readers`.
-
-## Settings
-
-```
-POST  /wp-json/newspack-nodes/v1/settings
-```
-
-Whitelisted single-option writer for the four substrate-level integer options: `newspack_nodes_num_partitions`, `newspack_nodes_num_segments`, `newspack_nodes_segment_size`, `newspack_nodes_max_lifespan`. Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings down to spokes. Triggers `Config::reset()` after a successful write so the next request sees the new value.
-
-## Aggregator
-
-```
-GET  /wp-json/newspack-nodes-aggregator/v1/status
-GET  /wp-json/newspack-nodes-aggregator/v1/servers
-GET  /wp-json/newspack-nodes-aggregator/v1/health
-```
-
-Hub-side aggregator endpoints — verbs on the `aggregator` service CI (`Aggregator_CI_Node`). `status` returns the per-server / per-partition memcache-backed status; `servers` lists registered remote spokes from `Server_Registry`; `health` reports cache reachability.
-
-### `/status` response
-
-Keyed by server id; per server, per-partition status pulled from `aggregator_status:{id}:p{N}` in memcache:
-
-```json
-{
-  "spoke-id-1": {
-    "id": "spoke-id-1",
-    "url": "https://spoke.example/",
-    "enabled": true,
-    "partitions": {
-      "0": { /* Stream_Merger_Node state for this spoke / partition */ }
-    }
-  }
-}
-```
-
-### `/servers` response
-
-```json
-[
-  {
-    "id": "spoke-id-1",
-    "url": "https://spoke.example/",
-    "enabled": true,
-    "logs": [ "firehose.log" ],
-    "has_credentials": true,
-    "is_config": false
-  }
-]
-```
-
-### `/health` response
-
-Always `200`:
-
-```json
-{
-  "healthy": true,
-  "cache": true,
-  "timestamp": 1715300000
-}
-```
+See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for full request/response shape and subscription syntax.
 
 ## Worker Spawn
 
-The runtime endpoint, listed here for completeness:
+The runtime substrate's HMAC-validated worker bootstrap endpoint, listed for orientation:
 
 ```
-POST  /wp-json/newspack-nodes/v1/workers/spawn
+POST /wp-json/newspack-nodes/v1/workers/spawn
 ```
 
-HMAC-validated; not for public callers. See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the full request/response shape and authentication details.
-
-## Permissions Check (shared)
-
-All non-spawn endpoints share `Performance_Controller_Base::read_permissions_check()`:
-
-```php
-public function read_permissions_check(): bool|\WP_Error {
-    if ( ! \current_user_can( 'manage_options' ) ) {
-        return new \WP_Error( 'rest_forbidden', 'Insufficient permissions', [ 'status' => 403 ] );
-    }
-    return true;
-}
-```
-
-Write endpoints (`POST /performance/settings`, `POST /performance/config`, `POST /performance/hooks/configure`, `POST /settings`, `POST /servers`, `PUT /servers/{id}`, `DELETE /servers/{id}`, `POST /performance/workers/restart`) use `manage_options` plus, for the restart route, a CSRF nonce (`newspack_nodes_restart_worker`).
+Not for public callers. See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the full request/response shape and authentication details.

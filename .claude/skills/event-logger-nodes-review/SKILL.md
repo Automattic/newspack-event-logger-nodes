@@ -1,6 +1,6 @@
 ---
 name: event-logger-nodes-review
-description: Code review checklist for newspack-event-logger-nodes (the application). Use whenever reviewing a diff that touches anything under newspack-event-logger-nodes/ — application Node subclasses, REST controllers, dashboards, topologies, job handlers, memcache schema, hub/spoke routing.
+description: Code review checklist for newspack-event-logger-nodes (the application). Use whenever reviewing a diff that touches anything under newspack-event-logger-nodes/ — application Node subclasses, service CI verbs, dashboards, topologies, job handlers, memcache schema, hub/spoke routing.
 argument-hint: "[file or class]"
 ---
 
@@ -16,9 +16,11 @@ After any diff touching files under `newspack-event-logger-nodes/`. Run BEFORE p
 
 ### 1. Remote-activity gate
 
-Cross-site activity (`remote_manager` job queueing on the push side, StreamMerger spawn on the pull side) is gated by a single config flag: `enable_aggregator`. Strict polarity — read with `true === ( Config::load_config()['enable_aggregator'] ?? false )`. Default OFF; hubs opt in explicitly. Fresh installs are spokes / standalone.
+`enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Strict polarity — read with `true === ( Config::load_config()['enable_aggregator'] ?? false )`. Default OFF; hubs opt in explicitly. Fresh installs are spokes / standalone.
 
-If a diff introduces a separate hub flag (`enable_workers === true` checks, a `Hub::is_active()` helper) or duplicates the gate in a new call site, push back — the whole point of the consolidation is one switch, no polarity drift. `enable_workers` is purely the `request-workers` topology gate now (FlameBuilder spawn); it does NOT participate in remote-activity decisions.
+Push-side fanout (`Settings_Sync::maybe_queue_static_sync`, `Auto_Tuner_Node::persist`) is INTENTIONALLY ungated — both always queue a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops; missing consumers ARE the structural gate. A diff that adds a polarity check around the push-side fanout regresses to the legacy `enable_workers` design — push back. Pull-side activation (`Stream_Merger_Node`) and admin submenu visibility ARE gated on `enable_aggregator`.
+
+If a diff introduces a separate hub flag (`enable_workers === true` checks, a `Hub::is_active()` helper) or duplicates the gate in a new call site, push back — the whole point of the v0.5.0 consolidation is one switch, no polarity drift. The legacy `enable_workers` toggle was retired.
 
 ### 2. Stats fail-soft, SSE fail-closed
 
@@ -99,12 +101,31 @@ Inherited from substrate: array VALUE → `TM_STRUCT`. String VALUE → `TM_BYTE
 
 LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobIntake all use TM_STRUCT. StreamMerger uses TM_BYTESTREAM for raw remote SSE chunks (string VALUE).
 
-## REST controller specifics
+## Service CI specifics
 
-- Capability gate: `manage_options` by default (worker requests excluded via `NEWSPACK_NODES_WORKER_TYPE` env tag).
-- Rate limit: 600 req/60s per controller; fail-open if memcache is down (so dashboard fanout doesn't break when memcache hiccups).
-- Error responses: `WP_Error`, not raw arrays.
+Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs (`Discovery_CI`, `Status_CI`, `Settings_CI`, `Logger_CI`, `Events_CI`, `Servers_CI`, `Aggregator_CI`, `Performance_CI`). The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/messages`. `Performance_Controller_Base` survives as a helper the CIs lean on for capability + rate-limit gates.
+
+- Verb declaration: in `node_schema()['commands']` — `name`, `description`, `args`, optional `permission_callback`.
+- Per-verb capability gate: `manage_options` by default; worker requests excluded via `NEWSPACK_NODES_WORKER_TYPE` env tag.
+- Per-verb rate limit: inherited from `Performance_Controller_Base` (600 req/60s); fail-open if memcache is down (so dashboard fanout doesn't break when memcache hiccups).
+- Error returns: throw freely — the substrate wraps as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument-validation paths.
 - Output escaping: `esc_html()` / `esc_attr()` / `esc_url()` for any string going into HTML; `wp_json_encode()` (not raw `json_encode`) for arrays sent over the wire.
+
+### 14. Canonical view contract (v0.8.0)
+
+Every dashboard hook (`useRequestLogGraph`, `useAggregatorStatusGraph`, `useAggregatorAdminGraph`, …) MUST follow the same view contract — the gut of the dashboard rewrite:
+
+- View owns a `pending` Map keyed by command ID for Promise settlement. Reply handler looks up by ID, settles, then partial-spreads.
+- TM_ERROR envelopes route through a single `_errorMessage()` helper. Never throw inline from a reply handler — that crashes React.
+- State updates use id-wins partial spread: `{ ...prev, [id]: { ...prev[id], ...patch } }`. The plain `{ ...prev, [id]: patch }` shape drops sibling fields and breaks drilldown.
+- No dead REPL mounts on production dashboards. The CommandInterpreter mount is for the console tree only; copy-pasting it into a Performance dashboard adds a hidden CI that competes for `_router` traffic.
+- Substrate boundary nodes (`_sse`, `_http`, `_heartbeat`) all sink into `ci`; flow is steered via `target` / `TO`, not bespoke `sink` chains.
+
+A diff that lands a new dashboard or hook without these is a regression to the pre-canonical pattern. Flag it.
+
+### 15. v0.6.0 schema field rename
+
+`node_schema()` uses `'arguments'` (not `'ctor'`) for positional ctor args and `'commands'` (not `'verbs'`) for verb declarations. A diff that reads or writes `'ctor'` / `'verbs'` is a stale port — the rename landed in substrate v0.6.0 and both repos shipped it.
 
 ## React / dashboard nits
 
@@ -115,10 +136,10 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 
 ## Tests
 
-- Unit tests under `tests/unit/`, integration under `tests/integration/`, REST controllers under `tests/unit/Rest/`.
+- Unit tests under `tests/unit/` (flat — Service CI tests sit alongside other unit tests, e.g. `AggregatorCITest.php`, `PerformanceCITest.php`, `SettingsCITest.php`). Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
 - Coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
-- New REST controllers should have a happy-path test, an unauthorized-request test, a rate-limit test, and a memcache-failure test.
+- New Service CI verbs should have a happy-path test, an unauthorized-request test, a rate-limit test, and a memcache-failure test.
 
 ## Common review nits that aren't bugs
 

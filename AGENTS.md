@@ -106,7 +106,7 @@ These are intentional. Don't "fix" them.
 
 3. **Fail-soft Stats_Store, fail-closed SSE slots.** Memcache failure asymmetry, deliberate. Stats path: every method returns `null` / `[]` / `false` when memcache is unreachable; never throws. Dashboards show "no data" instead of erroring. SSE slots fail-CLOSED at the caller — memcache down means new connections get HTTP 429 (preserves rate-limit invariant).
 
-4. **Fail-closed SettingsSync polarity.** `enable_workers` MUST be strict `=== true`. Anything else (missing, false, 1, "1") means "not a hub, do not fan out." This polarity was a real silent-fan-out bug fixed in legacy 2.4.42 — guarding via `?? false` or `!! ` is what *caused* the bug. Keep `! isset || true !== ...`.
+4. **Push-side fanout is ungated; no-consumer = silent no-op.** `Settings_Sync::maybe_queue_static_sync` and `Auto_Tuner_Node::persist` both always queue a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. The historical `enable_workers` polarity check was retired in v0.5.0; hub-mode is now a single operator switch (`enable_aggregator`, strict `=== true`, default OFF) that controls the admin submenu visibility and the Stream_Merger pull-side activation, but does not gate the push-side listeners.
 
 5. **Salt-rotation schema migration.** `Stats_Store::flush_all()` rotates an 8-char salt stored in `newspack_event_logger_nodes_stats_salt`. All existing keys orphan instantly (TTL handles cleanup). Schema bumps and emergency flushes share the mechanism. Long-running workers cache `prefix` at construction; restart workers after `flush_all()` for immediate effect.
 
@@ -123,7 +123,7 @@ These are intentional. Don't "fix" them.
 | Path | What |
 |------|------|
 | `newspack-event-logger-nodes.php` | Plugin entry; deferred loader; `register_namespace` for node-class resolution; memcache bootstrap; service-CI mount on `request_graph_ready`; stock-topology dir registration |
-| `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings, active `.tsl` topology list) |
+| `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings). The active `.tsl` topology list moved to the substrate's `topologies` key in v0.5.0 |
 | `includes/class-config.php` | Application config loader (substrate keys live in `newspack-nodes`) |
 | `includes/class-log-manager.php` | `Log_Manager` — per-request firehose writer; redacts URL secrets; refuses root |
 | `includes/class-{request-builder,request-flight,flame-builder,auto-tuner}.php` | Node subclasses: `Request_Builder_Node` (assembly) + `Request_Flight_Node` (hidden in-flight snapshot sibling) + `Flame_Builder_Node` (flame + stats fan-out) + `Auto_Tuner_Node` (applies auto-tune decisions) |
@@ -145,7 +145,7 @@ These are intentional. Don't "fix" them.
 
 These are mistakes that have actually happened. Pay attention.
 
-- **Fail-closed polarity in Settings_Sync.** Use `! isset( $config['enable_workers'] ) || true !== $config['enable_workers']`. Don't write `! ( $config['enable_workers'] ?? false )` — that's `1`/`"1"`-truthy, which silently turns spokes into hubs. Real bug fixed in legacy 2.4.42.
+- **`enable_workers` was retired.** The aggregator-mode gate is `enable_aggregator` (strict `=== true`, default OFF). Settings_Sync itself is ungated — without an aggregator topology + remotes, the queued `remote_manager` job is a silent no-op.
 - **PIPE_BUF (4096 bytes) for firehose writes.** `Log_Manager` truncates >4KB to `{"truncated": true}`. Anything that might exceed (job payloads with serialized option blobs, image-handler args, full `Settings_Sync` sweeps) MUST use `Job_Intake::queue()`.
 - **`outputs` (plural), not `output`.** Log reader registration uses `outputs` array. Singular is silent failure.
 - **Hub vs spoke routing.** Nodes only ever write `k:"job"`. Every node's `Job_Worker_Node` dispatches its own `job` entries against `newspack_nodes/job_handlers`. On the hub, `Stream_Merger_Node`'s `newspack_nodes/aggregator_ingest_line` filter rewrites incoming spoke lines to `k:"remote_job"`; the hub's `Job_Worker_Node` dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent — a job type registers under whichever side(s) should handle it (local on every node, hub-aggregated, or both).

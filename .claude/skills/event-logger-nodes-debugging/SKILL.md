@@ -1,6 +1,6 @@
 ---
 name: event-logger-nodes-debugging
-description: Debugging the event-logger-nodes application — dashboards, memcache stats schema, hub/spoke routing, SSE controllers, reqgrep, and the request-lifecycle pipeline. Use when something visible to users is wrong (stats not showing, dashboards stuck, SSE drops, requests not being assembled, jobs not running).
+description: Debugging the event-logger-nodes application — dashboards, memcache stats schema, hub/spoke routing, SSE slot pool, reqgrep, and the request-lifecycle pipeline. Use when something visible to users is wrong (stats not showing, dashboards stuck, SSE drops, requests not being assembled, jobs not running).
 argument-hint: "[symptom]"
 ---
 
@@ -59,7 +59,7 @@ cd request-builder                      # change cwd so subsequent verbs route t
 command_node "" ping                    # dispatch a verb at the cwd without typing the path
 ```
 
-For job-workers / request-workers / aggregator pivots, use the matching reader id (`job-workers.p0`, etc.).
+For job-workers / request-workers / aggregator pivots, use the matching reader id (`job-workers.p0`, etc.). The default firehose+jobs topology is `firehose-workers-and-jobs` — run `wp nodes types` to discover what's actually live.
 
 Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes ls' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes ls` to see what's actually live.
 
@@ -78,7 +78,7 @@ wp option get newspack_event_logger_nodes_stats_salt
 
 # Force a flush (rotates salt, all old keys orphan via TTL).
 wp option update newspack_event_logger_nodes_stats_salt $(openssl rand -hex 4)
-wp nodes restart firehose-workers --all-partitions   # pick up new salt
+wp nodes restart firehose-workers-and-jobs --all-partitions   # pick up new salt
 ```
 
 **Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
@@ -87,39 +87,39 @@ wp nodes restart firehose-workers --all-partitions   # pick up new salt
 
 ## Dashboards
 
-Page slugs (URL path: `/wp-admin/admin.php?page=<slug>`):
+Page slugs owned by this plugin (URL path: `/wp-admin/admin.php?page=<slug>`):
 
 | Slug | What |
 |------|------|
-| `newspack-nodes` | Substrate settings (base directory, partitions, retention, memcache servers) |
-| `newspack_event_logger_nodes` (Settings menu) | Application settings (log filters, hooks to instrument, hub/spoke config, Remote Servers table) |
-| `newspack-nodes-performance` | Performance overview (URL leaderboard, breakdown by server / status / category) |
+| `newspack-nodes-performance` | Performance overview (URL leaderboard, breakdown by server / status / category) — also the top-level Event Logger menu landing page |
 | `newspack-nodes-performance&request=<rid>` | URL drilldown with the request rendered inline |
-| `newspack-nodes-stream` | Request Log — recent completed requests + drilldown |
-| `newspack-nodes-gyroscope` | In-flight request timeline visualization |
-| `newspack-nodes-rawlogs` | Browse raw log lines (firehose tail) |
 | `newspack-nodes-errors` | Error log dashboard |
-| `newspack-nodes-workers` | Worker health + live position dashboard |
-| `newspack-nodes-aggregator` | Hub-side per-spoke status (only registered when `newspack_event_logger_nodes_enable_aggregator` is on) |
+| `newspack-nodes-gyroscope` | In-flight request timeline visualization |
+| `newspack-nodes-stream` | Request Log — recent completed requests + drilldown |
+| `newspack-nodes-aggregator` | Hub-side per-spoke status (only registered when `Config::load_config()['enable_aggregator']` is truthy) |
+| `newspack-event-logger-nodes` (Settings menu) | Application settings — registered via `add_options_page` under Settings, not under the Event Logger menu |
+
+Workers + Raw Logs are substrate-owned dashboards under the "Nodes" top-level menu — they register from `newspack-nodes/includes/admin/class-admin.php::register_event_dashboard_pages`. Don't look for them in this plugin.
 
 If a dashboard says "Connection lost", check (in this order):
-1. The page enqueues its build via the page-arg map in `newspack-event-logger-nodes.php` — does the slug match?
+1. The page enqueues its build via the `page_to_tree` map in `newspack-event-logger-nodes.php` — does the slug match?
 2. `restUrl` in localized `NewspackNodesData` is bare `/wp-json/`, not pre-namespaced.
-3. The relevant REST controller is hooked on `rest_api_init`.
-4. Browser DevTools network tab shows the actual REST URL it tried to hit.
+3. The relevant service CI is mounted on `newspack_nodes/request_graph_ready` (not `rest_api_init` — service CIs replaced the per-plugin REST controllers).
+4. Browser DevTools network tab shows the actual REST URL it tried to hit (commands ride the unified `/wp-json/newspack-nodes/v1/messages` endpoint).
 
 If panels are blank but the page renders: verify memcache is actually running (`docker ps | grep memcache`). Stats path is fail-soft — empty results, not errors, when memcache is unreachable.
 
-## SSE controllers
+## SSE
 
-All SSE endpoints share `SSEControllerBase`:
-- Heartbeat every 5 seconds via `send_sse_event('heartbeat', ...)`
-- `flush_if_needed()` before sleeping (avoids a per-message flush that would fight nginx buffering)
-- Slot rate-limiting via memcache (fail-CLOSED — HTTP 429 if memcache is down)
+There is no per-plugin SSE controller layer anymore — `SSEControllerBase` was deleted in M6.10. The substrate's `SSE_Out` node serves the unified endpoint `/wp-json/newspack-nodes/v1/messages/stream`; clients subscribe to one or more `<log>.p<N>` partitions and receive a 7-field message envelope per line plus an idle `heartbeat` event.
 
-If you're getting unexpected 429s, the slot pool is exhausted. Look at the SSE-slot key in memcache.
+This plugin wires the substrate's `SSE_Slot_Pool` onto `SSE_Out`'s 3-Closure seam at boot (`\Newspack_Nodes\SSE_Slot_Pool::wire()` in `newspack-event-logger-nodes.php`), so the unified SSE endpoint inherits the concurrency cap — fail-CLOSED (HTTP 429 if memcache is down — slot pool IS the rate limit).
 
-If clients reconnect every few seconds: the SSE stream might be timing out due to a missing heartbeat. Check the controller's poll loop — every iteration must emit either a real event or a heartbeat within 5s.
+On the client side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`) — `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI (which internally calls `SSE_Slot_Pool::touch`). Per-line transforms moved from server PHP to browser JS (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`).
+
+If you're getting unexpected 429s: the slot pool is exhausted. Inspect `evlog:sse:*` keys in memcache. The `newspack_event_logger_nodes/sse_rate_limited` action fires on every reject (logged to PHP `error_log` by default).
+
+If clients reconnect every few seconds: the SSE slot might be expiring. The slot TTL must outlive the client's heartbeat interval (server `check_slot` is check-only, NEVER refresh-on-check).
 
 ## Hub / spoke routing
 
@@ -128,10 +128,9 @@ A node is a hub when `enable_aggregator` is strictly `=== true` in the merged Co
 Diagnostic flow:
 
 ```bash
-# Is this node a hub? (substrate option, not application-prefixed)
-wp option get newspack_nodes_enable_workers
-
-# Is the aggregator topology even loaded? (strict === true; default OFF)
+# Is this node a hub? (strict === true; default OFF). The legacy
+# enable_workers gate was retired in v0.5.0 — enable_aggregator is the
+# single operator switch now.
 wp option get newspack_event_logger_nodes_enable_aggregator
 
 # Aggregator status (hub-side).
@@ -153,7 +152,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at 4KB and the handler saw `{"truncated": true}`. Use `JobIntake::queue()` instead.
 
-**SettingsSync silently doing nothing.** Verify `enable_aggregator` is strictly `=== true` in the merged Config (strict polarity, default OFF — every fresh install defaults to spoke). `enable_workers` is unrelated to fan-out gating — it only controls the `request-workers` topology (FlameBuilder).
+**SettingsSync silently doing nothing.** SettingsSync ITSELF is ungated and always queues a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check whether the hub side actually has an aggregator topology live (`enable_aggregator === true` in the merged Config, default OFF) and remotes registered. The legacy `enable_workers` toggle was retired in v0.5.0.
 
 **`outputs` log-reader filter array.** Plural, not singular. Singular is silent failure.
 
@@ -170,8 +169,15 @@ ls -la {base_dir}/logs/jobintake.log/p0/
 # RequestBuilder writes assembled requests to requests.log (with .idx companion for drilldown).
 ls -la {base_dir}/logs/requests.log/p0/
 
-# FlameBuilder writes flame data + index to flames.log.
-ls -la {base_dir}/logs/flames.log/p0/
+# Compact per-request summaries (drives the Request Log + Gyroscope dashboards).
+ls -la {base_dir}/logs/completed.log/p0/
+ls -la {base_dir}/logs/gyroscope.log/p0/
+
+# Errors partition (RequestBuilder forwards error/warning keywords here).
+ls -la {base_dir}/logs/errors.log/p0/
+
+# Jobs partition (job-router output).
+ls -la {base_dir}/logs/jobs.log/p0/
 ```
 
 `{base_dir}` resolves from the `newspack_nodes/config` filter (`base_directory` key). Default is `/tmp/newspack-nodes`.
