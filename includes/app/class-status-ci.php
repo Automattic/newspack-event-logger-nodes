@@ -2,8 +2,11 @@
 /**
  * Status_CI: command-dispatch for the health/version probe surface.
  *
- * Replaces legacy class-status-controller.php with a CommandInterpreter
- * that mounts at priority 11 alongside the rest of the M2 service CIs.
+ * Mounts at priority 11 alongside the rest of the M2 service CIs and
+ * declares its verb via the v0.6.0 schema-driven pattern — the inherited
+ * Service_CI_Node ctor builds the commands table from node_schema(), so
+ * there's no per-class ctor and the catalog scan picks the verb up
+ * automatically.
  *
  * Verbs:
  *   get — return plugin version, runtime version, partition count, the
@@ -25,31 +28,38 @@ use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
-class Status_CI_Node extends Command_Interpreter_Node {
+class Status_CI_Node extends Service_CI_Node {
 
-	public function __construct() {
-		// Node + CommandInterpreter have no explicit __construct, so the
-		// inherited no-op is implicit. Mirrors Workers_CI / Discovery_CI,
-		// which extend CommandInterpreter and also skip the parent call.
-		$this->commands( [
-			'get' => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				$config = RuntimeConfig::load_config();
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Service',
+			'description' => 'Health/version probe: plugin version, runtime version, partition count, active topologies, cache reachability, timestamp.',
+			'arguments'   => [],
+			'commands'    => [
+				[
+					'name'        => 'get',
+					'description' => 'Return a single-shot health snapshot for the admin "is this thing alive?" panel.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+						$config          = RuntimeConfig::load_config();
+						$cache_available = null !== Core::$memd;
 
-				$cache_available = null !== Core::$memd;
-
-				return [
-					'status'          => 'ok',
-					'version'         => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
-					'runtime_version' => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
-					'num_partitions'  => (int) ( $config['num_partitions'] ?? 1 ),
-					'topologies'      => \array_keys( Bootstrap::get_topologies() ),
-					'cache_available' => $cache_available,
-					'timestamp'       => \time(),
-				];
-			},
-		] );
+						return [
+							'status'          => 'ok',
+							'version'         => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
+							'runtime_version' => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
+							'num_partitions'  => (int) ( $config['num_partitions'] ?? 1 ),
+							'topologies'      => \array_keys( Bootstrap::get_topologies() ),
+							'cache_available' => $cache_available,
+							'timestamp'       => \time(),
+						];
+					},
+				],
+			],
+		];
 	}
 }
