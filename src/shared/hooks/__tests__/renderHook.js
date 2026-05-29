@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react/react-dom are transitive deps of @wordpress/element; we import them directly here only for the test renderer (createRoot, act). Linting can't see them because they're not listed in package.json, but they're guaranteed present alongside @wordpress/element. */
 /**
  * Tiny renderHook helper — we don't pull in @testing-library/react-hooks
  * since it isn't a devDep. This is enough for our usage: mount a

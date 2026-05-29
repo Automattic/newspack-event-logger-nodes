@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * ServersAdmin UI-surface tests — the thin React view over the Configured-Servers
  * node graph (the full-React replacement for the old jQuery aggregator-admin).
@@ -95,6 +94,15 @@ function setInput( input, value ) {
 	} );
 }
 
+// The confirm Modal renders into a portal on document.body. Scope to the dialog
+// so a label like "Remove" matches the modal action, not the row's Remove button.
+function dialogButton( label ) {
+	const dialog = document.querySelector( '[role="dialog"]' ) || document;
+	return Array.from( dialog.querySelectorAll( 'button' ) ).find(
+		( btn ) => btn.textContent.trim() === label
+	);
+}
+
 describe( 'ServersAdmin', () => {
 	let addServer;
 	let updateServer;
@@ -117,8 +125,6 @@ describe( 'ServersAdmin', () => {
 			removeServer,
 			testServer,
 		} );
-		// jsdom's window.confirm isn't implemented; default to confirmed.
-		window.confirm = jest.fn( () => true );
 	} );
 
 	afterEach( () => {
@@ -254,20 +260,40 @@ describe( 'ServersAdmin', () => {
 		expect( container.textContent ).toContain( 'https://' );
 	} );
 
-	it( 'calls removeServer for the row when remove is clicked (and confirmed)', async () => {
+	it( 'opens the confirm dialog (not removeServer) when remove is clicked', async () => {
 		registerViewFixture( { servers: SAMPLE_SERVERS, loading: false } );
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-server-id="spoke-01"]' );
 		await act( async () => {
 			row.querySelector( '.event-aggregator-remove' ).dispatchEvent(
+				new Event( 'click', { bubbles: true } )
+			);
+		} );
+		// The dialog shows the confirmation message; removeServer is deferred.
+		expect( document.body.textContent ).toContain(
+			'Are you sure you want to remove this server?'
+		);
+		expect( removeServer ).not.toHaveBeenCalled();
+	} );
+
+	it( 'calls removeServer when the dialog confirm is clicked', async () => {
+		registerViewFixture( { servers: SAMPLE_SERVERS, loading: false } );
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-server-id="spoke-01"]' );
+		await act( async () => {
+			row.querySelector( '.event-aggregator-remove' ).dispatchEvent(
+				new Event( 'click', { bubbles: true } )
+			);
+		} );
+		await act( async () => {
+			dialogButton( 'Remove' ).dispatchEvent(
 				new Event( 'click', { bubbles: true } )
 			);
 		} );
 		expect( removeServer ).toHaveBeenCalledWith( 'spoke-01' );
 	} );
 
-	it( 'does NOT call removeServer when the confirm is cancelled', async () => {
-		window.confirm = jest.fn( () => false );
+	it( 'does NOT call removeServer when the dialog is cancelled', async () => {
 		registerViewFixture( { servers: SAMPLE_SERVERS, loading: false } );
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-server-id="spoke-01"]' );
@@ -276,7 +302,16 @@ describe( 'ServersAdmin', () => {
 				new Event( 'click', { bubbles: true } )
 			);
 		} );
+		await act( async () => {
+			dialogButton( 'Cancel' ).dispatchEvent(
+				new Event( 'click', { bubbles: true } )
+			);
+		} );
 		expect( removeServer ).not.toHaveBeenCalled();
+		// Closing the dialog removes it from the document.
+		expect( document.body.textContent ).not.toContain(
+			'Are you sure you want to remove this server?'
+		);
 	} );
 
 	it( 'calls updateServer toggling enabled when the toggle is clicked', async () => {

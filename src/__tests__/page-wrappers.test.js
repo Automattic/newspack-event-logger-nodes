@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * Tests for the three dashboard "Page" wrappers — AggregatorStatusPage,
  * GyroscopePage, RequestStreamPage. They're identical thin shells:

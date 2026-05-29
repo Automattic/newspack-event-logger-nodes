@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /* global globalThis */
 /**
  * Tests for CategoryTimeChart — D3-driven overlaid area chart.
@@ -82,7 +81,6 @@ jest.mock( '../../shared/hooks/useTimeChart', () => {
 		setupTooltip: jest.fn(),
 		drawLegend: jest.fn(),
 		useTimeChart: ( renderFn ) => {
-			// eslint-disable-next-line no-undef -- globalThis is fine in jsdom.
 			globalThis.__lastRenderFn = renderFn;
 			const containerRef = {
 				current: {
@@ -99,7 +97,6 @@ jest.mock( '../../shared/hooks/useTimeChart', () => {
 } );
 
 import * as React from 'react';
-// eslint-disable-next-line import/order -- d3 mock must be set up before importing
 import * as d3 from 'd3';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { renderComponent } from '../../shared/hooks/__tests__/renderHook';

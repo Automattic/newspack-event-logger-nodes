@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /* global globalThis */
 /**
  * Tests for AggregateTimeChart — D3 stacked-area / line chart.
@@ -96,7 +95,6 @@ jest.mock( '../../shared/hooks/useTimeChart', () => {
 } );
 
 import * as React from 'react';
-// eslint-disable-next-line import/order -- d3 mock setup must come first.
 import * as d3 from 'd3';
 import AggregateTimeChart from '../AggregateTimeChart';
 import { renderComponent } from '../../shared/hooks/__tests__/renderHook';

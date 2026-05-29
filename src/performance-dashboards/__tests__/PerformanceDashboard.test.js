@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /* global globalThis */
 /**
  * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
@@ -62,7 +61,6 @@ jest.mock( '../../shared/hooks/usePageVisibility', () => ( {
 jest.mock( '../components/OverviewSection', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		globalThis.__overviewProps = props;
 		return React.createElement(
@@ -80,7 +78,6 @@ jest.mock( '../components/OverviewSection', () => ( {
 jest.mock( '../UrlTable', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		// Stash latest props so tests can invoke callbacks.
 		globalThis.__urlTableProps = props;
@@ -96,7 +93,6 @@ jest.mock( '../UrlTable', () => ( {
 jest.mock( '../components/UrlDetailView', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		globalThis.__urlDetailProps = props;
 		return React.createElement(
@@ -110,7 +106,6 @@ jest.mock( '../components/UrlDetailView', () => ( {
 jest.mock( '../components/RequestDetailView', () => ( {
 	__esModule: true,
 	default: () => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement(
 			'div',
@@ -124,27 +119,22 @@ jest.mock( '../components/RequestDetailView', () => ( {
 jest.mock( '@wordpress/components', () => ( {
 	__esModule: true,
 	Spinner: () => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement( 'div', { 'data-testid': 'spinner' } );
 	},
 	Card: ( { children } ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement( 'div', null, children );
 	},
 	CardBody: ( { children } ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement( 'div', null, children );
 	},
 	CardHeader: ( { children } ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement( 'div', null, children );
 	},
 	Modal: ( { children, title, headerActions } ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement(
 			'div',

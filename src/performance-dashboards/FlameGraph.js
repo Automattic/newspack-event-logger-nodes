@@ -434,9 +434,9 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	// Handlers are for auxiliary behavior (tooltip cleanup, transition timing).
 	// D3 flame graph creates its own interactive SVG elements inside.
 	return (
-		// eslint-disable-next-line jsx-a11y/no-static-element-interactions
 		<div
 			ref={ containerRef }
+			role="presentation"
 			className="event-logger-flame-graph"
 			style={ { width: '100%', minHeight: '200px' } }
 			onMouseLeave={ handleMouseLeave }

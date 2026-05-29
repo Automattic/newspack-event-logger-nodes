@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * Tests for HookSelectorModal — renders a category-grouped checkbox tree from
  * the render model published by useHookCatalogGraph. Post-migration the modal

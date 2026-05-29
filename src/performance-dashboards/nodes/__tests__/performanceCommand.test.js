@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * performance:command tests — the slice-tagging command-builder Node.
  *

@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * Tests for ResponseTimeChart — D3 scatter plot with enter/update/exit.
  *
@@ -81,7 +80,6 @@ jest.mock( 'd3', () => {
 } );
 
 import * as React from 'react';
-// eslint-disable-next-line import/order -- d3 mock must be set up first.
 import * as d3 from 'd3';
 import ResponseTimeChart from '../ResponseTimeChart';
 import { renderComponent } from '../../shared/hooks/__tests__/renderHook';

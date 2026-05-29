@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * hookCatalogView tests — owns the Performance Logger hook-catalog view model
  * after the substrate-canonical migration. Mirrors servers:view.
