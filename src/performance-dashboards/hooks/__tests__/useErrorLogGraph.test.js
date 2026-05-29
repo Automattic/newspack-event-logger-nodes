@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
  * substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes (same boundary

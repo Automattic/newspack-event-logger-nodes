@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * useAggregatorAdminGraph — mounts the Configured-Servers admin node graph
  * onto the canonical rule-#2 backbone (`_command_interpreter → _router`) using

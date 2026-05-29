@@ -16,6 +16,7 @@
  */
 
 import { useState } from '@wordpress/element';
+import { Modal, Button } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
@@ -55,6 +56,7 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 	const { id, url, enabled } = server;
 	const [ testStatus, setTestStatus ] = useState( { text: '', color: '' } );
 	const [ busy, setBusy ] = useState( false );
+	const [ isConfirmOpen, setIsConfirmOpen ] = useState( false );
 
 	const handleTest = async () => {
 		setBusy( true );
@@ -91,17 +93,11 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 		}
 	};
 
-	const handleRemove = async () => {
-		// eslint-disable-next-line no-alert
-		const confirmed = window.confirm(
-			__(
-				'Are you sure you want to remove this server?',
-				'newspack-event-logger-nodes'
-			)
-		);
-		if ( ! confirmed ) {
-			return;
-		}
+	// Remove opens a portal-rendered confirm dialog; onConfirm runs the removal.
+	const handleRemove = () => setIsConfirmOpen( true );
+
+	const confirmRemove = async () => {
+		setIsConfirmOpen( false );
 		setBusy( true );
 		try {
 			await onRemove( id );
@@ -109,6 +105,8 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 			setBusy( false );
 		}
 	};
+
+	const cancelRemove = () => setIsConfirmOpen( false );
 
 	return (
 		<tr data-server-id={ id }>
@@ -171,6 +169,40 @@ function ServerRow( { server, onToggle, onRemove, onTest } ) {
 				>
 					{ __( 'Remove', 'newspack-event-logger-nodes' ) }
 				</button>
+				{ isConfirmOpen && (
+					<Modal
+						title={ __(
+							'Remove server',
+							'newspack-event-logger-nodes'
+						) }
+						onRequestClose={ cancelRemove }
+					>
+						<p>
+							{ __(
+								'Are you sure you want to remove this server?',
+								'newspack-event-logger-nodes'
+							) }
+						</p>
+						<div className="event-aggregator-confirm-actions">
+							<Button variant="tertiary" onClick={ cancelRemove }>
+								{ __(
+									'Cancel',
+									'newspack-event-logger-nodes'
+								) }
+							</Button>
+							<Button
+								variant="primary"
+								isDestructive
+								onClick={ confirmRemove }
+							>
+								{ __(
+									'Remove',
+									'newspack-event-logger-nodes'
+								) }
+							</Button>
+						</div>
+					</Modal>
+				) }
 			</td>
 		</tr>
 	);

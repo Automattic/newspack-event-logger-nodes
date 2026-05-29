@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /* global KeyboardEvent */
 /**
  * Tests for TagInputField — multi-value tag input with three modes:

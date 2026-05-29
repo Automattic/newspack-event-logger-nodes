@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Removed every `eslint-disable` directive from the JS; the code now lints clean without suppressions.** Same config posture as the `newspack-nodes` sibling (kept in lockstep): `no-bitwise` off (the Message `TYPE` is a bitmask), `no-console` allows `warn`/`error`, `no-unused-vars` honors `^_`, and a `scripts/**/*.mjs` override (Node globals, console, jsdoc). Declared `react`/`react-dom` as devDependencies — the test renderer imports them directly (they're transitive deps of `@wordpress/element`), which clears the `import/no-extraneous-dependencies` suppressions across the test suite.
+
+### Fixed
+
+- **`ServersAdmin` "Remove server" uses an in-app confirm modal instead of `window.confirm`.** Built from the stable `@wordpress/components` `Modal` + `Button` (the idiom the settings modals already use), not the experimental `__experimentalConfirmDialog`. Confirm-to-remove / cancel-aborts behavior is preserved; removes the `no-alert` suppression.
+- **`FlameGraph`'s D3 container is `role="presentation"`** (it owns only auxiliary mouse handlers; D3 builds the interactive SVG inside), dropping its `jsx-a11y/no-static-element-interactions` suppression.
+
 ## [0.9.1] - 2026-05-29
 
 ### Fixed

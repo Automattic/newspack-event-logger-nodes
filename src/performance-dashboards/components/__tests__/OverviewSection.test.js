@@ -16,8 +16,6 @@
  *     current breakdown is 'server'.
  */
 
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element; we import it directly only for createElement in tests. */
-
 jest.mock( '../../AggregateTimeChart', () => ( {
 	__esModule: true,
 	default: ( { metric, breakdown, serverFilter } ) =>

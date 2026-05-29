@@ -170,7 +170,12 @@ function postBuildPlugin( entry, outDir, base, usedHandles ) {
 				}
 
 				console.log(
-					`✓ ${ entry } → ${ path.relative( ROOT, outDir ) }/${ base }.* [deps: ${ [ ...usedHandles ].join( ', ' ) || '(none)' }] [v${ version }]`
+					`✓ ${ entry } → ${ path.relative(
+						ROOT,
+						outDir
+					) }/${ base }.* [deps: ${
+						[ ...usedHandles ].join( ', ' ) || '(none)'
+					}] [v${ version }]`
 				);
 			} );
 		},

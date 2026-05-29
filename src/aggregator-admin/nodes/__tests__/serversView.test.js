@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * servers:view tests — owns the Configured-Servers admin view model after the
  * substrate-canonical migration.

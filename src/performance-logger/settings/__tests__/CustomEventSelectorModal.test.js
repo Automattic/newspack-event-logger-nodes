@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * Tests for CustomEventSelectorModal — pure modal with no network
  * calls. Loads the event list from window.newspackNodesCustomColors at

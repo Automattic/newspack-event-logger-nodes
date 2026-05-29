@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element; we import it directly only for createElement in tests. */
 /**
  * Tests for RequestDetailView — render-side branches.
  *

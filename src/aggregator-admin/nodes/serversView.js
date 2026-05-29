@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
 
 /**

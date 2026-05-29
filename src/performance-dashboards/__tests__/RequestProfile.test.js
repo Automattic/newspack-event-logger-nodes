@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * Tests for RequestProfile — pure render component, no hooks or
  * network. Sorts profiles by time desc, hides zero-time entries,

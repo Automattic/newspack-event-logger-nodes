@@ -342,10 +342,7 @@ const { TM_COMMAND, TM_RESPONSE, TM_ERROR, ID, FROM, TO } = jest.requireActual(
 // Build a reply Message: TM_COMMAND|TM_RESPONSE (optionally |TM_ERROR).
 function reply( id, name, payload, opts = {} ) {
 	const m = newMessage();
-	/* eslint-disable-next-line no-bitwise */
-	m[ TYPE ] =
-		// eslint-disable-next-line no-bitwise
-		TM_COMMAND | TM_RESPONSE | ( opts.error ? TM_ERROR : 0 );
+	m[ TYPE ] = TM_COMMAND | TM_RESPONSE | ( opts.error ? TM_ERROR : 0 );
 	m[ ID ] = id;
 	m[ VALUE ] = { name, payload };
 	return m;

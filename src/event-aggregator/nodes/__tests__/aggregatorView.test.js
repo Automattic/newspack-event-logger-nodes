@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * aggregator:view tests — owns the Aggregator Status view model.
  *

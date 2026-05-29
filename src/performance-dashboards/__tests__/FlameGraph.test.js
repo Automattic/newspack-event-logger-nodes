@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /* global MouseEvent */
 /**
  * Tests for FlameGraph — d3-flame-graph wrapper.
@@ -91,7 +90,6 @@ jest.mock( 'd3-flame-graph/dist/d3-flamegraph.css', () => ( {} ), {
 } );
 
 import * as React from 'react';
-// eslint-disable-next-line import/order -- mocks must come first.
 import * as d3 from 'd3';
 import FlameGraph from '../FlameGraph';
 import { renderComponent } from '../../shared/hooks/__tests__/renderHook';

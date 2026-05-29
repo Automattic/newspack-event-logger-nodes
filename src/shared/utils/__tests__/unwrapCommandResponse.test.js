@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * Tests for unwrapCommandResponse — extracts a verb's response payload from
  * the raw 7-field Message array that CommandClient.send() returns.

@@ -1,5 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * usePerformanceGraph tests — the Performance Dashboard graph clipped onto the
  * substrate's I/O boundary node (exospine + `_http`), plus the application's

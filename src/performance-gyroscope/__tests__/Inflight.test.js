@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /* global KeyboardEvent */
 /**
  * Inflight UI-surface tests — the thin view over the gyroscope node graph.

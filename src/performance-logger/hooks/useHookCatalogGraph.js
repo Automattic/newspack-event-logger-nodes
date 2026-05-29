@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * useHookCatalogGraph — mounts the Performance Logger hook-catalog graph onto
  * the canonical rule-#2 backbone (`_command_interpreter → _router`) using the

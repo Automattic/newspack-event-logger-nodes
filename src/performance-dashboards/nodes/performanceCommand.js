@@ -1,4 +1,3 @@
-/* eslint-disable no-bitwise -- TYPE field uses bitmask flags (Tachikoma convention). */
 /**
  * `performance:command` — the slice-tagging command-builder Node for the
  * Performance Dashboard.

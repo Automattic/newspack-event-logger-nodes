@@ -1,4 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies, import/no-unresolved -- react is a transitive dep of @wordpress/element. */
 /**
  * Tests for performance-dashboards/index.js — covers the AdminApp +
  * ErrorLogPage components defined inline alongside the mount logic.
@@ -14,7 +13,6 @@ let mockOnError = null;
 jest.mock( '../PerformanceDashboard', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		mockOnError = props.onError;
 		return React.createElement( 'div', null, 'PERFORMANCE_DASHBOARD' );
@@ -24,7 +22,6 @@ jest.mock( '../PerformanceDashboard', () => ( {
 jest.mock( '../ErrorLog', () => ( {
 	__esModule: true,
 	default: () => {
-		// eslint-disable-next-line global-require -- needs to come after mocks.
 		const React = require( 'react' );
 		return React.createElement( 'div', null, 'ERROR_LOG' );
 	},
@@ -78,7 +75,6 @@ describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 			if ( null !== mockOnError ) {
 				return admin;
 			}
-			// eslint-disable-next-line no-await-in-loop
 			await act( async () => {
 				await Promise.resolve();
 			} );
@@ -96,7 +92,6 @@ describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 			if ( null !== mockOnError ) {
 				return admin;
 			}
-			// eslint-disable-next-line no-await-in-loop
 			await act( async () => {
 				await new Promise( ( r ) => setTimeout( r, 25 ) );
 			} );
@@ -161,7 +156,6 @@ describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 		jest.doMock( '../PerformanceDashboard', () => ( {
 			__esModule: true,
 			default: () => {
-				// eslint-disable-next-line global-require
 				const r = require( 'react' );
 				return r.createElement( 'div', null, 'NEVER' );
 			},
@@ -169,7 +163,6 @@ describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 		const admin = document.createElement( 'div' );
 		admin.id = 'event-logger-admin';
 		document.body.appendChild( admin );
-		// eslint-disable-next-line global-require
 		require( '../index.js' );
 		// Dispatch DOMContentLoaded synchronously so the render() call
 		// runs. We don't await — the Suspense fallback should be visible.
