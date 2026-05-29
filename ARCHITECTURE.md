@@ -2,7 +2,7 @@
 
 Event-logger application built on the [`newspack-nodes`](../newspack-nodes/) runtime substrate. This document describes the *application* graph: which Nodes, what they do, how they wire together. For the underlying substrate (Node, Message, Router, Topic, Partition, Worker, Supervisor, REPL), see `../newspack-nodes/ARCHITECTURE.md`.
 
-For migration context (what this plugin replaces), see [MIGRATION.md](MIGRATION.md).
+This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo wholesale. There's no shadow mode or dual emission — the legacy plugins write to `/volumes/pyrobase/tmp/event-logger`, this one defaults to `/tmp/newspack-nodes`, so they coexist by isolating their storage.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ For migration context (what this plugin replaces), see [MIGRATION.md](MIGRATION.
 - [Stats_Store: Sums-Not-Means + Salt Rotation](#stats_store-sums-not-means--salt-rotation)
 - [Hub vs Spoke Topology](#hub-vs-spoke-topology)
 - [Hub-Side Helpers: Server_Registry / Remote_Manager / Discovery](#hub-side-helpers-server_registry--remote_manager--discovery)
-- [Settings_Sync: Aggregator Gate](#settings_sync-aggregator-gate)
+- [Settings_Sync: No Operator Gate](#settings_sync-no-operator-gate)
 - [Job_Intake vs Firehose Routing](#job_intake-vs-firehose-routing)
 - [Configuration](#configuration)
 - [REST + React](#rest--react)
@@ -150,7 +150,7 @@ Orphaned `start`s (callback threw, exit called, fatal error before `complete`) g
 
 ## Topologies
 
-Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is a line-oriented script the substrate's topology loader interprets per partition: `make_node <Type> <name> [ctor args…]` instantiates a Node, `connect_node <from> <to>` wires a sink, `cmd <node>:config <verb> [args…]` runs a config verb on the node, and `var <key> = <value>` declares frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. Tokens like `<partition>`, `<config:logs_dir>`, `<config:num_partitions>` are interpolated at load time. The `make_node` first argument is a **shell name** that the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`) resolve under the substrate's own prefix. Six topologies ship.
+Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is a line-oriented script the substrate's topology loader interprets per partition: `make_node <Type> <name> [ctor args…]` instantiates a Node, `connect_node <from> <to>` wires a sink, `cmd <node>:config <verb> [args…]` runs a config verb on the node, and `var <key> = <value>` declares frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. Tokens like `<partition>`, `<config:logs_dir>`, `<config:num_partitions>` are interpolated at load time against the substrate Config; `<eln:auto_disable_threshold>`, `<eln:is_hub>`, etc., resolve against the application Config (the v0.4.0 namespace split). The `make_node` first argument is a **shell name** that the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`) resolve under the substrate's own prefix. Six topologies ship.
 
 ### `topologies/firehose-workers-and-jobs.tsl` (default)
 
@@ -212,15 +212,15 @@ cmd flames:partition:config with_index flame-index
 make_node Flame_Builder flame-builder
 connect_node flame-builder flames:partition
 cmd flame-builder:config configure_stats <partition>
-cmd flame-builder:config set_is_hub <config:is_hub>
-cmd flame-builder:config set_auto_tune <config:auto_disable_threshold> <config:auto_protect_time_threshold>
-cmd flame-builder:config set_significant_events <config:significant_events_csv>
+cmd flame-builder:config set_is_hub <eln:is_hub>
+cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
+cmd flame-builder:config set_significant_events <eln:significant_events_csv>
 
 make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> ...
 connect_node requests:consumer flame-builder
 ```
 
-`configure_stats <partition>` constructs the per-partition `Stats_Store`; the auto-tune verbs feed the noisy/significant-event detection (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). The `<config:…>` tokens resolve against `Config::load_config('full')` so application-only keys (`auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events`) are visible — `Performance_Controller_Base::load_config()` only layers in substrate options, so it would return 0 for the thresholds even when the operator set them via the Settings UI.
+`configure_stats <partition>` constructs the per-partition `Stats_Store`; the auto-tune verbs feed the noisy/significant-event detection (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). The `<config:…>` tokens resolve against the substrate Config (`logs_dir`, `num_partitions`, `segment_size`, etc.); the `<eln:…>` tokens resolve against the application Config (`auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events_csv`, `is_hub`, `aggregator_*`) — the v0.4.0 split that gave app-owned values their own token namespace so substrate-only resolvers can't accidentally swallow them.
 
 ### `topologies/job-workers.tsl`
 
@@ -244,32 +244,16 @@ Hub-side ingest. One `Stream_Merger` pulls from configured spokes via SSE; sinks
 make_node Topic firehose:topic <config:logs_dir>/firehose.log <config:num_partitions> ...
 
 make_node Stream_Merger stream-merger firehose <partition>
+cmd stream-merger:config set_verify_ssl <eln:aggregator_verify_ssl>
+cmd stream-merger:config set_require_https <eln:aggregator_require_https>
 connect_node stream-merger firehose:topic
-cmd stream-merger:config set_verify_ssl <config:aggregator_verify_ssl>
-cmd stream-merger:config set_require_https <config:aggregator_require_https>
-cmd stream-merger:config load_remotes_from_registry
 ```
 
-`Stream_Merger` is a fan-in (partition count comes from the destination Topic, not the merger), and it owns a hidden `Health_Check_Tick` sibling (`stream-merger:health-check`) that hitchhikes the same Router TIMER heartbeat to run the periodic discovery + sync sweep. The `k:"job"` → `k:"remote_job"` rewrite filter is registered statically at plugin load (`Stream_Merger_Node::register_remote_job_rewrite_filter`), not from TSL. Aggregator is **gated** by the `enable_aggregator` config key (strict `=== true`, default OFF): if not explicitly enabled, the topology isn't activated, the supervisor never spawns the worker, and the admin "Aggregator" submenu is hidden. Hubs opt in by setting `'enable_aggregator' => true` in their `newspack-event-logger-nodes-config.php` overlay or via the admin checkbox.
+`Stream_Merger` is a fan-in (partition count comes from the destination Topic, not the merger), and it owns a hidden `Health_Check_Tick` sibling (`stream-merger:health-check`) that hitchhikes the same Router TIMER heartbeat to run the periodic discovery + sync sweep. Registry remotes load automatically when `connect_node` wires the target (lifecycle hook on `Stream_Merger::connect_node`) — there's no separate `load_remotes_from_registry` verb. SSL/HTTPS setters run BEFORE `connect_node` so the `Remote_Source` children created during the load inherit current policy. The `k:"job"` → `k:"remote_job"` rewrite filter is registered statically at plugin load (`Stream_Merger_Node::register_remote_job_rewrite_filter`), not from TSL. Aggregator is **gated** by the `enable_aggregator` config key (strict `=== true`, default OFF): if not explicitly enabled, the topology isn't activated, the supervisor never spawns the worker, and the admin "Aggregator" submenu is hidden. Hubs opt in by setting `'enable_aggregator' => true` in their `newspack-event-logger-nodes-config.php` overlay or via the admin checkbox.
 
 ### Topology resolution
 
-The active fleet is declared as data in `newspack-event-logger-nodes-config.php` — a flat list of TSL topology names appended to the substrate's `topologies` list, so per-site overrides can add or remove entries without patching plugin code:
-
-```php
-// newspack-event-logger-nodes-config.php (excerpt)
-return [
-    // …
-    'topologies' => [
-        'firehose-workers-only',  // alt: 'firehose-workers-and-jobs', 'firehose-jobs-only'
-        'request-workers',
-        // 'job-workers',
-        // 'aggregator',
-    ],
-];
-```
-
-Each name is resolved by `Newspack_Nodes\Topology_Registry`, which the plugin seeds at boot with `register_stock_dir( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' )` (a single array append, no config dependency) — so anyone calling `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor) finds the stock `.tsl` files. `num_partitions` defaults come from the substrate config, so one setting drives both `Log_Manager` — write side — and the worker fleet — read side; hardcoding diverges them. Which topologies actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — the catalog this list publishes is the "what topologies exist" set; the substrate filters it by what the operator has checked.
+As of v0.5.0, the `topologies` key lives on the substrate — `newspack-event-logger-nodes-config.php` no longer owns it. The plugin only **publishes its catalog**: at boot, it calls `register_stock_dir( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' )` on `Newspack_Nodes\Topology_Registry`, so anyone calling `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor) finds the stock `.tsl` files. Which catalog entries actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — this plugin only publishes the "what topologies exist" set; the substrate filters it by what the operator has checked. `num_partitions` defaults also come from the substrate config, so one setting drives both `Log_Manager` (write side) and the worker fleet (read side); hardcoding diverges them.
 
 Cost on regular WP requests is one array append at boot — the `.tsl` files themselves aren't parsed yet. Actual resolution + parsing happens in three places, none on the page-render hot path: supervisor's `check_config()` tick (every 15s), worker bootstrap (once per spawn), REST workers/dashboard reads.
 
@@ -342,14 +326,14 @@ Flush every 5s via Router-hitchhike Timer; flush on shutdown via `cleanup` (TM_E
 
 ### Auto_Tuner_Node
 
-Receives Flame_Builder_Node's tuning decisions as `TM_STRUCT` messages and applies them locally; when the aggregator is enabled, also queues a `remote_manager` sync_setting job via Job_Intake so every enabled spoke picks up the change.
+Receives Flame_Builder_Node's tuning decisions as `TM_STRUCT` messages and applies them locally; also unconditionally queues a `remote_manager` sync_setting job via Job_Intake — when a hub aggregator topology is running, the registered `remote_manager` handler picks it up and fans the change out to every enabled spoke; on non-hub sites, the queued job has no consumer and silently drops.
 
 ```
 Flame_Builder_Node.apply_auto_tune()  ──TM_STRUCT msg──→  Auto_Tuner_Node.fill()
        TO=auto-tuner                                  │
-       KEY=disable_hooks /                            ├─→ enable_aggregator on?
-           disable_custom_events /                    │       └─→ Settings_Sync::queue_job('remote_manager', ...)
-           add_significant_events                     │           (writes to jobintake.log for spoke fanout)
+       KEY=disable_hooks /                            ├─→ Settings_Sync::queue_job('remote_manager', ...)
+           disable_custom_events /                    │   (writes to jobintake.log; no-op on non-hubs)
+           add_significant_events                     │
        VALUE={ items: string[], context: {…} }        │
                                                       └─→ update_option(...)   (suppress_sync wrapped)
 ```
@@ -553,7 +537,7 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               +-----------------------------+
 ```
 
-**Hub identification**: a site is acting as a hub when `enable_aggregator` is strictly `=== true` AND it has at least one spoke registered. The toggle is a single operator switch — strict polarity, default OFF (fresh installs are not hubs). It gates the Aggregator admin submenu visibility and the push-side fan-out paths (`Settings_Sync` and `Auto_Tuner_Node` short-circuit when off). Pull-side activation (whether the Stream_Merger_Node worker actually spawns) is decoupled — that's driven by whether `aggregator` is in the substrate's Topologies multi-select.
+**Hub identification**: a site is acting as a hub when `enable_aggregator` is strictly `=== true` AND it has at least one spoke registered. The toggle is a single operator switch — strict polarity, default OFF (fresh installs are not hubs). It gates the Aggregator admin submenu visibility. Push-side fan-out listeners (`Settings_Sync`, `Auto_Tuner_Node`) are themselves ungated — they always queue a `remote_manager` job; without an aggregator topology running there's no consumer, and the queued job silently no-ops. Pull-side activation (whether the Stream_Merger_Node worker actually spawns) is decoupled — driven by whether `aggregator` is in the substrate's Topologies multi-select.
 
 **`k:"job"` vs `k:"remote_job"`**:
 
@@ -577,7 +561,7 @@ Three static-mode classes own the hub's outbound side. They don't run in the wor
 A single config flag, `enable_aggregator` (default OFF), gates the operator-visible side of hub-mode:
 
 - **Admin submenu** — the `Aggregator` submenu under Performance is hidden when off. The "Enable Aggregator" checkbox in Event Logger Settings → Remote Servers is the operator-facing toggle.
-- **Push side** — `Settings_Sync::maybe_queue_static_sync` and `Auto_Tuner_Node::persist` short-circuit when the option is off, so option changes and auto-tune decisions don't queue `remote_manager` fan-out jobs.
+- **Push side** — `Settings_Sync::maybe_queue_static_sync` and `Auto_Tuner_Node::persist` always queue a `remote_manager` job. The structural gate is the consumer: without an aggregator topology running there's no `remote_manager` handler registered, so the queued jobs silently no-op. The admin checkbox is the operator-visible part of the gate (Aggregator submenu + topology selection); the dispatch layer takes care of the rest.
 
 Pull-side worker activation is independent: the Stream_Merger_Node spawns whenever `aggregator` is in the substrate's Topologies multi-select. Two operator choices, two surfaces — checking "Enable Aggregator" without also checking the `aggregator` topology gives you a visible dashboard with no live data; checking the topology without the checkbox gives you a running worker but no UI to see it. The intentional design is that operators do both when standing up a hub; either alone is a partial state.
 
@@ -627,18 +611,11 @@ Merges discovered hooks and custom events from spokes into the hub's local setti
 
 Both merges suppress `Settings_Sync` first (`Settings_Sync::suppress_sync()` / `finally`) so the local `update_option` write doesn't get fanned BACK out to the spokes that just contributed it. Without the suppression, every discovery sweep would echo every spoke's hooks to every other spoke. Cap on accumulated entries: `MAX_EVENTS = 10000`.
 
-## Settings_Sync: Aggregator Gate
+## Settings_Sync: No Operator Gate
 
-`Settings_Sync::maybe_queue_static_sync` short-circuits when the operator-facing aggregator toggle is off — same gate the Stream_Merger_Node pull-side uses, so one switch stops both directions of remote-server activity:
+`Settings_Sync::maybe_queue_static_sync` is **ungated** — it always queues a `remote_manager` job into JobIntake when a synced option changes. The gate is structural: without an aggregator topology running and remotes registered, the queued job has no consumer and silently no-ops (the `Job_Worker_Node` finds no `remote_manager` handler in `newspack_nodes/job_handlers` and drops the line). Any topology that DOES dispatch `remote_manager` jobs picks them up automatically.
 
-```php
-// In Settings_Sync::maybe_queue_static_sync(...)
-if ( ! (int) \get_option( 'newspack_event_logger_nodes_enable_aggregator', 1 ) ) {
-    return;
-}
-```
-
-`Auto_Tuner_Node::persist` carries the same check around its `remote_manager` queue. No separate hub flag — the legacy `enable_workers`-as-hub-designation never actually drove behavior on its own (it composed with `enable_aggregator` to mean "really fan out"), so dropping the strict-`=== true` polarity dance and going with the single operator toggle eliminates a whole category of polarity-drift bugs.
+`Auto_Tuner_Node::persist` is also ungated — it always queues the `remote_manager` sync_setting job before the local `update_option` write, for the same no-consumer-equals-no-op reason. This was a deliberate simplification: the legacy `enable_workers`-as-hub-designation polarity dance was retired in v0.5.0. The remaining operator-facing toggle is `enable_aggregator` (strict `=== true`, default OFF), which gates the Aggregator admin submenu visibility and the Stream_Merger_Node pull-side activation; push-side fan-out listeners (Settings_Sync, Auto_Tuner) just queue, and let dispatch silently drop on non-hubs. Letting the no-consumer drop happen at dispatch time is cheaper and harder to misconfigure than a per-listener `get_option` gate.
 
 **Re-entrancy guard via `$syncing`**: Health_Check_Extensions calls `update_option` in response to a sync; without the guard, that triggers another sync, ad infinitum. The `suppress_sync(true)` API is called before the update, restored after.
 
@@ -715,11 +692,9 @@ The `'full'` mode loads every key including `auto_disable_threshold`, `auto_prot
 | Option | Type | Mode | Default | Use |
 |--------|------|------|---------|-----|
 | `enable_logging` | bool | core | `true` | Master switch for the firehose write path |
-| `enable_workers` | bool | core | inherits from substrate | Strict `=== true` enables hub mode |
-| `enable_aggregator` | int (0/1) | core | `1` | Gates the aggregator topology + admin submenu + push fan-out |
-| `enable_jobs` | bool | core | `true` | When false, Job_Worker_Node drains but doesn't dispatch |
+| `enable_aggregator` | bool | core | `false` | Gates the Aggregator admin submenu (operator-visible side of hub-mode); push-side fanout listeners are themselves ungated and rely on no-consumer-as-no-op |
 | `log_urls` | array of strings | core | `[]` | URL substring allowlist (empty = log everything) |
-| `skip_urls` | array of strings | core | `[]` | URL substring denylist; wins over `log_urls` |
+| `skip_urls` | array of strings | core | substrate-command paths | URL substring denylist; wins over `log_urls` |
 | `log_events` | array of strings | core | `[]` | Hook names to instrument (start/complete pairs at priority 1 / MAX-1) |
 | `custom_events` | array of strings | core | `[]` | Custom event names to log |
 | `discovered_events` | array of strings | extended | `[]` | Custom events discovered from spokes — merged in via `Health_Check_Extensions` |
@@ -753,13 +728,13 @@ Most config keys read through `Config::load_config()` which has a 5s in-process 
 
 ## REST + React
 
-There is no per-endpoint controller hierarchy anymore. The dashboards and admin tooling reach the application through the substrate's **command protocol**: one `POST /wp-json/newspack-nodes/v1/command` endpoint that routes a TM_COMMAND envelope to a named service CI node (`performance`, `events`, `status`, `logger`, `settings`, `servers`, `aggregator`, `discovery`). Each verb's request/response shape is documented in [API.md](API.md) (still expressed under the legacy `newspack-nodes/v1/*` and `newspack-nodes-aggregator/v1/*` paths for the reader's mental model — those are the verbs each CI exposes, not standalone routes). The CIs mount on `newspack_nodes/request_graph_ready`; see [MIGRATION.md](MIGRATION.md) for the M2–M5 controller→CI cutover.
+There is no per-endpoint controller hierarchy anymore. The dashboards and admin tooling reach the application through the substrate's **command protocol**: one `POST /wp-json/newspack-nodes/v1/command` endpoint that routes a TM_COMMAND envelope to a named service CI node (`performance`, `events`, `status`, `logger`, `settings`, `servers`, `aggregator`, `discovery`). Each verb's request/response shape is documented in [API.md](API.md) (still expressed under the legacy `newspack-nodes/v1/*` and `newspack-nodes-aggregator/v1/*` paths for the reader's mental model — those are the verbs each CI exposes, not standalone routes). The CIs mount on `newspack_nodes/request_graph_ready`.
 
 `Performance_Controller_Base` survives as the shared helper the service CIs lean on: capability check (`manage_options`), partition validation, fixed-window rate limit (600req/60s default; fail-open if memcache down), `not_found_error()` shape, and `load_config()` via the `newspack_nodes/config` filter.
 
 ### Real-time path: `/messages/stream` + slot pool
 
-SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as the `GET /wp-json/newspack-nodes/v1/messages/stream` controller. A client subscribes to one or more partitions (`?subscribe=firehose.pN`), `SSE_Out` runs the drain loop, and emits a 7-field message envelope per line plus an idle `heartbeat` event when no data flows. The five per-stream controllers (`FirehoseStreamController`, `RequestsStreamController`, `GyroscopeStreamController`, `ErrorsStreamController`, `RawlogsController`) and their `SSEControllerBase` parent were all deleted in the M6 consolidation (see [MIGRATION.md](MIGRATION.md)); the four browser dashboards and the hub-side `Remote_Source_Node` cross-server pull all consume `/messages/stream` directly.
+SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as the `GET /wp-json/newspack-nodes/v1/messages/stream` controller. A client subscribes to one or more partitions (`?subscribe=firehose.pN`), `SSE_Out` runs the drain loop, and emits a 7-field message envelope per line plus an idle `heartbeat` event when no data flows. The five per-stream controllers (`FirehoseStreamController`, `RequestsStreamController`, `GyroscopeStreamController`, `ErrorsStreamController`, `RawlogsController`) and their `SSEControllerBase` parent were all deleted in the M6 consolidation; the browser dashboards and the hub-side `Remote_Source_Node` cross-server pull all consume `/messages/stream` directly.
 
 ```
 +-----------------+   GET /messages/stream?subscribe=firehose.pN   +-----------------+
@@ -783,7 +758,19 @@ SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as
 
 ### React trees
 
-6 dashboards (`event-aggregator`, `event-dashboards`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) plus a `shared` helpers tree consume the command protocol (via `commandClient.send(...)`) and the `/messages/stream` SSE surface (via the shared `useMessageStream` hook). Source-of-truth shared hooks/utils live in `src/shared/` — but the *canonical* copies live in `newspack-nodes`; this plugin's `src/shared/*` are synced copies (the nodes build re-runs `sync-shared`). Edit the canonical in `newspack-nodes`, run `sync-shared.sh`. The four per-dashboard line transforms (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …) live per-tree and turn raw envelope VALUEs into the shape each dashboard renders. See [MIGRATION.md](MIGRATION.md) for the M6 dashboard cutover.
+6 dashboards (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) plus a `shared` helpers tree ride the substrate's `_http` / `_sse` / `_heartbeat` spine: each dashboard mounts a graph that builds TM_COMMANDs (TO=`_http/<ci-name>`) and resolves replies via a pending-Map keyed on `message[ID]`; SSE-driven dashboards additionally mount `_sse` (subscribing to the relevant `<log>.pN` feeds) and a `_heartbeat` Node that keeps the slot alive against `_http/workers`. Source-of-truth shared hooks/utils live in `src/shared/` — but the *canonical* copies live in `newspack-nodes`; this plugin's `src/shared/*` are synced copies (the nodes build re-runs `sync-shared`). Edit the canonical in `newspack-nodes`, run `sync-shared.sh`. The four per-dashboard line transforms (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …) live per-tree and turn raw envelope VALUEs into the shape each dashboard renders.
+
+### Canonical view contract (v0.8.0)
+
+Every command-driven dashboard view follows the same contract — established on `servers:view` during the aggregator-admin migration and propagated across the rest of the dashboards in v0.8.0:
+
+- **Pending-Map gate.** The view owns a `this.pending = new Map()` keyed by `message[ID]`. The hook stashes `{ resolve, reject }` under the id before filling the TM_COMMAND, and the view's `fill()` looks up the id on every reply, resolves/rejects the stashed Promise, and short-circuits the rest of the handler. This is what lets `_http`-pivoted replies land back on the right caller without polluting global view state.
+- **TM_ERROR isolation.** A pending-matched TM_ERROR rejects the Promise **without** writing to a global `view.error` field. Per-call error surface is the caller's catch (a row-level snackbar, an in-form notice — never a table-wide banner).
+- **`_errorMessage()` helper.** A small per-view helper that accepts either a string payload or a structured `{ message }` TM_ERROR payload and returns the human-readable string, so the pending Promise's `reject(new Error(...))` carries a usable message regardless of the error shape the CI emitted.
+- **Id-wins partial spread.** `updateServer` and similar `(id, partial)` verbs spread the partial FIRST so the positional id wins: `{ ...partial, id }`. Prevents a caller accidentally overwriting the addressed id from inside the partial.
+- **No dead REPL mounts.** The shared graph factory used to mount a REPL node behind every dashboard; the dashboards never used it, so it's gone. Mount what the dashboard actually needs — spine + `_http` + (optionally) `_sse` / `_heartbeat` / the dashboard's route/transform/view chain.
+
+See the v0.7.0 / v0.8.0 entries in `CHANGELOG.md` for the dashboard cutover history.
 
 ## CLI: wp nodes reqgrep
 
@@ -821,5 +808,5 @@ Implementation lives in `includes/cli/class-reqgrep-command.php`. Reads the fire
 
 - [AGENTS.md](AGENTS.md) — application contracts and invariants.
 - [API.md](API.md) — REST endpoint reference.
-- [MIGRATION.md](MIGRATION.md) — React tree cutover from `newspack-event-logger-plugins`.
+- `CHANGELOG.md` — version-by-version history (M2–M6 controller→CI migration, dashboard cutover, substrate Tachikoma alignment).
 - [Runtime ARCHITECTURE.md](../newspack-nodes/ARCHITECTURE.md) — substrate this plugin depends on.
