@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-29
+
+### Fixed
+
+- **`<eln:is_hub>` and `<eln:significant_events_csv>` no longer resolve to null.** The `<eln:…>` resolver closure listed both keys as owned but resolved them via `Config::load_config()[$key] ?? null` — neither is a real Config key. `$config['is_hub']` was always null, so `cmd flame-builder:config set_is_hub <eln:is_hub>` in `topologies/request-workers.tsl` always set the empty string, and the flame builder's CSV-of-significant-events was always empty. Extracted the resolver to a public static `Config::resolve_eln_token($key)` shared by the production bootstrap AND `tests/bootstrap.php` (no drift): `is_hub` now derives `(bool) ! empty( $config['enable_aggregator'] )`; `significant_events_csv` imploded from `$config['significant_events']` (with an `is_array` guard against malformed values).
+
+### Changed
+
+- **All three SSE dashboards' chains collapsed to `_sse → <dash>:view`.** `requestlog`, `gyroscope`, and `perferrors` each had a `_sse → :route → :transform → :view` chain. The route nodes were dead in every one — they checked `KEY === 'connection'` but the substrate's `SseConnector` uses `KEY === 'connected'` AND snoops it off before routing, so the control-target branch was unreachable. The transforms did real shape-mapping (URL/UA clipping for requestlog; KEY-shape multiplexing for gyroscope's `inflight` vs `complete`; rid promotion + m-clipping for perferrors), but the info was all in the envelope and could be inlined into each view's `fill()`. Eighteen files deleted across the three dashboards (6 per dashboard: route + transform + transform-line helper + each one's test). Each hook now mounts just `_sse + _http + _heartbeat + <dash>:view`. Same architectural mistake I made in the v0.7.0/v0.8.0 substrate-I/O migrations (not "inherited from a template"); the sibling Raw Logs dashboard in `newspack-nodes` collapsed in lockstep.
+
+### Tests
+
+- **Three smoke-shaped `SettingsSyncTest` tests strengthened** from `$this->assertTrue( true )` to full queued-job envelope assertions. Each now isolates the write via `make_temp_dir()` + `use_base_dir()`, walks `{$base_dir}/logs/jobintake.log/p*/*.log` via a new `read_jobintake_envelopes()` helper (mirrors `JobIntakeTest::read_all_jobintake_lines()`), unpacks the Tachikoma Messages, and asserts on the full envelope: exactly-one-queued, `k='job'` + `handler='remote_manager'`, `parameters.action='sync_setting'`, the resolved option name (REMAP applied for `SYNCED_OPTIONS` vs verbatim for `PERF_TUNING_OPTIONS`), `parameters.endpoint===Settings_Sync::ENDPOINT` vs `PERF_ENDPOINT` based on which list the option lives in, `parameters.value` matches defaults-substitution-resolved value vs raw forwarded value, `parameters.queued_at` is int. Verified the assertions are real via a sanity-check mutation. The three tests had been correctly minimal under the v0.5.0-retired `enable_workers` gate; the gate's removal made them no longer assert anything meaningful.
+
+### Removed
+
+- **`Performance_Controller_Base` + its test deleted.** Defined but used only by its own test — no production CI ever extended it. The entire `includes/rest/` directory is now gone. `composer dump-autoload -o` regenerates the classmap. `tests/integration/M2BootstrapTest.php` gains a regression guard so a future revert would fail.
+- **Stale `enable_workers` references stripped from test fixtures.** The option was retired in v0.5.0; 7 test config fixtures + 3 `SettingsSyncTest` setup blocks (which set `$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1'` expecting it to gate the dispatch path) were dead. A new `tests/unit/RetiredConfigKeysTest.php` asserts no fixture references retired keys (extensible as more get retired).
+- **Stale doc-comments fixed**: `class-health-check-tick.php`'s `maybe_enqueue()` docblock claimed it gates on `enable_aggregator` strictly true (the body has no such check); `class-auto-tuner.php` referenced `PerfSettingsController` which was deleted in the service-CI cutover (updated to point at the `Performance_CI_Node::settings_update` verb).
+
+### Changed (legacy CIs migrated to schema-driven dispatch)
+
+- **`Discovery_CI_Node`, `Logger_CI_Node`, `Status_CI_Node`** migrated from `extends Command_Interpreter_Node` + in-constructor `$this->commands([...])` to `extends Service_CI_Node` + `node_schema()['commands'][]` with inline `'handler' => static fn ...` closures. Handler bodies are byte-for-byte the legacy closures — only dispatch wiring changed. Read-only verbs keep their no-auth status. `AppNodeSchemaCoverageTest` now covers all 8 application CIs uniformly (the three migrated ones declare their own `node_schema()` and are auto-scooped by the classmap walk).
+
+### Docs
+
+- **Three rounds of doc audit** against the v0.5 → v0.8 application + dashboard cutover (`enable_workers` retirement, `SSEControllerBase` deletion, every dashboard onto substrate `_http`/`_sse`/`_heartbeat` with the canonical pending-Map view contract). AGENTS.md / API.md / ARCHITECTURE.md / README.md and all three `.claude/skills/*/SKILL.md` files audited against current code. The biggest catches: `event-logger-nodes-workflow/SKILL.md`'s `enable_aggregator` polarity was REVERSED (it said "Default ON; OFF only when explicitly 0" — actual default is OFF, hubs opt in); `event-logger-nodes-debugging/SKILL.md`'s SSE section described `SSEControllerBase` as live (it was deleted in M6.10); API.md's per-CI verb tables had specific shape errors (`raw-logs` verbs misnamed, `workers` 5th verb misnamed, `topologies` missing `connect_worker_input`, `Performance_Controller_Base` "shared helper" framing in multiple files when no CI uses it).
+
 ## [0.8.1] - 2026-05-28
 
 ### Tests
