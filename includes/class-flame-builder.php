@@ -1153,7 +1153,12 @@ class Flame_Builder_Node extends Node {
 					$e['count']      += $stats['count'];
 					$e['timed_count'] += $stats['timed_count'] ?? 0;
 					$e['sum_ms']     += $stats['sum_ms'];
-					$e['min_ms']     = ( 0 === $e['min_ms'] ) ? $stats['min_ms'] : \min( $e['min_ms'], $stats['min_ms'] );
+					// Only fold min_ms from buckets that have timing; untimed-only
+					// buckets carry the PHP_INT_MAX sentinel, which must never enter
+					// the persisted index (leaves min_ms at 0 for untimed-only URLs).
+					if ( ( $stats['timed_count'] ?? 0 ) > 0 ) {
+						$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $stats['min_ms'] : \min( $e['min_ms'], $stats['min_ms'] );
+					}
 					$e['max_ms']     = \max( $e['max_ms'], $stats['max_ms'] );
 					$e['last_seen']  = \max( $e['last_seen'], $stats['last_seen'] );
 					$e['count_2xx'] += $stats['count_2xx'] ?? 0;

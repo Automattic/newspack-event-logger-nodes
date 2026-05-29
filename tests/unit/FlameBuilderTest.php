@@ -234,6 +234,71 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 150.0, $stats['flame']['value'], 1e-6 );
 	}
 
+	public function test_url_index_min_ms_zero_for_untimed_only_url(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb    = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// Worker requests carry no timing (has_timing false): count increments,
+		// timed_count stays 0, so min_ms must persist as 0 — never the sentinel.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$bucket   = $store->bucket_key_for( $now );
+		$index    = $store->get_url_index_hourly( $bucket );
+		$url_hash = Request_Builder_Node::url_hash( '/w' );
+		$this->assertArrayHasKey( $url_hash, $index );
+		$this->assertSame( 1, $index[ $url_hash ]['count'] );
+		$this->assertSame( 0, $index[ $url_hash ]['timed_count'] );
+		$this->assertSame( 0, $index[ $url_hash ]['min_ms'] );
+	}
+
+	public function test_url_index_min_ms_real_when_timed_request_mixed_in(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb    = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// One untimed (worker) + one timed request for the same URL. min_ms must
+		// reflect the real timed minimum, not the sentinel or 0.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/m', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/m', 'duration_ms' => 42.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$bucket   = $store->bucket_key_for( $now );
+		$index    = $store->get_url_index_hourly( $bucket );
+		$url_hash = Request_Builder_Node::url_hash( '/m' );
+		$this->assertArrayHasKey( $url_hash, $index );
+		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
+	}
+
+	public function test_url_index_min_ms_persisted_real_survives_later_untimed_flush(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb    = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// First flush persists a real min (42) for the URL. A later, separate
+		// flush of an untimed-only (worker) request for the same URL must not
+		// clobber the already-persisted real min — the write-side timed_count
+		// guard protects it across flushes.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/p', 'duration_ms' => 42.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/p', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$bucket   = $store->bucket_key_for( $now );
+		$index    = $store->get_url_index_hourly( $bucket );
+		$url_hash = Request_Builder_Node::url_hash( '/p' );
+		$this->assertArrayHasKey( $url_hash, $index );
+		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
+	}
+
 	public function test_flush_persists_hourly_to_memcache(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

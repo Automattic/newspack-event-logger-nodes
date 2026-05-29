@@ -478,6 +478,73 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '/articles/123', $result['data'][0]['url'] );
 	}
 
+	public function test_urls_verb_heals_poisoned_min_ms_sentinel(): void {
+		// A URL whose every persisted bucket is untimed carries the
+		// PHP_INT_MAX sentinel as min_ms (worker / timed-out requests). The
+		// display must never surface the sentinel — it heals to 0.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $store->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'aaaaaaaaaaaa' => [
+				'url'         => '/worker-only',
+				'count'       => 7,
+				'timed_count' => 0,
+				'sum_ms'      => 0.0,
+				'min_ms'      => PHP_INT_MAX,
+				'max_ms'      => 0.0,
+				'last_seen'   => 1700000001,
+			],
+		] );
+
+		$ci     = new Performance_CI_Node();
+		$result = VerbHarness::fire( $ci, 'performance', 'urls', [] );
+
+		$this->assertSame( 1, $result['total'] );
+		// JSON round-trip in the verb harness collapses 0.0 → int 0; the
+		// poisoned value would survive as a huge number, so a 0 here proves
+		// the sentinel was rejected.
+		$this->assertSame( 0, $result['data'][0]['min_ms'] );
+	}
+
+	public function test_urls_verb_min_ms_unaffected_by_untimed_sibling_bucket(): void {
+		// Same URL hash across two buckets: one untimed-only (timed_count 0,
+		// min_ms 0 from the write-side guard) and one timed (timed_count 5,
+		// min_ms 42). The read merge must fold only the timed bucket so the
+		// real minimum survives — an untimed-only sibling must not clamp it to 0.
+		$store    = new Stats_Store( 0, 86400 );
+		$bucket_b = $store->current_url_bucket();
+		$bucket_a = $store->bucket_key_for( \time() - 600 );
+
+		$store->set_url_index_hourly( $bucket_a, [
+			'bbbbbbbbbbbb' => [
+				'url'         => '/mixed',
+				'count'       => 3,
+				'timed_count' => 0,
+				'sum_ms'      => 0.0,
+				'min_ms'      => 0,
+				'max_ms'      => 0.0,
+				'last_seen'   => 1700000001,
+			],
+		] );
+		$store->set_url_index_hourly( $bucket_b, [
+			'bbbbbbbbbbbb' => [
+				'url'         => '/mixed',
+				'count'       => 5,
+				'timed_count' => 5,
+				'sum_ms'      => 500.0,
+				'min_ms'      => 42,
+				'max_ms'      => 120.0,
+				'last_seen'   => 1700000002,
+			],
+		] );
+
+		$ci     = new Performance_CI_Node();
+		$result = VerbHarness::fire( $ci, 'performance', 'urls', [] );
+
+		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 42, $result['data'][0]['min_ms'] );
+	}
+
 	public function test_urls_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$ci     = new Performance_CI_Node();
