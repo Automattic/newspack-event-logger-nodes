@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.9.0
+ * Version: 0.9.1
  * Requires Plugins: newspack-nodes
  * Text Domain: newspack-event-logger-nodes
  * Domain Path: /languages
@@ -13,7 +13,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.9.0' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.9.1' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );

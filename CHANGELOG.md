@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-29
+
 ### Fixed
 
 - **Performance URL table "Min" column no longer renders `9,223,372,036,854,775,807` (PHP_INT_MAX) for untimed-only URLs.** URLs whose requests carry no timing samples (worker requests, timed-out requests: `count > 0`, `timed_count === 0`) end their per-URL bucket with the `min_ms = PHP_INT_MAX` sentinel. Two mismatched sentinels (pending side `PHP_INT_MAX`, persisted side `0`) let the sentinel poison the persisted hourly URL index in memcache, and the dashboard surfaced it verbatim. Fixed at two layers, both keyed off `timed_count`: the flame-builder URL-index merge folds `min_ms` only from buckets with `timed_count > 0` (keeping the persisted value at 0 for untimed-only URLs and never letting the sentinel reach memcache); and the performance-CI read path now mirrors the write path — it folds `min_ms` only from buckets with `timed_count > 0`, so an untimed-only bucket (carrying `min_ms` 0 or a poisoned `PHP_INT_MAX`) never clamps the merged minimum across partitions/buckets and any already-poisoned memcache entries heal to 0 at display immediately, before TTL/salt-rotation clears them. Mixed timed + untimed URLs still report the real timed minimum.
