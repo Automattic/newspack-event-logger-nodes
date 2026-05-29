@@ -136,7 +136,6 @@ These are intentional. Don't "fix" them.
 | `includes/app/class-{discovery,status,settings,logger,events,servers,aggregator,performance}-ci.php` | Service CIs (`*_CI_Node`) mounted on `request_graph_ready`; the command-protocol REST surface |
 | `includes/admin/class-admin.php` | Application settings UI |
 | `includes/cli/class-reqgrep-command.php` | `Reqgrep_Command` — `wp nodes reqgrep` application-aware firehose filter |
-| `includes/rest/class-performance-controller-base.php` | `Performance_Controller_Base` — orphaned REST helper class (capability check, partition validation, fixed-window rate limit, `not_found_error` shape). No production CI extends or calls it; its only callers are its own unit tests. Slated for review/deletion — do NOT extend in new code |
 | `topologies/` | Per-partition node graphs as declarative `.tsl` files (firehose-workers-and-jobs, firehose-workers-only, firehose-jobs-only, request-workers, job-workers, aggregator) |
 | `src/` | React dashboard trees (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`, plus `shared` helpers) |
 | `tests/` | PHPUnit suite (unit + integration + Rest) |

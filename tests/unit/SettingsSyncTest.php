@@ -536,9 +536,6 @@ class SettingsSyncTest extends TestCase {
 		// Empty value with a remap option: maybe_queue_static_sync resolves the
 		// canonical key and falls back to file defaults. Verifies the
 		// prefix-stripping path runs without crashing.
-		// Set enable_workers to fire the queue path.
-		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
-		Config::reset();
 		Settings_Sync::suppress_sync( false );
 
 		// remote_num_segments is in SYNCED_OPTIONS — empty value triggers
@@ -551,14 +548,9 @@ class SettingsSyncTest extends TestCase {
 
 		// Doesn't crash.
 		$this->assertTrue( true );
-
-		// Cleanup.
-		unset( $GLOBALS['_wp_options']['newspack_nodes_enable_workers'] );
 	}
 
 	public function test_static_handler_with_false_value_substitutes_defaults(): void {
-		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
-		Config::reset();
 		Settings_Sync::suppress_sync( false );
 
 		// PERF_TUNING_OPTIONS entry with false → defaults lookup.
@@ -569,15 +561,11 @@ class SettingsSyncTest extends TestCase {
 		);
 
 		$this->assertTrue( true );
-
-		unset( $GLOBALS['_wp_options']['newspack_nodes_enable_workers'] );
 	}
 
 	// --- on_static_option_add path -----------------------------------------
 
 	public function test_static_handler_add_option_with_perf_tuning_option(): void {
-		$GLOBALS['_wp_options']['newspack_nodes_enable_workers'] = '1';
-		Config::reset();
 		Settings_Sync::suppress_sync( false );
 
 		Settings_Sync::on_static_option_add(
@@ -586,8 +574,6 @@ class SettingsSyncTest extends TestCase {
 		);
 
 		$this->assertTrue( true );
-
-		unset( $GLOBALS['_wp_options']['newspack_nodes_enable_workers'] );
 	}
 
 	// --- decode_payload happy path with mixed value types -------------------

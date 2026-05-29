@@ -6,7 +6,6 @@ return [
 	'segment_size'     => 1024,
 	'max_lifespan'     => 0,
 	'enable_logging'   => true,
-	'enable_workers'   => false,
 	'memcache_servers' => [],
 	'allowed_users'    => [],
 	'skip_urls'        => [],

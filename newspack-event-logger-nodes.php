@@ -122,25 +122,11 @@ $_newspack_event_logger_nodes_load = static function () use (
 
 	// Topology `<eln:KEY>` token resolver. The substrate owns the `config`
 	// namespace (logs_dir, num_partitions, segment_size, etc.); these six
-	// app-specific keys resolve straight off the application Config so the
-	// `.tsl` files read the same values they did under the old merged config.
+	// app-specific keys resolve via Config::resolve_eln_token so the
+	// derivation lives in one place (the bootstrap mirrors this).
 	\Newspack_Nodes\Core::register_config_namespace(
 		'eln',
-		static function ( string $key ) {
-			static $own = [
-				'is_hub',
-				'auto_disable_threshold',
-				'auto_protect_time_threshold',
-				'aggregator_require_https',
-				'aggregator_verify_ssl',
-				'significant_events_csv',
-			];
-			if ( ! \in_array( $key, $own, true ) ) {
-				return null;
-			}
-			$config = \Newspack_Event_Logger_Nodes\Config::load_config();
-			return $config[ $key ] ?? null;
-		}
+		[ \Newspack_Event_Logger_Nodes\Config::class, 'resolve_eln_token' ]
 	);
 
 	// Named formatters are similarly cheap (one map insert each) and the

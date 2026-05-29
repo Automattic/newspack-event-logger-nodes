@@ -88,10 +88,12 @@ class Health_Check_Tick_Node extends Node {
 	 * Enqueue a `remote_manager` health_check job if the debounce window has
 	 * elapsed and there's at least one enabled remote. Silently no-ops when:
 	 *   - within the debounce window;
-	 *   - `enable_aggregator` isn't strictly `true` (mirrors SettingsSync /
-	 *     StreamMerger polarity — defense-in-depth, the topology shouldn't
-	 *     be running at all when the gate is off);
 	 *   - no enabled remotes are registered.
+	 *
+	 * No `enable_aggregator` gate here — this node only runs inside the
+	 * aggregator topology, which only spawns when `enable_aggregator` is
+	 * on. The structural gate is upstream; this method just checks the
+	 * remote registry (architecture decision #4 in AGENTS.md).
 	 */
 	protected function maybe_enqueue(): void {
 		$now = \time();

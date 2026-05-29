@@ -149,9 +149,10 @@ class Auto_Tuner_Node extends Node {
 	private function persist( string $option, $value ): void {
 		// Always queue the remote fan-out job. AutoTuner only touches
 		// PERF_TUNING_OPTIONS (log_events, custom_events,
-		// significant_events), which PerfSettingsController owns —
-		// not /settings. Without an aggregator topology + enabled
-		// remotes, the queued job has no consumer (silent no-op).
+		// significant_events), which the Performance_CI_Node
+		// `settings_update` verb owns — not /settings. Without an
+		// aggregator topology + enabled remotes, the queued job has
+		// no consumer (silent no-op).
 		Settings_Sync::queue_job(
 			'remote_manager',
 			[
