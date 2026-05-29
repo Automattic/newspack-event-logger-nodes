@@ -41,25 +41,29 @@ The output handles multiple wire formats — both the new positional Message env
 
 ## Inspecting via the REPL
 
-Pivot into a worker to see node state:
+Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the default combined firehose+jobs topology is `firehose-workers-and-jobs`, so:
 
 ```bash
-wp nodes cli firehose-workers.p0
+wp nodes cli firehose-workers-and-jobs.p0
 ```
+
+(Other topology names: `firehose-workers-only`, `firehose-jobs-only`, `request-workers`, `job-workers`, `aggregator` — only those a deployment has actually spawned will show in `wp nodes ls`.)
 
 From the prompt:
 
 ```
 status                                  # local mode summary (no command sent to worker)
-ls -alos                                # all nodes with sinks/owners/counters
-dump request-builder                    # state of RequestBuilder, including LRU cache stats
-dump firehose:tee                       # see the Tee's targets
+ls -alst                                # all nodes with COUNT/SINK/TARGET columns (-a=all, -l=count+target, -s=sink, -t=target)
+dump request-builder                    # state of Request_Builder_Node, including LRU cache stats (alias of dump_node)
+dump firehose:tee                       # Tee's target list
 ls -a request-builder                   # all nodes that sink into request-builder
 cd request-builder                      # change cwd so subsequent verbs route there
-command_node "" ping                    # dispatch a verb at the cwd without typing the path
+command_node "" ping                    # dispatch a verb at the cwd without typing the path (aliases: command, cmd)
 ```
 
-For job-workers / request-workers / aggregator pivots, use the matching reader id (`job-workers.p0`, etc.). The default firehose+jobs topology is `firehose-workers-and-jobs` — run `wp nodes types` to discover what's actually live.
+Valid `ls` column flags are `-a`, `-c`, `-l`, `-s`, `-t` (combinable, e.g. `-alst`). There is no `-o` flag — substrate moved off the legacy `sink/owner` model to the rule-#2 `sink/target` model.
+
+For job-workers / request-workers / aggregator pivots, use the matching reader id (`job-workers.p0`, `request-workers.p0`, `aggregator.p0`, etc.). Run `wp nodes types` to see the topologies the substrate cataloged and `wp nodes ls` to see what's actually live.
 
 Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes ls' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes ls` to see what's actually live.
 
@@ -105,7 +109,7 @@ If a dashboard says "Connection lost", check (in this order):
 1. The page enqueues its build via the `page_to_tree` map in `newspack-event-logger-nodes.php` — does the slug match?
 2. `restUrl` in localized `NewspackNodesData` is bare `/wp-json/`, not pre-namespaced.
 3. The relevant service CI is mounted on `newspack_nodes/request_graph_ready` (not `rest_api_init` — service CIs replaced the per-plugin REST controllers).
-4. Browser DevTools network tab shows the actual REST URL it tried to hit (commands ride the unified `/wp-json/newspack-nodes/v1/messages` endpoint).
+4. Browser DevTools network tab shows the actual REST URL it tried to hit (commands ride the unified `/wp-json/newspack-nodes/v1/command` endpoint; SSE rides `/wp-json/newspack-nodes/v1/messages/stream`).
 
 If panels are blank but the page renders: verify memcache is actually running (`docker ps | grep memcache`). Stats path is fail-soft — empty results, not errors, when memcache is unreachable.
 
@@ -133,11 +137,16 @@ Diagnostic flow:
 # single operator switch now.
 wp option get newspack_event_logger_nodes_enable_aggregator
 
-# Aggregator status (hub-side).
-curl -sk "<site>/wp-json/newspack-nodes-aggregator/v1/status"
-
-# Per-server health (hub-side).
-curl -sk "<site>/wp-json/newspack-nodes-aggregator/v1/health"
+# Aggregator status / health / servers — there is no standalone REST
+# namespace for these any more (the legacy `newspack-nodes-aggregator/v1/*`
+# routes were retired in the Service-CI cutover; only an unused
+# `aggregatorRestUrl` localized var survives). Dispatch via the unified
+# command-protocol endpoint instead — same payload shape:
+NONCE=$(wp eval 'echo wp_create_nonce("wp_rest");' --user=<admin>)
+curl -sk -X POST "<site>/wp-json/newspack-nodes/v1/command" \
+  -H "X-WP-Nonce: $NONCE" -H "Content-Type: application/json" \
+  -d '{"to":"aggregator","verb":"status"}'
+# Swap verb for "health" or "servers" to hit the other Aggregator_CI verbs.
 ```
 
 If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cURL drops 5s of data on reconnect (single-segment seek); if your spoke is bouncing frequently the hub will see gaps.
