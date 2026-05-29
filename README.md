@@ -6,7 +6,7 @@ Application built on the [`newspack-nodes`](https://github.com/Automattic/newspa
 
 This plugin is the *application*. The *runtime* — Node, Message, Router, Topic, Partition, Worker, Supervisor, REPL — lives in [`newspack-nodes`](https://github.com/Automattic/newspack-nodes). Both plugins must be installed and active; the runtime must load first.
 
-Application classes (`Request_Builder_Node`, `Flame_Builder_Node`, `Job_Router_Node`, `Job_Worker_Node`, `Stream_Merger_Node`, `Auto_Tuner_Node`, …) are plain `Newspack_Nodes\Node` subclasses with their own `fill()` bodies — Node subclasses carry a `_Node` suffix; helpers (`Log_Manager`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`) don't. The runtime owns the wiring; this plugin owns the data-processing logic. The plugin registers its class namespace with the substrate (`Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' )`), so a topology's `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix — no per-class registration.
+Application classes (`Request_Builder_Node`, `Flame_Builder_Node`, `Job_Router_Node`, `Job_Worker_Node`, `Stream_Merger_Node`, `Auto_Tuner_Node`, …) are plain `Newspack_Nodes\Node` subclasses with their own `fill()` bodies — Node subclasses carry a `_Node` suffix; helpers (`Log_Manager`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`) don't. The runtime owns the wiring; this plugin owns the data-processing logic. The plugin registers its class namespace with the substrate (`Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', …/topologies )` for application nodes + `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' )` for service CIs), so a topology's `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix — no per-class registration.
 
 ## Quick Start
 
@@ -36,7 +36,7 @@ add_filter( 'newspack_nodes/config', static function ( $config ) {
 
 // Application keys (this plugin only).
 add_filter( 'newspack_event_logger_nodes/config', static function ( $config ) {
-    $config['enable_aggregator'] = true;   // hub mode (strict === true, default OFF)
+    $config['enable_aggregator'] = true;   // hub mode (typed bool, default OFF)
     return $config;
 } );
 ```

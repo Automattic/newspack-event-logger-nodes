@@ -41,12 +41,12 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 
 #### Adding a service CI verb
 
-Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/messages` — one envelope per request, dispatched against the addressed node. There are no per-plugin REST controllers anymore (the only one left is the `Performance_Controller_Base` helper).
+Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/command` (POST one or more envelopes per request, dispatched against the addressed node) and `/wp-json/newspack-nodes/v1/messages/stream` (GET SSE). There are no per-plugin REST controllers anymore; `Performance_Controller_Base` survives in `includes/rest/` as a tested base for any future REST shim but is not extended by any current CI.
 
-1. Pick the right service CI: `Discovery_CI`, `Status_CI`, `Settings_CI`, `Logger_CI`, `Events_CI`, `Servers_CI`, `Aggregator_CI`, `Performance_CI` (under `includes/app/`).
-2. Add a new verb entry in that CI's `node_schema()['commands']` array — `name`, `description`, `args`, optional `permission_callback`.
-3. Implement the verb method on the same class; signature follows the substrate's `(Command_Interpreter_Node $self, string $args, array $envelope = [])` convention.
-4. Capability gate defaults to `manage_options`; rate-limit and worker-tag exclusion are inherited from `Performance_Controller_Base` if your CI uses it.
+1. Pick the right service CI class (files under `includes/app/class-*-ci.php`): `Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`.
+2. Add a new verb entry in that CI's `node_schema()['commands']` array — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field; gate inside the handler instead (see step 4).
+3. Handler signature is the substrate's `static function ( <ConcreteCI>_Node $self, string $args, array $envelope = [], mixed $payload = null ): mixed` — `$self` is concretely typed to the dispatching CI so the closure can read injected dependencies (registries, stores) off it; `node_schema()` is static so anything stateful comes through `$self`.
+4. Capability gate: call `self::require_manage_options()` at the top of the handler — it's a `Service_CI_Node` static helper that throws `TM_COMMAND|TM_ERROR` for non-admins. Worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag the substrate sets pre-dispatch. `Performance_Controller_Base` (in `includes/rest/`) is a REST helper class kept as a tested base for future REST shims; **no current service CI extends it**, so don't reach for it in new code.
 5. Throw freely — the substrate wraps thrown errors as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument validation.
 6. Stats reads are fail-soft (`null` / `[]` / `false`). Slot-pool ops are fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
 
@@ -56,18 +56,26 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 
 1. Source under `src/{tree-name}/`. Build via wp-scripts (`npm run build`).
 2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the `page_to_tree` map.
-3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`).
+3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`, `CommandClient`).
 4. Hook layout per dashboard:
    - `const { ci, router, teardown: teardownSpine } = mountExospine();` — exospine returns the request-scope CI, the `_router`, and a teardown.
-   - Build the substrate boundary nodes once: `_sse` (`SseIn` — EventSource ingress), `_http` (`HttpOut` — POST /command boundary; `.client = CommandClient`), `_heartbeat` (`Heartbeat` — slot keep-alive; `target = '_http/workers'`).
-   - All nodes set `sink = ci`. Flow direction is steered with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
-   - The view node owns the React render-state and a `pending` Map for command Promises. Reply handler matches incoming envelopes against `pending` by ID, resolves/rejects, then partial-spreads onto state.
+   - Mount only the substrate boundary nodes the dashboard needs:
+     - `_sse` (`SseIn` — EventSource ingress) — required for live-stream dashboards (request log, gyroscope, error log).
+     - `_http` (`HttpOut` — POST /command boundary; `http.client = new CommandClient({ baseUrl: data.restUrl, nonce: data.nonce })`) — required for any command-fanout dashboard.
+     - `_heartbeat` (`Heartbeat` — SSE slot keep-alive; `target = '_http/workers'` — pokes the substrate's `workers/heartbeat` verb which calls `SSE_Slot_Pool::touch`). Required whenever `_sse` is mounted.
+   - A CRUD-on-demand dashboard (e.g. `aggregator-admin`) needs only `_http` + the view node. A pure live-stream dashboard needs `_sse` + `_heartbeat` + transform/view chain.
+   - All mounted nodes set `sink = ci`. Flow direction is steered with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
+   - The view node owns the React render-state (published via `setState('view', model)`) and — for command-fanout views — a `pending` Map keyed by `message[ID]` for Promise settlement. Reply handler matches incoming envelopes against `pending`, resolves/rejects, then updates `this.model` and republishes.
 5. View contract (canonical, enforced in `event-logger-nodes-review`):
-   - `pending` is a `Map` keyed by command ID for Promise settlement.
-   - TM_ERROR envelopes route through a single `_errorMessage()` helper — never thrown inline.
-   - State updates use id-wins partial spread (`{ ...prev, [id]: { ...prev[id], ...patch } }`); never `{ ...prev, [id]: patch }`.
-   - No dead REPL mounts on a production dashboard tree (the CommandInterpreter mount is for the console tree only).
-6. Reference implementations: `src/performance-request-log/hooks/useRequestLogGraph.js`, `src/event-aggregator/hooks/useAggregatorStatusGraph.js`, `src/aggregator-admin/hooks/useAggregatorAdminGraph.js`.
+   - Command-fanout views own a `pending` Map keyed by `message[ID]`; the hook stashes `{ resolve, reject }` resolvers before filling each TM_COMMAND. Pure-SSE views don't need `pending`.
+   - TM_ERROR envelopes route through an internal `_errorMessage(payload)` helper that coerces string / `{message}` / fallback payloads to a human-readable string — never thrown inline from `fill()` (that crashes React).
+   - View-model updates preserve prior data on partial replies (per-slice last-modified dedup in `performanceView`; servers-list-replaces-table in `serversView`). Don't wholesale-clobber the model on every reply — preserve sibling slices.
+   - No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on a production dashboard tree — they're for the console tree only and would collide with the debug-overlay's REPL.
+6. Reference implementations:
+   - Command-fanout (CRUD): `src/aggregator-admin/hooks/useAggregatorAdminGraph.js` + `src/aggregator-admin/nodes/serversView.js`.
+   - Command-poll: `src/event-aggregator/hooks/useAggregatorStatusGraph.js` + `src/event-aggregator/nodes/aggregatorView.js`.
+   - SSE-stream: `src/performance-request-log/hooks/useRequestLogGraph.js`.
+   - Sliced data model with incremental merge: `src/performance-dashboards/nodes/performanceView.js`.
 7. Shared hooks live in `src/shared/` (synced copies; canonical source is `newspack-nodes/src/shared/`). Import via `../shared/hooks/...`.
 
 #### Adding an application Node subclass
@@ -80,7 +88,7 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 
 1. Live under `includes/cli/class-<verb>-command.php`. Register in `newspack-event-logger-nodes.php` inside the `WP_CLI` block.
 2. Validate inputs at the boundary; long-running commands should accept an `--allow-root` flag (WP-CLI convention).
-3. **Make blocking work injectable.** If the command reads stdin in a loop, calls `sleep` between iterations, or polls a file, accept the relevant resource/iteration-count as a parameter so tests can drive it deterministically. Pattern: `process_stdin( $stream = STDIN, int $max_iterations = PHP_INT_MAX )` — production passes defaults, tests pass a `php://memory` stream and a small iteration cap. See `ReqgrepCommand::process_stdin` and `follow_mode` for the canonical examples.
+3. **Make blocking work injectable.** If the command reads stdin in a loop, calls `sleep` between iterations, or polls a file, accept the relevant resource/iteration-count as a parameter so tests can drive it deterministically. Pattern: `process_stdin( $stream = STDIN, int $max_iterations = PHP_INT_MAX )` — production passes defaults, tests pass a `php://memory` stream and a small iteration cap. See `Reqgrep_Command::process_stdin` and `Reqgrep_Command::follow_mode` for the canonical examples.
 4. Same for the readline/non-readline split — accept the TTY flag rather than calling `posix_isatty` inline; tests pass `false` to exercise the non-blocking path.
 
 #### Removing dead code
@@ -105,7 +113,9 @@ cd tests && ../vendor/bin/phpunit --enforce-time-limit
 # Filter to a specific test file or method.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit --filter RequestBuilderTest
 
-# Coverage HTML/Clover.
+# Coverage HTML/Clover. Refuses to run as root (Log_Manager refuses root;
+# the suite instantiates it and would surface as 37 spurious failures).
+# Invoke via `docker exec -u bend <container> bash tests/run-coverage.sh`.
 tests/run-coverage.sh
 ```
 

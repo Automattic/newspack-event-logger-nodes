@@ -91,7 +91,7 @@ Optional-dependency guards stay: `class_exists( 'Memcached' )` (PHP extension), 
 
 ### 12. Stream-injection + iteration-cap pattern for testability
 
-CLI commands and other blocking-work classes (`ReqgrepCommand::process_stdin`, `follow_mode`, `Cli_Stdin_Reader::drain_fh`) accept the I/O resource and an iteration cap as parameters rather than calling `STDIN` / `microtime` / `sleep` inline. Production uses defaults; tests pass `php://memory` streams and small caps to exercise loops deterministically.
+CLI commands and other blocking-work classes (`Reqgrep_Command::process_stdin`, `Reqgrep_Command::follow_mode`, the substrate's `CLI_Stdin_Reader_Node::fire`) accept the I/O resource and an iteration cap as parameters rather than calling `STDIN` / `microtime` / `sleep` inline. Production uses defaults; tests pass `php://memory` streams and small caps to exercise loops deterministically.
 
 A diff that introduces a new blocking command and bakes the streams in (no injection seam, no iteration cap) is hard to test — flag it. The cost is low: one extra ctor / method parameter.
 
@@ -103,23 +103,25 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 
 ## Service CI specifics
 
-Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs (`Discovery_CI`, `Status_CI`, `Settings_CI`, `Logger_CI`, `Events_CI`, `Servers_CI`, `Aggregator_CI`, `Performance_CI`). The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/messages`. `Performance_Controller_Base` survives as a helper the CIs lean on for capability + rate-limit gates.
+Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs (`Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`). The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` (under `includes/rest/`) is a tested REST helper class kept for any future REST shim — **no current service CI extends or uses it**, so a diff that adds an `extends Performance_Controller_Base` to a CI is reviving a pattern the cutover dropped; push back unless there's an explicit reason.
 
-- Verb declaration: in `node_schema()['commands']` — `name`, `description`, `args`, optional `permission_callback`.
-- Per-verb capability gate: `manage_options` by default; worker requests excluded via `NEWSPACK_NODES_WORKER_TYPE` env tag.
-- Per-verb rate limit: inherited from `Performance_Controller_Base` (600 req/60s); fail-open if memcache is down (so dashboard fanout doesn't break when memcache hiccups).
+- Verb declaration: in `node_schema()['commands']` — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field.
+- Per-verb capability gate: every handler calls `self::require_manage_options()` (the `Service_CI_Node` static helper) at the top; worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag set pre-dispatch.
+- Per-verb rate limit: none enforced in the CIs themselves (`Performance_Controller_Base::RATE_LIMIT_REQUESTS = 600/60s` exists but isn't wired through the Service-CI path). The SSE slot pool's connection cap is the structural backpressure on dashboards.
 - Error returns: throw freely — the substrate wraps as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument-validation paths.
 - Output escaping: `esc_html()` / `esc_attr()` / `esc_url()` for any string going into HTML; `wp_json_encode()` (not raw `json_encode`) for arrays sent over the wire.
+- Handler signature: `static function ( <ConcreteCI>_Node $self, string $args, array $envelope = [], mixed $payload = null ): mixed`. `$self` is concretely typed to the dispatching CI so the closure can read ctor-injected dependencies (registries, stores) off it.
 
 ### 14. Canonical view contract (v0.8.0)
 
-Every dashboard hook (`useRequestLogGraph`, `useAggregatorStatusGraph`, `useAggregatorAdminGraph`, …) MUST follow the same view contract — the gut of the dashboard rewrite:
+Every dashboard hook (`useRequestLogGraph`, `useAggregatorStatusGraph`, `useAggregatorAdminGraph`, `usePerformanceGraph`, …) MUST follow the same view contract — the gut of the dashboard rewrite:
 
-- View owns a `pending` Map keyed by command ID for Promise settlement. Reply handler looks up by ID, settles, then partial-spreads.
-- TM_ERROR envelopes route through a single `_errorMessage()` helper. Never throw inline from a reply handler — that crashes React.
-- State updates use id-wins partial spread: `{ ...prev, [id]: { ...prev[id], ...patch } }`. The plain `{ ...prev, [id]: patch }` shape drops sibling fields and breaks drilldown.
-- No dead REPL mounts on production dashboards. The CommandInterpreter mount is for the console tree only; copy-pasting it into a Performance dashboard adds a hidden CI that competes for `_router` traffic.
-- Substrate boundary nodes (`_sse`, `_http`, `_heartbeat`) all sink into `ci`; flow is steered via `target` / `TO`, not bespoke `sink` chains.
+- Command-fanout views (any view that issues a TM_COMMAND it expects a reply for) own a `pending` Map keyed by `message[ID]`. The hook stashes `{ resolve, reject }` resolvers under the ID before filling the message; the view's `fill()` matches by ID, settles, then updates the render model. Pure-SSE views (no outbound commands) don't need `pending`.
+- TM_ERROR envelopes route through an internal `_errorMessage(payload)` helper that coerces string / `{message}` / fallback payloads to a human-readable string before stashing in the view model's `error` field or rejecting the pending Promise. Never throw inline from `fill()` — that crashes React.
+- View-model updates preserve prior data on partial replies — per-slice last-modified dedup in `performanceView`; list-replaces-table in `serversView`; complete-wins upsert in `gyroscopeView`. A diff that wholesale-replaces the model on every reply (clobbering sibling slices / prior rows) breaks drilldown — flag it.
+- No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on production dashboards. The CommandInterpreter mount is for the console tree only; copy-pasting it into a Performance dashboard adds dead nodes that compete for `_router` traffic and collide with the debug-overlay's REPL.
+- All mounted nodes (`_sse`, `_http`, `_heartbeat`, view, transform, route) `sink = ci`; flow is steered via `target` / `TO`, not bespoke `nodeA.sink = nodeB` chains.
+- Mount only what the dashboard needs: CRUD-on-demand (aggregator-admin) gets `_http` + view only; live-stream dashboards (request log, gyroscope, error log) get `_sse` + `_heartbeat` + transform + view. Mounting unused boundary nodes is dead weight.
 
 A diff that lands a new dashboard or hook without these is a regression to the pre-canonical pattern. Flag it.
 
@@ -136,10 +138,10 @@ A diff that lands a new dashboard or hook without these is a regression to the p
 
 ## Tests
 
-- Unit tests under `tests/unit/` (flat — Service CI tests sit alongside other unit tests, e.g. `AggregatorCITest.php`, `PerformanceCITest.php`, `SettingsCITest.php`). Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
+- Unit tests under `tests/unit/` — mostly flat (Service CI tests sit alongside other unit tests, e.g. `AggregatorCITest.php`, `PerformanceCITest.php`, `SettingsCITest.php`); the only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
 - Coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
-- New Service CI verbs should have a happy-path test, an unauthorized-request test, a rate-limit test, and a memcache-failure test.
+- New Service CI verbs should have a happy-path test, an unauthorized-request test (verifying `require_manage_options` throws for non-admins), and a memcache-failure test (where the handler reads `Core::$memd`). Rate-limit tests aren't applicable — Service CI verbs aren't rate-limited at the CI layer; the SSE slot pool is the only structural backpressure.
 
 ## Common review nits that aren't bugs
 
