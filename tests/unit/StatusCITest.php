@@ -123,4 +123,24 @@ class StatusCITest extends TestCase {
 		$this->assertSame( 1, $result['num_partitions'] );
 		$this->assertSame( [], $result['topologies'] );
 	}
+
+	// ── schema-driven dispatch ─────────────────────────────────────────────
+
+	public function test_extends_service_ci_node(): void {
+		$this->assertTrue(
+			\is_subclass_of( Status_CI_Node::class, \Newspack_Nodes\Service_CI_Node::class ),
+			'Status_CI_Node must extend Service_CI_Node so its node_schema is auto-wired by the catalog scan.'
+		);
+	}
+
+	public function test_node_schema_declares_get_verb_with_category(): void {
+		$schema = Status_CI_Node::node_schema();
+
+		$this->assertIsArray( $schema );
+		$this->assertSame( 'Service', $schema['category'] );
+		$this->assertNotEmpty( $schema['description'] );
+		$this->assertArrayHasKey( 'commands', $schema );
+		$names = \array_column( $schema['commands'], 'name' );
+		$this->assertSame( [ 'get' ], $names );
+	}
 }

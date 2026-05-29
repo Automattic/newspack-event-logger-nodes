@@ -4,7 +4,11 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
+
+\class_exists( \Newspack_Event_Logger_Nodes\Job_Intake::class )
+	|| require_once \dirname( __DIR__, 2 ) . '/includes/class-job-intake.php';
 
 #[CoversClass( Settings_Sync::class )]
 class SettingsSyncTest extends TestCase {
@@ -18,6 +22,53 @@ class SettingsSyncTest extends TestCase {
 		if ( \class_exists( Config::class ) ) {
 			Config::reset();
 		}
+	}
+
+	/**
+	 * Walk a tmp base_dir's `jobintake.log/p*` partitions and return every
+	 * queued job-envelope array in the order it was written. Each line on disk
+	 * is a packed Tachikoma Message; the envelope lives in VALUE and has shape
+	 * `{ k: 'job', handler: <string>, parameters: <array>, ts: <float> }`.
+	 *
+	 * Mirrors `JobIntakeTest::read_all_jobintake_lines()` — kept local so the
+	 * Settings_Sync suite remains self-contained.
+	 *
+	 * @return array<int, array>
+	 */
+	private function read_jobintake_envelopes( string $base_dir ): array {
+		$envelopes = [];
+		$base_log  = "{$base_dir}/logs/jobintake.log";
+		if ( ! \is_dir( $base_log ) ) {
+			return $envelopes;
+		}
+		foreach ( \scandir( $base_log ) as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+			$pdir = "{$base_log}/{$entry}";
+			if ( ! \is_dir( $pdir ) ) {
+				continue;
+			}
+			foreach ( \scandir( $pdir ) as $file ) {
+				if ( ! \preg_match( '/^\d+\.log$/', $file ) ) {
+					continue;
+				}
+				$content = \file_get_contents( "{$pdir}/{$file}" );
+				if ( '' === $content ) {
+					continue;
+				}
+				foreach ( \preg_split( '/\n/', \rtrim( $content, "\n" ) ) as $line ) {
+					if ( '' === $line ) {
+						continue;
+					}
+					$msg = Message::unpacked( $line );
+					if ( \is_array( $msg[ Message::VALUE ] ?? null ) ) {
+						$envelopes[] = $msg[ Message::VALUE ];
+					}
+				}
+			}
+		}
+		return $envelopes;
 	}
 
 	// --- Instance mode (closure-dispatch with encryption) -------------------
@@ -534,38 +585,87 @@ class SettingsSyncTest extends TestCase {
 
 	public function test_static_handler_with_empty_value_substitutes_defaults_remap(): void {
 		// Empty value with a remap option: maybe_queue_static_sync resolves the
-		// canonical key and falls back to file defaults. Verifies the
-		// prefix-stripping path runs without crashing.
+		// canonical key and falls back to file defaults. Verifies the queued
+		// remote_manager envelope carries the REMAPPED remote_option name
+		// (`newspack_nodes_num_segments`, NOT the local `..._remote_...` name)
+		// and the substrate-side ENDPOINT, and that the prefix-stripped
+		// defaults lookup hits — `num_segments` lives in the substrate config
+		// defaults, so the empty value resolves to that integer default
+		// instead of being dispatched as ''.
+		$tmp = $this->make_temp_dir( 'newspack-settings-sync-' );
+		$this->use_base_dir( $tmp, [ 'num_partitions' => 1, 'num_segments' => 7 ] );
 		Settings_Sync::suppress_sync( false );
 
-		// remote_num_segments is in SYNCED_OPTIONS — empty value triggers
-		// defaults-lookup for the canonical 'num_segments' key.
 		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_remote_num_segments',
 			null,
 			''
 		);
 
-		// Doesn't crash.
-		$this->assertTrue( true );
+		$envelopes = $this->read_jobintake_envelopes( $tmp );
+		$this->assertCount( 1, $envelopes, 'one remote_manager job queued' );
+		$this->assertSame( 'job', $envelopes[0]['k'] );
+		$this->assertSame( 'remote_manager', $envelopes[0]['handler'] );
+
+		$params = $envelopes[0]['parameters'];
+		$this->assertSame( 'sync_setting', $params['action'] );
+		// is_remap branch: local→remote name remap on the wire.
+		$this->assertSame( 'newspack_nodes_num_segments', $params['option'] );
+		// SYNCED_OPTIONS entries route to the substrate `/settings` verb,
+		// NOT the perf-tuning endpoint.
+		$this->assertSame( Settings_Sync::ENDPOINT, $params['endpoint'] );
+		// Defaults substitution: '' → file-backed default. The per-test config
+		// pinned num_segments=7; the empty value must resolve to that.
+		$this->assertSame( 7, $params['value'] );
+		$this->assertIsInt( $params['queued_at'] );
+
+		$this->rmdir_recursive( $tmp );
 	}
 
 	public function test_static_handler_with_false_value_substitutes_defaults(): void {
+		// PERF_TUNING_OPTIONS entry with false → defaults lookup. Verifies that
+		// the (admin form returning bool false for an empty multiselect)
+		// branch resolves to the file-backed `log_events` default rather
+		// than dispatching the raw `false` (which would fail server-side
+		// sanitization for typed array options) — AND that the perf-tuning
+		// option routes to the PERF_ENDPOINT, not the substrate ENDPOINT.
+		$tmp = $this->make_temp_dir( 'newspack-settings-sync-' );
+		$this->use_base_dir( $tmp, [ 'num_partitions' => 1, 'log_events' => [ 'init', 'wp_loaded' ] ] );
 		Settings_Sync::suppress_sync( false );
 
-		// PERF_TUNING_OPTIONS entry with false → defaults lookup.
 		Settings_Sync::on_static_option_update(
 			'newspack_event_logger_nodes_log_events',
 			null,
 			false
 		);
 
-		$this->assertTrue( true );
+		$envelopes = $this->read_jobintake_envelopes( $tmp );
+		$this->assertCount( 1, $envelopes );
+		$this->assertSame( 'remote_manager', $envelopes[0]['handler'] );
+
+		$params = $envelopes[0]['parameters'];
+		$this->assertSame( 'sync_setting', $params['action'] );
+		// is_perf branch: no name remap.
+		$this->assertSame( 'newspack_event_logger_nodes_log_events', $params['option'] );
+		// PERF_TUNING_OPTIONS route to the perf-tuning verb, NOT the substrate
+		// settings verb. Crossing the two misroutes server-side.
+		$this->assertSame( Settings_Sync::PERF_ENDPOINT, $params['endpoint'] );
+		// false → defaults lookup hit; raw false must NOT survive to the wire.
+		$this->assertSame( [ 'init', 'wp_loaded' ], $params['value'] );
+
+		$this->rmdir_recursive( $tmp );
 	}
 
 	// --- on_static_option_add path -----------------------------------------
 
 	public function test_static_handler_add_option_with_perf_tuning_option(): void {
+		// `on_static_option_add` is the 2-arg add_option-side handler; this
+		// covers the add path for a PERF_TUNING_OPTIONS entry whose value is
+		// a non-empty array (defaults-substitution block skipped). Verifies
+		// the queued envelope carries the literal value through unchanged
+		// and lands on PERF_ENDPOINT (perf tuning verb), not ENDPOINT.
+		$tmp = $this->make_temp_dir( 'newspack-settings-sync-' );
+		$this->use_base_dir( $tmp, [ 'num_partitions' => 1 ] );
 		Settings_Sync::suppress_sync( false );
 
 		Settings_Sync::on_static_option_add(
@@ -573,7 +673,18 @@ class SettingsSyncTest extends TestCase {
 			[ '/foo' ]
 		);
 
-		$this->assertTrue( true );
+		$envelopes = $this->read_jobintake_envelopes( $tmp );
+		$this->assertCount( 1, $envelopes );
+		$this->assertSame( 'remote_manager', $envelopes[0]['handler'] );
+
+		$params = $envelopes[0]['parameters'];
+		$this->assertSame( 'sync_setting', $params['action'] );
+		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $params['option'] );
+		$this->assertSame( Settings_Sync::PERF_ENDPOINT, $params['endpoint'] );
+		// Non-empty array bypasses the defaults block — value travels verbatim.
+		$this->assertSame( [ '/foo' ], $params['value'] );
+
+		$this->rmdir_recursive( $tmp );
 	}
 
 	// --- decode_payload happy path with mixed value types -------------------

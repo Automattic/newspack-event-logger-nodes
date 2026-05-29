@@ -131,4 +131,24 @@ class LoggerCITest extends TestCase {
 		$this->assertIsArray( $result['categories'] );
 		$this->assertNotEmpty( $result['categories'] );
 	}
+
+	// ── schema-driven dispatch ─────────────────────────────────────────────
+
+	public function test_extends_service_ci_node(): void {
+		$this->assertTrue(
+			\is_subclass_of( Logger_CI_Node::class, \Newspack_Nodes\Service_CI_Node::class ),
+			'Logger_CI_Node must extend Service_CI_Node so its node_schema is auto-wired by the catalog scan.'
+		);
+	}
+
+	public function test_node_schema_declares_config_and_hooks_verbs(): void {
+		$schema = Logger_CI_Node::node_schema();
+
+		$this->assertIsArray( $schema );
+		$this->assertSame( 'Service', $schema['category'] );
+		$this->assertNotEmpty( $schema['description'] );
+		$this->assertArrayHasKey( 'commands', $schema );
+		$names = \array_column( $schema['commands'], 'name' );
+		$this->assertEqualsCanonicalizing( [ 'config', 'hooks' ], $names );
+	}
 }
