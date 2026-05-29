@@ -5,9 +5,10 @@
  * Real-time scrolling log of completed requests.
  *
  * This is a THIN view over the `requestlog:*` node graph (mounted by
- * `useRequestLogGraph`). The graph owns all data: `requestlog:stream` holds the
- * SSE connection, `requestlog:transform` turns envelopes into rows, and
- * `requestlog:view` holds the buffer + view model. This component only renders.
+ * `useRequestLogGraph`). The graph owns all data: `_sse` holds the EventSource
+ * and routes envelopes directly to `requestlog:view`, which defensively shapes
+ * each completed-request envelope (drop missing-url, clip url + UA, default-fill)
+ * and holds the buffer + view model. This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
  * - LOW frequency: `useNodeState('requestlog:view','view')` for

@@ -2,16 +2,16 @@
 /**
  * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
  * substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes (same boundary
- * useRequestLogGraph uses), plus the existing `perferrors:route` /
- * `perferrors:transform` / `perferrors:view` chain, all on the exospine
- * (`_command_interpreter` → `_router`). The bespoke `perferrors:stream` Node
- * and its inlined slot-heartbeat loop are gone.
+ * useRequestLogGraph uses). The chain collapsed to `_sse → perferrors:view`
+ * directly; the dead `perferrors:route` classifier and the
+ * `perferrors:transform` Callback are gone — the view's `fill()` shapes raw
+ * envelopes inline.
  *
  * EventSource is faked via `global.EventSource`; SseIn's connection logic is
  * unmocked here — we drive a `msg` event through the fake EventSource and
- * assert it actually routes stream → route → transform → view. The slot
- * keep-alive bridge mirrors useRequestLogGraph exactly: a `connected` envelope
- * populates `_heartbeat.{slot,partition}`, and the Router TIMER drives
+ * assert it actually routes _sse → view. The slot keep-alive bridge mirrors
+ * useRequestLogGraph exactly: a `connected` envelope populates
+ * `_heartbeat.{slot,partition}`, and the Router TIMER drives
  * `heartbeat.onTimer` so the slot keep-alive actually fires.
  *
  * usePageVisibility is mocked to a controllable value so the visibility effect
@@ -71,10 +71,10 @@ const ROUTER = '_router';
 const SSE = '_sse';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-const ROUTE = 'perferrors:route';
-const TRANSFORM = 'perferrors:transform';
 const VIEW = 'perferrors:view';
-const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
+const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
+// Names that MUST NOT be registered any more — the dead route/transform nodes.
+const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
 
 // Build a `connected` envelope as the SseConnector recognizes it.
 function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
@@ -94,7 +94,7 @@ function errorEnvelope( rid, value ) {
 }
 
 describe( 'useErrorLogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the six graph nodes, each sinking into the CI', () => {
+	test( 'mounts the backbone + the four graph nodes, each sinking into the CI', () => {
 		renderHook( () => useErrorLogGraph() );
 		const ci = Core.node( CI );
 		expect( ci ).toBeTruthy();
@@ -106,10 +106,16 @@ describe( 'useErrorLogGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → route → transform → view (and heartbeat → _http/workers)', () => {
+	test( 'does not mount the retired perferrors:route / perferrors:transform nodes', () => {
 		renderHook( () => useErrorLogGraph() );
-		expect( Core.node( SSE ).target ).toBe( ROUTE );
-		expect( Core.node( TRANSFORM ).target ).toBe( VIEW );
+		for ( const name of REMOVED_NODE_NAMES ) {
+			expect( Core.node( name ) ).toBeNull();
+		}
+	} );
+
+	test( 'steers flow with targets: _sse → view directly (and heartbeat → _http/workers)', () => {
+		renderHook( () => useErrorLogGraph() );
+		expect( Core.node( SSE ).target ).toBe( VIEW );
 		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
 	} );
 

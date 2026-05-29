@@ -3,6 +3,19 @@ import fnv1a from '../../shared/utils/fnv1a';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const RPS_WINDOW_MS = 10000;
+// Defensive bounds for raw envelope VALUEs. Mirrors the legacy
+// `transformCompletedLine` clip behavior — kept here so the view is the single
+// place that knows envelope → render-entry mapping.
+const MAX_URL_LENGTH = 2000;
+const MAX_UA_LENGTH = 500;
+
+// Clip a string at `max`, appending an ellipsis. Non-strings pass through.
+const clip = ( s, max ) => {
+	if ( 'string' !== typeof s ) {
+		return s;
+	}
+	return s.length > max ? s.substring( 0, max ) + '...' : s;
+};
 
 /**
  * Generate URL hash for linking to URL detail (path only, no query string).
@@ -29,12 +42,15 @@ const urlHash = ( url ) => {
  *   `useNodeState('requestlog:view','view')`.
  *
  * `fill()` accepts two TM_STRUCT shapes:
- * - a row (`VALUE` = the mapped completed-request from `requestlog:transform`):
- *   enriched + appended newest-first to a capped buffer (unless paused), updating
- *   requests/second + last-event time.
+ * - a row (`VALUE` = the raw completed-request envelope from `_sse`): defensively
+ *   shaped (drop missing-url, clip url@2000, clip user_agent@500, default-fill)
+ *   then enriched + appended newest-first to a capped buffer (unless paused),
+ *   updating requests/second + last-event time.
  * - a control (`VALUE = { action, … }`): `pause`, `clear`, `connection`.
  *
  * Buffer + RPS + entry-enrichment logic migrated verbatim from `RequestStream.js`.
+ * The defensive shaping was inlined from the (now-deleted) `requestlog:transform`
+ * node when the chain collapsed to `_sse → requestlog:view`.
  */
 class RequestLogViewNode extends Node {
 	constructor( maxEntries ) {
@@ -65,12 +81,23 @@ class RequestLogViewNode extends Node {
 		}
 	}
 
-	// A mapped completed-request row: enrich into the render entry shape, newest-
-	// first, capped. Mirrors RequestStream's handleMessage.
+	// A raw completed-request envelope's VALUE: defensively shape (drop
+	// missing-url, clip url + UA, default-fill) then enrich into the render
+	// entry shape, newest-first, capped. The defensive shaping is inlined from
+	// the dropped `requestlog:transform` node — the view is the single place
+	// that knows envelope → render-entry mapping.
 	_appendRow( req ) {
 		if ( this.paused ) {
 			return;
 		}
+		// Defensive: VALUE must be a plain object with a url.
+		if ( ! req || 'object' !== typeof req || Array.isArray( req ) ) {
+			return;
+		}
+		if ( ! req.url ) {
+			return;
+		}
+		const url = clip( req.url, MAX_URL_LENGTH );
 		this.entryCounter += 1;
 		this.entries.unshift( {
 			// Monotonic per-mount counter — used as the React list key so two
@@ -79,15 +106,15 @@ class RequestLogViewNode extends Node {
 			// same second). Without it the virtualized list reuses one node for
 			// both and scrolling jumps.
 			seq: this.entryCounter,
-			rid: req.rid,
-			url: req.url,
-			urlHash: urlHash( req.url ),
-			method: req.method,
-			duration_ms: req.duration_ms,
-			status_code: req.status_code,
-			timestamp: req.end_time,
-			remote_addr: req.remote_addr,
-			user_agent: req.user_agent,
+			rid: req.rid || '',
+			url,
+			urlHash: urlHash( url ),
+			method: req.method || 'GET',
+			duration_ms: req.duration_ms || 0,
+			status_code: req.status_code || 0,
+			timestamp: req.end_time || 0,
+			remote_addr: req.remote_addr || '',
+			user_agent: clip( req.user_agent || '', MAX_UA_LENGTH ),
 			isEven: this.entryCounter % 2 === 0,
 		} );
 		if ( this.entries.length > this.maxEntries ) {

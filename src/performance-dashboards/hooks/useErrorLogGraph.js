@@ -8,17 +8,18 @@
  *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
  *   _heartbeat  (Heartbeat — slot keep-alive; target = `_http/workers`)
  *
- * Plus the existing dashboard chain (unchanged factories, only retargeted):
+ * Plus the single dashboard node — the view-model:
  *
- *   perferrors:route       (data → transform, control → view)
- *   perferrors:transform   (target = view)
- *   perferrors:view        (the view-model node the React view reads)
+ *   perferrors:view  (the view-model node the React view reads)
+ *
+ * The chain collapsed in v0.x: `_sse` targets the view directly. The old
+ * `perferrors:route` classifier was dead (its `controlTarget` was never
+ * reached — the substrate emits `KEY='connected'` AND snoops it off before it
+ * reaches subscribers), and `perferrors:transform` was a one-line dispatch
+ * that's now inline in the view's `fill()`.
  *
  * Every node sinks into the CI; flow is steered by each node's `target`. The
- * bespoke `perferrors:stream` Node and its inlined slot-heartbeat loop are
- * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke.
- *
- * The slot bridge mirrors useRequestLogGraph (and useConsoleGraph): a
+ * slot bridge mirrors useRequestLogGraph (and useConsoleGraph): a
  * `connected`-event subscriber on `_sse` reads `payload.slot` / `.partition`
  * and pushes them into `_heartbeat`. The page-visibility / pause effect drives
  * `sse.start()` / `sse.close()` (and `heartbeat.clearSlot()` on close).
@@ -26,9 +27,7 @@
  * Returns the thin control callbacks the view calls — `setPaused` and
  * `clear`. These are dispatched HOOK-DIRECT to the view node
  * (`viewRef.current.fill`), an external bridge: they are NOT routed through
- * the graph (only connection-status would be, via the route — and `_sse` no
- * longer synthesizes a connection-status control, so that vestigial route is
- * dormant). Torn down on unmount: the SSE source is closed, the graph nodes
+ * the graph. Torn down on unmount: the SSE source is closed, the graph nodes
  * are unregistered, then the exospine.
  *
  * Exospine isolation: this hook calls `mountExospine()` for its own React
@@ -50,8 +49,6 @@ import {
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createPerfErrorsRoute } from '../nodes/perfErrorsRoute';
-import { createPerfErrorsTransform } from '../nodes/perfErrorsTransform';
 import { createPerfErrorsView } from '../nodes/perfErrorsView';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
@@ -59,13 +56,11 @@ import usePageVisibility from '../../shared/hooks/usePageVisibility';
 const SSE = '_sse';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-// Dashboard chain.
-const ROUTE = 'perferrors:route';
-const TRANSFORM = 'perferrors:transform';
+// Dashboard view-model.
 const VIEW = 'perferrors:view';
 // Every named node this graph mounts — unregistered on teardown (exospine
 // nodes are removed separately by `teardownSpine()`).
-const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, ROUTE, TRANSFORM, VIEW ];
+const GRAPH_NODE_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -118,7 +113,7 @@ export function useErrorLogGraph( opts = {} ) {
 		}`;
 		sse.setName( SSE );
 		sse.sink = ci;
-		sse.target = ROUTE;
+		sse.target = VIEW;
 
 		const http = new HttpOut();
 		http.client = new CommandClient( {
@@ -136,18 +131,8 @@ export function useErrorLogGraph( opts = {} ) {
 		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
 		heartbeat.target = `${ HTTP }/workers`;
 
-		// Dashboard chain — unchanged factories (controlTarget points at the view
-		// even though `_sse` no longer synthesizes a connection-status control;
-		// the dormant route stays wired for substrate uniformity).
-		const route = createPerfErrorsRoute( ROUTE, {
-			dataTarget: TRANSFORM,
-			controlTarget: VIEW,
-		} );
-		const transform = createPerfErrorsTransform( TRANSFORM );
+		// The view-model — shapes raw envelopes into rows inline.
 		const view = createPerfErrorsView( VIEW, { maxEntries } );
-		route.sink = ci;
-		transform.sink = ci;
-		transform.target = VIEW;
 		view.sink = ci;
 
 		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
