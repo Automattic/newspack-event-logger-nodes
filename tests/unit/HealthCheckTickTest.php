@@ -75,13 +75,13 @@ class HealthCheckTickTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// Construction + sibling CI wiring.
+	// Construction + sibling interpreter wiring.
 	// -------------------------------------------------------------------------
 
-	public function test_health_check_tick_has_no_sibling_ci(): void {
+	public function test_health_check_tick_has_no_sibling_interpreter(): void {
 		// No config verbs — the periodic tick starts from StreamMerger's
 		// name() lifecycle, not a TSL verb — so the base ctor attaches no
-		// sibling :config CI.
+		// sibling :config interpreter.
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
 		$this->assertNull( $h->interpreter() );

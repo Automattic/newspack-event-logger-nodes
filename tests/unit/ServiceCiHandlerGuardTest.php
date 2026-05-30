@@ -17,7 +17,7 @@
  *   - test_migrated_cis_appear_in_substrate_class_catalog_as_service: fires the
  *     substrate's `Classes_CI list` and asserts every CI's shell_name is in the
  *     catalog with `category === 'Service'`. A future typo dropping a category
- *     back to ''/'Hidden' would silently re-hide the CI; this fails loudly.
+ *     back to ''/'Hidden' would silently re-hide the interpreter; this fails loudly.
  *   - test_every_schema_verb_installs_as_a_command: for each CI, asserts every
  *     verb in its node_schema()['commands'] is a key in `commands()` — the
  *     schema→commands derivation actually installed each verb (symmetry with the
@@ -68,7 +68,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 *
 	 * @dataProvider provide_migrated_cis
 	 *
-	 * @param callable $factory Builds the CI under a captured stderr handler.
+	 * @param callable $factory Builds the interpreter under a captured stderr handler.
 	 */
 	public function test_migrated_ci_emits_no_handlerless_warning( callable $factory ): void {
 		$buf = '';
@@ -92,7 +92,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 * shell_name appears with `category === 'Service'`.
 	 *
 	 * Non-vacuous: the `category === 'Service'` assertion can fail — it would if
-	 * a CI's node_schema category were dropped back to ''/'Hidden' (the substrate
+	 * an interpreter's node_schema category were dropped back to ''/'Hidden' (the substrate
 	 * filters those out of the catalog entirely, so the shell_name would simply
 	 * be absent and assertArrayHasKey fails first; if it were some OTHER
 	 * non-empty category it would appear but assertSame catches it). A
@@ -145,13 +145,13 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 *
 	 * @dataProvider provide_migrated_cis
 	 *
-	 * @param callable $factory Builds the CI instance.
+	 * @param callable $factory Builds the interpreter instance.
 	 */
 	public function test_every_schema_verb_installs_as_a_command( callable $factory ): void {
-		$ci = $factory();
-		$this->assertInstanceOf( Command_Interpreter_Node::class, $ci );
+		$interpreter = $factory();
+		$this->assertInstanceOf( Command_Interpreter_Node::class, $interpreter );
 
-		$schema = $ci::node_schema();
+		$schema = $interpreter::node_schema();
 		$verbs  = \array_filter(
 			$schema['commands'] ?? [],
 			static fn ( $v ): bool => \is_array( $v ) && '' !== (string) ( $v['name'] ?? '' )
@@ -161,13 +161,13 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			'migrated CI declares no named verbs — schema scan is vacuous'
 		);
 
-		$commands = $ci->commands();
+		$commands = $interpreter->commands();
 		foreach ( $verbs as $verb ) {
 			$name = (string) $verb['name'];
 			$this->assertArrayHasKey(
 				$name,
 				$commands,
-				"schema verb '{$name}' on " . $ci::class . ' did not install as a command — schema→commands derivation dropped it'
+				"schema verb '{$name}' on " . $interpreter::class . ' did not install as a command — schema→commands derivation dropped it'
 			);
 		}
 	}
@@ -182,16 +182,16 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
 			'Aggregator_CI'  => [
 				static function (): Aggregator_CI_Node {
-					$ci           = new Aggregator_CI_Node();
-					$ci->registry = new Server_Registry();
-					return $ci;
+					$interpreter           = new Aggregator_CI_Node();
+					$interpreter->registry = new Server_Registry();
+					return $interpreter;
 				},
 			],
 			'Servers_CI'     => [
 				static function (): Servers_CI_Node {
-					$ci           = new Servers_CI_Node();
-					$ci->registry = new Server_Registry();
-					return $ci;
+					$interpreter           = new Servers_CI_Node();
+					$interpreter->registry = new Server_Registry();
+					return $interpreter;
 				},
 			],
 		];

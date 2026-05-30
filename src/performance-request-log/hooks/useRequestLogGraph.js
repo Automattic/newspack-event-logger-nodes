@@ -3,15 +3,15 @@
  * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
  * substrate's I/O boundary nodes — the same ones the topology console uses:
  *
- *   _sse        (SseIn — EventSource ingress, args `'completed {restUrl} {nonce}'`)
- *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
- *   _heartbeat  (Heartbeat — slot keep-alive; target = `_sse/workers`)
+ *   _sse        (SseInNode — EventSource ingress, args `'completed {restUrl} {nonce}'`)
+ *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
+ *   _heartbeat  (HeartbeatNode — slot keep-alive; target = `_sse/workers`)
  *
  * Plus the single view node:
  *
  *   requestlog:view        (the view-model node the React view reads)
  *
- * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * chain collapsed in May 2026 from `_sse → requestlog:route →
  * requestlog:transform → requestlog:view` to a direct `_sse → requestlog:view`.
  * The route node was a pass-through (the substrate's SseConnector snoops the
@@ -30,16 +30,16 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	SseIn,
-	HttpOut,
-	Heartbeat,
+	SseInNode,
+	HttpOutNode,
+	HeartbeatNode,
 	CommandClient,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createRequestLogView } from '../nodes/requestLogView';
+import { createRequestLogView } from '../nodes/request-log-view-node';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
 // The I/O boundary nodes mounted from the substrate runtime.
@@ -91,38 +91,42 @@ export function useRequestLogGraph( opts = {} ) {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, router, teardown: teardownSpine } = mountExospine();
+		// The canonical backbone every node clips onto: everything → interpreter → router.
+		const {
+			interpreter,
+			router,
+			teardown: teardownSpine,
+		} = mountExospine();
 
 		// I/O boundary nodes — the same ones useConsoleGraph mounts.
 		// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
-		const sse = new SseIn();
+		const sse = new SseInNode();
 		sse.arguments = `completed ${ data.restUrl || '/wp-json/' } ${
 			data.nonce || ''
 		}`;
 		sse.setName( SSE );
-		sse.sink = ci;
+		sse.sink = interpreter;
 		sse.target = VIEW;
 
-		const http = new HttpOut();
+		const http = new HttpOutNode();
 		http.client = new CommandClient( {
 			baseUrl: data.restUrl || '/wp-json/',
 			nonce: data.nonce || '',
 		} );
 		http.setName( HTTP );
-		http.sink = ci;
+		http.sink = interpreter;
 
-		const heartbeat = new Heartbeat();
+		const heartbeat = new HeartbeatNode();
 		heartbeat.setName( HEARTBEAT );
-		heartbeat.sink = ci;
+		heartbeat.sink = interpreter;
 		// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
 		// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
-		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
+		// discarded by HeartbeatNode.fill anyway, so broadcast routing is fine.
 		heartbeat.target = `${ HTTP }/workers`;
 
 		// The view node — the single dashboard consumer of `_sse`.
 		const view = createRequestLogView( VIEW, { maxEntries } );
-		view.sink = ci;
+		view.sink = interpreter;
 
 		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
 		// slot into `_heartbeat`. Mirrors useConsoleGraph.js:157-175.
@@ -143,7 +147,7 @@ export function useRequestLogGraph( opts = {} ) {
 			return true;
 		} );
 
-		// Heartbeat hitchhikes the backbone's TIMER (started in mountExospine).
+		// HeartbeatNode hitchhikes the backbone's TIMER (started in mountExospine).
 		router.register( 'TIMER', HEARTBEAT, () => heartbeat.onTimer() );
 
 		sseRef.current = sse;

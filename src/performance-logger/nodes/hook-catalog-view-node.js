@@ -4,7 +4,7 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * `hookcatalog:view` — owns the Performance Logger hook-catalog view model.
  *
  * Post-migration to substrate-canonical wiring, `fill()` receives the raw reply
- * Messages HttpOut feeds back from POST /command: the router peels the reply's
+ * Messages HttpOutNode feeds back from POST /command: the router peels the reply's
  * TO (= `hookcatalog:view`, stamped from the outbound FROM by the server's
  * reply pivot) and delivers them here. VALUE is the `{ name, payload }`
  * envelope.
@@ -21,6 +21,18 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * `useNodeState('hookcatalog:view','view')`. Mirrors servers:view.
  */
 class HookCatalogViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Performance Logger hook-catalog view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor() {
 		super();
 		this.model = {

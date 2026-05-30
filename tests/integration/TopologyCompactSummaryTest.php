@@ -85,7 +85,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	/**
-	 * Load `<name>.tsl` against a CI+Router pair, mirroring the scaffolding
+	 * Load `<name>.tsl` against an interpreter+Router pair, mirroring the scaffolding
 	 * WorkerBase::build_scaffolding() builds at spawn time:
 	 *
 	 *   _command_interpreter --sink--> _router
@@ -100,12 +100,12 @@ class TopologyCompactSummaryTest extends TestCase {
 		$router = new Router_Node();
 		$router->name( '_router' );
 
-		$ci = new Command_Interpreter_Node();
-		$ci->name( '_command_interpreter' );
-		$ci->sink( $router );
+		$interpreter = new Command_Interpreter_Node();
+		$interpreter->name( '_command_interpreter' );
+		$interpreter->sink( $router );
 
-		Topology_Loader::load( $name, 0, $ci );
-		return $ci;
+		Topology_Loader::load( $name, 0, $interpreter );
+		return $interpreter;
 	}
 
 	public function test_firehose_workers_and_jobs_registers_compact_summary_fanout(): void {

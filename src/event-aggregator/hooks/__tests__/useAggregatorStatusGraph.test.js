@@ -2,12 +2,12 @@
  * useAggregatorStatusGraph tests — the Aggregator Status dashboard graph clipped
  * onto the substrate's I/O boundary node (exospine + `_http`), plus the
  * `aggregator:view` model node. Migrated from the bespoke `aggregator:poll` Node to the
- * substrate's HttpOut: the hook owns the setInterval and dispatches a
- * TM_COMMAND through the CI (FROM=`aggregator:view`, TO=`_http/aggregator`,
+ * substrate's HttpOutNode: the hook owns the setInterval and dispatches a
+ * TM_COMMAND through the interpreter (FROM=`aggregator:view`, TO=`_http/aggregator`,
  * verb=`status`); the reply routes via TO=FROM back into the view node, which
  * unwraps `value.payload` for the render model.
  *
- * Every node sinks into the CI (rule #2); flow is steered ONLY by each node's
+ * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
  * `target` (the router peels TO and delivers). _http.client is injected via
  * `opts.commandClient` so the hook never touches the network. NO page-visibility
  * gating — the old AggregatorStatus polled unconditionally.
@@ -28,7 +28,7 @@ import {
 } from '@newspack-nodes/runtime';
 import { useAggregatorStatusGraph } from '../useAggregatorStatusGraph';
 
-const CI = '_command_interpreter';
+const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
 const VIEW = 'aggregator:view';
@@ -36,7 +36,7 @@ const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
 // A fake CommandClient: records each batch its postBatch is given, and
 // returns a canned reply Message (or a deferred promise tests resolve later).
-// buildMessage is the real shape used by HttpOut to mint a
+// buildMessage is the real shape used by HttpOutNode to mint a
 // connect_worker_input — but the aggregator never targets a worker reader,
 // so it isn't exercised here; we still expose it for the seam.
 function makeFakeClient( replyPayload = {}, now = null ) {
@@ -78,18 +78,18 @@ beforeEach( () => {
 } );
 
 describe( 'useAggregatorStatusGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the two graph nodes, each sinking into the CI', () => {
+	test( 'mounts the backbone + the two graph nodes, each sinking into the interpreter', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
-		const ci = Core.node( CI );
-		expect( ci ).toBeTruthy();
+		const interpreter = Core.node( INTERPRETER );
+		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		for ( const name of ALL_GRAPH_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
-			expect( node.sink ).toBe( ci );
+			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
@@ -135,7 +135,7 @@ describe( 'useAggregatorStatusGraph — exospine + I/O boundary wiring', () => {
 } );
 
 describe( 'useAggregatorStatusGraph — end-to-end routing through the exospine', () => {
-	test( 'an immediate poll reply routes _http → CI → router → aggregator:view and lands in the view model', async () => {
+	test( 'an immediate poll reply routes _http → interpreter → router → aggregator:view and lands in the view model', async () => {
 		const status = {
 			server1: {
 				id: 'server1',
@@ -232,7 +232,7 @@ describe( 'useAggregatorStatusGraph — teardown', () => {
 			useAggregatorStatusGraph( { commandClient: client } )
 		);
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
@@ -260,7 +260,7 @@ describe( 'useAggregatorStatusGraph — teardown', () => {
 		);
 		unmount();
 		// Resolve AFTER unmount; if the resolution path tries to fill() a
-		// detached CI it should NOT throw (HttpOut tolerates a null sink).
+		// detached interpreter it should NOT throw (HttpOutNode tolerates a null sink).
 		expect( () => {
 			const reply = newMessage();
 			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;

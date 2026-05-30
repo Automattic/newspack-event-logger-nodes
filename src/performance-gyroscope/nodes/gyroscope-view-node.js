@@ -34,6 +34,18 @@ const RPS_WINDOW_MS = 10000;
  * `updateRequestsPerSecond` + `handleBeforeConnect`).
  */
 class GyroscopeViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the in-flight gyroscope request view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor() {
 		super();
 		this.requests = new Map(); // All requests keyed by rid.

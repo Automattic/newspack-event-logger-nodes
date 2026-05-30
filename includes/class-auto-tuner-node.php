@@ -176,7 +176,7 @@ class Auto_Tuner_Node extends Node {
 
 	public static function node_schema(): array {
 		// Hidden: AutoTuner is instantiated as a sibling/patron of
-		// FlameBuilder (handled via $ci->patron()), not built directly
+		// FlameBuilder (handled via $interpreter->patron()), not built directly
 		// in TSL. Keeping it out of the palette prevents operators from
 		// wiring up a second instance that nothing routes messages to.
 		return [

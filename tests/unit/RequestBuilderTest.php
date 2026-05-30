@@ -540,9 +540,9 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 0, $rb->cache_size() );
 	}
 
-	// ── A1: sibling-CI + node_schema ─────────────────────────
+	// ── A1: sibling-interpreter + node_schema ─────────────────────────
 
-	public function test_request_builder_constructs_sibling_ci(): void {
+	public function test_request_builder_constructs_sibling_interpreter(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'req_builder' );
 

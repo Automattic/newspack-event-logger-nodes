@@ -96,8 +96,8 @@ class Stream_Merger_Node extends Node {
 		$this->health_check = new Health_Check_Tick_Node();
 		$this->health_check->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
-		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
+		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
+		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
 		parent::__construct();
 	}
 
@@ -156,8 +156,8 @@ class Stream_Merger_Node extends Node {
 		}
 		$this->remote_nodes = [];
 		// Full remove_node (not a bare unregister): Health_Check_Tick auto-wires
-		// its own :config CI from node_schema, and only remove_node() cascades
-		// that sibling CI's Core registration — a bare unregister would orphan it
+		// its own :config interpreter from node_schema, and only remove_node() cascades
+		// that sibling interpreter's Core registration — a bare unregister would orphan it
 		// and collide on a same-process name-recycle.
 		if ( null !== $this->health_check && '' !== $this->health_check->name() ) {
 			$this->health_check->remove_node();
@@ -229,7 +229,7 @@ class Stream_Merger_Node extends Node {
 	 * from the connect_node() lifecycle hook once the target is wired, so a
 	 * worker restart re-loads remotes from current registry state without a TSL
 	 * verb line. add_remote() reads $this->sink / $this->target, both set by the
-	 * time connect_node() runs (make_node sets the CI sink; connect_node sets the
+	 * time connect_node() runs (make_node sets the interpreter sink; connect_node sets the
 	 * target), so children inherit the merger's downstream wiring.
 	 */
 	public function load_remotes_from_registry(): void {
@@ -685,11 +685,11 @@ class Stream_Merger_Node extends Node {
 					'args'        => [
 						[ 'name' => 'verify', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_verify_ssl>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \strtolower( \trim( $args ) );
 						$bool = ( 'true' === $args || '1' === $args );
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_verify_ssl( $bool );
 						return 'ok';
 					},
@@ -700,11 +700,11 @@ class Stream_Merger_Node extends Node {
 					'args'        => [
 						[ 'name' => 'require', 'type' => 'bool', 'required' => true, 'default' => '<config:aggregator_require_https>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \strtolower( \trim( $args ) );
 						$bool = ( 'true' === $args || '1' === $args );
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_require_https( $bool );
 						return 'ok';
 					},

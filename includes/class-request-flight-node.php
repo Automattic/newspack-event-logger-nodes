@@ -6,7 +6,7 @@
  * the configured target (gyroscope partition).
  *
  * Hidden from the topology editor by the substrate's patron filter in
- * dump_metadata; configuration surfaces on the patron's :config CI as
+ * dump_metadata; configuration surfaces on the patron's :config interpreter as
  * `set_inflight_target` / `set_inflight_interval`.
  *
  * @package Newspack_Event_Logger_Nodes

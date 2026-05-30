@@ -64,7 +64,7 @@ class Aggregator_CI_Node extends Service_CI_Node {
 	 * dispatch time (legal: they're defined inside this class and so may
 	 * touch its props on any instance).
 	 *
-	 * Nullable + default null so a freshly-constructed CI is in a known
+	 * Nullable + default null so a freshly-constructed interpreter is in a known
 	 * state until the bootstrap wires up the dep; the `health` verb is
 	 * registry-free and works regardless, while `status`/`servers` will
 	 * fail loud if the bootstrap forgot to assign it.
@@ -83,7 +83,7 @@ class Aggregator_CI_Node extends Service_CI_Node {
 					'name'        => 'status',
 					'description' => 'Per-server partition snapshot keyed by server id.',
 					'args'        => [],
-					// $self is the dispatching CI instance — always an Aggregator_CI_Node
+					// $self is the dispatching interpreter instance — always an Aggregator_CI_Node
 					// here (dispatch() passes $this), so it's typed concretely to read
 					// the ctor-injected registry off it (node_schema is static).
 					'handler'     => static function ( Aggregator_CI_Node $self, string $args, array $envelope = [] ): array {

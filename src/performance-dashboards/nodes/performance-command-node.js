@@ -3,10 +3,10 @@
  * Performance Dashboard.
  *
  * Post-migration to substrate-canonical wiring this Node does NOT own the
- * network — `_http` (HttpOut) is the transport boundary. Each fetch* method:
+ * network — `_http` (HttpOutNode) is the transport boundary. Each fetch* method:
  *
  *  - Emits a `{action:'loading', slice}` TM_STRUCT control through `sink`
- *    (the exospine CI), stamped `TO = target` (→ `performance:view`) so the
+ *    (the exospine interpreter), stamped `TO = target` (→ `performance:view`) so the
  *    router peels the head and delivers it to the view's `fill()`. The view
  *    uses the slice tag to flip its loading flag for that slice.
  *  - Registers a pending entry `{slice, initial?}` on `performance:view`'s
@@ -14,7 +14,7 @@
  *    back via TO=FROM the view can apply the data to the registered slice.
  *  - Builds a TM_COMMAND (FROM=`performance:view`, TO=`_http/performance`,
  *    ID, VALUE={name,arguments,payload}) and fills it into `sink`. The router
- *    peels `_http`; HttpOut POSTs; the server pivots the reply TO=FROM (=
+ *    peels `_http`; HttpOutNode POSTs; the server pivots the reply TO=FROM (=
  *    `performance:view`); the router peels `performance:view`; the view's
  *    `fill()` matches the ID against `pending` and applies the result.
  *
@@ -67,6 +67,19 @@ function makeOpId() {
 const HTTP_TO = '_http/performance';
 
 class PerformanceCommandNode extends Node {
+	// Command-builder source: its fetch* methods are called directly by the hook
+	// to mint control messages; it has no fill() entry — no input port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description:
+				'Builds Performance Dashboard commands from hook calls.',
+			arguments: [],
+			commands: [],
+			accepts_fill: false,
+		};
+	}
+
 	constructor( onError, viewName ) {
 		super();
 		this._onError = onError;
@@ -272,7 +285,7 @@ class PerformanceCommandNode extends Node {
 
 	// Build a TM_COMMAND addressed at the `performance` CI through `_http`.
 	// FROM=view so the server's reply pivot lands on the view (the pending Map
-	// owner). Send through `sink` (the CI) so the router peels TO.
+	// owner). Send through `sink` (the interpreter) so the router peels TO.
 	_sendCommand( verb, payload, opId ) {
 		if ( this._closed || ! this.sink ) {
 			return;
@@ -286,7 +299,7 @@ class PerformanceCommandNode extends Node {
 		this.sink.fill( m );
 	}
 
-	// Stamp TO=target (the view) and forward through sink (the CI).
+	// Stamp TO=target (the view) and forward through sink (the interpreter).
 	_emitControl( value ) {
 		if ( this._closed || ! this.sink ) {
 			return;

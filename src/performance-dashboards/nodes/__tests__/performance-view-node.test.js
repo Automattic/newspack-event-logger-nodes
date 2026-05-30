@@ -16,7 +16,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createPerformanceView } from '../performanceView';
+import { createPerformanceView } from '../performance-view-node';
 
 beforeEach( () => Core.reset() );
 
@@ -331,7 +331,7 @@ test( 'names the node', () => {
 } );
 
 // Below: the substrate-canonical reply path. The view now also receives raw
-// TM_COMMAND|TM_RESPONSE replies pivoted via TO=FROM by HttpOut. It matches
+// TM_COMMAND|TM_RESPONSE replies pivoted via TO=FROM by HttpOutNode. It matches
 // `message[ID]` against `pending` and applies the result to the registered
 // slice (or resolves a resolveOnly promise).
 
@@ -500,3 +500,18 @@ describe( 'performance:view — pending-matched reply routing', () => {
 // symmetry with the canonical view tests.
 void FROM;
 void TO;
+
+describe( 'performance:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createPerformanceView(
+				'performance:view'
+			).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
+	} );
+} );

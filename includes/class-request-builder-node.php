@@ -95,13 +95,13 @@ class Request_Builder_Node extends Node {
 		// Hidden Flight sibling — patron filter hides it from the canvas.
 		// Naming happens in the overridden name() setter so the sibling
 		// adopts `{patron}:flight` when the patron is named (mirroring the
-		// CI sibling's `{patron}:config` propagation in Node::name).
+		// interpreter sibling's `{patron}:config` propagation in Node::name).
 		// Sink wiring also propagates from the overridden sink() setter.
 		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
-		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
+		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
+		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
 		parent::__construct();
 	}
 
@@ -147,7 +147,7 @@ class Request_Builder_Node extends Node {
 
 	/**
 	 * Override Node::name() so the Flight sibling tracks the patron name.
-	 * The CI sibling is handled by the parent (it owns $this->interpreter);
+	 * The interpreter sibling is handled by the parent (it owns $this->interpreter);
 	 * Flight is application-specific and lives outside that mechanism.
 	 */
 	public function name( ?string $name = null ): string {
@@ -1059,11 +1059,11 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
 						// Empty arg clears the target (disables the secondary emit).
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_errors_target( $args );
 						return 'ok';
 					},
@@ -1074,11 +1074,11 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
 						// Empty arg clears the target (disables the secondary emit).
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_completed_target( $args );
 						return 'ok';
 					},
@@ -1089,12 +1089,12 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
 						// Empty arg clears Flight's target — its fire_cb early-returns
 						// on the target check, disabling the periodic snapshot emit.
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->flight()->target( $args );
 						return 'ok';
 					},
@@ -1105,13 +1105,13 @@ class Request_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'ms', 'type' => 'int', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
 						if ( ! \ctype_digit( $args ) ) {
 							return 'usage: set_inflight_interval <ms>';
 						}
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->flight()->set_interval( (int) $args );
 						return 'ok';
 					},

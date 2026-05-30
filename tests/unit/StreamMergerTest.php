@@ -1841,9 +1841,9 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 'remote_job', $decoded['k'] );
 	}
 
-	// ── A3: sibling-CI + verbs ─────────────────────────────────
+	// ── A3: sibling-interpreter + verbs ─────────────────────────────────
 
-	public function test_stream_merger_constructs_sibling_ci(): void {
+	public function test_stream_merger_constructs_sibling_interpreter(): void {
 		$sm = new Stream_Merger_Node();
 		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
@@ -2190,8 +2190,8 @@ class StreamMergerTest extends TestCase {
 
 		$health_name = 'test-stream-merger:health-check';
 		$this->assertNotNull( Core::node( $health_name ), 'health_check sibling must be registered after name()' );
-		// Health_Check_Tick has no config verbs, so it auto-wires no :config CI.
-		$this->assertNull( Core::node( $health_name . ':config' ), 'health_check sibling has no :config CI (no verbs)' );
+		// Health_Check_Tick has no config verbs, so it auto-wires no :config interpreter.
+		$this->assertNull( Core::node( $health_name . ':config' ), 'health_check sibling has no :config interpreter (no verbs)' );
 
 		$sm->remove_node();
 
@@ -2538,29 +2538,29 @@ class StreamMergerTest extends TestCase {
 
 	// =========================================================================
 	// Coverage: each node_schema verb-handler closure body. The auto-wired
-	// :config CI exposes them via commands(); invoke each directly (the
+	// :config interpreter exposes them via commands(); invoke each directly (the
 	// make_merger() path goes through instance methods, leaving the
 	// closure-wrapper bodies dark).
 	// =========================================================================
 
 	public function test_set_verify_ssl_verb_closure_dispatches_to_patron(): void {
 		$sm = $this->make_merger();
-		$ci = $sm->interpreter();
-		$verbs = $ci->commands();
+		$interpreter = $sm->interpreter();
+		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
 
 		// 'true' sets verify_ssl true.
-		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, 'true' ) );
+		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $interpreter, 'true' ) );
 		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'verify_ssl' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $sm ) );
 
 		// 'false' sets verify_ssl false.
-		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, 'false' ) );
+		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $interpreter, 'false' ) );
 		$this->assertFalse( $ref->getValue( $sm ) );
 
 		// '1' is also truthy.
-		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $ci, '1' ) );
+		$this->assertSame( 'ok', $verbs['set_verify_ssl']( $interpreter, '1' ) );
 		$this->assertTrue( $ref->getValue( $sm ) );
 	}
 
@@ -2568,19 +2568,19 @@ class StreamMergerTest extends TestCase {
 		$sm = new Stream_Merger_Node();
 		$sm->arguments( 'firehose 0' );
 		$sm->name( 'sm-require-https' );
-		$ci = $sm->interpreter();
-		$verbs = $ci->commands();
+		$interpreter = $sm->interpreter();
+		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_require_https', $verbs );
 
 		// Toggle on via verb dispatch.
-		$this->assertSame( 'ok', $verbs['set_require_https']( $ci, 'true' ) );
+		$this->assertSame( 'ok', $verbs['set_require_https']( $interpreter, 'true' ) );
 		$ref = new \ReflectionProperty( Stream_Merger_Node::class, 'require_https' );
 		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $sm ) );
 
 		// Toggle off — note: instance starts with require_https=true (the
 		// constructor default), so the warn-on-downgrade branch fires here.
-		$this->assertSame( 'ok', $verbs['set_require_https']( $ci, 'false' ) );
+		$this->assertSame( 'ok', $verbs['set_require_https']( $interpreter, 'false' ) );
 		$this->assertFalse( $ref->getValue( $sm ) );
 	}
 
@@ -2622,7 +2622,7 @@ class StreamMergerTest extends TestCase {
 	}
 
 	public function test_auto_wired_ci_exposes_all_config_verbs(): void {
-		// The base-ctor auto-wire builds the :config CI from the
+		// The base-ctor auto-wire builds the :config interpreter from the
 		// node_schema()['commands'] handler entries.
 		$sm = new Stream_Merger_Node();
 		$sm->arguments( 'firehose 0' );

@@ -55,9 +55,9 @@ class LoggerCITest extends TestCase {
 			'num_partitions' => 4,
 			'topologies'     => [ 'firehose-workers-and-jobs' ],
 		] );
-		$ci = new Logger_CI_Node();
+		$interpreter = new Logger_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'logger', 'config' );
+		$result = VerbHarness::fire( $interpreter, 'logger', 'config' );
 
 		$this->assertIsArray( $result );
 		// Echoes the documented substrate keys exposed by the legacy
@@ -77,9 +77,9 @@ class LoggerCITest extends TestCase {
 		$GLOBALS['wp_filter']['save_post']  = new \WP_Hook();
 		$GLOBALS['wp_filter']['save_post']->callbacks[10]['cb1'] = [ 'function' => 'noop' ];
 
-		$ci = new Logger_CI_Node();
+		$interpreter = new Logger_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'logger', 'hooks' );
+		$result = VerbHarness::fire( $interpreter, 'logger', 'hooks' );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'hooks', $result );
@@ -110,9 +110,9 @@ class LoggerCITest extends TestCase {
 		$GLOBALS['wp_filter']['init'] = new \WP_Hook();
 		$GLOBALS['wp_filter']['init']->callbacks[10]['cb1'] = [ 'function' => 'noop' ];
 
-		$ci = new Logger_CI_Node();
+		$interpreter = new Logger_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'logger', 'hooks' );
+		$result = VerbHarness::fire( $interpreter, 'logger', 'hooks' );
 
 		$names = \array_column( $result['hooks'], 'name' );
 		$this->assertContains( 'init', $names );
@@ -120,9 +120,9 @@ class LoggerCITest extends TestCase {
 	}
 
 	public function test_hooks_verb_returns_empty_list_when_no_hooks_registered(): void {
-		$ci = new Logger_CI_Node();
+		$interpreter = new Logger_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'logger', 'hooks' );
+		$result = VerbHarness::fire( $interpreter, 'logger', 'hooks' );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( [], $result['hooks'] );

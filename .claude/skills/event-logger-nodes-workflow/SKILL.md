@@ -58,13 +58,13 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the `page_to_tree` map.
 3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`, `CommandClient`).
 4. Hook layout per dashboard:
-   - `const { ci, router, teardown: teardownSpine } = mountExospine();` — exospine returns the request-scope CI, the `_router`, and a teardown.
+   - `const { interpreter, router, teardown: teardownSpine } = mountExospine();` — exospine returns the request-scope interpreter, the `_router`, and a teardown.
    - Mount only the substrate boundary nodes the dashboard needs:
      - `_sse` (`SseIn` — EventSource ingress) — required for live-stream dashboards (request log, gyroscope, error log).
      - `_http` (`HttpOut` — POST /command boundary; `http.client = new CommandClient({ baseUrl: data.restUrl, nonce: data.nonce })`) — required for any command-fanout dashboard.
      - `_heartbeat` (`Heartbeat` — SSE slot keep-alive; `target = '_http/workers'` — pokes the substrate's `workers/heartbeat` verb which calls `SSE_Slot_Pool::touch`). Required whenever `_sse` is mounted.
    - A CRUD-on-demand dashboard (e.g. `aggregator-admin`) needs only `_http` + the view node. A pure live-stream dashboard needs `_sse` + `_heartbeat` + transform/view chain.
-   - All mounted nodes set `sink = ci`. Flow direction is steered with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
+   - All mounted nodes set `sink = interpreter`. Flow direction is steered with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
    - The view node owns the React render-state (published via `setState('view', model)`) and — for command-fanout views — a `pending` Map keyed by `message[ID]` for Promise settlement. Reply handler matches incoming envelopes against `pending`, resolves/rejects, then updates `this.model` and republishes.
 5. View contract (canonical, enforced in `event-logger-nodes-review`):
    - Command-fanout views own a `pending` Map keyed by `message[ID]`; the hook stashes `{ resolve, reject }` resolvers before filling each TM_COMMAND. Pure-SSE views don't need `pending`.

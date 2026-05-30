@@ -44,9 +44,9 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ 'init', 'wp_loaded', 'shutdown' ],
 			'custom_events' => [ 'my_event' => true ],
 		] );
-		$ci = new Discovery_CI_Node();
+		$interpreter = new Discovery_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'registered_hooks', $result );
@@ -60,9 +60,9 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ 'my_event', 'init' ],
 			'custom_events' => [ 'my_event' ],
 		] );
-		$ci = new Discovery_CI_Node();
+		$interpreter = new Discovery_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
 
 		$this->assertSame( [ 'init' ], $result['registered_hooks'] );
 		$this->assertSame( [ 'my_event' ], $result['custom_events'] );
@@ -74,9 +74,9 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ 'init' => true, 'shutdown' => true ],
 			'custom_events' => [ 'a', 'b' ],
 		] );
-		$ci = new Discovery_CI_Node();
+		$interpreter = new Discovery_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
 
 		$this->assertContains( 'init', $result['registered_hooks'] );
 		$this->assertContains( 'shutdown', $result['registered_hooks'] );
@@ -88,9 +88,9 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => [ '', 'init', '', 'init' ],
 			'custom_events' => [],
 		] );
-		$ci = new Discovery_CI_Node();
+		$interpreter = new Discovery_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
 
 		$this->assertSame( [ 'init' ], $result['registered_hooks'] );
 		$this->assertSame( [], $result['custom_events'] );
@@ -101,9 +101,9 @@ class DiscoveryCITest extends TestCase {
 			'log_events'    => 'not-an-array',
 			'custom_events' => 42,
 		] );
-		$ci = new Discovery_CI_Node();
+		$interpreter = new Discovery_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'discovery', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
 
 		$this->assertSame( [], $result['registered_hooks'] );
 		$this->assertSame( [], $result['custom_events'] );

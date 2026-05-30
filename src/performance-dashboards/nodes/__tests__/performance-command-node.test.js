@@ -8,7 +8,7 @@
  *  - registers a pending entry `{slice, initial?}` on the view's `pending` Map
  *    keyed by `message[ID]`,
  *  - builds a TM_COMMAND (FROM=`performance:view`, TO=`_http/performance`, ID,
- *    VALUE={name,arguments,payload}) and fills it into `sink` (the CI).
+ *    VALUE={name,arguments,payload}) and fills it into `sink` (the interpreter).
  *
  * `resolveRequest` and `fetchUrlBreakdown` register a `resolveOnly` pending
  * entry that the view's reply path resolves with the payload (transformed for
@@ -28,8 +28,8 @@ import {
 	TM_COMMAND,
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
-import { createPerformanceCommand } from '../performanceCommand';
-import { createPerformanceView } from '../performanceView';
+import { createPerformanceCommand } from '../performance-command-node';
+import { createPerformanceView } from '../performance-view-node';
 
 beforeEach( () => Core.reset() );
 
@@ -318,5 +318,20 @@ describe( 'performance:command — node identity', () => {
 		expect( () =>
 			createPerformanceCommand( 'performance:command', {} )
 		).not.toThrow();
+	} );
+} );
+
+describe( 'performance:command — nodeSchema', () => {
+	test( 'is a Hidden, source (no input port) node', () => {
+		const schema = createPerformanceCommand(
+			'performance:command',
+			{}
+		).constructor.nodeSchema();
+		expect( schema.accepts_fill ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
 	} );
 } );

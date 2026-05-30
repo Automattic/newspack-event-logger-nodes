@@ -62,7 +62,7 @@ class NodeLifecycleTest extends TestCase {
 		$node = $factory();
 		$weak = \WeakReference::create( $node );
 
-		// remove_node cascades sibling-CI cleanup + close_handle + (for
+		// remove_node cascades sibling-interpreter cleanup + close_handle + (for
 		// Timer-bearing subclasses) stop_timer deferred onto Core's
 		// closing queue. run_closing drains the queue → EventFramework
 		// $timers drops its back-ref. unset releases the last local

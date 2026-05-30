@@ -14,7 +14,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createRequestLogView } from '../requestLogView';
+import { createRequestLogView } from '../request-log-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -247,4 +247,17 @@ test( 'fills sensible defaults for missing fields on the appended entry', () => 
 	expect( e.remote_addr ).toBe( '' );
 	expect( e.user_agent ).toBe( '' );
 	expect( e.timestamp ).toBe( 0 );
+} );
+
+describe( 'requestlog:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createRequestLogView( 'requestlog:view' ).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
+	} );
 } );

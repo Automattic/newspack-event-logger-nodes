@@ -120,7 +120,7 @@ Every dashboard hook (`useRequestLogGraph`, `useAggregatorStatusGraph`, `useAggr
 - TM_ERROR envelopes route through an internal `_errorMessage(payload)` helper that coerces string / `{message}` / fallback payloads to a human-readable string before stashing in the view model's `error` field or rejecting the pending Promise. Never throw inline from `fill()` — that crashes React.
 - View-model updates preserve prior data on partial replies — per-slice last-modified dedup in `performanceView`; list-replaces-table in `serversView`; complete-wins upsert in `gyroscopeView`. A diff that wholesale-replaces the model on every reply (clobbering sibling slices / prior rows) breaks drilldown — flag it.
 - No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on production dashboards. The CommandInterpreter mount is for the console tree only; copy-pasting it into a Performance dashboard adds dead nodes that compete for `_router` traffic and collide with the debug-overlay's REPL.
-- All mounted nodes (`_sse`, `_http`, `_heartbeat`, view, transform, route) `sink = ci`; flow is steered via `target` / `TO`, not bespoke `nodeA.sink = nodeB` chains.
+- All mounted nodes (`_sse`, `_http`, `_heartbeat`, view, transform, route) `sink = interpreter`; flow is steered via `target` / `TO`, not bespoke `nodeA.sink = nodeB` chains.
 - Mount only what the dashboard needs: CRUD-on-demand (aggregator-admin) gets `_http` + view only; live-stream dashboards (request log, gyroscope, error log) get `_sse` + `_heartbeat` + transform + view. Mounting unused boundary nodes is dead weight.
 
 A diff that lands a new dashboard or hook without these is a regression to the pre-canonical pattern. Flag it.

@@ -2,7 +2,7 @@
  * hookCatalogView tests — owns the Performance Logger hook-catalog view model
  * after the substrate-canonical migration. Mirrors servers:view.
  *
- * Post-migration, `fill()` receives the raw reply Messages HttpOut feeds back
+ * Post-migration, `fill()` receives the raw reply Messages HttpOutNode feeds back
  * from POST /command: the router peels the reply's TO (= `hookcatalog:view`,
  * stamped from the outbound FROM by the server's reply pivot) and delivers them
  * here. VALUE is the `{ name, payload }` envelope.
@@ -25,7 +25,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createHookCatalogView } from '../hookCatalogView';
+import { createHookCatalogView } from '../hook-catalog-view-node';
 
 beforeEach( () => Core.reset() );
 
@@ -34,7 +34,7 @@ const SAMPLE = {
 	'REST API': [ 'rest_api_init' ],
 };
 
-// Build the verb-reply Message HttpOut feeds back (TO already peeled by router).
+// Build the verb-reply Message HttpOutNode feeds back (TO already peeled by router).
 function replyMsg( {
 	name,
 	payload,
@@ -314,5 +314,20 @@ describe( 'hookcatalog:view — registration', () => {
 	test( 'registers under the given name', () => {
 		const node = createHookCatalogView( 'hookcatalog:view' );
 		expect( Core.node( 'hookcatalog:view' ) ).toBe( node );
+	} );
+} );
+
+describe( 'hookcatalog:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createHookCatalogView(
+				'hookcatalog:view'
+			).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
 	} );
 } );

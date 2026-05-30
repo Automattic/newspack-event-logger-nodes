@@ -346,12 +346,12 @@ function newspack_event_logger_nodes_init_memcached(): void {
 }
 
 /**
- * Service-CommandInterpreter (CI) mounting.
+ * Service-CommandInterpreter (interpreter) mounting.
  *
  * The substrate's `HTTP_In::dispatch` lazy-builds the
  * request-scope graph (`_router` / `_command_interpreter` / `_http`)
  * then fires `newspack_nodes/request_graph_ready` so applications can
- * mount their CIs through the base CI's `make_node()` — which
+ * mount their CIs through the base interpreter's `make_node()` — which
  * constructs, names, and sinks each node in one atomic step. Without
  * the sink, verb responses (which walk back via TO=FROM) would have no
  * path to the HTTP_In and silently drop.
@@ -363,28 +363,28 @@ function newspack_event_logger_nodes_init_memcached(): void {
  * Named function (not a closure) so tests that wipe
  * `$GLOBALS['_wp_actions']` for isolation can re-attach the same callback.
  */
-function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_ci ): void {
+function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
 	$registry = \Newspack_Event_Logger_Nodes\Server_Registry::get_instance();
 
-	$base_ci->make_node( 'Discovery_CI',   'discovery' );
-	$base_ci->make_node( 'Status_CI',      'status' );
-	$base_ci->make_node( 'Settings_CI',    'settings' );
-	$base_ci->make_node( 'Logger_CI',      'logger' );
-	$base_ci->make_node( 'Events_CI',      'events' );
+	$base_interpreter->make_node( 'Discovery_CI',   'discovery' );
+	$base_interpreter->make_node( 'Status_CI',      'status' );
+	$base_interpreter->make_node( 'Settings_CI',    'settings' );
+	$base_interpreter->make_node( 'Logger_CI',      'logger' );
+	$base_interpreter->make_node( 'Events_CI',      'events' );
 	// Service CIs that need programmatic deps (the hub-side Server_Registry)
 	// use the Tachikoma uniform-construction pattern: `make_node` calls a
 	// no-arg ctor + `arguments()` for scalar config; the registry comes in
 	// via public-property assignment immediately after, since `arguments()`
 	// only handles round-trippable scalar tokens.
-	$servers_ci = $base_ci->make_node( 'Servers_CI', 'servers' );
+	$servers_ci = $base_interpreter->make_node( 'Servers_CI', 'servers' );
 	if ( $servers_ci instanceof \Newspack_Event_Logger_Nodes\App\Servers_CI_Node ) {
 		$servers_ci->registry = $registry;
 	}
-	$aggregator_ci = $base_ci->make_node( 'Aggregator_CI', 'aggregator' );
+	$aggregator_ci = $base_interpreter->make_node( 'Aggregator_CI', 'aggregator' );
 	if ( $aggregator_ci instanceof \Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node ) {
 		$aggregator_ci->registry = $registry;
 	}
-	$base_ci->make_node( 'Performance_CI', 'performance' );
+	$base_interpreter->make_node( 'Performance_CI', 'performance' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 

@@ -2,12 +2,12 @@
  * useAggregatorAdminGraph tests — the Configured-Servers admin graph clipped
  * onto the substrate's I/O boundary node (exospine + `_http`), plus the
  * `servers:view` model node.
- * Migrated from the bespoke `servers:command` Node to the substrate's HttpOut:
- * the hook dispatches each verb as a TM_COMMAND through the CI
+ * Migrated from the bespoke `servers:command` Node to the substrate's HttpOutNode:
+ * the hook dispatches each verb as a TM_COMMAND through the interpreter
  * (FROM=`servers:view`, TO=`_http/servers`, verb in VALUE.name); the reply
  * routes via TO=FROM back into the view node, which unwraps `value.payload`.
  *
- * Every node sinks into the CI (rule #2); flow is steered ONLY by each node's
+ * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
  * `target` (the router peels TO and delivers). _http.client is injected via
  * `opts.commandClient` so the hook never touches the network. Each CRUD
  * callback returns a Promise the view resolves by matching `message[ID]`
@@ -30,13 +30,13 @@ import {
 } from '@newspack-nodes/runtime';
 import { useAggregatorAdminGraph } from '../useAggregatorAdminGraph';
 
-const CI = '_command_interpreter';
+const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
 const VIEW = 'servers:view';
 const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
-// A fake CommandClient matching HttpOut's seam: postBatch returns reply
+// A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
 // Messages addressed back along FROM (the server's reply pivot). The payload
 // can be looked up by verb so a list reply yields a server map while a mutation
 // reply yields { id }.
@@ -84,18 +84,18 @@ beforeEach( () => {
 } );
 
 describe( 'useAggregatorAdminGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the I/O boundary nodes + the view, each sinking into the CI', () => {
+	test( 'mounts the backbone + the I/O boundary nodes + the view, each sinking into the interpreter', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
-		const ci = Core.node( CI );
-		expect( ci ).toBeTruthy();
+		const interpreter = Core.node( INTERPRETER );
+		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		for ( const name of ALL_GRAPH_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
-			expect( node.sink ).toBe( ci );
+			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
@@ -142,7 +142,7 @@ describe( 'useAggregatorAdminGraph — exospine + I/O boundary wiring', () => {
 } );
 
 describe( 'useAggregatorAdminGraph — end-to-end routing through the exospine', () => {
-	test( 'an immediate list reply routes _http → CI → router → servers:view and lands in the view model', async () => {
+	test( 'an immediate list reply routes _http → interpreter → router → servers:view and lands in the view model', async () => {
 		const servers = {
 			'spoke-01': { id: 'spoke-01', url: 'https://a' },
 			'spoke-02': { id: 'spoke-02', url: 'https://b' },
@@ -355,7 +355,7 @@ describe( 'useAggregatorAdminGraph — teardown', () => {
 			useAggregatorAdminGraph( { commandClient: client } )
 		);
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );

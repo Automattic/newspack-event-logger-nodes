@@ -10,7 +10,7 @@ import {
  * `aggregator:view` — owns the Aggregator Status view model.
  *
  * Post-migration to substrate-canonical wiring, `fill()` receives the raw
- * reply Message that HttpOut feeds back from POST /command: the router peels
+ * reply Message that HttpOutNode feeds back from POST /command: the router peels
  * the reply's TO (=`aggregator:view`, stamped from the outbound FROM by the
  * server's reply pivot) and delivers it here. VALUE is the `{ name, payload }`
  * envelope; `payload` is the raw `{ server_id: {} }` snapshot the aggregator
@@ -23,6 +23,18 @@ import {
  * consumed by `useNodeState('aggregator:view','view')`.
  */
 class AggregatorViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Aggregator Status view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor() {
 		super();
 		this.model = {

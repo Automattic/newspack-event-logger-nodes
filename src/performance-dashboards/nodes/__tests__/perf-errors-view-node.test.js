@@ -20,7 +20,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createPerfErrorsView } from '../perfErrorsView';
+import { createPerfErrorsView } from '../perf-errors-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -108,7 +108,7 @@ test( 'drops envelopes whose VALUE is an array', () => {
 	expect( v.entries ).toHaveLength( 0 );
 } );
 
-test( 'drops the `connected` sentinel (which the SseIn would otherwise stream through)', () => {
+test( 'drops the `connected` sentinel (which the SseInNode would otherwise stream through)', () => {
 	const v = createPerfErrorsView( 'perferrors:view' );
 	// The connected sentinel uses KEY='connected' with a structured VALUE
 	// (slot/partition/pid). It must NOT land in the error buffer.
@@ -174,4 +174,17 @@ test( 'publishes an initial view model on construction', () => {
 test( 'names the node', () => {
 	const v = createPerfErrorsView( 'perferrors:view' );
 	expect( v.name ).toBe( 'perferrors:view' );
+} );
+
+describe( 'perferrors:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createPerfErrorsView( 'perferrors:view' ).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
+	} );
 } );

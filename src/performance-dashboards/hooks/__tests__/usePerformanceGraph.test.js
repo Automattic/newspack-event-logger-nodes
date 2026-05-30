@@ -5,14 +5,14 @@
  * `performance:view` (the render model + pending-Promise registry).
  *
  * Post-migration: `performance:command` no longer owns the network. Each
- * fetch* dispatches a TM_COMMAND through the CI (FROM=`performance:view`,
+ * fetch* dispatches a TM_COMMAND through the interpreter (FROM=`performance:view`,
  * TO=`_http/performance`, verb in VALUE.name) and stashes a slice-tagged
- * pending entry on `performance:view`; HttpOut POSTs; the server pivots the
+ * pending entry on `performance:view`; HttpOutNode POSTs; the server pivots the
  * reply TO=FROM, the router peels `performance:view`, and the view's `fill()`
  * matches `message[ID]` against `pending` and applies the result to the
  * registered slice (or resolves a resolveOnly Promise).
  *
- * Every node sinks into the CI (rule #2); flow is steered ONLY by each node's
+ * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
  * `target` (the router peels TO and delivers). `_http.client` is injected via
  * `opts.commandClient` so the hook never touches the network.
  */
@@ -32,14 +32,14 @@ import {
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
 
-const CI = '_command_interpreter';
+const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
 const COMMAND = 'performance:command';
 const VIEW = 'performance:view';
 const ALL_GRAPH_NAMES = [ HTTP, COMMAND, VIEW ];
 
-// A fake CommandClient matching HttpOut's seam: postBatch returns reply
+// A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
 // Messages addressed back along FROM (the server's reply pivot). The payload
 // can be looked up by verb so url_detail / overview / urls / request_detail /
 // request_search each yield the right canned shape.
@@ -106,16 +106,16 @@ function countVerbs( batches, verb ) {
 }
 
 describe( 'usePerformanceGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + _http + the command + view, each sinking into the CI', () => {
+	test( 'mounts the backbone + _http + the command + view, each sinking into the interpreter', () => {
 		const client = makeFakeClient();
 		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
-		const ci = Core.node( CI );
-		expect( ci ).toBeTruthy();
+		const interpreter = Core.node( INTERPRETER );
+		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		for ( const name of ALL_GRAPH_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
-			expect( node.sink ).toBe( ci );
+			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
@@ -318,7 +318,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown', () => {
 		// null) stands in for that pre-mount state: resolveRequest must still
 		// resolve via the shared client directly. request_search is a stateless
 		// lookup with no view-model side effects.
-		// Support both HttpOut's postBatch (for mount-time overview/urls) AND
+		// Support both HttpOutNode's postBatch (for mount-time overview/urls) AND
 		// the .send fallback path resolveRequest uses pre-mount.
 		const fallbackClient = {
 			calls: [],
@@ -383,7 +383,7 @@ describe( 'usePerformanceGraph — teardown', () => {
 			usePerformanceGraph( { commandClient: client } )
 		);
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );

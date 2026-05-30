@@ -69,10 +69,10 @@ class StatusCITest extends TestCase {
 		] );
 		$this->activate_topologies( [ 'firehose-workers-and-jobs', 'request-workers' ] );
 		Core::$memd = new InMemoryMemcached();
-		$ci         = new Status_CI_Node();
+		$interpreter         = new Status_CI_Node();
 
 		$before = \time();
-		$result = VerbHarness::fire( $ci, 'status', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'status', 'get' );
 		$after  = \time();
 
 		$this->assertIsArray( $result );
@@ -93,18 +93,18 @@ class StatusCITest extends TestCase {
 		// resolve to a real topology — NOT the raw config `topologies` array,
 		// which would echo the bogus name verbatim.
 		$this->activate_topologies( [ 'request-workers', 'no-such-topology' ] );
-		$ci = new Status_CI_Node();
+		$interpreter = new Status_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'status', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'status', 'get' );
 
 		$this->assertSame( [ 'request-workers' ], $result['topologies'] );
 	}
 
 	public function test_cache_unavailable_reports_false_when_memd_null(): void {
 		Core::$memd = null;
-		$ci         = new Status_CI_Node();
+		$interpreter         = new Status_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'status', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'status', 'get' );
 
 		$this->assertFalse( $result['cache_available'] );
 		$this->assertSame( 'ok', $result['status'] );
@@ -116,9 +116,9 @@ class StatusCITest extends TestCase {
 		// (empty overlay) so the reported list is empty regardless of the
 		// deployment's substrate config-file default for `topologies`.
 		$this->activate_topologies( [] );
-		$ci = new Status_CI_Node();
+		$interpreter = new Status_CI_Node();
 
-		$result = VerbHarness::fire( $ci, 'status', 'get' );
+		$result = VerbHarness::fire( $interpreter, 'status', 'get' );
 
 		$this->assertSame( 1, $result['num_partitions'] );
 		$this->assertSame( [], $result['topologies'] );
