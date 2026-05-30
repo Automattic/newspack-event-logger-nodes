@@ -67,8 +67,8 @@ class StreamMergerTest extends TestCase {
 
 	private function make_merger(): Stream_Merger_Node {
 		$sm = new Stream_Merger_Node();
-		$sm->arguments( 'firehose 0' );
 		$sm->name( 'test-stream-merger' );
+		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );  // back-compat: most legacy tests use http://
 		return $sm;
 	}
@@ -463,8 +463,8 @@ class StreamMergerTest extends TestCase {
 			mkdir( $dir, 0755, true );
 		}
 		$offsetlog = new Partition_Node();
-		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -1557,8 +1557,8 @@ class StreamMergerTest extends TestCase {
 		$dir = "{$this->tmp_dir}/remote_firehose.log";
 		@\mkdir( $dir, 0755, true );
 		$offsetlog = new Partition_Node();
-		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-bad-offsetlog-' . uniqid() );
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -1586,8 +1586,8 @@ class StreamMergerTest extends TestCase {
 		$dir = "{$this->tmp_dir}/remote_firehose.log";
 		@\mkdir( $dir, 0755, true );
 		$offsetlog = new Partition_Node();
-		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-mixed-offsetlog-' . uniqid() );
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -1845,16 +1845,16 @@ class StreamMergerTest extends TestCase {
 
 	public function test_stream_merger_constructs_sibling_interpreter(): void {
 		$sm = new Stream_Merger_Node();
-		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
+		$sm->arguments( 'firehose' );
 		$this->assertNotNull( $sm->interpreter() );
 		$this->assertSame( 'sm:config', $sm->interpreter()->name() );
 	}
 
 	public function test_stream_merger_set_verify_ssl_verb_round_trips(): void {
 		$sm = new Stream_Merger_Node();
-		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
+		$sm->arguments( 'firehose' );
 		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_verify_ssl', 'false' ) );
 		$dump = $sm->dump_config();
 		$this->assertStringContainsString( 'cmd sm:config set_verify_ssl false', $dump );
@@ -1862,8 +1862,8 @@ class StreamMergerTest extends TestCase {
 
 	public function test_stream_merger_set_require_https_verb_round_trips(): void {
 		$sm = new Stream_Merger_Node();
-		$sm->arguments( 'firehose' );
 		$sm->name( 'sm' );
+		$sm->arguments( 'firehose' );
 		// Default is true; dump_config emits only the non-default (false) value.
 		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'false' ) );
 		$dump = $sm->dump_config();
@@ -2150,9 +2150,9 @@ class StreamMergerTest extends TestCase {
 
 		$sm = new Stream_Merger_Node();
 
+		$sm->name( 'sm-with-router' );
 		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
-		$sm->name( 'sm-with-router' );
 
 		// Reflect into Router to assert the TIMER registration landed. The
 		// listener key is the StreamMerger's name; the HealthCheckTick sibling
@@ -2316,8 +2316,8 @@ class StreamMergerTest extends TestCase {
 
 		$sm = new Stream_Merger_Node();
 
-		$sm->arguments( 'firehose 0' );
 		$sm->name( 'test-reg-sm' );
+		$sm->arguments( 'firehose 0' );
 		$sm->add_remote( 'site-reg' );
 
 		$this->assertSame( 1, $sm->remote_count() );
@@ -2451,17 +2451,17 @@ class StreamMergerTest extends TestCase {
 		$this->assertNotNull( Core::node( 'parent-merger:health-check' ) );
 	}
 
-	public function test_name_setter_idempotent_does_not_double_register_timer(): void {
-		// Setting the same name twice must not double-register TIMER.
+	public function test_arguments_setter_idempotent_does_not_double_register_timer(): void {
+		// Setting the same arguments twice must not double-register TIMER.
 		$router = new Router_Node();
 		$router->name( '_router' );
 
 		$sm = new Stream_Merger_Node();
 
-		$sm->arguments( 'firehose 0' );
 		$sm->set_require_https( false );
 		$sm->name( 'sm-twice' );
-		$sm->name( 'sm-twice' );
+		$sm->arguments( 'firehose 0' );
+		$sm->arguments( 'firehose 0' );
 
 		$ref  = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
 		$ref->setAccessible( true );
@@ -2566,8 +2566,8 @@ class StreamMergerTest extends TestCase {
 
 	public function test_set_require_https_verb_closure_dispatches_to_patron(): void {
 		$sm = new Stream_Merger_Node();
-		$sm->arguments( 'firehose 0' );
 		$sm->name( 'sm-require-https' );
+		$sm->arguments( 'firehose 0' );
 		$interpreter = $sm->interpreter();
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_require_https', $verbs );
@@ -2625,8 +2625,8 @@ class StreamMergerTest extends TestCase {
 		// The base-ctor auto-wire builds the :config interpreter from the
 		// node_schema()['commands'] handler entries.
 		$sm = new Stream_Merger_Node();
-		$sm->arguments( 'firehose 0' );
 		$sm->name( 'sm-verb-table' );
+		$sm->arguments( 'firehose 0' );
 		$verbs = $sm->interpreter()->commands();
 		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
 		$this->assertArrayHasKey( 'set_require_https', $verbs );
@@ -2644,8 +2644,8 @@ class StreamMergerTest extends TestCase {
 			mkdir( $dir, 0755, true );
 		}
 		$offsetlog = new Partition_Node();
-		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
+		$offsetlog->arguments( "{$dir} 0" );
 		$offsetlog->allow_large_writes();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;

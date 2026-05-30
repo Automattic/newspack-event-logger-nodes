@@ -118,31 +118,30 @@ class Stream_Merger_Node extends Node {
 			return $result;
 		}
 		$this->partition = \max( 0, $this->partition );
+		$this->start_periodic_tick();
 		return $result;
 	}
 
 	/**
-	 * Override name() so the owned HealthCheckTick sibling tracks
-	 * `{patron_name}:health-check` whenever the patron is named or
-	 * renamed (mirrors FlameBuilder::name()'s AutoTuner cascade) and
-	 * the Router TIMER hitchhike registers as soon as the node has a
-	 * name to register under. The periodic tick is mandatory — every
-	 * StreamMerger needs to heartbeat its SSE connections — so this
-	 * runs automatically on first-name-set instead of requiring an
-	 * explicit TSL `start_periodic_tick` verb invocation.
+	 * Pre-check the `{name}:health-check` sibling name for collisions before the base
+	 * commits a rename. HealthCheck is application-specific; the parent handles the
+	 * :config interpreter sibling.
 	 */
-	public function name( ?string $name = null ): string {
-		$was_named = '' !== $this->name;
-		$result    = parent::name( $name );
-		if ( null !== $name && '' !== $name ) {
-			if ( null !== $this->health_check ) {
-				$this->health_check->name( $name . ':health-check' );
-			}
-			if ( ! $was_named ) {
-				$this->start_periodic_tick();
-			}
+	protected function check_name_availability( string $name ): void {
+		if ( null !== $this->health_check && null !== Core::node( "{$name}:health-check" ) ) {
+			throw new \RuntimeException( \esc_html( "node name collision: {$name}:health-check already registered" ) );
 		}
-		return $result;
+		parent::check_name_availability( $name );
+	}
+
+	/**
+	 * Override set_sibling_names() so the owned HealthCheckTick sibling tracks
+	 * `{patron_name}:health-check` whenever the patron is named or
+	 * renamed (mirrors FlameBuilder::name()'s AutoTuner cascade)
+	 */
+	protected function set_sibling_names( ?string $name = null ): void {
+		$this->health_check?->name( $name . ':health-check' );
+		parent::set_sibling_names( $name );
 	}
 
 	/**
@@ -314,6 +313,13 @@ class Stream_Merger_Node extends Node {
 	}
 
 	public function start_periodic_tick(): void {
+		// Keyed by $this->name; a nameless node would register an orphan TIMER
+		// listener under the empty key (e.g. arguments() before name()). The
+		// sanctioned make_node order names the node first, so this only guards
+		// the un-sanctioned order.
+		if ( '' === $this->name ) {
+			return;
+		}
 		$router = Core::node( Node_Names::ROUTER );
 		if ( null === $router ) {
 			Core::print_less_often( 'StreamMerger::start_periodic_tick: no _router; periodic tick disabled' );

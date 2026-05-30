@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ServersAdmin` "Remove server" uses an in-app confirm modal instead of `window.confirm`.** Built from the stable `@wordpress/components` `Modal` + `Button` (the idiom the settings modals already use), not the experimental `__experimentalConfirmDialog`. Confirm-to-remove / cancel-aborts behavior is preserved; removes the `no-alert` suppression.
 - **`FlameGraph`'s D3 container is `role="presentation"`** (it owns only auxiliary mouse handlers; D3 builds the interactive SVG inside), dropping its `jsx-a11y/no-static-element-interactions` suppression.
 
+### Removed
+
+- **`Events_CI::recent` verb removed (dead code).** No consumer ever called it — no dashboard JS, no topology, no other PHP caller; `wp nodes reqgrep --recent` walks firehose segments directly via `get_segments()`/`read_at()`, not the verb. It was also the only consumer of the substrate Partition's default-binary `.idx`, which `newspack-nodes` removed in the same change. The `stats` verb (the live event-dashboards surface) is unchanged.
+
 ## [0.9.1] - 2026-05-29
 
 ### Fixed

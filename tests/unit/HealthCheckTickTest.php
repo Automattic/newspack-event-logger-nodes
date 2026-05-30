@@ -98,6 +98,7 @@ class HealthCheckTickTest extends TestCase {
 		$sm = new \Newspack_Event_Logger_Nodes\Stream_Merger_Node( 'firehose', 0 );
 		$sm->set_require_https( false );
 		$sm->name( 'sm' );
+		$sm->arguments( 'firehose 0' );
 
 		$ref = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
 		$ref->setAccessible( true );

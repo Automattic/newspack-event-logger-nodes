@@ -2,7 +2,9 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -1313,5 +1315,89 @@ class RequestBuilderTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\LRU_Cache::class, $rb->cache );
 		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Request_Flight_Node::class, $rb->flight );
+	}
+
+	// --- name() sibling cascade (flight) ----------------------------------
+
+	public function test_name_registers_flight_sibling_as_name_flight(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$this->assertSame( 'rb:flight', $rb->flight()->name() );
+		$this->assertSame( $rb->flight(), Core::node( 'rb:flight' ) );
+	}
+
+	public function test_name_rename_moves_flight_sibling(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'first' );
+		$this->assertSame( $rb->flight(), Core::node( 'first:flight' ) );
+		$rb->name( 'second' );
+		$this->assertNull( Core::node( 'first:flight' ) );
+		$this->assertSame( $rb->flight(), Core::node( 'second:flight' ) );
+	}
+
+	public function test_name_null_throws(): void {
+		// A named node is committed until remove_node(); name(null) throws.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$this->expectException( \RuntimeException::class );
+		$rb->name( null );
+	}
+
+	public function test_name_empty_string_throws(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$this->expectException( \RuntimeException::class );
+		$rb->name( '' );
+	}
+
+	public function test_remove_node_unregisters_flight_sibling(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$this->assertSame( $rb->flight(), Core::node( 'rb:flight' ) );
+		$rb->remove_node();
+		$this->assertNull( Core::node( 'rb' ) );
+		$this->assertNull( Core::node( 'rb:flight' ) );
+	}
+
+	public function test_name_getter_leaves_flight_sibling_intact(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$rb->name(); // getter — must not touch the flight sibling.
+		$this->assertSame( $rb->flight(), Core::node( 'rb:flight' ) );
+	}
+
+	public function test_name_zero_registers_flight_as_zero_flight(): void {
+		// Perl length() presence: '0' IS a value, so the node names literally "0"
+		// and the flight sibling becomes "0:flight".
+		$rb = new Request_Builder_Node();
+		$rb->name( '0' );
+		$this->assertSame( '0', $rb->name() );
+		$this->assertSame( $rb, Core::node( '0' ) );
+		$this->assertSame( '0:flight', $rb->flight()->name() );
+		$this->assertSame( $rb->flight(), Core::node( '0:flight' ) );
+	}
+
+	public function test_check_name_availability_detects_flight_sibling_collision(): void {
+		// A pre-existing `x:flight` node blocks naming a RequestBuilder `x`.
+		$blocker = new Request_Flight_Node();
+		$blocker->name( 'x:flight' );
+		$rb = new Request_Builder_Node();
+		$this->expectException( \RuntimeException::class );
+		$rb->name( 'x' );
+	}
+
+	public function test_collision_throws_before_mutation_leaves_flight_unregistered(): void {
+		// A failed rename (collision on the new flight name) must not have
+		// renamed the flight sibling toward the colliding name.
+		$blocker = new Request_Flight_Node();
+		$blocker->name( 'taken:flight' );
+		$rb = new Request_Builder_Node();
+		try {
+			$rb->name( 'taken' );
+			$this->fail( 'expected collision exception' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertNull( Core::node( 'taken' ) );
+			$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
+		}
 	}
 }
