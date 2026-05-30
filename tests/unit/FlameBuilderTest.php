@@ -104,6 +104,60 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
 	}
 
+	public function test_rename_cascades_auto_tuner_and_drops_old_name(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->name( 'fb2' );
+
+		$this->assertNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
+		$at = \Newspack_Nodes\Core::node( 'fb2:auto-tuner' );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class, $at );
+		$this->assertSame( $fb, $at->patron() );
+	}
+
+	public function test_name_null_throws(): void {
+		// A named node is committed until remove_node(); name(null) throws.
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$this->expectException( \RuntimeException::class );
+		$fb->name( null );
+	}
+
+	public function test_name_empty_string_throws(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$this->expectException( \RuntimeException::class );
+		$fb->name( '' );
+	}
+
+	public function test_remove_node_unregisters_auto_tuner(): void {
+		// remove_node() (not name(null)) tears down the owned auto-tuner sibling.
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class, \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
+
+		$fb->remove_node();
+		$this->assertNull( \Newspack_Nodes\Core::node( 'fb' ) );
+		$this->assertNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
+	}
+
+	public function test_zero_name_yields_zero_auto_tuner_sibling(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( '0' );
+
+		$at = \Newspack_Nodes\Core::node( '0:auto-tuner' );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class, $at );
+	}
+
+	public function test_check_name_availability_throws_on_auto_tuner_collision(): void {
+		$squatter = new \Newspack_Event_Logger_Nodes\Auto_Tuner_Node();
+		$squatter->name( 'fb:auto-tuner' );
+
+		$fb = new Flame_Builder_Node();
+		$this->expectException( \RuntimeException::class );
+		$fb->name( 'fb' );
+	}
+
 	public function test_non_array_value_skipped(): void {
 		$fb                    = new Flame_Builder_Node();
 		$msg                   = Message::new_message();

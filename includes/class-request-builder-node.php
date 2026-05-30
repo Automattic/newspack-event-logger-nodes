@@ -146,19 +146,33 @@ class Request_Builder_Node extends Node {
 	}
 
 	/**
-	 * Override Node::name() so the Flight sibling tracks the patron name.
-	 * The interpreter sibling is handled by the parent (it owns $this->interpreter);
-	 * Flight is application-specific and lives outside that mechanism.
+	 * Pre-check the `{name}:flight` sibling name for collisions before the base
+	 * commits a rename. Flight is application-specific; the parent handles the
+	 * :config interpreter sibling.
 	 */
-	public function name( ?string $name = null ): string {
-		if ( null !== $name ) {
-			$result = parent::name( $name );
-			if ( null !== $this->flight ) {
-				$this->flight->name( $name . ':flight' );
-			}
-			return $result;
+	protected function check_name_availability( string $name ): void {
+		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
+			throw new \RuntimeException( \esc_html( "node name collision: {$name}:flight already registered" ) );
 		}
-		return parent::name();
+		parent::check_name_availability( $name );
+	}
+
+	/**
+	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
+	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
+	 * Mirrors Node::set_sibling_names for the :config interpreter.
+	 */
+	protected function set_sibling_names( ?string $name = null ): void {
+		$this->flight?->name( "{$name}:flight" );
+		parent::set_sibling_names( $name );
+	}
+
+	/** Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan. */
+	public function remove_node(): void {
+		if ( null !== $this->flight ) {
+			$this->flight->remove_node();
+		}
+		parent::remove_node();
 	}
 
 	/**

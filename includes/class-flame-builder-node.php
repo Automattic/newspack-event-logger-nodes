@@ -119,31 +119,36 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Override name() so the owned auto-tuner sibling tracks
-	 * `{patron_name}:auto-tuner` whenever the patron is named or
-	 * renamed. The base Node::name() handles $this->interpreter;
-	 * we extend it for our own custom sibling.
+	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
+	 * alongside the base's own-name + `:config` checks. Chains parent::.
 	 */
-	public function name( ?string $name = null ): string {
-		$result = parent::name( $name );
-		if ( null !== $name && null !== $this->auto_tuner ) {
-			$this->auto_tuner->name( $name . ':auto-tuner' );
+	protected function check_name_availability( string $name ): void {
+		if ( null !== $this->auto_tuner && null !== \Newspack_Nodes\Core::node( "{$name}:auto-tuner" ) ) {
+			throw new \RuntimeException( \esc_html( "node name collision: {$name}:auto-tuner already registered" ) );
 		}
-		return $result;
+		parent::check_name_availability( $name );
 	}
 
 	/**
-	 * Cascade-unregister the owned auto-tuner sibling alongside
-	 * the patron, mirroring Node::remove_node's $interpreter
-	 * cleanup. Without this the auto-tuner orphans in
-	 * Core::$nodes_by_name and a re-spawned FlameBuilder with the
-	 * same name collides on its sibling.
+	 * Track the owned auto-tuner sibling as `{name}:auto-tuner`. Only called from
+	 * name() with a non-empty $name; sibling teardown lives in remove_node().
+	 * Chains parent::.
+	 */
+	protected function set_sibling_names( ?string $name = null ): void {
+		$this->auto_tuner?->name( "{$name}:auto-tuner" );
+		parent::set_sibling_names( $name );
+	}
+
+	/**
+	 * Cascade-remove the owned auto-tuner sibling alongside the patron. Full
+	 * remove_node (not a bare unregister) so the auto-tuner's own `:config`
+	 * interpreter sibling unregisters too and a same-name respawn doesn't collide.
 	 */
 	public function remove_node(): void {
-		if ( null !== $this->auto_tuner && '' !== $this->auto_tuner->name() ) {
-			\Newspack_Nodes\Core::unregister_node( $this->auto_tuner->name() );
+		if ( null !== $this->auto_tuner ) {
+			$this->auto_tuner->remove_node();
+			$this->auto_tuner = null;
 		}
-		$this->auto_tuner = null;
 		parent::remove_node();
 	}
 
