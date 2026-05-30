@@ -77,11 +77,10 @@ Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings 
 
 Read-only — settings WRITES live on the `performance` CI (`config_update`, `settings_update`, `hooks_configure`).
 
-### `events` — raw firehose viewer
+### `events` — hourly-stats surface
 
 | Verb | Args | Returns |
 |------|------|---------|
-| `recent` | `{ limit?: int = 100 (1..1000) }` | `{ data: entries[], meta: { limit, scanned } }` — newest-first walk of the firehose `.idx` across all partitions; capped at `MAX_INDEX_ENTRIES = 100000`. Each entry has `rid` (Message::KEY) and `_partition` back-filled. |
 | `stats` | — | `{ data: { time_series: [{hour, count, sum_ms, sum_peak_mb}, ...] }, meta: {} }` — per-partition hourly buckets read from `Stats_Store` and merged. Fail-soft on memcache outage (empty `time_series`). Note the envelope shape differs from `performance.timing`, which returns `{ time_series: […] }` flat. |
 
 ### `servers` — remote-spoke registry CRUD

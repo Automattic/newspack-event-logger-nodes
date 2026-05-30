@@ -3,10 +3,8 @@
  * EventsCITest: unit tests for Events_CI, the M2 service-CI that replaces
  * the legacy EventsController.
  *
- * Asserts value-equivalence with the legacy controller for the two verbs
+ * Asserts value-equivalence with the legacy controller for the verb
  * exposed to the event-dashboards React tree:
- *   recent — newest-first walk of the firehose index across all partitions,
- *            returning up to N entries with rid + _partition back-fill.
  *   stats  — merge of per-partition hourly buckets into a single time_series
  *            array.
  *
@@ -25,7 +23,6 @@ use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -47,79 +44,6 @@ class EventsCITest extends TestCase {
 		VerbHarness::reset();
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
-	}
-
-	// ── recent verb ────────────────────────────────────────────────────────
-
-	public function test_recent_verb_returns_data_meta_shape_when_empty(): void {
-		// No firehose logs on disk — verb still returns the canonical
-		// `{ data, meta }` envelope.
-		$interpreter     = new Events_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'events', 'recent', [ 'limit' => 50 ] );
-
-		$this->assertIsArray( $result );
-		$this->assertArrayHasKey( 'data', $result );
-		$this->assertArrayHasKey( 'meta', $result );
-		$this->assertSame( [], $result['data'] );
-		$this->assertSame( 50, $result['meta']['limit'] );
-		$this->assertSame( 0, $result['meta']['scanned'] );
-	}
-
-	public function test_recent_verb_default_limit_is_100(): void {
-		// Empty args body — verb should fall through to the legacy default
-		// limit of 100 (matches EventsController route default).
-		$interpreter     = new Events_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'events', 'recent' );
-
-		$this->assertSame( 100, $result['meta']['limit'] );
-	}
-
-	public function test_recent_verb_clamps_limit_low(): void {
-		// Mirror the legacy sanitize_callback: `max(1, min(1000, (int)$v))`.
-		// Negative input clamped to 1.
-		$interpreter     = new Events_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'events', 'recent', [ 'limit' => -5 ] );
-		$this->assertSame( 1, $result['meta']['limit'] );
-	}
-
-	public function test_recent_verb_clamps_limit_high(): void {
-		// Mirror the legacy sanitize_callback upper bound: 1000.
-		$interpreter     = new Events_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'events', 'recent', [ 'limit' => 5000 ] );
-		$this->assertSame( 1000, $result['meta']['limit'] );
-	}
-
-	public function test_recent_verb_returns_indexed_firehose_entries(): void {
-		// Seed a firehose segment + index entry so scan_index finds something.
-		// Mirrors GyroscopeControllerTest's seed pattern.
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1 ] );
-		$segment_dir = $this->tmp . '/logs/firehose.log/p0';
-		\mkdir( $segment_dir, 0755, true );
-
-		// Build a TM_STRUCT packed message with a payload the verb can read.
-		$payload      = [ 'k' => 'init', 'm' => '/hello', 'ts' => 1700000000, 'n' => 1 ];
-		$msg          = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = 1700000000;
-		$msg[ Message::KEY ]       = 'rid-abc-123';
-		$msg[ Message::VALUE ]     = $payload;
-		$packed       = Message::packed( $msg );
-		\file_put_contents( "{$segment_dir}/0.log", $packed );
-
-		// 8-byte binary index: pack('NN', segment_id, offset).
-		$index = \pack( 'NN', 0, 0 );
-		\file_put_contents( "{$segment_dir}/0.idx", $index );
-
-		$interpreter     = new Events_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'events', 'recent', [ 'limit' => 10 ] );
-
-		$this->assertCount( 1, $result['data'] );
-		$this->assertSame( 'init', $result['data'][0]['k'] );
-		$this->assertSame( '/hello', $result['data'][0]['m'] );
-		// Back-fill: rid pulled from Message::KEY, _partition from the scan index.
-		$this->assertSame( 'rid-abc-123', $result['data'][0]['rid'] );
-		$this->assertSame( 0, $result['data'][0]['_partition'] );
-		$this->assertSame( 1, $result['meta']['scanned'] );
 	}
 
 	// ── stats verb ─────────────────────────────────────────────────────────
@@ -211,27 +135,14 @@ class EventsCITest extends TestCase {
 
 	// ── schema-driven dispatch ──────────────────────────────────────────────
 
-	public function test_node_schema_lists_both_verbs_with_handlers(): void {
+	public function test_node_schema_lists_only_stats_verb_with_handler(): void {
 		$verbs = [];
 		foreach ( Events_CI_Node::node_schema()['commands'] as $verb ) {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 
-		$this->assertArrayHasKey( 'recent', $verbs );
-		$this->assertArrayHasKey( 'stats', $verbs );
-		$this->assertIsCallable( $verbs['recent']['handler'] );
+		$this->assertSame( [ 'stats' ], \array_keys( $verbs ) );
 		$this->assertIsCallable( $verbs['stats']['handler'] );
-	}
-
-	public function test_recent_verb_declares_optional_limit_arg(): void {
-		// `recent` reads `$payload['limit'] ?? 100`, clamped 1..1000 — optional
-		// int defaulting to 100, so the Inspector renders a single int field.
-		$args = self::args_by_name( 'recent' );
-
-		$this->assertSame( [ 'limit' ], \array_keys( $args ) );
-		$this->assertSame( 'int', $args['limit']['type'] );
-		$this->assertFalse( $args['limit']['required'] );
-		$this->assertSame( 100, $args['limit']['default'] );
 	}
 
 	public function test_stats_verb_declares_no_args(): void {
@@ -251,19 +162,5 @@ class EventsCITest extends TestCase {
 			$verbs[ $verb['name'] ] = $verb;
 		}
 		return $verbs;
-	}
-
-	/**
-	 * A verb's args[] indexed by arg name.
-	 *
-	 * @param string $verb Verb name.
-	 * @return array<string,array<string,mixed>>
-	 */
-	private static function args_by_name( string $verb ): array {
-		$out = [];
-		foreach ( self::verbs_by_name()[ $verb ]['args'] as $arg ) {
-			$out[ $arg['name'] ] = $arg;
-		}
-		return $out;
 	}
 }

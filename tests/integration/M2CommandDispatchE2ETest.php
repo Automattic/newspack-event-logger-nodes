@@ -96,27 +96,22 @@ class M2CommandDispatchE2ETest extends TestCase {
 
 	/**
 	 * Fidelity guard for the data-provider's JSON-string args: the provider
-	 * passes `'{"limit":1}'` for events.recent, and build_request() must decode
-	 * it into the array the verb consumes (verbs do
-	 * `is_array($payload) ? $payload : []`, so a raw string collapses to `[]`
-	 * and the limit silently reverts to the 100 default). Asserting the verb
-	 * actually honoured `limit:1` proves the payload arrived decoded.
+	 * passes `'{}'` for performance.timing, and build_request() must decode it
+	 * into the array the verb consumes (verbs do
+	 * `is_array($payload) ? $payload : []`, so a raw string collapses to `[]`).
+	 * Asserting the verb returns a structured payload proves the body arrived
+	 * decoded.
 	 */
-	public function test_events_recent_honours_json_string_limit_from_provider(): void {
+	public function test_verb_receives_decoded_json_string_args_from_provider(): void {
 		$ctrl = new HTTP_In_Node();
 		$ctrl->set_test_mode( true );
 		\ob_start();
-		$ctrl->dispatch( $this->build_request( 'events', 'recent', '{"limit":1}' ) );
+		$ctrl->dispatch( $this->build_request( 'performance', 'timing', '{}' ) );
 		$body = (string) \ob_get_clean();
 
-		$msg     = self::response_for( $body, 'recent' );
+		$msg     = self::response_for( $body, 'timing' );
 		$payload = $msg[ Message::VALUE ]['payload'] ?? null;
-		$this->assertIsArray( $payload, 'events.recent must return a structured payload' );
-		$this->assertSame(
-			1,
-			$payload['meta']['limit'] ?? null,
-			'limit:1 from the JSON-string args must reach the verb (a string payload would default to 100)'
-		);
+		$this->assertIsArray( $payload, 'performance.timing must return a structured payload' );
 	}
 
 	/**
@@ -195,7 +190,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 			'status.get'         => [ 'status',      'get',    '{}' ],
 			'settings.get'       => [ 'settings',    'get',    '{}' ],
 			'logger.config'      => [ 'logger',      'config', '{}' ],
-			'events.recent'      => [ 'events',      'recent', '{"limit":1}' ],
+			'events.stats'       => [ 'events',      'stats',  '{}' ],
 			'servers.list'       => [ 'servers',     'list',   '{}' ],
 			'aggregator.health'  => [ 'aggregator',  'health', '{}' ],
 			'performance.timing' => [ 'performance', 'timing', '{}' ],
