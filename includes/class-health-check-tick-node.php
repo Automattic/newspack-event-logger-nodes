@@ -54,7 +54,7 @@ class Health_Check_Tick_Node extends Node {
 	public function __construct() {
 		// No config verbs: this node is an owned sibling of StreamMerger and its
 		// periodic tick is started from StreamMerger's name() lifecycle, not a
-		// TSL verb. parent::__construct() with empty verbs attaches no CI.
+		// TSL verb. parent::__construct() with empty verbs attaches no interpreter.
 		parent::__construct();
 	}
 
@@ -140,7 +140,7 @@ class Health_Check_Tick_Node extends Node {
 	}
 
 	// -------------------------------------------------------------------------
-	// Sibling-CI verb table + node_schema (A3).
+	// Sibling-interpreter verb table + node_schema (A3).
 	// -------------------------------------------------------------------------
 
 	public static function node_schema(): array {

@@ -5,7 +5,7 @@
  * the substrate's HTTP I/O boundary node — the minimal mount surface a
  * poll-only dashboard needs:
  *
- *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
  *
  * Plus the application's render-model node:
  *
@@ -16,10 +16,10 @@
  * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
  * the debug-overlay's REPL when it opens on this page.
  *
- * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * hook owns the poll setInterval — on every tick it builds a TM_COMMAND
  * (FROM=`aggregator:view`, TO=`_http/aggregator`, verb=`status`) and fills it
- * into the CI. The router peels `_http`, HttpOut POSTs the command, the server
+ * into the interpreter. The router peels `_http`, HttpOutNode POSTs the command, the server
  * pivots the reply TO=FROM, the router peels `aggregator:view`, and the view
  * unwraps the payload into its render model. No bespoke `aggregator:poll` node.
  *
@@ -36,7 +36,7 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	HttpOut,
+	HttpOutNode,
 	CommandClient,
 	newMessage,
 	TYPE,
@@ -45,7 +45,7 @@ import {
 	VALUE,
 	TM_COMMAND,
 } from '@newspack-nodes/runtime';
-import { createAggregatorView } from '../nodes/aggregatorView';
+import { createAggregatorView } from '../nodes/aggregator-view-node';
 
 // The I/O boundary node mounted from the substrate runtime.
 const HTTP = '_http';
@@ -84,7 +84,7 @@ function initialRefresh() {
 /**
  * Build the poll TM_COMMAND: FROM=`aggregator:view` so the server's reply pivot
  * lands on the view; TO=`_http/aggregator` so the router peels `_http` and
- * HttpOut POSTs the bare `aggregator.status` command (no worker indirection).
+ * HttpOutNode POSTs the bare `aggregator.status` command (no worker indirection).
  *
  * @return {Array} A 7-field positional Message.
  */
@@ -112,8 +112,8 @@ export function useAggregatorStatusGraph( opts = {} ) {
 	const [ refreshInterval, setRefreshIntervalState ] =
 		useState( initialRefresh );
 
-	// Live CI handle for the poll-interval effect.
-	const ciRef = useRef( null );
+	// Live interpreter handle for the poll-interval effect.
+	const interpreterRef = useRef( null );
 
 	// Flipped true once the graph (and its view node) is mounted, so the React
 	// view's useNodeState re-subscribes to the now-registered view node.
@@ -124,12 +124,12 @@ export function useAggregatorStatusGraph( opts = {} ) {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, teardown: teardownSpine } = mountExospine();
+		// The canonical backbone every node clips onto: everything → interpreter → router.
+		const { interpreter, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary node — HttpOut is the only one this poll-only dashboard
+		// I/O boundary node — HttpOutNode is the only one this poll-only dashboard
 		// needs.
-		const http = new HttpOut();
+		const http = new HttpOutNode();
 		http.client =
 			optsRef.current.commandClient ||
 			new CommandClient( {
@@ -137,29 +137,29 @@ export function useAggregatorStatusGraph( opts = {} ) {
 				nonce: data.nonce || '',
 			} );
 		http.setName( HTTP );
-		http.sink = ci;
+		http.sink = interpreter;
 
 		// The application view-model node — the receiver of the poll reply via the
 		// server's TO=FROM pivot.
 		const view = createAggregatorView( VIEW );
-		view.sink = ci;
+		view.sink = interpreter;
 
-		ciRef.current = ci;
+		interpreterRef.current = interpreter;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
 		setViewReady( true );
 
-		// Fire one immediate poll: the canonical "everything sinks into the CI"
-		// path — CI forwards (non-command, non-empty-TO) to router → router peels
-		// `_http` → HttpOut.fill POSTs the command.
-		ci.fill( buildPollMessage() );
+		// Fire one immediate poll: the canonical "everything sinks into the interpreter"
+		// path — interpreter forwards (non-command, non-empty-TO) to router → router peels
+		// `_http` → HttpOutNode.fill POSTs the command.
+		interpreter.fill( buildPollMessage() );
 
 		return () => {
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );
 			}
 			teardownSpine();
-			ciRef.current = null;
+			interpreterRef.current = null;
 		};
 	}, [] );
 
@@ -173,8 +173,8 @@ export function useAggregatorStatusGraph( opts = {} ) {
 	useEffect( () => {
 		const intervalMs = parseInt( refreshInterval, 10 );
 		const id = setInterval( () => {
-			if ( ciRef.current ) {
-				ciRef.current.fill( buildPollMessage() );
+			if ( interpreterRef.current ) {
+				interpreterRef.current.fill( buildPollMessage() );
 			}
 		}, intervalMs );
 		return () => clearInterval( id );

@@ -4,7 +4,7 @@
  * substrate's HTTP I/O boundary node — the minimal mount surface this
  * fire-on-OPEN modal needs:
  *
- *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
  *
  * Plus the application's render-model node:
  *
@@ -18,7 +18,7 @@
  * The trigger is fire-on-OPEN: an effect keyed on `isOpen` builds a TM_COMMAND
  * (FROM=`hookcatalog:view`, TO=`_http/performance`, VALUE.name=`hooks_registered`)
  * with a unique `message[ID]`, stashes a Promise resolver in the view's `pending`
- * Map, and fills the message into the CI. The router peels `_http`, HttpOut
+ * Map, and fills the message into the interpreter. The router peels `_http`, HttpOutNode
  * POSTs, the server pivots the reply TO=FROM, the router peels
  * `hookcatalog:view`, and the view's `fill()` matches `message[ID]` to settle
  * the Promise + extract hooks_by_category for the render model.
@@ -38,7 +38,7 @@ import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	HttpOut,
+	HttpOutNode,
 	CommandClient,
 	useNodeState,
 	newMessage,
@@ -50,7 +50,7 @@ import {
 	TM_COMMAND,
 	TM_RESPONSE,
 } from '@newspack-nodes/runtime';
-import { createHookCatalogView } from '../nodes/hookCatalogView';
+import { createHookCatalogView } from '../nodes/hook-catalog-view-node';
 
 const HTTP = '_http';
 const VIEW = 'hookcatalog:view';
@@ -88,8 +88,8 @@ export function useHookCatalogGraph( opts = {} ) {
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
-	// Live CI handle for the dispatch callback.
-	const ciRef = useRef( null );
+	// Live interpreter handle for the dispatch callback.
+	const interpreterRef = useRef( null );
 
 	// Flipped true once the graph (and its view node) is mounted, so the React
 	// view's useNodeState re-subscribes to the now-registered view node.
@@ -100,11 +100,11 @@ export function useHookCatalogGraph( opts = {} ) {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, teardown: teardownSpine } = mountExospine();
+		// The canonical backbone every node clips onto: everything → interpreter → router.
+		const { interpreter, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary node — HttpOut is the only one this modal needs.
-		const http = new HttpOut();
+		// I/O boundary node — HttpOutNode is the only one this modal needs.
+		const http = new HttpOutNode();
 		http.client =
 			optsRef.current.commandClient ||
 			new CommandClient( {
@@ -112,13 +112,13 @@ export function useHookCatalogGraph( opts = {} ) {
 				nonce: data.nonce || '',
 			} );
 		http.setName( HTTP );
-		http.sink = ci;
+		http.sink = interpreter;
 
 		// The application view-model node — receiver of every reply via TO=FROM pivot.
 		const view = createHookCatalogView( VIEW );
-		view.sink = ci;
+		view.sink = interpreter;
 
-		ciRef.current = ci;
+		interpreterRef.current = interpreter;
 
 		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
 		setViewReady( true );
@@ -128,14 +128,14 @@ export function useHookCatalogGraph( opts = {} ) {
 				Core.unregisterNode( name );
 			}
 			teardownSpine();
-			ciRef.current = null;
+			interpreterRef.current = null;
 		};
 	}, [] );
 
 	// Dispatch a verb and return a Promise the view settles via message[ID].
 	const dispatch = useCallback( ( verb ) => {
-		const ci = ciRef.current;
-		if ( ! ci ) {
+		const interpreter = interpreterRef.current;
+		if ( ! interpreter ) {
 			return Promise.reject( new Error( 'graph not mounted' ) );
 		}
 		const view = Core.node( VIEW );
@@ -146,12 +146,12 @@ export function useHookCatalogGraph( opts = {} ) {
 		const promise = new Promise( ( resolve, reject ) => {
 			view.pending.set( id, { resolve, reject } );
 		} );
-		ci.fill( buildCommand( verb, id ) );
+		interpreter.fill( buildCommand( verb, id ) );
 		return promise;
 	}, [] );
 
 	// Fire one hooks_registered fetch whenever the modal opens. On failure
-	// route a synthetic empty-catalog reply THROUGH the CI (canonical path —
+	// route a synthetic empty-catalog reply THROUGH the interpreter (canonical path —
 	// router peels TO=`hookcatalog:view` and delivers) so the spinner clears
 	// (legacy modal had no error UI).
 	useEffect( () => {
@@ -159,8 +159,8 @@ export function useHookCatalogGraph( opts = {} ) {
 			return;
 		}
 		dispatch( 'hooks_registered' ).catch( () => {
-			const ci = ciRef.current;
-			if ( ! ci ) {
+			const interpreter = interpreterRef.current;
+			if ( ! interpreter ) {
 				return;
 			}
 			const fake = newMessage();
@@ -170,7 +170,7 @@ export function useHookCatalogGraph( opts = {} ) {
 				name: 'hooks_registered',
 				payload: { hooks_by_category: {} },
 			};
-			ci.fill( fake );
+			interpreter.fill( fake );
 		} );
 	}, [ isOpen, dispatch ] );
 

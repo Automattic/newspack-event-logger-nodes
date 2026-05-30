@@ -1,7 +1,7 @@
 /**
  * aggregator:view tests — owns the Aggregator Status view model.
  *
- * Post-migration to `_http`/CI routing, the view's `fill()` receives the raw
+ * Post-migration to `_http`/interpreter routing, the view's `fill()` receives the raw
  * reply Message directly from the substrate's router (TO=FROM pivot from the
  * server): TM_COMMAND|TM_RESPONSE carrying `{ name, payload }` in VALUE and
  * the server's snapshot clock in TIMESTAMP. The view unwraps `value.payload`
@@ -24,13 +24,13 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createAggregatorView } from '../aggregatorView';
+import { createAggregatorView } from '../aggregator-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// A reply Message as the server emits one (the format HttpOut feeds back into
-// the CI: TM_COMMAND|TM_RESPONSE carrying `{ name, payload }` in VALUE).
+// A reply Message as the server emits one (the format HttpOutNode feeds back into
+// the interpreter: TM_COMMAND|TM_RESPONSE carrying `{ name, payload }` in VALUE).
 function replyMsg( payload, now = null ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
@@ -163,4 +163,17 @@ test( 'ignores a message with no VALUE', () => {
 test( 'names the node', () => {
 	const v = createAggregatorView( 'aggregator:view' );
 	expect( v.name ).toBe( 'aggregator:view' );
+} );
+
+describe( 'aggregator:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createAggregatorView( 'aggregator:view' ).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
+	} );
 } );

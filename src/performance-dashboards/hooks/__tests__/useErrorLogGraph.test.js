@@ -6,7 +6,7 @@
  * `perferrors:transform` Callback are gone — the view's `fill()` shapes raw
  * envelopes inline.
  *
- * EventSource is faked via `global.EventSource`; SseIn's connection logic is
+ * EventSource is faked via `global.EventSource`; SseInNode's connection logic is
  * unmocked here — we drive a `msg` event through the fake EventSource and
  * assert it actually routes _sse → view. The slot keep-alive bridge mirrors
  * useRequestLogGraph exactly: a `connected` envelope populates
@@ -65,7 +65,7 @@ beforeEach( () => {
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 } );
 
-const CI = '_command_interpreter';
+const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const SSE = '_sse';
 const HTTP = '_http';
@@ -93,15 +93,15 @@ function errorEnvelope( rid, value ) {
 }
 
 describe( 'useErrorLogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the four graph nodes, each sinking into the CI', () => {
+	test( 'mounts the backbone + the four graph nodes, each sinking into the interpreter', () => {
 		renderHook( () => useErrorLogGraph() );
-		const ci = Core.node( CI );
-		expect( ci ).toBeTruthy();
+		const interpreter = Core.node( INTERPRETER );
+		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		for ( const name of ALL_GRAPH_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
-			expect( node.sink ).toBe( ci );
+			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
@@ -289,7 +289,7 @@ describe( 'useErrorLogGraph — teardown', () => {
 		const { unmount } = renderHook( () => useErrorLogGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );

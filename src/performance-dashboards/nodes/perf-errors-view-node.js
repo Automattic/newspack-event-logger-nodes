@@ -33,6 +33,18 @@ const MAX_M_LENGTH = 1000;
  * Buffer + entry-enrichment logic migrated verbatim from `ErrorLog.js`.
  */
 class PerfErrorsViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Error Log view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries;
@@ -69,7 +81,7 @@ class PerfErrorsViewNode extends Node {
 		if ( ! rid ) {
 			return;
 		}
-		// SseIn streams a `connected` sentinel envelope too; it's not an error.
+		// SseInNode streams a `connected` sentinel envelope too; it's not an error.
 		if ( 'connected' === rid ) {
 			return;
 		}

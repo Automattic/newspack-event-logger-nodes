@@ -5,7 +5,7 @@
  * `performance:command` (slice-tagging command-builder) and `performance:view`
  * (render model + pending-Promise registry):
  *
- *   _http              (HttpOut — POST /command boundary; .client = CommandClient)
+ *   _http              (HttpOutNode — POST /command boundary; .client = CommandClient)
  *   performance:command (slice-tagging command-builder)
  *   performance:view    (the view-model node React reads + pending Map)
  *
@@ -14,10 +14,10 @@
  * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
  * the debug-overlay's REPL when it opens on this page.
  *
- * Every node sinks into the CI (rule #2); flow is steered by each node's
+ * Every node sinks into the interpreter (rule #2); flow is steered by each node's
  * `target`. The hook owns the orchestration effects (initial load, refresh
  * interval, selection-driven fetches, debounced URL-params change). Each
- * fetch flows `performance:command` → CI → router → `_http` → POST → server
+ * fetch flows `performance:command` → interpreter → router → `_http` → POST → server
  * pivots TO=FROM → router → `performance:view`, which matches `message[ID]`
  * to its pending Map and applies the result to the registered slice.
  *
@@ -44,15 +44,15 @@ import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	HttpOut,
+	HttpOutNode,
 	CommandClient,
 	newMessage,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
-import { createPerformanceCommand } from '../nodes/performanceCommand';
-import { createPerformanceView } from '../nodes/performanceView';
+import { createPerformanceCommand } from '../nodes/performance-command-node';
+import { createPerformanceView } from '../nodes/performance-view-node';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 import { getCommandClient } from '../../shared/utils/commandClient';
 import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
@@ -117,11 +117,11 @@ export function usePerformanceGraph( opts = {} ) {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, teardown: teardownSpine } = mountExospine();
+		// The canonical backbone every node clips onto: everything → interpreter → router.
+		const { interpreter, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary node — HttpOut is the only one this dashboard needs.
-		const http = new HttpOut();
+		// I/O boundary node — HttpOutNode is the only one this dashboard needs.
+		const http = new HttpOutNode();
 		http.client =
 			optsRef.current.commandClient ||
 			new CommandClient( {
@@ -129,20 +129,20 @@ export function usePerformanceGraph( opts = {} ) {
 				nonce: data.nonce || '',
 			} );
 		http.setName( HTTP );
-		http.sink = ci;
+		http.sink = interpreter;
 
 		// The application view-model node — receiver of every reply via TO=FROM pivot.
 		const view = createPerformanceView( VIEW );
-		view.sink = ci;
+		view.sink = interpreter;
 
-		// The slice-tagging command-builder. sink = CI (rule #2); target = view
+		// The slice-tagging command-builder. sink = interpreter (rule #2); target = view
 		// so `loading`/`error` controls route to the view via the router peeling
 		// TO. viewName = VIEW so the command can stash pending entries there.
 		const command = createPerformanceCommand( COMMAND, {
 			onError: optsRef.current.onError,
 			viewName: VIEW,
 		} );
-		command.sink = ci;
+		command.sink = interpreter;
 		command.target = VIEW;
 
 		commandRef.current = command;
@@ -155,7 +155,7 @@ export function usePerformanceGraph( opts = {} ) {
 			}
 			// Close the command (cancel guard) first so a late reply doesn't fire
 			// emissions against a torn-down view; unregister the graph nodes; THEN
-			// tear the exospine down (removes the CI + router).
+			// tear the exospine down (removes the interpreter + router).
 			command.close();
 			for ( const name of GRAPH_NODE_NAMES ) {
 				Core.unregisterNode( name );

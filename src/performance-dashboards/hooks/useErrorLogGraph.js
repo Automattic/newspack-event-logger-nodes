@@ -3,9 +3,9 @@
  * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
  * substrate's I/O boundary nodes — the same ones useRequestLogGraph mounts:
  *
- *   _sse        (SseIn — EventSource ingress, args `'errors {restUrl} {nonce}'`)
- *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
- *   _heartbeat  (Heartbeat — slot keep-alive; target = `_http/workers`)
+ *   _sse        (SseInNode — EventSource ingress, args `'errors {restUrl} {nonce}'`)
+ *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
+ *   _heartbeat  (HeartbeatNode — slot keep-alive; target = `_http/workers`)
  *
  * Plus the single dashboard node — the view-model:
  *
@@ -17,7 +17,7 @@
  * reaches subscribers), and `perferrors:transform` was a one-line dispatch
  * that's now inline in the view's `fill()`.
  *
- * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * slot bridge mirrors useRequestLogGraph (and useConsoleGraph): a
  * `connected`-event subscriber on `_sse` reads `payload.slot` / `.partition`
  * and pushes them into `_heartbeat`. The page-visibility / pause effect drives
@@ -39,16 +39,16 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	SseIn,
-	HttpOut,
-	Heartbeat,
+	SseInNode,
+	HttpOutNode,
+	HeartbeatNode,
 	CommandClient,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createPerfErrorsView } from '../nodes/perfErrorsView';
+import { createPerfErrorsView } from '../nodes/perf-errors-view-node';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
 // I/O boundary nodes mounted from the substrate runtime.
@@ -101,38 +101,42 @@ export function useErrorLogGraph( opts = {} ) {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, router, teardown: teardownSpine } = mountExospine();
+		// The canonical backbone every node clips onto: everything → interpreter → router.
+		const {
+			interpreter,
+			router,
+			teardown: teardownSpine,
+		} = mountExospine();
 
 		// I/O boundary nodes — the same ones useRequestLogGraph mounts.
 		// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
-		const sse = new SseIn();
+		const sse = new SseInNode();
 		sse.arguments = `errors ${ data.restUrl || '/wp-json/' } ${
 			data.nonce || ''
 		}`;
 		sse.setName( SSE );
-		sse.sink = ci;
+		sse.sink = interpreter;
 		sse.target = VIEW;
 
-		const http = new HttpOut();
+		const http = new HttpOutNode();
 		http.client = new CommandClient( {
 			baseUrl: data.restUrl || '/wp-json/',
 			nonce: data.nonce || '',
 		} );
 		http.setName( HTTP );
-		http.sink = ci;
+		http.sink = interpreter;
 
-		const heartbeat = new Heartbeat();
+		const heartbeat = new HeartbeatNode();
 		heartbeat.setName( HEARTBEAT );
-		heartbeat.sink = ci;
+		heartbeat.sink = interpreter;
 		// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
 		// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
-		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
+		// discarded by HeartbeatNode.fill anyway, so broadcast routing is fine.
 		heartbeat.target = `${ HTTP }/workers`;
 
 		// The view-model — shapes raw envelopes into rows inline.
 		const view = createPerfErrorsView( VIEW, { maxEntries } );
-		view.sink = ci;
+		view.sink = interpreter;
 
 		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
 		// slot into `_heartbeat`. Mirrors useRequestLogGraph.js.
@@ -153,7 +157,7 @@ export function useErrorLogGraph( opts = {} ) {
 			return true;
 		} );
 
-		// Heartbeat hitchhikes the backbone's TIMER (started in mountExospine).
+		// HeartbeatNode hitchhikes the backbone's TIMER (started in mountExospine).
 		router.register( 'TIMER', HEARTBEAT, () => heartbeat.onTimer() );
 
 		sseRef.current = sse;

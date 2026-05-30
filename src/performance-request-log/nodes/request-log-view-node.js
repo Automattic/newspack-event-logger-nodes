@@ -53,6 +53,18 @@ const urlHash = ( url ) => {
  * node when the chain collapsed to `_sse → requestlog:view`.
  */
 class RequestLogViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Request Log view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries;

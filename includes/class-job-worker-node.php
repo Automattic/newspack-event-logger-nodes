@@ -85,7 +85,7 @@ class Job_Worker_Node extends Node {
 	 * override below re-normalizes after that walk.
 	 */
 	public function __construct() {
-		// Base ctor auto-wires a sibling :config CI from node_schema()['commands']
+		// Base ctor auto-wires a sibling :config interpreter from node_schema()['commands']
 		// handlers — JobWorker declares none, so no sibling is created.
 		parent::__construct();
 

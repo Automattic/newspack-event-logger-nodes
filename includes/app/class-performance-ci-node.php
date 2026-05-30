@@ -24,7 +24,7 @@
  *    (or its `admin_permissions_check` cousin on the writers), which
  *    enforces the capability.
  *  - Rate limit: dropped. The legacy rate-limit was an artifact of REST
- *    polling; CI dispatch fires verbs once-per-request through the worker,
+ *    polling; interpreter dispatch fires verbs once-per-request through the worker,
  *    not from a fan-out of polling tabs.
  *  - Stats reads fail-soft (matches Stats_Store + dashboards "no data" UX).
  *  - Disk scans capped at MAX_INDEX_ENTRIES so a missing-rid lookup can't
@@ -420,7 +420,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				// Lifted from legacy PerformanceController::get_timing — merged
 				// hourly buckets across partitions. The legacy "data + meta"
-				// wrapper is dropped (REST artifact); CI returns the inner
+				// wrapper is dropped (REST artifact); the interpreter returns the inner
 				// payload directly.
 				return [
 					'time_series' => self::merge_hourly_across_partitions(),

@@ -113,8 +113,8 @@ class Flame_Builder_Node extends Node {
 		$this->auto_tuner = new Auto_Tuner_Node();
 		$this->auto_tuner->patron( $this );
 
-		// Base ctor auto-wires the sibling :config CI from node_schema()['commands']
-		// handlers (static; read $ci->patron() lazily, so end-placement is fine).
+		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
+		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
 		parent::__construct();
 	}
 
@@ -1664,7 +1664,7 @@ class Flame_Builder_Node extends Node {
 	}
 
 	// -------------------------------------------------------------------------
-	// Sibling-CI verb table + node_schema (A3).
+	// Sibling-interpreter verb table + node_schema (A3).
 	// -------------------------------------------------------------------------
 
 	private function handle_request( array $message ): void {
@@ -1712,11 +1712,11 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<config:is_hub>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \strtolower( \trim( $args ) );
 						$bool = ( 'true' === $args || '1' === $args );
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_is_hub( $bool );
 						return 'ok';
 					},
@@ -1728,13 +1728,13 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'count_threshold', 'type' => 'int',   'required' => true, 'default' => '<config:auto_disable_threshold>' ],
 						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true, 'default' => '<config:auto_protect_time_threshold>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$parts = \preg_split( '/\s+/', \trim( $args ) );
 						if ( \count( $parts ) < 2 ) {
 							return 'usage: set_auto_tune <count_threshold> <time_threshold>';
 						}
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_auto_tune( (int) $parts[0], (float) $parts[1] );
 						return 'ok';
 					},
@@ -1745,13 +1745,13 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'names', 'type' => 'string', 'required' => false, 'default' => '<config:significant_events_csv>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
 						$list = '' === $args
 							? []
 							: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ) ) );
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_significant_events( $list );
 						return 'ok';
 					},
@@ -1762,7 +1762,7 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $ci, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$parts = \preg_split( '/\s+/', \trim( $args ) );
 						if ( \count( $parts ) < 1 || '' === $parts[0] ) {
 							return 'usage: configure_stats <partition>';
@@ -1777,7 +1777,7 @@ class Flame_Builder_Node extends Node {
 						$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $partition, $max_lifespan );
 
 						/** @var self $patron */
-						$patron = $ci->patron();
+						$patron = $interpreter->patron();
 						$patron->set_stats_store( $stats_store );
 						return 'ok';
 					},

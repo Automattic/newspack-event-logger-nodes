@@ -4,16 +4,16 @@
  * substrate's I/O boundary nodes — the same ones request-log + topology console
  * use:
  *
- *   _sse        (SseIn — EventSource ingress, args `'gyroscope {restUrl} {nonce}'`)
- *   _http       (HttpOut — POST /command boundary; .client = CommandClient)
- *   _heartbeat  (Heartbeat — slot keep-alive; target = `_http/workers`)
+ *   _sse        (SseInNode — EventSource ingress, args `'gyroscope {restUrl} {nonce}'`)
+ *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
+ *   _heartbeat  (HeartbeatNode — slot keep-alive; target = `_http/workers`)
  *
  * Plus the single dashboard node:
  *
  *   gyroscope:view        (the in-flight model the React view samples; consumes
  *                          wire envelopes directly — KEY/VALUE dispatch inlined)
  *
- * Every node sinks into the CI; flow is steered by each node's `target`. The
+ * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * bespoke `gyroscope:stream` Node and its inlined slot-heartbeat loop are
  * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke. The
  * `gyroscope:route` + `gyroscope:transform` hops were collapsed into
@@ -32,16 +32,16 @@ import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	SseIn,
-	HttpOut,
-	Heartbeat,
+	SseInNode,
+	HttpOutNode,
+	HeartbeatNode,
 	CommandClient,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createGyroscopeView } from '../nodes/gyroscopeView';
+import { createGyroscopeView } from '../nodes/gyroscope-view-node';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
 // The I/O boundary nodes mounted from the substrate runtime.
@@ -84,38 +84,42 @@ export function useGyroscopeGraph() {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → CI → router.
-		const { ci, router, teardown: teardownSpine } = mountExospine();
+		// The canonical backbone every node clips onto: everything → interpreter → router.
+		const {
+			interpreter,
+			router,
+			teardown: teardownSpine,
+		} = mountExospine();
 
 		// I/O boundary nodes — the same ones useRequestLogGraph + useConsoleGraph mount.
 		// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
-		const sse = new SseIn();
+		const sse = new SseInNode();
 		sse.arguments = `gyroscope ${ data.restUrl || '/wp-json/' } ${
 			data.nonce || ''
 		}`;
 		sse.setName( SSE );
-		sse.sink = ci;
+		sse.sink = interpreter;
 		sse.target = VIEW;
 
-		const http = new HttpOut();
+		const http = new HttpOutNode();
 		http.client = new CommandClient( {
 			baseUrl: data.restUrl || '/wp-json/',
 			nonce: data.nonce || '',
 		} );
 		http.setName( HTTP );
-		http.sink = ci;
+		http.sink = interpreter;
 
-		const heartbeat = new Heartbeat();
+		const heartbeat = new HeartbeatNode();
 		heartbeat.setName( HEARTBEAT );
-		heartbeat.sink = ci;
+		heartbeat.sink = interpreter;
 		// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
 		// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
-		// discarded by Heartbeat.fill anyway, so broadcast routing is fine.
+		// discarded by HeartbeatNode.fill anyway, so broadcast routing is fine.
 		heartbeat.target = `${ HTTP }/workers`;
 
 		// Dashboard view — consumes wire envelopes directly.
 		const view = createGyroscopeView( VIEW );
-		view.sink = ci;
+		view.sink = interpreter;
 
 		// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
 		// slot into `_heartbeat`. Mirrors useRequestLogGraph.js / useConsoleGraph.js.
@@ -136,7 +140,7 @@ export function useGyroscopeGraph() {
 			return true;
 		} );
 
-		// Heartbeat hitchhikes the backbone's TIMER (started in mountExospine).
+		// HeartbeatNode hitchhikes the backbone's TIMER (started in mountExospine).
 		router.register( 'TIMER', HEARTBEAT, () => heartbeat.onTimer() );
 
 		sseRef.current = sse;

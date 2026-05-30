@@ -4,11 +4,11 @@
  * `hookcatalog:view` model node.
  *
  * Migrated from the bespoke `hookcatalog:command` Node to the substrate's
- * HttpOut: the hook dispatches the `hooks_registered` verb as a TM_COMMAND
- * through the CI (FROM=`hookcatalog:view`, TO=`_http/performance`); the reply
+ * HttpOutNode: the hook dispatches the `hooks_registered` verb as a TM_COMMAND
+ * through the interpreter (FROM=`hookcatalog:view`, TO=`_http/performance`); the reply
  * routes via TO=FROM back into the view, which extracts hooks_by_category.
  *
- * Every node sinks into the CI (rule #2); flow is steered ONLY by each node's
+ * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
  * `target`. _http.client is injected via `opts.commandClient` so the hook never
  * touches the network. The trigger is fire-on-open: flipping `isOpen` true
  * dispatches one fetch (re-fetches on every re-open). Mirrors
@@ -31,13 +31,13 @@ import {
 } from '@newspack-nodes/runtime';
 import { useHookCatalogGraph } from '../useHookCatalogGraph';
 
-const CI = '_command_interpreter';
+const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
 const VIEW = 'hookcatalog:view';
 const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
-// A fake CommandClient matching HttpOut's seam: postBatch returns reply
+// A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
 // Messages addressed back along FROM (the server's reply pivot). The payload
 // can be looked up by verb so a hooks_registered reply yields the catalog dict.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
@@ -84,18 +84,18 @@ beforeEach( () => {
 } );
 
 describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + _http + the view, each sinking into the CI', () => {
+	test( 'mounts the backbone + _http + the view, each sinking into the interpreter', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useHookCatalogGraph( { isOpen: false, commandClient: client } )
 		);
-		const ci = Core.node( CI );
-		expect( ci ).toBeTruthy();
+		const interpreter = Core.node( INTERPRETER );
+		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		for ( const name of ALL_GRAPH_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
-			expect( node.sink ).toBe( ci );
+			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
@@ -155,7 +155,7 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
 	} );
 
-	test( 'the resolved catalog routes _http → CI → router → hookcatalog:view and lands in the model', async () => {
+	test( 'the resolved catalog routes _http → interpreter → router → hookcatalog:view and lands in the model', async () => {
 		const hooks = {
 			Lifecycle: [ 'init' ],
 			'REST API': [ 'rest_api_init' ],
@@ -257,7 +257,7 @@ describe( 'useHookCatalogGraph — teardown', () => {
 			useHookCatalogGraph( { isOpen: false, commandClient: client } )
 		);
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, CI, ROUTER ] ) {
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );

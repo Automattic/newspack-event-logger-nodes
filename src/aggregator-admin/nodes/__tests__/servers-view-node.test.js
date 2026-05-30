@@ -2,7 +2,7 @@
  * servers:view tests — owns the Configured-Servers admin view model after the
  * substrate-canonical migration.
  *
- * Post-migration, `fill()` receives the raw reply Messages HttpOut feeds back
+ * Post-migration, `fill()` receives the raw reply Messages HttpOutNode feeds back
  * from POST /command: the router peels the reply's TO (= `servers:view`, stamped
  * from the outbound FROM by the server's reply pivot) and delivers them here.
  * VALUE is the `{ name, payload }` envelope; the node unwraps `value.payload`.
@@ -23,7 +23,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createServersView } from '../serversView';
+import { createServersView } from '../servers-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -47,7 +47,7 @@ const SAMPLE = {
 	},
 };
 
-// Build the verb-reply Message HttpOut feeds back (TO already peeled by router).
+// Build the verb-reply Message HttpOutNode feeds back (TO already peeled by router).
 function replyMsg( {
 	name,
 	payload,
@@ -286,5 +286,18 @@ describe( 'servers:view — malformed input', () => {
 		m[ VALUE ] = 'not-an-object';
 		v.fill( m );
 		expect( v.setStateCache.view ).toBe( initial );
+	} );
+} );
+
+describe( 'servers:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createServersView( 'servers:view' ).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
 	} );
 } );

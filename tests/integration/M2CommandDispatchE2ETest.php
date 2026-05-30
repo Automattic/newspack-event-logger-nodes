@@ -13,10 +13,10 @@
  *                                       _router / _command_interpreter / _http)
  *                                    →  do_action newspack_nodes/request_graph_ready
  *                                       (mount hook installs every service CI
- *                                       via $base_ci->make_node())
+ *                                       via $base_interpreter->make_node())
  *                                    →  Router (peels TO head)
  *                                    →  Service CI (interpret + run verb)
- *                                    →  CI sink → base CI → Router
+ *                                    →  interpreter sink → base interpreter → Router
  *                                    →  HTTP_In (writes packed Message)
  *                                    →  ob_get_clean captures the body
  *
@@ -54,7 +54,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 		// (`_router` / `_command_interpreter` / `_http`) and fires
 		// `newspack_nodes/request_graph_ready`, which the mount hook in
 		// setUp uses to construct and sink each service CI via the
-		// base CI's make_node() — same path production runs.
+		// base interpreter's make_node() — same path production runs.
 
 		$ctrl = new HTTP_In_Node();
 		$ctrl->set_test_mode( true );

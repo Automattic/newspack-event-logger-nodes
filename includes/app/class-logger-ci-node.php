@@ -22,7 +22,7 @@
  *
  * Both verbs are read-only with no auth check — the legacy controller
  * gated them on `read_permissions_check` for rate-limiting; rate-limiting
- * is now a transport concern handled outside the CI. No service
+ * is now a transport concern handled outside the interpreter. No service
  * dependencies — substrate Config and HookCategorizer are both globals
  * accessed directly, matching Discovery_CI / Settings_CI.
  *
@@ -55,7 +55,7 @@ class Logger_CI_Node extends Service_CI_Node {
 						// server strings) stay since they're already managed via WP
 						// options. Value-equivalent with the legacy `get_config`
 						// response body — minus the `{data, meta}` REST envelope,
-						// which is reconstructed by the REST shim, not the CI.
+						// which is reconstructed by the REST shim, not the interpreter.
 						return RuntimeConfig::load_config();
 					},
 				],

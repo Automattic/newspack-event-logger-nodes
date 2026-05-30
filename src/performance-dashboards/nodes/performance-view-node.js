@@ -23,7 +23,7 @@ import {
  *       the OTHER slices are preserved (per-slice error isolation).
  *     - `clear`  → reset `urlDetail` / `requestDetail` to its empty shape.
  *
- *  2. Raw TM_COMMAND|TM_RESPONSE replies pivoted via TO=FROM by HttpOut. The
+ *  2. Raw TM_COMMAND|TM_RESPONSE replies pivoted via TO=FROM by HttpOutNode. The
  *     view matches `message[ID]` against `pending` and applies the result to
  *     the registered slice (or resolves a `resolveOnly` Promise, optionally
  *     piping the payload through a `transform` first). On TM_ERROR the slice
@@ -41,6 +41,18 @@ import {
  * model — no per-message React concern like the request stream.
  */
 class PerformanceViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Performance Dashboard view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor() {
 		super();
 		this.model = {

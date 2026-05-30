@@ -7,7 +7,7 @@
  * `HTTP_In::dispatch` lazy-builds the request-scope graph
  * (`_router` / `_command_interpreter` / `_http`) then fires
  * `newspack_nodes/request_graph_ready` so applications can mount their
- * service CIs through the base CI's `make_node()` — construct, name,
+ * service CIs through the base interpreter's `make_node()` — construct, name,
  * and sink in one atomic step. A single `POST /newspack-nodes/v1/command`
  * round-trip can then address each by short name.
  *
@@ -74,7 +74,7 @@ class M2BootstrapTest extends TestCase {
 		foreach ( $expected as $name ) {
 			$this->assertNotNull(
 				Core::node( $name ),
-				"CI '{$name}' must be registered under its short name after newspack_nodes/request_graph_ready."
+				"interpreter '{$name}' must be registered under its short name after newspack_nodes/request_graph_ready."
 			);
 		}
 	}
@@ -181,7 +181,7 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_sse_controller_base_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\SSEControllerBase' ),
-			'SSEControllerBase deleted in M6.10 — all 5 subclasses are gone; substrate SSE_Out owns the SSE wire-format helpers via SSE_Stream_Trait.'
+			'SSEControllerBase deleted in M6.10 — all 5 subclasses are gone; substrate SSE_Out_Node owns the SSE wire-format helpers (inlined).'
 		);
 	}
 

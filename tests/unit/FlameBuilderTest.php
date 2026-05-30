@@ -602,9 +602,9 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayNotHasKey( 'ts', $node );
 	}
 
-	// ── A3: sibling-CI + verbs ─────────────────────────────────
+	// ── A3: sibling-interpreter + verbs ─────────────────────────────────
 
-	public function test_flame_builder_constructs_sibling_ci(): void {
+	public function test_flame_builder_constructs_sibling_interpreter(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertNotNull( $fb->interpreter() );

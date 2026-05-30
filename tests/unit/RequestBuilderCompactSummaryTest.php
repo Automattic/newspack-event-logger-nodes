@@ -143,10 +143,10 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
 
-		// Invoke set_completed_target via the CI verb (not the direct setter).
-		$ci    = $rb->interpreter();
-		$verbs = $ci->commands();
-		$verbs['set_completed_target']( $ci, 'completed:tee' );
+		// Invoke set_completed_target via the interpreter verb (not the direct setter).
+		$interpreter    = $rb->interpreter();
+		$verbs = $interpreter->commands();
+		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
 
 		$request = (object) [
 			'rid'            => 'r-1',
@@ -171,10 +171,10 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
 
-		$ci    = $rb->interpreter();
-		$verbs = $ci->commands();
-		$verbs['set_completed_target']( $ci, 'completed:tee' );
-		$verbs['set_completed_target']( $ci, '' );  // clear
+		$interpreter    = $rb->interpreter();
+		$verbs = $interpreter->commands();
+		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
+		$verbs['set_completed_target']( $interpreter, '' );  // clear
 
 		$request = (object) [
 			'rid'            => 'r-1',
@@ -196,11 +196,11 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	public function test_dump_config_round_trips_configured_state(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$ci    = $rb->interpreter();
-		$verbs = $ci->commands();
-		$verbs['set_completed_target']( $ci, 'completed:tee' );
-		$verbs['set_inflight_target']( $ci, 'gyroscope:partition' );
-		$verbs['set_inflight_interval']( $ci, '1500' );
+		$interpreter    = $rb->interpreter();
+		$verbs = $interpreter->commands();
+		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
+		$verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' );
+		$verbs['set_inflight_interval']( $interpreter, '1500' );
 
 		$dump = $rb->dump_config();
 

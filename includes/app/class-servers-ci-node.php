@@ -76,7 +76,7 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * time (legal: they're defined inside this class and so may touch its
 	 * props on any instance).
 	 *
-	 * Nullable + default null so a freshly-constructed CI is in a known
+	 * Nullable + default null so a freshly-constructed interpreter is in a known
 	 * state until the bootstrap wires up the dep; verb handlers that
 	 * dereference `$self->registry` will fail loud if the bootstrap forgot
 	 * to assign it, rather than constructing into uninitialised-property UB.
@@ -95,7 +95,7 @@ class Servers_CI_Node extends Service_CI_Node {
 					'name'        => 'list',
 					'description' => 'All registered servers as a map keyed by id.',
 					'args'        => [],
-					// $self is the dispatching CI instance — always a Servers_CI_Node
+					// $self is the dispatching interpreter instance — always a Servers_CI_Node
 					// here (dispatch() passes $this), so it's typed concretely to read
 					// the ctor-injected registry off it (node_schema is static).
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {

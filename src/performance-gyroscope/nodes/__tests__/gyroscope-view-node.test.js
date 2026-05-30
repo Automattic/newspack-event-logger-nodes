@@ -32,7 +32,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createGyroscopeView } from '../gyroscopeView';
+import { createGyroscopeView } from '../gyroscope-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -253,4 +253,17 @@ test( 'publishes an initial view model on construction', () => {
 test( 'names the node', () => {
 	const v = createGyroscopeView( 'gyroscope:view' );
 	expect( v.name ).toBe( 'gyroscope:view' );
+} );
+
+describe( 'gyroscope:view — nodeSchema', () => {
+	test( 'is a Hidden, terminal (no output port) node', () => {
+		const schema =
+			createGyroscopeView( 'gyroscope:view' ).constructor.nodeSchema();
+		expect( schema.has_target ).toBe( false );
+		expect( schema.category ).toBe( 'Hidden' );
+		expect( typeof schema.description ).toBe( 'string' );
+		expect( schema.description.length ).toBeGreaterThan( 0 );
+		expect( schema.arguments ).toEqual( [] );
+		expect( schema.commands ).toEqual( [] );
+	} );
 } );

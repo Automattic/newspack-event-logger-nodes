@@ -197,7 +197,7 @@ describe( 'useMessageStream', () => {
 		act( () => {
 			src.emit( 'msg', [ 64, 0, '', '', '', 'connected', { slot: 3 } ] );
 		} );
-		// Heartbeat fires every 5000ms; advance and assert.
+		// HeartbeatNode fires every 5000ms; advance and assert.
 		act( () => {
 			jest.advanceTimersByTime( 5000 );
 		} );

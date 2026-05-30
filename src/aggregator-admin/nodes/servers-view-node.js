@@ -4,7 +4,7 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * `servers:view` — owns the Configured-Servers admin view model.
  *
  * Post-migration to substrate-canonical wiring, `fill()` receives the raw reply
- * Messages HttpOut feeds back from POST /command: the router peels the reply's
+ * Messages HttpOutNode feeds back from POST /command: the router peels the reply's
  * TO (= `servers:view`, stamped from the outbound FROM by the server's reply
  * pivot) and delivers them here. VALUE is the `{ name, payload }` envelope.
  *
@@ -20,6 +20,18 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * `useNodeState('servers:view','view')`. Mirrors aggregator:view.
  */
 class ServersViewNode extends Node {
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Configured-Servers admin view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
+	}
+
 	constructor() {
 		super();
 		this.model = {
