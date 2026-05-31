@@ -241,6 +241,25 @@ class PerformanceViewNode extends Node {
 	_publish() {
 		this.setState( 'view', { ...this.model } );
 	}
+
+	// Settle every in-flight resolveOnly pending promise before the node is
+	// removed, so a graph teardown / Reset-Graph reinit doesn't strand a caller
+	// awaiting a reply that will now never land on this (removed) node — the
+	// reply pivots back by name to the freshly-rebuilt view, whose `pending` is
+	// empty. Resolve with null (these reads' canonical "no data" return —
+	// resolveRequest / fetchUrlBreakdown already resolve(null) on a closed /
+	// invalid call), NOT reject, so fetchUrlBreakdown's _onError banner doesn't
+	// pop on an intentional reset. Slice-tagged entries carry no resolver
+	// (fire-and-forget fetches); they are simply dropped.
+	removeNode() {
+		for ( const entry of this.pending.values() ) {
+			if ( entry.resolveOnly && 'function' === typeof entry.resolve ) {
+				entry.resolve( null );
+			}
+		}
+		this.pending.clear();
+		super.removeNode();
+	}
 }
 
 // Coerce a TM_ERROR payload (string / { message } / anything else) to a

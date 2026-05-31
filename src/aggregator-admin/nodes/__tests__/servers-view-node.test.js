@@ -289,6 +289,28 @@ describe( 'servers:view — malformed input', () => {
 	} );
 } );
 
+describe( 'servers:view — removeNode rejects in-flight pending', () => {
+	test( 'removeNode rejects every pending promise so a reset/teardown does not strand a caller', async () => {
+		const v = createServersView( 'servers:view' );
+		const p1 = new Promise( ( resolve, reject ) =>
+			v.pending.set( 'op-a', { resolve, reject } )
+		);
+		const p2 = new Promise( ( resolve, reject ) =>
+			v.pending.set( 'op-b', { resolve, reject } )
+		);
+		// Attach catch handlers BEFORE removeNode rejects, so the synchronous
+		// reject is already handled (no unhandled-rejection) and we can assert it.
+		const e1 = p1.catch( ( e ) => e );
+		const e2 = p2.catch( ( e ) => e );
+
+		v.removeNode();
+
+		expect( await e1 ).toBeInstanceOf( Error );
+		expect( await e2 ).toBeInstanceOf( Error );
+		expect( v.pending.size ).toBe( 0 );
+	} );
+} );
+
 describe( 'servers:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
 		const schema =

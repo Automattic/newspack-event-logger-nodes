@@ -29,6 +29,7 @@ import {
 	TM_COMMAND,
 	TM_RESPONSE,
 	TM_ERROR,
+	useNodeState,
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
 
@@ -417,5 +418,53 @@ describe( 'usePerformanceGraph — teardown', () => {
 			resolveReply( [ r ] );
 		} ).not.toThrow();
 		await Promise.resolve();
+	} );
+} );
+
+describe( 'usePerformanceGraph — Core.reinit (Reset Graph)', () => {
+	test( 'Core.reinit rebuilds the graph nodes fresh (backbone preserved)', async () => {
+		const client = makeFakeClient();
+		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		await act( async () => {} );
+		const firstView = Core.node( VIEW );
+		const firstCommand = Core.node( COMMAND );
+		const backbone = Core.node( INTERPRETER );
+		expect( firstView ).not.toBeNull();
+		expect( typeof Core.reinit ).toBe( 'function' );
+
+		await act( async () => {
+			Core.reinit();
+		} );
+
+		// Soft nodes are fresh instances under the same names; backbone survives.
+		expect( Core.node( VIEW ) ).not.toBe( firstView );
+		expect( Core.node( COMMAND ) ).not.toBe( firstCommand );
+		expect( Core.node( COMMAND ).target ).toBe( VIEW );
+		expect( Core.node( HTTP ).client ).toBe( client );
+		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
+		expect( Core.node( INTERPRETER ) ).toBe( backbone );
+	} );
+
+	test( 'Core.reinit re-renders the consumer so useNodeState re-subscribes to the fresh view', async () => {
+		const client = makeFakeClient();
+		const { result } = renderHook( () => {
+			usePerformanceGraph( { commandClient: client } );
+			return useNodeState( VIEW, 'view' );
+		} );
+		await act( async () => {} );
+		const firstView = Core.node( VIEW );
+
+		await act( async () => {
+			Core.reinit();
+		} );
+		const freshView = Core.node( VIEW );
+		expect( freshView ).not.toBe( firstView );
+
+		// The fresh view publishes state; the consumer must observe it (proving it
+		// re-subscribed to freshView, not the removed firstView).
+		act( () => {
+			freshView.setState( 'view', { overview: { sentinel: true } } );
+		} );
+		expect( result.current ).toEqual( { overview: { sentinel: true } } );
 	} );
 } );

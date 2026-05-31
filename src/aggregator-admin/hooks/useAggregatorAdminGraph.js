@@ -15,7 +15,8 @@
  * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
  * the debug-overlay's REPL when it opens on this page.
  *
- * Every node sinks into the interpreter; flow is steered by each node's `target`. The
+ * The graph build is handed to `mountExospine( build )`, which snapshots Core so
+ * the soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The
  * hook owns the CRUD dispatch — on each call it builds a TM_COMMAND
  * (FROM=`servers:view`, TO=`_http/servers`, verb in VALUE.name) with a unique
  * `message[ID]`, stashes a `{ resolve, reject }` resolver in `servers:view`'s
@@ -53,7 +54,6 @@ import { createServersView } from '../nodes/servers-view-node';
 
 const HTTP = '_http';
 const VIEW = 'servers:view';
-const GRAPH_NODE_NAMES = [ HTTP, VIEW ];
 
 // Monotonic per-hook-instance ID counter — message[ID] is what the view uses
 // to match a reply back to a pending Promise resolver.
@@ -90,7 +90,8 @@ function buildCommand( verb, payload, id ) {
  *                                      defaults to a freshly-constructed CommandClient.
  * @return {{ addServer: Function, updateServer: Function, removeServer: Function,
  *   testServer: Function }} CRUD callbacks for the thin React view (the model is
- *   read via useNodeState).
+ *   read via useNodeState). Reset Graph is driven by the overlay via `Core.reinit`,
+ *   stashed by mountExospine.
  */
 export function useAggregatorAdminGraph( opts = {} ) {
 	const optsRef = useRef( opts );
@@ -99,51 +100,54 @@ export function useAggregatorAdminGraph( opts = {} ) {
 	// Live interpreter handle for the CRUD callbacks.
 	const interpreterRef = useRef( null );
 
-	// Flipped true once the graph (and its view node) is mounted, so the React
-	// view's useNodeState re-subscribes to the now-registered view node.
-	const [ , setViewReady ] = useState( false );
+	// Bumped on every (re)build so a consumer's useNodeState re-subscribes to the
+	// freshly-registered view node. A monotonic counter, not a boolean latch —
+	// reinit()'s second build must still force a render.
+	const [ , bumpBuild ] = useState( 0 );
 
 	// Mount the graph once: clip it onto the exospine, then fire one immediate list.
 	useEffect( () => {
-		const data =
-			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+		// The soft view-nodes the backbone clips onto. mountExospine snapshots
+		// Core around this so reinit() removes exactly these and rebuilds them.
+		const build = ( { interpreter } ) => {
+			const data =
+				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
+				{};
 
-		// The canonical backbone every node clips onto: everything → interpreter → router.
-		const { interpreter, teardown: teardownSpine } = mountExospine();
+			// I/O boundary node — HttpOutNode is the only one this CRUD-on-demand
+			// dashboard needs.
+			const http = new HttpOutNode();
+			http.client =
+				optsRef.current.commandClient ||
+				new CommandClient( {
+					baseUrl: data.restUrl || '/wp-json/',
+					nonce: data.nonce || '',
+				} );
+			http.setName( HTTP );
+			http.sink = interpreter;
 
-		// I/O boundary node — HttpOutNode is the only one this CRUD-on-demand
-		// dashboard needs.
-		const http = new HttpOutNode();
-		http.client =
-			optsRef.current.commandClient ||
-			new CommandClient( {
-				baseUrl: data.restUrl || '/wp-json/',
-				nonce: data.nonce || '',
-			} );
-		http.setName( HTTP );
-		http.sink = interpreter;
+			// The application view-model node — receiver of every reply via TO=FROM pivot.
+			const view = createServersView( VIEW );
+			view.sink = interpreter;
 
-		// The application view-model node — receiver of every reply via TO=FROM pivot.
-		const view = createServersView( VIEW );
-		view.sink = interpreter;
+			interpreterRef.current = interpreter;
 
-		interpreterRef.current = interpreter;
+			// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
+			bumpBuild( ( n ) => n + 1 );
 
-		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
-		setViewReady( true );
+			// Fire one immediate list (the canonical "everything sinks into the interpreter"
+			// path — interpreter forwards to router → router peels `_http` → HttpOutNode POSTs).
+			// Fire-and-forget: the view updates render state on the reply.
+			interpreter.fill( buildCommand( 'list', null, makeOpId() ) );
 
-		// Fire one immediate list (the canonical "everything sinks into the interpreter"
-		// path — interpreter forwards to router → router peels `_http` → HttpOutNode POSTs).
-		// Fire-and-forget: the view updates render state on the reply.
-		interpreter.fill( buildCommand( 'list', null, makeOpId() ) );
-
-		return () => {
-			for ( const name of GRAPH_NODE_NAMES ) {
-				Core.unregisterNode( name );
-			}
-			teardownSpine();
-			interpreterRef.current = null;
+			// Non-node side effects undone before the nodes are removed.
+			return () => {
+				interpreterRef.current = null;
+			};
 		};
+
+		const { teardown } = mountExospine( build );
+		return teardown;
 	}, [] );
 
 	// Dispatch a verb and return a Promise that resolves with the unwrapped

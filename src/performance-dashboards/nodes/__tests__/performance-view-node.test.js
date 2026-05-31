@@ -501,6 +501,31 @@ describe( 'performance:view — pending-matched reply routing', () => {
 void FROM;
 void TO;
 
+describe( 'performance:view — removeNode settles in-flight resolveOnly pending', () => {
+	test( 'removeNode resolves resolveOnly pending with null and drops slice-tagged entries', async () => {
+		const v = createPerformanceView( 'performance:view' );
+		// A resolveOnly Promise (resolveRequest / fetchUrlBreakdown). On teardown
+		// it must SETTLE so the caller's await completes — resolved with null (the
+		// methods' canonical "no data" return), NOT rejected, so fetchUrlBreakdown's
+		// _onError banner doesn't pop on a Reset-Graph reinit.
+		const awaited = new Promise( ( resolve, reject ) =>
+			v.pending.set( 'op-resolve', {
+				resolveOnly: true,
+				resolve,
+				reject,
+			} )
+		);
+		// A slice-tagged fire-and-forget entry (fetchOverview / fetchUrls) — no
+		// Promise awaiting it, so it is simply dropped.
+		v.pending.set( 'op-slice', { slice: 'overview' } );
+
+		expect( () => v.removeNode() ).not.toThrow();
+
+		expect( await awaited ).toBeNull();
+		expect( v.pending.size ).toBe( 0 );
+	} );
+} );
+
 describe( 'performance:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
 		const schema =

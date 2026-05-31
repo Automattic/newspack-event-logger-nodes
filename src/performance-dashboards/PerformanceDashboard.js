@@ -92,7 +92,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const setRequestPartitionRef = useRef( () => {} );
 
 	// Read the published view model directly (Error Log pattern). Null until the
-	// hook mounts the node; the hook's setViewReady forces a re-render to subscribe.
+	// hook mounts the node; the hook's bumpBuild forces a re-render to subscribe.
 	const view = useNodeState( 'performance:view', 'view' );
 
 	// Derive the slices the orchestrator renders/derives from — SAME NAMES as the

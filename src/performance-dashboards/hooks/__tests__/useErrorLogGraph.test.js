@@ -26,6 +26,7 @@ import {
 	TYPE,
 	TM_INFO,
 	Core,
+	useNodeState,
 } from '@newspack-nodes/runtime';
 
 let mockPageVisible = true;
@@ -305,5 +306,64 @@ describe( 'useErrorLogGraph — teardown', () => {
 				pack( errorEnvelope( 'late', { ts: 1, k: 'error', m: 'x' } ) )
 			)
 		).not.toThrow();
+	} );
+} );
+
+describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
+	test( 'Core.reinit rebuilds the graph nodes fresh (backbone preserved)', () => {
+		renderHook( () => useErrorLogGraph() );
+		const firstView = Core.node( VIEW );
+		const firstHttp = Core.node( HTTP );
+		const backbone = Core.node( INTERPRETER );
+		expect( firstView ).not.toBeNull();
+		expect( typeof Core.reinit ).toBe( 'function' );
+
+		act( () => {
+			Core.reinit();
+		} );
+
+		// Soft nodes are fresh instances under the same names; backbone survives.
+		expect( Core.node( VIEW ) ).not.toBe( firstView );
+		expect( Core.node( HTTP ) ).not.toBe( firstHttp );
+		expect( Core.node( SSE ).target ).toBe( VIEW );
+		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
+		expect( Core.node( INTERPRETER ) ).toBe( backbone );
+	} );
+
+	test( 'Core.reinit re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
+		const { result } = renderHook( () => {
+			useErrorLogGraph();
+			return useNodeState( VIEW, 'view' );
+		} );
+		const firstView = Core.node( VIEW );
+
+		act( () => {
+			Core.reinit();
+		} );
+		const freshView = Core.node( VIEW );
+		expect( freshView ).not.toBe( firstView );
+
+		// The fresh view publishes state; the consumer must observe it (proving it
+		// re-subscribed to freshView, not the removed firstView).
+		act( () => {
+			freshView.setState( 'view', { paused: true } );
+		} );
+		expect( result.current ).toEqual( { paused: true } );
+	} );
+
+	test( 'reinit while paused re-publishes paused:true so the UI matches the closed stream', () => {
+		const { result } = renderHook( () => useErrorLogGraph() );
+		act( () => result.current.setPaused( true ) );
+		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
+
+		act( () => {
+			Core.reinit();
+		} );
+
+		// The rebuilt view's constructor defaults paused:false; the hook must
+		// re-apply the surviving pause so the button / empty-state don't show
+		// "live" while the connection effect (gating on the surviving isPaused)
+		// keeps _sse closed.
+		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
 	} );
 } );
