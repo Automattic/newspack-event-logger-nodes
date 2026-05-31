@@ -16,7 +16,8 @@
  * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
  * the debug-overlay's REPL when it opens on this page.
  *
- * Every node sinks into the interpreter; flow is steered by each node's `target`. The
+ * The graph build is handed to `mountExospine( build )`, which snapshots Core so
+ * the soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The
  * hook owns the poll setInterval — on every tick it builds a TM_COMMAND
  * (FROM=`aggregator:view`, TO=`_http/aggregator`, verb=`status`) and fills it
  * into the interpreter. The router peels `_http`, HttpOutNode POSTs the command, the server
@@ -34,7 +35,6 @@
 
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
-	Core,
 	mountExospine,
 	HttpOutNode,
 	CommandClient,
@@ -51,9 +51,6 @@ import { createAggregatorView } from '../nodes/aggregator-view-node';
 const HTTP = '_http';
 // The application's render-model node.
 const VIEW = 'aggregator:view';
-// Every named node this graph mounts — unregistered on teardown (the exospine
-// nodes are removed separately by teardownSpine()).
-const GRAPH_NODE_NAMES = [ HTTP, VIEW ];
 
 // Refresh-interval options offered to the user (the select in the dashboard).
 export const REFRESH_OPTIONS = [
@@ -102,7 +99,8 @@ function buildPollMessage() {
  * @param {Object} [opts.commandClient] CommandClient seam assigned to `_http.client`;
  *                                      defaults to a freshly-constructed CommandClient.
  * @return {{ setRefreshInterval: Function, refreshInterval: string }} Control
- *   callbacks for the thin React view (the model is read via useNodeState).
+ *   callbacks for the thin React view (the model is read via useNodeState). Reset
+ *   Graph is driven by the overlay via `Core.reinit`, stashed by mountExospine.
  */
 export function useAggregatorStatusGraph( opts = {} ) {
 	const optsRef = useRef( opts );
@@ -115,52 +113,55 @@ export function useAggregatorStatusGraph( opts = {} ) {
 	// Live interpreter handle for the poll-interval effect.
 	const interpreterRef = useRef( null );
 
-	// Flipped true once the graph (and its view node) is mounted, so the React
-	// view's useNodeState re-subscribes to the now-registered view node.
-	const [ , setViewReady ] = useState( false );
+	// Bumped on every (re)build so a consumer's useNodeState re-subscribes to the
+	// freshly-registered view node. A monotonic counter, not a boolean latch —
+	// reinit()'s second build must still force a render.
+	const [ , bumpBuild ] = useState( 0 );
 
 	// Mount the graph once: clip it onto the exospine, then fire one immediate poll.
 	useEffect( () => {
-		const data =
-			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+		// The soft view-nodes the backbone clips onto. mountExospine snapshots
+		// Core around this so reinit() removes exactly these and rebuilds them.
+		const build = ( { interpreter } ) => {
+			const data =
+				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
+				{};
 
-		// The canonical backbone every node clips onto: everything → interpreter → router.
-		const { interpreter, teardown: teardownSpine } = mountExospine();
+			// I/O boundary node — HttpOutNode is the only one this poll-only dashboard
+			// needs.
+			const http = new HttpOutNode();
+			http.client =
+				optsRef.current.commandClient ||
+				new CommandClient( {
+					baseUrl: data.restUrl || '/wp-json/',
+					nonce: data.nonce || '',
+				} );
+			http.setName( HTTP );
+			http.sink = interpreter;
 
-		// I/O boundary node — HttpOutNode is the only one this poll-only dashboard
-		// needs.
-		const http = new HttpOutNode();
-		http.client =
-			optsRef.current.commandClient ||
-			new CommandClient( {
-				baseUrl: data.restUrl || '/wp-json/',
-				nonce: data.nonce || '',
-			} );
-		http.setName( HTTP );
-		http.sink = interpreter;
+			// The application view-model node — the receiver of the poll reply via the
+			// server's TO=FROM pivot.
+			const view = createAggregatorView( VIEW );
+			view.sink = interpreter;
 
-		// The application view-model node — the receiver of the poll reply via the
-		// server's TO=FROM pivot.
-		const view = createAggregatorView( VIEW );
-		view.sink = interpreter;
+			interpreterRef.current = interpreter;
 
-		interpreterRef.current = interpreter;
+			// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
+			bumpBuild( ( n ) => n + 1 );
 
-		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
-		setViewReady( true );
+			// Fire one immediate poll: the canonical "everything sinks into the interpreter"
+			// path — interpreter forwards (non-command, non-empty-TO) to router → router peels
+			// `_http` → HttpOutNode.fill POSTs the command.
+			interpreter.fill( buildPollMessage() );
 
-		// Fire one immediate poll: the canonical "everything sinks into the interpreter"
-		// path — interpreter forwards (non-command, non-empty-TO) to router → router peels
-		// `_http` → HttpOutNode.fill POSTs the command.
-		interpreter.fill( buildPollMessage() );
-
-		return () => {
-			for ( const name of GRAPH_NODE_NAMES ) {
-				Core.unregisterNode( name );
-			}
-			teardownSpine();
-			interpreterRef.current = null;
+			// Non-node side effects undone before the nodes are removed.
+			return () => {
+				interpreterRef.current = null;
+			};
 		};
+
+		const { teardown } = mountExospine( build );
+		return teardown;
 	}, [] );
 
 	// Persist the refresh choice (matches the old save-to-localStorage effect).
@@ -169,7 +170,9 @@ export function useAggregatorStatusGraph( opts = {} ) {
 	}, [ refreshInterval ] );
 
 	// Own the poll interval: re-timed on interval change, cleared on unmount. NOT
-	// gated on visibility — the old AggregatorStatus polled unconditionally.
+	// gated on visibility — the old AggregatorStatus polled unconditionally. Reads
+	// the live interpreter ref each tick, so it keeps polling the stable backbone
+	// across a reinit (the fresh view receives the reply via TO=FROM by name).
 	useEffect( () => {
 		const intervalMs = parseInt( refreshInterval, 10 );
 		const id = setInterval( () => {

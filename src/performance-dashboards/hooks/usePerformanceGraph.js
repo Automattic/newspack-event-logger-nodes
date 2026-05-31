@@ -30,19 +30,15 @@
  * (assigned to `_http.client`) so the hook never touches the network.
  * Production lazily defaults to a freshly-constructed CommandClient.
  *
- * Exospine isolation: this hook calls `mountExospine()` for its own React
- * tree root. `PerformanceDashboard` and `ErrorLog` are mounted into
- * SEPARATE DOM containers (`event-logger-admin` vs `event-logger-errors`),
- * so each hook's exospine is naturally isolated by React-root scope. A page
- * that ever rendered both would still get one exospine per hook instance —
- * `Core` is a per-page singleton, but each `mountExospine` registers the
- * canonical `_command_interpreter`/`_router` names by design; the matching
- * teardown removes them. The two performance-dashboards hooks aren't used on
- * the same page in this plugin.
+ * The graph build is handed to `mountExospine( build )`, which snapshots Core so
+ * the soft nodes (`_http` / command / view) can be torn down + rebuilt on
+ * `reinit()` ("Reset Graph"); the orchestration effects re-fire on rebuild via
+ * the `buildCount` bump. `PerformanceDashboard` and `ErrorLog` mount into
+ * SEPARATE DOM containers, so each hook's exospine is isolated by React-root
+ * scope; the matching teardown removes the backbone.
  */
 import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
 import {
-	Core,
 	mountExospine,
 	HttpOutNode,
 	CommandClient,
@@ -63,7 +59,6 @@ const HTTP = '_http';
 // '/', so a '/' in a node name would misroute.
 const COMMAND = 'performance:command';
 const VIEW = 'performance:view';
-const GRAPH_NODE_NAMES = [ HTTP, COMMAND, VIEW ];
 
 // Dedup `server` (always — feeds the filter dropdown) with the active chart
 // dimension into one comma arg. < 2 dims collapses the controller's nested
@@ -109,66 +104,75 @@ export function usePerformanceGraph( opts = {} ) {
 	const urlFetchTimerRef = useRef( null );
 	const lastRefreshRef = useRef( 0 );
 
-	const [ viewReady, setViewReady ] = useState( false );
+	// Bumped on every (re)build so the orchestration effects re-fire against the
+	// fresh command node and a consumer's useNodeState re-subscribes to the
+	// freshly-registered view node. A monotonic counter, not a boolean latch —
+	// reinit()'s second build must still force a render.
+	const [ buildCount, bumpBuild ] = useState( 0 );
 	const isPageVisible = usePageVisibility();
 
 	// Mount the graph once onto the exospine: I/O boundary + command + view.
 	useEffect( () => {
-		const data =
-			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
+		// The soft view-nodes the backbone clips onto. mountExospine snapshots
+		// Core around this so reinit() removes exactly these and rebuilds them.
+		const build = ( { interpreter } ) => {
+			const data =
+				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
+				{};
 
-		// The canonical backbone every node clips onto: everything → interpreter → router.
-		const { interpreter, teardown: teardownSpine } = mountExospine();
+			// I/O boundary node — HttpOutNode is the only one this dashboard needs.
+			const http = new HttpOutNode();
+			http.client =
+				optsRef.current.commandClient ||
+				new CommandClient( {
+					baseUrl: data.restUrl || '/wp-json/',
+					nonce: data.nonce || '',
+				} );
+			http.setName( HTTP );
+			http.sink = interpreter;
 
-		// I/O boundary node — HttpOutNode is the only one this dashboard needs.
-		const http = new HttpOutNode();
-		http.client =
-			optsRef.current.commandClient ||
-			new CommandClient( {
-				baseUrl: data.restUrl || '/wp-json/',
-				nonce: data.nonce || '',
+			// The application view-model node — receiver of every reply via TO=FROM pivot.
+			const view = createPerformanceView( VIEW );
+			view.sink = interpreter;
+
+			// The slice-tagging command-builder. sink = interpreter (rule #2); target = view
+			// so `loading`/`error` controls route to the view via the router peeling
+			// TO. viewName = VIEW so the command can stash pending entries there.
+			const command = createPerformanceCommand( COMMAND, {
+				onError: optsRef.current.onError,
+				viewName: VIEW,
 			} );
-		http.setName( HTTP );
-		http.sink = interpreter;
+			command.sink = interpreter;
+			command.target = VIEW;
 
-		// The application view-model node — receiver of every reply via TO=FROM pivot.
-		const view = createPerformanceView( VIEW );
-		view.sink = interpreter;
+			commandRef.current = command;
+			viewRef.current = view;
 
-		// The slice-tagging command-builder. sink = interpreter (rule #2); target = view
-		// so `loading`/`error` controls route to the view via the router peeling
-		// TO. viewName = VIEW so the command can stash pending entries there.
-		const command = createPerformanceCommand( COMMAND, {
-			onError: optsRef.current.onError,
-			viewName: VIEW,
-		} );
-		command.sink = interpreter;
-		command.target = VIEW;
+			// Re-render so the orchestration effects re-fire against the fresh
+			// command and useNodeState re-subscribes to the freshly-mounted view.
+			bumpBuild( ( n ) => n + 1 );
 
-		commandRef.current = command;
-		viewRef.current = view;
-		setViewReady( true );
-
-		return () => {
-			if ( urlFetchTimerRef.current ) {
-				clearTimeout( urlFetchTimerRef.current );
-			}
-			// Close the command (cancel guard) first so a late reply doesn't fire
-			// emissions against a torn-down view; unregister the graph nodes; THEN
-			// tear the exospine down (removes the interpreter + router).
-			command.close();
-			for ( const name of GRAPH_NODE_NAMES ) {
-				Core.unregisterNode( name );
-			}
-			teardownSpine();
-			commandRef.current = null;
-			viewRef.current = null;
+			// Non-node side effects undone before the nodes are removed. Close the
+			// command (cancel guard) first so a late reply doesn't fire emissions
+			// against a torn-down view.
+			return () => {
+				if ( urlFetchTimerRef.current ) {
+					clearTimeout( urlFetchTimerRef.current );
+				}
+				command.close();
+				commandRef.current = null;
+				viewRef.current = null;
+			};
 		};
+
+		const { teardown } = mountExospine( build );
+		return teardown;
 	}, [] );
 
-	// Initial load + re-fetch on server-filter / breakdown change.
+	// Initial load + re-fetch on server-filter / breakdown change. Re-fires on
+	// every (re)build via buildCount.
 	useEffect( () => {
-		if ( ! viewReady ) {
+		if ( ! buildCount ) {
 			return;
 		}
 		const dims = breakdownsFor( chartBreakdown );
@@ -177,11 +181,11 @@ export function usePerformanceGraph( opts = {} ) {
 			...urlParamsRef.current,
 			server: serverFilter,
 		} );
-	}, [ viewReady, serverFilter, chartBreakdown ] );
+	}, [ buildCount, serverFilter, chartBreakdown ] );
 
 	// Auto-refresh body while the modal is closed and the page is visible.
 	useEffect( () => {
-		if ( ! viewReady || selectedUrl || ! isPageVisible ) {
+		if ( ! buildCount || selectedUrl || ! isPageVisible ) {
 			return undefined;
 		}
 		const intervalMs = parseInt( refreshInterval, 10 );
@@ -199,7 +203,7 @@ export function usePerformanceGraph( opts = {} ) {
 		}
 		const interval = setInterval( doRefresh, intervalMs );
 		return () => clearInterval( interval );
-	}, [ viewReady, refreshInterval, selectedUrl, isPageVisible ] );
+	}, [ buildCount, refreshInterval, selectedUrl, isPageVisible ] );
 
 	// Clear a view slice (resets urlDetail / requestDetail to empty).
 	const clearSlice = useCallback( ( slice ) => {
@@ -217,7 +221,7 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// Selection-driven url-detail: initial fetch + silent auto-refresh.
 	useEffect( () => {
-		if ( ! viewReady ) {
+		if ( ! buildCount ) {
 			return undefined;
 		}
 		if ( ! selectedUrl ) {
@@ -239,7 +243,7 @@ export function usePerformanceGraph( opts = {} ) {
 		}
 		return undefined;
 	}, [
-		viewReady,
+		buildCount,
 		selectedUrl,
 		selectedRequest,
 		refreshInterval,
@@ -249,7 +253,7 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// Selection-driven request-detail.
 	useEffect( () => {
-		if ( ! viewReady ) {
+		if ( ! buildCount ) {
 			return;
 		}
 		if ( ! selectedRequest ) {
@@ -270,7 +274,7 @@ export function usePerformanceGraph( opts = {} ) {
 			commandRef.current.fetchRequestDetail( selectedRequest, partition );
 		}
 	}, [
-		viewReady,
+		buildCount,
 		selectedRequest,
 		requestPartition,
 		urlDetailData,

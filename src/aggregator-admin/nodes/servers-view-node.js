@@ -108,6 +108,20 @@ class ServersViewNode extends Node {
 	_publish() {
 		this.setState( 'view', this.model );
 	}
+
+	// Reject every in-flight pending promise before the node is removed, so a
+	// graph teardown / Reset-Graph reinit doesn't strand a caller awaiting a
+	// reply that will now never land on this (removed) node — the reply pivots
+	// back by name to the freshly-rebuilt view, whose `pending` is empty.
+	removeNode() {
+		for ( const { reject } of this.pending.values() ) {
+			if ( 'function' === typeof reject ) {
+				reject( new Error( 'View removed before reply' ) );
+			}
+		}
+		this.pending.clear();
+		super.removeNode();
+	}
 }
 
 // Coerce a TM_ERROR payload (string / { message } / anything else) to a
