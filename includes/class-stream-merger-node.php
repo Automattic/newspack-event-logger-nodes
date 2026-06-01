@@ -281,6 +281,9 @@ class Stream_Merger_Node extends Timer_Node {
 		$this->sink?->fill( $message );
 	}
 
+	/**
+	 * @param array<int, mixed> $message
+	 */
 	private function handle_request( array $message ): void {
 		$value = (string) $message[ Message::VALUE ];
 		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
@@ -440,7 +443,7 @@ class Stream_Merger_Node extends Timer_Node {
 		return $n;
 	}
 
-	/** @return array<string,Remote_Source_Node> */
+	/** @return array<string, Remote_Source_Node> Child remote-source nodes, keyed by remote id. */
 	public function remote_nodes(): array {
 		return $this->remote_nodes;
 	}
@@ -484,6 +487,9 @@ class Stream_Merger_Node extends Timer_Node {
 			: null;
 	}
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_position( string $server_id ): array {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->position()
@@ -507,6 +513,7 @@ class Stream_Merger_Node extends Timer_Node {
 
 	/**
 	 * Back-compat: same lookup-by-handle pattern as on_curl_data.
+	 * @param array<string, mixed> $info
 	 */
 	public function on_curl_message( array $info ): void {
 		$handle = $info['handle'] ?? null;

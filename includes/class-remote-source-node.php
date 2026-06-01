@@ -86,8 +86,10 @@ class Remote_Source_Node extends Node {
 	private ?\CurlHandle $handle = null;
 
 	private string  $buffer        = '';
+	/** @var array<string, mixed> Current SSE event accumulator ({event, data}). */
 	private array   $current_event = [ 'event' => '', 'data' => '' ];
 	private ?int    $slot          = null;
+	/** @var array<string, int> Read cursor ({segment_id, offset}). */
 	private array   $position      = [ 'segment_id' => 0, 'offset' => 0 ];
 	private float   $last_event_time = 0.0;
 	private int     $current_backoff = self::INITIAL_BACKOFF;
@@ -254,7 +256,7 @@ class Remote_Source_Node extends Node {
 	/**
 	 * Status snapshot for the StreamMerger GET_REMOTES request.
 	 *
-	 * @return array
+	 * @return array<string, mixed>
 	 */
 	public function current_status(): array {
 		return [
@@ -477,6 +479,7 @@ class Remote_Source_Node extends Node {
 	/**
 	 * Called by EventFramework::drain_curl_multi() when curl_multi_info_read
 	 * returns CURLMSG_DONE for this RemoteSource's multi.
+	 * @param array<string, mixed> $info
 	 */
 	public function on_curl_message( array $info ): void {
 		if ( ! isset( $info['msg'] ) || \CURLMSG_DONE !== $info['msg'] ) {
@@ -934,6 +937,7 @@ class Remote_Source_Node extends Node {
 		$cache->set( $key, \array_merge( $existing, $data ), self::STATUS_TTL );
 	}
 
+	/** @param mixed $response wp_remote_post response (array or \WP_Error; shape not trusted). */
 	private function update_heartbeat_status( $response, float $rtt, int $sent_at ): void {
 		$cache = Core::$memd;
 		if ( null === $cache ) {

@@ -30,19 +30,21 @@ class Config {
 	/**
 	 * Cached config (file defaults + WordPress options + substrate values).
 	 *
-	 * @var array|null
+	 * @var array<string, mixed>|null
 	 */
 	private static $config = null;
 
 	/**
 	 * Cached config defaults from files.
 	 *
-	 * @var array|null
+	 * @var array<string, mixed>|null
 	 */
 	private static $config_defaults = null;
 
 	/**
 	 * Option schema — every key loaded on every `load_config()` call.
+	 *
+	 * @var array<string, string>
 	 */
 	private static $option_schema = [
 		'allowed_users'               => 'array_strings',
@@ -77,6 +79,8 @@ class Config {
 	 * trade — one targeted read each beats bloating every frontend request.
 	 * `discovered_events` is admin/health-check-only (not even in the schema)
 	 * and is listed here so its writers route through the same helper.
+	 *
+	 * @var array<string, bool>
 	 */
 	private static $non_autoloaded_options = [
 		'newspack_event_logger_nodes_log_events'        => true,
@@ -126,6 +130,8 @@ class Config {
 	 * Allowed directories for local config override files.
 	 *
 	 * Only config files within these directories (or subdirectories) are allowed.
+	 *
+	 * @var array<int, string>
 	 */
 	private static $allowed_config_dirs = [
 		'/usr/src',
@@ -139,7 +145,7 @@ class Config {
 	 * `memcache_servers`, etc.) keep working without having to know about
 	 * the layering split.
 	 *
-	 * @return array Configuration array.
+	 * @return array<string, mixed> Configuration array.
 	 */
 	public static function load_config(): array {
 		if ( null !== self::$config ) {
@@ -206,7 +212,7 @@ class Config {
 	/**
 	 * Load configuration defaults from file only (no WordPress options).
 	 *
-	 * @return array Configuration defaults from file.
+	 * @return array<string, mixed> Configuration defaults from file.
 	 */
 	public static function load_config_defaults(): array {
 		if ( null !== self::$config_defaults ) {
@@ -251,7 +257,7 @@ class Config {
 	 * This method applies the newspack_event_logger_nodes_custom_colors filter lazily,
 	 * allowing plugins that load after Event Logger to register their events.
 	 *
-	 * @return array Associative array of event_name => hex_color.
+	 * @return array<string, mixed> Associative array of event_name => hex_color.
 	 */
 	public static function get_custom_colors(): array {
 		$config = self::load_config();

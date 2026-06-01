@@ -87,6 +87,10 @@ class Auto_Tuner_Node extends Node {
 
 	// --- Apply -----------------------------------------------------------------
 
+	/**
+	 * @param array<string, mixed> $context
+	 * @param array<string, mixed> $hooks
+	 */
 	private function apply_disable_hooks( array $hooks, array $context ): void {
 		if ( ! \function_exists( 'get_option' ) ) {
 			return;
@@ -107,6 +111,10 @@ class Auto_Tuner_Node extends Node {
 		$this->persist( 'newspack_event_logger_nodes_log_events', $updated );
 	}
 
+	/**
+	 * @param array<string, mixed> $context
+	 * @param array<string, mixed> $events
+	 */
 	private function apply_disable_custom_events( array $events, array $context ): void {
 		if ( ! \function_exists( 'get_option' ) ) {
 			return;
@@ -126,6 +134,9 @@ class Auto_Tuner_Node extends Node {
 		$this->persist( 'newspack_event_logger_nodes_custom_events', $existing );
 	}
 
+	/**
+	 * @param array<string, mixed> $events
+	 */
 	private function apply_add_significant_events( array $events ): void {
 		if ( ! \function_exists( 'get_option' ) ) {
 			return;
@@ -145,6 +156,8 @@ class Auto_Tuner_Node extends Node {
 	 * Remote fan-out (when the aggregator is on) + local update_option (with
 	 * SettingsSync's static listener suppressed so the local write doesn't
 	 * re-queue what we just queued).
+	 *
+	 * @param mixed $value New option value to persist.
 	 */
 	private function persist( string $option, $value ): void {
 		// Always queue the remote fan-out job. AutoTuner only touches

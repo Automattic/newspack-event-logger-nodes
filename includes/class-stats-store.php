@@ -126,11 +126,17 @@ class Stats_Store {
 	// Single key per partition holds the rolling map.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_hourly(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_hourly( array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_HOURLY ), $data, $this->ttl() );
 	}
@@ -146,6 +152,9 @@ class Stats_Store {
 		Core::$memd?->set( $this->key( self::NS_HOURLY ), $cur, $this->ttl() );
 	}
 
+	/**
+	 * @param array<string, mixed> $cur
+	 */
 	private function prune_old_hourly( array &$cur ): void {
 		$cutoff   = \time() - $this->max_lifespan;
 		$min_hour = \gmdate( 'Y-m-d-H', $cutoff );
@@ -161,11 +170,18 @@ class Stats_Store {
 	// Plus an explicit bucket-keyed setter for FlameBuilder's full-bucket merge.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_url_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<int, string> $buckets
+	 * @return array<string, mixed>
+	 */
 	public function get_url_buckets( array $buckets ): array {
 		if ( empty( $buckets ) ) {
 			return [];
@@ -198,12 +214,20 @@ class Stats_Store {
 		Core::$memd?->set( $this->key( self::NS_URLS, $bucket ), $cur, $this->ttl() );
 	}
 
-	/** Explicit bucket setter (FlameBuilder's full-bucket overwrite path). */
+	/**
+	 * Explicit bucket setter (FlameBuilder's full-bucket overwrite path).
+	 *
+	 * @param array<string, mixed> $data
+	 */
 	public function set_url_index_hourly( string $bucket, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl() );
 	}
 
-	/** Alias of `get_url_bucket` matching upstream naming. */
+	/**
+	 * Alias of `get_url_bucket` matching upstream naming.
+	 *
+	 * @return array<string, mixed>
+	 */
 	public function get_url_index_hourly( string $bucket ): array {
 		return $this->get_url_bucket( $bucket );
 	}
@@ -213,11 +237,17 @@ class Stats_Store {
 	// volume can be high.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_url_stats( string $url_hash ): ?array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL, $url_hash ) );
 		return \is_array( $val ) ? $val : null;
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_url_stats( string $url_hash, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats() );
 	}
@@ -226,15 +256,24 @@ class Stats_Store {
 	// Leaderboard: 5-min buckets, sums + per-category sums.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_leaderboard_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB, $bucket ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_LB, $bucket ), $data, $this->ttl() );
 	}
 
+	/**
+	 * @param array<string, mixed> $categories
+	 */
 	public function bump_leaderboard( float $req_time, array $categories = [] ): void {
 		$bucket = $this->current_url_bucket();
 		$cur    = $this->get_leaderboard_bucket( $bucket );
@@ -247,15 +286,24 @@ class Stats_Store {
 		Core::$memd?->set( $this->key( self::NS_LB, $bucket ), $cur, $this->ttl() );
 	}
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl() );
 	}
 
+	/**
+	 * @param array<string, mixed> $categories
+	 */
 	public function bump_server_leaderboard( string $server, float $req_time, array $categories = [] ): void {
 		$bucket = $this->current_url_bucket();
 		$cur    = $this->get_server_leaderboard_bucket( $server, $bucket );
@@ -274,6 +322,8 @@ class Stats_Store {
 	 * Used by FlameBuilder at persist time to combine the current flush's bucket
 	 * with the already-persisted bucket of the same key. Static so callers can
 	 * use it without an instance.
+	 * @param array<string, mixed> $dst
+	 * @param array<string, mixed> $src
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
 		$dst['count']        = (int)   ( $dst['count']        ?? 0 ) + (int)   ( $src['count']        ?? 0 );
@@ -311,6 +361,8 @@ class Stats_Store {
 	 *
 	 * Incoming shape: [cat => {time, count, entries: {name => [time, count]}}]
 	 * Stored shape:   [cat => {samples, sum_time, sum_count, entries: {name => [sum_time, sum_count, samples]}}]
+	 * @param array<string, mixed> $dst
+	 * @param array<string, mixed> $src
 	 */
 	private function merge_categories_into( array &$dst, array $src ): void {
 		foreach ( $src as $cat => $data ) {
@@ -338,6 +390,9 @@ class Stats_Store {
 	// (partition, dimension, server) for the per-server variant.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_dimensional( string $dimension, string $server = '' ): array {
 		$parts = [ self::NS_DIM, $dimension ];
 		if ( '' !== $server ) {
@@ -347,6 +402,9 @@ class Stats_Store {
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_dimensional( string $dimension, array $data, string $server = '' ): bool {
 		$parts = [ self::NS_DIM, $dimension ];
 		if ( '' !== $server ) {
@@ -372,11 +430,17 @@ class Stats_Store {
 	// fan-out is multiplicative across dimensions × buckets.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_url_dimensional( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_DIM, $url_hash ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_url_dimensional( string $url_hash, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl() );
 	}
@@ -400,6 +464,7 @@ class Stats_Store {
 	 * the value rolls into Other. Total slot count is bounded at $max.
 	 *
 	 * "total" is the pseudo-category running grand-total — exempt from the cap.
+	 * @param array<string, mixed> $bucket_data
 	 */
 	private function bump_with_cap( array &$bucket_data, string $value, float $req_time, int $max ): void {
 		if ( 'total' !== $value && ! isset( $bucket_data[ $value ] ) ) {
@@ -414,6 +479,9 @@ class Stats_Store {
 		$bucket_data[ $value ]['s'] += $req_time;
 	}
 
+	/**
+	 * @param array<string, mixed> $cur
+	 */
 	private function prune_old_dim( array &$cur ): void {
 		$cutoff     = \time() - $this->max_lifespan;
 		$min_bucket = \gmdate( 'Y-m-d-H', $cutoff ) . '-00';
@@ -429,11 +497,17 @@ class Stats_Store {
 	// Plus per-server variants keyed by server hash.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_categories(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_categories( array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_CATEGORIES ), $data, $this->ttl() );
 	}
@@ -449,11 +523,17 @@ class Stats_Store {
 		Core::$memd?->set( $this->key( self::NS_CATEGORIES ), $cur, $this->ttl() );
 	}
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_server_categories( string $server ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_server_categories( string $server, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl() );
 	}
@@ -462,11 +542,17 @@ class Stats_Store {
 	// Per-URL categories: { bucket => { cat => {t, c, n} } } per url_hash.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @return array<string, mixed>
+	 */
 	public function get_url_categories( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_CAT, $url_hash ) );
 		return \is_array( $val ) ? $val : [];
 	}
 
+	/**
+	 * @param array<string, mixed> $data
+	 */
 	public function set_url_categories( string $url_hash, array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl() );
 	}
@@ -486,6 +572,7 @@ class Stats_Store {
 	 * "Other" rollover (same semantics as bump_with_cap).
 	 *
 	 * "total" is the pseudo-category running grand-total — exempt from the cap.
+	 * @param array<string, mixed> $bucket_data
 	 */
 	private function bump_category_with_cap( array &$bucket_data, string $category, float $time, int $invocations, int $max ): void {
 		if ( 'total' !== $category && ! isset( $bucket_data[ $category ] ) ) {
@@ -516,6 +603,8 @@ class Stats_Store {
 	 * @param float $sum_req_time Sum of per-request $req_time values.
 	 * @param array $sums         Per-category sums keyed by category name.
 	 * @return array Display-shaped leaderboard data.
+	 * @param array<string, mixed> $sums
+	 * @return array<string, mixed>
 	 */
 	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
 		$display_cats = [];

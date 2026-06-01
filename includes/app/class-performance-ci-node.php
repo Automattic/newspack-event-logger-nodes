@@ -1117,6 +1117,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-partition hourly buckets into one sorted time_series.
 	 * Same contract as Events_CI's stats verb.
+	 *
+	 * @return array<int, mixed>
 	 */
 	private static function merge_hourly_across_partitions(): array {
 		$merged = [];
@@ -1141,6 +1143,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Walk every recent URL bucket for the given hash and emit a per-bucket
 	 * `{count, sum_ms, sum_peak_mb}` time series. Mirrors
 	 * PerfUrlsController::build_url_time_series.
+	 * @return array<string, mixed>
 	 */
 	private static function build_url_time_series( string $hash ): array {
 		$buckets = self::recent_url_buckets();
@@ -1174,6 +1177,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Build the merged global category leaderboard for the recent window.
 	 * Mirror of PerfOverviewController::build_global_leaderboard.
+	 * @return array<string, mixed>
 	 */
 	private static function build_global_leaderboard(): array {
 		$count        = 0;
@@ -1197,6 +1201,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Build the per-server category leaderboard for the recent window.
 	 * Mirror of PerfOverviewController::build_server_leaderboard.
+	 * @return array<string, mixed>
 	 */
 	private static function build_server_leaderboard( string $server ): array {
 		$count        = 0;
@@ -1221,7 +1226,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge a single leaderboard bucket's categories into the running totals.
 	 * Used by both global + server leaderboard builders.
 	 *
-	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array}> $sums       Running totals (mutated).
+	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array<int, mixed>}> $sums       Running totals (mutated).
 	 * @param array<string,array<string,mixed>>                                              $categories Inbound categories.
 	 */
 	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
@@ -1241,6 +1246,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge dimensional buckets across all partitions for one dim/server.
 	 * Mirror of PerfOverviewController::merge_dim_across_partitions.
+	 * @return array<string, mixed>
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
 		$merged = [];
@@ -1262,6 +1268,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge category buckets across all partitions (global scope).
 	 * Mirror of PerfOverviewController::merge_categories_across_partitions.
+	 * @return array<string, mixed>
 	 */
 	private static function merge_categories_across_partitions(): array {
 		$merged = [];
@@ -1275,6 +1282,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-server category buckets across all partitions.
 	 * Mirror of PerfOverviewController::merge_server_categories_across_partitions.
+	 * @return array<string, mixed>
 	 */
 	private static function merge_server_categories_across_partitions( string $server ): array {
 		$merged = [];
@@ -1288,6 +1296,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-URL dimensional buckets for one dim/hash.
 	 * Mirror of PerfUrlsController::merge_url_dim.
+	 * @return array<string, mixed>
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
 		$merged = [];
@@ -1311,6 +1320,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-URL category buckets for one hash.
 	 * Mirror of PerfUrlsController::merge_url_categories.
+	 * @return array<string, mixed>
 	 */
 	private static function merge_url_categories( string $hash ): array {
 		$merged = [];
@@ -1347,6 +1357,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * this alongside the same `$index` to avoid a second memcache fan-out.
 	 *
 	 * @param array<int,array<string,mixed>> $index Output of self::load_index().
+	 * @return array<string, mixed>
 	 */
 	private static function build_overview_payload( array $index ): array {
 		$time_series       = self::merge_hourly_across_partitions();
@@ -1377,6 +1388,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Pull the per-URL aggregate stats blob (flame, profiles, last_modified).
 	 * First partition with a matching blob wins — matches legacy
 	 * PerfUrlsController::find_url_aggregate.
+	 * @return array<string, mixed>
 	 */
 	private static function find_url_aggregate( string $hash ): ?array {
 		foreach ( self::stats_stores() as $store ) {
@@ -1463,6 +1475,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Locate a single request index entry by rid in one partition.
 	 * Returns the legacy search shape: `{rid, partition, url_hash}`.
+	 * @return array<string, mixed>
 	 */
 	private static function find_request_index_entry( string $log_base, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
@@ -1497,6 +1510,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Read the full request body from a known partition + optionally merge
 	 * any matching flame_data. Mirror of
 	 * PerfRequestsController::find_request_in_partition.
+	 * @return array<string, mixed>
 	 */
 	private static function find_request_in_partition( string $log_base, int $partition, string $rid, int $num_partitions ): ?array {
 		$result        = null;
@@ -1662,6 +1676,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Search every flame partition for a flame entry matching the rid; the
 	 * first hit wins. FlameBuilder writes to whatever partition it's wired
 	 * into, so a per-rid lookup has to fan out across all of them.
+	 * @return array<string, mixed>
 	 */
 	private static function find_flame_for_rid( string $log_base, string $rid, int $num_partitions ): ?array {
 		$entries_count = 0;

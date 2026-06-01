@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **PHPStan raised to level 6.** The static-analysis gate now enforces value types on every iterable (`array<…>`); all method/parameter/return/property arrays carry explicit shapes. Substrate-wide this is PHPDoc-only (the 7-field positional Message as `array<int, mixed>`, stats/flame accumulator maps as `array<string, mixed>`, hook-name lists as `array<int, int|string>`). No runtime behavior changes.
+
+### Fixed
+
+- The three remote-aggregation sanitize callbacks (`sanitize_remote_num_segments` / `_segment_size` / `_max_lifespan`) again accept `null`: their parameter is typed `int|string|null` and the `null === $value` guard is restored, so a WordPress `sanitize_callback` invoked with `null` (unset option) returns `''` instead of raising a `TypeError`.
+
 ## [0.10.0] - 2026-05-31
 
 ### Changed

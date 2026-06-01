@@ -174,7 +174,15 @@ class Admin {
 		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );
 	}
 
-	public function skip_default_writes( $value, string $option, $old_value ) {
+	/**
+	 * `pre_update_option` filter: skip writing options whose value still equals the default.
+	 *
+	 * @param mixed  $value     New option value about to be written.
+	 * @param string $option    Full option name.
+	 * @param mixed  $old_value Current stored value.
+	 * @return mixed The value to persist (unchanged unless short-circuited).
+	 */
+	public function skip_default_writes( mixed $value, string $option, mixed $old_value ): mixed {
 		$key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
 		if ( $key === $option || '' === $key ) {
 			return $value;
@@ -595,21 +603,39 @@ class Admin {
 		return \absint( $input );
 	}
 
-	public function sanitize_remote_num_segments( $value ) {
+	/**
+	 * Sanitize the remote num_segments setting: clamp to [2, 16], or '' when unset.
+	 *
+	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
+	 * @return int|string Clamped segment count, or '' when blank/unset.
+	 */
+	public function sanitize_remote_num_segments( int|string|null $value ): int|string {
 		if ( '' === $value || null === $value ) {
 			return '';
 		}
 		return \max( 2, \min( 16, \absint( $value ) ) );
 	}
 
-	public function sanitize_remote_segment_size( $value ) {
+	/**
+	 * Sanitize the remote segment_size setting: clamp to [1MB, 256MB], or '' when unset.
+	 *
+	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
+	 * @return int|string Clamped byte size, or '' when blank/unset.
+	 */
+	public function sanitize_remote_segment_size( int|string|null $value ): int|string {
 		if ( '' === $value || null === $value ) {
 			return '';
 		}
 		return \max( 1024 * 1024, \min( 256 * 1024 * 1024, \absint( $value ) ) );
 	}
 
-	public function sanitize_remote_max_lifespan( $value ) {
+	/**
+	 * Sanitize the remote max_lifespan setting: clamp to [60, 604800] seconds, or '' when unset.
+	 *
+	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
+	 * @return int|string Clamped lifespan in seconds, or '' when blank/unset.
+	 */
+	public function sanitize_remote_max_lifespan( int|string|null $value ): int|string {
 		if ( '' === $value || null === $value ) {
 			return '';
 		}
@@ -629,9 +655,9 @@ class Admin {
 	 * downstream callers don't see gaps from filter().
 	 *
 	 * @param mixed $value Array, JSON string, or other (treated as empty).
-	 * @return array Sanitized list of strings (zero-indexed).
+	 * @return array<string> Sanitized list of strings (zero-indexed).
 	 */
-	public function sanitize_array_strings( $value ): array {
+	public function sanitize_array_strings( mixed $value ): array {
 		// React tree posts JSON via a hidden input — decode first.
 		if ( \is_string( $value ) ) {
 			$trimmed = \trim( $value );

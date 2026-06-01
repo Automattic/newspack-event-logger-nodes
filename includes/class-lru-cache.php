@@ -22,7 +22,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class LRU_Cache {
 
-	/** @var array Buckets array. */
+	/** @var array<int, array<string, mixed>> Buckets array, indexed by bucket number. */
 	private array $buckets = [];
 
 	/** @var int Current bucket index. */
@@ -158,7 +158,7 @@ class LRU_Cache {
 	/**
 	 * Get all buckets (for serialization).
 	 *
-	 * @return array State array.
+	 * @return array<string, mixed> State array.
 	 */
 	public function get_state(): array {
 		return [
@@ -170,7 +170,7 @@ class LRU_Cache {
 	/**
 	 * Restore from state (for deserialization).
 	 *
-	 * @param array $state State array.
+	 * @param array<string, mixed> $state State array.
 	 */
 	public function restore_state( array $state ): void {
 		$buckets = $state['buckets'] ?? [];

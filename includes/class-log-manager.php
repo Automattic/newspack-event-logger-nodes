@@ -24,24 +24,36 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * External plugins (Pyrobase, etc.) use this to log custom events.
  */
 class Log_Manager {
+	/** @var bool */
 	public $enabled          = false;
+	/** @var bool|null */
 	private $started         = null;
+	/** @var bool */
 	private $finished        = false;
+	/** @var \Newspack_Nodes\Topic_Node|null */
 	private $topic           = null;
+	/** @var int */
 	private $partition_idx   = 0;
+	/** @var bool */
 	private $line_limited    = false;
+	/** @var int */
 	private $line_number     = 1;
+	/** @var array<int, mixed> Timer-frame stack. */
 	private $times           = [];
+	/** @var float|null */
 	private $request_time    = null;
+	/** @var int|float|null */
 	private $request_ts      = null;
+	/** @var string */
 	private $request_id      = '';
+	/** @var string */
 	private $request_url     = '';
 	private static ?self $instance = null;
 
-	/** @var array Stack of suspended parent LogManager instances. */
+	/** @var array<int, self> Stack of suspended parent LogManager instances. */
 	private static $context_stack = [];
 
-	/** @var array Cached config (loaded once at construction). */
+	/** @var array<string, mixed> Cached config (loaded once at construction). */
 	private $config = [];
 
 	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
@@ -76,7 +88,7 @@ class Log_Manager {
 	 */
 	const FATAL_TYPES = [ E_ERROR, E_PARSE, E_COMPILE_ERROR, E_USER_ERROR ];
 
-	/** @var array Hash set for fast sensitive key lookup. */
+	/** @var array<string, bool> Hash set for fast sensitive key lookup. */
 	private static array $sensitive_keys = [
 		'AUTH_KEY'                 => true,
 		'AUTH_SALT'                => true,
@@ -98,7 +110,7 @@ class Log_Manager {
 		'TERMCAP'                  => true,
 	];
 
-	/** @var array Sensitive substrings to check in keys. */
+	/** @var array<int, string> Sensitive substrings to check in keys. */
 	private static array $sensitive_substrings = [
 		'AUTH',
 		'BEARER',
@@ -175,6 +187,8 @@ class Log_Manager {
 
 	/**
 	 * Finish initialization
+	 *
+	 * @param array<string, mixed> $config
 	 */
 	private function init_firehose( array $config ): void {
 		// Set request ID FIRST — Topic constructor may trigger re-entrant
@@ -362,7 +376,7 @@ class Log_Manager {
 	 * Log a message with the given category and data.
 	 *
 	 * @param string $category Event category/keyword.
-	 * @param array  $data     Additional data to include.
+	 * @param array<string, mixed>  $data     Additional data to include.
 	 * @return bool True on success.
 	 */
 	public function message( string $category, array $data = [] ): bool {
@@ -502,7 +516,7 @@ class Log_Manager {
 	 * Start timing a labeled operation.
 	 *
 	 * @param string $label Label for the timer (e.g., 'query', 'template').
-	 * @param array  $data  Additional data to include in the start event.
+	 * @param array<string, mixed>  $data  Additional data to include in the start event.
 	 */
 	public function start( string $label, array $data = [] ): void {
 		// Prevent unbounded timer stack growth.
@@ -529,7 +543,7 @@ class Log_Manager {
 	 * Complete a labeled operation and log the duration.
 	 *
 	 * @param string $label Label that was passed to start().
-	 * @param array  $data  Additional data to include in the complete event.
+	 * @param array<string, mixed>  $data  Additional data to include in the complete event.
 	 */
 	public function complete( string $label, array $data = [] ): void {
 		if ( \count( $this->times ) < 1 ) {

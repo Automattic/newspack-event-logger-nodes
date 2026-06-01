@@ -299,7 +299,7 @@ class Request_Builder_Node extends Node {
 	 * so in-flight requests retain trace data across worker restarts.
 	 * Orphan eviction is handled by LRU bucket rotation.
 	 *
-	 * @return array State to persist.
+	 * @return array<string, mixed> State to persist.
 	 */
 	public function save_state(): array {
 		// Convert objects to arrays for serialization.
@@ -323,7 +323,7 @@ class Request_Builder_Node extends Node {
 	/**
 	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
 	 *
-	 * @param array $saved Saved state from save_state().
+	 * @param array<string, mixed> $saved Saved state from save_state().
 	 */
 	public function restore_state( array $saved ): void {
 		if ( ! isset( $saved['request_cache'] ) ) {
@@ -349,7 +349,7 @@ class Request_Builder_Node extends Node {
 	/**
 	 * Node entry point: process a single line from firehose.log.
 	 *
-	 * @param array $message Reference; not mutated.
+	 * @param array<int, mixed> $message Reference; not mutated.
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
@@ -758,7 +758,7 @@ class Request_Builder_Node extends Node {
 	 * requests-stream-controller::transform_line so the schema-parity
 	 * audit passes. URL clipped to 2000 chars + "..." suffix; UA to 500.
 	 *
-	 * @param \stdClass|array $request Completed request envelope.
+	 * @param \stdClass|array<string, mixed> $request Completed request envelope.
 	 * @return array<string,mixed>
 	 */
 	public function build_compact_summary( $request ): array {
@@ -791,7 +791,7 @@ class Request_Builder_Node extends Node {
 	 * Fire the secondary compact-summary emit. Silent no-op when the
 	 * topology hasn't wired completed_target or a sink isn't attached.
 	 *
-	 * @param \stdClass|array $request Completed request envelope.
+	 * @param \stdClass|array<string, mixed> $request Completed request envelope.
 	 */
 	private function emit_compact_summary( $request ): void {
 		if ( '' === $this->completed_target || null === $this->sink ) {
@@ -808,10 +808,12 @@ class Request_Builder_Node extends Node {
 		$this->sink->fill( $msg );
 	}
 
+	/** @param array<string, mixed> $request Completed request record. */
 	public static function extract_what( array $request ): string {
 		return self::extract_stack_top_slot( $request, 1, 'what', '' );
 	}
 
+	/** @param array<string, mixed> $request Completed request record. */
 	public static function extract_state( array $request ): string {
 		return self::extract_stack_top_slot( $request, 0, 'state', 'process' );
 	}
@@ -846,7 +848,7 @@ class Request_Builder_Node extends Node {
 	/**
 	 * Emit an error/warning entry via the named errors_target.
 	 *
-	 * @param array  $entry Decoded entry.
+	 * @param array<string, mixed> $entry Decoded entry.
 	 * @param string $rid   Request id — propagated to Message::KEY so
 	 *                      downstream readers can identify the request
 	 *                      without re-parsing the entry payload.
@@ -869,8 +871,8 @@ class Request_Builder_Node extends Node {
 	 * Format index entry callback for Partition::with_index().
 	 *
 	 * @param string            $line     The JSON line written.
-	 * @param array             $position Position array.
-	 * @param \stdClass|array|null $data  Pre-decoded data (avoids re-parsing $line).
+	 * @param array<string, int> $position Position array.
+	 * @param \stdClass|array<string, mixed>|null $data  Pre-decoded data (avoids re-parsing $line).
 	 * @return string|null Index entry or null.
 	 */
 	public static function format_index_entry( string $line, array $position, &$data = null ): ?string {
@@ -960,7 +962,7 @@ class Request_Builder_Node extends Node {
 	 * Parse request index entry.
 	 *
 	 * @param string $line Index line.
-	 * @return array|null Parsed entry or null.
+	 * @return array<string, mixed>|null Parsed entry or null.
 	 */
 	public static function parse_request_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
@@ -1016,6 +1018,7 @@ class Request_Builder_Node extends Node {
 	 * Manifest for the topology console's palette + form rendering.
 	 * See Node::node_schema() for the shape contract.
 	 */
+	/** @param array<int, mixed> $message Incoming command Message. */
 	private function handle_request( array $message ): void {
 		$value = (string) $message[ Message::VALUE ];
 		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );

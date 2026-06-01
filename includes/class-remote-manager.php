@@ -95,7 +95,7 @@ class Remote_Manager {
 	 * @param mixed $handlers Existing handlers (filter boundary — defensively
 	 *                        coerced to array if a misbehaving caller passes
 	 *                        anything else).
-	 * @return array Modified handlers.
+	 * @return array<string, mixed> Modified handlers.
 	 */
 	public static function register_handler( $handlers ): array {
 		if ( ! \is_array( $handlers ) ) {
@@ -119,7 +119,7 @@ class Remote_Manager {
 	 * correlation flows into LogManager (per-job request_id is rotated even
 	 * across many handler invocations on a long-running worker).
 	 *
-	 * @param array $parameters Job parameters.
+	 * @param array<string, mixed> $parameters Job parameters.
 	 */
 	public static function handle_job( array $parameters ): void {
 		$action = $parameters['action'] ?? '';
@@ -207,7 +207,7 @@ class Remote_Manager {
 	 * @param string     $option   Option name (already mapped by SettingsSync).
 	 * @param mixed      $value    Option value.
 	 * @param string     $endpoint REST endpoint to POST to.
-	 * @param array|null $servers  Optional list of server IDs (null = all enabled).
+	 * @param array<int, mixed>|null $servers  Optional list of server IDs (null = all enabled).
 	 */
 	public static function sync_setting( string $option, $value, string $endpoint = '/wp-json/newspack-nodes/v1/settings', ?array $servers = null ): void {
 		self::reset_config_snapshots();
@@ -323,7 +323,7 @@ class Remote_Manager {
 	 * Sync every registered setting (via the synced_settings filter) to every
 	 * enabled (or filtered) server.
 	 *
-	 * @param array|null $server_ids Optional list of server IDs to sync to (null = all enabled).
+	 * @param array<int, mixed>|null $server_ids Optional list of server IDs to sync to (null = all enabled).
 	 */
 	public static function sync_all_settings( ?array $server_ids = null ): void {
 		self::reset_config_snapshots();
@@ -478,8 +478,8 @@ class Remote_Manager {
 	 * (whitelisted-fields-only) discovery payload or null on error.
 	 *
 	 * @param string $server_id Server ID.
-	 * @param array  $server    Server config.
-	 * @return array|null Discovery data or null on error.
+	 * @param array<string, mixed>  $server    Server config.
+	 * @return array<string, mixed>|null Discovery data or null on error.
 	 */
 	private static function check_server( string $server_id, array $server ): ?array {
 		$data = self::discover_from_server( $server, $server_id );
@@ -519,9 +519,9 @@ class Remote_Manager {
 	 * button) reuses the same dispatch + parse logic the periodic health
 	 * check uses — keeps the two surfaces in lock-step.
 	 *
-	 * @param array  $server    Server config (url, auth_username, auth_password).
+	 * @param array<string, mixed>  $server    Server config (url, auth_username, auth_password).
 	 * @param string $server_id Server ID, used only for log_status calls.
-	 * @return array|null Decoded discovery payload, or null on error.
+	 * @return array<string, mixed>|null Decoded discovery payload, or null on error.
 	 */
 	public static function discover_from_server( array $server, string $server_id ): ?array {
 		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
@@ -642,12 +642,12 @@ class Remote_Manager {
 	 * `token` field for compatibility with the simpler ServerRegistry that
 	 * stored `{url, token}` pairs.
 	 *
-	 * @param array  $server   Server config.
+	 * @param array<string, mixed>  $server   Server config.
 	 * @param string $endpoint Category tag — one of SettingsSync::ENDPOINT,
 	 *                          SettingsSync::PERF_ENDPOINT. Validated against
 	 *                          ALLOWED_ENDPOINT_PREFIXES before dispatch.
-	 * @param array  $body     {option, value} settings-update payload.
-	 * @return array|\WP_Error Response or error.
+	 * @param array<string, mixed>  $body     {option, value} settings-update payload.
+	 * @return array<string, mixed>|\WP_Error Response or error.
 	 */
 	public static function post_to_server( array $server, string $endpoint, array $body ) {
 		if ( ! Settings_Sync::is_allowed_endpoint( $endpoint ) ) {
@@ -684,7 +684,7 @@ class Remote_Manager {
 	 * as-is.
 	 *
 	 * @param string $endpoint Tag selecting the verb target.
-	 * @param array  $body     Settings payload `{option, value}` from sync_setting.
+	 * @param array<string, mixed>  $body     Settings payload `{option, value}` from sync_setting.
 	 * @return string Packed Message JSONL line ready for `wp_remote_post` `body`.
 	 */
 	private static function build_command_envelope( string $endpoint, array $body ): string {
@@ -700,8 +700,8 @@ class Remote_Manager {
 	 * Resolve a category-tag endpoint to its `(to, verb, payload)` triple.
 	 *
 	 * @param string $endpoint One of SettingsSync::ENDPOINT or PERF_ENDPOINT.
-	 * @param array  $body     `{option, value}` pair.
-	 * @return array{0:string,1:string,2:array} `[to, verb, payload]`.
+	 * @param array<string, mixed>  $body     `{option, value}` pair.
+	 * @return array{0: string, 1: string, 2: array<string, mixed>} `[to, verb, payload]`.
 	 */
 	private static function resolve_command_target( string $endpoint, array $body ): array {
 		if ( Settings_Sync::PERF_ENDPOINT === $endpoint ) {
@@ -725,9 +725,9 @@ class Remote_Manager {
 	/**
 	 * GET from a remote server's REST endpoint.
 	 *
-	 * @param array  $server   Server config.
+	 * @param array<string, mixed>  $server   Server config.
 	 * @param string $endpoint API endpoint.
-	 * @return array|\WP_Error Response or error.
+	 * @return array<string, mixed>|\WP_Error Response or error.
 	 */
 	public static function get_from_server( array $server, string $endpoint ) {
 		if ( ! Settings_Sync::is_allowed_endpoint( $endpoint ) ) {
@@ -751,9 +751,9 @@ class Remote_Manager {
 	 * defaults (timeout, ssl-verify, redirection, response-size cap) and adds
 	 * Basic-Auth headers when Application Password creds are present.
 	 *
-	 * @param array $server Server config (auth_username, auth_password, token, url).
-	 * @param array $extra  Args to merge in (headers, body, ...).
-	 * @return array
+	 * @param array<string, mixed> $server Server config (auth_username, auth_password, token, url).
+	 * @param array<string, mixed> $extra  Args to merge in (headers, body, ...).
+	 * @return array<string, mixed>
 	 */
 	private static function request_args( array $server, array $extra ): array {
 		$config = Config::load_config();
@@ -798,8 +798,8 @@ class Remote_Manager {
 	 * keys that could be used to bypass endpoint validation if a handler
 	 * naively forwards parameters to post/get_to_server.
 	 *
-	 * @param array $parameters Raw job parameters.
-	 * @return array Sanitized parameters with only safe keys.
+	 * @param array<string, mixed> $parameters Raw job parameters.
+	 * @return array<string, mixed> Sanitized parameters with only safe keys.
 	 */
 	private static function sanitize_handler_parameters( array $parameters ): array {
 		$safe = [];
@@ -868,7 +868,7 @@ class Remote_Manager {
 	 * through worker-to-worker dispatches.
 	 *
 	 * @param string $name Job name (used as request URI suffix).
-	 * @return array Original $_SERVER snapshot for end_job_context.
+	 * @return array<string, mixed> Original $_SERVER snapshot for end_job_context.
 	 */
 	public static function begin_job_context( string $name ): array {
 		// Preserve the original $_SERVER for restoration.
@@ -906,7 +906,7 @@ class Remote_Manager {
 	 * Restore $_SERVER and pop the LogManager context stack. Counterpart to
 	 * begin_job_context().
 	 *
-	 * @param array $orig_server Snapshot returned by begin_job_context.
+	 * @param array<string, mixed> $orig_server Snapshot returned by begin_job_context.
 	 */
 	public static function end_job_context( array $orig_server ): void {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Restoring previously-saved value.
@@ -922,9 +922,9 @@ class Remote_Manager {
 	 * info if it ever needs to. Returns 0 when no segments / cursor info is
 	 * present, matching "no lag known" semantics.
 	 *
-	 * @param array $segments Map of partition_id => list of segment metadata
+	 * @param array<array-key, mixed> $segments Map of partition_id => list of segment metadata
 	 *                        objects (`size`, `id`).
-	 * @param array $cursor   Map of partition_id => `{segment_id, offset}`.
+	 * @param array<array-key, mixed> $cursor   Map of partition_id => `{segment_id, offset}`.
 	 * @return int Total byte lag.
 	 */
 	public static function calculate_lag( array $segments, array $cursor ): int {
@@ -986,6 +986,8 @@ class Remote_Manager {
 
 	/**
 	 * Resolve the response body from a wp_remote_* response array.
+	 *
+	 * @param array<string, mixed>|\WP_Error $response wp_remote_* response.
 	 */
 	private static function response_body( $response ): string {
 		if ( \function_exists( 'wp_remote_retrieve_body' ) ) {
@@ -1000,6 +1002,8 @@ class Remote_Manager {
 	/**
 	 * Construct a WP_Error if available, else a structured array. Lets tests
 	 * assert error returns without WordPress loaded.
+	 *
+	 * @return \WP_Error|array{error: string, message: string}
 	 */
 	private static function wp_error_or_array( string $code, string $message ) {
 		if ( \class_exists( '\\WP_Error' ) ) {
