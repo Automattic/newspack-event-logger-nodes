@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-31
+
 ### Changed
 
 - The command interpreter is spelled `interpreter` throughout (variables, comments, docs); the `mountExospine()` return key is `interpreter`; service-CI `*_CI_Node` identifiers keep `CI`. Node subclasses carry a `_Node` suffix with `class-*-node.php` / `*-node.js` filenames.
