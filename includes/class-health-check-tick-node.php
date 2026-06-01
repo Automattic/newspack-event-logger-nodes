@@ -31,15 +31,14 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Message;
-use Newspack_Nodes\Node;
 use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Timer_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class Health_Check_Tick_Node extends Node {
+class Health_Check_Tick_Node extends Timer_Node {
 
 	/**
 	 * Minimum seconds between consecutive sweeps. Matches legacy
@@ -65,28 +64,18 @@ class Health_Check_Tick_Node extends Node {
 	 * uses — see StreamMerger::start_periodic_tick().
 	 */
 	public function start_periodic_tick(): void {
-		$router = Core::node( Node_Names::ROUTER );
-		if ( null === $router ) {
+		if ( '' === $this->name || null === Core::node( Node_Names::ROUTER ) ) {
 			Core::print_less_often( 'HealthCheckTick::start_periodic_tick: no _router; periodic tick disabled' );
 			return;
 		}
-		$router->register( 'TIMER', $this->name );
-	}
-
-	public function fill( array &$message ): void {
-		++$this->counter;
-		if (
-			0 === ( $message[ Message::TYPE ] & Message::TM_INFO )
-			|| 'TIMER' !== $message[ Message::KEY ]
-		) {
-			return;
-		}
-		$this->maybe_enqueue();
+		// Router-hitchhike: notify_timer() calls fire_cb() -> fire() each tick.
+		$this->set_timer();
 	}
 
 	/**
-	 * Enqueue a `remote_manager` health_check job if the debounce window has
-	 * elapsed and there's at least one enabled remote. Silently no-ops when:
+	 * fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
+	 * each TIMER tick. Enqueues a `remote_manager` health_check job if the debounce
+	 * window has elapsed and there's at least one enabled remote. Silently no-ops:
 	 *   - within the debounce window;
 	 *   - no enabled remotes are registered.
 	 *
@@ -95,7 +84,7 @@ class Health_Check_Tick_Node extends Node {
 	 * on. The structural gate is upstream; this method just checks the
 	 * remote registry (architecture decision #4 in AGENTS.md).
 	 */
-	protected function maybe_enqueue(): void {
+	public function fire(): void {
 		$now = \time();
 		if ( $now - $this->last_check < self::DEBOUNCE_SECONDS ) {
 			return;

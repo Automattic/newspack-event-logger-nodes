@@ -25,15 +25,15 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Node;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Timer_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class Stream_Merger_Node extends Node {
+class Stream_Merger_Node extends Timer_Node {
 
 	/** Offsetlog commit cadence. */
 	public const COMMIT_INTERVAL_S = 5;
@@ -278,10 +278,6 @@ class Stream_Merger_Node extends Node {
 			$this->handle_request( $message );
 			return;
 		}
-		if ( ( $type & Message::TM_INFO ) && 'TIMER' === $message[ Message::KEY ] ) {
-			$this->tick();
-			return;
-		}
 		$this->sink?->fill( $message );
 	}
 
@@ -320,12 +316,12 @@ class Stream_Merger_Node extends Node {
 		if ( '' === $this->name ) {
 			return;
 		}
-		$router = Core::node( Node_Names::ROUTER );
-		if ( null === $router ) {
+		if ( null === Core::node( Node_Names::ROUTER ) ) {
 			Core::print_less_often( 'StreamMerger::start_periodic_tick: no _router; periodic tick disabled' );
 			return;
 		}
-		$router->register( 'TIMER', $this->name );
+		// Router-hitchhike: notify_timer() calls fire_cb() -> fire() each tick.
+		$this->set_timer();
 		if ( null !== $this->health_check ) {
 			$this->health_check->start_periodic_tick();
 		}
@@ -552,7 +548,9 @@ class Stream_Merger_Node extends Node {
 	// Periodic tick: walk children + commit offsetlog.
 	// =========================================================================
 
-	public function tick(): void {
+	// fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
+	// each TIMER tick. Drives every remote's poll + the debounced offsetlog commit.
+	public function fire(): void {
 		foreach ( $this->remote_nodes as $server_id => $remote ) {
 			if ( '__test__' === $server_id ) {
 				continue;

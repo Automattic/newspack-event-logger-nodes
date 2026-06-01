@@ -336,7 +336,7 @@ class StreamMergerTest extends TestCase {
 			if ( null === $handle ) {
 				// Need to be connected to have a handle to disconnect.
 				Core::$now = Core::$now + Stream_Merger_Node::MAX_BACKOFF + 1;
-				$sm->tick();
+				$sm->fire();
 				$handle = $sm->test_get_handle( 'siteB' );
 			}
 			$this->assertNotNull( $handle, 'tick must reconnect after backoff window' );
@@ -370,7 +370,7 @@ class StreamMergerTest extends TestCase {
 
 		// Reconnect after backoff window.
 		Core::$now = 1010.0;
-		$sm->tick();
+		$sm->fire();
 		$handle = $sm->test_get_handle( 'siteC' );
 		$this->assertNotNull( $handle );
 
@@ -395,7 +395,7 @@ class StreamMergerTest extends TestCase {
 
 		// Just under timeout — connection survives.
 		Core::$now = 1000.0 + Stream_Merger_Node::HEARTBEAT_TIMEOUT - 1;
-		$sm->tick();
+		$sm->fire();
 		$this->assertSame( $first_handle, $sm->test_get_handle( 'siteD' ), 'connection must survive within HEARTBEAT_TIMEOUT' );
 
 		// Just over timeout — connection killed. tick bumps backoff and then
@@ -403,7 +403,7 @@ class StreamMergerTest extends TestCase {
 		// so the visible end-state is: new handle, last_error reset by
 		// maybe_connect, current_backoff still 2 from the kill path.
 		Core::$now = 1000.0 + Stream_Merger_Node::HEARTBEAT_TIMEOUT + 1;
-		$sm->tick();
+		$sm->fire();
 
 		$second_handle = $sm->test_get_handle( 'siteD' );
 		$this->assertNotNull( $second_handle, 'tick must reopen the handle after staleness' );
@@ -686,13 +686,13 @@ class StreamMergerTest extends TestCase {
 
 		// Within backoff window: tick is no-op.
 		Core::$now = 1001.0;
-		$sm->tick();
+		$sm->fire();
 		$this->assertSame( 0, $sm->active_count() );
 		$this->assertSame( 1, $sm->remote_count() );
 
 		// After backoff window (initial 2s post-bump): tick reconnects.
 		Core::$now = 1003.0;
-		$sm->tick();
+		$sm->fire();
 		$this->assertSame( 1, $sm->active_count() );
 		$this->assertSame( 1, $sm->remote_count() );
 	}
@@ -1494,13 +1494,13 @@ class StreamMergerTest extends TestCase {
 		$sm->add_remote( 'siteFast', 'http://siteFast.test/', 'tok' );
 
 		// First tick — should commit (last_commit_time = 0).
-		$sm->tick();
+		$sm->fire();
 
 		// Second tick at +2s — under COMMIT_INTERVAL_S=5, no second commit.
 		Core::$now = 1002.0;
 		$offsetlog_seg = \Newspack_Nodes\Config::get_offsets_directory() . '/aggregator.p0/p0/0.log';
 		$sizes_before  = \filesize( $offsetlog_seg );
-		$sm->tick();
+		$sm->fire();
 		\clearstatcache();
 		$sizes_after = \filesize( $offsetlog_seg );
 		$this->assertSame( $sizes_before, $sizes_after, 'tick under interval must not write' );
@@ -1646,7 +1646,7 @@ class StreamMergerTest extends TestCase {
 		$sm->process_sse_chunk( "data: x\n\n" );
 
 		// Tick skips the synthetic remote → no crash.
-		$sm->tick();
+		$sm->fire();
 
 		// __test__ still exists.
 		$this->assertSame( 1, $sm->remote_count() );
@@ -1662,7 +1662,7 @@ class StreamMergerTest extends TestCase {
 		$h = $sm->test_get_handle( 'siteCommit' );
 		$sm->on_curl_data( $h, $this->position_frame( 2, 50 ) );
 
-		$sm->tick();
+		$sm->fire();
 		// First tick committed; verify offsetlog file exists.
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
 		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
@@ -1980,27 +1980,21 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 'a-response-not-a-request', $capture->captured[0][ Message::VALUE ] );
 	}
 
-	public function test_fill_with_tm_info_timer_triggers_tick(): void {
-		// The TIMER branch in fill() runs tick(); with COMMIT_INTERVAL_S
-		// elapsed AND a remote with a non-default position, this drives
-		// commit_all() and produces an offsetlog segment file. Confirms the
-		// router-hitchhike entry point is wired the same way HealthCheckTick's
-		// is — TM_INFO + KEY==='TIMER' is the fan-out shape.
+	public function test_fire_runs_periodic_commit(): void {
+		// fire() is the Timer_Node tick (Router::notify_timer() -> fire_cb() ->
+		// fire()). With COMMIT_INTERVAL_S elapsed AND a remote at a non-default
+		// position, it drives commit_all() and produces an offsetlog segment file.
 		$sm = $this->make_merger();
 		Core::$now = 1000.0;
-		$sm->add_remote( 'siteTimerFill', 'http://siteTimerFill.test/', 'tok' );
+		$sm->add_remote( 'siteTimerFire', 'http://siteTimerFire.test/', 'tok' );
 
 		// Update position so commit_all() has something to write.
-		$h = $sm->test_get_handle( 'siteTimerFill' );
+		$h = $sm->test_get_handle( 'siteTimerFire' );
 		$sm->on_curl_data( $h, $this->position_frame( 1, 25 ) );
 
-		// Build the TIMER fan-out message identical to Router::notify('TIMER', ...).
-		$tick                  = Message::new_message();
-		$tick[ Message::TYPE ] = Message::TM_INFO;
-		$tick[ Message::KEY ]  = 'TIMER';
-		$sm->fill( $tick );
+		$sm->fire();
 
-		// Offsetlog file exists — proves tick() ran maybe_commit() through fill().
+		// Offsetlog file exists — proves fire() ran maybe_commit().
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
 		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
 	}
@@ -2530,9 +2524,9 @@ class StreamMergerTest extends TestCase {
 		// tick() loop is a no-op on an empty merger; maybe_commit() also bails.
 		$sm = $this->make_merger();
 		Core::$now = 1000.0;
-		$sm->tick();
+		$sm->fire();
 		// Subsequent calls don't accumulate state either.
-		$sm->tick();
+		$sm->fire();
 		$this->addToAssertionCount( 1 );
 	}
 

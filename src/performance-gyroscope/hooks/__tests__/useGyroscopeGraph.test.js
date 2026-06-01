@@ -165,7 +165,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
 
-	test( 'the Router TIMER drives heartbeat.onTimer so the slot keep-alive actually fires', () => {
+	test( 'the Router TIMER drives heartbeat.fire (via notify_timer) so the slot keep-alive actually fires', () => {
 		jest.useFakeTimers();
 		try {
 			renderHook( () => useGyroscopeGraph() );
