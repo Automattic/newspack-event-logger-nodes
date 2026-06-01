@@ -3,6 +3,7 @@
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
  * Version: 0.10.0
+ * Author: Automattic
  * Requires Plugins: newspack-nodes
  * Text Domain: newspack-event-logger-nodes
  * Domain Path: /languages
