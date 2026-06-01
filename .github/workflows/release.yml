@@ -30,11 +30,11 @@ jobs:
 
       - name: Checkout
         if: steps.validate.outputs.is_release == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout newspack-nodes runtime (for the @newspack-nodes/runtime alias)
         if: steps.validate.outputs.is_release == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: Automattic/newspack-nodes
           ref: main
@@ -49,7 +49,7 @@ jobs:
 
       - name: Setup Node
         if: steps.validate.outputs.is_release == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
 
@@ -81,7 +81,7 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.validate.outputs.is_release == 'true'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           files: |
             release/newspack-event-logger-nodes.zip
