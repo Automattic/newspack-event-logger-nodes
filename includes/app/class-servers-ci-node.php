@@ -248,9 +248,9 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * controller's per-server response shape exactly.
 	 *
 	 * @param string         $id       Server id.
-	 * @param array          $config   Decrypted server config from the registry.
+	 * @param array<string, mixed>          $config   Decrypted server config from the registry.
 	 * @param Server_Registry $registry Registry for the `is_config_server` lookup.
-	 * @return array Public-safe representation of the server.
+	 * @return array<string, mixed> Public-safe representation of the server.
 	 */
 	private static function public_shape( string $id, array $config, Server_Registry $registry ): array {
 		return [
@@ -279,7 +279,7 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * if missing. Used by verbs that need the rest of the decoded args too
 	 * (`update`), so they don't decode twice.
 	 *
-	 * @param array $decoded Decoded verb arguments.
+	 * @param array<string, mixed> $decoded Decoded verb arguments.
 	 * @return string Server id.
 	 */
 	private static function require_id( array $decoded ): string {
@@ -294,8 +294,8 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * Pull the canonical server-config keys out of a verb's args, defaulting
 	 * missing fields to the same shape `validate_config` expects.
 	 *
-	 * @param array $decoded Decoded verb arguments.
-	 * @return array Server-config blob ready for registry->add().
+	 * @param array<string, mixed> $decoded Decoded verb arguments.
+	 * @return array<string, mixed> Server-config blob ready for registry->add().
 	 */
 	private static function extract_server_config( array $decoded ): array {
 		return [
@@ -348,8 +348,8 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * (WP_Error, non-200, non-JSON body).
 	 *
 	 * @param string $id     Server id.
-	 * @param array  $server Decrypted server config from the registry.
-	 * @return array Sanitised probe response.
+	 * @param array<string, mixed>  $server Decrypted server config from the registry.
+	 * @return array<string, mixed> Sanitised probe response.
 	 */
 	private static function probe_remote( string $id, array $server ): array {
 		$app_config = AppConfig::load_config();

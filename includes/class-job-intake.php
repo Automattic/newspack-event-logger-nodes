@@ -145,7 +145,7 @@ class Job_Intake {
 	 * - Otherwise, round-robin across partitions
 	 *
 	 * @param string      $handler    Handler name (alphanumeric, underscores, hyphens, max 64 chars).
-	 * @param array       $parameters Job parameters (can be large).
+	 * @param array<string, mixed>       $parameters Job parameters (can be large).
 	 * @param string|null $key        Optional partition key for consistent routing.
 	 * @return bool True on success, false on validation failure, lock unavailable, or write error.
 	 */
@@ -211,8 +211,8 @@ class Job_Intake {
 	/**
 	 * Write multiple jobs in a batch.
 	 *
-	 * @param array       $jobs Array of ['handler' => string, 'parameters' => array].
-	 * @param string|null $key  Optional partition key for all jobs.
+	 * @param array<int, array<string, mixed>> $jobs Zero-indexed list of ['handler' => string, 'parameters' => array].
+	 * @param string|null                      $key  Optional partition key for all jobs.
 	 * @return int Number of jobs successfully written.
 	 */
 	public function queue_many( array $jobs, ?string $key = null ): int {
@@ -259,7 +259,7 @@ class Job_Intake {
 	 * overrides are for tests targeting an isolated tmp dir.
 	 *
 	 * @param string      $handler        Handler name.
-	 * @param array       $parameters     Job parameters.
+	 * @param array<string, mixed>       $parameters     Job parameters.
 	 * @param string|null $key            Optional partition key (e.g., event ID).
 	 * @param string|null $base_dir       Override base directory.
 	 * @param int|null    $num_partitions Override partition count.

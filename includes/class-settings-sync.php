@@ -108,11 +108,15 @@ class Settings_Sync {
 	 */
 	private static bool $static_syncing = false;
 
+	/** @var array<int, string> Option names to mirror to remotes. */
 	private array $synced_options;
 	/** @var callable */
 	private $dispatch;
 	private bool $syncing = false;
 
+	/**
+	 * @param array<int, string> $synced_options
+	 */
 	public function __construct(
 		array $synced_options,
 		callable $dispatch
@@ -150,8 +154,8 @@ class Settings_Sync {
 	 * and POST it to the right remote name without re-traversing the option
 	 * schema.
 	 *
-	 * @param array $settings Existing settings.
-	 * @return array Modified settings.
+	 * @param array<string, mixed> $settings Existing settings.
+	 * @return array<string, mixed> Modified settings.
 	 */
 	public static function register_synced_settings( array $settings ): array {
 		// Core options with name remap.
@@ -296,7 +300,7 @@ class Settings_Sync {
 	 * `$base_dir`); the upstream legacy plugin used a 2-arg static helper.
 	 *
 	 * @param string      $handler Job handler name.
-	 * @param array       $params  Job parameters.
+	 * @param array<string, mixed>       $params  Job parameters.
 	 * @param string|null $key     Optional partition key.
 	 * @return bool True on success.
 	 */
@@ -328,6 +332,10 @@ class Settings_Sync {
 	// (Instance suppress_sync alias removed — collided with static method;
 	// callers use suppress_instance_sync directly.)
 
+	/**
+	 * @param mixed $old Previous option value.
+	 * @param mixed $new New option value.
+	 */
 	public function on_option_update( string $option, $old, $new ): void {
 		if ( $this->syncing ) {
 			return; // Re-entrancy guard.

@@ -252,6 +252,9 @@ const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' 
  * (app runtime basenames) + (every active topology's Partition basenames) +
  * (every active worker's topology basenames). The substrate's `Log_Cleaner`
  * orphans every `{base}/logs/*.log/` directory NOT in the result.
+ *
+ * @param array<int, string> $basenames Topology-derived basenames from the substrate.
+ * @return array<int, string>
  */
 function newspack_event_logger_nodes_expected_log_basenames( array $basenames ): array {
 	// Substrate's `Log_Cleaner::expected_basenames()` seeds $basenames with

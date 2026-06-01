@@ -62,33 +62,47 @@ class Flame_Builder_Node extends Node {
 	/** @var LRU_Cache Per-URL aggregate accumulator. */
 	private $stats_cache;
 
-	/** @var array All flush arrays. */
+	/** @var array<string, mixed> All flush arrays (each a bucket-keyed accumulator). */
 	private $hourly_stats                = [];
+	/** @var array<string, mixed> */
 	private $leaderboard_stats           = [];
+	/** @var array<string, mixed> */
 	private $leaderboard_by_server_stats = [];
+	/** @var array<string, mixed> */
 	private $url_stats                   = [];
+	/** @var array<string, mixed> */
 	private $dim_stats                   = [];
+	/** @var array<string, mixed> */
 	private $dim_stats_by_server         = [];
+	/** @var array<string, mixed> */
 	private $url_dim_stats               = [];
+	/** @var array<string, mixed> */
 	private $cat_stats                   = [];
+	/** @var array<string, mixed> */
 	private $cat_stats_by_server         = [];
+	/** @var array<string, mixed> */
 	private $url_cat_stats               = [];
 
 	/** Per-URL aggregate state. */
-	private $last_flush_time             = 0.0;
-	private $auto_disable_threshold      = 0;
-	private $auto_protect_time_threshold = 0.0;
+	private float $last_flush_time             = 0.0;
+	private int $auto_disable_threshold        = 0;
+	private float $auto_protect_time_threshold = 0.0;
+	/** @var array<string, mixed> Disable decisions keyed by hook name. */
 	private $hooks_to_disable            = [];
+	/** @var array<string, mixed> Disable decisions keyed by event name. */
 	private $custom_events_to_disable    = [];
+	/** @var array<string, bool> Significant-event set ({name => true}). */
 	private $significant_events          = [];
+	/** @var array<string, mixed> Newly-significant events keyed by name. */
 	private $new_significant_events      = [];
+	/** @var array<string, bool> Custom-event-name set ({name => true}). */
 	private $custom_event_names          = [];
-	private $is_hub                      = false;
+	private bool $is_hub                 = false;
 
 	/** Pending stats for the current (incomplete) 5-minute bucket. */
-	private $pending_bucket = '';
+	private string $pending_bucket = '';
 
-	/** @var array Pending bucket accumulators. */
+	/** @var array<string, mixed> Pending bucket accumulators. */
 	private $pending = [];
 
 	/** @var Stats_Store|null Memcache-backed stats store. */
@@ -170,7 +184,7 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Inject the custom-event-names set.
 	 *
-	 * @param array $names
+	 * @param array<int, string> $names
 	 */
 	public function set_custom_event_names( array $names ): void {
 		$this->custom_event_names = [];
@@ -182,7 +196,7 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Inject the persisted significant-events set.
 	 *
-	 * @param array $events
+	 * @param array<int, string> $events
 	 */
 	public function set_significant_events( array $events ): void {
 		$this->significant_events = [];
@@ -226,6 +240,8 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Accessor for the auto-tune state.
+	 *
+	 * @return array<string, list<string>>
 	 */
 	public function get_auto_tune_state(): array {
 		return [
@@ -237,6 +253,8 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Save state for persistence.
+	 *
+	 * @return array<string, mixed>
 	 */
 	public function save_state(): array {
 		return [
@@ -247,6 +265,8 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Restore state from save_state().
+	 *
+	 * @param array<string, mixed> $saved
 	 */
 	public function restore_state( array $saved ): void {
 		if ( isset( $saved['pending_bucket'] ) && \is_string( $saved['pending_bucket'] ) ) {
@@ -294,7 +314,7 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Process a single completed request from requests.log.
 	 *
-	 * @param array $message Reference; not mutated.
+	 * @param array<int, mixed> $message Reference; not mutated.
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
@@ -391,7 +411,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param string $rid        Request ID.
 	 * @param string $url_hash   URL hash.
-	 * @param array  $flame_data Flame graph data.
+	 * @param array<string, mixed> $flame_data Flame graph data.
 	 * @return bool True on success.
 	 */
 	private function store_flame( string $rid, string $url_hash, array $flame_data ): bool {
@@ -419,8 +439,8 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Strip hidden sequence suffixes (\x00N) from flame node names recursively.
 	 *
-	 * @param array $node  Flame node (modified in place).
-	 * @param int   $depth Current recursion depth.
+	 * @param array<string, mixed> $node  Flame node (modified in place).
+	 * @param int                  $depth Current recursion depth.
 	 */
 	private static function strip_name_suffixes( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -442,9 +462,9 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Format index entry callback for Partition::with_index().
 	 *
-	 * @param string     $line     The JSON line written to the log.
-	 * @param array      $position Position array with segment_id, offset, length.
-	 * @param array|null $data     Pre-decoded data (avoids re-parsing $line).
+	 * @param string                     $line     The JSON line written to the log.
+	 * @param array<string, int>         $position Position array with segment_id, offset, length.
+	 * @param array<string, mixed>|null  $data     Pre-decoded data (avoids re-parsing $line).
 	 * @return string|null Index entry or null to skip.
 	 */
 	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
@@ -488,8 +508,8 @@ class Flame_Builder_Node extends Node {
 	 * This handles improperly nested events (e.g., when a child span outlives
 	 * its parent) by using LIFO matching like the log-manager does.
 	 *
-	 * @param array $entries Log entries.
-	 * @return array Flame graph data.
+	 * @param array<int, mixed> $entries Log entries.
+	 * @return array<string, mixed> Flame graph data.
 	 */
 	private function build_flame_data( array $entries ): array {
 		// Root node.
@@ -575,8 +595,8 @@ class Flame_Builder_Node extends Node {
 	 * Appends \x00{N} to duplicate names so they stay separate during merge,
 	 * but the suffix is stripped before display.
 	 *
-	 * @param array $node  Flame node (modified by reference).
-	 * @param int   $depth Current recursion depth.
+	 * @param array<string, mixed> $node  Flame node (modified by reference).
+	 * @param int                  $depth Current recursion depth.
 	 */
 	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -615,9 +635,9 @@ class Flame_Builder_Node extends Node {
 	 * Accumulate all per-request stats from a completed request.
 	 *
 	 * @param string $url_hash   URL hash.
-	 * @param array  $flame_data Per-request flame tree.
-	 * @param array  $profiles   profiles{} from request.
-	 * @param array  $request    Full request record.
+	 * @param array<string, mixed> $flame_data Per-request flame tree.
+	 * @param array<array-key, mixed> $profiles   profiles{} from request.
+	 * @param array<string, mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
 		$duration_ms  = (float) ( $flame_data['value'] ?? 0 );
@@ -1252,6 +1272,9 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Merge incoming dimensional buckets into existing, expire old, and cap.
+	 *
+	 * @param array<string, mixed> $existing Existing buckets (modified by reference).
+	 * @param array<string, mixed> $buckets  Incoming buckets to merge.
 	 */
 	private function merge_and_cap_dimensional( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
 		if ( 0 === $max_values ) {
@@ -1291,6 +1314,9 @@ class Flame_Builder_Node extends Node {
 	 * Merge incoming category buckets into existing, expire old, and cap.
 	 *
 	 * 'total' pseudo-category preserved before sort; overflow rolls into 'Other'.
+	 *
+	 * @param array<string, mixed> $existing Existing buckets (modified by reference).
+	 * @param array<string, mixed> $buckets  Incoming buckets to merge.
 	 */
 	private function merge_and_cap_categories( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
 		if ( 0 === $max_values ) {
@@ -1421,6 +1447,9 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Cap a single bucket's categories to top N by time, preserving 'total'.
+	 *
+	 * @param array<string, mixed> $cats Category buckets.
+	 * @return array<string, mixed>
 	 */
 	private static function cap_single_bucket( array $cats, int $max_values ): array {
 		if ( \count( $cats ) <= $max_values ) {
@@ -1470,6 +1499,10 @@ class Flame_Builder_Node extends Node {
 	 * of inclusive durations across every request the node was seen in) and
 	 * `seen_count` (true count of those requests). Display values come from
 	 * finalize at flush time (sum_value / total_count).
+	 *
+	 * @param array<int, mixed> $existing Existing aggregate children (list).
+	 * @param array<int, mixed> $incoming Incoming per-request children (list).
+	 * @return array<int, mixed>
 	 */
 	private static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -1523,6 +1556,8 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Finalize a flame node for display: convert sums to averages, strip
 	 * suffixes, normalize parent ≥ children, and remove internal fields.
+	 *
+	 * @param array<string, mixed> $node Flame node (modified by reference).
 	 */
 	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -1629,8 +1664,8 @@ class Flame_Builder_Node extends Node {
 	 * sink) delivers it to the AutoTuner Node named 'auto-tuner', which
 	 * applies it locally and (on hubs) fans out via JobIntake.
 	 *
-	 * @param string $key   'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
-	 * @param array  $items Hook/event names — already deduped at the caller.
+	 * @param string             $key   'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
+	 * @param array<int, string> $items Hook/event names — already deduped at the caller.
 	 */
 	private function emit_auto_tune( string $key, array $items ): void {
 		if ( empty( $items ) || null === $this->sink ) {
@@ -1672,6 +1707,7 @@ class Flame_Builder_Node extends Node {
 	// Sibling-interpreter verb table + node_schema (A3).
 	// -------------------------------------------------------------------------
 
+	/** @param array<int, mixed> $message Incoming command Message. */
 	private function handle_request( array $message ): void {
 		$value = (string) $message[ Message::VALUE ];
 		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );

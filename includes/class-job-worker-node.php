@@ -406,6 +406,9 @@ class Job_Worker_Node extends Node {
 	// Requests + node_schema (A3).
 	// -------------------------------------------------------------------------
 
+	/**
+	 * @param array<int, mixed> $message
+	 */
 	private function handle_request( array $message ): void {
 		$value = (string) $message[ Message::VALUE ];
 		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );

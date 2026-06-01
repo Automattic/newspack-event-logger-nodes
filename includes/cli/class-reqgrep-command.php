@@ -94,7 +94,7 @@ class Reqgrep_Command {
 	/** In-flight matched requests. Each value is stdClass {lines:array, bytes:int}. */
 	private ?LRU_Cache $inflight = null;
 
-	/** History bucket array. Each bucket is a hashmap rid => string[]. */
+	/** @var array<int, array<string, array<int, string>>> History buckets; each bucket maps rid => lines. */
 	private array $history = [ [] ];
 
 	/** Search pattern (positional arg, default '.'). */
@@ -127,10 +127,10 @@ class Reqgrep_Command {
 	/** Number of partitions to walk. */
 	private int $num_partitions = 1;
 
-	/** Loaded config snapshot. */
+	/** @var array<string, mixed> Loaded config snapshot. */
 	private array $config = [];
 
-	/** Cached Partition instances per index. */
+	/** @var array<int, \Newspack_Nodes\Partition_Node> Cached Partition instances per index. */
 	private array $partition_cache = [];
 
 	/**
@@ -195,6 +195,10 @@ class Reqgrep_Command {
 	 */
 	private bool $drain_buffers_on_invoke = true;
 
+	/**
+	 * @param array<int, string>   $args
+	 * @param array<string, mixed> $assoc_args
+	 */
 	public function __invoke( array $args, array $assoc_args ): void {
 		// Drain any plugin-installed output buffers so streamed echoes don't get
 		// captured into a userspace buffer that grows until OOM.
@@ -690,7 +694,7 @@ class Reqgrep_Command {
 	 * Format a log entry for display with indentation, dot rows for elapsed
 	 * seconds, and (start)/(complete) bookkeeping.
 	 *
-	 * @param array $entry Decoded JSON entry.
+	 * @param array<string, mixed> $entry Decoded JSON entry.
 	 * @return string Formatted output line.
 	 */
 	private function format_entry( array $entry ): string {

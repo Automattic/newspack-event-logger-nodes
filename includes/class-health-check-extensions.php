@@ -29,7 +29,7 @@ class Health_Check_Extensions {
 	 * RemoteManager::health_check (no WP action indirection); the action
 	 * is still fired alongside for external plugin listeners.
 	 *
-	 * @param array $all_discovery Map of server_id => discovery data.
+	 * @param array<string, mixed> $all_discovery Map of server_id => discovery data.
 	 */
 	public static function process_discovery( array $all_discovery ): void {
 		// Long-lived JobWorker; merge_hooks / merge_events below do
@@ -91,7 +91,7 @@ class Health_Check_Extensions {
 	 * New hooks are added as unchecked (false).
 	 * Temporarily unhooks SettingsSync to prevent fan-out.
 	 *
-	 * @param array $remote_hooks Remote hook names.
+	 * @param array<int, int|string> $remote_hooks Remote hook names (array_keys output; numeric names coerce to int).
 	 */
 	private static function merge_hooks( array $remote_hooks ): void {
 		$existing = \get_option( 'newspack_event_logger_nodes_log_events', [] );
@@ -158,7 +158,7 @@ class Health_Check_Extensions {
 	 *
 	 * Temporarily unhooks SettingsSync to prevent fan-out.
 	 *
-	 * @param array $remote_events Remote event names.
+	 * @param array<int, int|string> $remote_events Remote event names (array_keys output; numeric names coerce to int).
 	 */
 	private static function merge_events( array $remote_events ): void {
 		$discovered = \get_option( 'newspack_event_logger_nodes_discovered_events', [] );

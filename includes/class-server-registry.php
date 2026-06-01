@@ -49,7 +49,7 @@ class Server_Registry {
 	/**
 	 * Cached merged servers (config-file defaults + WP option overlay).
 	 *
-	 * @var array<string,array>|null
+	 * @var array<string,array<string, mixed>>|null
 	 */
 	private ?array $servers = null;
 
@@ -73,7 +73,7 @@ class Server_Registry {
 	/**
 	 * Get all servers (synonym of get_all() for backwards-compat).
 	 *
-	 * @return array Associative array of server_id => config.
+	 * @return array<string, mixed> Associative array of server_id => config.
 	 */
 	public function get_servers(): array {
 		return $this->get_all();
@@ -82,7 +82,7 @@ class Server_Registry {
 	/**
 	 * Numeric-keyed list view of get_all().
 	 *
-	 * @return array Sequential array of server configs (id keyed in field).
+	 * @return array<int, mixed> Sequential array of server configs (id keyed in field).
 	 */
 	public function list_servers(): array {
 		$out = [];
@@ -99,7 +99,7 @@ class Server_Registry {
 	 * Merges config file defaults with WordPress option values.
 	 * WordPress option values override config file defaults.
 	 *
-	 * @return array Associative array of server_id => config.
+	 * @return array<array-key, mixed> Associative array of server_id => config.
 	 */
 	public function get_all(): array {
 		if ( null === $this->servers ) {
@@ -158,7 +158,7 @@ class Server_Registry {
 	/**
 	 * Get only enabled servers.
 	 *
-	 * @return array<string,array>
+	 * @return array<string,array<string, mixed>>
 	 */
 	public function get_enabled(): array {
 		return \array_filter(
@@ -173,7 +173,7 @@ class Server_Registry {
 	 * Get a specific server by ID.
 	 *
 	 * @param string $id Server ID.
-	 * @return array|null Server config or null if not found.
+	 * @return array<string, mixed>|null Server config or null if not found.
 	 */
 	public function get( string $id ): ?array {
 		$servers = $this->get_all();
@@ -207,7 +207,7 @@ class Server_Registry {
 	 *  - validation fails (URL, credentials, logs)
 	 *
 	 * @param string $id     Server ID (alphanumeric, hyphen, underscore; 1-64 chars).
-	 * @param array  $config Server configuration.
+	 * @param array<string, mixed>  $config Server configuration.
 	 */
 	public function add( string $id, array $config ): bool {
 		if ( ! self::is_valid_id( $id ) ) {
@@ -247,7 +247,7 @@ class Server_Registry {
 	 * verb. Used by callers that don't distinguish add-vs-update at their level.
 	 *
 	 * @param string $id     Server ID.
-	 * @param array  $config Full server configuration.
+	 * @param array<string, mixed>  $config Full server configuration.
 	 */
 	public function register( string $id, array $config ): bool {
 		if ( ! self::is_valid_id( $id ) ) {
@@ -286,7 +286,7 @@ class Server_Registry {
 	 * for those entries.
 	 *
 	 * @param string $id      Server ID.
-	 * @param array  $partial Partial configuration to merge.
+	 * @param array<string, mixed>  $partial Partial configuration to merge.
 	 */
 	public function update( string $id, array $partial ): bool {
 		if ( ! self::is_valid_id( $id ) ) {
@@ -390,7 +390,7 @@ class Server_Registry {
 	 * Write paths use this so we never accidentally persist a config-file
 	 * default into the WP option (would shadow file changes forever).
 	 *
-	 * @return array<string,array>
+	 * @return array<string,array<string, mixed>>
 	 */
 	private function get_wp_servers(): array {
 		$option = \get_option( self::OPTION_KEY, [] );
@@ -404,7 +404,7 @@ class Server_Registry {
 	 * marks the option as non-autoloaded so it doesn't bloat every request's
 	 * option cache); falls back to 2-arg for stripped-down test stubs.
 	 *
-	 * @param array $wp_servers Map of id => validated config.
+	 * @param array<string, mixed> $wp_servers Map of id => validated config.
 	 */
 	private static function write_option( array $wp_servers ): void {
 		$arity = self::update_option_arity();
@@ -436,8 +436,8 @@ class Server_Registry {
 	/**
 	 * Validate and sanitize a full server configuration.
 	 *
-	 * @param array $config Raw configuration.
-	 * @return array|null Validated configuration or null if invalid.
+	 * @param array<string, mixed> $config Raw configuration.
+	 * @return array<string, mixed>|null Validated configuration or null if invalid.
 	 */
 	private function validate_config( array $config ): ?array {
 		// URL is required, must be string, must be HTTPS.
@@ -583,7 +583,7 @@ class Server_Registry {
 	 *
 	 * @param string $action Verb: added | updated | removed | registered.
 	 * @param string $id     Server ID acted upon.
-	 * @param array  $fields Field names (sanitized — never values).
+	 * @param array<string>  $fields Field names (sanitized — never values).
 	 */
 	private function audit( string $action, string $id, array $fields ): void {
 		$user_id  = \function_exists( 'get_current_user_id' ) ? (int) \get_current_user_id() : 0;

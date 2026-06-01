@@ -28,14 +28,14 @@ class Hook_Categorizer {
 	/**
 	 * Cached base config from JSON file.
 	 *
-	 * @var array|null
+	 * @var array<string, mixed>|null
 	 */
 	private static ?array $base_config = null;
 
 	/**
 	 * Cached merged config (base + user customizations).
 	 *
-	 * @var array|null
+	 * @var array<string, mixed>|null
 	 */
 	private static ?array $merged_config = null;
 
@@ -47,7 +47,7 @@ class Hook_Categorizer {
 	/**
 	 * Load base configuration from hook_categories.json.
 	 *
-	 * @return array Base configuration.
+	 * @return array<string, mixed> Base configuration.
 	 */
 	public static function get_base_config(): array {
 		if ( null !== self::$base_config ) {
@@ -68,7 +68,7 @@ class Hook_Categorizer {
 	/**
 	 * Get user customizations from database.
 	 *
-	 * @return array User customizations with keys: patterns, overrides, colors.
+	 * @return array<string, mixed> User customizations with keys: patterns, overrides, colors.
 	 */
 	public static function get_user_customizations(): array {
 		$defaults = [
@@ -84,7 +84,7 @@ class Hook_Categorizer {
 	/**
 	 * Get merged configuration (base + user customizations).
 	 *
-	 * @return array Merged configuration.
+	 * @return array<string, mixed> Merged configuration.
 	 */
 	public static function get_merged_config(): array {
 		if ( null !== self::$merged_config ) {
@@ -170,8 +170,8 @@ class Hook_Categorizer {
 	/**
 	 * Categorize multiple hooks.
 	 *
-	 * @param array $hooks Array of hook names.
-	 * @return array Associative array of hook_name => category.
+	 * @param array<int, string> $hooks List of hook names.
+	 * @return array<string, string> Associative array of hook_name => category.
 	 */
 	public static function categorize_many( array $hooks ): array {
 		$result = [];
@@ -184,7 +184,7 @@ class Hook_Categorizer {
 	/**
 	 * Get all categories with their colors.
 	 *
-	 * @return array Associative array of category => color.
+	 * @return array<string, mixed> Associative array of category => color.
 	 */
 	public static function get_categories(): array {
 		$config = self::get_merged_config();
@@ -236,7 +236,7 @@ class Hook_Categorizer {
 	/**
 	 * Get all registered hooks from WordPress.
 	 *
-	 * @return array Array of hook names that have callbacks attached.
+	 * @return array<int, string> Array of hook names that have callbacks attached.
 	 */
 	public static function get_registered_hooks(): array {
 		global $wp_filter;
@@ -267,7 +267,7 @@ class Hook_Categorizer {
 	/**
 	 * Get registered hooks grouped by category.
 	 *
-	 * @return array Associative array of category => [hooks...].
+	 * @return array<string, mixed> Associative array of category => [hooks...].
 	 */
 	public static function get_registered_hooks_by_category(): array {
 		$hooks      = self::get_registered_hooks();
