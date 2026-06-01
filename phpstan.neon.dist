@@ -1,5 +1,5 @@
 parameters:
-    level: 6
+    level: 7
     # PHP 8.2+ — application code uses constants-in-traits and other 8.2
     # syntax; composer.json's `platform.php: 8.0` is the minimum-INSTALL
     # floor, but actual runtime is PHP 8.2+ (Eve / Atomic ship PHP 8.4).

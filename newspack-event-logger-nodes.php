@@ -534,7 +534,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		}
 
 		$handle  = "newspack-nodes-{$tree}";
-		$version = \filemtime( $asset_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION;
+		$version = (string) ( \filemtime( $asset_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
 		$deps    = [ 'wp-element', 'wp-components', 'wp-api-fetch', 'wp-i18n' ];
 		\wp_enqueue_script( $handle, $asset_url, $deps, $version, true );
 
@@ -544,7 +544,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		$css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.css";
 		$css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}/index.css";
 		if ( \file_exists( $css_path ) ) {
-			$css_version = \filemtime( $css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION;
+			$css_version = (string) ( \filemtime( $css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
 			\wp_enqueue_style( $handle, $css_url, [ 'wp-components' ], $css_version );
 		}
 
@@ -557,7 +557,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			$settings_css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/event-aggregator-settings/settings.css';
 			$settings_css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/event-aggregator-settings/settings.css';
 			if ( \file_exists( $settings_css_path ) ) {
-				$settings_css_version = \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION;
+				$settings_css_version = (string) ( \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
 				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [], $settings_css_version );
 			}
 		}

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PHPStan raised to level 7.** Builds on the level-6 value-type work: the few unguarded builtin returns are made safe — `filemtime()` enqueue versions cast to `string`, `wp_json_encode()` results feeding `esc_attr()`/`strpos()`/`explode()` coalesce to `''`, `current_filter()` coalesces to `''`, `Hook_Categorizer` guards a failed config read (behind a testable file-read seam) and returns its documented default, and `LRU_Cache` restore casts its bucket index to `int`. Behavior-preserving; a new test covers the unreadable-config path. Full suite green.
 - **PHPStan raised to level 6.** The static-analysis gate now enforces value types on every iterable (`array<…>`); all method/parameter/return/property arrays carry explicit shapes. Substrate-wide this is PHPDoc-only (the 7-field positional Message as `array<int, mixed>`, stats/flame accumulator maps as `array<string, mixed>`, hook-name lists as `array<int, int|string>`). No runtime behavior changes.
 
 ### Fixed

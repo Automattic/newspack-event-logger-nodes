@@ -155,7 +155,7 @@ class Settings_Sync {
 	 * schema.
 	 *
 	 * @param array<string, mixed> $settings Existing settings.
-	 * @return array<string, mixed> Modified settings.
+	 * @return array<int|string, mixed> Modified settings (list entries appended).
 	 */
 	public static function register_synced_settings( array $settings ): array {
 		// Core options with name remap.

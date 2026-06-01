@@ -144,7 +144,7 @@ class Core {
 			return $v;
 		}
 
-		$hook_name = \current_filter();
+		$hook_name = \current_filter() ?: '';
 		$category  = $hook_name . ' hook';
 
 		// Log filter value as 'm', truncated to keep firehose lines small.

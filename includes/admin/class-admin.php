@@ -1375,8 +1375,8 @@ class Admin {
 	 * @param string         $examples    Optional example values.
 	 */
 	private function render_array_field( string $field, array $values, array $default, string $description, string $examples = '' ): void {
-		$values_json  = \wp_json_encode( $values );
-		$default_json = \wp_json_encode( $default );
+		$values_json  = \wp_json_encode( $values ) ?: '';
+		$default_json = \wp_json_encode( $default ) ?: '';
 		?>
 		<div style="display:flex; align-items:flex-start; gap:10px;">
 			<div style="flex:1;">

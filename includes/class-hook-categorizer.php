@@ -45,6 +45,17 @@ class Hook_Categorizer {
 	const MAX_PATTERN_LENGTH = 100;
 
 	/**
+	 * file_get_contents seam. Lazily-defaulted to a closure wrapping the real
+	 * read of hook_categories.json. Tests reassign to return false so the
+	 * read-failure guard in get_base_config() runs as production code.
+	 *
+	 * Signature: `function ( string $path ): string|false`.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $read_file = null;
+
+	/**
 	 * Load base configuration from hook_categories.json.
 	 *
 	 * @return array<string, mixed> Base configuration.
@@ -60,7 +71,12 @@ class Hook_Categorizer {
 			return self::$base_config;
 		}
 
-		$json              = \file_get_contents( $json_path ); // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Local file.
+		$read = self::$read_file ?? static fn( string $path ) => \file_get_contents( $path ); // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Local file.
+		$json = $read( $json_path );
+		if ( false === $json ) {
+			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
+			return self::$base_config;
+		}
 		self::$base_config = \json_decode( $json, true, 64 ) ?? [ '_colors' => [], '_patterns' => [] ];
 		return self::$base_config;
 	}

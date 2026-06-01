@@ -520,6 +520,7 @@ class Flame_Builder_Node extends Node {
 		];
 
 		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base_name ].
+		/** @var array<int, array<string, mixed>> $stack */
 		$stack   = [];
 		$stack[] = [
 			'node' => &$root,
@@ -1770,6 +1771,8 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true, 'default' => '<config:auto_protect_time_threshold>' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+						// Constant valid pattern: preg_split never returns false here.
+						/** @var list<string> $parts */
 						$parts = \preg_split( '/\s+/', \trim( $args ) );
 						if ( \count( $parts ) < 2 ) {
 							return 'usage: set_auto_tune <count_threshold> <time_threshold>';
@@ -1804,6 +1807,8 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+						// Constant valid pattern: preg_split never returns false here.
+						/** @var list<string> $parts */
 						$parts = \preg_split( '/\s+/', \trim( $args ) );
 						if ( \count( $parts ) < 1 || '' === $parts[0] ) {
 							return 'usage: configure_stats <partition>';
