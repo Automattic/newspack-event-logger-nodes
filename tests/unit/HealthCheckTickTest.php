@@ -6,7 +6,6 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Message;
 use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -59,19 +58,6 @@ class HealthCheckTickTest extends TestCase {
 		$ref = new \ReflectionProperty( Log_Manager::class, 'context_stack' );
 		$ref->setAccessible( true );
 		$ref->setValue( null, [] );
-	}
-
-	/**
-	 * Build a TIMER tick message in the Router-emitted shape: TM_INFO with
-	 * KEY='TIMER'. HealthCheckTick gates on exactly this pair before calling
-	 * maybe_enqueue().
-	 */
-	private function timer_tick(): array {
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_INFO;
-		$msg[ Message::KEY ]   = 'TIMER';
-		$msg[ Message::VALUE ] = (string) \time();
-		return $msg;
 	}
 
 	// -------------------------------------------------------------------------
@@ -135,8 +121,8 @@ class HealthCheckTickTest extends TestCase {
 	}
 
 	public function test_start_periodic_tick_registers_with_router_timer(): void {
-		// With _router present, registration must succeed and a Router::notify('TIMER')
-		// will dispatch a TM_INFO into HealthCheckTick's fill().
+		// With _router present, set_timer() router-hitchhikes — registering this
+		// node's name on the Router TIMER so notify_timer() drives its fire_cb().
 		$router = new Router_Node();
 		$router->name( '_router' );
 
@@ -144,70 +130,16 @@ class HealthCheckTickTest extends TestCase {
 		$h->name( 'h' );
 		$h->start_periodic_tick();
 
-		// Wipe enabled remotes so maybe_enqueue() short-circuits on registry-empty
-		// (no LogManager dance, no $_SERVER mutation).
-		$GLOBALS['_wp_options'] = [];
-
-		// Trigger a TIMER notification — Router::fire() does this on each tick.
-		// HealthCheckTick should receive it via the Node-name dispatch path.
-		$router->notify( 'TIMER', \time() );
-
-		// counter is incremented on every fill() entry, so a registered listener
-		// will have observed at least one message.
-		$this->assertGreaterThanOrEqual( 1, $h->counter() );
+		$ref = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
+		$ref->setAccessible( true );
+		$regs = $ref->getValue( $router );
+		$this->assertArrayHasKey( 'TIMER', $regs );
+		$this->assertArrayHasKey( 'h', $regs['TIMER'] );
 	}
 
 	// -------------------------------------------------------------------------
-	// fill(): TM_INFO+TIMER vs everything else.
-	// -------------------------------------------------------------------------
-
-	public function test_fill_ignores_non_info_message(): void {
-		$h = new Health_Check_Tick_Node();
-		$h->name( 'h' );
-
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::KEY ]   = 'TIMER';
-		$msg[ Message::VALUE ] = '';
-		$h->fill( $msg );
-
-		// counter ticks but no enqueue side effect — no LogManager singleton
-		// was constructed because maybe_enqueue() never ran.
-		$this->assertSame( 1, $h->counter() );
-	}
-
-	public function test_fill_ignores_info_with_wrong_key(): void {
-		// TM_INFO carries lots of event names (FIRE, CACHE_FLUSH, MEMORY_PRESSURE, …).
-		// Only KEY='TIMER' triggers the sweep — anything else is a no-op.
-		$h = new Health_Check_Tick_Node();
-		$h->name( 'h' );
-
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_INFO;
-		$msg[ Message::KEY ]   = 'FIRE';
-		$msg[ Message::VALUE ] = '';
-		$h->fill( $msg );
-
-		$this->assertSame( 1, $h->counter() );
-	}
-
-	public function test_fill_dispatches_timer_tick_to_maybe_enqueue(): void {
-		// With no enabled remotes, maybe_enqueue() bails after registry-empty
-		// check; we observe it ran by confirming counter incremented and no
-		// crash from $_SERVER mutation (the registry check happens BEFORE
-		// $_SERVER mutation).
-		$GLOBALS['_wp_options'] = [];
-
-		$h = new Health_Check_Tick_Node();
-		$h->name( 'h' );
-		$msg = $this->timer_tick();
-		$h->fill( $msg );
-
-		$this->assertSame( 1, $h->counter() );
-	}
-
-	// -------------------------------------------------------------------------
-	// maybe_enqueue(): debounce, no-remotes, and successful enqueue paths.
+	// fire(): debounce, no-remotes, and successful enqueue paths. fire() is the
+	// Timer_Node tick entry (Router::notify_timer() -> fire_cb() -> fire()).
 	// -------------------------------------------------------------------------
 
 	public function test_maybe_enqueue_silent_when_no_remotes(): void {
@@ -220,8 +152,7 @@ class HealthCheckTickTest extends TestCase {
 
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
-		$msg = $this->timer_tick();
-		$h->fill( $msg );
+		$h->fire();
 
 		// $_SERVER is untouched — short-circuit happened before begin_job_context.
 		$this->assertSame( $orig_uri, $_SERVER['REQUEST_URI'] );
@@ -252,8 +183,7 @@ class HealthCheckTickTest extends TestCase {
 		// rewrite, then restoration via end_job_context's finally).
 		$pre_uri = $_SERVER['REQUEST_URI'] ?? '/original';
 		$_SERVER['REQUEST_URI'] = $pre_uri;
-		$msg = $this->timer_tick();
-		$h->fill( $msg );
+		$h->fire();
 		// $_SERVER restored after begin/end_job_context's finally.
 		$this->assertSame( $pre_uri, $_SERVER['REQUEST_URI'] );
 
@@ -267,8 +197,7 @@ class HealthCheckTickTest extends TestCase {
 
 		// Second tick: must early-return (still within DEBOUNCE_SECONDS=300).
 		// last_check must not advance.
-		$msg = $this->timer_tick();
-		$h->fill( $msg );
+		$h->fire();
 		$this->assertSame( $last_check_after_first, $ref->getValue( $h ) );
 	}
 
@@ -292,8 +221,7 @@ class HealthCheckTickTest extends TestCase {
 
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
-		$msg = $this->timer_tick();
-		$h->fill( $msg );
+		$h->fire();
 
 		// $_SERVER restored to pre-job state — end_job_context's finally ran.
 		$this->assertSame( '/test/page', $_SERVER['REQUEST_URI'] );
@@ -328,8 +256,7 @@ class HealthCheckTickTest extends TestCase {
 		// sees the new server and the enqueue path proceeds (last_check ticks).
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
-		$msg = $this->timer_tick();
-		$h->fill( $msg );
+		$h->fire();
 
 		$ref = new \ReflectionProperty( Health_Check_Tick_Node::class, 'last_check' );
 		$ref->setAccessible( true );

@@ -11,7 +11,7 @@
  * assert it actually routes _sse → view. The slot keep-alive bridge mirrors
  * useRequestLogGraph exactly: a `connected` envelope populates
  * `_heartbeat.{slot,partition}`, and the Router TIMER drives
- * `heartbeat.onTimer` so the slot keep-alive actually fires.
+ * `heartbeat.fire` (via notify_timer) so the slot keep-alive actually fires.
  *
  * usePageVisibility is mocked to a controllable value so the visibility effect
  * is deterministic under jsdom.
@@ -173,7 +173,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
 
-	test( 'the Router TIMER drives heartbeat.onTimer so the slot keep-alive actually fires', () => {
+	test( 'the Router TIMER drives heartbeat.fire (via notify_timer) so the slot keep-alive actually fires', () => {
 		jest.useFakeTimers();
 		try {
 			renderHook( () => useErrorLogGraph() );

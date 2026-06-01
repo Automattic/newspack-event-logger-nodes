@@ -98,7 +98,7 @@ export function useErrorLogGraph( opts = {} ) {
 	useEffect( () => {
 		// The soft view-nodes the backbone clips onto. mountExospine snapshots
 		// Core around this so reinit() removes exactly these and rebuilds them.
-		const build = ( { interpreter, router } ) => {
+		const build = ( { interpreter } ) => {
 			const { maxEntries } = optsRef.current;
 			const data =
 				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
@@ -153,8 +153,9 @@ export function useErrorLogGraph( opts = {} ) {
 				return true;
 			} );
 
-			// HeartbeatNode hitchhikes the backbone's TIMER (started in mountExospine).
-			router.register( 'TIMER', HEARTBEAT, () => heartbeat.onTimer() );
+			// HeartbeatNode hitchhikes the backbone's TIMER (set_timer() with no args):
+			// the _router's notify_timer calls heartbeat.fireCb -> fire each tick.
+			heartbeat.setTimer();
 
 			sseRef.current = sse;
 			heartbeatRef.current = heartbeat;
