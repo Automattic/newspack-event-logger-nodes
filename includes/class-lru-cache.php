@@ -190,7 +190,7 @@ class LRU_Cache {
 
 		$max_key       = \max( \array_keys( $buckets ) );
 		$this->buckets = $buckets;
-		$this->current = \max( 0, \min( $current, $max_key ) );
+		$this->current = (int) \max( 0, \min( $current, $max_key ) );
 	}
 
 	/**

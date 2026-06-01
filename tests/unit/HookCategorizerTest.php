@@ -61,6 +61,21 @@ class HookCategorizerTest extends TestCase {
 		$this->assertIsArray( $config );
 	}
 
+	public function test_get_base_config_returns_default_when_file_unreadable(): void {
+		Hook_Categorizer::clear_cache();
+		// file-read seam: simulate file_get_contents() failing (read error /
+		// race after the file_exists check) by returning false.
+		Hook_Categorizer::$read_file = static fn( string $path ) => false;
+		try {
+			$config = Hook_Categorizer::get_base_config();
+		} finally {
+			Hook_Categorizer::$read_file = null;
+			Hook_Categorizer::clear_cache();
+		}
+
+		$this->assertSame( [ '_colors' => [], '_patterns' => [] ], $config );
+	}
+
 	// ── get_user_customizations() ───────────────────────────────────────────
 
 	public function test_get_user_customizations_returns_defaults_when_empty(): void {

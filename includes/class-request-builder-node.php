@@ -396,6 +396,8 @@ class Request_Builder_Node extends Node {
 			$request->rid = $rid;
 			$this->cache->set( $rid, $request );
 		}
+		// The cache only ever stores the \stdClass built above for a given rid.
+		/** @var \stdClass $request */
 
 		// Forward errors and warnings to errors.log. Pass the rid so the
 		// emitted Message carries it in KEY — errors.log readers (and any

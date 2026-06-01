@@ -89,7 +89,7 @@ class Remote_Source_Node extends Node {
 	/** @var array<string, mixed> Current SSE event accumulator ({event, data}). */
 	private array   $current_event = [ 'event' => '', 'data' => '' ];
 	private ?int    $slot          = null;
-	/** @var array<string, int> Read cursor ({segment_id, offset}). */
+	/** @var array{segment_id:int, offset:int} Read cursor. */
 	private array   $position      = [ 'segment_id' => 0, 'offset' => 0 ];
 	private float   $last_event_time = 0.0;
 	private int     $current_backoff = self::INITIAL_BACKOFF;

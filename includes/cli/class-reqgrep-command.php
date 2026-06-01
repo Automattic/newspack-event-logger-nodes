@@ -237,6 +237,7 @@ class Reqgrep_Command {
 			$real_path = \realpath( (string) $assoc_args['path'] );
 			if ( false === $real_path ) {
 				\WP_CLI::error( 'Invalid path: ' . $assoc_args['path'] );
+				return;
 			}
 			$logs_dir = Config::get_logs_directory();
 			if ( 0 !== \strpos( $real_path, $logs_dir ) ) {
@@ -757,7 +758,7 @@ class Reqgrep_Command {
 		$msg = '';
 		if ( isset( $entry['m'] ) ) {
 			if ( \is_array( $entry['m'] ) ) {
-				$msg = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+				$msg = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ?: '';
 			} else {
 				$msg = (string) $entry['m'];
 			}
