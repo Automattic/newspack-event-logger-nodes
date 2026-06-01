@@ -86,11 +86,9 @@ same artifacts for testing. It rsyncs the plugin minus development artifacts
 (`src/`, `tests/`, `node_modules/`, `.github`, `composer.{json,lock}`,
 `package*.json`, etc.) so the zip holds the plugin directory at root — `wp plugin
 install --force --activate <url>.zip` works as-is. It ALSO copies
-`00-newspack-profiler.php` into `release/` as a standalone asset — the Atomic-side
-`deploy-event-logger.sh` fetches it directly from the release URL because it lives
-under `mu-plugins/` on the target site. Both files must be attached to the release
-for the deploy script to succeed (the workflow attaches both; `fail_on_unmatched_files`
-guards against a missing one).
+`00-newspack-profiler.php` into `release/` as a standalone asset (it ships as an
+`mu-plugins/` drop-in, separate from the plugin zip). The workflow attaches both
+files to the release; `fail_on_unmatched_files` guards against a missing one.
 
 **Note on coupling**: this plugin's version is not tied to `newspack-nodes`'s — they release independently. If a release depends on a specific runtime version, call it out in the CHANGELOG entry; consider bumping the `newspack-nodes` requirement in the plugin header (`Requires Plugins:` once we use it).
 
