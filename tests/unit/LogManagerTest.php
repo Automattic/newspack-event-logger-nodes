@@ -325,6 +325,11 @@ class LogManagerTest extends TestCase {
 		$_SERVER['REQUEST_URI'] = '/health';
 		$lm = Log_Manager::instance();
 		$this->assertFalse( $lm->enabled, 'Skip URL should disable logging' );
+
+		// skip_urls patterns are prefixes (no trailing '?'), so a sub-path is skipped too.
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/health/check';
+		$this->assertFalse( Log_Manager::instance()->enabled, 'a sub-path of a skip prefix is skipped' );
 	}
 
 	public function test_matches_url_filter_with_log_urls(): void {
@@ -344,7 +349,8 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
 		Config::reset();
 
-		$_SERVER['REQUEST_URI'] = '/api/data';
+		// log_urls = ['/api/'] (a prefix, no trailing '?'); a matching path enables logging.
+		$_SERVER['REQUEST_URI'] = '/api/';
 		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->enabled, 'Matching URL should be enabled' );
 	}
@@ -355,6 +361,106 @@ class LogManagerTest extends TestCase {
 		// that has no compiled regex.
 		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->matches_url_filter( '/anything' ), 'No filter = log all' );
+	}
+
+	// ── URL filter: prefix match with a '?' terminator ─────────────────────
+	// Both skip_urls and log_urls prefix-match the request path (query string
+	// removed) with a '?' appended, so a pattern ending in '?' is an EXACT match
+	// and one without is a PREFIX: ['/?'] = home page only, ['/news?'] = exactly
+	// /news, ['/news'] = anything under /news. (see Log_Manager::compile_url_filter)
+
+	public function test_matches_url_filter_log_urls_prefix(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
+		Config::reset();
+
+		// log_urls = ['/api/'] (no trailing '?') matches anything starting with it.
+		$_SERVER['REQUEST_URI'] = '/api/data';
+		$this->assertTrue( Log_Manager::instance()->enabled, 'a path under the prefix matches' );
+
+		// ...but only at the START, not a pattern appearing mid-URL.
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/v2/api/';
+		$this->assertFalse( Log_Manager::instance()->enabled, 'the prefix must match at the start, not mid-URL' );
+	}
+
+	public function test_matches_url_filter_log_urls_trailing_question_mark_is_exact(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-exact' ) );
+		Config::reset();
+
+		// log_urls = ['/news?']: the trailing '?' makes it match ONLY '/news'.
+		$_SERVER['REQUEST_URI'] = '/news';
+		$this->assertTrue( Log_Manager::instance()->enabled, "'/news?' matches '/news' exactly" );
+
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/news/123';
+		$this->assertFalse( Log_Manager::instance()->enabled, "'/news?' must not match a sub-path" );
+
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/newsletter';
+		$this->assertFalse( Log_Manager::instance()->enabled, "'/news?' must not match a longer sibling" );
+	}
+
+	public function test_matches_url_filter_log_urls_home_page(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-home' ) );
+		Config::reset();
+
+		// log_urls = ['/?'] logs ONLY the home page.
+		$_SERVER['REQUEST_URI'] = '/';
+		$this->assertTrue( Log_Manager::instance()->enabled, "['/?'] matches the home page" );
+
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/about';
+		$this->assertFalse( Log_Manager::instance()->enabled, "['/?'] must not match any other page" );
+	}
+
+	public function test_matches_url_filter_log_urls_strips_query_string(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-exact' ) );
+		Config::reset();
+
+		// The query string is removed before matching, so '/news?…' still matches ['/news?'].
+		$_SERVER['REQUEST_URI'] = '/news?ref=newsletter';
+		$this->assertTrue( Log_Manager::instance()->enabled, 'the query string is stripped before matching' );
+	}
+
+	public function test_matches_url_filter_log_urls_multi_pattern_grouped(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-multi' ) );
+		Config::reset();
+
+		// log_urls = ['/foo/','/bar/']; the (?:) group anchors EVERY alternative at
+		// the start — the second alternative matches as a prefix...
+		$_SERVER['REQUEST_URI'] = '/bar/x';
+		$this->assertTrue( Log_Manager::instance()->enabled, 'a grouped alternative matches at the start' );
+
+		// ...but not mid-URL (the un-grouped `^/foo/|/bar/` bug would match here).
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/x/bar/';
+		$this->assertFalse( Log_Manager::instance()->enabled, 'an alternative mid-URL must not match (grouped anchor)' );
+	}
+
+	public function test_matches_url_filter_skip_urls_use_the_same_scheme(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'skip-urls-exact' ) );
+		Config::reset();
+
+		// skip_urls obey the same '?'-terminator rule: ['/health?'] skips ONLY '/health'.
+		$_SERVER['REQUEST_URI'] = '/health';
+		$this->assertFalse( Log_Manager::instance()->enabled, "skip ['/health?'] skips '/health' exactly" );
+
+		// A sub-path is NOT skipped (and with no log_urls set, logging stays enabled).
+		Log_Manager::reset();
+		$_SERVER['REQUEST_URI'] = '/health/check';
+		$this->assertTrue( Log_Manager::instance()->enabled, "skip ['/health?'] must not skip a sub-path" );
 	}
 
 	// ── Line limiting ──────────────────────────────────────────────────────

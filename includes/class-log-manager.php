@@ -157,21 +157,9 @@ class Log_Manager {
 			return;
 		}
 
-		// Compile URL filter patterns into single regex for O(1) matching.
-		$skip_urls = $this->config['skip_urls'] ?? [];
-		if ( \is_array( $skip_urls ) && ! empty( $skip_urls ) ) {
-			$patterns = \array_filter( \array_map( 'trim', $skip_urls ) );
-			if ( ! empty( $patterns ) ) {
-				$this->skip_regex = '/' . \implode( '|', \array_map( fn( $p ) => \preg_quote( $p, '/' ), $patterns ) ) . '/i';
-			}
-		}
-		$log_urls = $this->config['log_urls'] ?? [];
-		if ( \is_array( $log_urls ) && ! empty( $log_urls ) ) {
-			$patterns = \array_filter( \array_map( 'trim', $log_urls ) );
-			if ( ! empty( $patterns ) ) {
-				$this->log_regex = '/' . \implode( '|', \array_map( fn( $p ) => \preg_quote( $p, '/' ), $patterns ) ) . '/i';
-			}
-		}
+		// skip_urls and log_urls are handled identically — both prefix-match the request path with a '?' terminator appended (see matches_url_filter / compile_url_filter), so a pattern ending in '?' is exact and one without is a prefix.
+		$this->skip_regex = self::compile_url_filter( $this->config['skip_urls'] ?? [] );
+		$this->log_regex  = self::compile_url_filter( $this->config['log_urls'] ?? [] );
 
 		global $newspack_profiler;
 		if ( null !== $newspack_profiler ) {
@@ -618,8 +606,11 @@ class Log_Manager {
 	 * @return bool True if URL should be logged.
 	 */
 	public function matches_url_filter( string $url ): bool {
+		// Match the path (query string removed) with a '?' appended as a terminator, so a pattern ending in '?' matches exactly and one without matches as a prefix.
+		$target = \explode( '?', $url, 2 )[0] . '?';
+
 		// Check skip regex first (always skip these).
-		if ( null !== $this->skip_regex && \preg_match( $this->skip_regex, $url ) ) {
+		if ( null !== $this->skip_regex && \preg_match( $this->skip_regex, $target ) ) {
 			$this->enabled = false;
 			return false;
 		}
@@ -629,12 +620,33 @@ class Log_Manager {
 			$this->enabled = true;
 			return true;  // No filter = log all.
 		}
-		if ( \preg_match( $this->log_regex, $url ) ) {
+		if ( \preg_match( $this->log_regex, $target ) ) {
 			$this->enabled = true;
 			return true;
 		}
 		$this->enabled = false;
 		return false;
+	}
+
+	/**
+	 * Compile a URL-filter pattern list into a start-anchored regex, or null.
+	 *
+	 * Patterns prefix-match the request path with a '?' terminator appended
+	 * (see matches_url_filter), so a pattern ending in '?' matches exactly.
+	 *
+	 * @param mixed $urls Config value, expected to be an array of pattern strings.
+	 * @return string|null Compiled regex, or null when there are no patterns.
+	 */
+	private static function compile_url_filter( $urls ): ?string {
+		if ( ! \is_array( $urls ) || empty( $urls ) ) {
+			return null;
+		}
+		$patterns = \array_filter( \array_map( 'trim', $urls ) );
+		if ( empty( $patterns ) ) {
+			return null;
+		}
+		// `/^(?:a|b)/i` — start-anchored; the (?:) group anchors EVERY alternative.
+		return '/^(?:' . \implode( '|', \array_map( fn( $p ) => \preg_quote( $p, '/' ), $patterns ) ) . ')/i';
 	}
 
 	private function log_environment(): void {
