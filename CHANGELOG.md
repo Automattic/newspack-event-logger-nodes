@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The debug overlay / shared Newspack Nodes header now reports the **runtime** version instead of this plugin's. `NewspackNodesData.version` (read by the shared `Header` / debug overlay, which are part of the `newspack-nodes` runtime) is localized to `NEWSPACK_NODES_VERSION`, not `NEWSPACK_EVENT_LOGGER_NODES_VERSION` — so the overlay and the topology console no longer disagree (e.g. `0.10.0` vs `0.10.2`). No fallback: ELN loads after `newspack-nodes` defines the constant, and if it's absent the runtime ELN depends on isn't loaded. The script cache-bust version stays this plugin's.
 - Added the missing `Author: Automattic` plugin header so the Plugins screen shows "by Automattic" (matching Newspack Nodes).
 - The three remote-aggregation sanitize callbacks (`sanitize_remote_num_segments` / `_segment_size` / `_max_lifespan`) again accept `null`: their parameter is typed `int|string|null` and the `null === $value` guard is restored, so a WordPress `sanitize_callback` invoked with `null` (unset option) returns `''` instead of raising a `TypeError`.
 

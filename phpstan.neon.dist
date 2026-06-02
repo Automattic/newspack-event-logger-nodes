@@ -23,6 +23,11 @@ parameters:
         # szepeviktor/phpstan-wordpress doesn't ship WP-CLI stubs; supply them
         # via php-stubs/wp-cli-stubs.
         - vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
+        # Substrate plugin ROOT file: define()s NEWSPACK_NODES_VERSION (the
+        # runtime version). scanDirectories above covers the substrate classes
+        # under includes/, but this constant lives in the plugin root — scan it
+        # so production references to the runtime version resolve.
+        - ../newspack-nodes/newspack-nodes.php
     scanDirectories:
         # Substrate plugin (newspack-nodes). Loaded at runtime by WordPress
         # via the deferred-loader pattern in newspack-event-logger-nodes.php

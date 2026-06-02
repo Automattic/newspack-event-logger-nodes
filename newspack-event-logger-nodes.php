@@ -583,7 +583,8 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			'nonce'             => $nonce,
 			'restartNonce'      => $restart_nonce,
 			'tree'              => $tree,
-			'version'           => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+			// Runtime version — feeds the shared newspack-nodes Header/overlay (the runtime), not this plugin; no fallback (ELN loads after nodes on plugins_loaded pri 11).
+			'version'           => \NEWSPACK_NODES_VERSION,
 		];
 		\wp_localize_script( $handle, 'NewspackNodesData', $localized );
 
