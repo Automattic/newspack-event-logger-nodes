@@ -28,6 +28,8 @@ import {
 	TM_ERROR,
 	Core,
 	useNodeState,
+	formatCommandArgs,
+	parseCommandArgs,
 } from '@newspack-nodes/runtime';
 import { useAggregatorAdminGraph } from '../useAggregatorAdminGraph';
 
@@ -44,11 +46,11 @@ const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
-		buildMessage( { to, verb, args = '', payload = null } ) {
+		buildMessage( { to, verb, args = '' } ) {
 			const m = newMessage();
 			m[ TYPE ] = TM_COMMAND;
 			m[ TO ] = to;
-			m[ VALUE ] = { name: verb, arguments: args, payload };
+			m[ VALUE ] = { name: verb, arguments: args };
 			return m;
 		},
 		postBatch( messages ) {
@@ -191,18 +193,25 @@ describe( 'useAggregatorAdminGraph — CRUD callbacks dispatch the verb then re-
 		// Mutation resolves to the verb's payload.
 		expect( returned ).toEqual( { id: 'spoke-01' } );
 
-		// An `add` was dispatched with the fields in the payload + enabled:true.
+		// An `add` was dispatched with the fields in the args string: id is the
+		// positional token; the rest are named args (enabled:true → bare --enabled).
 		const add = findVerb( client.batches, 'add' );
 		expect( add ).toBeTruthy();
 		expect( add[ TO ] ).toBe( 'servers' );
 		expect( add[ FROM ] ).toBe( VIEW );
-		expect( add[ VALUE ].payload ).toMatchObject( {
-			id: 'spoke-01',
-			url: 'https://x',
-			auth_username: 'u',
-			auth_password: 'p',
-			enabled: true,
-		} );
+		expect( add[ VALUE ].payload ).toBeUndefined();
+		expect( add[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'spoke-01' ], {
+				url: 'https://x',
+				auth_username: 'u',
+				auth_password: 'p',
+				enabled: true,
+			} )
+		);
+		const addArgs = parseCommandArgs( add[ VALUE ].arguments );
+		expect( addArgs.positional[ 0 ] ).toBe( 'spoke-01' );
+		expect( addArgs.options.url ).toBe( 'https://x' );
+		expect( addArgs.options.enabled ).toBe( true );
 
 		// A re-list ran after the mutation (replaces window.location.reload()).
 		const listsAfter = countVerbs( client.batches, 'list' );
@@ -226,10 +235,11 @@ describe( 'useAggregatorAdminGraph — CRUD callbacks dispatch the verb then re-
 
 		const update = findVerb( client.batches, 'update' );
 		expect( update ).toBeTruthy();
-		expect( update[ VALUE ].payload ).toEqual( {
-			id: 'spoke-01',
-			enabled: false,
-		} );
+		expect( update[ VALUE ].payload ).toBeUndefined();
+		// Only the changed field rides as a named arg; enabled:false → --enabled=false.
+		expect( update[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'spoke-01' ], { enabled: false } )
+		);
 		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
@@ -252,7 +262,10 @@ describe( 'useAggregatorAdminGraph — CRUD callbacks dispatch the verb then re-
 
 		const del = findVerb( client.batches, 'delete' );
 		expect( del ).toBeTruthy();
-		expect( del[ VALUE ].payload ).toEqual( { id: 'spoke-01' } );
+		expect( del[ VALUE ].payload ).toBeUndefined();
+		expect( del[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'spoke-01' ] )
+		);
 		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
@@ -277,7 +290,10 @@ describe( 'useAggregatorAdminGraph — CRUD callbacks dispatch the verb then re-
 
 		const t = findVerb( client.batches, 'test' );
 		expect( t ).toBeTruthy();
-		expect( t[ VALUE ].payload ).toEqual( { id: 'spoke-01' } );
+		expect( t[ VALUE ].payload ).toBeUndefined();
+		expect( t[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'spoke-01' ] )
+		);
 		expect( returned ).toEqual( probe );
 		// The test verb is read-only — no re-list expected.
 		expect( countVerbs( client.batches, 'list' ) ).toBe( listsBefore );
@@ -369,7 +385,7 @@ describe( 'useAggregatorAdminGraph — teardown', () => {
 				const m = newMessage();
 				m[ TYPE ] = TM_COMMAND;
 				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: '', payload: null };
+				m[ VALUE ] = { name: verb, arguments: '' };
 				return m;
 			},
 			postBatch( messages ) {

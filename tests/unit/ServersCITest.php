@@ -100,7 +100,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'get', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'get', 'site-a' );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -111,7 +111,7 @@ class ServersCITest extends TestCase {
 	public function test_get_verb_returns_error_for_unknown_id(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'get', [ 'id' => 'nope' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'get', 'nope' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -120,7 +120,7 @@ class ServersCITest extends TestCase {
 	public function test_get_verb_requires_id(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'get', [] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'get', '' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'id required', $result );
@@ -135,12 +135,12 @@ class ServersCITest extends TestCase {
 		$interpreter       = new Servers_CI_Node();
 		$interpreter->registry = $registry;
 
-		$result = VerbHarness::fire( $interpreter, 'servers', 'add', [
-			'id'            => 'new-site',
-			'url'           => 'https://new.example.com',
-			'auth_username' => 'admin',
-			'auth_password' => 'pw',
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'add',
+			'new-site --url=https://new.example.com --auth_username=admin --auth_password=pw'
+		);
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'new-site', $result['id'] );
@@ -158,10 +158,12 @@ class ServersCITest extends TestCase {
 		$interpreter       = new Servers_CI_Node();
 		$interpreter->registry = $registry;
 
-		$result = VerbHarness::fire( $interpreter, 'servers', 'add', [
-			'id'  => 'site-a',
-			'url' => 'https://a.example.com',
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'add',
+			'site-a --url=https://a.example.com'
+		);
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -174,10 +176,12 @@ class ServersCITest extends TestCase {
 	public function test_add_verb_rejects_invalid_id(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'add', [
-			'id'  => '!!bad-id!!',
-			'url' => 'https://a.example.com',
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'add',
+			'!!bad-id!! --url=https://a.example.com'
+		);
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid', $result );
@@ -186,10 +190,12 @@ class ServersCITest extends TestCase {
 	public function test_add_verb_rejects_http_url(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'add', [
-			'id'  => 'plain',
-			'url' => 'http://insecure.example.com',
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'add',
+			'plain --url=http://insecure.example.com'
+		);
 
 		// Registry's validate_config rejects non-HTTPS URLs → add returns false → interpreter error.
 		$this->assertIsString( $result );
@@ -209,10 +215,12 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'update', [
-			'id'      => 'site-a',
-			'enabled' => true,
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'update',
+			'site-a --enabled=true'
+		);
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -232,10 +240,12 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'update', [
-			'id'      => 'site-a',
-			'enabled' => true,
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'update',
+			'site-a --enabled=true'
+		);
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -248,10 +258,12 @@ class ServersCITest extends TestCase {
 	public function test_update_verb_returns_error_for_unknown_id(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'update', [
-			'id'      => 'never-existed',
-			'enabled' => true,
-		] );
+		$result = VerbHarness::fire(
+			$interpreter,
+			'servers',
+			'update',
+			'never-existed --enabled=true'
+		);
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -267,7 +279,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'delete', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'delete', 'site-a' );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -283,7 +295,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'delete', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'delete', 'site-a' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -295,7 +307,7 @@ class ServersCITest extends TestCase {
 	public function test_delete_verb_returns_error_for_unknown_id(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'delete', [ 'id' => 'never-existed' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'delete', 'never-existed' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -353,7 +365,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'test', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'test', 'site-a' );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'site-a', $result['id'] );
@@ -401,7 +413,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		VerbHarness::fire( $interpreter, 'servers', 'test', [ 'id' => 'site-a' ] );
+		VerbHarness::fire( $interpreter, 'servers', 'test', 'site-a' );
 
 		// Compare the captured body to the shared builder's output field-by-field,
 		// zeroing the per-message microtime TIMESTAMP (the only field that can't
@@ -416,13 +428,13 @@ class ServersCITest extends TestCase {
 			$actual,
 			'probe_remote must build its body through the shared command_message_body() builder'
 		);
-		// Spell out the verb/arguments/payload the builder produces for this
-		// call so the de-dup can't silently regress them (the array equality
-		// above already covers TYPE/FROM/TO).
+		// Spell out the verb/arguments the builder produces for this call so the
+		// de-dup can't silently regress them (the array equality above already
+		// covers TYPE/FROM/TO).
 		$value = $actual[ \Newspack_Nodes\Message::VALUE ];
 		$this->assertSame( 'get', $value['name'] );
 		$this->assertSame( '', $value['arguments'] );
-		$this->assertSame( '', $value['payload'] );
+		$this->assertArrayNotHasKey( 'payload', $value );
 	}
 
 	public function test_test_verb_returns_error_on_non_200_response(): void {
@@ -434,7 +446,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'test', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'test', 'site-a' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( '503', $result );
@@ -449,7 +461,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'test', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'test', 'site-a' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'connect', $result );
@@ -462,7 +474,7 @@ class ServersCITest extends TestCase {
 
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = $registry;
-		$result = VerbHarness::fire( $interpreter, 'servers', 'test', [ 'id' => 'site-a' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'test', 'site-a' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -471,7 +483,7 @@ class ServersCITest extends TestCase {
 	public function test_test_verb_returns_error_for_unknown_id(): void {
 		$interpreter     = new Servers_CI_Node();
 		$interpreter->registry = new Server_Registry();
-		$result = VerbHarness::fire( $interpreter, 'servers', 'test', [ 'id' => 'never-existed' ] );
+		$result = VerbHarness::fire( $interpreter, 'servers', 'test', 'never-existed' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', $result );
@@ -499,14 +511,14 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_list_verb_declares_no_args(): void {
-		// `list` reads no $payload/$args — it just enumerates the registry.
+		// `list` reads no args — it just enumerates the registry.
 		$verbs = self::verbs_by_name();
 		$this->assertSame( [], $verbs['list']['args'] );
 	}
 
 	public function test_id_only_verbs_declare_required_id(): void {
-		// get/delete/test all funnel $payload through decoded_id() →
-		// require_id(), which throws 'id required' when absent → required string.
+		// get/delete/test all read the single positional id via positional_id(),
+		// which throws 'id required' when absent → required string.
 		foreach ( [ 'get', 'delete', 'test' ] as $name ) {
 			$args = self::args_by_name( $name );
 			$this->assertSame( [ 'id' ], \array_keys( $args ), "'{$name}' must take only id" );
@@ -549,7 +561,8 @@ class ServersCITest extends TestCase {
 	}
 
 	public function test_update_verb_declares_required_id_plus_optional_config(): void {
-		// `update` requires id (require_id throws) then array_intersect_key with
+		// `update` requires the positional id (throws 'id required') then
+		// partial_config() applies only the present options out of
 		// [url, auth_username, auth_password, enabled, logs] — all optional partial.
 		$args = self::args_by_name( 'update' );
 

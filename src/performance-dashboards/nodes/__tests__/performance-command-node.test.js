@@ -8,7 +8,8 @@
  *  - registers a pending entry `{slice, initial?}` on the view's `pending` Map
  *    keyed by `message[ID]`,
  *  - builds a TM_COMMAND (FROM=`performance:view`, TO=`_http/performance`, ID,
- *    VALUE={name,arguments,payload}) and fills it into `sink` (the interpreter).
+ *    VALUE={name,arguments}) and fills it into `sink` (the interpreter). The
+ *    args string is built via `formatCommandArgs` (the shared substrate grammar).
  *
  * `resolveRequest` and `fetchUrlBreakdown` register a `resolveOnly` pending
  * entry that the view's reply path resolves with the payload (transformed for
@@ -27,6 +28,7 @@ import {
 	VALUE,
 	TM_COMMAND,
 	TM_STRUCT,
+	formatCommandArgs,
 } from '@newspack-nodes/runtime';
 import { createPerformanceCommand } from '../performance-command-node';
 import { createPerformanceView } from '../performance-view-node';
@@ -117,11 +119,14 @@ describe( 'performance:command — TM_COMMAND build', () => {
 		expect( cmd[ TO ] ).toBe( '_http/performance' );
 		expect( cmd[ FROM ] ).toBe( 'performance:view' );
 		expect( cmd[ VALUE ].name ).toBe( 'overview' );
-		expect( cmd[ VALUE ].payload ).toEqual( {
-			categories: true,
-			server: 'web1',
-			breakdown: 'server,status',
-		} );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [], {
+				server: 'web1',
+				breakdown: 'server,status',
+				categories: true,
+			} )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 		expect( typeof cmd[ ID ] ).toBe( 'string' );
 		expect( cmd[ ID ].length ).toBeGreaterThan( 0 );
 	} );
@@ -130,7 +135,10 @@ describe( 'performance:command — TM_COMMAND build', () => {
 		const { outbox, command } = mount();
 		command.fetchOverview();
 		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
-		expect( cmd[ VALUE ].payload ).toEqual( { categories: true } );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [], { categories: true } )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 	} );
 
 	test( 'fetchUrls forwards only present params plus limit:100', () => {
@@ -138,11 +146,14 @@ describe( 'performance:command — TM_COMMAND build', () => {
 		command.fetchUrls( { search: 'x', offset: 20 } );
 		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
 		expect( cmd[ VALUE ].name ).toBe( 'urls' );
-		expect( cmd[ VALUE ].payload ).toEqual( {
-			limit: 100,
-			search: 'x',
-			offset: 20,
-		} );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [], {
+				limit: 100,
+				offset: 20,
+				search: 'x',
+			} )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 	} );
 
 	test( 'fetchUrlDetail builds a url_detail TM_COMMAND with {hash, categories?, breakdown?}', () => {
@@ -150,10 +161,10 @@ describe( 'performance:command — TM_COMMAND build', () => {
 		command.fetchUrlDetail( 'abc123', { categories: true, initial: true } );
 		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
 		expect( cmd[ VALUE ].name ).toBe( 'url_detail' );
-		expect( cmd[ VALUE ].payload ).toEqual( {
-			hash: 'abc123',
-			categories: true,
-		} );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'abc123' ], { categories: true } )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 	} );
 
 	test( 'fetchRequestDetail builds a request_detail TM_COMMAND with {rid, partition}', () => {
@@ -161,10 +172,11 @@ describe( 'performance:command — TM_COMMAND build', () => {
 		command.fetchRequestDetail( 'ok-rid', 0 );
 		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
 		expect( cmd[ VALUE ].name ).toBe( 'request_detail' );
-		expect( cmd[ VALUE ].payload ).toEqual( {
-			rid: 'ok-rid',
-			partition: 0,
-		} );
+		// partition 0 is the default — omitted from the args string.
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'ok-rid' ], {} )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 	} );
 } );
 
@@ -250,7 +262,10 @@ describe( 'performance:command — resolveRequest & fetchUrlBreakdown via pendin
 		command.resolveRequest( 'rid-9' );
 		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
 		expect( cmd[ VALUE ].name ).toBe( 'request_search' );
-		expect( cmd[ VALUE ].payload ).toEqual( { rid: 'rid-9' } );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'rid-9' ] )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 		const entry = view.pending.get( cmd[ ID ] );
 		expect( entry ).toMatchObject( { resolveOnly: true } );
 		expect( typeof entry.resolve ).toBe( 'function' );
@@ -280,10 +295,10 @@ describe( 'performance:command — resolveRequest & fetchUrlBreakdown via pendin
 		command.fetchUrlBreakdown( 'abc123', 'method' );
 		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
 		expect( cmd[ VALUE ].name ).toBe( 'url_detail' );
-		expect( cmd[ VALUE ].payload ).toEqual( {
-			hash: 'abc123',
-			breakdown: 'method',
-		} );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'abc123' ], { breakdown: 'method' } )
+		);
+		expect( cmd[ VALUE ].payload ).toBeUndefined();
 		const entry = view.pending.get( cmd[ ID ] );
 		expect( entry ).toMatchObject( { resolveOnly: true } );
 		expect( typeof entry.transform ).toBe( 'function' );

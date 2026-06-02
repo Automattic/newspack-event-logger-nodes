@@ -87,7 +87,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'num_partitions' => 16 ]
+			'--num_partitions=16'
 		);
 
 		$this->assertIsArray( $result );
@@ -106,12 +106,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[
-				'num_partitions' => 4,
-				'num_segments'   => 8,
-				'segment_size'   => 32768,
-				'max_lifespan'   => 7200,
-			]
+			'--num_partitions=4 --num_segments=8 --segment_size=32768 --max_lifespan=7200'
 		);
 
 		$this->assertSame( 4, $result['num_partitions'] );
@@ -131,7 +126,7 @@ class SettingsCITest extends TestCase {
 		// becoming N separate per-request get_option lookups.
 		$GLOBALS['_wp_option_autoload'] = [];
 		$interpreter                             = new Settings_CI_Node();
-		VerbHarness::fire( $interpreter, 'settings', 'update', [ 'num_partitions' => 4 ] );
+		VerbHarness::fire( $interpreter, 'settings', 'update', '--num_partitions=4' );
 
 		$this->assertTrue(
 			$GLOBALS['_wp_option_autoload']['newspack_nodes_num_partitions'],
@@ -148,7 +143,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'num_partitions' => -5 ]
+			'--num_partitions=-5'
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid value', $result );
@@ -165,7 +160,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'max_lifespan' => 0 ]
+			'--max_lifespan=0'
 		);
 		$this->assertSame( 0, $result['max_lifespan'] );
 		$this->assertSame( 0, $GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] );
@@ -181,7 +176,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'num_partitions' => 0 ]
+			'--num_partitions=0'
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid value', $result );
@@ -194,7 +189,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'not_in_allowlist' => 42 ]
+			'--not_in_allowlist=42'
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'unknown setting', $result );
@@ -207,7 +202,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'num_partitions' => 'not-an-int' ]
+			'--num_partitions=not-an-int'
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid value', $result );
@@ -220,7 +215,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[ 'num_partitions' => 4 ]
+			'--num_partitions=4'
 		);
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -238,7 +233,7 @@ class SettingsCITest extends TestCase {
 			$interpreter,
 			'settings',
 			'update',
-			[]
+			''
 		);
 		$this->assertSame( 2, $result['num_partitions'] );
 	}

@@ -276,7 +276,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'overview',
-			[ 'server' => 'web01' ]
+			'--server=web01'
 		);
 
 		// Only the server-scoped leaderboard was seeded — global is empty.
@@ -299,7 +299,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'overview',
-			[ 'categories' => true ]
+			'--categories'
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
@@ -323,7 +323,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'overview',
-			[ 'breakdown' => 'server' ]
+			'--breakdown=server'
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
@@ -348,7 +348,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'overview',
-			[ 'breakdown' => 'server,status' ]
+			'--breakdown=server,status'
 		);
 
 		$this->assertArrayHasKey( 'breakdowns', $result );
@@ -366,7 +366,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'overview',
-			[ 'breakdown' => 'nosuchdim' ]
+			'--breakdown=nosuchdim'
 		);
 
 		// No valid dims → no breakdown_time_series, no breakdowns.
@@ -390,7 +390,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'overview',
-			[ 'server' => 'web01', 'categories' => true ]
+			'--server=web01 --categories'
 		);
 
 		// Server-scoped data, not the global ones.
@@ -429,7 +429,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'urls',
-			[ 'limit' => 5000 ]
+			'--limit=5000'
 		);
 		$this->assertSame( 1000, $result['limit'] );
 	}
@@ -448,7 +448,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'urls',
-			[ 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'offset' => 0 ]
+			'--sort=count --order=desc --limit=2 --offset=0'
 		);
 
 		$this->assertSame( 3, $result['total'] );
@@ -471,7 +471,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'urls',
-			[ 'search' => 'article' ]
+			'--search=article'
 		);
 
 		$this->assertSame( 1, $result['total'] );
@@ -497,7 +497,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'urls', [] );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
 		$this->assertSame( 1, $result['total'] );
 		// JSON round-trip in the verb harness collapses 0.0 → int 0; the
@@ -539,7 +539,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'urls', [] );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
 		$this->assertSame( 1, $result['total'] );
 		$this->assertSame( 42, $result['data'][0]['min_ms'] );
@@ -566,7 +566,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'not-a-hash' ]
+			'not-a-hash'
 		);
 
 		$this->assertIsString( $result );
@@ -581,7 +581,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'deadbeefcafe' ]
+			'deadbeefcafe'
 		);
 
 		$this->assertIsString( $result );
@@ -606,7 +606,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'abc123def456' ]
+			'abc123def456'
 		);
 
 		$this->assertIsArray( $result );
@@ -644,7 +644,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'cafebabe1234' ]
+			'cafebabe1234'
 		);
 
 		$this->assertSame( 100, $result['aggregate_flame']['value'] );
@@ -658,7 +658,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'abc123def456' ]
+			'abc123def456'
 		);
 
 		$this->assertIsString( $result );
@@ -686,7 +686,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'abc123def456' ]
+			'abc123def456'
 		);
 
 		$this->assertArrayHasKey( 'time_series', $result['stats'] );
@@ -718,7 +718,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'abc123def456', 'breakdown' => 'method' ]
+			'abc123def456 --breakdown=method'
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
@@ -748,7 +748,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'abc123def456', 'categories' => true ]
+			'abc123def456 --categories'
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
@@ -769,7 +769,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'url_detail',
-			[ 'hash' => 'abc123def456', 'breakdown' => 'nosuchdim' ]
+			'abc123def456 --breakdown=nosuchdim'
 		);
 
 		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
@@ -785,7 +785,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_search',
-			[ 'rid' => 'no-such-rid' ]
+			'no-such-rid'
 		);
 
 		$this->assertIsString( $result );
@@ -811,7 +811,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_search',
-			[ 'rid' => $rid ]
+			$rid
 		);
 
 		$this->assertIsArray( $result );
@@ -835,7 +835,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_search',
-			[ 'rid' => 'whatever' ]
+			'whatever'
 		);
 
 		$this->assertIsString( $result );
@@ -852,7 +852,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_detail',
-			[ 'rid' => 'no-such-rid', 'partition' => 0 ]
+			'no-such-rid'
 		);
 
 		$this->assertIsString( $result );
@@ -866,7 +866,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_detail',
-			[ 'rid' => 'whatever', 'partition' => 5 ]
+			'whatever --partition=5'
 		);
 
 		$this->assertIsString( $result );
@@ -894,7 +894,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_detail',
-			[ 'rid' => $rid, 'partition' => 0 ]
+			$rid
 		);
 
 		$this->assertIsArray( $result );
@@ -931,7 +931,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_detail',
-			[ 'rid' => $rid, 'partition' => 0 ]
+			$rid
 		);
 
 		$this->assertArrayHasKey( 'flame_data', $result );
@@ -943,7 +943,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_detail',
-			[ 'partition' => 0 ]
+			'--partition=0'
 		);
 
 		$this->assertIsString( $result );
@@ -957,7 +957,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_detail',
-			[ 'rid' => 'whatever', 'partition' => 0 ]
+			'whatever'
 		);
 
 		$this->assertIsString( $result );
@@ -1265,10 +1265,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'hooks_configure',
-			[
-				'hooks'         => [ 'init', 'wp_loaded' ],
-				'custom_events' => [ 'my_event' ],
-			]
+			'--hooks=init,wp_loaded --custom_events=my_event'
 		);
 
 		$this->assertIsArray( $result );
@@ -1278,16 +1275,16 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'my_event' => true ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] );
 	}
 
-	public function test_hooks_configure_verb_sanitizes_strings_skips_empty_and_non_strings(): void {
+	public function test_hooks_configure_verb_sanitizes_strings_skips_empty(): void {
+		// Comma-list with an empty element (`,,`) and an HTML-tagged element.
+		// The verb explodes on comma, drops the empty token, and runs each
+		// surviving token through sanitize_text_field (stripping the tags).
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'hooks_configure',
-			[
-				'hooks'         => [ 'init', '', 12345, '<b>raw</b>' ],
-				'custom_events' => null,
-			]
+			'--hooks=init,,<b>raw</b>'
 		);
 
 		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
@@ -1301,9 +1298,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'hooks_configure',
-			[
-				'custom_events' => [ 'event_one', 'event_two' ],
-			]
+			'--custom_events=event_one,event_two'
 		);
 
 		$this->assertTrue( $result['success'] );
@@ -1329,7 +1324,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'hooks_configure',
-			[ 'hooks' => [ 'init' ] ]
+			'--hooks=init'
 		);
 
 		$this->assertIsString( $result );
@@ -1418,11 +1413,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'config_update',
-			[
-				'log_events'             => [ 'init', 'shutdown' ],
-				'auto_disable_threshold' => 1500,
-				'log_memory'             => true,
-			]
+			'--log_events=init,shutdown --auto_disable_threshold=1500 --log_memory'
 		);
 
 		$this->assertIsArray( $result );
@@ -1450,10 +1441,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'config_update',
-			[
-				'log_memory' => true,            // small scalar → autoloaded
-				'log_events' => [ 'init' ],      // large list  → NOT autoloaded
-			]
+			'--log_memory --log_events=init'   // scalar autoloaded; list not
 		);
 
 		$this->assertTrue(
@@ -1476,7 +1464,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'hooks_configure',
-			[ 'hooks' => [ 'init', 'shutdown' ], 'custom_events' => [ 'my_event' ] ]
+			'--hooks=init,shutdown --custom_events=my_event'
 		);
 
 		$this->assertFalse(
@@ -1488,21 +1476,15 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_config_update_verb_flattens_array_assoc_shape(): void {
-		// Legacy `array_assoc` branch: the React tree sends URL lists as
-		// `{url: ''}` objects to play nicely with controlled inputs. The
-		// controller flattens that into a deduped value array.
+		// The `array_assoc` coercion branch dedupes the comma-list value into a
+		// unique indexed array (`array_values( array_unique( ... ) )`). A repeated
+		// element in the list must collapse to a single entry.
 		$interpreter     = new Performance_CI_Node();
 		VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'config_update',
-			[
-				'log_urls' => [
-					'/articles'      => '',
-					'/home'          => '',
-					'duplicate-key'  => 'duplicate-key',
-				],
-			]
+			'--log_urls=/articles,/home,/home'
 		);
 
 		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'];
@@ -1520,9 +1502,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'config_update',
-			[
-				'custom_events' => [ 'event_one', 'event_two' ],
-			]
+			'--custom_events=event_one,event_two'
 		);
 
 		$this->assertSame(
@@ -1540,12 +1520,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'config_update',
-			[
-				'auto_disable_threshold'      => '750',
-				'auto_protect_time_threshold' => '1.25',
-				'log_memory'                  => 1,
-				'flush_every_line'            => 0,
-			]
+			'--auto_disable_threshold=750 --auto_protect_time_threshold=1.25 --log_memory=1 --flush_every_line=0'
 		);
 
 		$this->assertSame( 750, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
@@ -1563,7 +1538,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'config_update',
-			[ 'not_a_real_setting' => 'whatever' ]
+			'--not_a_real_setting=whatever'
 		);
 
 		$this->assertTrue( $result['success'] );
@@ -1578,7 +1553,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'config_update',
-			[ 'log_events' => [ 'init' ] ]
+			'--log_events=init'
 		);
 
 		$this->assertIsString( $result );
@@ -1602,10 +1577,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_memory',
-				'value'  => true,
-			]
+			'--option=newspack_event_logger_nodes_log_memory --value=true'
 		);
 
 		$this->assertIsArray( $result );
@@ -1620,10 +1592,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
-				'value'  => 50,
-			]
+			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=50'
 		);
 
 		$this->assertSame( 50, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
@@ -1635,10 +1604,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold',
-				'value'  => 1.5,
-			]
+			'--option=newspack_event_logger_nodes_auto_protect_time_threshold --value=1.5'
 		);
 
 		$this->assertEqualsWithDelta(
@@ -1654,10 +1620,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_events',
-				'value'  => [ 'init', 'shutdown' ],
-			]
+			'--option=newspack_event_logger_nodes_log_events --value=init,shutdown'
 		);
 
 		$this->assertSame(
@@ -1672,15 +1635,32 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_events',
-				'value'  => [ '<b>init</b>', "  trim_me\t" ],
-			]
+			// Comma-list value, double-quoted so the spaces around `trim_me`
+			// survive tokenization; the array sanitizer strips tags + trims.
+			'--option=newspack_event_logger_nodes_log_events --value="<b>init</b>,  trim_me  "'
 		);
 
 		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
 		$this->assertSame( 'init', $saved[0] );
 		$this->assertSame( 'trim_me', $saved[1] );
+	}
+
+	public function test_settings_update_verb_array_empty_value_clears_to_empty_list(): void {
+		// An empty array value (a cleared list, or the forwarder's `--value=""`
+		// for an empty list) must persist as [], not [''] — `explode(',', '')`
+		// yields one empty string that would otherwise survive into add_action('').
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'settings_update',
+			'--option=newspack_event_logger_nodes_log_events --value=""'
+		);
+
+		$this->assertSame(
+			[],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']
+		);
 	}
 
 	public function test_settings_update_verb_rejects_unknown_option(): void {
@@ -1689,10 +1669,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'arbitrary_option',
-				'value'  => 'x',
-			]
+			'--option=arbitrary_option --value=x'
 		);
 
 		$this->assertIsString( $result );
@@ -1706,10 +1683,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
-				'value'  => 2 ** 31,
-			]
+			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=2147483648'
 		);
 
 		$this->assertIsString( $result );
@@ -1722,10 +1696,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
-				'value'  => -5,
-			]
+			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=-5'
 		);
 
 		$this->assertIsString( $result );
@@ -1738,10 +1709,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_auto_disable_threshold',
-				'value'  => 'banana',
-			]
+			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=banana'
 		);
 
 		$this->assertIsString( $result );
@@ -1755,26 +1723,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold',
-				'value'  => 99999.0,
-			]
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_non_array_for_array_option(): void {
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_events',
-				'value'  => 'not-an-array',
-			]
+			'--option=newspack_event_logger_nodes_auto_protect_time_threshold --value=99999.0'
 		);
 
 		$this->assertIsString( $result );
@@ -1782,38 +1731,15 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_settings_update_verb_rejects_excessive_array_count(): void {
-		// MAX_EVENTS in legacy is 10000.
+		// MAX_EVENTS in legacy is 10000. The array-typed value arrives as a
+		// comma-list; 10001 elements overflows the array sanitizer's size cap.
 		$interpreter     = new Performance_CI_Node();
+		$csv             = \implode( ',', \array_fill( 0, 10001, 'x' ) );
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_events',
-				'value'  => \array_fill( 0, 10001, 'x' ),
-			]
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_array_too_deep(): void {
-		// Legacy sanitize_array depth cap is 5; 7 levels of nesting trips it.
-		$deep = 'value';
-		for ( $i = 0; $i < 7; $i++ ) {
-			$deep = [ 'nest' => $deep ];
-		}
-
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_events',
-				'value'  => $deep,
-			]
+			'--option=newspack_event_logger_nodes_log_events --value=' . $csv
 		);
 
 		$this->assertIsString( $result );
@@ -1826,11 +1752,26 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[ 'value' => true ]
+			'--value=true'
 		);
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'option', \strtolower( $result ) );
+	}
+
+	public function test_settings_update_verb_requires_value_param(): void {
+		// `value` is required by the grammar; an option with no `--value`
+		// surfaces 'value required' through the central error catch.
+		$interpreter     = new Performance_CI_Node();
+		$result = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'settings_update',
+			'--option=newspack_event_logger_nodes_log_memory'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'value required', \strtolower( $result ) );
 	}
 
 	public function test_settings_update_verb_rejects_unauthorized(): void {
@@ -1840,10 +1781,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'settings_update',
-			[
-				'option' => 'newspack_event_logger_nodes_log_memory',
-				'value'  => true,
-			]
+			'--option=newspack_event_logger_nodes_log_memory --value=true'
 		);
 
 		$this->assertIsString( $result );
@@ -1861,7 +1799,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_list',
-			[ 'limit' => 10 ]
+			'--limit=10'
 		);
 
 		$this->assertIsArray( $result );
@@ -1887,7 +1825,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_list',
-			[ 'limit' => 5000 ]
+			'--limit=5000'
 		);
 
 		$this->assertSame( 1000, $result['meta']['limit'] );
@@ -1900,7 +1838,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_list',
-			[ 'limit' => 0 ]
+			'--limit=0'
 		);
 
 		$this->assertSame( 1, $result['meta']['limit'] );
@@ -1932,7 +1870,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_list',
-			[ 'limit' => 10 ]
+			'--limit=10'
 		);
 
 		$this->assertCount( 2, $result['data'] );
@@ -1971,7 +1909,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_list',
-			[ 'limit' => 2 ]
+			'--limit=2'
 		);
 
 		$this->assertCount( 2, $result['data'] );
@@ -2000,7 +1938,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_detail',
-			[ 'id' => 'rid-xyz' ]
+			'rid-xyz'
 		);
 
 		$this->assertIsArray( $result );
@@ -2042,7 +1980,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_detail',
-			[ 'id' => $rid ]
+			$rid
 		);
 
 		$this->assertSame( $rid, $result['data']['request_id'] );
@@ -2069,7 +2007,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_detail',
-			[ 'id' => $rid ]
+			$rid
 		);
 
 		$this->assertCount( 1, $result['data']['entries'] );
@@ -2085,7 +2023,7 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'request_log_detail',
-			[ 'id' => 'rid-anything' ]
+			'rid-anything'
 		);
 
 		$this->assertIsString( $result );

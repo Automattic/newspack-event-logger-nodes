@@ -65,7 +65,7 @@ class RemoteManagerTest extends TestCase {
 	 *
 	 * @param string $body Raw `wp_remote_post` body.
 	 * @param string $to   Expected TO node path.
-	 * @return array{name:string,arguments:string,payload:mixed}
+	 * @return array{name:string,arguments:string}
 	 */
 	private static function assert_command_envelope( string $body, string $to ): array {
 		$message = \Newspack_Nodes\Message::unpacked( $body );
@@ -1208,11 +1208,11 @@ class RemoteManagerTest extends TestCase {
 		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
 		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $urls );
 
-		// Body is a packed Message; the verb payload carries the resolved
-		// {option, value} pair (perf-tuning key → Performance_CI.settings_update).
+		// Body is a packed Message; the verb arguments carry the resolved
+		// {option, value} pair (perf-tuning key → Performance_CI.settings_update)
+		// as `--option=<opt> --value=<v>` (list values comma-join).
 		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'performance' );
-		$this->assertSame( 'newspack_event_logger_nodes_log_urls', $value['payload']['option'] );
-		$this->assertSame( [ '/foo' ], $value['payload']['value'] );
+		$this->assertSame( '--option=newspack_event_logger_nodes_log_urls --value=/foo', $value['arguments'] );
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -1726,13 +1726,16 @@ class RemoteManagerTest extends TestCase {
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'settings' );
 		$this->assertSame( 'update', $value['name'] );
-		$this->assertArrayHasKey( 'num_segments', $value['payload'] );
+		// The arguments carry the short-name key `--num_segments=<value>`.
 		// The value is whatever Config::load_config() resolves for num_segments.
 		// (The app config file default wins over the substrate option via the
 		// load_config() array_merge layering, so read it from Config rather than
 		// hard-coding the option value — the remap from remote_num_segments →
 		// num_segments is the load-bearing assertion here.)
-		$this->assertSame( Config::load_config()['num_segments'], $value['payload']['num_segments'] );
+		$this->assertSame(
+			'--num_segments=' . Config::load_config()['num_segments'],
+			$value['arguments']
+		);
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
@@ -2317,16 +2320,15 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_post_to_server_encodes_body_as_packed_message(): void {
 		// The body is a single packed Message (JSONL). VALUE is the structured
-		// `{name, arguments, payload}` LIVE array — arguments empty (literal-
-		// string CLI tail), the structured update map living in `payload`.
-		// Round-tripping the value confirms the encoding is lossless. The body
-		// is posted with Content-Type text/plain to match the browser client
-		// (WP REST 400s a JSONL body sent as application/json).
+		// `{name, arguments}` LIVE array — the {option, value} pair rides in the
+		// `--option=<opt> --value=<v>` arguments tail (list values comma-join).
+		// The body is posted with Content-Type text/plain to match the browser
+		// client (WP REST 400s a JSONL body sent as application/json).
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		Remote_Manager::post_to_server(
 			[ 'url' => 'https://x.test', 'auth_username' => 'u', 'auth_password' => 'p' ],
 			Settings_Sync::PERF_ENDPOINT,
-			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'a' => 1, 'b' => 'two' ] ]
+			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init', 'wp' ] ]
 		);
 
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
@@ -2334,7 +2336,7 @@ class RemoteManagerTest extends TestCase {
 
 		$this->assertSame( 'text/plain; charset=UTF-8', $last['args']['headers']['Content-Type'] ?? '' );
 		$value = self::assert_command_envelope( $last['args']['body'], 'performance' );
-		$this->assertSame( [ 'a' => 1, 'b' => 'two' ], $value['payload']['value'] );
+		$this->assertSame( '--option=newspack_event_logger_nodes_log_events --value=init,wp', $value['arguments'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -2532,9 +2534,8 @@ class RemoteManagerTest extends TestCase {
 	public function test_post_to_server_wraps_substrate_body_in_packed_command_message_for_settings_update(): void {
 		// Substrate-key endpoint maps to {to: settings, verb: update}. The body
 		// must be a packed Message (positional 7-field array): TYPE=TM_COMMAND,
-		// FROM=_http, TO=settings, VALUE = LIVE {name, arguments, payload} array
-		// with arguments empty (Tachikoma convention: literal-string args) and
-		// the structured update map in payload.
+		// FROM=_http, TO=settings, VALUE = LIVE {name, arguments} array with the
+		// update map rendered into the `--<short>=<value>` arguments tail.
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
@@ -2546,18 +2547,15 @@ class RemoteManagerTest extends TestCase {
 		$value = self::assert_command_envelope( $last['args']['body'], 'settings' );
 
 		$this->assertSame( 'update', $value['name'] );
-		$this->assertSame( '', $value['arguments'] );
-		$this->assertSame(
-			[ 'num_partitions' => 4 ],
-			$value['payload'],
-			'Settings_CI.update accepts a partial-update keyed by short-name (no `newspack_nodes_` prefix).'
-		);
+		// Settings_CI.update takes a partial-update keyed by short-name (no
+		// `newspack_nodes_` prefix) as `--<short>=<value>`.
+		$this->assertSame( '--num_partitions=4', $value['arguments'] );
 	}
 
 	public function test_post_to_server_wraps_perf_body_in_tm_command_envelope_for_settings_update(): void {
 		// Perf-tuning endpoint maps to {to: performance, verb: settings_update}.
-		// Performance_CI.settings_update expects a single {option, value} pair
-		// in `payload` — not a partial-keyed map like Settings_CI.update.
+		// Performance_CI.settings_update takes a single {option, value} pair as
+		// `--option=<opt> --value=<v>` (list values comma-join).
 		$GLOBALS['_wp_test_remote_posts'] = [];
 		Remote_Manager::post_to_server(
 			[ 'url' => 'https://spoke.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
@@ -2569,10 +2567,9 @@ class RemoteManagerTest extends TestCase {
 		$value = self::assert_command_envelope( $last['args']['body'], 'performance' );
 
 		$this->assertSame( 'settings_update', $value['name'] );
-		$this->assertSame( '', $value['arguments'] );
 		$this->assertSame(
-			[ 'option' => 'newspack_event_logger_nodes_log_events', 'value' => [ 'init' ] ],
-			$value['payload']
+			'--option=newspack_event_logger_nodes_log_events --value=init',
+			$value['arguments']
 		);
 	}
 
@@ -2678,9 +2675,9 @@ class RemoteManagerTest extends TestCase {
 		);
 		$last  = \end( $GLOBALS['_wp_test_remote_posts'] );
 		$value = self::assert_command_envelope( $last['args']['body'], 'settings' );
-		$this->assertArrayHasKey( 'segment_size', $value['payload'] );
-		$this->assertArrayNotHasKey( 'newspack_nodes_segment_size', $value['payload'] );
-		$this->assertSame( 1048576, $value['payload']['segment_size'] );
+		// Prefix stripped on the wire: `--segment_size=…`, not `--newspack_nodes_segment_size=…`.
+		$this->assertSame( '--segment_size=1048576', $value['arguments'] );
+		$this->assertStringNotContainsString( 'newspack_nodes_segment_size', $value['arguments'] );
 	}
 
 	public function test_sync_setting_includes_legacy_server_without_enabled_key(): void {

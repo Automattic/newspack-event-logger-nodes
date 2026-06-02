@@ -43,11 +43,11 @@ const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
-		buildMessage( { to, verb, args = '', payload = null } ) {
+		buildMessage( { to, verb, args = '' } ) {
 			const m = newMessage();
 			m[ TYPE ] = TM_COMMAND;
 			m[ TO ] = to;
-			m[ VALUE ] = { name: verb, arguments: args, payload };
+			m[ VALUE ] = { name: verb, arguments: args };
 			return m;
 		},
 		postBatch( messages ) {
@@ -153,6 +153,9 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( msg[ TO ] ).toBe( 'performance' );
 		expect( msg[ FROM ] ).toBe( VIEW );
 		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
+		// hooks_registered takes no args; empty args string, no request payload.
+		expect( msg[ VALUE ].arguments ).toBe( '' );
+		expect( msg[ VALUE ].payload ).toBeUndefined();
 	} );
 
 	test( 'the resolved catalog routes _http → interpreter → router → hookcatalog:view and lands in the model', async () => {
@@ -182,11 +185,11 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		// A client whose postBatch never resolves: loading stays true.
 		const client = {
 			batches: [],
-			buildMessage( { to, verb, args = '', payload = null } ) {
+			buildMessage( { to, verb, args = '' } ) {
 				const m = newMessage();
 				m[ TYPE ] = TM_COMMAND;
 				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: args, payload };
+				m[ VALUE ] = { name: verb, arguments: args };
 				return m;
 			},
 			postBatch( messages ) {
@@ -270,7 +273,7 @@ describe( 'useHookCatalogGraph — teardown', () => {
 				const m = newMessage();
 				m[ TYPE ] = TM_COMMAND;
 				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: '', payload: null };
+				m[ VALUE ] = { name: verb, arguments: '' };
 				return m;
 			},
 			postBatch( messages ) {

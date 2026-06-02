@@ -43,11 +43,11 @@ const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 function makeFakeClient( replyPayload = {}, now = null ) {
 	const client = {
 		batches: [],
-		buildMessage( { to, verb, args = '', payload = null } ) {
+		buildMessage( { to, verb, args = '' } ) {
 			const m = newMessage();
 			m[ TYPE ] = TM_COMMAND;
 			m[ TO ] = to;
-			m[ VALUE ] = { name: verb, arguments: args, payload };
+			m[ VALUE ] = { name: verb, arguments: args };
 			return m;
 		},
 		postBatch( messages ) {
@@ -124,6 +124,9 @@ describe( 'useAggregatorStatusGraph — exospine + I/O boundary wiring', () => {
 		expect( msg[ TO ] ).toBe( 'aggregator' );
 		expect( msg[ FROM ] ).toBe( VIEW );
 		expect( msg[ VALUE ].name ).toBe( 'status' );
+		// status takes no args; the request carries an empty args string and no payload.
+		expect( msg[ VALUE ].arguments ).toBe( '' );
+		expect( msg[ VALUE ].payload ).toBeUndefined();
 	} );
 
 	test( 'returns the current refresh interval (defaults to 2000)', () => {
@@ -246,7 +249,7 @@ describe( 'useAggregatorStatusGraph — teardown', () => {
 				const m = newMessage();
 				m[ TYPE ] = TM_COMMAND;
 				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: '', payload: null };
+				m[ VALUE ] = { name: verb, arguments: '' };
 				return m;
 			},
 			postBatch( messages ) {

@@ -326,7 +326,7 @@ export function usePerformanceGraph( opts = {} ) {
 				await client.send( {
 					to: 'performance',
 					verb: 'request_search',
-					payload: { rid },
+					args: rid,
 				} )
 			);
 		} catch ( err ) {

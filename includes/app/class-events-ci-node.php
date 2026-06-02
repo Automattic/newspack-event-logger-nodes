@@ -54,7 +54,7 @@ class Events_CI_Node extends Service_CI_Node {
 					'name'        => 'stats',
 					'description' => 'Merge per-partition hourly buckets into one time_series.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						$config         = RuntimeConfig::load_config();
 						$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
 						$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );

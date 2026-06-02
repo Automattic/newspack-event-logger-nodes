@@ -45,6 +45,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Remote_Manager;
 use Newspack_Event_Logger_Nodes\Server_Registry;
+use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Service_CI_Node;
@@ -98,7 +99,7 @@ class Servers_CI_Node extends Service_CI_Node {
 					// $self is the dispatching interpreter instance — always a Servers_CI_Node
 					// here (dispatch() passes $this), so it's typed concretely to read
 					// the ctor-injected registry off it (node_schema is static).
-					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						$self->registry->reset_cache();
 						$out = [];
 						foreach ( $self->registry->get_all() as $id => $config ) {
@@ -113,8 +114,8 @@ class Servers_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
-						$id = self::decoded_id( $payload );
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
+						$id = self::positional_id( $args );
 						$self->registry->reset_cache();
 						$server = $self->registry->get( $id );
 						if ( null === $server ) {
@@ -134,10 +135,11 @@ class Servers_CI_Node extends Service_CI_Node {
 						[ 'name' => 'enabled', 'type' => 'bool', 'required' => false, 'default' => true ],
 						[ 'name' => 'logs', 'type' => 'json', 'required' => false, 'default' => [ 'firehose.log' ] ],
 					],
-					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$decoded = \is_array( $payload ) ? $payload : [];
-						$id      = (string) ( $decoded['id'] ?? '' );
+						$parsed = Command_Args::parse( $args );
+						$opts   = $parsed['options'];
+						$id     = $parsed['positional'][0] ?? '';
 						// Empty + format check together: legacy controller maps both to
 						// HTTP 400 with the same kind of "invalid id" message.
 						if ( ! Server_Registry::is_valid_id( $id ) ) {
@@ -147,7 +149,7 @@ class Servers_CI_Node extends Service_CI_Node {
 						if ( null !== $self->registry->get( $id ) ) {
 							throw new \RuntimeException( \esc_html( "server already exists: {$id}" ) );
 						}
-						$config = self::extract_server_config( $decoded );
+						$config = self::extract_server_config( $opts );
 						if ( ! $self->registry->add( $id, $config ) ) {
 							// Registry rejected on validate_config (non-HTTPS URL,
 							// missing url, etc.) or hit MAX_SERVERS.
@@ -171,19 +173,22 @@ class Servers_CI_Node extends Service_CI_Node {
 						[ 'name' => 'enabled', 'type' => 'bool', 'required' => false ],
 						[ 'name' => 'logs', 'type' => 'json', 'required' => false ],
 					],
-					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$decoded = \is_array( $payload ) ? $payload : [];
-						$id      = self::require_id( $decoded );
+						$parsed = Command_Args::parse( $args );
+						$id     = $parsed['positional'][0] ?? '';
+						if ( '' === $id ) {
+							throw new \RuntimeException( 'id required' );
+						}
 						$self->registry->reset_cache();
 						$existing = $self->registry->get( $id );
 						if ( null === $existing ) {
 							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 						}
-						$partial = \array_intersect_key(
-							$decoded,
-							\array_flip( [ 'url', 'auth_username', 'auth_password', 'enabled', 'logs' ] )
-						);
+						// Partial update: only options actually present in the args
+						// string are applied; an absent --key leaves the stored field
+						// untouched. enabled/logs are typed by partial_config().
+						$partial = self::partial_config( $parsed['options'] );
 						if ( ! $self->registry->update( $id, $partial ) ) {
 							throw new \RuntimeException( 'update failed' );
 						}
@@ -203,9 +208,9 @@ class Servers_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$id = self::decoded_id( $payload );
+						$id = self::positional_id( $args );
 						$self->registry->reset_cache();
 						if ( null === $self->registry->get( $id ) ) {
 							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
@@ -224,9 +229,9 @@ class Servers_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$id = self::decoded_id( $payload );
+						$id = self::positional_id( $args );
 						$self->registry->reset_cache();
 						$server = $self->registry->get( $id );
 						if ( null === $server ) {
@@ -264,26 +269,14 @@ class Servers_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Pull the `id` field out of a verb's payload, throwing if missing.
+	 * Pull the single required positional id out of the args string, throwing
+	 * 'id required' when absent. Used by get/delete/test/update.
 	 *
-	 * @param mixed $payload Verb's structured-data slot (the `payload` field
-	 *                       of the TM_COMMAND VALUE struct).
+	 * @param string $args Verb arguments string.
 	 * @return string Server id.
 	 */
-	private static function decoded_id( mixed $payload ): string {
-		return self::require_id( \is_array( $payload ) ? $payload : [] );
-	}
-
-	/**
-	 * Pull the `id` field out of an already-decoded argument array, throwing
-	 * if missing. Used by verbs that need the rest of the decoded args too
-	 * (`update`), so they don't decode twice.
-	 *
-	 * @param array<string, mixed> $decoded Decoded verb arguments.
-	 * @return string Server id.
-	 */
-	private static function require_id( array $decoded ): string {
-		$id = (string) ( $decoded['id'] ?? '' );
+	private static function positional_id( string $args ): string {
+		$id = Command_Args::parse( $args )['positional'][0] ?? '';
 		if ( '' === $id ) {
 			throw new \RuntimeException( 'id required' );
 		}
@@ -291,20 +284,78 @@ class Servers_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Pull the canonical server-config keys out of a verb's args, defaulting
-	 * missing fields to the same shape `validate_config` expects.
+	 * Build the canonical full server-config blob from `add`'s parsed options,
+	 * defaulting missing fields to the same shape `validate_config` expects.
+	 * enabled defaults true; logs default to ['firehose.log']; a `--logs=<csv>`
+	 * comma-list becomes an array.
 	 *
-	 * @param array<string, mixed> $decoded Decoded verb arguments.
+	 * @param array<string,string|true> $opts Parsed `--key=value` options.
 	 * @return array<string, mixed> Server-config blob ready for registry->add().
 	 */
-	private static function extract_server_config( array $decoded ): array {
+	private static function extract_server_config( array $opts ): array {
 		return [
-			'url'           => (string) ( $decoded['url']           ?? '' ),
-			'auth_username' => (string) ( $decoded['auth_username'] ?? '' ),
-			'auth_password' => (string) ( $decoded['auth_password'] ?? '' ),
-			'enabled'       => $decoded['enabled'] ?? true,
-			'logs'          => $decoded['logs']    ?? [ 'firehose.log' ],
+			'url'           => (string) ( $opts['url']           ?? '' ),
+			'auth_username' => (string) ( $opts['auth_username'] ?? '' ),
+			'auth_password' => (string) ( $opts['auth_password'] ?? '' ),
+			'enabled'       => self::option_bool( $opts, 'enabled', true ),
+			'logs'          => isset( $opts['logs'] ) ? self::option_logs( $opts['logs'] ) : [ 'firehose.log' ],
 		];
+	}
+
+	/**
+	 * Build the partial-update blob from `update`'s parsed options: only the
+	 * keys ACTUALLY PRESENT in $opts are included, so an absent --key leaves the
+	 * stored field untouched. enabled is coerced to a real bool, logs to an
+	 * array; the rest stay strings.
+	 *
+	 * @param array<string,string|true> $opts Parsed `--key=value` options.
+	 * @return array<string, mixed> Partial config for registry->update().
+	 */
+	private static function partial_config( array $opts ): array {
+		$partial = [];
+		foreach ( [ 'url', 'auth_username', 'auth_password' ] as $key ) {
+			if ( isset( $opts[ $key ] ) ) {
+				$partial[ $key ] = (string) $opts[ $key ];
+			}
+		}
+		if ( isset( $opts['enabled'] ) ) {
+			$partial['enabled'] = self::option_bool( $opts, 'enabled', true );
+		}
+		if ( isset( $opts['logs'] ) ) {
+			$partial['logs'] = self::option_logs( $opts['logs'] );
+		}
+		return $partial;
+	}
+
+	/**
+	 * Coerce a `--enabled=<true|false>` option to a real bool. A bare `--enabled`
+	 * flag (parsed as `true`) reads as true; only `0`/`false` (any case) read as
+	 * false; an absent key falls back to $default. Mirrors the substrate bool
+	 * grammar so `(bool) 'false'` (which PHP would read as TRUE) can't slip in.
+	 *
+	 * @param array<string,string|true> $opts    Parsed options.
+	 * @param string                    $key     Option name.
+	 * @param bool                      $default Fallback when absent.
+	 */
+	private static function option_bool( array $opts, string $key, bool $default ): bool {
+		if ( ! isset( $opts[ $key ] ) ) {
+			return $default;
+		}
+		return ! \in_array( \strtolower( (string) $opts[ $key ] ), [ '0', 'false' ], true );
+	}
+
+	/**
+	 * Split a `--logs=<csv>` comma-list option into an array of trimmed names.
+	 * A bare `--logs` flag (parsed as `true`) yields an empty list.
+	 *
+	 * @param string|true $value Raw option value.
+	 * @return list<string>
+	 */
+	private static function option_logs( $value ): array {
+		if ( true === $value || '' === $value ) {
+			return [];
+		}
+		return \array_values( \array_filter( \array_map( '\trim', \explode( ',', (string) $value ) ), static fn ( string $s ): bool => '' !== $s ) );
 	}
 
 	/**

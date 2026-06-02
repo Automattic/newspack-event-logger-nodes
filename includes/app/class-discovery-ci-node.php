@@ -39,7 +39,7 @@ class Discovery_CI_Node extends Service_CI_Node {
 					'name'        => 'get',
 					'description' => 'Return registered_hooks + custom_events for this spoke.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						$config           = RuntimeConfig::load_config();
 						$registered_hooks = self::extract_string_list( $config['log_events']    ?? [] );
 						$custom_events    = self::extract_string_list( $config['custom_events'] ?? [] );

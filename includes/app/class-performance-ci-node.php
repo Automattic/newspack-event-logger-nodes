@@ -41,6 +41,7 @@ use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
@@ -166,19 +167,19 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Optional args mirror the legacy PerfOverviewController query
 				// params: `server` scopes the leaderboard / breakdown /
 				// categories; `breakdown` is a comma-separated dim list
 				// (single-dim → flat `breakdown_time_series`; multi-dim →
-				// nested `breakdowns: {dim => series}`); `categories=true`
+				// nested `breakdowns: {dim => series}`); `--categories`
 				// adds `category_time_series` (global or per-server).
-				$decoded    = \is_array( $payload ) ? $payload : [];
-				$server     = (string) ( $decoded['server'] ?? '' );
-				$breakdown  = (string) ( $decoded['breakdown'] ?? '' );
-				$categories = ! empty( $decoded['categories'] );
+				$opts       = Command_Args::parse( $args )['options'];
+				$server     = (string) ( $opts['server'] ?? '' );
+				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
+				$categories = self::flag( $opts, 'categories' );
 
 				$payload                       = self::build_overview_payload( self::load_index() );
 				$payload['global_leaderboard'] = '' === $server
@@ -222,16 +223,16 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$sort    = (string) ( $decoded['sort']   ?? 'count' );
-				$order   = (string) ( $decoded['order']  ?? 'desc' );
-				$limit   = \min( 1000, \max( 1, (int) ( $decoded['limit']  ?? 50 ) ) );
-				$offset  = \min( 10000, \max( 0, (int) ( $decoded['offset'] ?? 0 ) ) );
-				$search  = (string) ( $decoded['search'] ?? '' );
-				$server  = (string) ( $decoded['server'] ?? '' );
+				$opts    = Command_Args::parse( $args )['options'];
+				$sort    = (string) ( $opts['sort']   ?? 'count' );
+				$order   = (string) ( $opts['order']  ?? 'desc' );
+				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
+				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
+				$search  = (string) ( $opts['search'] ?? '' );
+				$server  = (string) ( $opts['server'] ?? '' );
 
 				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
 					$sort = 'count';
@@ -282,11 +283,12 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$hash    = (string) ( $decoded['hash'] ?? '' );
+				$parsed = Command_Args::parse( $args );
+				$opts   = $parsed['options'];
+				$hash   = (string) ( $parsed['positional'][0] ?? '' );
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
@@ -332,12 +334,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					'last_modified'      => $aggregate['last_modified'] ?? 0,
 				];
 
-				$breakdown = (string) ( $decoded['breakdown'] ?? '' );
+				$breakdown = (string) ( $opts['breakdown'] ?? '' );
 				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
 					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown );
 				}
 
-				if ( ! empty( $decoded['categories'] ) ) {
+				if ( self::flag( $opts, 'categories' ) ) {
 					$payload['category_time_series'] = self::merge_url_categories( $hash );
 				}
 
@@ -350,11 +352,10 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$rid     = (string) ( $decoded['rid'] ?? '' );
+				$rid = (string) ( Command_Args::parse( $args )['positional'][0] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
 				}
@@ -385,15 +386,15 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$rid     = (string) ( $decoded['rid'] ?? '' );
+				$parsed = Command_Args::parse( $args );
+				$rid    = (string) ( $parsed['positional'][0] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
 				}
-				$partition = (int) ( $decoded['partition'] ?? 0 );
+				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
 
 				$config         = RuntimeConfig::load_config();
 				$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
@@ -415,7 +416,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'timing',
 					'description' => 'Merged hourly timing buckets across partitions.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_timing — merged
@@ -431,7 +432,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'dashboard',
 					'description' => 'Overview payload + full URL index in one round-trip.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerformanceController::get_dashboard:
@@ -449,7 +450,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'hooks_registered',
 					'description' => 'Registered hooks grouped by category.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_registered_hooks.
@@ -472,7 +473,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'hooks_categories',
 					'description' => 'Hook categories + merged config.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksController::get_hook_categories
@@ -487,7 +488,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'hooks_available',
 					'description' => 'All runtime hooks for the picker UI.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
@@ -508,30 +509,32 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'hooks', 'type' => 'json', 'required' => false ],
 						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$decoded       = \is_array( $payload ) ? $payload : [];
-				$hooks         = $decoded['hooks']         ?? null;
-				$custom_events = $decoded['custom_events'] ?? null;
+				$opts          = Command_Args::parse( $args )['options'];
+				$hooks         = self::csv( $opts, 'hooks' );
+				$custom_events = self::csv( $opts, 'custom_events' );
 				$configured    = 0;
 
-				if ( \is_array( $hooks ) && [] !== $hooks ) {
+				if ( [] !== $hooks ) {
 					$flat = [];
 					foreach ( $hooks as $h ) {
-						if ( \is_string( $h ) && '' !== $h ) {
-							$flat[] = \sanitize_text_field( $h );
+						$h = \sanitize_text_field( $h );
+						if ( '' !== $h ) {
+							$flat[] = $h;
 						}
 					}
 					\update_option( 'newspack_event_logger_nodes_log_events', $flat, AppConfig::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
 					$configured += \count( $flat );
 				}
 
-				if ( \is_array( $custom_events ) && [] !== $custom_events ) {
+				if ( [] !== $custom_events ) {
 					$assoc = [];
 					foreach ( $custom_events as $event ) {
-						if ( \is_string( $event ) && '' !== $event ) {
-							$assoc[ \sanitize_text_field( $event ) ] = true;
+						$event = \sanitize_text_field( $event );
+						if ( '' !== $event ) {
+							$assoc[ $event ] = true;
 						}
 					}
 					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc, AppConfig::autoload_for( 'newspack_event_logger_nodes_custom_events' ) );
@@ -553,7 +556,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'config_get',
 					'description' => 'Read the nine perf-tuning options.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::get_config, with one
@@ -593,25 +596,36 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'log_memory', 'type' => 'bool', 'required' => false ],
 						[ 'name' => 'flush_every_line', 'type' => 'bool', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfConfigController::update_config — the
-				// bulk write path for the nine perf-tuning options. Keys absent
-				// from the request body are untouched (partial update). Unknown
-				// keys are silently ignored to match the legacy whitelist sweep.
-				$decoded = \is_array( $payload ) ? $payload : [];
+				// bulk write path for the nine perf-tuning options. Options absent
+				// from the args string are untouched (partial update). Unknown
+				// options are silently ignored to match the legacy whitelist sweep.
+				$opts    = Command_Args::parse( $args )['options'];
 				$updated = [];
 				foreach ( self::CONFIG_MAP as $param => $cfg ) {
-					// Skip missing keys AND explicit-null values (legacy parity:
-					// PerfConfigController::update_config uses `$request->get_param()`
-					// which returns null for both). `??` collapses both cases into
-					// the same continue.
-					$value = $decoded[ $param ] ?? null;
-					if ( null === $value ) {
+					// Only options actually present in the args string are applied;
+					// a missing `--param` means "leave that setting untouched".
+					if ( ! \array_key_exists( $param, $opts ) ) {
 						continue;
 					}
-					\update_option( $cfg['option'], self::coerce_config_value( $value, $cfg['type'] ), AppConfig::autoload_for( $cfg['option'] ) );
+					// *_events / *_urls arrive as comma-lists; bool flags resolve via
+					// flag() so `--param=0`/`--param=false` map to false; int/float
+					// hard-cast through coerce_config_value on the raw option string.
+					switch ( $cfg['type'] ) {
+						case 'array_assoc':
+						case 'array_bool':
+							$value = self::coerce_config_value( self::csv( $opts, $param ), $cfg['type'] );
+							break;
+						case 'bool':
+							$value = self::flag( $opts, $param );
+							break;
+						default:
+							$value = self::coerce_config_value( $opts[ $param ], $cfg['type'] );
+					}
+					\update_option( $cfg['option'], $value, AppConfig::autoload_for( $cfg['option'] ) );
 					$updated[] = $param;
 				}
 
@@ -632,26 +646,37 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy PerfSettingsController::update_setting —
 				// single-option write path with the suppress_sync guard so a
 				// remotely-synced setting applied on a spoke doesn't bounce
-				// back as a re-sync (mirrors the inbound REST polarity).
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$option  = (string) ( $decoded['option'] ?? '' );
+				// back as a re-sync (mirrors the inbound REST polarity). This
+				// `--option=<opt> --value="<v>"` grammar is the exact shape the
+				// hub→spoke forwarder emits, so it must not drift.
+				$opts   = Command_Args::parse( $args )['options'];
+				$option = (string) ( $opts['option'] ?? '' );
 				if ( '' === $option ) {
 					throw new \RuntimeException( 'option required' );
 				}
 				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
 					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
 				}
-				if ( ! \array_key_exists( 'value', $decoded ) ) {
+				if ( ! \array_key_exists( 'value', $opts ) ) {
 					throw new \RuntimeException( 'value required' );
 				}
 
-				$sanitized = self::sanitize_settings_value( $decoded['value'], self::SETTINGS_OPTIONS[ $option ] );
+				// The value rides the wire as a string; array-typed options carry
+				// it as a comma-list that the array sanitizer expects pre-split.
+				// Drop empty tokens so a cleared/empty value (`--value=""`, or the
+				// forwarder's empty list) yields [] not [''] (which would otherwise
+				// survive into add_action('') downstream).
+				$type     = self::SETTINGS_OPTIONS[ $option ];
+				$raw_value = true === $opts['value'] ? '' : (string) $opts['value'];
+				$value    = 'array' === $type ? self::csv( [ 'v' => $raw_value ], 'v' ) : $raw_value;
+
+				$sanitized = self::sanitize_settings_value( $value, $type );
 				if ( null === $sanitized ) {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
@@ -682,15 +707,15 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 100 ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_list.
 				// Limit clamped 1..1000 (default 100); fan out across
 				// partitions; sort by timestamp DESC; slice to limit.
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$limit   = isset( $decoded['limit'] )
-					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $decoded['limit'] ) )
+				$opts  = Command_Args::parse( $args )['options'];
+				$limit = isset( $opts['limit'] )
+					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $opts['limit'] ) )
 					: self::REQUEST_LIST_DEFAULT_LIMIT;
 
 				[ $entries, $scanned ] = self::collect_request_list( $limit );
@@ -713,7 +738,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Lifted from legacy RequestLogController::get_detail.
@@ -722,8 +747,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// id returns the legacy stub-compatible empty-entries shape
 				// (NOT 404 — the React tree polls these and `expected to
 				// exist soon` is a normal state).
-				$decoded = \is_array( $payload ) ? $payload : [];
-				$rid     = (string) ( $decoded['id'] ?? '' );
+				$rid = (string) ( Command_Args::parse( $args )['positional'][0] ?? '' );
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'id required' );
 				}
@@ -755,6 +779,50 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 			],
 		];
+	}
+
+	/**
+	 * Resolve a Command_Args boolean flag. A bare `--flag` parses to `true`;
+	 * A bare `--flag` and `--flag=1` / `--flag=true` are truthy; `--flag=0` /
+	 * `--flag=false` and an absent key are false. (The matching false-set is the
+	 * same one Servers_CI::option_bool uses, since those are the only tokens
+	 * formatCommandArgs / the forwarder ever emit for a boolean.)
+	 *
+	 * @param array<string,string|true> $options Parsed options.
+	 * @param string                    $key     Flag name.
+	 */
+	private static function flag( array $options, string $key ): bool {
+		if ( ! \array_key_exists( $key, $options ) ) {
+			return false;
+		}
+		$value = $options[ $key ];
+		if ( true === $value ) {
+			return true;
+		}
+		return ! \in_array( \strtolower( (string) $value ), [ '0', 'false' ], true );
+	}
+
+	/**
+	 * Split a Command_Args comma-list option into a trimmed, non-empty string
+	 * array. An absent key or an empty/flag value yields `[]`.
+	 *
+	 * @param array<string,string|true> $options Parsed options.
+	 * @param string                    $key     Option name.
+	 * @return array<int,string>
+	 */
+	private static function csv( array $options, string $key ): array {
+		$raw = $options[ $key ] ?? '';
+		if ( true === $raw || '' === $raw ) {
+			return [];
+		}
+		$out = [];
+		foreach ( \explode( ',', (string) $raw ) as $item ) {
+			$item = \trim( $item );
+			if ( '' !== $item ) {
+				$out[] = $item;
+			}
+		}
+		return $out;
 	}
 
 	// -------------------------------------------------------------------------
