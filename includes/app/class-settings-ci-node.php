@@ -33,6 +33,7 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
+use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Service_CI_Node;
@@ -78,7 +79,7 @@ class Settings_CI_Node extends Service_CI_Node {
 					'name'        => 'get',
 					'description' => 'Return the four substrate-owned integer settings as a snapshot.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						return self::snapshot();
 					},
 				],
@@ -91,11 +92,14 @@ class Settings_CI_Node extends Service_CI_Node {
 						[ 'name' => 'segment_size', 'type' => 'int', 'required' => false ],
 						[ 'name' => 'max_lifespan', 'type' => 'int', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$decoded = \is_array( $payload ) ? $payload : [];
+						// Partial update: each present `--<key>=<int>` option is applied; an
+						// absent key leaves that setting untouched. This `--<key>=<int>`
+						// grammar is also what the hub->spoke forwarder emits — don't deviate.
+						$opts = Command_Args::parse( $args )['options'];
 
-						foreach ( $decoded as $key => $value ) {
+						foreach ( $opts as $key => $value ) {
 							if ( ! isset( self::ALLOWED_KEYS[ $key ] ) ) {
 								throw new \RuntimeException( \esc_html( "unknown setting: {$key}" ) );
 							}

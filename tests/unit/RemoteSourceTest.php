@@ -1210,9 +1210,9 @@ class RemoteSourceTest extends TestCase {
 		// dispatching workers.heartbeat — NOT the legacy keyed
 		// `{type,to,from,value:"<json>"}` object. Content-Type is text/plain
 		// because the body is JSONL (WP REST 400s a JSONL application/json
-		// body). VALUE is the structured command LIVE array; slot + partition
-		// + ttl ride in the verb's `payload` field (Tachikoma contract:
-		// arguments is the literal CLI tail, payload is for structured data).
+		// body). VALUE is the structured command LIVE array; slot + ttl +
+		// partition ride positionally in the verb's `arguments` tail, which
+		// Workers.heartbeat parses as `<slot> <ttl> <partition>`.
 		$this->assertSame( 'text/plain; charset=UTF-8', $post['args']['headers']['Content-Type'] ?? '' );
 		$message = Message::unpacked( $post['args']['body'] );
 		$this->assertSame( Message::TM_COMMAND, $message[ Message::TYPE ] );
@@ -1221,18 +1221,14 @@ class RemoteSourceTest extends TestCase {
 		$value = $message[ Message::VALUE ];
 		$this->assertIsArray( $value, 'VALUE must be the structured command array, not a JSON string' );
 		$this->assertSame( 'heartbeat', $value['name'] );
-		$this->assertSame( 2, $value['payload']['slot'] );
-		$this->assertSame( 0, $value['payload']['partition'] );
 		// INVARIANT: the slot TTL is refreshed ONLY by this client heartbeat
 		// (the server no longer refresh-on-checks), so it MUST outlive the
 		// heartbeat interval or the slot dies in the gap between pokes.
-		$this->assertSame(
-			Remote_Source_Node::HEARTBEAT_INTERVAL * 4,
-			$value['payload']['ttl']
-		);
+		$ttl = Remote_Source_Node::HEARTBEAT_INTERVAL * 4;
+		$this->assertSame( "2 {$ttl} 0", $value['arguments'], 'positional <slot> <ttl> <partition>' );
 		$this->assertGreaterThan(
 			Remote_Source_Node::HEARTBEAT_INTERVAL,
-			$value['payload']['ttl'],
+			$ttl,
 			'heartbeat ttl must exceed HEARTBEAT_INTERVAL so the slot survives between pokes'
 		);
 	}

@@ -568,7 +568,7 @@ class Remote_Manager {
 	/**
 	 * Build the body for an outbound `/command` POST: a single packed Message
 	 * (JSONL line). TYPE=TM_COMMAND, FROM=`_http`, TO=$to, VALUE is the LIVE
-	 * structured command array `{name, arguments, payload}` — NOT a separately
+	 * structured command array `{name, arguments}` — NOT a separately
 	 * `wp_json_encode`'d string. Matches the browser CommandClient wire shape
 	 * (src/runtime/command_client.js) and what HTTP_In decodes.
 	 *
@@ -576,13 +576,12 @@ class Remote_Manager {
 	 * `discovery.get` body through this one builder — keeps the manual-probe
 	 * wire in lock-step with the periodic health-check probe.
 	 *
-	 * @param string $to      Target node path (the command's TO field).
-	 * @param string $verb    Command verb name.
-	 * @param mixed  $payload Structured payload (live array/scalar), '' for none.
-	 * @param string $args    Literal-string argument tail (Tachikoma convention).
+	 * @param string $to   Target node path (the command's TO field).
+	 * @param string $verb Command verb name.
+	 * @param string $args Literal-string argument tail the remote verb parses (Command_Args grammar).
 	 * @return string Packed Message JSONL line.
 	 */
-	public static function command_message_body( string $to, string $verb, mixed $payload, string $args = '' ): string {
+	public static function command_message_body( string $to, string $verb, string $args = '' ): string {
 		$msg                                   = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND;
 		$msg[ \Newspack_Nodes\Message::FROM ]  = \Newspack_Nodes\Node_Names::HTTP;
@@ -590,7 +589,6 @@ class Remote_Manager {
 		$msg[ \Newspack_Nodes\Message::VALUE ] = [
 			'name'      => $verb,
 			'arguments' => $args,
-			'payload'   => $payload,
 		];
 		return \Newspack_Nodes\Message::packed( $msg );
 	}
@@ -676,50 +674,57 @@ class Remote_Manager {
 	 *   JSON string). The whole-Message JSON is the only encode boundary;
 	 *   CommandInterpreter::interpret() reads VALUE directly with no decode.
 	 *
-	 * Substrate-keys (`ENDPOINT`) flow to `settings.update` with the payload
-	 * keyed by short-name (`newspack_nodes_` prefix stripped — the verb's
-	 * whitelist is short-name-keyed: num_partitions, num_segments,
-	 * segment_size, max_lifespan). Perf-keys (`PERF_ENDPOINT`) flow to
-	 * `performance.settings_update` which takes the `{option, value}` pair
-	 * as-is.
+	 * Substrate-keys (`ENDPOINT`) flow to `settings.update` as `--<short>=<value>`
+	 * (`newspack_nodes_` prefix stripped — the verb's whitelist is short-name-keyed:
+	 * num_partitions, num_segments, segment_size, max_lifespan). Perf-keys
+	 * (`PERF_ENDPOINT`) flow to `performance.settings_update` as
+	 * `--option=<opt> --value=<v>`. Both arg strings are built from the named-arg
+	 * map via Command_Args::format, so they round-trip through the remote verb's
+	 * Command_Args::parse.
 	 *
 	 * @param string $endpoint Tag selecting the verb target.
 	 * @param array<string, mixed>  $body     Settings payload `{option, value}` from sync_setting.
 	 * @return string Packed Message JSONL line ready for `wp_remote_post` `body`.
 	 */
 	private static function build_command_envelope( string $endpoint, array $body ): string {
-		[ $to, $verb, $payload ] = self::resolve_command_target( $endpoint, $body );
+		[ $to, $verb, $named_args ] = self::resolve_command_target( $endpoint, $body );
 
-		// arguments is the literal CLI-shaped tail; for settings-sync verbs
-		// the structured update map lives in `payload` (matches Tachikoma's
-		// contract — arguments is a string, payload is for structured data).
-		return self::command_message_body( $to, $verb, $payload );
+		// The structured update map becomes the `--key=value` arguments tail the
+		// remote verb parses — no separate payload channel.
+		$args = \Newspack_Nodes\Command_Args::format( [], $named_args );
+		return self::command_message_body( $to, $verb, $args );
 	}
 
 	/**
-	 * Resolve a category-tag endpoint to its `(to, verb, payload)` triple.
+	 * Resolve a category-tag endpoint to its `(to, verb, named_args)` triple. The
+	 * named-args map is rendered to a `--key=value` arguments string by the caller.
 	 *
 	 * @param string $endpoint One of SettingsSync::ENDPOINT or PERF_ENDPOINT.
 	 * @param array<string, mixed>  $body     `{option, value}` pair.
-	 * @return array{0: string, 1: string, 2: array<string, mixed>} `[to, verb, payload]`.
+	 * @return array{0: string, 1: string, 2: array<string, mixed>} `[to, verb, named_args]`.
 	 */
 	private static function resolve_command_target( string $endpoint, array $body ): array {
 		if ( Settings_Sync::PERF_ENDPOINT === $endpoint ) {
 			// Performance_CI.settings_update keeps the full WP option name —
 			// its whitelist matches PerfSettingsController::ALLOWED_OPTIONS
-			// 1:1 (newspack_event_logger_nodes_log_events etc.).
-			return [ 'performance', 'settings_update', $body ];
+			// 1:1 (newspack_event_logger_nodes_log_events etc.). Emits
+			// `--option=<opt> --value=<v>`.
+			return [ 'performance', 'settings_update', [
+				'option' => (string) ( $body['option'] ?? '' ),
+				'value'  => $body['value'] ?? '',
+			] ];
 		}
 
 		// Substrate-keys (Settings_CI.update). The verb whitelist is
 		// short-name-keyed, so strip the `newspack_nodes_` prefix here on the
 		// wire — keeps the verb stable for callers that don't know that
 		// prefix history (legacy /settings did the same strip server-side).
+		// Emits `--<short>=<value>`.
 		$option = (string) ( $body['option'] ?? '' );
 		$short  = 0 === \strpos( $option, 'newspack_nodes_' )
 			? \substr( $option, \strlen( 'newspack_nodes_' ) )
 			: $option;
-		return [ 'settings', 'update', [ $short => $body['value'] ?? null ] ];
+		return [ 'settings', 'update', [ $short => $body['value'] ?? '' ] ];
 	}
 
 	/**

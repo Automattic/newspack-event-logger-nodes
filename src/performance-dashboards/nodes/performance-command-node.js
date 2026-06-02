@@ -13,7 +13,9 @@
  *    `pending` Map keyed by `message[ID]` so when the server's reply pivots
  *    back via TO=FROM the view can apply the data to the registered slice.
  *  - Builds a TM_COMMAND (FROM=`performance:view`, TO=`_http/performance`,
- *    ID, VALUE={name,arguments,payload}) and fills it into `sink`. The router
+ *    ID, VALUE={name,arguments}) and fills it into `sink`. The args string is
+ *    built with `formatCommandArgs` (the shared substrate grammar) — the
+ *    server verb parses it back into positional + named args. The router
  *    peels `_http`; HttpOutNode POSTs; the server pivots the reply TO=FROM (=
  *    `performance:view`); the router peels `performance:view`; the view's
  *    `fill()` matches the ID against `pending` and applies the result.
@@ -44,6 +46,7 @@ import {
 	TM_COMMAND,
 	newMessage,
 	Core,
+	formatCommandArgs,
 } from '@newspack-nodes/runtime';
 
 // URL hash: lowercase hex.
@@ -103,14 +106,18 @@ class PerformanceCommandNode extends Node {
 			return;
 		}
 		this._emitControl( { action: 'loading', slice: 'overview' } );
-		const payload = { categories: true };
+		const options = {};
 		if ( server ) {
-			payload.server = server;
+			options.server = server;
 		}
 		if ( Array.isArray( dims ) && dims.length > 0 ) {
-			payload.breakdown = dims.join( ',' );
+			options.breakdown = dims.join( ',' );
 		}
-		this._sendVerb( 'overview', payload, { slice: 'overview' } );
+		// `categories` is a flag — always on for the overview.
+		options.categories = true;
+		this._sendVerb( 'overview', formatCommandArgs( [], options ), {
+			slice: 'overview',
+		} );
 	}
 
 	// URL leaderboard; forwards only the present query params + the limit.
@@ -119,13 +126,28 @@ class PerformanceCommandNode extends Node {
 			return;
 		}
 		this._emitControl( { action: 'loading', slice: 'urls' } );
-		const payload = { limit: 100 };
-		for ( const key of [ 'search', 'sort', 'order', 'offset', 'server' ] ) {
-			if ( params[ key ] ) {
-				payload[ key ] = params[ key ];
-			}
+		// Grammar order: sort, order, limit, offset, search, server — forward only
+		// the present query params plus the fixed limit.
+		const options = {};
+		if ( params.sort ) {
+			options.sort = params.sort;
 		}
-		this._sendVerb( 'urls', payload, { slice: 'urls' } );
+		if ( params.order ) {
+			options.order = params.order;
+		}
+		options.limit = 100;
+		if ( params.offset ) {
+			options.offset = params.offset;
+		}
+		if ( params.search ) {
+			options.search = params.search;
+		}
+		if ( params.server ) {
+			options.server = params.server;
+		}
+		this._sendVerb( 'urls', formatCommandArgs( [], options ), {
+			slice: 'urls',
+		} );
 	}
 
 	// URL detail. `opts.initial` controls (a) whether to emit a loading control
@@ -148,14 +170,14 @@ class PerformanceCommandNode extends Node {
 			this._onError?.( new Error( 'Invalid URL hash format' ) );
 			return;
 		}
-		const payload = { hash };
-		if ( opts.categories ) {
-			payload.categories = true;
-		}
+		const options = {};
 		if ( opts.breakdown ) {
-			payload.breakdown = opts.breakdown;
+			options.breakdown = opts.breakdown;
 		}
-		this._sendVerb( 'url_detail', payload, {
+		if ( opts.categories ) {
+			options.categories = true;
+		}
+		this._sendVerb( 'url_detail', formatCommandArgs( [ hash ], options ), {
 			slice: 'urlDetail',
 			initial: !! opts.initial,
 		} );
@@ -185,9 +207,14 @@ class PerformanceCommandNode extends Node {
 			this._onError?.( new Error( 'Invalid partition number' ) );
 			return;
 		}
+		// partition 0 is the default — omit it from the args string.
+		const options = {};
+		if ( partition ) {
+			options.partition = partition;
+		}
 		this._sendVerb(
 			'request_detail',
-			{ rid, partition },
+			formatCommandArgs( [ rid ], options ),
 			{ slice: 'requestDetail' }
 		);
 	}
@@ -212,7 +239,11 @@ class PerformanceCommandNode extends Node {
 				resolve( null );
 				return;
 			}
-			this._sendCommand( 'request_search', { rid }, opId );
+			this._sendCommand(
+				'request_search',
+				formatCommandArgs( [ rid ] ),
+				opId
+			);
 		} ).catch( () => null );
 	}
 
@@ -241,7 +272,11 @@ class PerformanceCommandNode extends Node {
 				resolve( null );
 				return;
 			}
-			this._sendCommand( 'url_detail', { hash, breakdown }, opId );
+			this._sendCommand(
+				'url_detail',
+				formatCommandArgs( [ hash ], { breakdown } ),
+				opId
+			);
 		} ).catch( ( err ) => {
 			this._onError?.( err );
 			return null;
@@ -255,12 +290,12 @@ class PerformanceCommandNode extends Node {
 	}
 
 	// Send a verb + register slice-tagged pending in one step.
-	_sendVerb( verb, payload, pendingEntry ) {
+	_sendVerb( verb, args, pendingEntry ) {
 		const opId = makeOpId();
 		if ( ! this._registerPending( opId, pendingEntry ) ) {
 			return;
 		}
-		this._sendCommand( verb, payload, opId );
+		this._sendCommand( verb, args, opId );
 	}
 
 	// Register a pending entry on the view's `pending` Map. Returns false if the
@@ -286,7 +321,7 @@ class PerformanceCommandNode extends Node {
 	// Build a TM_COMMAND addressed at the `performance` CI through `_http`.
 	// FROM=view so the server's reply pivot lands on the view (the pending Map
 	// owner). Send through `sink` (the interpreter) so the router peels TO.
-	_sendCommand( verb, payload, opId ) {
+	_sendCommand( verb, args, opId ) {
 		if ( this._closed || ! this.sink ) {
 			return;
 		}
@@ -295,7 +330,7 @@ class PerformanceCommandNode extends Node {
 		m[ FROM ] = this._viewName;
 		m[ TO ] = HTTP_TO;
 		m[ ID ] = opId;
-		m[ VALUE ] = { name: verb, arguments: '', payload };
+		m[ VALUE ] = { name: verb, arguments: args };
 		this.sink.fill( m );
 	}
 

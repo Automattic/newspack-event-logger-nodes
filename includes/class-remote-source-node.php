@@ -819,14 +819,11 @@ class Remote_Source_Node extends Node {
 		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
 		$msg[ Message::FROM ]  = Node_Names::HTTP;
 		$msg[ Message::TO ]    = 'workers';
+		// Workers.heartbeat parses positional `<slot> <ttl> <partition>`.
+		// ttl must outlive HEARTBEAT_INTERVAL — only the client refreshes the slot now.
 		$msg[ Message::VALUE ] = [
 			'name'      => 'heartbeat',
-			'arguments' => '',
-			'payload'   => [
-				'slot'      => $this->slot,
-				'ttl'       => self::HEARTBEAT_INTERVAL * 4, // must outlive HEARTBEAT_INTERVAL — only the client refreshes the slot now
-				'partition' => $this->partition,
-			],
+			'arguments' => $this->slot . ' ' . ( self::HEARTBEAT_INTERVAL * 4 ) . ' ' . $this->partition,
 		];
 		$body = Message::packed( $msg );
 

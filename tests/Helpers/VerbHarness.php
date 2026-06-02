@@ -40,16 +40,14 @@ class VerbHarness {
 	 * message into `payload`).
 	 *
 	 * @param Command_Interpreter_Node $interpreter interpreter under test (already constructed).
-	 * @param string             $name       Name to register the interpreter under (e.g. 'workers').
-	 * @param string             $verb       Verb to invoke (e.g. 'list').
-	 * @param mixed              $verb_payload Structured data the verb consumes via its
-	 *                                         `$payload` parameter. Pass `null` (default)
-	 *                                         for verbs that take no input.
-	 * @param string             $args       Optional literal-string argument tail.
-	 * @param string             $key        Optional KEY field for the inbound message.
+	 * @param string             $name Name to register the interpreter under (e.g. 'workers').
+	 * @param string             $verb Verb to invoke (e.g. 'list').
+	 * @param string             $args Literal-string argument tail (the `arguments` field);
+	 *                                 verbs parse it via Command_Args. Empty for nullary verbs.
+	 * @param string             $key  Optional KEY field for the inbound message.
 	 * @return mixed The verb's payload (structure for success verbs; error-message string for TM_ERROR).
 	 */
-	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, mixed $verb_payload = null, string $args = '', string $key = '' ): mixed {
+	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, string $args = '', string $key = '' ): mixed {
 		$router = new Router_Node(); $router->name( Node_Names::ROUTER );
 		$base   = new Command_Interpreter_Node(); $base->name( Node_Names::COMMAND_INTERPRETER ); $base->sink( $router );
 		$interpreter->name( $name );
@@ -73,7 +71,6 @@ class VerbHarness {
 		$msg[ Message::VALUE ] = [
 			'name'      => $verb,
 			'arguments' => $args,
-			'payload'   => $verb_payload,
 		];
 		// Exercises verb LOGIC, not authorization. Mark the command as in-process
 		// so the substrate's client-tier authorize gate (Message::LOCAL) passes.

@@ -44,7 +44,7 @@ class Status_CI_Node extends Service_CI_Node {
 					'name'        => 'get',
 					'description' => 'Return a single-shot health snapshot for the admin "is this thing alive?" panel.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope, mixed $payload ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						$config          = RuntimeConfig::load_config();
 						$cache_available = null !== Core::$memd;
 

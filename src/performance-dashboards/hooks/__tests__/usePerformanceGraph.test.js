@@ -30,6 +30,7 @@ import {
 	TM_RESPONSE,
 	TM_ERROR,
 	useNodeState,
+	parseCommandArgs,
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
 
@@ -216,7 +217,8 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 			.find(
 				( m ) =>
 					m[ VALUE ]?.name === 'overview' &&
-					m[ VALUE ]?.payload?.server === 'web1'
+					parseCommandArgs( m[ VALUE ]?.arguments ).options.server ===
+						'web1'
 			);
 		expect( overview ).toBeTruthy();
 	} );
@@ -237,7 +239,10 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 		} );
 		const detail = findVerb( client.batches, 'url_detail' );
 		expect( detail ).toBeTruthy();
-		expect( detail[ VALUE ].payload.hash ).toBe( 'abc' );
+		// hash is the first positional token in the args string.
+		expect(
+			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
+		).toBe( 'abc' );
 	} );
 
 	test( 'fires fetchRequestDetail using the provided partition', async () => {
@@ -257,7 +262,10 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 		} );
 		const req = findVerb( client.batches, 'request_detail' );
 		expect( req ).toBeTruthy();
-		expect( req[ VALUE ].payload.partition ).toBe( 2 );
+		// partition 2 is non-default → `--partition=2` (string after parse).
+		expect(
+			parseCommandArgs( req[ VALUE ].arguments ).options.partition
+		).toBe( '2' );
 	} );
 } );
 

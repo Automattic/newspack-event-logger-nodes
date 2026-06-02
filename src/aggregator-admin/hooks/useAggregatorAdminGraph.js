@@ -49,6 +49,7 @@ import {
 	ID,
 	VALUE,
 	TM_COMMAND,
+	formatCommandArgs,
 } from '@newspack-nodes/runtime';
 import { createServersView } from '../nodes/servers-view-node';
 
@@ -69,18 +70,18 @@ function makeOpId() {
  * `_http` and HttpOutNode POSTs the bare command. `id` is the correlator the view
  * uses to resolve the hook's Promise.
  *
- * @param {string} verb    Verb name (list / add / update / delete / test).
- * @param {*}      payload Verb payload (the structured-data slot).
- * @param {string} id      Correlator stamped into message[ID].
+ * @param {string} verb Verb name (list / add / update / delete / test).
+ * @param {string} args Tachikoma-style argument string (built via formatCommandArgs).
+ * @param {string} id   Correlator stamped into message[ID].
  * @return {Array} A 7-field positional Message.
  */
-function buildCommand( verb, payload, id ) {
+function buildCommand( verb, args, id ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_COMMAND;
 	m[ FROM ] = VIEW;
 	m[ TO ] = `${ HTTP }/servers`;
 	m[ ID ] = id;
-	m[ VALUE ] = { name: verb, arguments: '', payload };
+	m[ VALUE ] = { name: verb, arguments: args };
 	return m;
 }
 
@@ -138,7 +139,7 @@ export function useAggregatorAdminGraph( opts = {} ) {
 			// Fire one immediate list (the canonical "everything sinks into the interpreter"
 			// path — interpreter forwards to router → router peels `_http` → HttpOutNode POSTs).
 			// Fire-and-forget: the view updates render state on the reply.
-			interpreter.fill( buildCommand( 'list', null, makeOpId() ) );
+			interpreter.fill( buildCommand( 'list', '', makeOpId() ) );
 
 			// Non-node side effects undone before the nodes are removed.
 			return () => {
@@ -150,10 +151,10 @@ export function useAggregatorAdminGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// Dispatch a verb and return a Promise that resolves with the unwrapped
-	// payload (or rejects with a TM_ERROR). The view matches `message[ID]`
-	// against its `pending` Map to settle the Promise.
-	const dispatch = useCallback( ( verb, payload ) => {
+	// Dispatch a verb (with a pre-built args string) and return a Promise that
+	// resolves with the unwrapped payload (or rejects with a TM_ERROR). The view
+	// matches `message[ID]` against its `pending` Map to settle the Promise.
+	const dispatch = useCallback( ( verb, args = '' ) => {
 		const interpreter = interpreterRef.current;
 		if ( ! interpreter ) {
 			return Promise.reject( new Error( 'graph not mounted' ) );
@@ -166,7 +167,7 @@ export function useAggregatorAdminGraph( opts = {} ) {
 		const promise = new Promise( ( resolve, reject ) => {
 			view.pending.set( id, { resolve, reject } );
 		} );
-		interpreter.fill( buildCommand( verb, payload, id ) );
+		interpreter.fill( buildCommand( verb, args, id ) );
 		return promise;
 	}, [] );
 
@@ -174,43 +175,47 @@ export function useAggregatorAdminGraph( opts = {} ) {
 	// rejects to the caller; the view already surfaced the error into its model
 	// via the TM_ERROR reply path (no extra control fill needed).
 	const runMutation = useCallback(
-		async ( verb, payload ) => {
-			const result = await dispatch( verb, payload );
+		async ( verb, args ) => {
+			const result = await dispatch( verb, args );
 			// Fire-and-forget re-list (replaces window.location.reload()).
-			dispatch( 'list', null ).catch( () => {} );
+			dispatch( 'list', '' ).catch( () => {} );
 			return result;
 		},
 		[ dispatch ]
 	);
 
+	// id is the positional token; the credentials + enabled flag are named args.
 	const addServer = useCallback(
 		( fields ) =>
-			runMutation( 'add', {
-				id: fields.id,
-				url: fields.url,
-				auth_username: fields.auth_username,
-				auth_password: fields.auth_password,
-				enabled: true,
-			} ),
+			runMutation(
+				'add',
+				formatCommandArgs( [ fields.id ], {
+					url: fields.url,
+					auth_username: fields.auth_username,
+					auth_password: fields.auth_password,
+					enabled: true,
+				} )
+			),
 		[ runMutation ]
 	);
 
-	// Spread partial FIRST so the positional `id` always wins — a partial that
-	// happens to carry an `id` key can't silently retarget the row.
+	// id is positional (so a `partial` carrying its own `id` key can't retarget
+	// the row); only the changed fields ride as named args.
 	const updateServer = useCallback(
-		( id, partial ) => runMutation( 'update', { ...partial, id } ),
+		( id, partial ) =>
+			runMutation( 'update', formatCommandArgs( [ id ], partial ) ),
 		[ runMutation ]
 	);
 
 	const removeServer = useCallback(
-		( id ) => runMutation( 'delete', { id } ),
+		( id ) => runMutation( 'delete', formatCommandArgs( [ id ] ) ),
 		[ runMutation ]
 	);
 
 	// test() is read-only — return its probe result to the caller for per-row
 	// status; no re-list (a probe doesn't change the registry).
 	const testServer = useCallback(
-		( id ) => dispatch( 'test', { id } ),
+		( id ) => dispatch( 'test', formatCommandArgs( [ id ] ) ),
 		[ dispatch ]
 	);
 

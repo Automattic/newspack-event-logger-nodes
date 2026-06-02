@@ -90,7 +90,7 @@ function buildPollMessage() {
 	m[ TYPE ] = TM_COMMAND;
 	m[ FROM ] = VIEW;
 	m[ TO ] = `${ HTTP }/aggregator`;
-	m[ VALUE ] = { name: 'status', arguments: '', payload: null };
+	m[ VALUE ] = { name: 'status', arguments: '' };
 	return m;
 }
 
