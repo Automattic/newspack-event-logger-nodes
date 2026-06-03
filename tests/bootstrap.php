@@ -328,6 +328,40 @@ if ( ! function_exists( 'wp_remote_post' ) ) {
 	}
 }
 
+if ( ! function_exists( 'home_url' ) ) {
+	// Tests set $GLOBALS['_wp_test_home_url'] to control the site host.
+	function home_url( string $path = '' ): string {
+		$base = $GLOBALS['_wp_test_home_url'] ?? 'http://localhost';
+		return \rtrim( $base, '/' ) . '/' . \ltrim( $path, '/' );
+	}
+}
+
+if ( ! function_exists( 'add_query_arg' ) ) {
+	// Polymorphic like WP core: add_query_arg( array $params, string $url ) or
+	// add_query_arg( string $key, string $value, string $url ).
+	function add_query_arg( ...$args ): string {
+		if ( \is_array( $args[0] ) ) {
+			$params = $args[0];
+			$url    = (string) ( $args[1] ?? '' );
+		} else {
+			$params = [ (string) $args[0] => (string) ( $args[1] ?? '' ) ];
+			$url    = (string) ( $args[2] ?? '' );
+		}
+		$sep   = ( false === \strpos( $url, '?' ) ) ? '?' : '&';
+		$pairs = [];
+		foreach ( $params as $k => $v ) {
+			$pairs[] = \rawurlencode( (string) $k ) . '=' . \rawurlencode( (string) $v );
+		}
+		return $url . $sep . \implode( '&', $pairs );
+	}
+}
+
+if ( ! function_exists( 'wp_parse_url' ) ) {
+	function wp_parse_url( string $url, int $component = -1 ): mixed {
+		return \parse_url( $url, $component );
+	}
+}
+
 if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
 	function wp_remote_retrieve_response_code( mixed $response ): int {
 		if ( \is_array( $response ) && isset( $response['response']['code'] ) ) {
@@ -445,6 +479,12 @@ require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
+
+// The cache warmer is a self-contained mu-plugin drop-in (not autoloaded).
+// Load its classes for the unit tests; SKIP_BOOT suppresses the file's
+// maybe_install_for_request() side effect so requiring it doesn't install.
+\define( 'NEWSPACK_CACHE_WARMER_SKIP_BOOT', true );
+require_once \dirname( __DIR__ ) . '/mu-plugins/01-newspack-cache-warmer.php';
 
 // Widen the substrate Config's allowed_config_dirs so tests using
 // `LOCAL_NEWSPACK_NODES_CONF=...path-inside-this-plugin/tests/configs/...php`

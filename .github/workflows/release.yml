@@ -86,5 +86,6 @@ jobs:
           files: |
             release/newspack-event-logger-nodes.zip
             release/00-newspack-profiler.php
+            release/01-newspack-cache-warmer.php
           body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: true

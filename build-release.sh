@@ -4,7 +4,8 @@
 #
 # Output: release/newspack-event-logger-nodes.zip — the plugin dir at the
 # archive root, ready for: wp plugin install --force --activate <url>.zip
-# Also publishes release/00-newspack-profiler.php as a standalone asset.
+# Also publishes release/00-newspack-profiler.php and
+# release/01-newspack-cache-warmer.php as standalone mu-plugin assets.
 #
 
 set -euo pipefail
@@ -39,9 +40,10 @@ echo "=== Creating release zip ==="
 echo "  ${PLUGIN}.zip"
 (cd "${STAGING_DIR}" && zip -rqX "${RELEASE_DIR}/${PLUGIN}.zip" "${PLUGIN}" --exclude '*/._*' --exclude '*/.DS_Store')
 
-# The Atomic deploy script fetches this mu-plugin from the release URL; it
-# installs under mu-plugins/, not wp-content/plugins/.
+# The Atomic deploy script fetches these mu-plugins from the release URL; they
+# install under mu-plugins/, not wp-content/plugins/.
 cp "${SCRIPT_DIR}/mu-plugins/00-newspack-profiler.php" "${RELEASE_DIR}/"
+cp "${SCRIPT_DIR}/mu-plugins/01-newspack-cache-warmer.php" "${RELEASE_DIR}/"
 
 rm -rf "${STAGING_DIR}"
 
