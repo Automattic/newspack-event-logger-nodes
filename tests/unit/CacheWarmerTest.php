@@ -40,6 +40,7 @@ class CacheWarmerTest extends TestCase {
 		unset(
 			$GLOBALS['_wp_actions']['eln_cache_warmer_cold_groups'],
 			$GLOBALS['_wp_actions']['password_protected_is_active'],
+			$GLOBALS['_wp_actions']['determine_current_user'],
 			$_SERVER['NEWSPACK_NODES_WORKER_TYPE']
 		);
 		$GLOBALS['wp_object_cache'] = $this->saved_object_cache;
@@ -282,6 +283,26 @@ class CacheWarmerTest extends TestCase {
 	}
 
 	// ── maybe_install_for_request() — the drop-in-load cold-cache swap ──────
+
+	public function test_warm_request_forces_anonymous_render(): void {
+		// The Authorization header is only for the edge cache; in WP the warm
+		// render must be logged-OUT so Newspack's block caching stays enabled (it
+		// disables for logged-in editors) and populates the anonymous cache real
+		// visitors read. determine_current_user is forced to 0, overriding any
+		// app-password auth the loopback's header would otherwise trigger.
+		$GLOBALS['wp_object_cache'] = $this->fake_object_cache();
+		$_GET['eln_cache_warm']     = Cache_Warmer::secret();
+
+		Cache_Warmer::maybe_install_for_request();
+
+		$this->assertSame( 0, apply_filters( 'determine_current_user', 7 ) );
+	}
+
+	public function test_normal_request_does_not_force_anonymous(): void {
+		Cache_Warmer::maybe_install_for_request(); // no secret param
+
+		$this->assertSame( 7, apply_filters( 'determine_current_user', 7 ) );
+	}
 
 	public function test_install_happens_on_warm_loopback_request(): void {
 		$GLOBALS['_wp_test_home_url'] = 'https://www.bendsource.com';
