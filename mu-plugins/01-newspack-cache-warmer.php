@@ -7,7 +7,7 @@
  *
  * Deploy: copy to wp-content/mu-plugins/01-newspack-cache-warmer.php. Drop-in,
  * not a plugin — runs regardless of which plugins are active. Persistent state
- * is one host-gated cron event + one secret option.
+ * is one cron event + one secret option.
  *
  * @package Newspack_Cache_Warmer
  */
