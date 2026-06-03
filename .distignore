@@ -29,10 +29,12 @@ Thumbs.db
 # Dev tooling / configs
 .distignore
 .eslintrc.js
+babel.config.js
 build-release.sh
 cghooks.lock
 commitlint.config.js
 jest.config.js
+jest.style-mock.js
 package-lock.json
 package.json
 phpcs.xml.dist

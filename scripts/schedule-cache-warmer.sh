@@ -15,6 +15,26 @@ readonly HOOK="eln_cache_warmer_tick"
 readonly RECURRENCE="eln_cache_warmer_minute"
 WP="${WP:-wp}"
 
+# Optionally store an application password for the warm loopback so an edge /
+# page cache forwards it to PHP for a real render instead of serving a cached
+# homepage. Read silently; blank leaves any existing value untouched. The
+# drop-in stores it encrypted (sodium, keyed off wp_salt); the plaintext rides
+# stdin into `wp eval`, never a CLI arg, so it never lands in `ps`.
+printf 'App password for the warm loopback (user:app-password), blank to skip: ' >&2
+read -r -s cred || true
+printf '\n' >&2
+if [ -n "$cred" ]; then
+	printf '%s' "$cred" | "$WP" eval '
+$c = trim( file_get_contents( "php://stdin" ) );
+if ( ! class_exists( "Newspack_Cache_Warmer\\Cache_Warmer" ) ) {
+	fwrite( STDERR, "cache-warmer drop-in not installed; cannot store auth\n" );
+	exit( 1 );
+}
+Newspack_Cache_Warmer\Cache_Warmer::store_auth( $c );
+' "$@"
+	echo "stored encrypted loopback credential"
+fi
+
 # Capture the event list in its own step so a wp failure (bad --path, wp
 # missing, DB down) aborts loud here under `set -e` instead of being read as
 # "hook not scheduled" and silently creating a duplicate.

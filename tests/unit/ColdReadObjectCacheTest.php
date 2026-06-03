@@ -65,6 +65,41 @@ class ColdReadObjectCacheTest extends TestCase {
 		$this->assertFalse( $found, 'cold-group read must report not-found so callers treat it as a miss' );
 	}
 
+	public function test_get_misses_on_a_prefixed_cold_group(): void {
+		// Newspack's block cache splits into per-page / feed group variants
+		// (`newspack_blocks-post-{ID}`, `newspack_blocks-feed`); a static-Page
+		// homepage uses `newspack_blocks-post-{ID}`. Cooling the base group must
+		// cool those derived groups too, or the homepage keeps hitting the cache.
+		$real = $this->fake_real_cache();
+		$real->set( 'np_cached_block_abc_0', 'stale-html', 'newspack_blocks-post-42' );
+
+		$cold  = new Cold_Read_Object_Cache( $real, [ 'newspack_blocks' ] );
+		$found = null;
+
+		$this->assertFalse( $cold->get( 'np_cached_block_abc_0', 'newspack_blocks-post-42', false, $found ) );
+		$this->assertFalse( $found );
+	}
+
+	public function test_get_does_not_cool_a_group_lacking_the_separator(): void {
+		// Prefix match requires the `-` separator, so an unrelated group that
+		// merely starts with a cold name still passes through.
+		$real = $this->fake_real_cache();
+		$real->set( 'k', 'warm', 'newspack_blocksx' );
+
+		$cold = new Cold_Read_Object_Cache( $real, [ 'newspack_blocks' ] );
+
+		$this->assertSame( 'warm', $cold->get( 'k', 'newspack_blocksx' ) );
+	}
+
+	public function test_get_multiple_misses_on_a_prefixed_cold_group(): void {
+		$real = $this->fake_real_cache();
+		$cold = new Cold_Read_Object_Cache( $real, [ 'newspack_blocks' ] );
+
+		$result = $cold->get_multiple( [ 'k1', 'k2' ], 'newspack_blocks-feed' );
+
+		$this->assertSame( [ 'k1' => false, 'k2' => false ], $result );
+	}
+
 	public function test_get_passes_through_on_warm_group(): void {
 		$real = $this->fake_real_cache();
 		$real->set( 'alloptions', [ 'a' => 1 ], 'options' );

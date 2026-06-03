@@ -34,7 +34,7 @@ class Cold_Read_Object_Cache {
 	 */
 	private $real;
 
-	/** @var array<string, true> Cold groups as a set for O(1) membership checks. */
+	/** @var array<int, string> Cold-group name prefixes (see is_cold). */
 	private array $cold;
 
 	/**
@@ -43,7 +43,26 @@ class Cold_Read_Object_Cache {
 	 */
 	public function __construct( $real, array $cold_groups ) {
 		$this->real = $real;
-		$this->cold = \array_fill_keys( $cold_groups, true );
+		$this->cold = \array_values( $cold_groups );
+	}
+
+	/**
+	 * Whether reads on this group must miss. Matches a cold group exactly OR a
+	 * derived "{group}-…" variant: Newspack's block cache splits into
+	 * `newspack_blocks-post-{ID}` / `newspack_blocks-feed` groups (a static-Page
+	 * homepage uses the per-post one), so cooling `newspack_blocks` must cool
+	 * those too. The `-` separator keeps an unrelated `newspack_blocksX` warm.
+	 *
+	 * @param string $group Cache group.
+	 * @return bool
+	 */
+	private function is_cold( string $group ): bool {
+		foreach ( $this->cold as $g ) {
+			if ( $group === $g || \str_starts_with( $group, $g . '-' ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -56,7 +75,7 @@ class Cold_Read_Object_Cache {
 	 * @return mixed
 	 */
 	public function get( $key, $group = '', $force = false, &$found = null ) {
-		if ( isset( $this->cold[ $group ] ) ) {
+		if ( $this->is_cold( (string) $group ) ) {
 			$found = false;
 			return false;
 		}
@@ -72,7 +91,7 @@ class Cold_Read_Object_Cache {
 	 * @return array<int|string, mixed>
 	 */
 	public function get_multiple( $keys, $group = '', $force = false ) {
-		if ( isset( $this->cold[ $group ] ) ) {
+		if ( $this->is_cold( (string) $group ) ) {
 			return \array_fill_keys( $keys, false );
 		}
 		return $this->real->get_multiple( $keys, $group, $force );
@@ -151,6 +170,12 @@ class Cache_Warmer {
 
 	/** Option holding the loopback secret. */
 	private const SECRET_OPTION = 'eln_cache_warmer_secret';
+
+	/** Option holding the loopback's HTTP Basic credential, encrypted at rest. */
+	public const AUTH_OPTION = 'eln_cache_warmer_auth';
+
+	/** Wire-format marker for an encrypted option value (vs a plaintext wp-config value). */
+	private const ENCRYPTED_PREFIX = '$enc$';
 
 	/** Cron hook the warmer ticks on (schedule it manually via `wp cron`). */
 	public const CRON_HOOK = 'eln_cache_warmer_tick';
@@ -262,6 +287,87 @@ class Cache_Warmer {
 		return \add_query_arg( 'eln_cache_warm', self::secret(), \home_url( '/' ) );
 	}
 
+	/**
+	 * HTTP Basic credential for the loopback ("Basic …"), or '' when none.
+	 *
+	 * An authenticated loopback makes the edge/page cache forward to PHP instead
+	 * of serving a cached homepage. Read in the job-worker process (no password
+	 * ever rides through the job message / jobs.log): the `eln_cache_warmer_auth`
+	 * option ("user:application password", set via `wp option update`), or the
+	 * `NEWSPACK_CACHE_WARMER_AUTH` wp-config constant if you prefer to keep it
+	 * out of the DB (constant wins).
+	 *
+	 * @return string
+	 */
+	public static function auth_header(): string {
+		$cred = \defined( 'NEWSPACK_CACHE_WARMER_AUTH' )
+			? (string) \NEWSPACK_CACHE_WARMER_AUTH
+			: self::decrypt( (string) \get_option( self::AUTH_OPTION, '' ) );
+		$cred = \trim( $cred );
+		return '' === $cred ? '' : 'Basic ' . \base64_encode( $cred );
+	}
+
+	/**
+	 * Encrypt + store the loopback credential (the install script calls this via
+	 * `wp eval`). Empty input clears it. Stored non-autoloaded.
+	 *
+	 * @param string $credential "user:application password".
+	 */
+	public static function store_auth( string $credential ): void {
+		$credential = \trim( $credential );
+		if ( '' === $credential ) {
+			\delete_option( self::AUTH_OPTION );
+			return;
+		}
+		\update_option( self::AUTH_OPTION, self::encrypt( $credential ), false );
+	}
+
+	/** 32-byte key from wp_salt('auth') — DB-only access can't derive it. Matches Server_Registry. */
+	private static function encryption_key(): string {
+		return \sodium_crypto_generichash( \wp_salt( 'auth' ), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
+	}
+
+	/**
+	 * Encrypt to `$enc$<base64(nonce.ciphertext)>`; '' on empty input or no sodium.
+	 *
+	 * @param string $plaintext Value to encrypt.
+	 * @return string
+	 */
+	private static function encrypt( string $plaintext ): string {
+		if ( '' === $plaintext || ! \function_exists( 'sodium_crypto_secretbox' ) ) {
+			return '';
+		}
+		$nonce      = \random_bytes( SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$ciphertext = \sodium_crypto_secretbox( $plaintext, $nonce, self::encryption_key() );
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- binary-safe storage.
+		return self::ENCRYPTED_PREFIX . \base64_encode( $nonce . $ciphertext );
+	}
+
+	/**
+	 * Decrypt a stored value. A non-prefixed value (plaintext typed straight into
+	 * wp-config / a legacy row) passes through unchanged; '' on decrypt failure.
+	 *
+	 * @param string $stored Stored value (encrypted or plaintext).
+	 * @return string
+	 */
+	private static function decrypt( string $stored ): string {
+		if ( 0 !== \strpos( $stored, self::ENCRYPTED_PREFIX ) ) {
+			return $stored;
+		}
+		if ( ! \function_exists( 'sodium_crypto_secretbox_open' ) ) {
+			return '';
+		}
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- binary-safe storage.
+		$decoded = \base64_decode( \substr( $stored, \strlen( self::ENCRYPTED_PREFIX ) ), true );
+		if ( false === $decoded || \strlen( $decoded ) < SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ) {
+			return '';
+		}
+		$nonce      = \substr( $decoded, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$ciphertext = \substr( $decoded, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$plaintext  = \sodium_crypto_secretbox_open( $ciphertext, $nonce, self::encryption_key() );
+		return false === $plaintext ? '' : $plaintext;
+	}
+
 	/** Cron callback: fire the blocking loopback warm render (single-flight). */
 	public static function run_tick(): void {
 		// Single-flight: skip if a prior render is still in flight (the lock
@@ -270,18 +376,22 @@ class Cache_Warmer {
 			return;
 		}
 		\set_transient( self::LOCK, 1, 60 );
+		$args = [
+			// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- background cron must outlast the ~6.5s cold render.
+			'timeout'   => 20,
+			'blocking'  => true,
+			// Verify TLS by default (the loopback hits the public home_url host);
+			// only self-signed-cert dev environments opt out via the filter.
+			'sslverify' => (bool) \apply_filters( 'eln_cache_warmer_sslverify', true ),
+		];
+		// Authenticate the loopback (application password) so the edge/page cache
+		// forwards to PHP for a real render instead of serving a cached homepage.
+		$auth = self::auth_header();
+		if ( '' !== $auth ) {
+			$args['headers'] = [ 'Authorization' => $auth ];
+		}
 		// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.wp_remote_get_wp_remote_get -- portable loopback; vip_safe_* may be absent off-VIP and caps the timeout below our cold render.
-		$result = \wp_remote_get(
-			self::warm_url(),
-			[
-				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- background cron must outlast the ~6.5s cold render.
-				'timeout'   => 20,
-				'blocking'  => true,
-				// Verify TLS by default (the loopback hits the public home_url host);
-				// only self-signed-cert dev environments opt out via the filter.
-				'sslverify' => (bool) \apply_filters( 'eln_cache_warmer_sslverify', true ),
-			]
-		);
+		$result = \wp_remote_get( self::warm_url(), $args );
 		\delete_transient( self::LOCK );
 
 		// Surface loopback failures (e.g. an unroutable host) instead of swallowing them.
