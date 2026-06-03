@@ -175,15 +175,3 @@ export class GyroscopeViewNode extends Node {
 		this.setState( 'view', { connectionError: this.connectionError } );
 	}
 }
-
-/**
- * Create and register the Gyroscope view-model node.
- *
- * @param {string} name The node name.
- * @return {GyroscopeViewNode} The view-model node.
- */
-export function createGyroscopeView( name ) {
-	const node = new GyroscopeViewNode();
-	node.setName( name );
-	return node;
-}

@@ -140,15 +140,3 @@ function _errorMessage( payload ) {
 	}
 	return 'Operation failed';
 }
-
-/**
- * Create and register the Configured-Servers admin view-model node.
- *
- * @param {string} name Node name.
- * @return {ServersViewNode} The view-model node.
- */
-export function createServersView( name ) {
-	const node = new ServersViewNode();
-	node.setName( name );
-	return node;
-}

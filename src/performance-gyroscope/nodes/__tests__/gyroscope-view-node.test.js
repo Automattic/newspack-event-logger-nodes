@@ -32,10 +32,18 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createGyroscopeView } from '../gyroscope-view-node';
+import { GyroscopeViewNode } from '../gyroscope-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name ) {
+	const node = new GyroscopeViewNode();
+	node.setName( name );
+	return node;
+}
 
 // A wire envelope as the EventSource delivers it: KEY='inflight', VALUE=array.
 function inflightEnvelope( requests ) {
@@ -70,7 +78,7 @@ function controlMsg( payload ) {
 }
 
 test( 'upserts inflight requests from a wire envelope into node.requests keyed by rid', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill(
 		inflightEnvelope( [
 			{ rid: 'a', url: '/a', state: 'process' },
@@ -82,7 +90,7 @@ test( 'upserts inflight requests from a wire envelope into node.requests keyed b
 } );
 
 test( 'appending inflight rows does NOT publish setState (no per-row re-render)', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	const spy = jest.spyOn( v, 'setState' );
 	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	v.fill( completeEnvelope( { rid: 'a', url: '/a', duration_ms: 5 } ) );
@@ -90,14 +98,14 @@ test( 'appending inflight rows does NOT publish setState (no per-row re-render)'
 } );
 
 test( 'a later inflight snapshot updates an in-flight request', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'render' } ] ) );
 	expect( v.requests.get( 'a' ).state ).toBe( 'render' );
 } );
 
 test( 'an inflight snapshot never overwrites a request already marked complete', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( completeEnvelope( { rid: 'a', url: '/a', duration_ms: 7 } ) );
 	// A late snapshot (produced before the completion) must not resurrect it.
 	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
@@ -105,7 +113,7 @@ test( 'an inflight snapshot never overwrites a request already marked complete',
 } );
 
 test( 'completion merges into an existing entry and sets time_ms/est_ms', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill(
 		inflightEnvelope( [
 			{ rid: 'a', url: '/a', method: 'GET', state: 'process' },
@@ -124,28 +132,28 @@ test( 'completion merges into an existing entry and sets time_ms/est_ms', () => 
 } );
 
 test( 'completion with no prior inflight entry still records the request', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( completeEnvelope( { rid: 'z', url: '/z', duration_ms: 10 } ) );
 	expect( v.requests.get( 'z' ).state ).toBe( 'complete' );
 	expect( v.requests.get( 'z' ).est_ms ).toBe( 10 );
 } );
 
 test( 'completion missing duration_ms defaults time_ms/est_ms to 0', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( completeEnvelope( { rid: 'z', url: '/z' } ) );
 	expect( v.requests.get( 'z' ).time_ms ).toBe( 0 );
 	expect( v.requests.get( 'z' ).est_ms ).toBe( 0 );
 } );
 
 test( 'drops the substrate `connected` envelope (never a gyroscope record)', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( connectedEnvelope() );
 	expect( v.requests.size ).toBe( 0 );
 	expect( v.lastEventTime ).toBeNull();
 } );
 
 test( 'drops an unrecognized wire envelope (string VALUE, no rid)', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	const m = newMessage();
 	m[ KEY ] = 'x';
 	m[ VALUE ] = 'string';
@@ -155,7 +163,7 @@ test( 'drops an unrecognized wire envelope (string VALUE, no rid)', () => {
 } );
 
 test( 'drops an object VALUE missing rid (defensive)', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	const m = newMessage();
 	m[ KEY ] = 'x';
 	m[ VALUE ] = { method: 'GET', url: '/y' };
@@ -164,7 +172,7 @@ test( 'drops an object VALUE missing rid (defensive)', () => {
 } );
 
 test( 'snapshot() reaps complete entries (shown one tick then deleted)', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	v.fill( completeEnvelope( { rid: 'b', url: '/b', duration_ms: 5 } ) );
 	// First snapshot still includes the completed request.
@@ -178,7 +186,7 @@ test( 'snapshot() reaps complete entries (shown one tick then deleted)', () => {
 } );
 
 test( 'snapshot() sorts by est_ms descending and caps to maxRows', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill(
 		inflightEnvelope( [
 			{ rid: 'a', url: '/a', state: 'process', est_ms: 10 },
@@ -193,7 +201,7 @@ test( 'snapshot() sorts by est_ms descending and caps to maxRows', () => {
 } );
 
 test( 'snapshot() updates rps from the reaped completed count', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	expect( v.rps ).toBe( 0 );
 	v.fill( completeEnvelope( { rid: 'a', url: '/a', duration_ms: 5 } ) );
 	v.fill( completeEnvelope( { rid: 'b', url: '/b', duration_ms: 5 } ) );
@@ -202,14 +210,14 @@ test( 'snapshot() updates rps from the reaped completed count', () => {
 } );
 
 test( 'touches lastEventTime on each processed envelope', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	expect( v.lastEventTime ).toBeNull();
 	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
 	expect( typeof v.lastEventTime ).toBe( 'number' );
 } );
 
 test( 'clear empties the map, history and rps', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill(
 		inflightEnvelope( [
 			{ rid: 'a', url: '/a', state: 'process' },
@@ -226,39 +234,38 @@ test( 'clear empties the map, history and rps', () => {
 } );
 
 test( 'connection control publishes connectionError', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( false );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'clear' } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	expect( v.setStateCache.view ).toEqual( { connectionError: false } );
 } );
 
 test( 'names the node', () => {
-	const v = createGyroscopeView( 'gyroscope:view' );
+	const v = makeView( 'gyroscope:view' );
 	expect( v.name ).toBe( 'gyroscope:view' );
 } );
 
 describe( 'gyroscope:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createGyroscopeView( 'gyroscope:view' ).constructor.nodeSchema();
+		const schema = makeView( 'gyroscope:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

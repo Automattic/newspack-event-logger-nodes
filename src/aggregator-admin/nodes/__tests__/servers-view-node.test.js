@@ -23,10 +23,18 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createServersView } from '../servers-view-node';
+import { ServersViewNode } from '../servers-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name ) {
+	const node = new ServersViewNode();
+	node.setName( name );
+	return node;
+}
 
 const SAMPLE = {
 	'spoke-01': {
@@ -63,7 +71,7 @@ function replyMsg( {
 
 describe( 'servers:view — initial model', () => {
 	test( 'publishes an initial loading model on construction', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		expect( v.setStateCache.view ).toMatchObject( {
 			servers: null,
 			loading: true,
@@ -72,12 +80,12 @@ describe( 'servers:view — initial model', () => {
 	} );
 
 	test( 'names the node', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		expect( v.name ).toBe( 'servers:view' );
 	} );
 
 	test( 'has a `pending` Map for hook-side promise resolution', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		expect( v.pending ).toBeInstanceOf( Map );
 		expect( v.pending.size ).toBe( 0 );
 	} );
@@ -85,7 +93,7 @@ describe( 'servers:view — initial model', () => {
 
 describe( 'servers:view — list reply updates the render model', () => {
 	test( 'a list reply converts the server map to an array of servers', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		v.fill( replyMsg( { name: 'list', payload: SAMPLE } ) );
 		const model = v.setStateCache.view;
 		expect( Array.isArray( model.servers ) ).toBe( true );
@@ -97,7 +105,7 @@ describe( 'servers:view — list reply updates the render model', () => {
 	} );
 
 	test( 'a list reply clears loading and any prior error', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		// Simulate an error first.
 		const errMsg = replyMsg( {
 			name: 'list',
@@ -112,14 +120,14 @@ describe( 'servers:view — list reply updates the render model', () => {
 	} );
 
 	test( 'an empty list payload yields an empty servers array', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		v.fill( replyMsg( { name: 'list', payload: {} } ) );
 		expect( v.setStateCache.view.servers ).toEqual( [] );
 		expect( v.setStateCache.view.loading ).toBe( false );
 	} );
 
 	test( 'a null list payload yields an empty servers array', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		v.fill( replyMsg( { name: 'list', payload: null } ) );
 		expect( v.setStateCache.view.servers ).toEqual( [] );
 	} );
@@ -127,7 +135,7 @@ describe( 'servers:view — list reply updates the render model', () => {
 
 describe( 'servers:view — TM_ERROR replies surface the error', () => {
 	test( 'a TM_ERROR with no matching pending entry sets the error and clears loading (prior servers preserved)', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		v.fill( replyMsg( { name: 'list', payload: SAMPLE } ) );
 		v.fill(
 			replyMsg( {
@@ -143,7 +151,7 @@ describe( 'servers:view — TM_ERROR replies surface the error', () => {
 	} );
 
 	test( 'TM_ERROR without a message defaults the error string', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		v.fill(
 			replyMsg( {
 				name: 'add',
@@ -161,7 +169,7 @@ describe( 'servers:view — TM_ERROR replies surface the error', () => {
 		// banner for a single-row failure. The caller's rejection IS the error
 		// surface; the global view.error is reserved for un-correlated failures
 		// (initial list, broadcast errors).
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		v.fill( replyMsg( { name: 'list', payload: SAMPLE } ) );
 		expect( v.setStateCache.view.error ).toBeNull();
 		const resolve = jest.fn();
@@ -184,7 +192,7 @@ describe( 'servers:view — TM_ERROR replies surface the error', () => {
 		// error (e.g. { message, code, field }) into VALUE.payload mirroring the
 		// success path's structured shape; the view should still surface the
 		// human-readable message rather than falling back to 'Operation failed'.
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const reject = jest.fn();
 		v.pending.set( 'op-9', { resolve: jest.fn(), reject } );
 		v.fill(
@@ -202,7 +210,7 @@ describe( 'servers:view — TM_ERROR replies surface the error', () => {
 
 describe( 'servers:view — pending-promise resolution', () => {
 	test( 'a successful reply resolves the pending promise with the payload', async () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
 		v.pending.set( 'op-1', { resolve, reject } );
@@ -216,7 +224,7 @@ describe( 'servers:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a TM_ERROR reply rejects the pending promise and clears the entry', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
 		v.pending.set( 'op-2', { resolve, reject } );
@@ -238,7 +246,7 @@ describe( 'servers:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a list reply still updates the render model when also resolving a pending promise', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const resolve = jest.fn();
 		v.pending.set( 'op-3', { resolve, reject: jest.fn() } );
 		v.fill( replyMsg( { id: 'op-3', name: 'list', payload: SAMPLE } ) );
@@ -247,7 +255,7 @@ describe( 'servers:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a reply without a matching pending entry is handled normally (no throw)', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		expect( () =>
 			v.fill(
 				replyMsg( {
@@ -260,7 +268,7 @@ describe( 'servers:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a reply with no ID is handled normally (no pending lookup)', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		expect( () =>
 			v.fill( replyMsg( { name: 'list', payload: SAMPLE } ) )
 		).not.toThrow();
@@ -270,7 +278,7 @@ describe( 'servers:view — pending-promise resolution', () => {
 
 describe( 'servers:view — malformed input', () => {
 	test( 'ignores a message with no VALUE', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const initial = v.setStateCache.view;
 		const m = newMessage();
 		m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
@@ -279,7 +287,7 @@ describe( 'servers:view — malformed input', () => {
 	} );
 
 	test( 'ignores a message with a non-object VALUE', () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const initial = v.setStateCache.view;
 		const m = newMessage();
 		m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
@@ -291,7 +299,7 @@ describe( 'servers:view — malformed input', () => {
 
 describe( 'servers:view — removeNode rejects in-flight pending', () => {
 	test( 'removeNode rejects every pending promise so a reset/teardown does not strand a caller', async () => {
-		const v = createServersView( 'servers:view' );
+		const v = makeView( 'servers:view' );
 		const p1 = new Promise( ( resolve, reject ) =>
 			v.pending.set( 'op-a', { resolve, reject } )
 		);
@@ -313,8 +321,7 @@ describe( 'servers:view — removeNode rejects in-flight pending', () => {
 
 describe( 'servers:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createServersView( 'servers:view' ).constructor.nodeSchema();
+		const schema = makeView( 'servers:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

@@ -20,10 +20,18 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createPerfErrorsView } from '../perf-errors-view-node';
+import { PerfErrorsViewNode } from '../perf-errors-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name, opts = {} ) {
+	const node = new PerfErrorsViewNode( opts.maxEntries );
+	node.setName( name );
+	return node;
+}
 
 // An envelope as the wire delivers it: KEY=rid, VALUE={ts, k, m, n}.
 const envMsg = ( rid, value ) => {
@@ -43,7 +51,7 @@ const controlMsg = ( payload ) => {
 };
 
 test( 'appends rows newest-first with seq + isEven, capped', () => {
-	const v = createPerfErrorsView( 'perferrors:view', { maxEntries: 2 } );
+	const v = makeView( 'perferrors:view', { maxEntries: 2 } );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( envMsg( 'b', { ts: 2, k: 'warning', m: 'y' } ) );
 	v.fill( envMsg( 'c', { ts: 3, k: 'error', m: 'z' } ) );
@@ -52,7 +60,7 @@ test( 'appends rows newest-first with seq + isEven, capped', () => {
 } );
 
 test( 'enriches each row with seq, id (= seq), rid, ts, k, m and an even/odd flag', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'first', { ts: 111, k: 'error', m: 'one' } ) );
 	v.fill( envMsg( 'second', { ts: 222, k: 'warning', m: 'two' } ) );
 	expect( v.entries[ 0 ] ).toEqual( {
@@ -76,7 +84,7 @@ test( 'enriches each row with seq, id (= seq), rid, ts, k, m and an even/odd fla
 } );
 
 test( 'defaults missing optional VALUE fields (ts=0, k="", m="")', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', {} ) );
 	expect( v.entries[ 0 ] ).toEqual(
 		expect.objectContaining( { rid: 'rid', ts: 0, k: '', m: '' } )
@@ -84,32 +92,32 @@ test( 'defaults missing optional VALUE fields (ts=0, k="", m="")', () => {
 } );
 
 test( 'clips long m at 1000 chars with ellipsis', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', { ts: 1, k: 'X', m: 'x'.repeat( 2000 ), n: 0 } ) );
 	expect( v.entries[ 0 ].m.length ).toBe( 1003 );
 	expect( v.entries[ 0 ].m.endsWith( '...' ) ).toBe( true );
 } );
 
 test( 'drops envelopes with no rid (KEY empty)', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( '', { ts: 1, k: 'error', m: 'x' } ) );
 	expect( v.entries ).toHaveLength( 0 );
 } );
 
 test( 'drops envelopes whose VALUE is a string (not an object)', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', 'just a string' ) );
 	expect( v.entries ).toHaveLength( 0 );
 } );
 
 test( 'drops envelopes whose VALUE is an array', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', [ 1, 2, 3 ] ) );
 	expect( v.entries ).toHaveLength( 0 );
 } );
 
 test( 'drops the `connected` sentinel (which the SseInNode would otherwise stream through)', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	// The connected sentinel uses KEY='connected' with a structured VALUE
 	// (slot/partition/pid). It must NOT land in the error buffer.
 	v.fill( envMsg( 'connected', { slot: 0, partition: 0, pid: 1 } ) );
@@ -119,7 +127,7 @@ test( 'drops the `connected` sentinel (which the SseInNode would otherwise strea
 } );
 
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	const spy = jest.spyOn( v, 'setState' );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( envMsg( 'b', { ts: 2, k: 'error', m: 'y' } ) );
@@ -127,14 +135,14 @@ test( 'appending rows does NOT publish setState (no per-row React re-render)', (
 } );
 
 test( 'touches lastEventTime on each appended row', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	expect( v.lastEventTime ).toBeNull();
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	expect( typeof v.lastEventTime ).toBe( 'number' );
 } );
 
 test( 'pause stops appends and publishes paused', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	expect( v.entries ).toHaveLength( 0 );
@@ -144,7 +152,7 @@ test( 'pause stops appends and publishes paused', () => {
 } );
 
 test( 'connection control publishes connectionError', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	expect(
 		Core.node( 'perferrors:view' ).setStateCache.view.connectionError
@@ -152,7 +160,7 @@ test( 'connection control publishes connectionError', () => {
 } );
 
 test( 'clear empties the buffer', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( controlMsg( { action: 'clear' } ) );
 	expect( v.entries ).toHaveLength( 0 );
@@ -163,7 +171,7 @@ test( 'clear empties the buffer', () => {
 } );
 
 test( 'publishes an initial view model on construction', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
@@ -172,14 +180,13 @@ test( 'publishes an initial view model on construction', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createPerfErrorsView( 'perferrors:view' );
+	const v = makeView( 'perferrors:view' );
 	expect( v.name ).toBe( 'perferrors:view' );
 } );
 
 describe( 'perferrors:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createPerfErrorsView( 'perferrors:view' ).constructor.nodeSchema();
+		const schema = makeView( 'perferrors:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

@@ -12,6 +12,8 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Topic_Node;
 use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Node_Names;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -204,8 +206,26 @@ class Log_Manager {
 		$segment_size = (int) ( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
 		$num_segments = (int) ( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
 		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
-		$this->topic  = new Topic_Node();
-		$this->topic->arguments( "{$base_dir} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
+		// One firehose Topic per process. Reuse the canonical `firehose:topic` if it
+		// already exists — the aggregator topology's `make_node Topic firehose:topic`, or
+		// a concurrently-suspended parent job context's — so every context shares the same
+		// N-partition writer (each message self-routes by KEY=request_id). Create ours
+		// (self-patron + interpreter-sink) only when none exists; never removed — it's
+		// process-wide infrastructure, exactly one, reused.
+		$existing = Core::node( 'firehose:topic' );
+		if ( $existing instanceof Topic_Node ) {
+			$this->topic = $existing;
+		} else {
+			$this->topic = new Topic_Node();
+			$this->topic->name( 'firehose:topic' );
+			// Self-patron (Log_Manager is not a Node) so dump_metadata hides our plumbing from the canvas.
+			$this->topic->patron( $this->topic );
+			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+			if ( null !== $ci ) {
+				$this->topic->sink( $ci );
+			}
+			$this->topic->arguments( "{$base_dir} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
+		}
 	}
 
 	/**

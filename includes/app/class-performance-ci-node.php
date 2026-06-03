@@ -46,6 +46,7 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Service_CI_Node;
 
@@ -825,6 +826,24 @@ class Performance_CI_Node extends Service_CI_Node {
 		return $out;
 	}
 
+	/**
+	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
+	 * a transient scratch Partition. Callers remove_node() it after use.
+	 *
+	 * @param Partition_Node $partition Freshly-constructed scratch Partition.
+	 * @param string         $log       Log basename ('requests' | 'flames').
+	 * @param int            $index     Partition index.
+	 */
+	private static function name_scratch_partition( Partition_Node $partition, string $log, int $index ): void {
+		$token = \getmypid() . '-' . \spl_object_id( $partition );
+		$partition->name( "{$log}.{$token}.p{$index}" );
+		$partition->patron( $partition );
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $partition->sink() && null !== $ci ) {
+			$partition->sink( $ci );
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Config + settings value coercion — shared by config_update + settings_update.
 	// Lifted from legacy PerfConfigController + PerfSettingsController.
@@ -1489,6 +1508,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$entries_count = 0;
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$partition = new Partition_Node();
+			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.log {$p}" );
 			$partition->with_index(
 				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
@@ -1520,6 +1540,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				},
 				true
 			);
+			$partition->remove_node();
 			if ( \count( $requests ) >= 500 || $entries_count > self::MAX_INDEX_ENTRIES ) {
 				break;
 			}
@@ -1548,6 +1569,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function find_request_index_entry( string $log_base, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
 		$requests = new Partition_Node();
+		self::name_scratch_partition( $requests, 'requests', $partition );
 		$requests->arguments( "{$log_base}/requests.log {$partition}" );
 		$requests->with_index(
 			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
@@ -1571,6 +1593,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			},
 			true
 		);
+		$requests->remove_node();
 		return $result;
 	}
 
@@ -1584,6 +1607,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$result        = null;
 		$entries_count = 0;
 		$requests = new Partition_Node();
+		self::name_scratch_partition( $requests, 'requests', $partition );
 		$requests->arguments( "{$log_base}/requests.log {$partition}" );
 		$requests->with_index(
 			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
@@ -1617,6 +1641,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			},
 			true
 		);
+		$requests->remove_node();
 
 		if ( null === $result ) {
 			return null;
@@ -1648,6 +1673,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
 			$partition = new Partition_Node();
+			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.log {$p}" );
 			$partition->with_index(
 				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
@@ -1680,6 +1706,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				},
 				true
 			);
+			$partition->remove_node();
 		}
 
 		return [ $entries, $scanned ];
@@ -1703,6 +1730,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		for ( $p = 0; $p < $num_partitions && null === $result; $p++ ) {
 			$partition = new Partition_Node();
+			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.log {$p}" );
 			$partition->with_index(
 				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
@@ -1735,6 +1763,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				},
 				true
 			);
+			$partition->remove_node();
 		}
 
 		return [ $result, $scanned ];
@@ -1750,6 +1779,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$entries_count = 0;
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$flames = new Partition_Node();
+			self::name_scratch_partition( $flames, 'flames', $p );
 			$flames->arguments( "{$log_base}/flames.log {$p}" );
 			$flames->with_index(
 				static fn ( $line, $position, &$data = null ) => Flame_Builder_Node::format_index_entry( $line, $position, $data )
@@ -1782,6 +1812,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				},
 				true
 			);
+			$flames->remove_node();
 			if ( null !== $result ) {
 				return $result;
 			}

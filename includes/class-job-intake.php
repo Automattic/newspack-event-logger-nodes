@@ -17,6 +17,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -129,8 +130,15 @@ class Job_Intake {
 		// clash with stale Core registrations from the previous instance.
 		$instance_token = \getmypid() . '-' . \spl_object_id( $this );
 		$p              = new Partition_Node();
-		$p->arguments( "{$log_base} {$partition}" );
 		$p->name( "jobintake.{$instance_token}.p{$partition}" );
+		// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
+		$p->patron( $p );
+		// Rule 4: sink into the interpreter only when one is in scope.
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $p->sink() && null !== $ci ) {
+			$p->sink( $ci );
+		}
+		$p->arguments( "{$log_base} {$partition}" );
 		$p->allow_large_writes();
 		$this->partitions[ $partition ] = $p;
 		return $p;
