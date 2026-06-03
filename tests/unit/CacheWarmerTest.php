@@ -78,6 +78,37 @@ class CacheWarmerTest extends TestCase {
 		}
 	}
 
+	// ── Self-owned cron recurrence (so scheduling never depends on another plugin) ──
+
+	public function test_register_cron_schedule_adds_a_minute_interval(): void {
+		$schedules = Cache_Warmer::register_cron_schedule( [] );
+
+		$this->assertArrayHasKey( Cache_Warmer::CRON_SCHEDULE, $schedules );
+		$this->assertSame( 60, $schedules[ Cache_Warmer::CRON_SCHEDULE ]['interval'] );
+	}
+
+	public function test_register_cron_schedule_preserves_existing_schedules(): void {
+		$existing  = [ 'hourly' => [ 'interval' => 3600, 'display' => 'Once Hourly' ] ];
+		$schedules = Cache_Warmer::register_cron_schedule( $existing );
+
+		$this->assertSame( $existing['hourly'], $schedules['hourly'] );
+		$this->assertArrayHasKey( Cache_Warmer::CRON_SCHEDULE, $schedules );
+	}
+
+	public function test_register_wires_the_cron_schedule_filter(): void {
+		// register() must add the cron_schedules filter so the recurrence is
+		// available to `wp cron event schedule` without newspack-nodes loaded.
+		$saved                  = $GLOBALS['_wp_actions'] ?? [];
+		$GLOBALS['_wp_actions'] = [];
+		try {
+			Cache_Warmer::register();
+			$schedules = apply_filters( 'cron_schedules', [] );
+			$this->assertArrayHasKey( Cache_Warmer::CRON_SCHEDULE, $schedules );
+		} finally {
+			$GLOBALS['_wp_actions'] = $saved;
+		}
+	}
+
 	// ── Cold-group allowlist ────────────────────────────────────────────────
 
 	public function test_default_cold_groups_cover_block_cache_and_transients(): void {
