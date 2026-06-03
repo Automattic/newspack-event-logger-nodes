@@ -173,6 +173,39 @@ class Core {
 	}
 
 	/**
+	 * Whether a callback declares a by-reference parameter.
+	 *
+	 * Such a callback can't be timing-wrapped: the wrapper passes args via
+	 * func_get_args() + call_user_func_array(), which copy, so a by-ref param
+	 * receives a value (PHP warning + lost mutation). Reflect once; on any
+	 * reflection failure, fall through to wrapping (prior behavior).
+	 *
+	 * @param mixed $function Callback (string|array|Closure|invokable object).
+	 * @return bool
+	 */
+	private static function callback_has_ref_param( $function ): bool {
+		try {
+			if ( \is_array( $function ) && \count( $function ) === 2 ) {
+				$ref = new \ReflectionMethod( $function[0], $function[1] );
+			} elseif ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
+				$ref = new \ReflectionMethod( $function );
+			} elseif ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
+				$ref = new \ReflectionMethod( $function, '__invoke' );
+			} else {
+				$ref = new \ReflectionFunction( $function );
+			}
+		} catch ( \Throwable $e ) {
+			return false;
+		}
+		foreach ( $ref->getParameters() as $param ) {
+			if ( $param->isPassedByReference() ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Wrap each callback on a hook with timing instrumentation.
 	 *
 	 * Replaces each callback's function with a closure that calls start/complete
@@ -204,6 +237,14 @@ class Core {
 
 				// Skip wrappers we already created (prevents double-wrap on recursion).
 				if ( $original instanceof \Closure && isset( $this->wrapper_ids[ \spl_object_id( $original ) ] ) ) {
+					continue;
+				}
+
+				// A by-reference callback (e.g. a `pre_get_posts` $query mutator
+				// like vip_es_disable_advanced_post_cache) can't be wrapped: the
+				// wrapper reads args via func_get_args(), which drops the
+				// reference, so the original would be handed a value and PHP warns.
+				if ( self::callback_has_ref_param( $original ) ) {
 					continue;
 				}
 

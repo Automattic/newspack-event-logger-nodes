@@ -448,6 +448,50 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( $original, $wp_filter['the_content']->callbacks[ $priority ]['our_cb']['function'] );
 	}
 
+	public function test_wrap_callbacks_skips_by_reference_callbacks(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'the_content' ],
+			'significant_events' => [ 'the_content hook' ],
+		] );
+
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		// A callback taking its argument by reference (like
+		// vip_es_disable_advanced_post_cache( &$query )). The wrapper reads args
+		// via func_get_args(), which can't preserve a reference, so wrapping it
+		// would pass a value to a by-ref param — a PHP warning + a lost mutation.
+		// It must be left un-wrapped.
+		$original = function ( &$v ) { $v = 'mutated'; return $v; };
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [
+				'byref_cb' => [
+					'function'      => $original,
+					'accepted_args' => 1,
+				],
+			],
+		];
+
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'test' );
+
+		$this->assertSame(
+			$original,
+			$wp_filter['the_content']->callbacks[10]['byref_cb']['function'],
+			'a by-reference callback must be left un-wrapped'
+		);
+		$this->assertSame(
+			1,
+			$wp_filter['the_content']->callbacks[10]['byref_cb']['accepted_args'],
+			'accepted_args must be untouched for a skipped callback'
+		);
+	}
+
 	public function test_wrap_callbacks_prevents_double_wrap(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->use_config( [
