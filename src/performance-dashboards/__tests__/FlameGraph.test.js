@@ -91,7 +91,7 @@ jest.mock( 'd3-flame-graph/dist/d3-flamegraph.css', () => ( {} ), {
 
 import * as React from 'react';
 import * as d3 from 'd3';
-import FlameGraph from '../FlameGraph';
+import FlameGraph, { pruneFlameGraph } from '../FlameGraph';
 import { renderComponent } from '../../shared/hooks/__tests__/renderHook';
 
 const d3Mock = d3.__chain;
@@ -362,5 +362,85 @@ describe( 'FlameGraph', () => {
 			)
 		).not.toThrow();
 		unmount();
+	} );
+} );
+
+describe( 'pruneFlameGraph', () => {
+	it( 'returns null/undefined roots unchanged', () => {
+		expect( pruneFlameGraph( null ) ).toBe( null );
+		expect( pruneFlameGraph( undefined ) ).toBe( undefined );
+	} );
+
+	it( 'drops children below 0.1% of the total (root) time', () => {
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [
+				{ name: 'A', value: 500, children: [] },
+				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% — below 0.1%.
+				{ name: 'C', value: 200, children: [] },
+			],
+		};
+		const pruned = pruneFlameGraph( root );
+		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
+			'A',
+			'C',
+		] );
+	} );
+
+	it( 'drops an entire subtree when its parent is below threshold', () => {
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [
+				{
+					name: 'sliver',
+					value: 0.4, // below 0.1% of 1000.
+					children: [ { name: 'deep', value: 0.4, children: [] } ],
+				},
+			],
+		};
+		const pruned = pruneFlameGraph( root );
+		expect( pruned.children ).toHaveLength( 0 );
+	} );
+
+	it( 'keeps children exactly at the threshold', () => {
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [ { name: 'edge', value: 1, children: [] } ], // exactly 0.1%.
+		};
+		const pruned = pruneFlameGraph( root );
+		expect( pruned.children ).toHaveLength( 1 );
+	} );
+
+	it( 'does not mutate the input tree', () => {
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [
+				{ name: 'A', value: 500, children: [] },
+				{ name: 'tiny', value: 0.5, children: [] },
+			],
+		};
+		pruneFlameGraph( root );
+		expect( root.children ).toHaveLength( 2 );
+	} );
+
+	it( 'caps the node count to maxNodes, keeping the largest', () => {
+		// All ten children are well above 0.1%, so only the cap can trim them.
+		const children = [ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 ].map( ( v ) => ( {
+			name: `n${ v }`,
+			value: v,
+			children: [],
+		} ) );
+		const root = { name: 'process', value: 100, children };
+		const pruned = pruneFlameGraph( root, { maxNodes: 4 } );
+		// Root + 3 largest children.
+		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
+			'n10',
+			'n9',
+			'n8',
+		] );
 	} );
 } );
