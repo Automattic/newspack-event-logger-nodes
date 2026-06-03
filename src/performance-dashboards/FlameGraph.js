@@ -246,6 +246,91 @@ const findNodeByPath = ( node, path ) => {
 	return null;
 };
 
+// Default pruning thresholds: drop frames below 0.1% of total, cap at 1000 nodes.
+const PRUNE_MIN_FRACTION = 0.001;
+const PRUNE_MAX_NODES = 1000;
+
+/**
+ * Clone a flame node, keeping only descendants whose value >= cutoff.
+ *
+ * Children are nested within their parent, so a node's value never exceeds its
+ * parent's — dropping a node below cutoff safely drops its whole subtree.
+ *
+ * @param {Object} node   Flame node.
+ * @param {number} cutoff Minimum value (in ms) a child must reach to survive.
+ * @return {Object} New node with pruned children.
+ */
+const cloneAboveCutoff = ( node, cutoff ) => {
+	const children = ( node.children || [] )
+		.filter( ( child ) => ( child.value || 0 ) >= cutoff )
+		.map( ( child ) => cloneAboveCutoff( child, cutoff ) );
+	return { ...node, children };
+};
+
+/**
+ * Count nodes in a flame tree.
+ *
+ * @param {Object} node Flame node.
+ * @return {number} Total node count including this node.
+ */
+const countNodes = ( node ) =>
+	( node.children || [] ).reduce(
+		( sum, child ) => sum + countNodes( child ),
+		1
+	);
+
+/**
+ * Collect the values of every non-root node into the given array.
+ *
+ * @param {Object}  node   Flame node.
+ * @param {Array}   values Accumulator.
+ * @param {boolean} isRoot Whether this node is the root (excluded).
+ */
+const collectNonRootValues = ( node, values, isRoot ) => {
+	if ( ! isRoot ) {
+		values.push( node.value || 0 );
+	}
+	( node.children || [] ).forEach( ( child ) =>
+		collectNonRootValues( child, values, false )
+	);
+};
+
+/**
+ * Prune a flame graph tree for rendering.
+ *
+ * Drops frames smaller than `minFraction` of the total (root) time, then — if
+ * the tree is still larger than `maxNodes` — raises the cutoff to keep only the
+ * largest `maxNodes` frames. The root is always preserved.
+ *
+ * @param {Object} root                  Flame graph root (value = total time).
+ * @param {Object} [options]             Tuning.
+ * @param {number} [options.minFraction] Min fraction of total to keep (default 0.001).
+ * @param {number} [options.maxNodes]    Hard cap on rendered node count (default 1000).
+ * @return {Object} Pruned tree (a copy; the input is not mutated).
+ */
+export const pruneFlameGraph = ( root, options = {} ) => {
+	if ( ! root ) {
+		return root;
+	}
+	const minFraction = options.minFraction ?? PRUNE_MIN_FRACTION;
+	const maxNodes = options.maxNodes ?? PRUNE_MAX_NODES;
+	const total = root.value || 0;
+
+	let cutoff = total * minFraction;
+	let pruned = cloneAboveCutoff( root, cutoff );
+
+	if ( countNodes( pruned ) > maxNodes ) {
+		// Too many survivors — keep only the largest (maxNodes - 1) non-root frames.
+		const values = [];
+		collectNonRootValues( pruned, values, true );
+		values.sort( ( a, b ) => b - a );
+		cutoff = Math.max( cutoff, values[ maxNodes - 2 ] ?? Infinity );
+		pruned = cloneAboveCutoff( root, cutoff );
+	}
+
+	return pruned;
+};
+
 /**
  * Flame Graph component.
  *
@@ -266,9 +351,12 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	// Memoize color mapper (stable reference since it no longer depends on data).
 	const colorMapper = useMemo( () => createColorMapper(), [] );
 
+	// Prune tiny frames (< 0.1% of total) and cap node count before rendering.
+	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
+
 	// Create/update chart when data changes.
 	useEffect( () => {
-		if ( ! data || ! containerRef.current ) {
+		if ( ! prunedData || ! containerRef.current ) {
 			return;
 		}
 
@@ -295,7 +383,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					.width( width )
 					.setColorMapper( colorMapper )
 					.transitionDuration( 0 );
-				chartRef.current.update( data );
+				chartRef.current.update( prunedData );
 
 				// Restore zoom to previously zoomed node after update.
 				if ( zoomedNodeRef.current ) {
@@ -353,7 +441,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				} );
 
 			chartRef.current = chart;
-			d3.select( container ).datum( data ).call( chart );
+			d3.select( container ).datum( prunedData ).call( chart );
 
 			// Track Cmd/Ctrl state on mousedown (more reliable than click
 			// which Mac browsers may intercept for Cmd+Click).
@@ -361,7 +449,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				metaClickRef.current = e.metaKey || e.ctrlKey;
 			} );
 		}
-	}, [ data, lastModified, colorMapper, onRevealEntry ] );
+	}, [ prunedData, lastModified, colorMapper, onRevealEntry ] );
 
 	// Cleanup on unmount - reset zoom state so navigation resets view.
 	useEffect( () => {
@@ -389,19 +477,21 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	// Handle resize.
 	useEffect( () => {
 		const handleResize = () => {
-			if ( chartRef.current && containerRef.current && data ) {
+			if ( chartRef.current && containerRef.current && prunedData ) {
 				const width = containerRef.current.clientWidth || 800;
 				chartRef.current.width( width );
 				d3.select( containerRef.current )
-					.datum( data )
+					.datum( prunedData )
 					.call( chartRef.current );
 			}
 		};
 
 		window.addEventListener( 'resize', handleResize );
 		return () => window.removeEventListener( 'resize', handleResize );
-	}, [ data ] );
+	}, [ prunedData ] );
 
+	// Gate the empty state on the original data — pruning is a render
+	// optimization and must never turn a non-empty graph into "no data".
 	if ( ! data || ! data.children || data.children.length === 0 ) {
 		return (
 			<div className="event-logger-flame-empty">
