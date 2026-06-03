@@ -141,8 +141,11 @@ class Cold_Read_Object_Cache {
  * Refresh-ahead warmer. On its own loopback hit it installs the cold-read
  * decorator (at drop-in load, before any plugin reads the cache). The recurring
  * cron that fires the loopback is NOT auto-scheduled — schedule it manually
- * where you want it to run (`wp cron event schedule eln_cache_warmer_tick …`);
- * this drop-in registers the handler so the event is runnable.
+ * where you want it to run:
+ *   wp cron event schedule eln_cache_warmer_tick now eln_cache_warmer_minute
+ * This drop-in registers both the handler (so the event is runnable) and its
+ * own `eln_cache_warmer_minute` recurrence (so scheduling doesn't depend on any
+ * other plugin's cron interval being loaded).
  */
 class Cache_Warmer {
 
@@ -152,13 +155,35 @@ class Cache_Warmer {
 	/** Cron hook the warmer ticks on (schedule it manually via `wp cron`). */
 	public const CRON_HOOK = 'eln_cache_warmer_tick';
 
+	/** Self-owned 60s recurrence so scheduling never depends on another plugin. */
+	public const CRON_SCHEDULE = 'eln_cache_warmer_minute';
+
 	/** Single-flight lock so a slow render can't be lapped by the next tick. */
 	private const LOCK = 'eln_cache_warmer_lock';
 
-	/** Drop-in bootstrap: install on a warm loopback + register the cron handler. */
+	/** Drop-in bootstrap: install on a warm loopback + register the cron handler + recurrence. */
 	public static function register(): void {
 		self::maybe_install_for_request();
 		\add_action( self::CRON_HOOK, [ self::class, 'run_tick' ] );
+		\add_filter( 'cron_schedules', [ self::class, 'register_cron_schedule' ] ); // phpcs:ignore WordPress.WP.CronInterval -- intentional 60s warmer cadence (matches the substrate supervisor's minute tick).
+	}
+
+	/**
+	 * Register the warmer's own 60s cron interval so `wp cron event schedule
+	 * eln_cache_warmer_tick now eln_cache_warmer_minute` works standalone —
+	 * no reliance on newspack-nodes' `newspack_nodes_minute` being loaded.
+	 *
+	 * @param array<string, mixed> $schedules Existing cron schedules.
+	 * @return array<string, mixed>
+	 */
+	public static function register_cron_schedule( array $schedules ): array {
+		if ( ! isset( $schedules[ self::CRON_SCHEDULE ] ) ) {
+			$schedules[ self::CRON_SCHEDULE ] = [
+				'interval' => 60,
+				'display'  => 'Every Minute (Cache Warmer)',
+			];
+		}
+		return $schedules;
 	}
 
 	/** Install the cold-read decorator iff this request is the warmer's own loopback. */
