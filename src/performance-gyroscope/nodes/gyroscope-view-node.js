@@ -33,7 +33,7 @@ const RPS_WINDOW_MS = 10000;
  * `Inflight.js` (`requestsRef` + `handleMessage` + `renderRequests` +
  * `updateRequestsPerSecond` + `handleBeforeConnect`).
  */
-class GyroscopeViewNode extends Node {
+export class GyroscopeViewNode extends Node {
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
 	static nodeSchema() {

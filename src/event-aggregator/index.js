@@ -5,6 +5,7 @@
  */
 
 import { createRoot } from '@wordpress/element';
+import './nodes/register';
 import AggregatorStatusPage from './AggregatorStatusPage';
 
 // Mount to aggregator status page container.

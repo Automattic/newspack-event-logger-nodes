@@ -5,6 +5,7 @@
  */
 
 import { createRoot } from '@wordpress/element';
+import './nodes/register';
 import GyroscopePage from './GyroscopePage';
 
 // Mount to gyroscope page container.

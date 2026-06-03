@@ -30,7 +30,10 @@ import {
 	TM_STRUCT,
 	formatCommandArgs,
 } from '@newspack-nodes/runtime';
-import { createPerformanceCommand } from '../performance-command-node';
+import {
+	createPerformanceCommand,
+	PerformanceCommandNode,
+} from '../performance-command-node';
 import { createPerformanceView } from '../performance-view-node';
 
 beforeEach( () => Core.reset() );
@@ -48,6 +51,16 @@ function mount( opts = {} ) {
 	command.viewName = 'performance:view';
 	return { outbox, view, command };
 }
+
+describe( 'performance:command — no-arg construction (make_node)', () => {
+	test( 'defaults viewName to performance:view so make_node (no-arg ctor) routes to the view', () => {
+		// make_node constructs with no args; the viewName default must live in the
+		// ctor (not the createX factory) or _viewNode() returns null and control
+		// messages never reach the view.
+		const command = new PerformanceCommandNode();
+		expect( command.viewName ).toBe( 'performance:view' );
+	} );
+} );
 
 describe( 'performance:command — control emissions (loading)', () => {
 	test( 'fetchOverview emits a loading control TO=target', () => {

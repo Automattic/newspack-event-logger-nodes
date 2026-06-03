@@ -36,7 +36,6 @@
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	mountExospine,
-	HttpOutNode,
 	CommandClient,
 	newMessage,
 	TYPE,
@@ -45,7 +44,7 @@ import {
 	VALUE,
 	TM_COMMAND,
 } from '@newspack-nodes/runtime';
-import { createAggregatorView } from '../nodes/aggregator-view-node';
+import '../nodes/register';
 
 // The I/O boundary node mounted from the substrate runtime.
 const HTTP = '_http';
@@ -129,20 +128,17 @@ export function useAggregatorStatusGraph( opts = {} ) {
 
 			// I/O boundary node — HttpOutNode is the only one this poll-only dashboard
 			// needs.
-			const http = new HttpOutNode();
+			const http = interpreter.makeNode( 'HttpOut', HTTP );
 			http.client =
 				optsRef.current.commandClient ||
 				new CommandClient( {
 					baseUrl: data.restUrl || '/wp-json/',
 					nonce: data.nonce || '',
 				} );
-			http.setName( HTTP );
-			http.sink = interpreter;
 
 			// The application view-model node — the receiver of the poll reply via the
 			// server's TO=FROM pivot.
-			const view = createAggregatorView( VIEW );
-			view.sink = interpreter;
+			interpreter.makeNode( 'AggregatorView', VIEW );
 
 			interpreterRef.current = interpreter;
 

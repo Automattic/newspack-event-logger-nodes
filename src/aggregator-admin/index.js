@@ -12,6 +12,7 @@
  */
 
 import { createRoot } from '@wordpress/element';
+import './nodes/register';
 import ServersAdmin from './ServersAdmin';
 import DebugOverlay from '@newspack-nodes/debug-overlay';
 

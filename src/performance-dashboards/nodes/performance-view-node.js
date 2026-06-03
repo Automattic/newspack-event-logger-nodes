@@ -40,7 +40,7 @@ import {
  * `useNodeState('performance:view','view')`. Low-frequency poll/selection
  * model — no per-message React concern like the request stream.
  */
-class PerformanceViewNode extends Node {
+export class PerformanceViewNode extends Node {
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
 	static nodeSchema() {

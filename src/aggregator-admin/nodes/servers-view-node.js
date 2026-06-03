@@ -19,7 +19,7 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * Every model change publishes via `setState('view', model)`, consumed by
  * `useNodeState('servers:view','view')`. Mirrors aggregator:view.
  */
-class ServersViewNode extends Node {
+export class ServersViewNode extends Node {
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
 	static nodeSchema() {

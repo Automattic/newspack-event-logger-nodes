@@ -52,7 +52,7 @@ const urlHash = ( url ) => {
  * The defensive shaping was inlined from the (now-deleted) `requestlog:transform`
  * node when the chain collapsed to `_sse → requestlog:view`.
  */
-class RequestLogViewNode extends Node {
+export class RequestLogViewNode extends Node {
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
 	static nodeSchema() {
@@ -67,7 +67,7 @@ class RequestLogViewNode extends Node {
 
 	constructor( maxEntries ) {
 		super();
-		this.maxEntries = maxEntries;
+		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
 		this.entries = [];
 		this.entryCounter = 0;
 		this.completedHistory = [];

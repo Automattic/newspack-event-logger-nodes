@@ -32,7 +32,7 @@ const MAX_M_LENGTH = 1000;
  *
  * Buffer + entry-enrichment logic migrated verbatim from `ErrorLog.js`.
  */
-class PerfErrorsViewNode extends Node {
+export class PerfErrorsViewNode extends Node {
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
 	static nodeSchema() {
@@ -47,7 +47,7 @@ class PerfErrorsViewNode extends Node {
 
 	constructor( maxEntries ) {
 		super();
-		this.maxEntries = maxEntries;
+		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
 		this.entries = [];
 		this.entryCounter = 0;
 		this.completedHistory = [];
