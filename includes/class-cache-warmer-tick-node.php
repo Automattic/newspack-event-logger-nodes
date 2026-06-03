@@ -14,7 +14,7 @@
  * cadence, stale-timeout headroom) and keeps this worker's drain loop moving.
  * The job handler (handle_job) reuses the drop-in's single-flight loopback.
  *
- * Add to a topology with a single line — the timer self-starts on name():
+ * Add to a topology with a single line — the timer self-starts in arguments():
  *   make_node Cache_Warmer_Tick cache-warmer:tick
  *
  * @package Newspack_Event_Logger_Nodes
@@ -154,7 +154,7 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Control',
-			'description' => 'Queues a cache_warmer JobWorker job every 60s (self-starts on name).',
+			'description' => 'Queues a cache_warmer JobWorker job every 60s by default; self-starts in arguments() (optional numeric arg = interval seconds).',
 			'arguments'   => [],
 			'commands'    => [],
 		];
