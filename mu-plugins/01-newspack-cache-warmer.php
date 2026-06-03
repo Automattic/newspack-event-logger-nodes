@@ -227,6 +227,11 @@ class Cache_Warmer {
 		// Let the loopback reach the real homepage rather than an access-gate
 		// login page (e.g. the Password Protected plugin would 302 it otherwise).
 		\add_filter( 'password_protected_is_active', static fn (): bool => false );
+		// The loopback's Authorization header is only to get past the edge/page
+		// cache; in WP the warm render must be logged-OUT, or Newspack disables
+		// block caching for logged-in editors and we'd rebuild but cache nothing.
+		// Force anonymous, overriding any app-password auth the header triggers.
+		\add_filter( 'determine_current_user', static fn () => 0, PHP_INT_MAX );
 		self::install_cold_cache();
 	}
 
