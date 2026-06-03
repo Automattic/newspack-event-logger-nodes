@@ -72,6 +72,7 @@ $_newspack_event_logger_nodes_register_user_topology_dir = static function (): v
 $_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
 	\Newspack_Event_Logger_Nodes\Stream_Merger_Node::register_remote_job_rewrite_filter();
 	\Newspack_Event_Logger_Nodes\Remote_Manager::init();
+	\Newspack_Event_Logger_Nodes\Cache_Warmer_Tick_Node::init();
 };
 
 /**
