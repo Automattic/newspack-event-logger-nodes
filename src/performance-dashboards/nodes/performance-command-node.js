@@ -69,7 +69,7 @@ function makeOpId() {
 // the request-scope `performance` service CI.
 const HTTP_TO = '_http/performance';
 
-class PerformanceCommandNode extends Node {
+export class PerformanceCommandNode extends Node {
 	// Command-builder source: its fetch* methods are called directly by the hook
 	// to mint control messages; it has no fill() entry — no input port.
 	static nodeSchema() {
@@ -86,7 +86,9 @@ class PerformanceCommandNode extends Node {
 	constructor( onError, viewName ) {
 		super();
 		this._onError = onError;
-		this._viewName = viewName;
+		// Default lives here (not the createX factory) so a no-arg make_node ctor
+		// still routes control messages to the view.
+		this._viewName = viewName ?? 'performance:view';
 		this._closed = false;
 	}
 
@@ -98,6 +100,11 @@ class PerformanceCommandNode extends Node {
 	}
 	get viewName() {
 		return this._viewName;
+	}
+
+	// Programmatic-dep setter — the hook assigns the error-toast seam after make_node.
+	set onError( fn ) {
+		this._onError = fn;
 	}
 
 	// Overview (always with category time series); optional server + breakdowns.

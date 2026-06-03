@@ -22,7 +22,7 @@ import {
  * AggregatorStatus's render. Every change publishes via `setState('view', model)`,
  * consumed by `useNodeState('aggregator:view','view')`.
  */
-class AggregatorViewNode extends Node {
+export class AggregatorViewNode extends Node {
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
 	static nodeSchema() {

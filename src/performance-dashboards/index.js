@@ -14,6 +14,7 @@ import {
 import { __ } from '@wordpress/i18n';
 import { Notice, Spinner } from '@wordpress/components';
 import DebugOverlay from '@newspack-nodes/debug-overlay';
+import './nodes/register';
 
 // Lazy load heavy performance components for code splitting.
 const PerformanceDashboard = lazy( () => import( './PerformanceDashboard' ) );

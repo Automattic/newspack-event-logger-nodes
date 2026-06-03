@@ -40,15 +40,13 @@
 import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
 import {
 	mountExospine,
-	HttpOutNode,
 	CommandClient,
 	newMessage,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
-import { createPerformanceCommand } from '../nodes/performance-command-node';
-import { createPerformanceView } from '../nodes/performance-view-node';
+import '../nodes/register';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 import { getCommandClient } from '../../shared/utils/commandClient';
 import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
@@ -121,28 +119,26 @@ export function usePerformanceGraph( opts = {} ) {
 				{};
 
 			// I/O boundary node — HttpOutNode is the only one this dashboard needs.
-			const http = new HttpOutNode();
+			const http = interpreter.makeNode( 'HttpOut', HTTP );
 			http.client =
 				optsRef.current.commandClient ||
 				new CommandClient( {
 					baseUrl: data.restUrl || '/wp-json/',
 					nonce: data.nonce || '',
 				} );
-			http.setName( HTTP );
-			http.sink = interpreter;
 
 			// The application view-model node — receiver of every reply via TO=FROM pivot.
-			const view = createPerformanceView( VIEW );
-			view.sink = interpreter;
+			const view = interpreter.makeNode( 'PerformanceView', VIEW );
 
 			// The slice-tagging command-builder. sink = interpreter (rule #2); target = view
 			// so `loading`/`error` controls route to the view via the router peeling
 			// TO. viewName = VIEW so the command can stash pending entries there.
-			const command = createPerformanceCommand( COMMAND, {
-				onError: optsRef.current.onError,
-				viewName: VIEW,
-			} );
-			command.sink = interpreter;
+			const command = interpreter.makeNode(
+				'PerformanceCommand',
+				COMMAND
+			);
+			command.onError = optsRef.current.onError;
+			command.viewName = VIEW;
 			command.target = VIEW;
 
 			commandRef.current = command;

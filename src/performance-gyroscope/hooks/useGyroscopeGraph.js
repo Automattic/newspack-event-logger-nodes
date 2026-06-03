@@ -33,16 +33,13 @@
 import { useEffect, useRef, useState } from '@wordpress/element';
 import {
 	mountExospine,
-	SseInNode,
-	HttpOutNode,
-	HeartbeatNode,
 	CommandClient,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
 } from '@newspack-nodes/runtime';
-import { createGyroscopeView } from '../nodes/gyroscope-view-node';
+import '../nodes/register';
 import usePageVisibility from '../../shared/hooks/usePageVisibility';
 
 // The I/O boundary nodes mounted from the substrate runtime.
@@ -90,33 +87,29 @@ export function useGyroscopeGraph() {
 
 			// I/O boundary nodes — the same ones useRequestLogGraph + useConsoleGraph mount.
 			// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
-			const sse = new SseInNode();
-			sse.arguments = `gyroscope ${ data.restUrl || '/wp-json/' } ${
-				data.nonce || ''
-			}`;
-			sse.setName( SSE );
-			sse.sink = interpreter;
+			const sse = interpreter.makeNode(
+				'SseIn',
+				SSE,
+				`gyroscope ${ data.restUrl || '/wp-json/' } ${
+					data.nonce || ''
+				}`
+			);
 			sse.target = VIEW;
 
-			const http = new HttpOutNode();
+			const http = interpreter.makeNode( 'HttpOut', HTTP );
 			http.client = new CommandClient( {
 				baseUrl: data.restUrl || '/wp-json/',
 				nonce: data.nonce || '',
 			} );
-			http.setName( HTTP );
-			http.sink = interpreter;
 
-			const heartbeat = new HeartbeatNode();
-			heartbeat.setName( HEARTBEAT );
-			heartbeat.sink = interpreter;
+			const heartbeat = interpreter.makeNode( 'Heartbeat', HEARTBEAT );
 			// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
 			// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
 			// discarded by HeartbeatNode.fill anyway, so broadcast routing is fine.
 			heartbeat.target = `${ HTTP }/workers`;
 
 			// Dashboard view — consumes wire envelopes directly.
-			const view = createGyroscopeView( VIEW );
-			view.sink = interpreter;
+			const view = interpreter.makeNode( 'GyroscopeView', VIEW );
 
 			// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
 			// slot into `_heartbeat`. Mirrors useRequestLogGraph.js / useConsoleGraph.js.

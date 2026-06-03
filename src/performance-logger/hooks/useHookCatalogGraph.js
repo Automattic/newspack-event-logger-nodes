@@ -38,7 +38,6 @@ import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	HttpOutNode,
 	CommandClient,
 	useNodeState,
 	newMessage,
@@ -50,7 +49,7 @@ import {
 	TM_COMMAND,
 	TM_RESPONSE,
 } from '@newspack-nodes/runtime';
-import { createHookCatalogView } from '../nodes/hook-catalog-view-node';
+import '../nodes/register';
 
 const HTTP = '_http';
 const VIEW = 'hookcatalog:view';
@@ -104,19 +103,16 @@ export function useHookCatalogGraph( opts = {} ) {
 		const { interpreter, teardown: teardownSpine } = mountExospine();
 
 		// I/O boundary node — HttpOutNode is the only one this modal needs.
-		const http = new HttpOutNode();
+		const http = interpreter.makeNode( 'HttpOut', HTTP );
 		http.client =
 			optsRef.current.commandClient ||
 			new CommandClient( {
 				baseUrl: data.restUrl || '/wp-json/',
 				nonce: data.nonce || '',
 			} );
-		http.setName( HTTP );
-		http.sink = interpreter;
 
 		// The application view-model node — receiver of every reply via TO=FROM pivot.
-		const view = createHookCatalogView( VIEW );
-		view.sink = interpreter;
+		interpreter.makeNode( 'HookCatalogView', VIEW );
 
 		interpreterRef.current = interpreter;
 

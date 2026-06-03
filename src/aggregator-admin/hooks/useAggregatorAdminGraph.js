@@ -40,7 +40,6 @@ import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	HttpOutNode,
 	CommandClient,
 	newMessage,
 	TYPE,
@@ -51,7 +50,7 @@ import {
 	TM_COMMAND,
 	formatCommandArgs,
 } from '@newspack-nodes/runtime';
-import { createServersView } from '../nodes/servers-view-node';
+import '../nodes/register';
 
 const HTTP = '_http';
 const VIEW = 'servers:view';
@@ -117,19 +116,16 @@ export function useAggregatorAdminGraph( opts = {} ) {
 
 			// I/O boundary node — HttpOutNode is the only one this CRUD-on-demand
 			// dashboard needs.
-			const http = new HttpOutNode();
+			const http = interpreter.makeNode( 'HttpOut', HTTP );
 			http.client =
 				optsRef.current.commandClient ||
 				new CommandClient( {
 					baseUrl: data.restUrl || '/wp-json/',
 					nonce: data.nonce || '',
 				} );
-			http.setName( HTTP );
-			http.sink = interpreter;
 
 			// The application view-model node — receiver of every reply via TO=FROM pivot.
-			const view = createServersView( VIEW );
-			view.sink = interpreter;
+			interpreter.makeNode( 'ServersView', VIEW );
 
 			interpreterRef.current = interpreter;
 

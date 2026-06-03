@@ -6,6 +6,7 @@
 
 import { render } from '@wordpress/element';
 
+import './nodes/register';
 import TagInputField from './settings/TagInputField';
 import './styles/base.scss';
 import './styles/settings.scss';
