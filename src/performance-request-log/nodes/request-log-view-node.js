@@ -183,19 +183,3 @@ export class RequestLogViewNode extends Node {
 		} );
 	}
 }
-
-/**
- * Create and register the Request Log view-model node.
- *
- * @param {string} name              Node name.
- * @param {Object} [opts]            Options.
- * @param {number} [opts.maxEntries] Buffer cap (default 1000, matching the page).
- * @return {RequestLogViewNode} The view-model node.
- */
-export function createRequestLogView( name, opts = {} ) {
-	const node = new RequestLogViewNode(
-		opts.maxEntries || DEFAULT_MAX_ENTRIES
-	);
-	node.setName( name );
-	return node;
-}

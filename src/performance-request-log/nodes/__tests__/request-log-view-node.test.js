@@ -14,10 +14,18 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createRequestLogView } from '../request-log-view-node';
+import { RequestLogViewNode } from '../request-log-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name, opts = {} ) {
+	const node = new RequestLogViewNode( opts.maxEntries );
+	node.setName( name );
+	return node;
+}
 
 // A row message from requestlog:transform: TM_STRUCT carrying the mapped row.
 function rowMsg( req ) {
@@ -50,7 +58,7 @@ function row( overrides = {} ) {
 }
 
 test( 'appends rows newest-first to node.entries (no publish)', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'a' } ) ) );
 	v.fill( rowMsg( row( { rid: 'b' } ) ) );
 	v.fill( rowMsg( row( { rid: 'c' } ) ) );
@@ -59,7 +67,7 @@ test( 'appends rows newest-first to node.entries (no publish)', () => {
 } );
 
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	const spy = jest.spyOn( v, 'setState' );
 	v.fill( rowMsg( row() ) );
 	v.fill( rowMsg( row() ) );
@@ -67,7 +75,7 @@ test( 'appending rows does NOT publish setState (no per-row React re-render)', (
 } );
 
 test( 'caps the buffer at maxEntries (newest kept)', () => {
-	const v = createRequestLogView( 'requestlog:view', { maxEntries: 3 } );
+	const v = makeView( 'requestlog:view', { maxEntries: 3 } );
 	for ( let i = 0; i < 5; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
@@ -77,7 +85,7 @@ test( 'caps the buffer at maxEntries (newest kept)', () => {
 } );
 
 test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'first', url: '/a', end_time: 111 } ) ) );
 	v.fill( rowMsg( row( { rid: 'second', url: '/b', end_time: 222 } ) ) );
 	expect( v.entries[ 0 ] ).toMatchObject( {
@@ -97,21 +105,21 @@ test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () 
 } );
 
 test( 'exposes a numeric rps on the node instance', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row() ) );
 	expect( typeof v.rps ).toBe( 'number' );
 	expect( v.rps ).toBeGreaterThan( 0 );
 } );
 
 test( 'touches lastEventTime on each appended row', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	expect( v.lastEventTime ).toBeNull();
 	v.fill( rowMsg( row() ) );
 	expect( typeof v.lastEventTime ).toBe( 'number' );
 } );
 
 test( 'pause stops appends and the published model reflects paused', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'ignored' } ) ) );
 	expect( v.entries ).toHaveLength( 0 );
@@ -119,7 +127,7 @@ test( 'pause stops appends and the published model reflects paused', () => {
 } );
 
 test( 'resume after pause lets rows through again', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'dropped' } ) ) );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
@@ -130,7 +138,7 @@ test( 'resume after pause lets rows through again', () => {
 } );
 
 test( 'clear empties the buffer, counter and rps', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	for ( let i = 0; i < 10; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
@@ -144,7 +152,7 @@ test( 'clear empties the buffer, counter and rps', () => {
 } );
 
 test( 'the published model carries paused and connectionError', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
 	expect( Object.keys( v.setStateCache.view ).sort() ).toEqual( [
 		'connectionError',
@@ -153,27 +161,27 @@ test( 'the published model carries paused and connectionError', () => {
 } );
 
 test( 'connection control publishes connectionError', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( false );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
@@ -181,7 +189,7 @@ test( 'publishes an initial view model on construction', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	expect( v.name ).toBe( 'requestlog:view' );
 } );
 
@@ -191,20 +199,20 @@ test( 'names the node', () => {
 // here. Mirrors what `transformCompletedLine` used to do.
 
 test( 'drops a raw envelope whose VALUE has no url (defensive)', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( { rid: 'no-url' } ) );
 	expect( v.entries ).toHaveLength( 0 );
 } );
 
 test( 'drops a raw envelope whose VALUE is not an object', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( 'string' ) );
 	v.fill( rowMsg( [ 1, 2, 3 ] ) );
 	expect( v.entries ).toHaveLength( 0 );
 } );
 
 test( 'clips url at 2000 chars + ellipsis when appending', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	const longUrl = 'https://x/' + 'a'.repeat( 5000 );
 	v.fill(
 		rowMsg( {
@@ -220,7 +228,7 @@ test( 'clips url at 2000 chars + ellipsis when appending', () => {
 } );
 
 test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	const longUA = 'a'.repeat( 1000 );
 	v.fill(
 		rowMsg( {
@@ -236,7 +244,7 @@ test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
 } );
 
 test( 'fills sensible defaults for missing fields on the appended entry', () => {
-	const v = createRequestLogView( 'requestlog:view' );
+	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( { url: 'https://x' } ) );
 	expect( v.entries ).toHaveLength( 1 );
 	const e = v.entries[ 0 ];
@@ -251,8 +259,7 @@ test( 'fills sensible defaults for missing fields on the appended entry', () => 
 
 describe( 'requestlog:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createRequestLogView( 'requestlog:view' ).constructor.nodeSchema();
+		const schema = makeView( 'requestlog:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

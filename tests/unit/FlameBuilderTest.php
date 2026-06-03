@@ -1622,4 +1622,31 @@ class FlameBuilderTest extends TestCase {
 		$snap_b = $store->get_hourly();
 		$this->assertSame( $snap_a, $snap_b, 'second flush does not double-count' );
 	}
+
+	// --- Rule 2: sibling is sunk into the interpreter ---------------------
+
+	public function test_sink_propagates_to_auto_tuner_sibling(): void {
+		// make_node auto-sinks FlameBuilder into _command_interpreter; the
+		// overridden sink() setter must propagate that sink to the owned
+		// auto-tuner sibling so it routes like any other sibling (Rule 2c).
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+
+		$capture = new Capture_Sink_Node();
+		$fb->sink( $capture );
+
+		$at = Core::node( 'fb:auto-tuner' );
+		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class, $at );
+		$this->assertSame( $capture, $at->sink(), 'auto-tuner sibling adopts the interpreter sink' );
+	}
+
+	public function test_sink_getter_returns_own_sink(): void {
+		// The sink() override must still behave as a plain getter when called
+		// with no argument (don't accidentally return the sibling's sink).
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$capture = new Capture_Sink_Node();
+		$fb->sink( $capture );
+		$this->assertSame( $capture, $fb->sink() );
+	}
 }

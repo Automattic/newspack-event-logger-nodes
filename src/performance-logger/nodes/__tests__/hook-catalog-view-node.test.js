@@ -25,9 +25,17 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createHookCatalogView } from '../hook-catalog-view-node';
+import { HookCatalogViewNode } from '../hook-catalog-view-node';
 
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name ) {
+	const node = new HookCatalogViewNode();
+	node.setName( name );
+	return node;
+}
 
 const SAMPLE = {
 	Lifecycle: [ 'init', 'shutdown' ],
@@ -50,7 +58,7 @@ function replyMsg( {
 
 describe( 'hookcatalog:view — initial model', () => {
 	test( 'publishes an initial loading model on construction', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		expect( v.setStateCache.view ).toMatchObject( {
 			hooksByCategory: {},
 			loading: true,
@@ -59,12 +67,12 @@ describe( 'hookcatalog:view — initial model', () => {
 	} );
 
 	test( 'names the node', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		expect( v.name ).toBe( 'hookcatalog:view' );
 	} );
 
 	test( 'has a `pending` Map for hook-side promise resolution', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		expect( v.pending ).toBeInstanceOf( Map );
 		expect( v.pending.size ).toBe( 0 );
 	} );
@@ -72,7 +80,7 @@ describe( 'hookcatalog:view — initial model', () => {
 
 describe( 'hookcatalog:view — hooks_registered reply updates the render model', () => {
 	test( 'extracts hooks_by_category from the reply payload', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill(
 			replyMsg( {
 				name: 'hooks_registered',
@@ -86,7 +94,7 @@ describe( 'hookcatalog:view — hooks_registered reply updates the render model'
 	} );
 
 	test( 'an empty hooks_by_category yields an empty map', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill(
 			replyMsg( {
 				name: 'hooks_registered',
@@ -98,7 +106,7 @@ describe( 'hookcatalog:view — hooks_registered reply updates the render model'
 	} );
 
 	test( 'a null hooks_by_category yields an empty map', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill(
 			replyMsg( {
 				name: 'hooks_registered',
@@ -109,14 +117,14 @@ describe( 'hookcatalog:view — hooks_registered reply updates the render model'
 	} );
 
 	test( 'a missing payload yields an empty map (still clears loading)', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill( replyMsg( { name: 'hooks_registered', payload: null } ) );
 		expect( v.setStateCache.view.hooksByCategory ).toEqual( {} );
 		expect( v.setStateCache.view.loading ).toBe( false );
 	} );
 
 	test( 'a reply clears a prior error', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		// Surface a non-pending error first.
 		v.fill(
 			replyMsg( {
@@ -138,7 +146,7 @@ describe( 'hookcatalog:view — hooks_registered reply updates the render model'
 
 describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 	test( 'an un-correlated TM_ERROR sets the error and clears loading (prior map preserved)', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill(
 			replyMsg( {
 				name: 'hooks_registered',
@@ -159,7 +167,7 @@ describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 	} );
 
 	test( 'TM_ERROR without a message defaults the error string', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill(
 			replyMsg( {
 				name: 'hooks_registered',
@@ -172,7 +180,7 @@ describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 	} );
 
 	test( 'TM_ERROR matching a pending entry does NOT pollute global view.error', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		v.fill(
 			replyMsg( {
 				name: 'hooks_registered',
@@ -196,7 +204,7 @@ describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 	} );
 
 	test( 'TM_ERROR with a structured {message} payload extracts the message field', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		const reject = jest.fn();
 		v.pending.set( 'op-9', { resolve: jest.fn(), reject } );
 		v.fill(
@@ -216,7 +224,7 @@ describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 
 describe( 'hookcatalog:view — pending-promise resolution', () => {
 	test( 'a successful reply resolves the pending promise with the payload', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
 		v.pending.set( 'op-1', { resolve, reject } );
@@ -228,7 +236,7 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a TM_ERROR reply rejects the pending promise and clears the entry', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
 		v.pending.set( 'op-2', { resolve, reject } );
@@ -248,7 +256,7 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a hooks_registered reply still updates the render model when also resolving a pending promise', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		const resolve = jest.fn();
 		v.pending.set( 'op-3', { resolve, reject: jest.fn() } );
 		v.fill(
@@ -263,7 +271,7 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a reply without a matching pending entry is handled normally (no throw)', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		expect( () =>
 			v.fill(
 				replyMsg( {
@@ -276,7 +284,7 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 	} );
 
 	test( 'a reply with no ID is handled normally (no pending lookup)', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		expect( () =>
 			v.fill(
 				replyMsg( {
@@ -291,7 +299,7 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 
 describe( 'hookcatalog:view — malformed input', () => {
 	test( 'ignores a message with no VALUE', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		const initial = v.setStateCache.view;
 		const m = newMessage();
 		m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
@@ -300,7 +308,7 @@ describe( 'hookcatalog:view — malformed input', () => {
 	} );
 
 	test( 'ignores a message with a non-object VALUE', () => {
-		const v = createHookCatalogView( 'hookcatalog:view' );
+		const v = makeView( 'hookcatalog:view' );
 		const initial = v.setStateCache.view;
 		const m = newMessage();
 		m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
@@ -312,17 +320,14 @@ describe( 'hookcatalog:view — malformed input', () => {
 
 describe( 'hookcatalog:view — registration', () => {
 	test( 'registers under the given name', () => {
-		const node = createHookCatalogView( 'hookcatalog:view' );
+		const node = makeView( 'hookcatalog:view' );
 		expect( Core.node( 'hookcatalog:view' ) ).toBe( node );
 	} );
 } );
 
 describe( 'hookcatalog:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createHookCatalogView(
-				'hookcatalog:view'
-			).constructor.nodeSchema();
+		const schema = makeView( 'hookcatalog:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

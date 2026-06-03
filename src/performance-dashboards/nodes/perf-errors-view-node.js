@@ -164,19 +164,3 @@ export class PerfErrorsViewNode extends Node {
 		} );
 	}
 }
-
-/**
- * Create and register the Error Log view-model node.
- *
- * @param {string} name              Node name.
- * @param {Object} [opts]            Options.
- * @param {number} [opts.maxEntries] Buffer cap (default 5000, matching the page).
- * @return {PerfErrorsViewNode} The view-model node.
- */
-export function createPerfErrorsView( name, opts = {} ) {
-	const node = new PerfErrorsViewNode(
-		opts.maxEntries || DEFAULT_MAX_ENTRIES
-	);
-	node.setName( name );
-	return node;
-}

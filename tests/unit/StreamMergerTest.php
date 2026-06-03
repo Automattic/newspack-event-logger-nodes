@@ -2707,4 +2707,80 @@ class StreamMergerTest extends TestCase {
 		$hc  = $ref->getProperty( 'health_check' )->getValue( $sm );
 		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Health_Check_Tick_Node::class, $hc );
 	}
+
+	// ------------------------------------------------------------------------
+	// Offsetlog Partition is a named, patron-linked sibling (make_node parity).
+	// ------------------------------------------------------------------------
+
+	/** Read the merger's lazily-built offsetlog Partition out of its private property. */
+	private function offsetlog_of( Stream_Merger_Node $sm ): ?Partition_Node {
+		$ref  = new \ReflectionClass( $sm );
+		$prop = $ref->getProperty( 'offsetlog' );
+		return $prop->getValue( $sm );
+	}
+
+	/**
+	 * commit_all() materializes the offsetlog Partition; it must be a named,
+	 * patron-linked sibling — named `{merger}:offsetlog`, registered in Core,
+	 * and patron set to the merger so dump_metadata hides it from the canvas.
+	 */
+	public function test_offsetlog_partition_is_named_and_patron_set(): void {
+		$sm = $this->make_merger();
+		$sm->add_remote( 'siteOff1', 'http://siteOff1.test/', 'tok' );
+		$sm->commit_all();
+
+		$offsetlog = $this->offsetlog_of( $sm );
+		$this->assertInstanceOf( Partition_Node::class, $offsetlog );
+		$this->assertSame( 'test-stream-merger:offsetlog', $offsetlog->name() );
+		$this->assertSame( $offsetlog, Core::node( 'test-stream-merger:offsetlog' ) );
+		$this->assertSame( $sm, $offsetlog->patron() );
+	}
+
+	/**
+	 * When a `_command_interpreter` is in scope, the offsetlog sibling is sunk
+	 * into it (the offsetlog has no specific sink of its own).
+	 */
+	public function test_offsetlog_partition_sinks_into_command_interpreter_when_present(): void {
+		$ci = new \Newspack_Nodes\Command_Interpreter_Node();
+		$ci->name( \Newspack_Nodes\Node_Names::COMMAND_INTERPRETER );
+
+		$sm = $this->make_merger();
+		$sm->add_remote( 'siteOff2', 'http://siteOff2.test/', 'tok' );
+		$sm->commit_all();
+
+		$offsetlog = $this->offsetlog_of( $sm );
+		$this->assertInstanceOf( Partition_Node::class, $offsetlog );
+		$this->assertSame( $ci, $offsetlog->sink() );
+	}
+
+	/**
+	 * An unnamed merger still names its offsetlog sibling: the name falls back
+	 * to the stable `aggregator.p{N}` partition-dir basename (no empty-key node).
+	 */
+	public function test_offsetlog_partition_name_falls_back_when_merger_unnamed(): void {
+		$sm = new Stream_Merger_Node();
+		$sm->arguments( 'firehose 0' );
+		$sm->set_require_https( false );
+		$sm->add_remote( 'siteOff3', 'http://siteOff3.test/', 'tok' );
+		$sm->commit_all();
+
+		$offsetlog = $this->offsetlog_of( $sm );
+		$this->assertInstanceOf( Partition_Node::class, $offsetlog );
+		$this->assertSame( 'aggregator.p0:offsetlog', $offsetlog->name() );
+	}
+
+	/**
+	 * The named offsetlog sibling is unregistered by remove_node() so a removed +
+	 * recreated merger doesn't leak `{merger}:offsetlog` in Core.
+	 */
+	public function test_remove_node_tears_down_named_offsetlog(): void {
+		$sm = $this->make_merger();
+		$sm->add_remote( 'siteOff4', 'http://siteOff4.test/', 'tok' );
+		$sm->commit_all();
+		$this->assertNotNull( Core::node( 'test-stream-merger:offsetlog' ), 'offsetlog registered after commit_all' );
+
+		$sm->remove_node();
+
+		$this->assertNull( Core::node( 'test-stream-merger:offsetlog' ), 'remove_node must unregister the offsetlog sibling' );
+	}
 }

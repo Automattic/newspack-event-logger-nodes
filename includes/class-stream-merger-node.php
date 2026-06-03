@@ -162,6 +162,9 @@ class Stream_Merger_Node extends Timer_Node {
 			$this->health_check->remove_node();
 		}
 		$this->health_check = null;
+		// Tear down the named offsetlog sibling (+ its :config) so a removed merger doesn't leak it in Core.
+		$this->offsetlog?->remove_node();
+		$this->offsetlog = null;
 		parent::remove_node();
 	}
 
@@ -673,6 +676,16 @@ class Stream_Merger_Node extends Timer_Node {
 		// inner Partition's own partition axis is always 0. Matches the
 		// pattern Consumer uses for its offsetlog.
 		$this->offsetlog = new Partition_Node();
+		// Named, patron-linked plumbing sibling (Tachikoma make_node parity):
+		// `{merger}:offsetlog`, falling back to the stable partition-dir basename
+		// when the merger is unnamed. patron() hides it from the canvas.
+		$prefix = '' !== $this->name ? $this->name : "aggregator.p{$this->partition}";
+		$this->offsetlog->name( "{$prefix}:offsetlog" );
+		$this->offsetlog->patron( $this );
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $this->offsetlog->sink() && null !== $ci ) {
+			$this->offsetlog->sink( $ci );
+		}
 		$this->offsetlog->arguments( "{$dir} 0" );
 		return $this->offsetlog;
 	}

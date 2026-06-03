@@ -16,9 +16,17 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createPerformanceView } from '../performance-view-node';
+import { PerformanceViewNode } from '../performance-view-node';
 
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name ) {
+	const node = new PerformanceViewNode();
+	node.setName( name );
+	return node;
+}
 
 // A control/result message: TM_STRUCT carrying { action, slice, … }.
 const ctrl = ( value ) => {
@@ -32,7 +40,7 @@ const ctrl = ( value ) => {
 const view = () => Core.node( 'performance:view' ).setStateCache.view;
 
 test( 'publishes an initial model with four empty slices + lastRefresh null', () => {
-	createPerformanceView( 'performance:view' );
+	makeView( 'performance:view' );
 	expect( view() ).toEqual( {
 		overview: { data: null, loading: false, error: null },
 		urls: { data: [], total: 0, loading: false, error: null },
@@ -43,7 +51,7 @@ test( 'publishes an initial model with four empty slices + lastRefresh null', ()
 } );
 
 test( 'loading sets the slice loading:true and leaves the others', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill( ctrl( { action: 'loading', slice: 'overview' } ) );
 	expect( view().overview ).toEqual( {
 		data: null,
@@ -54,7 +62,7 @@ test( 'loading sets the slice loading:true and leaves the others', () => {
 } );
 
 test( 'overview result stores data, clears loading, stamps lastRefresh', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill( ctrl( { action: 'loading', slice: 'overview' } ) );
 	v.fill(
 		ctrl( {
@@ -72,7 +80,7 @@ test( 'overview result stores data, clears loading, stamps lastRefresh', () => {
 } );
 
 test( 'urls result stores data + total from the reply', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -89,7 +97,7 @@ test( 'urls result stores data + total from the reply', () => {
 } );
 
 test( 'requestDetail result stores data', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -105,7 +113,7 @@ test( 'requestDetail result stores data', () => {
 } );
 
 test( 'error on a slice sets error + clears loading, preserving prior data on OTHER slices', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -123,7 +131,7 @@ test( 'error on a slice sets error + clears loading, preserving prior data on OT
 } );
 
 test( 'urlDetail initial:true replaces and records last_modified', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -142,7 +150,7 @@ test( 'urlDetail initial:true replaces and records last_modified', () => {
 } );
 
 test( 'urlDetail non-initial with a NEW last_modified merges new rids newest-first', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -173,7 +181,7 @@ test( 'urlDetail non-initial with a NEW last_modified merges new rids newest-fir
 } );
 
 test( 'urlDetail merge caps the requests list at 500 newest-first', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	const prev = [];
 	for ( let i = 0; i < 500; i++ ) {
 		prev.push( { rid: `old-${ i }`, timestamp: i } );
@@ -203,7 +211,7 @@ test( 'urlDetail merge caps the requests list at 500 newest-first', () => {
 } );
 
 test( 'urlDetail non-initial with the SAME last_modified is a no-op (model reference unchanged)', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -232,7 +240,7 @@ test( 'urlDetail non-initial with the SAME last_modified is a no-op (model refer
 } );
 
 test( 'clear of urlDetail resets it and clears stored last_modified (next non-initial is fresh)', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	v.fill(
 		ctrl( {
 			action: 'result',
@@ -269,7 +277,7 @@ test( 'clear of urlDetail resets it and clears stored last_modified (next non-in
 } );
 
 test( 'urlDetail initial result with null data is a safe no-op (does not crash)', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	const before = view();
 	expect( () =>
 		v.fill(
@@ -286,7 +294,7 @@ test( 'urlDetail initial result with null data is a safe no-op (does not crash)'
 } );
 
 test( 'urlDetail non-initial result with null data is a safe no-op (does not crash)', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	// Seed a prior urlDetail so we can assert it survives the null payload.
 	v.fill(
 		ctrl( {
@@ -318,7 +326,7 @@ test( 'urlDetail non-initial result with null data is a safe no-op (does not cra
 } );
 
 test( 'a malformed message (no VALUE/action) is ignored', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	const before = view();
 	v.fill( ctrl( undefined ) );
 	v.fill( ctrl( { slice: 'overview' } ) );
@@ -326,7 +334,7 @@ test( 'a malformed message (no VALUE/action) is ignored', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createPerformanceView( 'performance:view' );
+	const v = makeView( 'performance:view' );
 	expect( v.name ).toBe( 'performance:view' );
 } );
 
@@ -350,7 +358,7 @@ function reply( id, name, payload, opts = {} ) {
 
 describe( 'performance:view — pending-matched reply routing', () => {
 	test( 'an overview reply matched against pending applies the result to the overview slice', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		v.pending.set( 'op-1', { slice: 'overview' } );
 		v.fill( reply( 'op-1', 'overview', { total_requests: 9 } ) );
 		expect( view().overview ).toEqual( {
@@ -362,7 +370,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a urls reply matched against pending applies data + total to the urls slice', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		v.pending.set( 'op-2', { slice: 'urls' } );
 		v.fill(
 			reply( 'op-2', 'urls', {
@@ -381,7 +389,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a urlDetail reply with initial:true replaces and records last_modified', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		v.pending.set( 'op-3', { slice: 'urlDetail', initial: true } );
 		v.fill(
 			reply( 'op-3', 'url_detail', {
@@ -395,7 +403,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a urlDetail reply non-initial with NEW last_modified merges newest-first', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		v.pending.set( 'op-3a', { slice: 'urlDetail', initial: true } );
 		v.fill(
 			reply( 'op-3a', 'url_detail', {
@@ -416,7 +424,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a requestDetail reply applies the data to the requestDetail slice', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		v.pending.set( 'op-4', { slice: 'requestDetail' } );
 		v.fill( reply( 'op-4', 'request_detail', { rid: 'r1', url: '/x' } ) );
 		expect( view().requestDetail ).toEqual( {
@@ -427,7 +435,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a TM_ERROR reply matched against pending applies an error to the slice', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		v.pending.set( 'op-5', { slice: 'overview' } );
 		v.fill(
 			reply( 'op-5', 'overview', 'something failed', { error: true } )
@@ -439,7 +447,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a resolveOnly pending resolves the Promise with the raw payload (no view-model update)', async () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		const p = new Promise( ( resolve, reject ) => {
 			v.pending.set( 'op-6', { resolveOnly: true, resolve, reject } );
 		} );
@@ -457,7 +465,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a resolveOnly pending with a transform pipes the payload through it', async () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		const transform = ( d ) => ( d && d.breakdown_time_series ) || null;
 		const p = new Promise( ( resolve, reject ) => {
 			v.pending.set( 'op-7', {
@@ -476,7 +484,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'a resolveOnly TM_ERROR rejects the Promise without updating any slice', async () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		const before = view();
 		const p = new Promise( ( resolve, reject ) => {
 			v.pending.set( 'op-8', { resolveOnly: true, resolve, reject } );
@@ -489,7 +497,7 @@ describe( 'performance:view — pending-matched reply routing', () => {
 	} );
 
 	test( 'an unmatched-ID reply is ignored (no pending entry → no slice update)', () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		const before = view();
 		v.fill( reply( 'op-unknown', 'overview', { total_requests: 1 } ) );
 		expect( view() ).toBe( before );
@@ -503,7 +511,7 @@ void TO;
 
 describe( 'performance:view — removeNode settles in-flight resolveOnly pending', () => {
 	test( 'removeNode resolves resolveOnly pending with null and drops slice-tagged entries', async () => {
-		const v = createPerformanceView( 'performance:view' );
+		const v = makeView( 'performance:view' );
 		// A resolveOnly Promise (resolveRequest / fetchUrlBreakdown). On teardown
 		// it must SETTLE so the caller's await completes — resolved with null (the
 		// methods' canonical "no data" return), NOT rejected, so fetchUrlBreakdown's
@@ -528,10 +536,7 @@ describe( 'performance:view — removeNode settles in-flight resolveOnly pending
 
 describe( 'performance:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createPerformanceView(
-				'performance:view'
-			).constructor.nodeSchema();
+		const schema = makeView( 'performance:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

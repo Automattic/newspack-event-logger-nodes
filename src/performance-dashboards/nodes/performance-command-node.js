@@ -353,24 +353,3 @@ export class PerformanceCommandNode extends Node {
 		this.sink.fill( out );
 	}
 }
-
-/**
- * Create and register the Performance Dashboard command-builder node.
- *
- * @param {string}   name            Node name.
- * @param {Object}   [opts]          Options.
- * @param {Function} [opts.onError]  Global error-toast seam; called on validation
- *                                   failures (same contract as legacy onError).
- * @param {string}   [opts.viewName] View node name where pending entries are
- *                                   registered. Defaults to `performance:view`;
- *                                   tests override.
- * @return {PerformanceCommandNode} The command-builder node.
- */
-export function createPerformanceCommand( name, opts = {} ) {
-	const node = new PerformanceCommandNode(
-		opts.onError,
-		opts.viewName || 'performance:view'
-	);
-	node.setName( name );
-	return node;
-}

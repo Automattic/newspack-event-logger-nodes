@@ -24,10 +24,18 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
-import { createAggregatorView } from '../aggregator-view-node';
+import { AggregatorViewNode } from '../aggregator-view-node';
 
 // setName registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
+
+// Construct + name the node directly — the createX factory is gone (make_node
+// builds it in production); bare-new + setName is the test seam.
+function makeView( name ) {
+	const node = new AggregatorViewNode();
+	node.setName( name );
+	return node;
+}
 
 // A reply Message as the server emits one (the format HttpOutNode feeds back into
 // the interpreter: TM_COMMAND|TM_RESPONSE carrying `{ name, payload }` in VALUE).
@@ -68,7 +76,7 @@ const SAMPLE = {
 };
 
 test( 'publishes an initial loading model on construction', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	expect( v.setStateCache.view ).toMatchObject( {
 		servers: null,
 		loading: true,
@@ -77,7 +85,7 @@ test( 'publishes an initial loading model on construction', () => {
 } );
 
 test( 'a reply Message converts the server map (value.payload) to an array of servers', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	v.fill( replyMsg( SAMPLE, 100 ) );
 	const model = v.setStateCache.view;
 	expect( Array.isArray( model.servers ) ).toBe( true );
@@ -89,13 +97,13 @@ test( 'a reply Message converts the server map (value.payload) to an array of se
 } );
 
 test( 'a reply Message stores serverNow from its TIMESTAMP', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	v.fill( replyMsg( SAMPLE, 1748960000 ) );
 	expect( v.setStateCache.view.serverNow ).toBe( 1748960000 );
 } );
 
 test( 'computes connectedCount (servers with >=1 connected partition) and totalCount', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	v.fill( replyMsg( SAMPLE, 1 ) );
 	const model = v.setStateCache.view;
 	expect( model.connectedCount ).toBe( 1 );
@@ -103,7 +111,7 @@ test( 'computes connectedCount (servers with >=1 connected partition) and totalC
 } );
 
 test( 'a reply Message clears loading and any prior error', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	v.fill( errorMsg( 'boom' ) );
 	expect( v.setStateCache.view.error ).toBe( 'boom' );
 	v.fill( replyMsg( SAMPLE, 1 ) );
@@ -112,7 +120,7 @@ test( 'a reply Message clears loading and any prior error', () => {
 } );
 
 test( 'a reply Message sets lastRefresh (a browser-clock ms number)', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	const before = Date.now();
 	v.fill( replyMsg( SAMPLE, 1 ) );
 	const { lastRefresh } = v.setStateCache.view;
@@ -121,7 +129,7 @@ test( 'a reply Message sets lastRefresh (a browser-clock ms number)', () => {
 } );
 
 test( 'an empty payload yields an empty servers array, connected 0 / total 0', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	v.fill( replyMsg( {}, 1 ) );
 	const model = v.setStateCache.view;
 	expect( model.servers ).toEqual( [] );
@@ -130,7 +138,7 @@ test( 'an empty payload yields an empty servers array, connected 0 / total 0', (
 } );
 
 test( 'a TM_ERROR reply sets the error string and clears loading (servers untouched)', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	v.fill( replyMsg( SAMPLE, 1 ) );
 	v.fill( errorMsg( 'aggregator down' ) );
 	const model = v.setStateCache.view;
@@ -142,7 +150,7 @@ test( 'a TM_ERROR reply sets the error string and clears loading (servers untouc
 } );
 
 test( 'a TM_ERROR reply with no payload uses a default error string', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	const m = newMessage();
 	m[ TYPE ] = TM_COMMAND | TM_RESPONSE | TM_ERROR;
 	m[ VALUE ] = { name: 'status', payload: null };
@@ -152,7 +160,7 @@ test( 'a TM_ERROR reply with no payload uses a default error string', () => {
 } );
 
 test( 'ignores a message with no VALUE', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	const initial = v.setStateCache.view;
 	const m = newMessage();
 	// No VALUE / TYPE — pure noise.
@@ -161,14 +169,13 @@ test( 'ignores a message with no VALUE', () => {
 } );
 
 test( 'names the node', () => {
-	const v = createAggregatorView( 'aggregator:view' );
+	const v = makeView( 'aggregator:view' );
 	expect( v.name ).toBe( 'aggregator:view' );
 } );
 
 describe( 'aggregator:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema =
-			createAggregatorView( 'aggregator:view' ).constructor.nodeSchema();
+		const schema = makeView( 'aggregator:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

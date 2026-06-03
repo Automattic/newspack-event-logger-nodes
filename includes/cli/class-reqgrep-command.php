@@ -46,6 +46,8 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Nodes\Consumer_Node;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
 
 class Reqgrep_Command {
@@ -495,7 +497,20 @@ class Reqgrep_Command {
 	 */
 	private function get_partition( int $partition ): Partition_Node {
 		if ( ! isset( $this->partition_cache[ $partition ] ) ) {
-			$p = new Partition_Node();
+			// Name the sibling after the firehose log basename; suffix with a
+			// process+object-id token so a second command run doesn't clash with
+			// stale Core registrations.
+			$role           = \pathinfo( $this->base_dir, PATHINFO_FILENAME ) ?: 'firehose';
+			$instance_token = \getmypid() . '-' . \spl_object_id( $this );
+			$p              = new Partition_Node();
+			$p->name( "{$role}.{$instance_token}.p{$partition}" );
+			// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
+			$p->patron( $p );
+			// Rule 4: sink into the interpreter only when one is in scope.
+			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+			if ( null === $p->sink() && null !== $ci ) {
+				$p->sink( $ci );
+			}
 			$p->arguments( "{$this->base_dir} {$partition}" );
 			$this->partition_cache[ $partition ] = $p;
 		}

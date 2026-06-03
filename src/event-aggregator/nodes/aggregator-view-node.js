@@ -112,15 +112,3 @@ export class AggregatorViewNode extends Node {
 		this.setState( 'view', this.model );
 	}
 }
-
-/**
- * Create and register the Aggregator Status view-model node.
- *
- * @param {string} name Node name.
- * @return {AggregatorViewNode} The view-model node.
- */
-export function createAggregatorView( name ) {
-	const node = new AggregatorViewNode();
-	node.setName( name );
-	return node;
-}

@@ -13,6 +13,7 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
+use Newspack_Nodes\Node_Names;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -99,6 +100,14 @@ class Request_Builder_Node extends Node {
 		// Sink wiring also propagates from the overridden sink() setter.
 		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
+
+		// Rule 2c sibling default: sink into `_command_interpreter` when one is
+		// in scope so Flight's emits route there before the topology wires
+		// RequestBuilder's own sink. Rule 4: skip when no interpreter exists.
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null !== $ci && null === $this->flight->sink() ) {
+			$this->flight->sink( $ci );
+		}
 
 		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
 		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).

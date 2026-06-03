@@ -167,6 +167,18 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Propagate the make_node auto-sink down to the owned auto-tuner sibling so
+	 * it's sunk into _command_interpreter like any other sibling (Rule 2c).
+	 */
+	public function sink( ?Node $node = null ): ?Node {
+		if ( \func_num_args() > 0 ) {
+			$this->auto_tuner?->sink( $node );
+			return parent::sink( $node );
+		}
+		return parent::sink();
+	}
+
+	/**
 	 * Inject the Stats_Store.
 	 */
 	public function set_stats_store( ?Stats_Store $store ): void {

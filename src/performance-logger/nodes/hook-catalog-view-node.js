@@ -131,15 +131,3 @@ function _errorMessage( payload ) {
 	}
 	return 'Operation failed';
 }
-
-/**
- * Create and register the hook-catalog view-model node.
- *
- * @param {string} name Node name.
- * @return {HookCatalogViewNode} The view-model node.
- */
-export function createHookCatalogView( name ) {
-	const node = new HookCatalogViewNode();
-	node.setName( name );
-	return node;
-}

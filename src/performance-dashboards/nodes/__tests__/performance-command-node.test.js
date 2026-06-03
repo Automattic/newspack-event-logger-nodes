@@ -30,22 +30,32 @@ import {
 	TM_STRUCT,
 	formatCommandArgs,
 } from '@newspack-nodes/runtime';
-import {
-	createPerformanceCommand,
-	PerformanceCommandNode,
-} from '../performance-command-node';
-import { createPerformanceView } from '../performance-view-node';
+import { PerformanceCommandNode } from '../performance-command-node';
+import { PerformanceViewNode } from '../performance-view-node';
 
 beforeEach( () => Core.reset() );
+
+// Construct + name a command node directly — the createX factory is gone
+// (make_node builds it in production); bare-new + setName is the test seam.
+// The viewName default lives in the ctor, so a no-arg make_node still routes.
+function makeCommand( name, opts = {} ) {
+	const node = new PerformanceCommandNode(
+		opts.onError,
+		opts.viewName || 'performance:view'
+	);
+	node.setName( name );
+	return node;
+}
 
 // Mount a command+view pair sharing a recording sink so we can inspect every
 // outbound message in order.
 function mount( opts = {} ) {
 	const outbox = [];
 	const sink = { fill: ( m ) => outbox.push( m ) };
-	const view = createPerformanceView( 'performance:view' );
+	const view = new PerformanceViewNode();
+	view.setName( 'performance:view' );
 	view.sink = sink;
-	const command = createPerformanceCommand( 'performance:command', opts );
+	const command = makeCommand( 'performance:command', opts );
 	command.sink = sink;
 	command.target = 'performance:view';
 	command.viewName = 'performance:view';
@@ -334,24 +344,22 @@ describe( 'performance:command — close() guard', () => {
 } );
 
 describe( 'performance:command — node identity', () => {
-	test( 'createPerformanceCommand names the node', () => {
+	test( 'setName names the node', () => {
 		Core.reset();
-		const n = createPerformanceCommand( 'performance:command', {} );
+		const n = makeCommand( 'performance:command', {} );
 		expect( n.name ).toBe( 'performance:command' );
 	} );
 
 	test( 'no longer requires a commandClient (no client.send path)', () => {
-		// The factory accepts no opts.commandClient — passing one MUST not throw,
+		// The ctor accepts no commandClient — constructing one MUST not throw,
 		// but the command no longer consults it.
-		expect( () =>
-			createPerformanceCommand( 'performance:command', {} )
-		).not.toThrow();
+		expect( () => makeCommand( 'performance:command', {} ) ).not.toThrow();
 	} );
 } );
 
 describe( 'performance:command — nodeSchema', () => {
 	test( 'is a Hidden, source (no input port) node', () => {
-		const schema = createPerformanceCommand(
+		const schema = makeCommand(
 			'performance:command',
 			{}
 		).constructor.nodeSchema();

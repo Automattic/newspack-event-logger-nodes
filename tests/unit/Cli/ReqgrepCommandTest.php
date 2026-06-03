@@ -18,6 +18,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\CLI;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Command_Interpreter_Node;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -886,6 +889,113 @@ class ReqgrepCommandTest extends TestCase {
 
 			$this->assertSame( $a, $b, 'same partition index returns the cached instance' );
 			$this->assertNotSame( $a, $c, 'different index → different instance' );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// Sibling-node contract: the Partition materialized in get_partition() is a
+	// SIBLING (utility node created inside a helper). Per the make_node
+	// discipline it MUST be named, have its patron set (so dump_metadata hides
+	// it from the canvas), and be sunk into the `_command_interpreter` when one
+	// is in scope (Rule 4 skips the sink when no interpreter is registered).
+	// -------------------------------------------------------------------------
+
+	public function test_get_partition_names_the_sibling(): void {
+		$tmp = '/tmp/reqgrep-sibling-name-' . \uniqid();
+		\mkdir( $tmp, 0755, true );
+		try {
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp . '/firehose.log' );
+
+			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
+			$ref->setAccessible( true );
+			$p = $ref->invoke( $cmd, 0 );
+
+			$this->assertStringStartsWith( 'firehose.', $p->name(), 'sibling Partition must be named after the firehose log' );
+			$this->assertStringEndsWith( '.p0', $p->name() );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_get_partition_sets_patron(): void {
+		$tmp = '/tmp/reqgrep-sibling-patron-' . \uniqid();
+		\mkdir( $tmp, 0755, true );
+		try {
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp . '/firehose.log' );
+
+			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
+			$ref->setAccessible( true );
+			$p = $ref->invoke( $cmd, 0 );
+
+			$this->assertNotNull( $p->patron(), 'sibling Partition must have a patron (marks it as plumbing)' );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_get_partition_sunk_into_command_interpreter_when_present(): void {
+		$tmp = '/tmp/reqgrep-sibling-sink-' . \uniqid();
+		\mkdir( $tmp, 0755, true );
+		try {
+			// Rule 4: an in-scope `_command_interpreter` becomes the sibling's sink.
+			$ci = new Command_Interpreter_Node();
+			$ci->name( Node_Names::COMMAND_INTERPRETER );
+
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp . '/firehose.log' );
+
+			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
+			$ref->setAccessible( true );
+			$p = $ref->invoke( $cmd, 0 );
+
+			$this->assertSame( $ci, $p->sink(), 'sibling Partition must sink into the interpreter when one is registered' );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_get_partition_no_interpreter_leaves_sink_null(): void {
+		$tmp = '/tmp/reqgrep-sibling-nosink-' . \uniqid();
+		\mkdir( $tmp, 0755, true );
+		try {
+			// Rule 4 exception: no `_command_interpreter` in scope — still NAME +
+			// set patron, but skip the interpreter sink (sink stays null).
+			$this->assertNull( Core::node( Node_Names::COMMAND_INTERPRETER ) );
+
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setAccessible( true );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp . '/firehose.log' );
+
+			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
+			$ref->setAccessible( true );
+			$p = $ref->invoke( $cmd, 0 );
+
+			$this->assertStringStartsWith( 'firehose.', $p->name() );
+			$this->assertNotNull( $p->patron() );
+			$this->assertNull( $p->sink(), 'with no interpreter in scope the sibling sink stays null (Rule 4)' );
 		} finally {
 			$this->rmdir_recursive( $tmp );
 		}

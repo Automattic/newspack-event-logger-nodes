@@ -278,15 +278,3 @@ function _errorMessage( payload ) {
 	}
 	return 'Operation failed';
 }
-
-/**
- * Create and register the Performance Dashboard view-model node.
- *
- * @param {string} name Node name.
- * @return {PerformanceViewNode} The view-model node.
- */
-export function createPerformanceView( name ) {
-	const node = new PerformanceViewNode();
-	node.setName( name );
-	return node;
-}
