@@ -85,6 +85,7 @@ class CacheWarmerTickTest extends TestCase {
 
 		$node = new Cache_Warmer_Tick_Node();
 		$node->name( 'cache-warmer:tick' );
+		$node->arguments( '' );
 
 		$ref = new \ReflectionProperty( \Newspack_Nodes\Node::class, 'registrations' );
 		$ref->setAccessible( true );

@@ -23,7 +23,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Message;
 use Newspack_Nodes\Timer_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -87,21 +87,22 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 			return parent::name();
 		}
 		$result = parent::name( $name );
-		$this->start_periodic_tick();
 		return $result;
 	}
 
-	/**
-	 * Register on `_router`'s TIMER so notify_timer() drives fire_cb() -> fire()
-	 * each heartbeat. No-ops gracefully (rate-limited warning, no throw) when
-	 * there's no _router — periodic tick disabled, not an error.
-	 */
-	public function start_periodic_tick(): void {
-		if ( '' === $this->name || null === Core::node( Node_Names::ROUTER ) ) {
-			Core::print_less_often( 'CacheWarmerTick::start_periodic_tick: no _router; periodic tick disabled' );
-			return;
+	public function arguments( ?string $args = null ): string {
+		if ( null === $args ) {
+			return $this->arguments;
 		}
-		$this->set_timer();
+		$this->arguments = $args;
+		if ( '' === $args ) {
+			$this->set_timer();
+		} elseif ( preg_match( '/^[0-9]+$/', $args ) ) {
+			$this->set_timer( (int) $args );
+		} else {
+			throw new \InvalidArgumentException( 'Bad arguments for Cache_Warmer_Tick' );
+		}
+		return $this->arguments;
 	}
 
 	/**
@@ -117,25 +118,16 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 		}
 		$this->last_enqueue = $now;
 
-		// Worker REQUEST_URI is the spawn endpoint (skip_urls), so the parent
-		// LogManager is disabled; begin_job_context swaps to /jobs/<handler> and
-		// the fresh LogManager built on first instance() is enabled.
-		$orig_server = Job_Worker_Node::begin_job_context( self::JOB_HANDLER );
-		try {
-			$log_manager = Log_Manager::instance();
-			$log_manager->message(
-				'job',
-				[
-					'm' => [
-						'handler'    => self::JOB_HANDLER,
-						'parameters' => [ 'queued_at' => $now ],
-					],
-				]
-			);
-			$log_manager->flush();
-		} finally {
-			Job_Worker_Node::end_job_context( $orig_server );
-		}
+		$message = Message::new_message();
+		$message[ Message::TYPE  ] = Message::TM_STRUCT;
+		$message[ Message::FROM  ] = $this->name;
+		$message[ Message::TO    ] = $this->target;
+		$message[ Message::VALUE ] = [
+			'type'       => 'job',
+			'handler'    => self::JOB_HANDLER,
+			'parameters' => [ 'queued_at' => $now ],
+		];
+		parent::fill( $message );
 	}
 
 	/**
