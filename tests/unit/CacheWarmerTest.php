@@ -243,6 +243,44 @@ class CacheWarmerTest extends TestCase {
 		unset( $GLOBALS['_wp_actions']['eln_cache_warmer_sslverify'] );
 	}
 
+	public function test_run_tick_sends_basic_auth_when_credential_configured(): void {
+		// An authenticated loopback makes the edge/page cache bypass and forward
+		// to PHP (otherwise the proxy serves a cached homepage and the render —
+		// and the cold-cache decorator — never run). The credential is an
+		// application password "user:app password" supplied out-of-band.
+		$GLOBALS['_wp_test_home_url'] = 'https://www.bendsource.com';
+		Cache_Warmer::store_auth( 'svc:abcd 1234 efgh ijkl' );
+
+		Cache_Warmer::run_tick();
+
+		$call = $GLOBALS['_wp_test_remote_gets'][0];
+		$this->assertSame(
+			'Basic ' . base64_encode( 'svc:abcd 1234 efgh ijkl' ),
+			$call['args']['headers']['Authorization'] ?? null
+		);
+		unset( $GLOBALS['_wp_options']['eln_cache_warmer_auth'] );
+	}
+
+	public function test_store_auth_encrypts_the_credential_at_rest(): void {
+		Cache_Warmer::store_auth( 'svc:hunter2 secret' );
+
+		$stored = $GLOBALS['_wp_options']['eln_cache_warmer_auth'];
+		$this->assertStringStartsWith( '$enc$', $stored, 'credential must be encrypted at rest, not plaintext' );
+		$this->assertStringNotContainsString( 'hunter2', $stored );
+		unset( $GLOBALS['_wp_options']['eln_cache_warmer_auth'] );
+	}
+
+	public function test_run_tick_omits_auth_header_when_no_credential(): void {
+		$GLOBALS['_wp_test_home_url'] = 'https://www.bendsource.com';
+
+		Cache_Warmer::run_tick();
+
+		$this->assertArrayNotHasKey(
+			'Authorization',
+			$GLOBALS['_wp_test_remote_gets'][0]['args']['headers'] ?? []
+		);
+	}
+
 	// ── maybe_install_for_request() — the drop-in-load cold-cache swap ──────
 
 	public function test_install_happens_on_warm_loopback_request(): void {
