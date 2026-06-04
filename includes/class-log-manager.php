@@ -40,7 +40,7 @@ class Log_Manager {
 	private $line_limited    = false;
 	/** @var int */
 	private $line_number     = 1;
-	/** @var array<int, mixed> Timer-frame stack. */
+	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
 	private $times           = [];
 	/** @var float|null */
 	private $request_time    = null;
@@ -171,7 +171,7 @@ class Log_Manager {
 		}
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '/unknown';
+		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( self::to_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
 		$this->matches_url_filter( $this->request_url );
 	}
 
@@ -183,9 +183,9 @@ class Log_Manager {
 	private function init_firehose( array $config ): void {
 		// Set request ID FIRST — Topic constructor may trigger re-entrant
 		// message() calls (via Config::load_config filters), and those need a valid rid.
-		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
+		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
-		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) ) {
+		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['UNIQUE_ID'] ) ), 0, 64 );
 		} else {
 			$this->request_id     = self::generate_request_id();
@@ -193,7 +193,7 @@ class Log_Manager {
 		}
 
 		$base_dir            = Config::get_logs_directory() . '/firehose.log';
-		$num_partitions      = (int) ( $config['num_partitions'] ?? 1 );
+		$num_partitions      = self::to_int( $config['num_partitions'] ?? 1 );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
 		// Partition route by request_id, not by URL. Keeps every entry for a
 		// single request (WP + gyrate sub-renders + jobs spawned from it) in
@@ -203,9 +203,9 @@ class Log_Manager {
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
 		// Pass segment_size/num_segments/max_lifespan from core config to avoid Topic
 		// calling load_config(), which fires option schema filters and re-enters LogManager.
-		$segment_size = (int) ( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
-		$num_segments = (int) ( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
-		$max_lifespan = (int) ( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
+		$segment_size = self::to_int( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
+		$num_segments = self::to_int( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
+		$max_lifespan = self::to_int( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
 		// One firehose Topic per process. Reuse the canonical `firehose:topic` if it
 		// already exists — the aggregator topology's `make_node Topic firehose:topic`, or
 		// a concurrently-suspended parent job context's — so every context shares the same
@@ -352,7 +352,7 @@ class Log_Manager {
 		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
-		$worker_type = \sanitize_text_field( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' );
+		$worker_type = \sanitize_text_field( self::to_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
 		if ( '' !== $worker_type ) {
 			$process_data['worker_type'] = $worker_type;
 		}
@@ -369,8 +369,8 @@ class Log_Manager {
 		$this->message( 'process (start)', $process_data );
 		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
 
-		$method       = isset( $_SERVER['REQUEST_METHOD'] ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
-		$server_name  = isset( $_SERVER['SERVER_NAME'] ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
+		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
+		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
 		$scheme       = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
 		$redacted_url = self::redact_url( $this->request_url );
 		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
@@ -514,6 +514,9 @@ class Log_Manager {
 		$ref_partition_method = new \ReflectionMethod( Topic_Node::class, 'partition' );
 		$ref_partition_method->setAccessible( true );
 		$partition = $ref_partition_method->invoke( $this->topic, $this->partition_idx );
+		if ( ! $partition instanceof Partition_Node ) {
+			return;
+		}
 
 		$ref_init = new \ReflectionMethod( Partition_Node::class, 'init_current_segment' );
 		$ref_init->setAccessible( true );
@@ -564,7 +567,7 @@ class Log_Manager {
 		for ( $i = \count( $this->times ) - 1; $i >= 0; $i-- ) {
 			$entry = $this->times[ $i ];
 			if ( $label === $entry['label'] ) {
-				$start   = $entry['ts'] ?? $now;
+				$start   = $entry['ts'];
 				$removed = \array_splice( $this->times, $i );
 				$match   = \array_shift( $removed );
 				break;
@@ -573,7 +576,7 @@ class Log_Manager {
 		for ( $i = \count( $removed ) - 1; $i >= 0; $i-- ) {
 			$entry = $removed[ $i ];
 			if ( empty( $entry['muted'] ) ) {
-				$duration_ms = ( $now - ( $entry['ts'] ?? $now ) ) / self::NS_PER_MS;
+				$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
 				$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
 			}
 		}
@@ -662,7 +665,7 @@ class Log_Manager {
 		if ( ! \is_array( $urls ) || empty( $urls ) ) {
 			return null;
 		}
-		$patterns = \array_filter( \array_map( 'trim', $urls ) );
+		$patterns = \array_filter( \array_map( static fn( $u ) => \trim( self::to_string( $u ) ), $urls ), static fn ( $v ) => (bool) $v );
 		if ( empty( $patterns ) ) {
 			return null;
 		}
@@ -691,7 +694,7 @@ class Log_Manager {
 				continue;
 			}
 			// Strip control characters to prevent log injection.
-			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', (string) $value ) ?? '';
+			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
 			// Redact sensitive query parameters from URL-containing values.
 			if ( isset( $url_value_keys[ $key ] ) ) {
 				$sanitized = self::redact_url( $sanitized );
@@ -786,6 +789,28 @@ class Log_Manager {
 			$slug = \substr( $slug, 0, -4 );
 		}
 		return $slug;
+	}
+
+	/**
+	 * Narrow a mixed $_SERVER / config value to a string, reproducing the
+	 * `(string)` coercion the surrounding code already applies to scalars
+	 * (these values are always scalar strings in practice).
+	 *
+	 * @param mixed $value Value to coerce.
+	 */
+	private static function to_string( $value ): string {
+		return \is_scalar( $value ) ? (string) $value : '';
+	}
+
+	/**
+	 * Narrow a mixed config value to an int, reproducing the `(int)`
+	 * coercion the surrounding code already applies to scalars (these
+	 * values are always scalar in practice).
+	 *
+	 * @param mixed $value Value to coerce.
+	 */
+	private static function to_int( $value ): int {
+		return \is_scalar( $value ) ? (int) $value : 0;
 	}
 
 }

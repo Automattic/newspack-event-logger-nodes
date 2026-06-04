@@ -221,6 +221,7 @@ class Job_Worker_Node extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
+		/** @var int $type */
 		$type = $message[ Message::TYPE ];
 		if ( $type & Message::TM_REQUEST ) {
 			$this->handle_request( $message );
@@ -243,7 +244,9 @@ class Job_Worker_Node extends Node {
 		if ( 'job' !== $kind && 'remote_job' !== $kind ) {
 			return;
 		}
-		$handler = (string) ( $entry['handler'] ?? '' );
+		/** @var int|float|string|bool|null $raw_handler */
+		$raw_handler = $entry['handler'] ?? '';
+		$handler     = (string) $raw_handler;
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
 			Core::print_less_often( "JobWorker: invalid handler name: $handler" );
 			return;
@@ -323,8 +326,9 @@ class Job_Worker_Node extends Node {
 		\Newspack_Event_Logger_Nodes\Log_Manager::suspend();
 
 		$path_info = '/' . \ltrim( $handler, '/' );
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
-		$server_name = $_SERVER['SERVER_NAME'] ?? 'localhost';
+		/** @var int|float|string|bool|null $raw_server_name */
+		$raw_server_name = $_SERVER['SERVER_NAME'] ?? 'localhost'; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
+		$server_name     = (string) $raw_server_name;
 
 		$_SERVER['UNIQUE_ID']       = self::generate_request_id();
 		$_SERVER['REQUEST_URI']     = '/jobs/' . \ltrim( $handler, '/' );
@@ -410,8 +414,10 @@ class Job_Worker_Node extends Node {
 	 * @param array<int, mixed> $message
 	 */
 	private function handle_request( array $message ): void {
-		$value = (string) $message[ Message::VALUE ];
-		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+		/** @var int|float|string|bool|null $raw_value */
+		$raw_value = $message[ Message::VALUE ];
+		$value     = (string) $raw_value;
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_HEALTH' === $verb ) {
 			$mem_limit = $this->memory_limit_bytes();

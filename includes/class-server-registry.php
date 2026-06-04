@@ -99,7 +99,9 @@ class Server_Registry {
 	 * Merges config file defaults with WordPress option values.
 	 * WordPress option values override config file defaults.
 	 *
-	 * @return array<array-key, mixed> Associative array of server_id => config.
+	 * @return array<array-key, array<string, mixed>> Associative array of server_id => config. Keys are
+	 *                                                 array-key (not string) because PHP coerces numeric
+	 *                                                 server-id keys to int — callers must not assume string.
 	 */
 	public function get_all(): array {
 		if ( null === $this->servers ) {
@@ -121,21 +123,19 @@ class Server_Registry {
 			// Get WordPress option (may override config defaults).
 			$option = \get_option( self::OPTION_KEY, null );
 
-			if ( null === $option ) {
-				// No option set - use config defaults.
-				$this->servers = $config_defaults;
-			} elseif ( \is_array( $option ) ) {
+			if ( \is_array( $option ) ) {
 				// Merge: WordPress option takes precedence.
-				$this->servers = \array_merge( $config_defaults, $option );
+				$merged = \array_merge( $config_defaults, $option );
 			} else {
-				$this->servers = $config_defaults;
+				// No (or non-array) option - use config defaults.
+				$merged = $config_defaults;
 			}
 
 			// Normalize: ensure all entries have required keys (config-file entries
 			// bypass validate_config and may be missing 'logs', 'enabled', etc.).
-			foreach ( $this->servers as $id => &$server ) {
+			$normalized = [];
+			foreach ( $merged as $id => $server ) {
 				if ( ! \is_array( $server ) ) {
-					unset( $this->servers[ $id ] );
 					continue;
 				}
 				$server += [
@@ -146,11 +146,13 @@ class Server_Registry {
 					'logs'          => [ 'firehose.log' ],
 				];
 				// Decrypt credentials (handles both encrypted and legacy plaintext).
-				if ( '' !== $server['auth_password'] ) {
-					$server['auth_password'] = self::decrypt( $server['auth_password'] );
+				$pw = $server['auth_password'];
+				if ( '' !== $pw && \is_scalar( $pw ) ) {
+					$server['auth_password'] = self::decrypt( (string) $pw );
 				}
+				$normalized[ (string) $id ] = $server;
 			}
-			unset( $server );
+			$this->servers = $normalized;
 		}
 		return $this->servers;
 	}
@@ -390,7 +392,7 @@ class Server_Registry {
 	 * Write paths use this so we never accidentally persist a config-file
 	 * default into the WP option (would shadow file changes forever).
 	 *
-	 * @return array<string,array<string, mixed>>
+	 * @return array<array-key, mixed>
 	 */
 	private function get_wp_servers(): array {
 		$option = \get_option( self::OPTION_KEY, [] );
@@ -404,7 +406,7 @@ class Server_Registry {
 	 * marks the option as non-autoloaded so it doesn't bloat every request's
 	 * option cache); falls back to 2-arg for stripped-down test stubs.
 	 *
-	 * @param array<string, mixed> $wp_servers Map of id => validated config.
+	 * @param array<array-key, mixed> $wp_servers Map of id => validated config.
 	 */
 	private static function write_option( array $wp_servers ): void {
 		$arity = self::update_option_arity();
@@ -586,7 +588,7 @@ class Server_Registry {
 	 * @param array<string>  $fields Field names (sanitized — never values).
 	 */
 	private function audit( string $action, string $id, array $fields ): void {
-		$user_id  = \function_exists( 'get_current_user_id' ) ? (int) \get_current_user_id() : 0;
+		$user_id  = \function_exists( 'get_current_user_id' ) ? \get_current_user_id() : 0;
 		$ts       = \gmdate( 'c' );
 		$fieldstr = empty( $fields ) ? '' : ' fields=' . \implode( ',', $fields );
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log

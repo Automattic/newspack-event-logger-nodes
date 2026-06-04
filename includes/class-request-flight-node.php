@@ -88,7 +88,7 @@ class Request_Flight_Node extends Timer_Node {
 			return [];
 		}
 		$out = [];
-		$now = (float) ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
+		$now = ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $patron->cache->iterate() as $rid => $request ) {
 			$r = (array) $request;
 			// Process-start ts — the EARLIEST point PHP began handling this
@@ -96,15 +96,22 @@ class Request_Flight_Node extends Timer_Node {
 			// mu-profiler's wall-clock load ts (captured before any plugins
 			// load), so this is the real request-start time the operator
 			// cares about.
-			$start_time  = (float) ( $r['timestamp'] ?? 0 );
-			$last_log_ts = (float) ( $r['last_log_ts'] ?? $start_time );
-			$tracker_ts  = (float) ( $r['tracker_ts'] ?? $now );
-			$time_ms     = ( $last_log_ts - $start_time ) * 1000;
-			$age_ms      = ( $now - $tracker_ts ) * 1000;
-			$out[]       = [
-				'rid'         => (string) $rid,
-				'method'      => (string) ( $r['request_method'] ?? 'GET' ),
-				'url'         => (string) ( $r['url'] ?? '' ),
+			$ts_v          = $r['timestamp'] ?? 0;
+			$start_time    = \is_scalar( $ts_v ) ? (float) $ts_v : 0.0;
+			$last_log_v    = $r['last_log_ts'] ?? $start_time;
+			$last_log_ts   = \is_scalar( $last_log_v ) ? (float) $last_log_v : $start_time;
+			$tracker_v     = $r['tracker_ts'] ?? $now;
+			$tracker_ts    = \is_scalar( $tracker_v ) ? (float) $tracker_v : $now;
+			$time_ms       = ( $last_log_ts - $start_time ) * 1000;
+			$age_ms        = ( $now - $tracker_ts ) * 1000;
+			$method_v      = $r['request_method'] ?? 'GET';
+			$url_v         = $r['url'] ?? '';
+			$remote_addr_v = $r['remote_addr'] ?? '';
+			$user_agent_v  = $r['user_agent'] ?? '';
+			$out[]         = [
+				'rid'         => \is_scalar( $rid ) ? (string) $rid : '',
+				'method'      => \is_scalar( $method_v ) ? (string) $method_v : 'GET',
+				'url'         => \is_scalar( $url_v ) ? (string) $url_v : '',
 				'state'       => Request_Builder_Node::extract_state( $r ),
 				'what'        => Request_Builder_Node::extract_what( $r ),
 				'time_ms'     => \round( $time_ms, 1 ),
@@ -112,8 +119,8 @@ class Request_Flight_Node extends Timer_Node {
 				'start_time'  => $start_time,
 				'last_log_ts' => $last_log_ts,
 				'lag_ms'      => \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ),
-				'remote_addr' => (string) ( $r['remote_addr'] ?? '' ),
-				'user_agent'  => (string) ( $r['user_agent'] ?? '' ),
+				'remote_addr' => \is_scalar( $remote_addr_v ) ? (string) $remote_addr_v : '',
+				'user_agent'  => \is_scalar( $user_agent_v ) ? (string) $user_agent_v : '',
 			];
 		}
 		return $out;

@@ -139,7 +139,9 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 	 * @param array<string, mixed> $parameters Job parameters (`queued_at`).
 	 */
 	public static function handle_job( array $parameters ): void {
-		$queued_at = (int) ( $parameters['queued_at'] ?? 0 );
+		/** @var int|float|string|bool|null $raw_queued_at */
+		$raw_queued_at = $parameters['queued_at'] ?? 0;
+		$queued_at     = (int) $raw_queued_at;
 		if ( $queued_at > 0 && ( \time() - $queued_at ) >= self::INTERVAL_SECONDS ) {
 			Core::print_less_often( 'CacheWarmerTick: dropping stale warm job (age >= ' . self::INTERVAL_SECONDS . 's)' );
 			return;

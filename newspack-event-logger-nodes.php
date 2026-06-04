@@ -343,6 +343,7 @@ function newspack_event_logger_nodes_init_memcached(): void {
 		$servers = [ '127.0.0.1:11211' ];
 	}
 	$memd = new \Memcached();
+	/** @var int|float|string|bool|null $server */
 	foreach ( $servers as $server ) {
 		$parts = \explode( ':', (string) $server );
 		$memd->addServer( $parts[0], (int) ( $parts[1] ?? 11211 ) );
@@ -515,7 +516,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		// and gets brittle when the parent renames. The `page` arg is the
 		// stable contract.
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
-		$page    = isset( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
+		$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
 		$page_to_tree = [
 			'newspack-nodes-performance'             => 'performance-dashboards',
 			'newspack-nodes-errors'                  => 'performance-dashboards',
@@ -595,8 +596,10 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		// `eventLoggerCustomColors` for custom-event color overrides.
 		$retention_seconds = 86400;
 		if ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
-			$substrate         = \Newspack_Nodes\Config::load_config();
-			$retention_seconds = (int) ( $substrate['max_lifespan'] ?? 86400 );
+			$substrate = \Newspack_Nodes\Config::load_config();
+			/** @var int|float|string|bool|null $raw_lifespan */
+			$raw_lifespan      = $substrate['max_lifespan'] ?? 86400;
+			$retention_seconds = (int) $raw_lifespan;
 		}
 		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
 		$hook_categories_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'hook_categories.json';
@@ -660,9 +663,11 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 				$asset_meta = \file_exists( $aggregator_asset_path )
 					? include $aggregator_asset_path
 					: [ 'dependencies' => [], 'version' => NEWSPACK_EVENT_LOGGER_NODES_VERSION ];
-				$deps = \array_values( \array_unique( \array_merge(
+				/** @var array<string> $detected_deps */
+				$detected_deps = \is_array( $asset_meta['dependencies'] ?? null ) ? $asset_meta['dependencies'] : [];
+				$deps          = \array_values( \array_unique( \array_merge(
 					[ 'jquery' ],
-					\is_array( $asset_meta['dependencies'] ?? null ) ? $asset_meta['dependencies'] : []
+					$detected_deps
 				) ) );
 				$version = (string) ( $asset_meta['version'] ?? ( \filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION ) );
 				\wp_enqueue_script(

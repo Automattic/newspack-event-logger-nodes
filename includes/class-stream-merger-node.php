@@ -237,7 +237,7 @@ class Stream_Merger_Node extends Timer_Node {
 	public function load_remotes_from_registry(): void {
 		$registry = new Server_Registry();
 		foreach ( $registry->get_enabled() as $server_id => $entry ) {
-			$this->add_remote( (string) $server_id );
+			$this->add_remote( $server_id );
 		}
 	}
 
@@ -276,6 +276,7 @@ class Stream_Merger_Node extends Timer_Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
+		/** @var int $type */
 		$type = $message[ Message::TYPE ];
 		if ( $type & Message::TM_REQUEST ) {
 			$this->handle_request( $message );
@@ -288,13 +289,15 @@ class Stream_Merger_Node extends Timer_Node {
 	 * @param array<int, mixed> $message
 	 */
 	private function handle_request( array $message ): void {
-		$value = (string) $message[ Message::VALUE ];
+		/** @var int|float|string|bool|null $raw_value */
+		$raw_value = $message[ Message::VALUE ];
+		$value     = (string) $raw_value;
 		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_REMOTES' === $verb ) {
 			$remotes = [];
 			foreach ( $this->remote_nodes as $server_id => $remote ) {
-				$remotes[ (string) $server_id ] = $remote->current_status();
+				$remotes[ $server_id ] = $remote->current_status();
 			}
 			$payload = [
 				'count'   => \count( $remotes ),
@@ -369,10 +372,18 @@ class Stream_Merger_Node extends Timer_Node {
 			if ( isset( $entry['enabled'] ) && false === $entry['enabled'] ) {
 				return;
 			}
-			$url           = (string) ( $entry['url'] ?? '' );
-			$auth_username = (string) ( $entry['auth_username'] ?? '' );
-			$auth_password = (string) ( $entry['auth_password'] ?? '' );
-			$auth_token    = (string) ( $entry['token'] ?? $auth_token );
+			/** @var int|float|string|bool|null $raw_url */
+			$raw_url = $entry['url'] ?? '';
+			/** @var int|float|string|bool|null $raw_username */
+			$raw_username = $entry['auth_username'] ?? '';
+			/** @var int|float|string|bool|null $raw_password */
+			$raw_password = $entry['auth_password'] ?? '';
+			/** @var int|float|string|bool|null $raw_token */
+			$raw_token     = $entry['token'] ?? $auth_token;
+			$url           = (string) $raw_url;
+			$auth_username = (string) $raw_username;
+			$auth_password = (string) $raw_password;
+			$auth_token    = (string) $raw_token;
 			if ( '' === $url ) {
 				Core::print_less_often( "StreamMerger::add_remote: missing URL for {$server_id}" );
 				return;
@@ -516,7 +527,7 @@ class Stream_Merger_Node extends Timer_Node {
 
 	/**
 	 * Back-compat: same lookup-by-handle pattern as on_curl_data.
-	 * @param array<string, mixed> $info
+	 * @param array{msg?: int, handle?: \CurlHandle, result?: int} $info
 	 */
 	public function on_curl_message( array $info ): void {
 		$handle = $info['handle'] ?? null;
@@ -640,7 +651,7 @@ class Stream_Merger_Node extends Timer_Node {
 		}
 		$lines = \explode( "\n", \rtrim( $content, "\n" ) );
 		try {
-			$msg = Message::unpacked( (string) \end( $lines ) );
+			$msg = Message::unpacked( \end( $lines ) );
 		} catch ( \InvalidArgumentException $e ) {
 			// Unparseable offsetlog entry: skip restoring the remote's position
 			// rather than aborting the merge.
@@ -652,9 +663,13 @@ class Stream_Merger_Node extends Timer_Node {
 			return;
 		}
 		$pos = $latest[ $server_id ];
+		/** @var int|float|string|bool|null $raw_seg */
+		$raw_seg = $pos['seg'] ?? 0;
+		/** @var int|float|string|bool|null $raw_off */
+		$raw_off = $pos['off'] ?? 0;
 		$remote->restore_position(
-			(int) ( $pos['seg'] ?? 0 ),
-			(int) ( $pos['off'] ?? 0 )
+			(int) $raw_seg,
+			(int) $raw_off
 		);
 	}
 

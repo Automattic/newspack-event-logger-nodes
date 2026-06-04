@@ -73,8 +73,8 @@ $newspack_profiler_state = [
 		$slug = '.' === $slug ? \basename( $plugin, '.php' ) : $slug;
 
 		// Derive wall-clock from base pair + hrtime delta.
-		$start_ts = $newspack_profiler_state['base_ts']
-			+ ( $newspack_profiler_state['hr'] - $newspack_profiler_state['base_hr'] ) / 1e9;
+		$start_ts = (float) $newspack_profiler_state['base_ts']
+			+ ( (float) $newspack_profiler_state['hr'] - (float) $newspack_profiler_state['base_hr'] ) / 1e9;
 
 		$newspack_profiler['plugins'][] = [
 			'slug'        => $slug,

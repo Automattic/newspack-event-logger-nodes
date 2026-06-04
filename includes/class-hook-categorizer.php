@@ -35,7 +35,7 @@ class Hook_Categorizer {
 	/**
 	 * Cached merged config (base + user customizations).
 	 *
-	 * @var array<string, mixed>|null
+	 * @var array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>}|null
 	 */
 	private static ?array $merged_config = null;
 
@@ -77,7 +77,8 @@ class Hook_Categorizer {
 			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
 			return self::$base_config;
 		}
-		self::$base_config = \json_decode( $json, true, 64 ) ?? [ '_colors' => [], '_patterns' => [] ];
+		$decoded           = \json_decode( $json, true, 64 );
+		self::$base_config = \is_array( $decoded ) ? $decoded : [ '_colors' => [], '_patterns' => [] ];
 		return self::$base_config;
 	}
 
@@ -94,13 +95,16 @@ class Hook_Categorizer {
 		];
 
 		$saved = \get_option( self::OPTION_NAME, [] );
+		if ( ! \is_array( $saved ) && ! \is_object( $saved ) && ! \is_string( $saved ) ) {
+			$saved = [];
+		}
 		return \wp_parse_args( $saved, $defaults );
 	}
 
 	/**
 	 * Get merged configuration (base + user customizations).
 	 *
-	 * @return array<string, mixed> Merged configuration.
+	 * @return array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
 	 */
 	public static function get_merged_config(): array {
 		if ( null !== self::$merged_config ) {
@@ -110,22 +114,30 @@ class Hook_Categorizer {
 		$base          = self::get_base_config();
 		$customizations = self::get_user_customizations();
 
+		$base_colors    = $base['_colors'] ?? [];
+		$user_colors    = $customizations['colors'] ?? [];
+		$base_patterns  = $base['_patterns'] ?? [];
+		$user_patterns_all = $customizations['patterns'] ?? [];
+		$overrides      = $customizations['overrides'] ?? [];
+
 		// Merge colors (user overrides base).
-		$colors = \array_merge( $base['_colors'] ?? [], $customizations['colors'] ?? [] );
+		$colors = \array_merge( \is_array( $base_colors ) ? $base_colors : [], \is_array( $user_colors ) ? $user_colors : [] );
 
 		// Merge patterns (user patterns added to base).
-		$patterns = $base['_patterns'] ?? [];
-		foreach ( $customizations['patterns'] ?? [] as $category => $user_patterns ) {
-			if ( ! isset( $patterns[ $category ] ) ) {
-				$patterns[ $category ] = [];
+		$patterns = \is_array( $base_patterns ) ? $base_patterns : [];
+		if ( \is_array( $user_patterns_all ) ) {
+			foreach ( $user_patterns_all as $category => $user_patterns ) {
+				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
+					$patterns[ $category ] = [];
+				}
+				$patterns[ $category ] = \array_merge( $patterns[ $category ], \is_array( $user_patterns ) ? $user_patterns : [] );
 			}
-			$patterns[ $category ] = \array_merge( $patterns[ $category ], $user_patterns );
 		}
 
 		self::$merged_config = [
 			'colors'    => $colors,
 			'patterns'  => $patterns,
-			'overrides' => $customizations['overrides'] ?? [],
+			'overrides' => \is_array( $overrides ) ? $overrides : [],
 		];
 
 		return self::$merged_config;
@@ -141,7 +153,7 @@ class Hook_Categorizer {
 		$config = self::get_merged_config();
 
 		// Check explicit overrides first.
-		if ( isset( $config['overrides'][ $hook_name ] ) ) {
+		if ( isset( $config['overrides'][ $hook_name ] ) && \is_string( $config['overrides'][ $hook_name ] ) ) {
 			return $config['overrides'][ $hook_name ];
 		}
 
@@ -151,6 +163,9 @@ class Hook_Categorizer {
 
 		try {
 			foreach ( $config['patterns'] as $category => $patterns ) {
+				if ( ! \is_array( $patterns ) ) {
+					continue;
+				}
 				foreach ( $patterns as $pattern ) {
 					if ( ! \is_string( $pattern ) ) {
 						continue;
@@ -215,7 +230,8 @@ class Hook_Categorizer {
 	 */
 	public static function get_color( string $category ): string {
 		$config = self::get_merged_config();
-		return $config['colors'][ $category ] ?? '#9E9E9E';
+		$color  = $config['colors'][ $category ] ?? '#9E9E9E';
+		return \is_string( $color ) ? $color : '#9E9E9E';
 	}
 
 	/**

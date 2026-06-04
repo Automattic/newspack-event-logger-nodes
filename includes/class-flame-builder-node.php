@@ -62,25 +62,25 @@ class Flame_Builder_Node extends Node {
 	/** @var LRU_Cache Per-URL aggregate accumulator. */
 	private $stats_cache;
 
-	/** @var array<string, mixed> All flush arrays (each a bucket-keyed accumulator). */
+	/** @var array<string, array<string, mixed>> Bucket-keyed hourly accumulator. */
 	private $hourly_stats                = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, mixed>> Bucket-keyed leaderboard accumulator. */
 	private $leaderboard_stats           = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, array<string, mixed>>> Server → bucket leaderboard accumulator. */
 	private $leaderboard_by_server_stats = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, mixed>> Bucket → url-hash URL stats accumulator. */
 	private $url_stats                   = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>> Dim → bucket → value accumulator. */
 	private $dim_stats                   = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Server → dim → bucket → value accumulator. */
 	private $dim_stats_by_server         = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Url-hash → dim → bucket → value accumulator. */
 	private $url_dim_stats               = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, mixed>> Bucket → category accumulator. */
 	private $cat_stats                   = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, array<string, mixed>>> Server → bucket → category accumulator. */
 	private $cat_stats_by_server         = [];
-	/** @var array<string, mixed> */
+	/** @var array<string, array<string, array<string, mixed>>> Url-hash → bucket → category accumulator. */
 	private $url_cat_stats               = [];
 
 	/** Per-URL aggregate state. */
@@ -102,7 +102,23 @@ class Flame_Builder_Node extends Node {
 	/** Pending stats for the current (incomplete) 5-minute bucket. */
 	private string $pending_bucket = '';
 
-	/** @var array<string, mixed> Pending bucket accumulators. */
+	/**
+	 * Pending bucket accumulators. All keys optional so the empty default and
+	 * reset_pending() both type-check; leaf shapes drive the deep-offset narrowing.
+	 *
+	 * @var array{
+	 *   hourly?: array<string, mixed>,
+	 *   dim?: array<string, array<string, array{c: int, s: float|int, m: float|int}>>,
+	 *   dim_by_server?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>,
+	 *   url_dim?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>,
+	 *   url_stats?: array<string, mixed>,
+	 *   cat?: array<string, array{t: float|int, c: float|int, n: int}>,
+	 *   cat_by_server?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>,
+	 *   cat_by_url?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>,
+	 *   leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>},
+	 *   leaderboard_by_server?: array<string, array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}>
+	 * }
+	 */
 	private $pending = [];
 
 	/** @var Stats_Store|null Memcache-backed stats store. */
@@ -285,7 +301,9 @@ class Flame_Builder_Node extends Node {
 			$this->pending_bucket = $saved['pending_bucket'];
 		}
 		if ( isset( $saved['pending'] ) && \is_array( $saved['pending'] ) ) {
-			$this->pending = \array_merge( $this->pending, $saved['pending'] );
+			$merged = \array_merge( $this->pending, $saved['pending'] );
+			/** @var array{hourly?: array<string, mixed>, dim?: array<string, array<string, array{c: int, s: float|int, m: float|int}>>, dim_by_server?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>, url_dim?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>, url_stats?: array<string, mixed>, cat?: array<string, array{t: float|int, c: float|int, n: int}>, cat_by_server?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>, cat_by_url?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>, leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}, leaderboard_by_server?: array<string, array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}>} $merged */
+			$this->pending = $merged;
 		}
 	}
 
@@ -330,7 +348,8 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
-		$type = $message[ Message::TYPE ];
+		$type_raw = $message[ Message::TYPE ];
+		$type     = \is_int( $type_raw ) ? $type_raw : 0;
 		if ( $type & Message::TM_REQUEST ) {
 			$this->handle_request( $message );
 			return;
@@ -343,15 +362,18 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 
-		$rid      = $request['rid'] ?? '';
-		$url_hash = Request_Builder_Node::url_hash( $request['url'] ?? '' );
+		$rid_raw  = $request['rid'] ?? '';
+		$rid      = \is_string( $rid_raw ) ? $rid_raw : '';
+		$url_raw  = $request['url'] ?? '';
+		$url_hash = Request_Builder_Node::url_hash( \is_string( $url_raw ) ? $url_raw : '' );
 		$entries  = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
 		}
 
+		$duration_raw        = $request['duration_ms'] ?? 0;
 		$flame_data          = $this->build_flame_data( $entries );
-		$flame_data['value'] = (float) ( $request['duration_ms'] ?? 0 );
+		$flame_data['value'] = \is_numeric( $duration_raw ) ? (float) $duration_raw : 0.0;
 
 		$profiles = $request['profiles'] ?? [];
 		if ( ! \is_array( $profiles ) ) {
@@ -388,13 +410,21 @@ class Flame_Builder_Node extends Node {
 		if ( null !== $stats_store ) {
 			$now = $this->now_ts();
 			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
+				if ( ! \is_array( $aggregate ) || ( ! \is_string( $url_hash ) && ! \is_int( $url_hash ) ) ) {
+					continue;
+				}
+				$url_hash = (string) $url_hash;
+				/** @var array<string, mixed> $aggregate */
 				// Create finalized flame for display (scale values, strip suffixes, normalize).
 				// Keep raw flame_raw for future merging (unscaled, with seen_count).
-				$total_count            = $aggregate['flame']['count'] ?? 0;
-				$aggregate['flame_raw'] = $aggregate['flame'];
-				self::finalize_flame_node( $aggregate['flame'], $total_count );
+				$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
+				$count_raw              = $flame['count'] ?? 0;
+				$total_count            = \is_numeric( $count_raw ) ? (int) $count_raw : 0;
+				$aggregate['flame_raw'] = $flame;
+				self::finalize_flame_node( $flame, $total_count );
+				$aggregate['flame']         = $flame;
 				$aggregate['last_modified'] = $now;
-				$stats_store->set_url_stats( (string) $url_hash, $aggregate );
+				$stats_store->set_url_stats( $url_hash, $aggregate );
 			}
 		}
 
@@ -460,13 +490,17 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 		$name     = $node['name'] ?? '';
+		$name     = \is_string( $name ) ? $name : '';
 		$null_pos = \strpos( $name, "\x00" );
 		if ( false !== $null_pos ) {
 			$node['name'] = \substr( $name, 0, $null_pos );
 		}
-		if ( ! empty( $node['children'] ) ) {
+		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
 			foreach ( $node['children'] as &$child ) {
-				self::strip_name_suffixes( $child, $depth + 1 );
+				if ( \is_array( $child ) ) {
+					/** @var array<string, mixed> $child */
+					self::strip_name_suffixes( $child, $depth + 1 );
+				}
 			}
 			unset( $child );
 		}
@@ -483,13 +517,15 @@ class Flame_Builder_Node extends Node {
 	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
 		// $line is the packed Message (positional JSON); VALUE is index 6.
 		$decoded = \json_decode( $line, true, 64 );
-		$value   = $decoded[ Message::VALUE ] ?? null;
+		$value   = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
 		if ( ! \is_array( $value ) || empty( $value['rid'] ) ) {
 			return null;
 		}
+		$rid_str      = \is_scalar( $value['rid'] ) ? (string) $value['rid'] : '';
+		$url_hash_str = \is_scalar( $value['url_hash'] ?? null ) ? (string) $value['url_hash'] : '';
 
-		return \str_pad( \substr( $value['rid'], 0, 32 ), 32 )
-			. \str_pad( \substr( $value['url_hash'], 0, 12 ), 12 )
+		return \str_pad( \substr( $rid_str, 0, 32 ), 32 )
+			. \str_pad( \substr( $url_hash_str, 0, 12 ), 12 )
 			. \str_pad( (string) $position['segment_id'], 6, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT );
@@ -533,7 +569,7 @@ class Flame_Builder_Node extends Node {
 		];
 
 		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base_name ].
-		/** @var array<int, array<string, mixed>> $stack */
+		/** @var array<int, array{node: array{name?: string, value?: mixed, children?: array<int, mixed>, ts?: int, detail?: string}, name: string}> $stack */
 		$stack   = [];
 		$stack[] = [
 			'node' => &$root,
@@ -541,7 +577,11 @@ class Flame_Builder_Node extends Node {
 		];
 
 		foreach ( $entries as $entry ) {
-			$keyword = $entry['k'] ?? '';
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			$keyword_raw = $entry['k'] ?? '';
+			$keyword     = \is_string( $keyword_raw ) ? $keyword_raw : '';
 
 			if ( \preg_match( self::PATTERN_START, $keyword, $m ) ) {
 				$base_name = $m[1];
@@ -574,11 +614,12 @@ class Flame_Builder_Node extends Node {
 			} elseif ( \preg_match( self::PATTERN_COMPLETE, $keyword, $m ) ) {
 				$base_name   = $m[1];
 				$duration_ms = $entry['duration_ms'] ?? 0;
+				$ts_raw      = $entry['ts'] ?? $this->now_ts();
 
 				// Search stack from top (LIFO) for matching name.
 				$found_idx = -1;
 				for ( $i = \count( $stack ) - 1; $i >= 1; $i-- ) { // Don't pop root.
-					if ( $stack[ $i ]['name'] === $base_name ) {
+					if ( ( $stack[ $i ]['name'] ?? null ) === $base_name ) {
 						$found_idx = $i;
 						break;
 					}
@@ -587,7 +628,7 @@ class Flame_Builder_Node extends Node {
 				if ( $found_idx >= 1 ) {
 					// Set duration and timestamp on matched node.
 					$stack[ $found_idx ]['node']['value'] = $duration_ms;
-					$stack[ $found_idx ]['node']['ts']    = (int) ( $entry['ts'] ?? $this->now_ts() );
+					$stack[ $found_idx ]['node']['ts']    = \is_numeric( $ts_raw ) ? (int) $ts_raw : $this->now_ts();
 
 					// Pop all nodes from found_idx to top.
 					// Children that outlive their parent become orphaned (value=0).
@@ -616,21 +657,26 @@ class Flame_Builder_Node extends Node {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
 			return;
 		}
-		if ( empty( $node['children'] ) ) {
+		if ( empty( $node['children'] ) || ! \is_array( $node['children'] ) ) {
 			return;
 		}
 
 		// Count occurrences of each name among siblings.
 		$name_counts = [];
 		foreach ( $node['children'] as $child ) {
-			$name                 = $child['name'] ?? 'unknown';
+			$child_name           = \is_array( $child ) ? ( $child['name'] ?? 'unknown' ) : 'unknown';
+			$name                 = \is_string( $child_name ) ? $child_name : 'unknown';
 			$name_counts[ $name ] = ( $name_counts[ $name ] ?? 0 ) + 1;
 		}
 
 		// Add sequence numbers to duplicates.
 		$name_seq = [];
 		foreach ( $node['children'] as &$child ) {
-			$name = $child['name'] ?? 'unknown';
+			if ( ! \is_array( $child ) ) {
+				continue;
+			}
+			$child_name = $child['name'] ?? 'unknown';
+			$name       = \is_string( $child_name ) ? $child_name : 'unknown';
 			if ( $name_counts[ $name ] > 1 ) {
 				$seq               = ( $name_seq[ $name ] ?? 0 ) + 1;
 				$name_seq[ $name ] = $seq;
@@ -654,7 +700,8 @@ class Flame_Builder_Node extends Node {
 	 * @param array<string, mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
-		$duration_ms  = (float) ( $flame_data['value'] ?? 0 );
+		$duration_val = $flame_data['value'] ?? 0;
+		$duration_ms  = \is_numeric( $duration_val ) ? (float) $duration_val : 0.0;
 		$error_status = $request['error_status'] ?? '-';
 		$is_timed_out = 'T' === $error_status;
 		$is_worker    = ! empty( $request['is_worker'] );
@@ -663,7 +710,8 @@ class Flame_Builder_Node extends Node {
 		$now        = $this->now_ts();
 
 		// --- 1. Per-URL aggregate (LRU, sums-not-means) ---
-		$aggregate = $this->stats_cache->get( $url_hash );
+		$cached    = $this->stats_cache->get( $url_hash );
+		$aggregate = \is_array( $cached ) ? $cached : null;
 		if ( null === $aggregate ) {
 			$aggregate = $this->stats_store?->get_url_stats( $url_hash ) ?? [
 				'flame'    => [
@@ -683,7 +731,8 @@ class Flame_Builder_Node extends Node {
 				unset( $aggregate['flame_raw'] );
 			}
 			// Migrate legacy flame shape (EMA running mean → sums).
-			if ( isset( $aggregate['flame'] ) && ! isset( $aggregate['flame']['sum_value'] ) ) {
+			$aggregate_flame = $aggregate['flame'] ?? null;
+			if ( isset( $aggregate_flame ) && ! ( \is_array( $aggregate_flame ) && isset( $aggregate_flame['sum_value'] ) ) ) {
 				$aggregate['flame'] = [
 					'name'      => 'aggregate',
 					'sum_value' => 0.0,
@@ -692,7 +741,8 @@ class Flame_Builder_Node extends Node {
 				];
 			}
 			// Migrate legacy profile shape.
-			if ( isset( $aggregate['profiles'] ) && ! isset( $aggregate['profiles']['sum_req_time'] ) ) {
+			$aggregate_profiles = $aggregate['profiles'] ?? null;
+			if ( isset( $aggregate_profiles ) && ! ( \is_array( $aggregate_profiles ) && isset( $aggregate_profiles['sum_req_time'] ) ) ) {
 				$aggregate['profiles'] = [
 					'count'        => 0,
 					'sum_req_time' => 0.0,
@@ -701,17 +751,20 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 
-		$flame          = &$aggregate['flame'];
-		$flame['count'] = ( $flame['count'] ?? 0 ) + 1;
+		$flame = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
+		$flame['count'] = ( \is_numeric( $flame['count'] ?? null ) ? $flame['count'] : 0 ) + 1;
 		if ( $has_timing ) {
-			$flame['sum_value'] = ( $flame['sum_value'] ?? 0 ) + $duration_ms;
-			$flame['children']  = self::merge_flame_children_incremental( $flame['children'] ?? [], $flame_data['children'] ?? [], $now );
+			$flame['sum_value'] = ( \is_numeric( $flame['sum_value'] ?? null ) ? $flame['sum_value'] : 0 ) + $duration_ms;
+			$flame_children     = \is_array( $flame['children'] ?? null ) ? $flame['children'] : [];
+			$incoming_children  = \is_array( $flame_data['children'] ?? null ) ? $flame_data['children'] : [];
+			$flame['children']  = self::merge_flame_children_incremental( $flame_children, $incoming_children, $now );
 		}
-		unset( $flame );
+		$aggregate['flame'] = $flame;
 
 		// --- 2. Bucket key + rotation ---
-		$timestamp  = (int) ( $request['timestamp'] ?? $now );
-		$bucket_key = $this->bucket_key( $timestamp );
+		$timestamp_raw = $request['timestamp'] ?? $now;
+		$timestamp     = \is_numeric( $timestamp_raw ) ? (int) $timestamp_raw : $now;
+		$bucket_key    = $this->bucket_key( $timestamp );
 		if ( $bucket_key !== $this->pending_bucket ) {
 			if ( '' !== $this->pending_bucket ) {
 				$this->promote_pending_bucket();
@@ -720,7 +773,8 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// --- 2b. URL stats (pending bucket) ---
-		$url = (string) ( $request['url'] ?? '' );
+		$url_val = $request['url'] ?? '';
+		$url     = \is_string( $url_val ) ? $url_val : '';
 		if ( '' !== $url ) {
 			if ( ! isset( $this->pending['url_stats'][ $url_hash ] ) ) {
 				$this->pending['url_stats'][ $url_hash ] = [
@@ -740,7 +794,8 @@ class Flame_Builder_Node extends Node {
 					'max_peak_mb' => 0,
 				];
 			}
-			$us = &$this->pending['url_stats'][ $url_hash ];
+			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
+			$us = $this->pending['url_stats'][ $url_hash ];
 			++$us['count'];
 			if ( $has_timing ) {
 				++$us['timed_count'];
@@ -748,7 +803,8 @@ class Flame_Builder_Node extends Node {
 				$us['max_ms']  = \max( $us['max_ms'], $duration_ms );
 			}
 			$us['last_seen']      = \max( $us['last_seen'], $timestamp );
-			$status_category      = (int) \floor( ( $request['status_code'] ?? 0 ) / 100 );
+			$status_code          = $request['status_code'] ?? 0;
+			$status_category      = (int) \floor( ( \is_numeric( $status_code ) ? (float) $status_code : 0 ) / 100 );
 			if ( $status_category >= 2 && $status_category <= 5 ) {
 				++$us[ "count_{$status_category}xx" ];
 			}
@@ -764,24 +820,32 @@ class Flame_Builder_Node extends Node {
 					}
 				}
 			}
-			$peak_mb = (float) ( $request['peak_mb'] ?? 0 );
+			$peak_raw = $request['peak_mb'] ?? 0;
+			$peak_mb  = \is_numeric( $peak_raw ) ? (float) $peak_raw : 0.0;
 			if ( $peak_mb > 0 ) {
 				$us['sum_peak_mb'] += $peak_mb;
 				$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
 			}
-			unset( $us );
+			$this->pending['url_stats'][ $url_hash ] = $us;
 		}
 
 		// --- 3. Hourly stats (pending bucket) ---
-		if ( empty( $this->pending['hourly'] ) ) {
-			$this->pending['hourly'] = [ 'count' => 0, 'sum_ms' => 0, 'sum_peak_mb' => 0 ];
-		}
+		$hourly_peak     = $request['peak_mb'] ?? 0;
+		$hourly_peak_num = \is_numeric( $hourly_peak ) ? $hourly_peak + 0 : 0;
+		$hourly          = $this->pending['hourly'] ?? [];
+		$hourly          = [
+			'count'       => \is_numeric( $hourly['count'] ?? null ) ? $hourly['count'] : 0,
+			'sum_ms'      => \is_numeric( $hourly['sum_ms'] ?? null ) ? $hourly['sum_ms'] : 0,
+			'sum_peak_mb' => \is_numeric( $hourly['sum_peak_mb'] ?? null ) ? $hourly['sum_peak_mb'] : 0,
+		];
 		if ( $has_timing ) {
-			++$this->pending['hourly']['count'];
-			$this->pending['hourly']['sum_ms'] += $duration_ms;
+			++$hourly['count'];
+			$hourly['sum_ms'] += $duration_ms;
 		}
-		$this->pending['hourly']['sum_peak_mb'] += $request['peak_mb'] ?? 0;
-		$status_cat = (int) \floor( ( $request['status_code'] ?? 0 ) / 100 );
+		$hourly['sum_peak_mb'] += $hourly_peak_num;
+		$this->pending['hourly'] = $hourly;
+		$status_code_raw = $request['status_code'] ?? 0;
+		$status_cat      = (int) \floor( ( \is_numeric( $status_code_raw ) ? (float) $status_code_raw : 0 ) / 100 );
 		if ( $status_cat >= 2 && $status_cat <= 5 ) {
 			$request['status_category'] = "{$status_cat}xx";
 		}
@@ -789,12 +853,15 @@ class Flame_Builder_Node extends Node {
 		// --- 3b. Dimensional stats (global + per-server + per-URL) ---
 		static $intern      = [];
 		static $intern_full = false;
-		$server_name   = (string) ( $request['server_name'] ?? '' );
-		$dim_peak_mb   = (float) ( $request['peak_mb'] ?? 0 );
-		$dim_duration  = $has_timing ? $duration_ms : 0;
+		$server_raw     = $request['server_name'] ?? '';
+		$server_name    = \is_string( $server_raw ) ? $server_raw : '';
+		$dim_peak_raw   = $request['peak_mb'] ?? 0;
+		$dim_peak_mb    = \is_numeric( $dim_peak_raw ) ? (float) $dim_peak_raw : 0.0;
+		$dim_duration   = $has_timing ? $duration_ms : 0;
 
 		foreach ( self::DIM_FIELDS as $dim => $field ) {
-			$val = (string) ( $request[ $field ] ?? '' );
+			$field_raw = $request[ $field ] ?? '';
+			$val       = \is_scalar( $field_raw ) ? (string) $field_raw : '';
 			if ( '' === $val ) {
 				$val = 'Unknown';
 			}
@@ -833,7 +900,12 @@ class Flame_Builder_Node extends Node {
 
 		// --- 4. Profile data (per-URL + global leaderboard) - SINGLE LOOP ---
 		if ( ! empty( $profiles ) && $has_timing ) {
-			$prof = &$aggregate['profiles'];
+			$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
+			$prof_cats          = $aggregate_profiles['categories'] ?? [];
+			$aggregate_profiles['categories'] = \is_array( $prof_cats ) ? $prof_cats : [];
+			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $prof */
+			$prof = $aggregate_profiles;
+			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $lb */
 			$lb   = &$this->pending['leaderboard'];
 
 			$req_time        = 0.0;
@@ -870,6 +942,7 @@ class Flame_Builder_Node extends Node {
 						'categories'   => [],
 					];
 				}
+				/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $slb */
 				$slb = &$this->pending['leaderboard_by_server'][ $server_name ];
 			}
 
@@ -878,7 +951,8 @@ class Flame_Builder_Node extends Node {
 					continue;
 				}
 				if ( ! $intern_full ) {
-					$category = $intern[ $category ] ??= $category;
+					$interned = $intern[ $category ] ??= $category;
+					$category = \is_string( $interned ) ? $interned : $category;
 					if ( \count( $intern ) >= 50000 ) {
 						$intern_full = true;
 					}
@@ -887,13 +961,15 @@ class Flame_Builder_Node extends Node {
 				$is_callback = (bool) \preg_match( '/ @-?\d+$/', $category );
 				$is_plugin   = (bool) \preg_match( '/ plugin$/', $category );
 
+				$time_raw  = $data['time'] ?? 0;
+				$count_raw = $data['count'] ?? 0;
+				$ts_raw    = $data['ts'] ?? 0;
+				$cat_time  = \is_numeric( $time_raw ) ? (float) $time_raw : 0.0;
+				$cat_count = \is_numeric( $count_raw ) ? (int) $count_raw : 0;
+				$cat_ts    = \is_numeric( $ts_raw ) ? (int) $ts_raw : 0;
 				if ( ! $is_callback ) {
-					$req_time += (float) ( $data['time'] ?? 0 );
+					$req_time += $cat_time;
 				}
-
-				$cat_time  = (float) ( $data['time'] ?? 0 );
-				$cat_count = (int) ( $data['count'] ?? 0 );
-				$cat_ts    = (int) ( $data['ts'] ?? 0 );
 
 				// Per-URL category.
 				if ( ! isset( $prof['categories'][ $category ] ) ) {
@@ -905,6 +981,7 @@ class Flame_Builder_Node extends Node {
 						'entries'   => [],
 					];
 				}
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $pcat */
 				$pcat              = &$prof['categories'][ $category ];
 				++$pcat['samples'];
 				$pcat['sum_time']  += $cat_time;
@@ -920,6 +997,7 @@ class Flame_Builder_Node extends Node {
 						'entries'   => [],
 					];
 				}
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $lcat */
 				$lcat              = &$lb['categories'][ $category ];
 				++$lcat['samples'];
 				$lcat['sum_time']  += $cat_time;
@@ -935,16 +1013,19 @@ class Flame_Builder_Node extends Node {
 							'entries'   => [],
 						];
 					}
+					/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $scat */
 					$scat              = &$slb['categories'][ $category ];
 					++$scat['samples'];
 					$scat['sum_time']  += $cat_time;
 					$scat['sum_count'] += $cat_count;
 
-					if ( ! empty( $data['entries'] ) ) {
-						foreach ( $data['entries'] as $s_name => $s_entry_data ) {
-							$s_name  = $intern[ $s_name ] ??= $s_name;
-							$s_time  = (float) ( $s_entry_data[0] ?? 0 );
-							$s_count = (float) ( $s_entry_data[1] ?? 0 );
+					$s_entries = $data['entries'] ?? null;
+					if ( ! empty( $s_entries ) && \is_array( $s_entries ) ) {
+						foreach ( $s_entries as $s_name => $s_entry_data ) {
+							$s_name_interned = $intern[ $s_name ] ??= $s_name;
+							$s_name  = \is_string( $s_name_interned ) ? $s_name_interned : (string) $s_name;
+							$s_time  = \is_array( $s_entry_data ) && \is_numeric( $s_entry_data[0] ?? null ) ? (float) $s_entry_data[0] : 0.0;
+							$s_count = \is_array( $s_entry_data ) && \is_numeric( $s_entry_data[1] ?? null ) ? (float) $s_entry_data[1] : 0.0;
 							if ( ! isset( $scat['entries'][ $s_name ] ) ) {
 								$scat['entries'][ $s_name ] = [ 0.0, 0.0, 0 ];
 							}
@@ -1001,11 +1082,13 @@ class Flame_Builder_Node extends Node {
 				}
 
 				// Entry loop (per-URL + global).
-				if ( ! empty( $data['entries'] ) ) {
-					foreach ( $data['entries'] as $name => $entry_data ) {
-						$name        = $intern[ $name ] ??= $name;
-						$entry_time  = (float) ( $entry_data[0] ?? 0 );
-						$entry_count = (float) ( $entry_data[1] ?? 0 );
+				$entries = $data['entries'] ?? null;
+				if ( ! empty( $entries ) && \is_array( $entries ) ) {
+					foreach ( $entries as $name => $entry_data ) {
+						$name_interned = $intern[ $name ] ??= $name;
+						$name        = \is_string( $name_interned ) ? $name_interned : (string) $name;
+						$entry_time  = \is_array( $entry_data ) && \is_numeric( $entry_data[0] ?? null ) ? (float) $entry_data[0] : 0.0;
+						$entry_count = \is_array( $entry_data ) && \is_numeric( $entry_data[1] ?? null ) ? (float) $entry_data[1] : 0.0;
 
 						if ( ! isset( $pcat['entries'][ $name ] ) ) {
 							$pcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
@@ -1066,7 +1149,7 @@ class Flame_Builder_Node extends Node {
 					unset( $prof['categories'][ $cat ] );
 				}
 			}
-			unset( $prof );
+			$aggregate['profiles'] = $prof;
 			unset( $lb );
 		}
 
@@ -1102,6 +1185,7 @@ class Flame_Builder_Node extends Node {
 
 		// --- Hourly ---
 		if ( ! empty( $this->hourly_stats ) ) {
+			/** @var array<string, array{count: int, sum_ms: float|int, sum_peak_mb: float|int}> $existing_hourly */
 			$existing_hourly = $stats_store->get_hourly();
 
 			foreach ( $this->hourly_stats as $bucket_key => $stats ) {
@@ -1112,9 +1196,9 @@ class Flame_Builder_Node extends Node {
 						'sum_peak_mb' => 0,
 					];
 				}
-				$existing_hourly[ $bucket_key ]['count']       += $stats['count'];
-				$existing_hourly[ $bucket_key ]['sum_ms']      += $stats['sum_ms'];
-				$existing_hourly[ $bucket_key ]['sum_peak_mb'] += $stats['sum_peak_mb'] ?? 0;
+				$existing_hourly[ $bucket_key ]['count']       += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
+				$existing_hourly[ $bucket_key ]['sum_ms']      += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
+				$existing_hourly[ $bucket_key ]['sum_peak_mb'] += \is_numeric( $stats['sum_peak_mb'] ?? null ) ? $stats['sum_peak_mb'] : 0;
 			}
 
 			// Expire bucket data older than the retention window.
@@ -1136,13 +1220,7 @@ class Flame_Builder_Node extends Node {
 				$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 			}
 			Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
-			foreach ( $existing['categories'] as &$cat_data ) {
-				if ( isset( $cat_data['entries'] ) && \count( $cat_data['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-					\uasort( $cat_data['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
-					$cat_data['entries'] = \array_slice( $cat_data['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
-				}
-			}
-			unset( $cat_data );
+			$this->cap_leaderboard_entries( $existing );
 			$stats_store->set_leaderboard_bucket( $bucket_key, $existing );
 		}
 
@@ -1154,13 +1232,7 @@ class Flame_Builder_Node extends Node {
 					$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 				}
 				Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
-				foreach ( $existing['categories'] as &$cat_data ) {
-					if ( isset( $cat_data['entries'] ) && \count( $cat_data['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-						\uasort( $cat_data['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
-						$cat_data['entries'] = \array_slice( $cat_data['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
-					}
-				}
-				unset( $cat_data );
+				$this->cap_leaderboard_entries( $existing );
 				$stats_store->set_server_leaderboard_bucket( $server, $bucket_key, $existing );
 			}
 		}
@@ -1168,12 +1240,14 @@ class Flame_Builder_Node extends Node {
 		// --- URL index (hourly buckets) ---
 		if ( ! empty( $this->url_stats ) ) {
 			foreach ( $this->url_stats as $bucket_key => $hour_data ) {
+				/** @var array<string, array<string, mixed>> $existing_urls */
 				$existing_urls = $stats_store->get_url_index_hourly( $bucket_key );
 
-				foreach ( $hour_data as $hash => $stats ) {
+				foreach ( $hour_data as $hash => $stats_raw ) {
+					$stats = \is_array( $stats_raw ) ? $stats_raw : [];
 					if ( ! isset( $existing_urls[ $hash ] ) ) {
 						$existing_urls[ $hash ] = [
-							'url'         => $stats['url'],
+							'url'         => $stats['url'] ?? '',
 							'count'       => 0,
 							'timed_count' => 0,
 							'sum_ms'      => 0,
@@ -1189,27 +1263,32 @@ class Flame_Builder_Node extends Node {
 							'max_peak_mb' => 0,
 						];
 					}
+					/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $e */
 					$e               = &$existing_urls[ $hash ];
-					$e['count']      += $stats['count'];
-					$e['timed_count'] += $stats['timed_count'] ?? 0;
-					$e['sum_ms']     += $stats['sum_ms'];
+					$e['count']      += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
+					$e['timed_count'] += \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0;
+					$e['sum_ms']     += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
 					// Only fold min_ms from buckets that have timing; untimed-only
 					// buckets carry the PHP_INT_MAX sentinel, which must never enter
 					// the persisted index (leaves min_ms at 0 for untimed-only URLs).
-					if ( ( $stats['timed_count'] ?? 0 ) > 0 ) {
-						$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $stats['min_ms'] : \min( $e['min_ms'], $stats['min_ms'] );
+					$s_min_ms   = \is_numeric( $stats['min_ms'] ?? null ) ? $stats['min_ms'] : 0;
+					$s_max_ms   = \is_numeric( $stats['max_ms'] ?? null ) ? $stats['max_ms'] : 0;
+					$s_last     = \is_numeric( $stats['last_seen'] ?? null ) ? $stats['last_seen'] : 0;
+					if ( ( \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0 ) > 0 ) {
+						$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $s_min_ms : \min( $e['min_ms'], $s_min_ms );
 					}
-					$e['max_ms']     = \max( $e['max_ms'], $stats['max_ms'] );
-					$e['last_seen']  = \max( $e['last_seen'], $stats['last_seen'] );
-					$e['count_2xx'] += $stats['count_2xx'] ?? 0;
-					$e['count_3xx'] += $stats['count_3xx'] ?? 0;
-					$e['count_4xx'] += $stats['count_4xx'] ?? 0;
-					$e['count_5xx'] += $stats['count_5xx'] ?? 0;
-					$e['sum_peak_mb'] += $stats['sum_peak_mb'] ?? 0;
-					$e['max_peak_mb']  = \max( $e['max_peak_mb'], $stats['max_peak_mb'] ?? 0 );
+					$e['max_ms']     = \max( $e['max_ms'], $s_max_ms );
+					$e['last_seen']  = \max( $e['last_seen'], $s_last );
+					$e['count_2xx'] += \is_numeric( $stats['count_2xx'] ?? null ) ? $stats['count_2xx'] : 0;
+					$e['count_3xx'] += \is_numeric( $stats['count_3xx'] ?? null ) ? $stats['count_3xx'] : 0;
+					$e['count_4xx'] += \is_numeric( $stats['count_4xx'] ?? null ) ? $stats['count_4xx'] : 0;
+					$e['count_5xx'] += \is_numeric( $stats['count_5xx'] ?? null ) ? $stats['count_5xx'] : 0;
+					$e['sum_peak_mb'] += \is_numeric( $stats['sum_peak_mb'] ?? null ) ? $stats['sum_peak_mb'] : 0;
+					$e['max_peak_mb']  = \max( $e['max_peak_mb'], \is_numeric( $stats['max_peak_mb'] ?? null ) ? $stats['max_peak_mb'] : 0 );
 
-					$max_dur = Stats_Store::MAX_DURATIONS_PER_BUCKET;
-					$merged  = \array_merge( $e['durations'], $stats['durations'] );
+					$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
+					$s_durations = \is_array( $stats['durations'] ?? null ) ? $stats['durations'] : [];
+					$merged      = \array_merge( $e['durations'], $s_durations );
 					if ( \count( $merged ) > $max_dur ) {
 						\shuffle( $merged );
 						$merged = \array_slice( $merged, 0, $max_dur );
@@ -1220,21 +1299,23 @@ class Flame_Builder_Node extends Node {
 
 				// Compute percentiles for all URLs in this hour.
 				foreach ( $existing_urls as &$url_stat ) {
-					if ( ! empty( $url_stat['durations'] ) ) {
+					if ( ! empty( $url_stat['durations'] ) && \is_array( $url_stat['durations'] ) ) {
 						$sorted = $url_stat['durations'];
 						\sort( $sorted );
 						$n = \count( $sorted );
 						$url_stat['p50_ms'] = $sorted[ (int) ( $n * 0.50 ) ] ?? 0;
 						$url_stat['p95_ms'] = $sorted[ (int) ( $n * 0.95 ) ] ?? 0;
 						$url_stat['p99_ms'] = $sorted[ (int) ( $n * 0.99 ) ] ?? 0;
-						$tc = $url_stat['timed_count'] ?? $url_stat['count'];
-						$url_stat['avg_ms'] = $tc > 0 ? $url_stat['sum_ms'] / $tc : 0;
+						$tc_raw = $url_stat['timed_count'] ?? $url_stat['count'] ?? 0;
+						$tc     = \is_numeric( $tc_raw ) ? $tc_raw : 0;
+						$sum_ms = \is_numeric( $url_stat['sum_ms'] ?? null ) ? $url_stat['sum_ms'] : 0;
+						$url_stat['avg_ms'] = $tc > 0 ? $sum_ms / $tc : 0;
 					}
 				}
 				unset( $url_stat );
 
 				if ( \count( $existing_urls ) > 500 ) {
-					\uasort( $existing_urls, fn( $a, $b ) => $b['count'] <=> $a['count'] );
+					\uasort( $existing_urls, fn( $a, $b ) => ( \is_numeric( $b['count'] ?? null ) ? $b['count'] : 0 ) <=> ( \is_numeric( $a['count'] ?? null ) ? $a['count'] : 0 ) );
 					$existing_urls = \array_slice( $existing_urls, 0, 500, true );
 				}
 
@@ -1259,10 +1340,9 @@ class Flame_Builder_Node extends Node {
 		foreach ( $this->url_dim_stats as $url_hash => $dims ) {
 			$existing = $stats_store->get_url_dimensional( $url_hash );
 			foreach ( $dims as $dim => $buckets ) {
-				if ( ! isset( $existing[ $dim ] ) ) {
-					$existing[ $dim ] = [];
-				}
-				$this->merge_and_cap_dimensional( $existing[ $dim ], $buckets, $cutoff, Stats_Store::MAX_URL_DIM_VALUES );
+				$dim_existing = isset( $existing[ $dim ] ) && \is_array( $existing[ $dim ] ) ? $existing[ $dim ] : [];
+				$this->merge_and_cap_dimensional( $dim_existing, $buckets, $cutoff, Stats_Store::MAX_URL_DIM_VALUES );
+				$existing[ $dim ] = $dim_existing;
 			}
 			$stats_store->set_url_dimensional( $url_hash, $existing );
 		}
@@ -1286,6 +1366,30 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Cap each leaderboard category's entries to the global limit (sorted by sum_time).
+	 *
+	 * @param array<string, mixed> $bucket Leaderboard bucket (modified by reference).
+	 */
+	private function cap_leaderboard_entries( array &$bucket ): void {
+		$categories = $bucket['categories'] ?? null;
+		if ( ! \is_array( $categories ) ) {
+			return;
+		}
+		foreach ( $categories as &$cat_data ) {
+			if ( ! \is_array( $cat_data ) ) {
+				continue;
+			}
+			$entries = $cat_data['entries'] ?? null;
+			if ( \is_array( $entries ) && \count( $entries ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+				\uasort( $entries, fn( $a, $b ) => ( \is_array( $b ) ? ( $b[0] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a[0] ?? 0 ) : 0 ) );
+				$cat_data['entries'] = \array_slice( $entries, 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
+			}
+		}
+		unset( $cat_data );
+		$bucket['categories'] = $categories;
+	}
+
+	/**
 	 * Merge incoming dimensional buckets into existing, expire old, and cap.
 	 *
 	 * @param array<string, mixed> $existing Existing buckets (modified by reference).
@@ -1296,32 +1400,48 @@ class Flame_Builder_Node extends Node {
 			$max_values = Stats_Store::MAX_DIM_VALUES;
 		}
 		foreach ( $buckets as $bk => $values ) {
-			foreach ( $values as $val => $stats ) {
-				$existing[ $bk ][ $val ]['c'] = ( $existing[ $bk ][ $val ]['c'] ?? 0 ) + $stats['c'];
-				$existing[ $bk ][ $val ]['s'] = ( $existing[ $bk ][ $val ]['s'] ?? 0 ) + $stats['s'];
-				$existing[ $bk ][ $val ]['m'] = ( $existing[ $bk ][ $val ]['m'] ?? 0 ) + ( $stats['m'] ?? 0 );
+			if ( ! \is_array( $values ) ) {
+				continue;
 			}
+			$bucket = \is_array( $existing[ $bk ] ?? null ) ? $existing[ $bk ] : [];
+			foreach ( $values as $val => $stats ) {
+				if ( ! \is_array( $stats ) ) {
+					continue;
+				}
+				$cur          = \is_array( $bucket[ $val ] ?? null ) ? $bucket[ $val ] : [];
+				$cur['c']     = ( \is_numeric( $cur['c'] ?? null ) ? $cur['c'] : 0 ) + ( \is_numeric( $stats['c'] ?? null ) ? $stats['c'] : 0 );
+				$cur['s']     = ( \is_numeric( $cur['s'] ?? null ) ? $cur['s'] : 0 ) + ( \is_numeric( $stats['s'] ?? null ) ? $stats['s'] : 0 );
+				$cur['m']     = ( \is_numeric( $cur['m'] ?? null ) ? $cur['m'] : 0 ) + ( \is_numeric( $stats['m'] ?? null ) ? $stats['m'] : 0 );
+				$bucket[ $val ] = $cur;
+			}
+			$existing[ $bk ] = $bucket;
 		}
 		foreach ( \array_keys( $existing ) as $bk ) {
 			if ( $bk < $cutoff ) {
 				unset( $existing[ $bk ] );
 			}
 		}
-		foreach ( $existing as $bk => &$bk_values ) {
+		foreach ( $existing as $bk => $bk_values_raw ) {
+			if ( ! \is_array( $bk_values_raw ) ) {
+				continue;
+			}
+			$bk_values = $bk_values_raw;
 			if ( \count( $bk_values ) > $max_values ) {
-				\uasort( $bk_values, fn( $a, $b ) => $b['c'] <=> $a['c'] );
+				\uasort( $bk_values, fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b['c'] ?? null ) ? $b['c'] : 0 ) <=> ( \is_array( $a ) && \is_numeric( $a['c'] ?? null ) ? $a['c'] : 0 ) );
 				$top    = \array_slice( $bk_values, 0, $max_values - 1, true );
 				$rest_c = $rest_s = $rest_m = 0;
 				foreach ( \array_slice( $bk_values, $max_values - 1 ) as $v ) {
-					$rest_c += $v['c'];
-					$rest_s += $v['s'];
-					$rest_m += $v['m'] ?? 0;
+					if ( ! \is_array( $v ) ) {
+						continue;
+					}
+					$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
+					$rest_s += \is_numeric( $v['s'] ?? null ) ? $v['s'] : 0;
+					$rest_m += \is_numeric( $v['m'] ?? null ) ? $v['m'] : 0;
 				}
-				$top['Other'] = [ 'c' => $rest_c, 's' => $rest_s, 'm' => $rest_m ];
-				$bk_values    = $top;
+				$top['Other']      = [ 'c' => $rest_c, 's' => $rest_s, 'm' => $rest_m ];
+				$existing[ $bk ]   = $top;
 			}
 		}
-		unset( $bk_values );
 		\ksort( $existing );
 	}
 
@@ -1338,28 +1458,45 @@ class Flame_Builder_Node extends Node {
 			$max_values = Stats_Store::MAX_CAT_VALUES;
 		}
 		foreach ( $buckets as $bk => $categories ) {
-			foreach ( $categories as $cat => $stats ) {
-				$existing[ $bk ][ $cat ]['t'] = ( $existing[ $bk ][ $cat ]['t'] ?? 0 ) + $stats['t'];
-				$existing[ $bk ][ $cat ]['c'] = ( $existing[ $bk ][ $cat ]['c'] ?? 0 ) + $stats['c'];
-				$existing[ $bk ][ $cat ]['n'] = ( $existing[ $bk ][ $cat ]['n'] ?? 0 ) + $stats['n'];
+			if ( ! \is_array( $categories ) ) {
+				continue;
 			}
+			$bucket = \is_array( $existing[ $bk ] ?? null ) ? $existing[ $bk ] : [];
+			foreach ( $categories as $cat => $stats ) {
+				if ( ! \is_array( $stats ) ) {
+					continue;
+				}
+				$cur          = \is_array( $bucket[ $cat ] ?? null ) ? $bucket[ $cat ] : [];
+				$cur['t']     = ( \is_numeric( $cur['t'] ?? null ) ? $cur['t'] : 0 ) + ( \is_numeric( $stats['t'] ?? null ) ? $stats['t'] : 0 );
+				$cur['c']     = ( \is_numeric( $cur['c'] ?? null ) ? $cur['c'] : 0 ) + ( \is_numeric( $stats['c'] ?? null ) ? $stats['c'] : 0 );
+				$cur['n']     = ( \is_numeric( $cur['n'] ?? null ) ? $cur['n'] : 0 ) + ( \is_numeric( $stats['n'] ?? null ) ? $stats['n'] : 0 );
+				$bucket[ $cat ] = $cur;
+			}
+			$existing[ $bk ] = $bucket;
 		}
 		foreach ( \array_keys( $existing ) as $bk ) {
 			if ( $bk < $cutoff ) {
 				unset( $existing[ $bk ] );
 			}
 		}
-		foreach ( $existing as $bk => &$bk_cats ) {
+		foreach ( $existing as $bk => $bk_cats_raw ) {
+			if ( ! \is_array( $bk_cats_raw ) ) {
+				continue;
+			}
+			$bk_cats = $bk_cats_raw;
 			if ( \count( $bk_cats ) > $max_values ) {
 				$total = $bk_cats['total'] ?? null;
 				unset( $bk_cats['total'] );
-				\uasort( $bk_cats, fn( $a, $b ) => ( $b['t'] ?? 0 ) <=> ( $a['t'] ?? 0 ) );
+				\uasort( $bk_cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
 				$top    = \array_slice( $bk_cats, 0, $max_values - 2, true );
 				$rest_t = $rest_c = $rest_n = 0;
 				foreach ( \array_slice( $bk_cats, $max_values - 2 ) as $v ) {
-					$rest_t += $v['t'] ?? 0;
-					$rest_c += $v['c'] ?? 0;
-					$rest_n += $v['n'] ?? 0;
+					if ( ! \is_array( $v ) ) {
+						continue;
+					}
+					$rest_t += \is_numeric( $v['t'] ?? null ) ? $v['t'] : 0;
+					$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
+					$rest_n += \is_numeric( $v['n'] ?? null ) ? $v['n'] : 0;
 				}
 				if ( $rest_t > 0 || $rest_c > 0 ) {
 					$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
@@ -1367,10 +1504,9 @@ class Flame_Builder_Node extends Node {
 				if ( $total ) {
 					$top['total'] = $total;
 				}
-				$bk_cats = $top;
+				$existing[ $bk ] = $top;
 			}
 		}
-		unset( $bk_cats );
 		\ksort( $existing );
 	}
 
@@ -1397,19 +1533,19 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Dimensional — global.
-		foreach ( $this->pending['dim'] as $dim => $values ) {
+		foreach ( $this->pending['dim'] ?? [] as $dim => $values ) {
 			$this->dim_stats[ $dim ][ $bk ] = $values;
 		}
 
 		// Dimensional — per-server.
-		foreach ( $this->pending['dim_by_server'] as $server => $dims ) {
+		foreach ( $this->pending['dim_by_server'] ?? [] as $server => $dims ) {
 			foreach ( $dims as $dim => $values ) {
 				$this->dim_stats_by_server[ $server ][ $dim ][ $bk ] = $values;
 			}
 		}
 
 		// Dimensional — per-URL.
-		foreach ( $this->pending['url_dim'] as $url_hash => $dims ) {
+		foreach ( $this->pending['url_dim'] ?? [] as $url_hash => $dims ) {
 			foreach ( $dims as $dim => $values ) {
 				$this->url_dim_stats[ $url_hash ][ $dim ][ $bk ] = $values;
 			}
@@ -1421,12 +1557,12 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Category — per-server, capped.
-		foreach ( $this->pending['cat_by_server'] as $server => $cats ) {
+		foreach ( $this->pending['cat_by_server'] ?? [] as $server => $cats ) {
 			$this->cat_stats_by_server[ $server ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
 		}
 
 		// Category — per-URL, capped.
-		foreach ( $this->pending['cat_by_url'] as $url_hash => $cats ) {
+		foreach ( $this->pending['cat_by_url'] ?? [] as $url_hash => $cats ) {
 			$this->url_cat_stats[ $url_hash ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
 		}
 
@@ -1443,7 +1579,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Leaderboard (per-server).
-		foreach ( $this->pending['leaderboard_by_server'] as $server => $slb_data ) {
+		foreach ( $this->pending['leaderboard_by_server'] ?? [] as $server => $slb_data ) {
 			if ( ( $slb_data['count'] ?? 0 ) <= 0 ) {
 				continue;
 			}
@@ -1472,13 +1608,16 @@ class Flame_Builder_Node extends Node {
 		}
 		$total = $cats['total'] ?? null;
 		unset( $cats['total'] );
-		\uasort( $cats, fn( $a, $b ) => ( $b['t'] ?? 0 ) <=> ( $a['t'] ?? 0 ) );
+		\uasort( $cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
 		$top    = \array_slice( $cats, 0, $max_values - 2, true );
 		$rest_t = $rest_c = $rest_n = 0;
 		foreach ( \array_slice( $cats, $max_values - 2 ) as $v ) {
-			$rest_t += $v['t'] ?? 0;
-			$rest_c += $v['c'] ?? 0;
-			$rest_n += $v['n'] ?? 0;
+			if ( ! \is_array( $v ) ) {
+				continue;
+			}
+			$rest_t += \is_numeric( $v['t'] ?? null ) ? $v['t'] : 0;
+			$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
+			$rest_n += \is_numeric( $v['n'] ?? null ) ? $v['n'] : 0;
 		}
 		if ( $rest_t > 0 || $rest_c > 0 ) {
 			$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
@@ -1524,15 +1663,23 @@ class Flame_Builder_Node extends Node {
 			return $existing;
 		}
 
+		/** @var array<string, array<string, mixed>> $indexed */
 		$indexed = [];
 		foreach ( $existing as $child ) {
-			$indexed[ $child['name'] ] = $child;
+			if ( ! \is_array( $child ) ) {
+				continue;
+			}
+			$child_name = \is_string( $child['name'] ?? null ) ? $child['name'] : 'unknown';
+			$indexed[ $child_name ] = $child;
 		}
 
 		foreach ( $incoming as $child ) {
-			$name           = $child['name'] ?? 'unknown';
-			$child_ts       = (int) ( $child['ts'] ?? $now_ts );
-			$incoming_value = (float) ( $child['value'] ?? 0 );
+			if ( ! \is_array( $child ) ) {
+				continue;
+			}
+			$name           = \is_string( $child['name'] ?? null ) ? $child['name'] : 'unknown';
+			$child_ts       = \is_numeric( $child['ts'] ?? null ) ? (int) $child['ts'] : $now_ts;
+			$incoming_value = \is_numeric( $child['value'] ?? null ) ? (float) $child['value'] : 0.0;
 			if ( ! isset( $indexed[ $name ] ) ) {
 				$indexed[ $name ] = [
 					'name'       => $name,
@@ -1542,15 +1689,17 @@ class Flame_Builder_Node extends Node {
 					'children'   => [],
 				];
 			} else {
-				++$indexed[ $name ]['seen_count'];
+				$indexed[ $name ]['seen_count'] = ( \is_numeric( $indexed[ $name ]['seen_count'] ?? null ) ? $indexed[ $name ]['seen_count'] : 0 ) + 1;
 				$indexed[ $name ]['ts']         = $child_ts;
-				$indexed[ $name ]['sum_value'] += $incoming_value;
+				$indexed[ $name ]['sum_value']  = ( \is_numeric( $indexed[ $name ]['sum_value'] ?? null ) ? $indexed[ $name ]['sum_value'] : 0 ) + $incoming_value;
 			}
 
-			if ( ! empty( $child['children'] ) ) {
+			$child_children   = $child['children'] ?? null;
+			$indexed_children = $indexed[ $name ]['children'] ?? [];
+			if ( ! empty( $child_children ) && \is_array( $child_children ) ) {
 				$indexed[ $name ]['children'] = self::merge_flame_children_incremental(
-					$indexed[ $name ]['children'] ?? [],
-					$child['children'],
+					\array_values( \is_array( $indexed_children ) ? $indexed_children : [] ),
+					\array_values( $child_children ),
 					$now_ts,
 					$depth + 1
 				);
@@ -1580,7 +1729,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Strip hidden sequence suffix (\x00N) used for duplicate sibling tracking.
-		$name     = $node['name'] ?? 'unknown';
+		$name     = \is_string( $node['name'] ?? null ) ? $node['name'] : 'unknown';
 		$null_pos = \strpos( $name, "\x00" );
 		if ( false !== $null_pos ) {
 			$node['name'] = \substr( $name, 0, $null_pos );
@@ -1588,23 +1737,27 @@ class Flame_Builder_Node extends Node {
 
 		// Convert sum to average across all requests for this URL.
 		if ( $total_count > 0 && isset( $node['sum_value'] ) ) {
-			$node['value'] = $node['sum_value'] / $total_count;
+			$node['value'] = ( \is_numeric( $node['sum_value'] ) ? $node['sum_value'] : 0 ) / $total_count;
 		} elseif ( ! isset( $node['value'] ) ) {
 			$node['value'] = 0;
 		}
 
-		if ( ! empty( $node['children'] ) ) {
+		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
 			foreach ( $node['children'] as &$child ) {
-				self::finalize_flame_node( $child, $total_count, $depth + 1 );
+				if ( \is_array( $child ) ) {
+					/** @var array<string, mixed> $child */
+					self::finalize_flame_node( $child, $total_count, $depth + 1 );
+				}
 			}
 			unset( $child );
 
 			// Normalize: ensure parent value >= sum of children.
 			$children_sum = 0;
 			foreach ( $node['children'] as $child ) {
-				$children_sum += $child['value'] ?? 0;
+				$children_sum += \is_array( $child ) && \is_numeric( $child['value'] ?? null ) ? $child['value'] : 0;
 			}
-			if ( $children_sum > $node['value'] ) {
+			$node_value = \is_numeric( $node['value'] ) ? $node['value'] : 0;
+			if ( $children_sum > $node_value ) {
 				$node['value'] = $children_sum;
 			}
 		}
@@ -1725,15 +1878,16 @@ class Flame_Builder_Node extends Node {
 
 	/** @param array<int, mixed> $message Incoming command Message. */
 	private function handle_request( array $message ): void {
-		$value = (string) $message[ Message::VALUE ];
-		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+		$value_raw = $message[ Message::VALUE ];
+		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_STATS' === $verb ) {
 			$stats_count = 0;
 			foreach ( $this->stats_cache->iterate() as $_ ) {
 				++$stats_count;
 			}
-			$now = (float) ( Core::$now ?: \microtime( true ) );
+			$now = ( Core::$now ?: \microtime( true ) );
 			$payload = [
 				'stats_count'              => $stats_count,
 				'pending_url_count'        => \count( $this->pending ),
@@ -1808,7 +1962,7 @@ class Flame_Builder_Node extends Node {
 						$args = \trim( $args );
 						$list = '' === $args
 							? []
-							: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ) ) );
+							: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ), static fn ( $v ) => (bool) $v ) );
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_significant_events( $list );
@@ -1832,8 +1986,9 @@ class Flame_Builder_Node extends Node {
 
 						// Read current substrate config for retention; the store reads
 						// the shared Core::$memd handle directly.
-						$config       = \Newspack_Event_Logger_Nodes\Config::load_config();
-						$max_lifespan = (int) ( $config['max_lifespan'] ?? 86400 );
+						$config           = \Newspack_Event_Logger_Nodes\Config::load_config();
+						$max_lifespan_raw = $config['max_lifespan'] ?? 86400;
+						$max_lifespan     = \is_numeric( $max_lifespan_raw ) ? (int) $max_lifespan_raw : 86400;
 
 						$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $partition, $max_lifespan );
 

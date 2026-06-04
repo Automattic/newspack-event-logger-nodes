@@ -307,7 +307,7 @@ class Settings_Sync {
 	public static function queue_job( string $handler, array $params, ?string $key = null ): bool {
 		// Resolve base_dir + num_partitions from Config (cheap; cached).
 		// JobIntake auto-resolves base_dir + num_partitions from substrate Config.
-		return (bool) Job_Intake::queue( $handler, $params, $key );
+		return Job_Intake::queue( $handler, $params, $key );
 	}
 
 	/**
@@ -377,8 +377,10 @@ class Settings_Sync {
 		if ( ! \is_array( $decoded ) || ! isset( $decoded['option'] ) ) {
 			return null;
 		}
+		/** @var int|float|string|bool|null $raw_option */
+		$raw_option = $decoded['option'];
 		return [
-			'option' => (string) $decoded['option'],
+			'option' => (string) $raw_option,
 			'value'  => $decoded['value'] ?? null,
 		];
 	}
@@ -453,7 +455,7 @@ class Settings_Sync {
 		if ( ! \function_exists( 'wp_salt' ) ) {
 			return '';
 		}
-		$salt = (string) \wp_salt( 'auth' );
+		$salt = \wp_salt( 'auth' );
 		if ( '' === $salt ) {
 			return '';
 		}

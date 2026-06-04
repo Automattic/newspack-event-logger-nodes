@@ -86,7 +86,7 @@ class Remote_Source_Node extends Node {
 	private ?\CurlHandle $handle = null;
 
 	private string  $buffer        = '';
-	/** @var array<string, mixed> Current SSE event accumulator ({event, data}). */
+	/** @var array{event:string, data:string} Current SSE event accumulator. */
 	private array   $current_event = [ 'event' => '', 'data' => '' ];
 	private ?int    $slot          = null;
 	/** @var array{segment_id:int, offset:int} Read cursor. */
@@ -265,7 +265,7 @@ class Remote_Source_Node extends Node {
 			'last_http_code'   => $this->last_http_code,
 			'position'         => $this->position,
 			'last_event_age_s' => $this->last_event_time > 0
-				? (int) ( (float) ( Core::$now ?: \microtime( true ) ) - $this->last_event_time )
+				? (int) ( ( Core::$now ?: \microtime( true ) ) - $this->last_event_time )
 				: null,
 			'current_backoff'  => $this->current_backoff,
 			'slot'             => $this->slot,
@@ -314,7 +314,7 @@ class Remote_Source_Node extends Node {
 			return false;
 		}
 
-		$now = (float) ( Core::$now ?: \microtime( true ) );
+		$now = Core::$now ?: \microtime( true );
 		if ( $this->last_attempt > 0.0 && ( $now - $this->last_attempt ) < $this->current_backoff ) {
 			$this->update_connection_status(
 				'backoff',
@@ -464,7 +464,7 @@ class Remote_Source_Node extends Node {
 			return 0;
 		}
 		if ( null === $this->last_http_code ) {
-			$code                 = (int) \curl_getinfo( $handle, CURLINFO_HTTP_CODE );
+			$code                 = \curl_getinfo( $handle, CURLINFO_HTTP_CODE );
 			$this->last_http_code = $code > 0 ? $code : null;
 			// First bytes through with a 200 status means the connection
 			// is alive and serving data — any `last_error` from a prior
@@ -481,7 +481,7 @@ class Remote_Source_Node extends Node {
 	/**
 	 * Called by EventFramework::drain_curl_multi() when curl_multi_info_read
 	 * returns CURLMSG_DONE for this RemoteSource's multi.
-	 * @param array<string, mixed> $info
+	 * @param array{msg?:int, handle?:\CurlHandle, result?:int} $info
 	 */
 	public function on_curl_message( array $info ): void {
 		if ( ! isset( $info['msg'] ) || \CURLMSG_DONE !== $info['msg'] ) {
@@ -499,8 +499,8 @@ class Remote_Source_Node extends Node {
 			return;
 		}
 
-		$result    = (int) ( $info['result'] ?? \CURLE_OK );
-		$http_code = (int) \curl_getinfo( $handle, \CURLINFO_HTTP_CODE );
+		$result    = $info['result'] ?? \CURLE_OK;
+		$http_code = \curl_getinfo( $handle, \CURLINFO_HTTP_CODE );
 		$err       = \curl_error( $handle );
 		$this->last_http_code = $http_code > 0 ? $http_code : null;
 
@@ -611,7 +611,7 @@ class Remote_Source_Node extends Node {
 
 		// Any successful event receipt resets backoff and refreshes liveness.
 		$this->current_backoff = self::INITIAL_BACKOFF;
-		$this->last_event_time = (float) ( Core::$now ?: \microtime( true ) );
+		$this->last_event_time = Core::$now ?: \microtime( true );
 
 		$decoded = \json_decode( $raw_data, true, 16 );
 
@@ -626,7 +626,10 @@ class Remote_Source_Node extends Node {
 		// `/messages/stream` data lines are `msg` events carrying a 7-field
 		// Message envelope; any other event type is silently ignored.
 		if ( 'msg' === $type && \is_array( $decoded ) && \count( $decoded ) === 7 ) {
-			return $this->dispatch_msg_envelope( $decoded );
+			// Positional 7-field Message JSON — array_values re-keys 0..6 (no-op
+			// on the already-positional decode) so the int-keyed envelope shape
+			// holds for the dispatch path.
+			return $this->dispatch_msg_envelope( \array_values( $decoded ) );
 		}
 
 		return true;
@@ -648,9 +651,11 @@ class Remote_Source_Node extends Node {
 	 * @param array<int,mixed> $envelope 7-field Message array.
 	 */
 	private function dispatch_msg_envelope( array $envelope ): bool {
-		$id    = (string) $envelope[ Message::ID ];
-		$key   = (string) $envelope[ Message::KEY ];
-		$value = $envelope[ Message::VALUE ];
+		$id_raw  = $envelope[ Message::ID ];
+		$key_raw = $envelope[ Message::KEY ];
+		$id      = \is_scalar( $id_raw ) ? (string) $id_raw : '';
+		$key     = \is_scalar( $key_raw ) ? (string) $key_raw : '';
+		$value   = $envelope[ Message::VALUE ];
 
 		// Position from envelope ID — `{segment_id}:{offset}` shape. Empty ID
 		// (e.g. the connected envelope, which fires BEFORE Consumer stamps
@@ -674,7 +679,8 @@ class Remote_Source_Node extends Node {
 		// `connected` envelope is the substrate's bookkeeping handshake —
 		// capture slot, mark connected, do NOT forward.
 		if ( 'connected' === $key && \is_array( $value ) && isset( $value['slot'] ) ) {
-			$this->slot = (int) $value['slot'];
+			$slot_raw   = $value['slot'];
+			$this->slot = \is_scalar( $slot_raw ) ? (int) $slot_raw : 0;
 			$this->record_successful_heartbeat();
 			$this->last_heartbeat = (int) Core::$now;
 			$this->update_connection_status( 'connected', $this->last_http_code, '' );
@@ -708,7 +714,8 @@ class Remote_Source_Node extends Node {
 	 * @param array<int,mixed> $envelope 7-field Message array.
 	 */
 	private function forward_envelope( array $envelope ): void {
-		$value = $envelope[ Message::VALUE ];
+		$value   = $envelope[ Message::VALUE ];
+		$key_raw = $envelope[ Message::KEY ];
 
 		if ( \is_array( $value ) ) {
 			$value['_source'] = $this->server_id;
@@ -743,7 +750,7 @@ class Remote_Source_Node extends Node {
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
-		$msg[ Message::KEY ]       = (string) $envelope[ Message::KEY ];
+		$msg[ Message::KEY ]       = \is_scalar( $key_raw ) ? (string) $key_raw : '';
 		$msg[ Message::VALUE ]     = $value;
 		++$this->counter;
 		$this->sink?->fill( $msg );
@@ -757,7 +764,7 @@ class Remote_Source_Node extends Node {
 		if ( ! $this->connected || ! ( $this->handle instanceof \CurlHandle ) ) {
 			return;
 		}
-		$now     = (float) ( Core::$now ?: \microtime( true ) );
+		$now     = Core::$now ?: \microtime( true );
 		$elapsed = $now - $this->last_event_time;
 		if ( $elapsed <= self::HEARTBEAT_TIMEOUT ) {
 			return;
@@ -958,14 +965,18 @@ class Remote_Source_Node extends Node {
 			$status = 'error';
 			$error  = 'Unexpected wp_remote_post response shape';
 		} else {
-			$code = isset( $response['response']['code'] ) ? (int) $response['response']['code'] : 0;
-			$body = isset( $response['body'] ) ? \json_decode( (string) $response['body'], true, 16 ) : null;
+			$resp     = $response['response'] ?? null;
+			$code_raw = \is_array( $resp ) ? ( $resp['code'] ?? null ) : null;
+			$code     = \is_scalar( $code_raw ) ? (int) $code_raw : 0;
+			$body_raw = $response['body'] ?? null;
+			$body     = \is_scalar( $body_raw ) ? \json_decode( (string) $body_raw, true, 16 ) : null;
 			if ( 200 !== $code ) {
 				$status = 'error';
 				$error  = "HTTP {$code}";
 			} elseif ( \is_array( $body ) && isset( $body['success'] ) && false === $body['success'] ) {
-				$status = 'slot_expired';
-				$error  = (string) ( $body['error'] ?? 'Slot no longer valid' );
+				$status  = 'slot_expired';
+				$err_raw = $body['error'] ?? 'Slot no longer valid';
+				$error   = \is_scalar( $err_raw ) ? (string) $err_raw : 'Slot no longer valid';
 			}
 		}
 

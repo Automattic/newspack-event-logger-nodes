@@ -281,7 +281,7 @@ class Request_Builder_Node extends Node {
 		}
 		$all = \is_array( $primary )
 			? $primary
-			: ( '' !== (string) $primary ? [ $primary ] : [] );
+			: ( '' !== $primary ? [ $primary ] : [] );
 		foreach ( $extras as $e ) {
 			if ( ! \in_array( $e, $all, true ) ) {
 				$all[] = $e;
@@ -317,7 +317,7 @@ class Request_Builder_Node extends Node {
 	public function save_state(): array {
 		// Convert objects to arrays for serialization.
 		$state = $this->cache->get_state();
-		if ( isset( $state['buckets'] ) ) {
+		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
 			foreach ( $state['buckets'] as &$bucket ) {
 				if ( \is_array( $bucket ) ) {
 					foreach ( $bucket as $key => &$val ) {
@@ -343,6 +343,9 @@ class Request_Builder_Node extends Node {
 			return;
 		}
 		$cache_state = $saved['request_cache'];
+		if ( ! \is_array( $cache_state ) ) {
+			return;
+		}
 		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
 			foreach ( $cache_state['buckets'] as &$bucket ) {
 				if ( \is_array( $bucket ) ) {
@@ -366,7 +369,8 @@ class Request_Builder_Node extends Node {
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
-		$type = $message[ Message::TYPE ];
+		$type_raw = $message[ Message::TYPE ];
+		$type     = \is_scalar( $type_raw ) ? (int) $type_raw : 0;
 		if ( $type & Message::TM_REQUEST ) {
 			$this->handle_request( $message );
 			return;
@@ -380,7 +384,8 @@ class Request_Builder_Node extends Node {
 			return;
 		}
 
-		$rid = (string) ( $message[ Message::KEY ] ?? '' );
+		$key_raw = $message[ Message::KEY ] ?? '';
+		$rid     = \is_scalar( $key_raw ) ? (string) $key_raw : '';
 		if ( '' === $rid ) {
 			return;
 		}
@@ -429,13 +434,21 @@ class Request_Builder_Node extends Node {
 			$label = $entry['l'] ?? '';
 			$this->push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $label ) ? $label : '' );
 		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
-			$this->pop_stack( $request, \substr( $keyword, 0, -11 ), $entry['duration_ms'] ?? 0, $entry['ts'] ?? 0 );
+			$dur_v = $entry['duration_ms'] ?? 0;
+			$ts_v  = $entry['ts'] ?? 0;
+			$this->pop_stack(
+				$request,
+				\substr( $keyword, 0, -11 ),
+				\is_scalar( $dur_v ) ? (float) $dur_v : 0.0,
+				\is_scalar( $ts_v ) ? (float) $ts_v : 0.0
+			);
 		}
 
 		// Track per-line activity timestamps for the inflight snapshot's
 		// time_ms / est_ms / lag_ms derivation (matches legacy
 		// InflightTracker::process lines 88-90).
-		$request->last_log_ts = (float) ( $entry['ts'] ?? 0 );
+		$ts_log_v             = $entry['ts'] ?? 0;
+		$request->last_log_ts = \is_scalar( $ts_log_v ) ? (float) $ts_log_v : 0.0;
 		$request->tracker_ts  = \microtime( true );
 
 		// Runaway requests stay visible in the cache so inflight_snapshot
@@ -572,7 +585,7 @@ class Request_Builder_Node extends Node {
 
 		$s['memory'] = function ( \stdClass $request, array $entry ): void {
 			$m = $entry['m'] ?? [];
-			if ( \is_array( $m ) && isset( $m['peak'] ) ) {
+			if ( \is_array( $m ) && isset( $m['peak'] ) && \is_scalar( $m['peak'] ) ) {
 				$request->peak_mb = (float) $m['peak'];
 			}
 		};
@@ -893,7 +906,7 @@ class Request_Builder_Node extends Node {
 	public static function format_index_entry( string $line, array $position, &$data = null ): ?string {
 		// $line is the packed Message (positional JSON); VALUE is index 6.
 		$decoded = \json_decode( $line, true, 64 );
-		$value   = $decoded[ Message::VALUE ] ?? null;
+		$value   = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
 		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
 			return null;
 		}
@@ -1035,8 +1048,9 @@ class Request_Builder_Node extends Node {
 	 */
 	/** @param array<int, mixed> $message Incoming command Message. */
 	private function handle_request( array $message ): void {
-		$value = (string) $message[ Message::VALUE ];
-		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+		$value_raw = $message[ Message::VALUE ];
+		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_CACHE' === $verb ) {
 			$now     = (int) Core::$now;
@@ -1046,13 +1060,18 @@ class Request_Builder_Node extends Node {
 			$count      = 0;
 			foreach ( $this->cache->iterate() as $rid => $request ) {
 				++$count;
-				$created = is_array( $request ) ? (int) ( $request['process']['ts_start'] ?? $request['ts'] ?? 0 ) : 0;
+				$created = 0;
+				if ( \is_array( $request ) ) {
+					$proc      = $request['process'] ?? null;
+					$created_v = ( \is_array( $proc ) ? ( $proc['ts_start'] ?? null ) : null ) ?? ( $request['ts'] ?? 0 );
+					$created   = \is_scalar( $created_v ) ? (int) $created_v : 0;
+				}
 				if ( $created > 0 && $created < $oldest_ts ) {
 					$oldest_ts  = $created;
 					$oldest_rid = $rid;
 				}
-				if ( count( $samples ) < 5 ) {
-					$samples[] = (string) $rid;
+				if ( \count( $samples ) < 5 ) {
+					$samples[] = \is_scalar( $rid ) ? (string) $rid : '';
 				}
 			}
 			$payload = [

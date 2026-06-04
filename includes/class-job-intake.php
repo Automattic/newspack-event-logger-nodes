@@ -90,8 +90,10 @@ class Job_Intake {
 			$config         = \class_exists( '\Newspack_Nodes\Config' )
 				? \Newspack_Nodes\Config::load_config()
 				: [];
-			$base_dir       = $base_dir       ?? \Newspack_Nodes\Config::get_base_directory();
-			$num_partitions = $num_partitions ?? (int) ( $config['num_partitions'] ?? 1 );
+			$base_dir = $base_dir ?? \Newspack_Nodes\Config::get_base_directory();
+			/** @var int|float|string|bool|null $raw_num_partitions */
+			$raw_num_partitions = $config['num_partitions'] ?? 1;
+			$num_partitions     = $num_partitions ?? (int) $raw_num_partitions;
 		}
 		$this->base_dir       = \rtrim( $base_dir, '/' );
 		$this->num_partitions = \max( 1, $num_partitions );
@@ -234,6 +236,7 @@ class Job_Intake {
 				continue;
 			}
 
+			/** @var array<string, mixed> $parameters */
 			if ( $this->write_job( $handler, $parameters, $key ) ) {
 				++$written;
 			}

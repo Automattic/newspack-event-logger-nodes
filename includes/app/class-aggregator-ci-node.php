@@ -104,23 +104,22 @@ class Aggregator_CI_Node extends Service_CI_Node {
 						$registry->reset_cache();
 						$servers = $registry->get_all();
 
-						$config         = RuntimeConfig::load_config();
-						$num_partitions = \min( 16, \max( 1, (int) ( $config['num_partitions'] ?? 1 ) ) );
+						$config           = RuntimeConfig::load_config();
+						$num_partitions_v = $config['num_partitions'] ?? 1;
+						$num_partitions   = \min( 16, \max( 1, \is_scalar( $num_partitions_v ) ? (int) $num_partitions_v : 1 ) );
 
 						$result = [];
 						foreach ( $servers as $id => $server ) {
-							if ( ! \is_array( $server ) ) {
-								continue;
-							}
 							$partitions = [];
 							for ( $p = 0; $p < $num_partitions; $p++ ) {
 								$val              = Core::$memd?->get( "aggregator_status:{$id}:p{$p}" );
 								$partitions[ $p ] = \is_array( $val ) ? $val : [];
 							}
 
+							$url_v         = $server['url'] ?? null;
 							$result[ $id ] = [
 								'id'         => $id,
-								'url'        => isset( $server['url'] ) ? \esc_url_raw( (string) $server['url'] ) : '',
+								'url'        => \is_scalar( $url_v ) ? \esc_url_raw( (string) $url_v ) : '',
 								'enabled'    => $server['enabled'] ?? true,
 								'partitions' => $partitions,
 							];
@@ -152,13 +151,14 @@ class Aggregator_CI_Node extends Service_CI_Node {
 						$registry->reset_cache();
 						$out = [];
 						foreach ( $registry->get_all() as $id => $cfg ) {
-							$out[] = [
-								'id'              => (string) $id,
-								'url'             => (string) ( $cfg['url'] ?? '' ),
+							$url_v   = $cfg['url'] ?? '';
+							$out[]   = [
+								'id'              => $id,
+								'url'             => \is_scalar( $url_v ) ? (string) $url_v : '',
 								'enabled'         => (bool) ( $cfg['enabled'] ?? false ),
 								'logs'            => $cfg['logs'] ?? [],
 								'has_credentials' => ! empty( $cfg['auth_username'] ) && ! empty( $cfg['auth_password'] ),
-								'is_config'       => $registry->is_config_server( (string) $id ),
+								'is_config'       => $registry->is_config_server( $id ),
 							];
 						}
 						// Sequential array, NOT a map keyed by id — legacy contract the

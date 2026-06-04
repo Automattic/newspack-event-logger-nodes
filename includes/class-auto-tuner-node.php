@@ -33,7 +33,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 class Auto_Tuner_Node extends Node {
 	public function fill( array &$message ): void {
-		if ( ( $message[ Message::TYPE ] & Message::TM_STRUCT ) === 0 ) {
+		/** @var int $type_flags */
+		$type_flags = $message[ Message::TYPE ];
+		if ( ( $type_flags & Message::TM_STRUCT ) === 0 ) {
 			return;
 		}
 		$value = $message[ Message::VALUE ];
@@ -80,7 +82,7 @@ class Auto_Tuner_Node extends Node {
 			return true;
 		}
 		if ( \function_exists( 'current_user_can' ) ) {
-			return (bool) \current_user_can( 'manage_options' );
+			return \current_user_can( 'manage_options' );
 		}
 		return false;
 	}
@@ -101,11 +103,13 @@ class Auto_Tuner_Node extends Node {
 		}
 		$significant = \is_array( $context['significant_events'] ?? null ) ? $context['significant_events'] : [];
 		$to_remove   = [];
+		/** @var string $hook */
 		foreach ( $hooks as $hook ) {
 			if ( ! isset( $significant[ $hook ] ) ) {
 				$to_remove[ $hook ] = true;
 			}
 		}
+		/** @var array<int|string, string> $existing */
 		$updated = \array_values( \array_filter( $existing, static fn( $v ) => ! isset( $to_remove[ $v ] ) ) );
 
 		$this->persist( 'newspack_event_logger_nodes_log_events', $updated );
@@ -124,6 +128,7 @@ class Auto_Tuner_Node extends Node {
 			$existing = [];
 		}
 		$significant = \is_array( $context['significant_events'] ?? null ) ? $context['significant_events'] : [];
+		/** @var string $event */
 		foreach ( $events as $event ) {
 			if ( isset( $significant[ $event ] ) ) {
 				continue;
@@ -145,7 +150,9 @@ class Auto_Tuner_Node extends Node {
 		if ( ! \is_array( $existing ) ) {
 			$existing = [];
 		}
-		$merged = \array_values( \array_unique( \array_merge( $existing, $events ) ) );
+		/** @var array<int|string, string> $combined */
+		$combined = \array_merge( $existing, $events );
+		$merged   = \array_values( \array_unique( $combined ) );
 
 		$this->persist( 'newspack_event_logger_nodes_significant_events', $merged );
 	}
