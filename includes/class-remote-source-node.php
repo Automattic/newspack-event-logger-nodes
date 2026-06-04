@@ -389,7 +389,7 @@ class Remote_Source_Node extends Node {
 				\CURLOPT_SSL_VERIFYPEER => $this->verify_ssl,
 				\CURLOPT_SSL_VERIFYHOST => $this->verify_ssl ? 2 : 0,
 				\CURLOPT_PROTOCOLS      => $this->require_https ? \CURLPROTO_HTTPS : ( \CURLPROTO_HTTPS | \CURLPROTO_HTTP ),
-				\CURLOPT_WRITEFUNCTION  => function ( $h, $bytes ) {
+				\CURLOPT_WRITEFUNCTION  => function ( \CurlHandle $h, string $bytes ): int {
 					return $this->on_curl_data( $h, $bytes );
 				},
 			]

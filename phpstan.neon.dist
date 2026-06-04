@@ -1,7 +1,7 @@
 includes:
     - vendor/phpstan/phpstan-strict-rules/rules.neon
 parameters:
-    level: 9
+    level: 10
     # phpstan-strict-rules: the full set EXCEPT rules that fight WordPress /
     # node-runtime idioms — empty() (pervasive WP), truthy conditionals
     # (if ($count) / !$str), short ternary ($x ?: $y), and dynamic property /
@@ -51,6 +51,11 @@ parameters:
         # Node subclass / static call here references them. Point PHPStan
         # at the substrate sources so it can discover those symbols.
         - ../newspack-nodes/includes
+    stubFiles:
+        # Refine getrusage()'s plain-array core type to the documented
+        # int-keyed shape so Log_Manager::log_resources()'s ru_* reads +
+        # tv_sec/tv_usec arithmetic type as int instead of mixed. See the stub.
+        - .phpstan/stubs/getrusage.stub.php
     # treatPhpDocTypesAsCertain + reportUnmatchedIgnoredErrors left at PHPStan
     # defaults (both `true`). First makes PHPDoc types behave like real types
     # for always-true/always-false detection. Second fails the build on any

@@ -319,6 +319,8 @@ class Job_Worker_Node extends Node {
 	 * @return array<string,mixed> The original $_SERVER, to pass to end_job_context().
 	 */
 	public static function begin_job_context( string $handler ): array {
+		// $_SERVER is string-keyed by design (superglobal snapshot for restore).
+		/** @var array<string, mixed> $orig_server */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
 		$orig_server = $_SERVER;
 
@@ -337,7 +339,8 @@ class Job_Worker_Node extends Node {
 		$_SERVER['SCRIPT_NAME']     = $path_info;
 		$_SERVER['SCRIPT_URL']      = $path_info;
 		$_SERVER['SCRIPT_URI']      = 'https://' . $server_name . $path_info;
-		$_SERVER['SCRIPT_FILENAME'] = ( \defined( 'NEWSPACK_FOUNDATION_BASE' ) ? \NEWSPACK_FOUNDATION_BASE : '' ) . '/template';
+		$foundation_base = \defined( 'NEWSPACK_FOUNDATION_BASE' ) ? \NEWSPACK_FOUNDATION_BASE : '';
+		$_SERVER['SCRIPT_FILENAME'] = ( \is_string( $foundation_base ) ? $foundation_base : '' ) . '/template';
 		$_SERVER['QUERY_STRING']    = '';
 		unset(
 			$_SERVER['CONTENT_TYPE'],

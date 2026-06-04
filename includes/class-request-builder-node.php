@@ -346,6 +346,8 @@ class Request_Builder_Node extends Node {
 		if ( ! \is_array( $cache_state ) ) {
 			return;
 		}
+		// Persisted cache snapshot: string-keyed by design (LRU_Cache::get_state()).
+		/** @var array<string, mixed> $cache_state */
 		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
 			foreach ( $cache_state['buckets'] as &$bucket ) {
 				if ( \is_array( $bucket ) ) {
@@ -383,6 +385,8 @@ class Request_Builder_Node extends Node {
 		if ( ! \is_array( $entry ) ) {
 			return;
 		}
+		// Decoded firehose entry: string-keyed payload (json_decode assoc map).
+		/** @var array<string, mixed> $entry */
 
 		$key_raw = $message[ Message::KEY ] ?? '';
 		$rid     = \is_scalar( $key_raw ) ? (string) $key_raw : '';
@@ -393,6 +397,7 @@ class Request_Builder_Node extends Node {
 		// Intern keyword strings — json_decode allocates a new string per entry,
 		// but most entries share the same ~200 unique keywords. Interning makes
 		// all identical strings share one zval, saving ~80 bytes per entry.
+		/** @var array<string, string> $intern */
 		static $intern = [];
 		$keyword       = $entry['k'] ?? '';
 		if ( ! \is_string( $keyword ) ) {
@@ -462,7 +467,10 @@ class Request_Builder_Node extends Node {
 			return;
 		}
 
-		if ( isset( $request->entries ) && \count( $request->entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
+		// Dynamic \stdClass property: list of stored per-entry records.
+		/** @var list<array<string, mixed>> $entries */
+		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
+		if ( isset( $request->entries ) && \count( $entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
 			$stored = [
 				'n'  => $n,
 				'ts' => $entry['ts'] ?? 0,
@@ -487,7 +495,8 @@ class Request_Builder_Node extends Node {
 				$stored['peak_mb'] = $entry['peak_mb'];
 			}
 
-			$request->entries[] = $stored;
+			$entries[]          = $stored;
+			$request->entries   = $entries;
 		} elseif ( isset( $request->entries ) && empty( $request->truncated ) ) {
 			$request->truncated = true;
 		}
@@ -539,6 +548,9 @@ class Request_Builder_Node extends Node {
 
 		$s['request'] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
+			if ( ! \is_string( $message ) ) {
+				return;
+			}
 			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
 				// Strip query string — URL hash already ignores it for merging,
 				// and keeping it wastes memory and makes the URL table noisy.
@@ -550,7 +562,7 @@ class Request_Builder_Node extends Node {
 
 		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
-			if ( \strlen( $message ) > 8192 ) {
+			if ( ! \is_string( $message ) || \strlen( $message ) > 8192 ) {
 				return;
 			}
 			if ( \preg_match( '/^REMOTE_ADDR => "(.+)"$/', $message, $m ) ) {
@@ -607,17 +619,31 @@ class Request_Builder_Node extends Node {
 			$request->stack    = [ [ 'process', '' ] ];
 			$request->profiles = [];
 		}
+		if ( ! \is_array( $request->stack ) ) {
+			$request->stack = [];
+		}
+		if ( ! \is_array( $request->profiles ) ) {
+			$request->profiles = [];
+		}
+
+		// References (not copies) so frame/profile mutations write through to the
+		// \stdClass properties in place — copy-into-local + write-back would
+		// copy-on-write the whole stack + profiles map on every push.
+		/** @var list<array{0: string, 1: string}> $stack */
+		$stack = &$request->stack;
+		// Dynamic \stdClass property: per-state profile records keyed by state name.
+		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
+		$profiles = &$request->profiles;
 
 		// Stop appending once we've hit the stack-depth cap — keeps memory
 		// bounded for runaway requests we deliberately keep visible in the
 		// inflight snapshot.
-		if ( \count( $request->stack ) >= self::MAX_STACK_DEPTH ) {
+		if ( \count( $stack ) >= self::MAX_STACK_DEPTH ) {
 			$request->is_runaway = true;
 			return;
 		}
-
-		if ( ! isset( $request->profiles[ $state ] ) ) {
-			$request->profiles[ $state ] = [
+		if ( ! isset( $profiles[ $state ] ) ) {
+			$profiles[ $state ] = [
 				'entries' => [],
 				'count'   => 0,
 				'time'    => 0,
@@ -625,16 +651,18 @@ class Request_Builder_Node extends Node {
 			];
 		}
 
-		$request->stack[] = [ $state, $label ];
+		$stack[] = [ $state, $label ];
 
-		$profile = &$request->profiles[ $state ];
+		$profile = &$profiles[ $state ];
 		if ( $label && \count( $profile['entries'] ) < 1000 && ! isset( $profile['entries'][ $label ] ) ) {
 			$profile['entries'][ $label ] = [ 0, 0 ];
 		}
+		unset( $profile );
 
-		if ( \count( $request->stack ) >= self::MAX_STACK_DEPTH ) {
+		if ( \count( $stack ) >= self::MAX_STACK_DEPTH ) {
 			$request->is_runaway = true;
 		}
+		// No write-back: $stack / $profiles are references to the properties.
 	}
 
 	/**
@@ -653,19 +681,33 @@ class Request_Builder_Node extends Node {
 		if ( empty( $request->stack ) ) {
 			return;
 		}
+		if ( ! \is_array( $request->stack ) ) {
+			$request->stack = [];
+		}
+		if ( ! \is_array( $request->profiles ) ) {
+			$request->profiles = [];
+		}
 
-		$last_idx = \count( $request->stack ) - 1;
-		$frame    = $request->stack[ $last_idx ];
+		// References (not copies): mutate the \stdClass property arrays in place.
+		// A copy-into-local + write-back would copy-on-write the whole stack +
+		// profiles map on every pop.
+		/** @var list<array{0: string, 1: string}> $stack */
+		$stack = &$request->stack;
+		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
+		$profiles = &$request->profiles;
+
+		$last_idx = \count( $stack ) - 1;
+		$frame    = $stack[ $last_idx ];
 
 		if ( $frame[0] === $state ) {
 			// Fast path: matched top of stack (the common case).
 			$label = $frame[1];
-			\array_pop( $request->stack );
+			\array_pop( $stack );
 		} else {
 			// Slow path: mismatched close — search backward and unwind.
 			$found_idx = false;
 			for ( $i = $last_idx - 1; $i >= 0; $i-- ) {
-				if ( $request->stack[ $i ][0] === $state ) {
+				if ( $stack[ $i ][0] === $state ) {
 					$found_idx = $i;
 					break;
 				}
@@ -674,12 +716,12 @@ class Request_Builder_Node extends Node {
 				return;
 			}
 
-			$label = $request->stack[ $found_idx ][1];
-			\array_splice( $request->stack, $found_idx );
+			$label = $stack[ $found_idx ][1];
+			\array_splice( $stack, $found_idx );
 		}
 
-		if ( isset( $request->profiles[ $state ] ) ) {
-			$profile          = &$request->profiles[ $state ];
+		if ( isset( $profiles[ $state ] ) ) {
+			$profile          = &$profiles[ $state ];
 			$profile['time'] += $time;
 			++$profile['count'];
 			$profile['ts'] = \max( $profile['ts'], $ts );
@@ -688,6 +730,7 @@ class Request_Builder_Node extends Node {
 				$profile['entries'][ $label ][0] += $time;
 				++$profile['entries'][ $label ][1];
 			}
+			unset( $profile );
 		}
 
 		// Subtract child time from ancestors to avoid double-counting.
@@ -695,19 +738,19 @@ class Request_Builder_Node extends Node {
 		// so callback completion does NOT subtract from the hook.
 		// Non-callback children subtract from BOTH the callback (if inside one)
 		// AND the callback's parent hook.
-		if ( ! empty( $request->stack ) && ! self::is_callback_state( $state ) ) {
-			for ( $j = \count( $request->stack ) - 1; $j >= 0; $j-- ) {
-				$ancestor_frame = $request->stack[ $j ];
+		if ( ! empty( $stack ) && ! self::is_callback_state( $state ) ) {
+			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
+				$ancestor_frame = $stack[ $j ];
 				$ancestor       = $ancestor_frame[0];
 				if ( 'process' === $ancestor ) {
 					break;
 				}
-				if ( isset( $request->profiles[ $ancestor ] ) ) {
-					$request->profiles[ $ancestor ]['time'] -= $time;
+				if ( isset( $profiles[ $ancestor ] ) ) {
+					$profiles[ $ancestor ]['time'] -= $time;
 
 					$ancestor_label = $ancestor_frame[1];
-					if ( $ancestor_label && isset( $request->profiles[ $ancestor ]['entries'][ $ancestor_label ] ) ) {
-						$request->profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
+					if ( $ancestor_label && isset( $profiles[ $ancestor ]['entries'][ $ancestor_label ] ) ) {
+						$profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
 					// If we just subtracted from a callback, continue to also
 					// subtract from its parent hook. Stop after the first
@@ -718,6 +761,8 @@ class Request_Builder_Node extends Node {
 				}
 			}
 		}
+
+		// No write-back: $stack / $profiles are references to the properties.
 	}
 
 	/**
@@ -749,8 +794,11 @@ class Request_Builder_Node extends Node {
 		if ( 'complete' === ( $request->state ?? '' ) ) {
 			return;
 		}
-		$now                    = \time();
-		$start_ts               = (int) ( $request->timestamp ?? $now );
+		$now = \time();
+		// Dynamic \stdClass property is mixed by design; the int cast is intentional.
+		/** @var int|float|string $ts_raw */
+		$ts_raw                 = $request->timestamp ?? $now;
+		$start_ts               = (int) $ts_raw;
 		$request->error_status  = 'T';
 		$request->duration_ms   = ( $now - $start_ts ) * 1000;
 		$request->status_code   = $request->status_code ?? 0;
@@ -774,7 +822,10 @@ class Request_Builder_Node extends Node {
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::KEY ]       = (string) ( $request->rid ?? '' );
+		// Dynamic \stdClass property is mixed by design; the string cast is intentional.
+		/** @var int|float|string $rid_raw */
+		$rid_raw                   = $request->rid ?? '';
+		$msg[ Message::KEY ]       = (string) $rid_raw;
 		$msg[ Message::VALUE ]     = (array) $request;
 		parent::fill( $msg );
 		$this->emit_compact_summary( $request );
@@ -790,19 +841,34 @@ class Request_Builder_Node extends Node {
 	 * @return array<string,mixed>
 	 */
 	public function build_compact_summary( $request ): array {
-		$r   = (array) $request;
-		$url = (string) ( $r['url'] ?? '' );
-		$ua  = (string) ( $r['user_agent'] ?? '' );
+		// Decoded request envelope: string-keyed map with mixed-by-design values.
+		/** @var array<string, mixed> $r */
+		$r = (array) $request;
+		// Mixed-by-design (array)/stdClass reads; the string casts are intentional.
+		/** @var int|float|string|bool|null $url_raw */
+		$url_raw = $r['url'] ?? '';
+		$url     = (string) $url_raw;
+		/** @var int|float|string|bool|null $ua_raw */
+		$ua_raw = $r['user_agent'] ?? '';
+		$ua     = (string) $ua_raw;
+		/** @var int|float|string|bool|null $rid_raw */
+		$rid_raw = $r['rid'] ?? '';
+		/** @var int|float|string|bool|null $method_raw */
+		$method_raw = $r['request_method'] ?? 'GET';
+		/** @var int|float|string|bool|null $remote_addr_raw */
+		$remote_addr_raw = $r['remote_addr'] ?? '';
 		// Preserve native numeric type for ts and dur so the wire format is
 		// byte-for-byte equivalent to legacy transform_line (which never
 		// cast). json_encode strips trailing `.0`, so an int-valued float
 		// round-trips as int through the wire — the SchemaParityAudit asserts
 		// that on the unpacked side.
-		$ts  = $r['timestamp'] ?? 0;
+		/** @var int|float $ts */
+		$ts = $r['timestamp'] ?? 0;
+		/** @var int|float $dur */
 		$dur = $r['duration_ms'] ?? 0;
 		return [
-			'rid'          => (string) ( $r['rid'] ?? '' ),
-			'method'       => (string) ( $r['request_method'] ?? 'GET' ),
+			'rid'          => (string) $rid_raw,
+			'method'       => (string) $method_raw,
 			'url'          => \strlen( $url ) > 2000 ? \substr( $url, 0, 2000 ) . '...' : $url,
 			'start_time'   => $ts,
 			'end_time'     => $ts + ( $dur / 1000 ),
@@ -810,7 +876,7 @@ class Request_Builder_Node extends Node {
 			'status_code'  => $r['status_code'] ?? 0,
 			'state'        => 'complete',
 			'error_status' => $r['error_status'] ?? '-',
-			'remote_addr'  => (string) ( $r['remote_addr'] ?? '' ),
+			'remote_addr'  => (string) $remote_addr_raw,
 			'user_agent'   => \strlen( $ua ) > 500 ? \substr( $ua, 0, 500 ) . '...' : $ua,
 		];
 	}
@@ -910,18 +976,33 @@ class Request_Builder_Node extends Node {
 		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
 			return null;
 		}
+		// Decoded request envelope: string-keyed map with mixed-by-design values.
+		/** @var array<string, mixed> $value */
 		$request = (object) $value;
 
-		$rid          = $request->rid ?? '';
-		$url_hash     = self::url_hash( $request->url );
-		$timestamp    = (int) ( $request->timestamp ?? \time() );
-		$duration_ms  = (int) ( $request->duration_ms ?? 0 );
-		$status_code  = (int) ( $request->status_code ?? 0 );
-		$peak_mb      = (float) ( $request->peak_mb ?? 0 );
+		// Dynamic \stdClass property reads are mixed by design; the casts are intentional.
+		$rid_raw = $request->rid ?? '';
+		$rid     = \is_string( $rid_raw ) ? $rid_raw : '';
+		$url_raw = $request->url ?? '';
+		$url     = \is_string( $url_raw ) ? $url_raw : '';
+		$url_hash     = self::url_hash( $url );
+		/** @var int|float|string $ts_raw */
+		$ts_raw      = $request->timestamp ?? \time();
+		$timestamp   = (int) $ts_raw;
+		/** @var int|float|string $dur_raw */
+		$dur_raw     = $request->duration_ms ?? 0;
+		$duration_ms = (int) $dur_raw;
+		/** @var int|float|string $status_raw */
+		$status_raw  = $request->status_code ?? 0;
+		$status_code = (int) $status_raw;
+		/** @var int|float|string $peak_raw */
+		$peak_raw     = $request->peak_mb ?? 0;
+		$peak_mb      = (float) $peak_raw;
 		$segment_id   = $position['segment_id'];
 		$offset       = $position['offset'];
 		$length       = $position['length'];
-		$error_status = $request->error_status ?? '-';
+		$es_raw       = $request->error_status ?? '-';
+		$error_status = \is_string( $es_raw ) ? $es_raw : '-';
 
 		if ( $offset > 9999999999 || $length > 99999999 || $segment_id > 999999 ) {
 			return '';
@@ -931,6 +1012,7 @@ class Request_Builder_Node extends Node {
 		$peak_mb_int = \min( (int) \round( $peak_mb ), 999999 );
 
 		// method: 1 char code for HTTP method.
+		/** @var array<string, string> $method_codes */
 		static $method_codes = [
 			'GET'     => 'G',
 			'POST'    => 'P',
@@ -941,7 +1023,8 @@ class Request_Builder_Node extends Node {
 			'OPTIONS' => 'O',
 			'CLI'     => 'C',
 		];
-		$method = $method_codes[ $request->request_method ?? 'GET' ] ?? 'G';
+		$rm_raw = $request->request_method ?? 'GET';
+		$method = $method_codes[ \is_string( $rm_raw ) ? $rm_raw : 'GET' ] ?? 'G';
 
 		return \str_pad( \substr( $rid, 0, 32 ), 32 )
 			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )
@@ -1015,6 +1098,7 @@ class Request_Builder_Node extends Node {
 
 			// method field appended in v3 format (position 95, 1 char).
 			if ( $len >= 96 ) {
+				/** @var array<string, string> $methods */
 				static $methods = [
 					'G' => 'GET',
 					'P' => 'POST',

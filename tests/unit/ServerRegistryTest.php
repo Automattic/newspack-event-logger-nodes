@@ -95,6 +95,20 @@ class ServerRegistryTest extends TestCase {
 		$this->assertSame( 'app-pass-12345', $entry['auth_password'] );
 	}
 
+	public function test_numeric_server_id_survives_get_all(): void {
+		// is_valid_id() accepts purely-numeric ids; PHP stores such a key as int,
+		// and get_all()'s merge must NOT reindex it (array_merge renumbers integer
+		// keys, silently destroying the id). The server must round-trip intact.
+		$reg = new Server_Registry();
+		$this->assertTrue( $reg->add( '5', [ 'url' => 'https://numeric.example.com' ] ) );
+
+		$reg->reset_cache();
+		$entry = $reg->get( '5' );
+		$this->assertNotNull( $entry, 'A server registered with a numeric id must survive get_all().' );
+		$this->assertSame( 'https://numeric.example.com', $entry['url'] );
+		$this->assertArrayHasKey( '5', $reg->get_all() );
+	}
+
 	public function test_stored_password_is_encrypted_at_rest(): void {
 		$reg = new Server_Registry();
 		$reg->add(

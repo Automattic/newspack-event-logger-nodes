@@ -125,7 +125,7 @@ class Flame_Builder_Node extends Node {
 	private $stats_store = null;
 
 
-	/** @var callable|null Test seam: clock function for bucket-key derivation. */
+	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
 
 	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
@@ -246,13 +246,15 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Replace the clock used for bucket-key derivation (testing seam).
+	 *
+	 * @param (callable(): int)|null $fn
 	 */
 	public function set_clock( ?callable $fn ): void {
 		$this->clock_fn = $fn;
 	}
 
 	private function now_ts(): int {
-		return null !== $this->clock_fn ? (int) ( $this->clock_fn )() : \time();
+		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
 	}
 
 	/**
@@ -557,7 +559,7 @@ class Flame_Builder_Node extends Node {
 	 * This handles improperly nested events (e.g., when a child span outlives
 	 * its parent) by using LIFO matching like the log-manager does.
 	 *
-	 * @param array<int, mixed> $entries Log entries.
+	 * @param array<array-key, mixed> $entries Log entries.
 	 * @return array<string, mixed> Flame graph data.
 	 */
 	private function build_flame_data( array $entries ): array {
@@ -641,7 +643,11 @@ class Flame_Builder_Node extends Node {
 		// Number duplicate sibling names to prevent collapse during aggregation.
 		self::number_duplicate_siblings( $root );
 
-		return $root;
+		// $root is the string-keyed root flame node; the by-ref helpers above
+		// widen its inferred key type, so restore the contract for the return.
+		/** @var array<string, mixed> $result */
+		$result = $root;
+		return $result;
 	}
 
 	/**
@@ -650,7 +656,7 @@ class Flame_Builder_Node extends Node {
 	 * Appends \x00{N} to duplicate names so they stay separate during merge,
 	 * but the suffix is stripped before display.
 	 *
-	 * @param array<string, mixed> $node  Flame node (modified by reference).
+	 * @param array<array-key, mixed> $node  Flame node (modified by reference).
 	 * @param int                  $depth Current recursion depth.
 	 */
 	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
@@ -697,7 +703,7 @@ class Flame_Builder_Node extends Node {
 	 * @param string $url_hash   URL hash.
 	 * @param array<string, mixed> $flame_data Per-request flame tree.
 	 * @param array<array-key, mixed> $profiles   profiles{} from request.
-	 * @param array<string, mixed> $request    Full request record.
+	 * @param array<array-key, mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
 		$duration_val = $flame_data['value'] ?? 0;
@@ -851,6 +857,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// --- 3b. Dimensional stats (global + per-server + per-URL) ---
+		/** @var array<string, string> $intern */
 		static $intern      = [];
 		static $intern_full = false;
 		$server_raw     = $request['server_name'] ?? '';
@@ -1328,12 +1335,16 @@ class Flame_Builder_Node extends Node {
 		foreach ( $this->dim_stats as $dim => $buckets ) {
 			$existing = $stats_store->get_dimensional( $dim );
 			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
+			// Bucket-keyed (bucket_key() returns strings); the by-ref merge widens
+			// the inferred key type, so restore it for the typed store write.
+			/** @var array<string, mixed> $existing */
 			$stats_store->set_dimensional( $dim, $existing );
 		}
 		foreach ( $this->dim_stats_by_server as $server => $dims ) {
 			foreach ( $dims as $dim => $buckets ) {
 				$existing = $stats_store->get_dimensional( $dim, $server );
 				$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
+				/** @var array<string, mixed> $existing */
 				$stats_store->set_dimensional( $dim, $existing, $server );
 			}
 		}
@@ -1392,7 +1403,7 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Merge incoming dimensional buckets into existing, expire old, and cap.
 	 *
-	 * @param array<string, mixed> $existing Existing buckets (modified by reference).
+	 * @param array<array-key, mixed> $existing Existing buckets (modified by reference).
 	 * @param array<string, mixed> $buckets  Incoming buckets to merge.
 	 */
 	private function merge_and_cap_dimensional( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
@@ -1654,13 +1665,13 @@ class Flame_Builder_Node extends Node {
 	 * `seen_count` (true count of those requests). Display values come from
 	 * finalize at flush time (sum_value / total_count).
 	 *
-	 * @param array<int, mixed> $existing Existing aggregate children (list).
-	 * @param array<int, mixed> $incoming Incoming per-request children (list).
+	 * @param array<array-key, mixed> $existing Existing aggregate children (list).
+	 * @param array<array-key, mixed> $incoming Incoming per-request children (list).
 	 * @return array<int, mixed>
 	 */
 	private static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
-			return $existing;
+			return \array_values( $existing );
 		}
 
 		/** @var array<string, array<string, mixed>> $indexed */
@@ -1721,7 +1732,7 @@ class Flame_Builder_Node extends Node {
 	 * Finalize a flame node for display: convert sums to averages, strip
 	 * suffixes, normalize parent ≥ children, and remove internal fields.
 	 *
-	 * @param array<string, mixed> $node Flame node (modified by reference).
+	 * @param array<array-key, mixed> $node Flame node (modified by reference).
 	 */
 	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {

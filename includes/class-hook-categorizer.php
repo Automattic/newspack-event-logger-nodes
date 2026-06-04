@@ -51,7 +51,7 @@ class Hook_Categorizer {
 	 *
 	 * Signature: `function ( string $path ): string|false`.
 	 *
-	 * @var \Closure|null
+	 * @var \Closure(string): (string|false)|null
 	 */
 	public static ?\Closure $read_file = null;
 
@@ -77,8 +77,10 @@ class Hook_Categorizer {
 			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
 			return self::$base_config;
 		}
-		$decoded           = \json_decode( $json, true, 64 );
-		self::$base_config = \is_array( $decoded ) ? $decoded : [ '_colors' => [], '_patterns' => [] ];
+		$decoded = \json_decode( $json, true, 64 );
+		/** @var array<string, mixed> $config json_decode dynamic output. */
+		$config            = \is_array( $decoded ) ? $decoded : [ '_colors' => [], '_patterns' => [] ];
+		self::$base_config = $config;
 		return self::$base_config;
 	}
 
@@ -98,7 +100,9 @@ class Hook_Categorizer {
 		if ( ! \is_array( $saved ) && ! \is_object( $saved ) && ! \is_string( $saved ) ) {
 			$saved = [];
 		}
-		return \wp_parse_args( $saved, $defaults );
+		/** @var array<string, mixed> $merged wp_parse_args boundary output. */
+		$merged = \wp_parse_args( $saved, $defaults );
+		return $merged;
 	}
 
 	/**
@@ -121,12 +125,15 @@ class Hook_Categorizer {
 		$overrides      = $customizations['overrides'] ?? [];
 
 		// Merge colors (user overrides base).
+		/** @var array<string, mixed> $colors config dynamic output. */
 		$colors = \array_merge( \is_array( $base_colors ) ? $base_colors : [], \is_array( $user_colors ) ? $user_colors : [] );
 
 		// Merge patterns (user patterns added to base).
+		/** @var array<string, mixed> $patterns config dynamic output. */
 		$patterns = \is_array( $base_patterns ) ? $base_patterns : [];
 		if ( \is_array( $user_patterns_all ) ) {
-			foreach ( $user_patterns_all as $category => $user_patterns ) {
+			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
+				$category = (string) $raw_category;
 				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
 					$patterns[ $category ] = [];
 				}
@@ -134,10 +141,12 @@ class Hook_Categorizer {
 			}
 		}
 
+		/** @var array<string, mixed> $overrides_map config dynamic output. */
+		$overrides_map       = \is_array( $overrides ) ? $overrides : [];
 		self::$merged_config = [
 			'colors'    => $colors,
 			'patterns'  => $patterns,
-			'overrides' => \is_array( $overrides ) ? $overrides : [],
+			'overrides' => $overrides_map,
 		];
 
 		return self::$merged_config;
@@ -251,6 +260,7 @@ class Hook_Categorizer {
 	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
 	 */
 	public static function is_internal( string $hook_name ): bool {
+		/** @var array<int, string> $prefixes */
 		static $prefixes = [
 			'newspack_event_logger_nodes_',
 			'newspack_event_logger_nodes/',
@@ -271,6 +281,7 @@ class Hook_Categorizer {
 	 * @return array<int, string> Array of hook names that have callbacks attached.
 	 */
 	public static function get_registered_hooks(): array {
+		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
 		global $wp_filter;
 
 		$hooks = [];

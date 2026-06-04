@@ -98,9 +98,8 @@ class Remote_Manager {
 	 * @return array<string, mixed> Modified handlers.
 	 */
 	public static function register_handler( $handlers ): array {
-		if ( ! \is_array( $handlers ) ) {
-			$handlers = [];
-		}
+		/** @var array<string, mixed> $handlers */
+		$handlers = \is_array( $handlers ) ? $handlers : [];
 		$handlers['remote_manager'] = [ self::class, 'handle_job' ];
 		return $handlers;
 	}
@@ -220,9 +219,13 @@ class Remote_Manager {
 			if ( $count >= self::MAX_SERVERS ) {
 				break;
 			}
-			if ( ! \is_string( $server_id ) ) {
+			// Server ids are scalar (a string, or an int when a numeric id was
+			// stored as an int array key); skip anything else and normalize to the
+			// string identity get()/HMAC/logging use. ($servers values are mixed.)
+			if ( ! \is_scalar( $server_id ) ) {
 				continue;
 			}
+			$server_id = (string) $server_id;
 
 			$server = $registry->get( $server_id );
 			if ( null === $server ) {
@@ -278,10 +281,10 @@ class Remote_Manager {
 			if ( $count >= self::MAX_SERVERS ) {
 				break;
 			}
-			if ( ! \is_string( $server_id ) ) {
-				continue;
-			}
-			$server = $registry->get( $server_id );
+			// A numeric server id is stored as an int array key; normalize back
+			// to its string form so get()/HMAC/logging use the real identity.
+			$server_id = (string) $server_id;
+			$server    = $registry->get( $server_id );
 			if ( null === $server ) {
 				continue;
 			}
@@ -611,7 +614,7 @@ class Remote_Manager {
 			self::log_status( $server_id, 'error', 'Invalid command envelope' );
 			return null;
 		}
-		$type = (int) ( $message[ \Newspack_Nodes\Message::TYPE ] ?? 0 );
+		$type = self::to_int( $message[ \Newspack_Nodes\Message::TYPE ] ?? 0 );
 		if ( $type & \Newspack_Nodes\Message::TM_ERROR ) {
 			self::log_status( $server_id, 'error', 'Spoke returned TM_ERROR' );
 			return null;
@@ -892,6 +895,7 @@ class Remote_Manager {
 	 * cron tick blows through dozens of stale jobs.
 	 */
 	private static function log_stale_drop( string $action, int $age ): void {
+		/** @var int $last */
 		static $last = 0;
 		if ( \time() - $last < 60 ) {
 			return;
@@ -911,6 +915,7 @@ class Remote_Manager {
 	 */
 	public static function begin_job_context( string $name ): array {
 		// Preserve the original $_SERVER for restoration.
+		/** @var array<string, mixed> $orig_server */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Saved verbatim for restore.
 		$orig_server = $_SERVER;
 

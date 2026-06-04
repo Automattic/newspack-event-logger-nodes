@@ -73,7 +73,7 @@ class Server_Registry {
 	/**
 	 * Get all servers (synonym of get_all() for backwards-compat).
 	 *
-	 * @return array<string, mixed> Associative array of server_id => config.
+	 * @return array<array-key, array<string, mixed>> Associative array of server_id => config.
 	 */
 	public function get_servers(): array {
 		return $this->get_all();
@@ -124,8 +124,11 @@ class Server_Registry {
 			$option = \get_option( self::OPTION_KEY, null );
 
 			if ( \is_array( $option ) ) {
-				// Merge: WordPress option takes precedence.
-				$merged = \array_merge( $config_defaults, $option );
+				// Option takes precedence; use `+` not array_merge — server ids
+				// are the keys, and array_merge RENUMBERS integer keys, so a
+				// numeric id (stored as an int key) would be silently reindexed
+				// and destroyed. The union operator preserves every key.
+				$merged = $option + $config_defaults;
 			} else {
 				// No (or non-array) option - use config defaults.
 				$merged = $config_defaults;
@@ -138,6 +141,7 @@ class Server_Registry {
 				if ( ! \is_array( $server ) ) {
 					continue;
 				}
+				/** @var array<string, mixed> $server — config map is string-keyed by design. */
 				$server += [
 					'url'           => '',
 					'auth_username' => '',
@@ -160,7 +164,7 @@ class Server_Registry {
 	/**
 	 * Get only enabled servers.
 	 *
-	 * @return array<string,array<string, mixed>>
+	 * @return array<array-key, array<string, mixed>> Keys are array-key (not string): PHP coerces numeric server-id keys to int.
 	 */
 	public function get_enabled(): array {
 		return \array_filter(
@@ -424,6 +428,7 @@ class Server_Registry {
 	 * Test bootstraps may define a 2-arg fake. Cached for the process.
 	 */
 	private static function update_option_arity(): int {
+		/** @var int|null $arity */
 		static $arity = null;
 		if ( null === $arity ) {
 			try {

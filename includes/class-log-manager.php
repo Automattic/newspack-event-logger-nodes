@@ -163,6 +163,8 @@ class Log_Manager {
 		$this->skip_regex = self::compile_url_filter( $this->config['skip_urls'] ?? [] );
 		$this->log_regex  = self::compile_url_filter( $this->config['log_urls'] ?? [] );
 
+		// Dynamic mu-profiler global; restore its file-scope shape (PHPStan widens `global` to mixed).
+		/** @var array{request_time?: float, request_ts?: int|float}|null $newspack_profiler */
 		global $newspack_profiler;
 		if ( null !== $newspack_profiler ) {
 			$this->request_time = $newspack_profiler['request_time'] ?? null;
@@ -674,6 +676,7 @@ class Log_Manager {
 	}
 
 	private function log_environment(): void {
+		/** @var array<string, true> $url_value_keys */
 		static $url_value_keys = [
 			'HTTP_REFERER'          => true,
 			'QUERY_STRING'          => true,

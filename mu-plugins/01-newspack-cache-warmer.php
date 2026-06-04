@@ -241,17 +241,23 @@ class Cache_Warmer {
 	 * @return array<int, string>
 	 */
 	public static function cold_groups(): array {
-		return (array) \apply_filters(
-			'eln_cache_warmer_cold_groups',
-			[ 'newspack_blocks', 'transient', 'site-transient' ]
+		// Narrow the filtered mixed-array down to the string elements is_cold() consumes.
+		return \array_values(
+			\array_filter(
+				(array) \apply_filters(
+					'eln_cache_warmer_cold_groups',
+					[ 'newspack_blocks', 'transient', 'site-transient' ]
+				),
+				'\is_string'
+			)
 		);
 	}
 
 	/**
 	 * Whether this request is the warmer's own loopback hit (secret matches).
 	 *
-	 * @param array<string, mixed> $get             The request query params ($_GET).
-	 * @param string               $expected_secret The stored warmer secret.
+	 * @param array<array-key, mixed> $get             The request query params ($_GET).
+	 * @param string                  $expected_secret The stored warmer secret.
 	 * @return bool
 	 */
 	public static function is_warm_request( array $get, string $expected_secret ): bool {

@@ -613,7 +613,7 @@ class Reqgrep_Command {
 
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
-					$this->output_request( $state->lines, $rid );
+					$this->output_request( self::to_lines( $state->lines ), $rid );
 				}
 				$inflight->delete( $rid );
 			}
@@ -650,14 +650,23 @@ class Reqgrep_Command {
 	 */
 	private function append_to_state( \stdClass $state, string $line ): bool {
 		$line_bytes = \strlen( $line );
-		if ( $state->bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
+		// Dynamic \stdClass state: ->bytes is always int, ->lines always a string list.
+		$bytes = \is_int( $state->bytes ) ? $state->bytes : 0;
+		if ( ! \is_array( $state->lines ) ) {
+			$state->lines = [];
+		}
+		// Reference (not a copy) so the append mutates the property in place —
+		// a copy-into-local + write-back triggers copy-on-write on every line.
+		/** @var list<string> $lines */
+		$lines = &$state->lines;
+		if ( $bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
 			return false;
 		}
-		if ( \count( $state->lines ) >= self::MAX_LINES_PER_REQUEST ) {
+		if ( \count( $lines ) >= self::MAX_LINES_PER_REQUEST ) {
 			return false;
 		}
-		$state->lines[] = $line;
-		$state->bytes  += $line_bytes;
+		$lines[]      = $line;
+		$state->bytes = $bytes + $line_bytes;
 		return true;
 	}
 

@@ -62,7 +62,7 @@ class Servers_CI_Node extends Service_CI_Node {
 	 *
 	 * Signature: `function ( string $url, array $args ): array|\WP_Error`.
 	 *
-	 * @var \Closure|null
+	 * @var \Closure(string, array<string, mixed>): (array<string, mixed>|\WP_Error)|null
 	 */
 	public static ?\Closure $http_call = null;
 
@@ -465,8 +465,10 @@ class Servers_CI_Node extends Service_CI_Node {
 			$args['headers']['Authorization'] = 'Basic ' . \base64_encode( $username . ':' . $password );
 		}
 
-		$call     = self::$http_call ?? static fn( string $u, array $a ): mixed =>
-			\wp_remote_post( $u, $a );
+		$call = self::$http_call ?? static function ( string $u, array $a ) {
+			/** @var array{method?: string, timeout?: float, redirection?: int, httpversion?: string, user-agent?: string, reject_unsafe_urls?: bool, blocking?: bool, headers?: array<string, mixed>|string, body?: array<string, mixed>|string, sslverify?: bool} $a -- WP HTTP args shape; loose `array` param widens it. */
+			return \wp_remote_post( $u, $a );
+		};
 		$response = $call( $url, $args );
 
 		if ( $response instanceof \WP_Error ) {
@@ -488,7 +490,8 @@ class Servers_CI_Node extends Service_CI_Node {
 		if ( ! \is_array( $envelope ) || ! \array_key_exists( \Newspack_Nodes\Message::VALUE, $envelope ) ) {
 			throw new \RuntimeException( 'server returned malformed command envelope' );
 		}
-		if ( (int) ( $envelope[ \Newspack_Nodes\Message::TYPE ] ?? 0 ) & \Newspack_Nodes\Message::TM_ERROR ) {
+		$raw_type = $envelope[ \Newspack_Nodes\Message::TYPE ] ?? 0;
+		if ( ( \is_numeric( $raw_type ) ? (int) $raw_type : 0 ) & \Newspack_Nodes\Message::TM_ERROR ) {
 			throw new \RuntimeException( 'server returned TM_ERROR for discovery probe' );
 		}
 		$value = $envelope[ \Newspack_Nodes\Message::VALUE ];
