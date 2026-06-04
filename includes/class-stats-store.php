@@ -57,7 +57,8 @@ class Stats_Store {
 	private function compute_prefix(): string {
 		$salt = '';
 		if ( \function_exists( 'get_option' ) ) {
-			$salt = (string) \get_option( self::SALT_OPTION, '' );
+			$opt  = \get_option( self::SALT_OPTION, '' );
+			$salt = \is_scalar( $opt ) ? (string) $opt : '';
 		}
 		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
 	}
@@ -142,12 +143,15 @@ class Stats_Store {
 	}
 
 	public function bump_hourly( float $req_time_secs, float $peak_mb ): void {
-		$cur                                = $this->get_hourly();
-		$bucket                             = $this->current_hour_bucket();
-		$cur[ $bucket ]                     ??= [ 'count' => 0, 'sum_ms' => 0.0, 'sum_peak_mb' => 0.0 ];
-		++$cur[ $bucket ]['count'];
-		$cur[ $bucket ]['sum_ms']      += $req_time_secs * 1000.0;
-		$cur[ $bucket ]['sum_peak_mb'] += $peak_mb;
+		$cur    = $this->get_hourly();
+		$bucket = $this->current_hour_bucket();
+		$cur[ $bucket ]                ??= [ 'count' => 0, 'sum_ms' => 0.0, 'sum_peak_mb' => 0.0 ];
+		/** @var array{count:int, sum_ms:float, sum_peak_mb:float} $entry */
+		$entry                          = $cur[ $bucket ];
+		++$entry['count'];
+		$entry['sum_ms']               += $req_time_secs * 1000.0;
+		$entry['sum_peak_mb']          += $peak_mb;
+		$cur[ $bucket ]                 = $entry;
 		$this->prune_old_hourly( $cur );
 		Core::$memd?->set( $this->key( self::NS_HOURLY ), $cur, $this->ttl() );
 	}
@@ -208,9 +212,12 @@ class Stats_Store {
 		$bucket = $this->current_url_bucket();
 		$cur    = $this->get_url_bucket( $bucket );
 		$cur[ $url ] ??= [ 'count' => 0, 'sum_req_time' => 0.0, 'samples' => 0 ];
-		++$cur[ $url ]['count'];
-		++$cur[ $url ]['samples'];
-		$cur[ $url ]['sum_req_time'] += $req_time;
+		/** @var array{count:int, sum_req_time:float, samples:int} $entry */
+		$entry                  = $cur[ $url ];
+		++$entry['count'];
+		++$entry['samples'];
+		$entry['sum_req_time'] += $req_time;
+		$cur[ $url ]            = $entry;
 		Core::$memd?->set( $this->key( self::NS_URLS, $bucket ), $cur, $this->ttl() );
 	}
 
@@ -238,7 +245,7 @@ class Stats_Store {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * @return array<string, mixed>
+	 * @return array<array-key, mixed>|null
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL, $url_hash ) );
@@ -280,6 +287,7 @@ class Stats_Store {
 		if ( empty( $cur ) ) {
 			$cur = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 		}
+		/** @var array{count:int, sum_req_time:float, categories:array<string, mixed>} $cur */
 		++$cur['count'];
 		$cur['sum_req_time'] += $req_time;
 		$this->merge_categories_into( $cur['categories'], $categories );
@@ -310,6 +318,7 @@ class Stats_Store {
 		if ( empty( $cur ) ) {
 			$cur = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 		}
+		/** @var array{count:int, sum_req_time:float, categories:array<string, mixed>} $cur */
 		++$cur['count'];
 		$cur['sum_req_time'] += $req_time;
 		$this->merge_categories_into( $cur['categories'], $categories );
@@ -326,12 +335,14 @@ class Stats_Store {
 	 * @param array<string, mixed> $src
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
-		$dst['count']        = (int)   ( $dst['count']        ?? 0 ) + (int)   ( $src['count']        ?? 0 );
-		$dst['sum_req_time'] = (float) ( $dst['sum_req_time'] ?? 0 ) + (float) ( $src['sum_req_time'] ?? 0 );
-		if ( ! isset( $dst['categories'] ) ) {
+		$dst['count']        = (int) ( \is_numeric( $dst['count'] ?? null ) ? $dst['count'] : 0 ) + (int) ( \is_numeric( $src['count'] ?? null ) ? $src['count'] : 0 );
+		$dst['sum_req_time'] = (float) ( \is_numeric( $dst['sum_req_time'] ?? null ) ? $dst['sum_req_time'] : 0 ) + (float) ( \is_numeric( $src['sum_req_time'] ?? null ) ? $src['sum_req_time'] : 0 );
+		if ( ! isset( $dst['categories'] ) || ! \is_array( $dst['categories'] ) ) {
 			$dst['categories'] = [];
 		}
-		foreach ( ( $src['categories'] ?? [] ) as $cat => $data ) {
+		$src_cats = ( isset( $src['categories'] ) && \is_array( $src['categories'] ) ) ? $src['categories'] : [];
+		foreach ( $src_cats as $cat => $data ) {
+			$data = \is_array( $data ) ? $data : [];
 			if ( ! isset( $dst['categories'][ $cat ] ) ) {
 				$dst['categories'][ $cat ] = [
 					'samples'   => 0,
@@ -340,17 +351,23 @@ class Stats_Store {
 					'entries'   => [],
 				];
 			}
+			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key, mixed>} $c */
 			$c               = &$dst['categories'][ $cat ];
-			$c['samples']   += (int)   ( $data['samples']   ?? 0 );
-			$c['sum_time']  += (float) ( $data['sum_time']  ?? 0 );
-			$c['sum_count'] += (float) ( $data['sum_count'] ?? 0 );
-			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
+			$c['samples']   += (int) ( \is_numeric( $data['samples'] ?? null ) ? $data['samples'] : 0 );
+			$c['sum_time']  += (float) ( \is_numeric( $data['sum_time'] ?? null ) ? $data['sum_time'] : 0 );
+			$c['sum_count'] += (float) ( \is_numeric( $data['sum_count'] ?? null ) ? $data['sum_count'] : 0 );
+			$entries         = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
+			foreach ( $entries as $name => $entry ) {
+				$entry = \is_array( $entry ) ? $entry : [];
 				if ( ! isset( $c['entries'][ $name ] ) ) {
 					$c['entries'][ $name ] = [ 0.0, 0.0, 0 ];
 				}
-				$c['entries'][ $name ][0] += (float) ( $entry[0] ?? 0 );
-				$c['entries'][ $name ][1] += (float) ( $entry[1] ?? 0 );
-				$c['entries'][ $name ][2] += (int)   ( $entry[2] ?? 0 );
+				/** @var array{0:float, 1:float, 2:int} $dst_entry */
+				$dst_entry      = &$c['entries'][ $name ];
+				$dst_entry[0]  += (float) ( \is_numeric( $entry[0] ?? null ) ? $entry[0] : 0 );
+				$dst_entry[1]  += (float) ( \is_numeric( $entry[1] ?? null ) ? $entry[1] : 0 );
+				$dst_entry[2]  += (int) ( \is_numeric( $entry[2] ?? null ) ? $entry[2] : 0 );
+				unset( $dst_entry );
 			}
 			unset( $c );
 		}
@@ -366,21 +383,30 @@ class Stats_Store {
 	 */
 	private function merge_categories_into( array &$dst, array $src ): void {
 		foreach ( $src as $cat => $data ) {
+			$data        = \is_array( $data ) ? $data : [];
 			$dst[ $cat ] ??= [
 				'samples'   => 0,
 				'sum_time'  => 0.0,
 				'sum_count' => 0.0,
 				'entries'   => [],
 			];
-			++$dst[ $cat ]['samples'];
-			$dst[ $cat ]['sum_time']  += (float) ( $data['time']  ?? 0 );
-			$dst[ $cat ]['sum_count'] += (float) ( $data['count'] ?? 0 );
-			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
-				$dst[ $cat ]['entries'][ $name ] ??= [ 0.0, 0.0, 0 ];
-				$dst[ $cat ]['entries'][ $name ][0] += (float) ( $entry[0] ?? 0 );
-				$dst[ $cat ]['entries'][ $name ][1] += (float) ( $entry[1] ?? 0 );
-				++$dst[ $cat ]['entries'][ $name ][2];
+			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key, mixed>} $c */
+			$c               = &$dst[ $cat ];
+			++$c['samples'];
+			$c['sum_time']  += (float) ( \is_numeric( $data['time'] ?? null ) ? $data['time'] : 0 );
+			$c['sum_count'] += (float) ( \is_numeric( $data['count'] ?? null ) ? $data['count'] : 0 );
+			$entries         = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
+			foreach ( $entries as $name => $entry ) {
+				$entry                = \is_array( $entry ) ? $entry : [];
+				$c['entries'][ $name ] ??= [ 0.0, 0.0, 0 ];
+				/** @var array{0:float, 1:float, 2:int} $dst_entry */
+				$dst_entry      = &$c['entries'][ $name ];
+				$dst_entry[0]  += (float) ( \is_numeric( $entry[0] ?? null ) ? $entry[0] : 0 );
+				$dst_entry[1]  += (float) ( \is_numeric( $entry[1] ?? null ) ? $entry[1] : 0 );
+				++$dst_entry[2];
+				unset( $dst_entry );
 			}
+			unset( $c );
 		}
 	}
 
@@ -414,6 +440,7 @@ class Stats_Store {
 	}
 
 	public function bump_dimensional( string $dimension, string $value, float $req_time ): void {
+		/** @var array<string, array<string, mixed>> $cur */
 		$cur                 = $this->get_dimensional( $dimension );
 		$bucket              = $this->current_url_bucket();
 		$cur[ $bucket ]      ??= [];
@@ -446,6 +473,7 @@ class Stats_Store {
 	}
 
 	public function bump_url_dimensional( string $url_hash, string $dimension, string $value, float $req_time ): void {
+		/** @var array<string, array<string, array<string, mixed>>> $cur */
 		$cur                                  = $this->get_url_dimensional( $url_hash );
 		$bucket                               = $this->current_url_bucket();
 		$cur[ $dimension ]                    ??= [];
@@ -475,8 +503,11 @@ class Stats_Store {
 			}
 		}
 		$bucket_data[ $value ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
-		++$bucket_data[ $value ]['c'];
-		$bucket_data[ $value ]['s'] += $req_time;
+		/** @var array{c:int, s:float, m:float} $slot */
+		$slot       = &$bucket_data[ $value ];
+		++$slot['c'];
+		$slot['s'] += $req_time;
+		unset( $slot );
 	}
 
 	/**
@@ -513,6 +544,7 @@ class Stats_Store {
 	}
 
 	public function bump_category( string $category, float $time, int $invocations ): void {
+		/** @var array<string, array<string, mixed>> $cur */
 		$cur            = $this->get_categories();
 		$bucket         = $this->current_url_bucket();
 		$cur[ $bucket ] ??= [];
@@ -558,6 +590,7 @@ class Stats_Store {
 	}
 
 	public function bump_url_category( string $url_hash, string $category, float $time, int $invocations ): void {
+		/** @var array<string, array<string, mixed>> $cur */
 		$cur            = $this->get_url_categories( $url_hash );
 		$bucket         = $this->current_url_bucket();
 		$cur[ $bucket ] ??= [];
@@ -583,9 +616,12 @@ class Stats_Store {
 			}
 		}
 		$bucket_data[ $category ] ??= [ 't' => 0.0, 'c' => 0.0, 'n' => 0 ];
-		$bucket_data[ $category ]['t'] += $time;
-		$bucket_data[ $category ]['c'] += $invocations;
-		++$bucket_data[ $category ]['n'];
+		/** @var array{t:float, c:float, n:int} $slot */
+		$slot       = &$bucket_data[ $category ];
+		$slot['t'] += $time;
+		$slot['c'] += $invocations;
+		++$slot['n'];
+		unset( $slot );
 	}
 
 	// -------------------------------------------------------------------------
@@ -599,27 +635,31 @@ class Stats_Store {
 	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
 	 *  - entries   are per-appearance averages (sum / samples).
 	 *
-	 * @param int   $total_count  Total profiled requests.
-	 * @param float $sum_req_time Sum of per-request $req_time values.
-	 * @param array $sums         Per-category sums keyed by category name.
-	 * @return array Display-shaped leaderboard data.
-	 * @param array<string, mixed> $sums
-	 * @return array<string, mixed>
+	 * @param int                   $total_count  Total profiled requests.
+	 * @param float                 $sum_req_time Sum of per-request $req_time values.
+	 * @param array<string, mixed>  $sums         Per-category sums keyed by category name.
+	 * @return array<string, mixed> Display-shaped leaderboard data.
 	 */
 	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
 		$display_cats = [];
 		foreach ( $sums as $cat => $data ) {
-			$samples   = (int) ( $data['samples'] ?? 0 );
-			$sum_time  = (float) ( $data['sum_time'] ?? 0 );
-			$sum_count = (float) ( $data['sum_count'] ?? 0 );
+			$data      = \is_array( $data ) ? $data : [];
+			$samples   = (int) ( \is_numeric( $data['samples'] ?? null ) ? $data['samples'] : 0 );
+			$sum_time  = (float) ( \is_numeric( $data['sum_time'] ?? null ) ? $data['sum_time'] : 0 );
+			$sum_count = (float) ( \is_numeric( $data['sum_count'] ?? null ) ? $data['sum_count'] : 0 );
 
 			$entries_out = [];
-			foreach ( ( $data['entries'] ?? [] ) as $name => $entry ) {
-				$e_samples = (int) ( $entry[2] ?? 0 );
+			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
+			foreach ( $entries as $name => $entry ) {
+				$entry     = \is_array( $entry ) ? $entry : [];
+				$e2        = $entry[2] ?? null;
+				$e_samples = (int) ( \is_numeric( $e2 ) ? $e2 : 0 );
 				if ( $e_samples > 0 ) {
+					$e0 = $entry[0] ?? null;
+					$e1 = $entry[1] ?? null;
 					$entries_out[ $name ] = [
-						( $entry[0] ?? 0 ) / $e_samples,
-						( $entry[1] ?? 0 ) / $e_samples,
+						( \is_numeric( $e0 ) ? $e0 : 0 ) / $e_samples,
+						( \is_numeric( $e1 ) ? $e1 : 0 ) / $e_samples,
 						$e_samples,
 					];
 				}

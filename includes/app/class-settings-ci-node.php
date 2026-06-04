@@ -133,11 +133,19 @@ class Settings_CI_Node extends Service_CI_Node {
 	 */
 	private static function snapshot(): array {
 		$config = RuntimeConfig::load_config();
+		/** @var int|float|string|bool|null $num_partitions */
+		$num_partitions = $config['num_partitions'] ?? 0;
+		/** @var int|float|string|bool|null $num_segments */
+		$num_segments = $config['num_segments'] ?? 0;
+		/** @var int|float|string|bool|null $segment_size */
+		$segment_size = $config['segment_size'] ?? 0;
+		/** @var int|float|string|bool|null $max_lifespan */
+		$max_lifespan = $config['max_lifespan'] ?? 0;
 		return [
-			'num_partitions' => (int) ( $config['num_partitions'] ?? 0 ),
-			'num_segments'   => (int) ( $config['num_segments']   ?? 0 ),
-			'segment_size'   => (int) ( $config['segment_size']   ?? 0 ),
-			'max_lifespan'   => (int) ( $config['max_lifespan']   ?? 0 ),
+			'num_partitions' => (int) $num_partitions,
+			'num_segments'   => (int) $num_segments,
+			'segment_size'   => (int) $segment_size,
+			'max_lifespan'   => (int) $max_lifespan,
 		];
 	}
 

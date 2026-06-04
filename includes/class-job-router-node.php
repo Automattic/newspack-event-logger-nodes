@@ -51,7 +51,9 @@ class Job_Router_Node extends Node {
 
 	public function fill( array &$message ): void {
 		++$this->counter;
-		if ( ! ( $message[ Message::TYPE ] & Message::TM_STRUCT ) ) {
+		/** @var int $type_flags */
+		$type_flags = $message[ Message::TYPE ];
+		if ( ! ( $type_flags & Message::TM_STRUCT ) ) {
 			return;
 		}
 		$entry = $message[ Message::VALUE ];
@@ -61,7 +63,9 @@ class Job_Router_Node extends Node {
 
 		// Source disambiguation: Consumer stamps FROM with its own node name.
 		// Topology names them `firehose:consumer` and `jobintake:consumer`.
-		$from         = (string) ( $message[ Message::FROM ] ?? '' );
+		/** @var int|float|string|bool|null $raw_from */
+		$raw_from     = $message[ Message::FROM ] ?? '';
+		$from         = (string) $raw_from;
 		$is_firehose  = ( false !== \strpos( $from, 'firehose:consumer' ) );
 		$is_jobintake = ( false !== \strpos( $from, 'jobintake:consumer' ) );
 		if ( ! $is_firehose && ! $is_jobintake ) {
@@ -85,7 +89,9 @@ class Job_Router_Node extends Node {
 		// StreamMerger only touches the entry-level `k`. For jobintake the
 		// entry is flat (no `m` wrap) so $body IS $entry; reading
 		// $entry['k'] handles both branches uniformly.
-		$type = (string) ( $entry['k'] ?? '' );
+		/** @var int|float|string|bool|null $raw_type */
+		$raw_type = $entry['k'] ?? '';
+		$type     = (string) $raw_type;
 		if ( self::KIND_JOB !== $type && self::KIND_REMOTE_JOB !== $type ) {
 			return;
 		}
@@ -95,7 +101,9 @@ class Job_Router_Node extends Node {
 			$type = self::KIND_JOB;
 		}
 
-		$handler = (string) ( $body['handler'] ?? '' );
+		/** @var int|float|string|bool|null $raw_handler */
+		$raw_handler = $body['handler'] ?? '';
+		$handler     = (string) $raw_handler;
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
 			Core::print_less_often( "JobRouter: invalid handler name: $handler" );
 			$this->set_state( 'DROPPED', [ 'reason' => 'invalid_handler', 'handler' => $handler ] );

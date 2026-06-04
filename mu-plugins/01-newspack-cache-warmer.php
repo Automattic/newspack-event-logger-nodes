@@ -71,11 +71,11 @@ class Cold_Read_Object_Cache {
 	 * @param int|string $key   Cache key.
 	 * @param string     $group Cache group.
 	 * @param bool       $force Whether to force a refetch.
-	 * @param mixed      $found Set by reference to whether the key was found.
+	 * @param bool|null  $found Set by reference to whether the key was found.
 	 * @return mixed
 	 */
 	public function get( $key, $group = '', $force = false, &$found = null ) {
-		if ( $this->is_cold( (string) $group ) ) {
+		if ( $this->is_cold( $group ) ) {
 			$found = false;
 			return false;
 		}
@@ -91,7 +91,7 @@ class Cold_Read_Object_Cache {
 	 * @return array<int|string, mixed>
 	 */
 	public function get_multiple( $keys, $group = '', $force = false ) {
-		if ( $this->is_cold( (string) $group ) ) {
+		if ( $this->is_cold( $group ) ) {
 			return \array_fill_keys( $keys, false );
 		}
 		return $this->real->get_multiple( $keys, $group, $force );
@@ -270,16 +270,20 @@ class Cache_Warmer {
 		) {
 			return;
 		}
+		/** @var \WP_Object_Cache $real_cache */
+		$real_cache = $GLOBALS['wp_object_cache'];
 		// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- deliberate, process-local swap for the warm render only.
 		$GLOBALS['wp_object_cache'] = new Cold_Read_Object_Cache(
-			$GLOBALS['wp_object_cache'],
+			$real_cache,
 			self::cold_groups()
 		);
 	}
 
 	/** The shared secret gating warm requests; generated once and stored non-autoloaded. */
 	public static function secret(): string {
-		$secret = (string) \get_option( self::SECRET_OPTION, '' );
+		/** @var int|float|string|bool|null $raw_secret */
+		$raw_secret = \get_option( self::SECRET_OPTION, '' );
+		$secret     = (string) $raw_secret;
 		if ( '' === $secret ) {
 			$secret = \bin2hex( \random_bytes( 16 ) );
 			\update_option( self::SECRET_OPTION, $secret, false );
@@ -305,9 +309,15 @@ class Cache_Warmer {
 	 * @return string
 	 */
 	public static function auth_header(): string {
-		$cred = \defined( 'NEWSPACK_CACHE_WARMER_AUTH' )
-			? (string) \NEWSPACK_CACHE_WARMER_AUTH
-			: self::decrypt( (string) \get_option( self::AUTH_OPTION, '' ) );
+		if ( \defined( 'NEWSPACK_CACHE_WARMER_AUTH' ) ) {
+			/** @var int|float|string|bool|null $raw_const */
+			$raw_const = \NEWSPACK_CACHE_WARMER_AUTH;
+			$cred      = (string) $raw_const;
+		} else {
+			/** @var int|float|string|bool|null $raw_auth */
+			$raw_auth = \get_option( self::AUTH_OPTION, '' );
+			$cred     = self::decrypt( (string) $raw_auth );
+		}
 		$cred = \trim( $cred );
 		return '' === $cred ? '' : 'Basic ' . \base64_encode( $cred );
 	}

@@ -55,9 +55,11 @@ class Events_CI_Node extends Service_CI_Node {
 					'description' => 'Merge per-partition hourly buckets into one time_series.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						$config         = RuntimeConfig::load_config();
-						$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
-						$max_lifespan   = (int) ( $config['max_lifespan'] ?? 86400 );
+						$config            = RuntimeConfig::load_config();
+						$num_partitions_v  = $config['num_partitions'] ?? 1;
+						$max_lifespan_v    = $config['max_lifespan'] ?? 86400;
+						$num_partitions    = \is_scalar( $num_partitions_v ) ? (int) $num_partitions_v : 1;
+						$max_lifespan      = \is_scalar( $max_lifespan_v ) ? (int) $max_lifespan_v : 86400;
 
 						$merged = [];
 						if ( null !== Core::$memd ) {
@@ -72,9 +74,15 @@ class Events_CI_Node extends Service_CI_Node {
 											'sum_peak_mb' => 0.0,
 										];
 									}
-									$merged[ $hour ]['count']       += (int) ( $row['count'] ?? 0 );
-									$merged[ $hour ]['sum_ms']      += (float) ( $row['sum_ms'] ?? 0 );
-									$merged[ $hour ]['sum_peak_mb'] += (float) ( $row['sum_peak_mb'] ?? 0 );
+									if ( ! \is_array( $row ) ) {
+										continue;
+									}
+									$count_v       = $row['count'] ?? 0;
+									$sum_ms_v      = $row['sum_ms'] ?? 0;
+									$sum_peak_mb_v = $row['sum_peak_mb'] ?? 0;
+									$merged[ $hour ]['count']       += \is_scalar( $count_v ) ? (int) $count_v : 0;
+									$merged[ $hour ]['sum_ms']      += \is_scalar( $sum_ms_v ) ? (float) $sum_ms_v : 0.0;
+									$merged[ $hour ]['sum_peak_mb'] += \is_scalar( $sum_peak_mb_v ) ? (float) $sum_peak_mb_v : 0.0;
 								}
 							}
 							\ksort( $merged );

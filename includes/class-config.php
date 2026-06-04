@@ -204,7 +204,7 @@ class Config {
 			return (float) $value;
 		}
 		if ( 'array_strings' === $type && \is_string( $value ) ) {
-			return \array_values( \array_filter( \array_map( 'trim', \explode( "\n", $value ) ) ) );
+			return \array_values( \array_filter( \array_map( 'trim', \explode( "\n", $value ) ), static fn ( $v ) => (bool) $v ) );
 		}
 		return $value;
 	}
@@ -261,7 +261,9 @@ class Config {
 	 */
 	public static function get_custom_colors(): array {
 		$config = self::load_config();
-		$colors = $config['custom_colors'] ?? [];
+		$raw    = $config['custom_colors'] ?? [];
+		/** @var array<string, mixed> $colors */
+		$colors = \is_array( $raw ) ? $raw : [];
 
 		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
@@ -277,6 +279,7 @@ class Config {
 			$discovered = \get_option( 'newspack_event_logger_nodes_discovered_events', [] );
 			if ( \is_array( $discovered ) ) {
 				foreach ( $discovered as $event => $color ) {
+					$event = (string) $event;
 					if ( ! isset( $colors[ $event ] ) ) {
 						$colors[ $event ] = \is_string( $color ) ? $color : '#ffa726';
 					}
@@ -419,7 +422,7 @@ class Config {
 			if ( ! \is_array( $events ) ) {
 				return '';
 			}
-			return \implode( ',', $events );
+			return \implode( ',', \array_map( '\strval', $events ) );
 		}
 
 		return $config[ $key ] ?? null;

@@ -103,8 +103,9 @@ class Servers_CI_Node extends Service_CI_Node {
 						$registry = $self->require_registry();
 						$registry->reset_cache();
 						$out = [];
+						/** @var array<string, mixed> $config */
 						foreach ( $registry->get_all() as $id => $config ) {
-							$out[ $id ] = self::public_shape( (string) $id, $config, $registry );
+							$out[ $id ] = self::public_shape( $id, $config, $registry );
 						}
 						return $out;
 					},
@@ -284,9 +285,11 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * @return array<string, mixed> Public server record.
 	 */
 	private static function public_shape( string $id, array $config, Server_Registry $registry ): array {
+		/** @var int|float|string|bool|null $raw_url */
+		$raw_url = $config['url'] ?? '';
 		return [
 			'id'              => $id,
-			'url'             => (string) ( $config['url'] ?? '' ),
+			'url'             => (string) $raw_url,
 			'enabled'         => (bool) ( $config['enabled'] ?? false ),
 			'logs'            => $config['logs'] ?? [],
 			'has_credentials' => ! empty( $config['auth_username'] ) && ! empty( $config['auth_password'] ),
@@ -381,7 +384,7 @@ class Servers_CI_Node extends Service_CI_Node {
 		if ( true === $value || '' === $value ) {
 			return [];
 		}
-		return \array_values( \array_filter( \array_map( '\trim', \explode( ',', (string) $value ) ), static fn ( string $s ): bool => '' !== $s ) );
+		return \array_values( \array_filter( \array_map( '\trim', \explode( ',', $value ) ), static fn ( string $s ): bool => '' !== $s ) );
 	}
 
 	/**
@@ -436,7 +439,9 @@ class Servers_CI_Node extends Service_CI_Node {
 		// is now a `discovery.get` command dispatched via `/command`. Build the
 		// body through the shared RemoteManager builder so the manual Test
 		// probe and the periodic health-check probe can't drift.
-		$url  = \rtrim( (string) $server['url'], '/' ) . '/wp-json/newspack-nodes/v1/command';
+		/** @var int|float|string|bool|null $raw_server_url */
+		$raw_server_url = $server['url'];
+		$url            = \rtrim( (string) $raw_server_url, '/' ) . '/wp-json/newspack-nodes/v1/command';
 		$args = [
 			// 5s bound on a synchronous Test-button probe — admin UI blocks on
 			// it. Default 1s misses real spokes on slow links (legacy parity).
@@ -449,8 +454,12 @@ class Servers_CI_Node extends Service_CI_Node {
 			'body'                => Remote_Manager::command_message_body( 'discovery', 'get', '' ),
 		];
 
-		$username = (string) ( $server['auth_username'] ?? '' );
-		$password = (string) ( $server['auth_password'] ?? '' );
+		/** @var int|float|string|bool|null $raw_username */
+		$raw_username = $server['auth_username'] ?? '';
+		/** @var int|float|string|bool|null $raw_password */
+		$raw_password = $server['auth_password'] ?? '';
+		$username     = (string) $raw_username;
+		$password     = (string) $raw_password;
 		if ( '' !== $username && '' !== $password ) {
 			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- HTTP Basic Auth.
 			$args['headers']['Authorization'] = 'Basic ' . \base64_encode( $username . ':' . $password );
@@ -506,7 +515,9 @@ class Servers_CI_Node extends Service_CI_Node {
 			);
 		}
 		if ( isset( $body['lag'] ) ) {
-			$safe['lag'] = (int) $body['lag'];
+			/** @var int|float|string|bool|null $raw_lag */
+			$raw_lag     = $body['lag'];
+			$safe['lag'] = (int) $raw_lag;
 		}
 
 		return [

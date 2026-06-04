@@ -188,7 +188,8 @@ class LRU_Cache {
 			return;
 		}
 
-		$max_key       = \max( \array_keys( $buckets ) );
+		$max_key = \max( \array_keys( $buckets ) );
+		/** @var array<int, array<string, mixed>> $buckets */
 		$this->buckets = $buckets;
 		$this->current = (int) \max( 0, \min( $current, $max_key ) );
 	}

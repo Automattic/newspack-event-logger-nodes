@@ -212,14 +212,18 @@ class Reqgrep_Command {
 		$this->pattern_regex = '/' . \preg_quote( $this->pattern, '/' ) . '/i';
 		$this->incomplete    = isset( $assoc_args['incomplete'] );
 		$this->raw           = isset( $assoc_args['raw'] );
-		$this->bucket_size   = \max( 1, \min( 10000, (int) ( $assoc_args['bucket-size'] ?? 250 ) ) );
-		$this->num_buckets   = \max( 1, \min( 100, (int) ( $assoc_args['num-buckets'] ?? 10 ) ) );
+		$bucket_size_arg     = $assoc_args['bucket-size'] ?? 250;
+		$num_buckets_arg     = $assoc_args['num-buckets'] ?? 10;
+		$this->bucket_size   = \max( 1, \min( 10000, \is_numeric( $bucket_size_arg ) ? (int) $bucket_size_arg : 0 ) );
+		$this->num_buckets   = \max( 1, \min( 100, \is_numeric( $num_buckets_arg ) ? (int) $num_buckets_arg : 0 ) );
 		$follow              = isset( $assoc_args['follow'] );
 		$this->cat_offset    = isset( $assoc_args['recent'] ) ? 'recent' : 'start';
 
 		$this->config         = Config::load_config();
-		$this->base_dir       = $assoc_args['path'] ?? Config::get_logs_directory() . '/firehose.log';
-		$this->num_partitions = (int) ( $this->config['num_partitions'] ?? 1 );
+		$path_arg             = $assoc_args['path'] ?? null;
+		$this->base_dir       = \is_string( $path_arg ) ? $path_arg : Config::get_logs_directory() . '/firehose.log';
+		$num_partitions_cfg   = $this->config['num_partitions'] ?? 1;
+		$this->num_partitions = \is_numeric( $num_partitions_cfg ) ? (int) $num_partitions_cfg : 0;
 
 		// LruCache: 300 slots, 60s rotation, on-evict prints [incomplete].
 		$this->inflight = ( new LRU_Cache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
@@ -229,16 +233,17 @@ class Reqgrep_Command {
 					if ( ! $state instanceof \stdClass ) {
 						return;
 					}
-					$this->output_request( $state->lines, $rid );
+					$this->output_request( self::to_lines( $state->lines ), $rid );
 					echo "[incomplete]\n\n";
 				}
 			);
 
 		// Validate explicit --path against the configured logs directory.
 		if ( isset( $assoc_args['path'] ) ) {
-			$real_path = \realpath( (string) $assoc_args['path'] );
+			$path_value = \is_string( $assoc_args['path'] ) ? $assoc_args['path'] : '';
+			$real_path  = \realpath( $path_value );
 			if ( false === $real_path ) {
-				\WP_CLI::error( 'Invalid path: ' . $assoc_args['path'] );
+				\WP_CLI::error( 'Invalid path: ' . $path_value );
 				return;
 			}
 			$logs_dir = Config::get_logs_directory();
@@ -405,13 +410,13 @@ class Reqgrep_Command {
 					// Move the cursor forward to the start of the next segment so
 					// we don't restart at this seg's tail next iteration.
 					if ( $s['id'] > $cursor['seg'] ) {
-						$cursor['seg'] = (int) $s['id'];
+						$cursor['seg'] = $s['id'];
 						$cursor['off'] = 0;
 					}
 					continue;
 				}
-				$consumed      = $this->stream_segment_lines( $partition, (int) $s['id'], $start, $len );
-				$cursor['seg'] = (int) $s['id'];
+				$consumed      = $this->stream_segment_lines( $partition, $s['id'], $start, $len );
+				$cursor['seg'] = $s['id'];
 				$cursor['off'] = $start + $consumed;
 				if ( $consumed > 0 ) {
 					$had_data = true;
@@ -440,8 +445,8 @@ class Reqgrep_Command {
 			}
 			$newest        = \end( $segments );
 			$cursors[ $p ] = [
-				'seg' => (int) $newest['id'],
-				'off' => (int) $newest['size'],
+				'seg' => $newest['id'],
+				'off' => $newest['size'],
 			];
 		}
 		return $cursors;
@@ -479,7 +484,7 @@ class Reqgrep_Command {
 			}
 			$buffer    = $pending . $bytes;
 			$lines     = \explode( "\n", $buffer );
-			$pending   = (string) \array_pop( $lines );
+			$pending   = \array_pop( $lines );
 			foreach ( $lines as $line ) {
 				$this->process_line( $line . "\n" );
 			}
@@ -558,25 +563,25 @@ class Reqgrep_Command {
 		}
 		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
 			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			$rid   = (string) ( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+			$rid   = self::to_str( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
 		} else {
 			$entry = $decoded;
-			$rid   = (string) ( $entry['rid'] ?? '' );
+			$rid   = self::to_str( $entry['rid'] ?? '' );
 		}
 		if ( ! \is_array( $entry ) || '' === $rid ) {
 			return;
 		}
 
-		$key = (string) ( $entry['k'] ?? '' );
+		$key = self::to_str( $entry['k'] ?? '' );
 
 		$inflight = $this->require_inflight();
 		$state    = $inflight->get( $rid );
-		if ( null !== $state ) {
+		if ( $state instanceof \stdClass ) {
 			// Already tracking this rid: extend it and finalize on complete.
 			$this->append_to_state( $state, $line );
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
-					$this->output_request( $state->lines, $rid );
+					$this->output_request( self::to_lines( $state->lines ), $rid );
 				}
 				$inflight->delete( $rid );
 			}
@@ -598,7 +603,7 @@ class Reqgrep_Command {
 				}
 			}
 
-			$n = (int) ( $entry['n'] ?? 0 );
+			$n = self::to_int( $entry['n'] ?? 0 );
 			if ( ! $found_history && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
 				\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
 			}
@@ -664,7 +669,7 @@ class Reqgrep_Command {
 			if ( ! $state instanceof \stdClass ) {
 				continue;
 			}
-			$this->output_request( $state->lines, (string) $rid );
+			$this->output_request( self::to_lines( $state->lines ), self::to_str( $rid ) );
 			echo "[incomplete]\n\n";
 		}
 	}
@@ -723,13 +728,13 @@ class Reqgrep_Command {
 	 * Format a log entry for display with indentation, dot rows for elapsed
 	 * seconds, and (start)/(complete) bookkeeping.
 	 *
-	 * @param array<string, mixed> $entry Decoded JSON entry.
+	 * @param array<int|string, mixed> $entry Decoded JSON entry.
 	 * @return string Formatted output line.
 	 */
 	private function format_entry( array $entry ): string {
-		$number = (int) ( $entry['n'] ?? 0 );
-		$ts     = (float) ( $entry['ts'] ?? 0 );
-		$key    = (string) ( $entry['k'] ?? '' );
+		$number = self::to_int( $entry['n'] ?? 0 );
+		$ts     = self::to_float( $entry['ts'] ?? 0 );
+		$key    = self::to_str( $entry['k'] ?? '' );
 
 		// Decrease indent BEFORE printing the (complete) line so its key sits
 		// at the same column as the matching (start) entry.
@@ -788,16 +793,16 @@ class Reqgrep_Command {
 			if ( \is_array( $entry['m'] ) ) {
 				$msg = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ?: '';
 			} else {
-				$msg = (string) $entry['m'];
+				$msg = self::to_str( $entry['m'] );
 			}
 		}
 
 		$suffix = '';
 		if ( isset( $entry['duration_ms'] ) ) {
-			$suffix .= ' (' . \number_format( (float) $entry['duration_ms'], 2 ) . 'ms)';
+			$suffix .= ' (' . \number_format( self::to_float( $entry['duration_ms'] ), 2 ) . 'ms)';
 		}
 		if ( isset( $entry['peak_mb'] ) ) {
-			$suffix .= ' [' . $entry['peak_mb'] . 'MB]';
+			$suffix .= ' [' . self::to_str( $entry['peak_mb'] ) . 'MB]';
 		}
 
 		$prefix = \sprintf(
@@ -831,5 +836,50 @@ class Reqgrep_Command {
 		$this->fmt_last_timestamp = $ts;
 
 		return \rtrim( $output, "\n" );
+	}
+
+	/**
+	 * Coerce a decoded-JSON scalar to string, reproducing the prior `(string)`
+	 * cast for the scalar field values the firehose actually emits; non-scalars
+	 * (which the old casts would have warned/erred on) become ''.
+	 *
+	 * @param mixed $value Decoded value.
+	 */
+	private static function to_str( $value ): string {
+		return \is_scalar( $value ) ? (string) $value : '';
+	}
+
+	/**
+	 * Coerce a decoded-JSON numeric to int, reproducing the prior `(int)` cast
+	 * for the numeric field values the firehose emits; non-numerics become 0.
+	 *
+	 * @param mixed $value Decoded value.
+	 */
+	private static function to_int( $value ): int {
+		return \is_numeric( $value ) ? (int) $value : 0;
+	}
+
+	/**
+	 * Coerce a decoded-JSON numeric to float, reproducing the prior `(float)`
+	 * cast for the numeric field values the firehose emits; non-numerics become 0.0.
+	 *
+	 * @param mixed $value Decoded value.
+	 */
+	private static function to_float( $value ): float {
+		return \is_numeric( $value ) ? (float) $value : 0.0;
+	}
+
+	/**
+	 * Narrow a stdClass `->lines` value (always built from string appends in
+	 * append_to_state) to a list of strings for output_request.
+	 *
+	 * @param mixed $value Decoded value.
+	 * @return array<int, string>
+	 */
+	private static function to_lines( $value ): array {
+		if ( ! \is_array( $value ) ) {
+			return [];
+		}
+		return \array_values( \array_filter( $value, 'is_string' ) );
 	}
 }

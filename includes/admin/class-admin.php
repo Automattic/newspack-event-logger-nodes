@@ -140,7 +140,7 @@ class Admin {
 
 		$config        = Config::load_config();
 		$allowed_users = $config['allowed_users'] ?? [];
-		if ( empty( $allowed_users ) ) {
+		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
 			return true;
 		}
 
@@ -267,7 +267,7 @@ class Admin {
 			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
 			if ( isset( $_GET['flushed'] ) ) {
 				// phpcs:ignore WordPress.Security.NonceVerification.Recommended
-				$restarted = isset( $_GET['restarted'] ) ? (int) $_GET['restarted'] : 0;
+				$restarted = isset( $_GET['restarted'] ) && \is_numeric( $_GET['restarted'] ) ? (int) $_GET['restarted'] : 0;
 				echo '<div class="notice notice-success is-dismissible"><p>'
 					. \esc_html(
 						\sprintf(
@@ -600,7 +600,7 @@ class Admin {
 		if ( '' === $input || null === $input ) {
 			return '';
 		}
-		return \absint( $input );
+		return \absint( \is_scalar( $input ) ? $input : 0 );
 	}
 
 	/**
@@ -782,10 +782,12 @@ class Admin {
 			if ( ! \is_string( $url ) || 0 !== \strpos( $url, 'https://' ) ) {
 				continue;
 			}
+			$auth_username = $config['auth_username'] ?? '';
+			$auth_password = $config['auth_password'] ?? '';
 			$result[ $server_id ] = [
 				'url'           => \esc_url_raw( $url ),
-				'auth_username' => \sanitize_text_field( (string) ( $config['auth_username'] ?? '' ) ),
-				'auth_password' => \sanitize_text_field( (string) ( $config['auth_password'] ?? '' ) ),
+				'auth_username' => \sanitize_text_field( \is_scalar( $auth_username ) ? (string) $auth_username : '' ),
+				'auth_password' => \sanitize_text_field( \is_scalar( $auth_password ) ? (string) $auth_password : '' ),
 				'enabled'       => (bool) ( $config['enabled'] ?? true ),
 			];
 		}
@@ -839,10 +841,11 @@ class Admin {
 		$file_default = \array_key_exists( $short_key, $defaults )
 			? (int) (bool) $defaults[ $short_key ]
 			: $hard_default;
-		return (int) \get_option(
+		$stored = \get_option(
 			"newspack_event_logger_nodes_{$short_key}",
 			$file_default
 		);
+		return \is_numeric( $stored ) ? (int) $stored : 0;
 	}
 
 	// ---- Aggregator field callbacks --------------------------------------
@@ -868,7 +871,8 @@ class Admin {
 	}
 
 	public function remote_num_segments_callback(): void {
-		$default = (int) ( \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_num_segments'] ?? 2 );
+		$default_raw = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_num_segments'] ?? 2;
+		$default     = \is_numeric( $default_raw ) ? (int) $default_raw : 0;
 		$this->render_number_field(
 			'remote_num_segments',
 			$default,
@@ -879,7 +883,8 @@ class Admin {
 	}
 
 	public function remote_segment_size_callback(): void {
-		$default = (int) ( \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_segment_size'] ?? 10485760 );
+		$default_raw = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_segment_size'] ?? 10485760;
+		$default     = \is_numeric( $default_raw ) ? (int) $default_raw : 0;
 		$this->render_number_field(
 			'remote_segment_size',
 			$default,
@@ -890,7 +895,8 @@ class Admin {
 	}
 
 	public function remote_max_lifespan_callback(): void {
-		$default = (int) ( \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_max_lifespan'] ?? 3600 );
+		$default_raw = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_max_lifespan'] ?? 3600;
+		$default     = \is_numeric( $default_raw ) ? (int) $default_raw : 0;
 		$this->render_number_field(
 			'remote_max_lifespan',
 			$default,
@@ -1015,8 +1021,8 @@ class Admin {
 		// Hide a stored 0 so the placeholder ("0") shows through — operators
 		// reading "Disable if count > 0" without seeing "0" as a value
 		// understand it's disabled rather than "any count > 0".
-		$count_display = ( '' === $count_value || 0 === (int) $count_value ) ? '' : $count_value;
-		$time_display  = ( '' === $time_value || 0.0 === (float) $time_value ) ? '' : $time_value;
+		$count_display = ( '' === $count_value || 0 === ( \is_numeric( $count_value ) ? (int) $count_value : 0 ) ) ? '' : $count_value;
+		$time_display  = ( '' === $time_value || 0.0 === ( \is_numeric( $time_value ) ? (float) $time_value : 0.0 ) ) ? '' : $time_value;
 		?>
 		<div style="display: flex; align-items: flex-start; gap: 10px;">
 			<div style="flex: 1;">
@@ -1025,7 +1031,7 @@ class Admin {
 						<?php \esc_html_e( 'Disable if count >', 'newspack-event-logger-nodes' ); ?>
 						<input type="number" id="auto_disable_threshold"
 							name="newspack_event_logger_nodes_auto_disable_threshold"
-							value="<?php echo \esc_attr( (string) $count_display ); ?>"
+							value="<?php echo \esc_attr( \is_scalar( $count_display ) ? (string) $count_display : '' ); ?>"
 							min="0" max="10000"
 							class="small-text" placeholder="0" />
 					</label>
@@ -1033,7 +1039,7 @@ class Admin {
 						<?php \esc_html_e( 'Protect if avg >=', 'newspack-event-logger-nodes' ); ?>
 						<input type="number" id="auto_protect_time_threshold"
 							name="newspack_event_logger_nodes_auto_protect_time_threshold"
-							value="<?php echo \esc_attr( (string) $time_display ); ?>"
+							value="<?php echo \esc_attr( \is_scalar( $time_display ) ? (string) $time_display : '' ); ?>"
 							min="0" max="1000" step="0.1"
 							class="small-text" placeholder="0" />
 						<?php \esc_html_e( 'ms', 'newspack-event-logger-nodes' ); ?>
@@ -1108,7 +1114,7 @@ class Admin {
 	 */
 	public function handle_reset_settings(): void {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$nonce = isset( $_POST[ self::RESET_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::RESET_NONCE ] ) ) : '';
+		$nonce = isset( $_POST[ self::RESET_NONCE ] ) && \is_string( $_POST[ self::RESET_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::RESET_NONCE ] ) ) : '';
 		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, self::RESET_ACTION ) ) {
 			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
 		}
@@ -1180,7 +1186,7 @@ class Admin {
 	 */
 	public function handle_flush_stats(): void {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$nonce = isset( $_POST[ self::FLUSH_STATS_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::FLUSH_STATS_NONCE ] ) ) : '';
+		$nonce = isset( $_POST[ self::FLUSH_STATS_NONCE ] ) && \is_string( $_POST[ self::FLUSH_STATS_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::FLUSH_STATS_NONCE ] ) ) : '';
 		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, self::FLUSH_STATS_ACTION ) ) {
 			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
 		}
@@ -1190,8 +1196,9 @@ class Admin {
 
 		// Stats_Store::flush_all() only rotates the salt option — it doesn't
 		// touch the cache, so no memcache handle is needed on this path.
-		$config = Config::load_config();
-		$stats  = new Stats_Store( 0, (int) ( $config['max_lifespan'] ?? 86400 ) );
+		$config       = Config::load_config();
+		$max_lifespan = $config['max_lifespan'] ?? 86400;
+		$stats        = new Stats_Store( 0, \is_numeric( $max_lifespan ) ? (int) $max_lifespan : 0 );
 		$stats->flush_all();
 
 		// Restart every worker across every active topology. Long-running
@@ -1338,9 +1345,10 @@ class Admin {
 		}
 
 		try {
-			$config         = Config::load_config();
-			$locks_dir      = Config::get_locks_directory();
-			$num_partitions = (int) ( $config['num_partitions'] ?? 1 );
+			$config             = Config::load_config();
+			$locks_dir          = Config::get_locks_directory();
+			$num_partitions_cfg = $config['num_partitions'] ?? 1;
+			$num_partitions     = \is_numeric( $num_partitions_cfg ) ? (int) $num_partitions_cfg : 0;
 		} catch ( \Throwable $e ) {
 			// Locks dir not creatable, base dir misconfigured, etc. Best-effort:
 			// the next supervisor pass will pick up the new config.
@@ -1402,14 +1410,14 @@ class Admin {
 	private function render_number_field( string $field, int $default, int $min, int $max, string $description ): void {
 		$value = \get_option( self::OPTION_PREFIX . $field, '' );
 		// Show empty (with placeholder) if not set or equals default.
-		$display_value = ( '' === $value || (int) $value === $default ) ? '' : $value;
+		$display_value = ( '' === $value || ( \is_numeric( $value ) ? (int) $value : 0 ) === $default ) ? '' : $value;
 		$input_class   = $max > 999 ? 'regular-text' : 'small-text';
 		?>
 		<div style="display: flex; align-items: flex-start; gap: 10px;">
 			<div style="flex: 1;">
 				<input type="number" id="<?php echo \esc_attr( $field ); ?>"
 					name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>"
-					value="<?php echo \esc_attr( $display_value ); ?>"
+					value="<?php echo \esc_attr( \is_scalar( $display_value ) ? (string) $display_value : '' ); ?>"
 					min="<?php echo \esc_attr( (string) $min ); ?>"
 					max="<?php echo \esc_attr( (string) $max ); ?>"
 					class="<?php echo \esc_attr( $input_class ); ?>"

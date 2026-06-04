@@ -47,12 +47,14 @@ class Status_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						$config          = RuntimeConfig::load_config();
 						$cache_available = null !== Core::$memd;
+						/** @var int|float|string|bool|null $num_partitions */
+						$num_partitions = $config['num_partitions'] ?? 1;
 
 						return [
 							'status'          => 'ok',
 							'version'         => \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ? \NEWSPACK_EVENT_LOGGER_NODES_VERSION : 'unknown',
 							'runtime_version' => \defined( 'NEWSPACK_NODES_VERSION' ) ? \NEWSPACK_NODES_VERSION : 'unknown',
-							'num_partitions'  => (int) ( $config['num_partitions'] ?? 1 ),
+							'num_partitions'  => (int) $num_partitions,
 							'topologies'      => \array_keys( Bootstrap::get_topologies() ),
 							'cache_available' => $cache_available,
 							'timestamp'       => \time(),

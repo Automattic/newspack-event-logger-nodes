@@ -1,5 +1,21 @@
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
 parameters:
-    level: 8
+    level: 9
+    # phpstan-strict-rules: the full set EXCEPT rules that fight WordPress /
+    # node-runtime idioms — empty() (pervasive WP), truthy conditionals
+    # (if ($count) / !$str), short ternary ($x ?: $y), and dynamic property /
+    # method access (Node $this->{$name} per make_node decision #11, the
+    # cache-warmer decorator's dynamic delegation to WP_Object_Cache).
+    # checkDynamicProperties is off too (dynamic node config assignment).
+    strictRules:
+        allRules: true
+        disallowedEmpty: false
+        booleansInConditions: false
+        booleansInLoopConditions: false
+        disallowedShortTernary: false
+        noVariableVariables: false
+    checkDynamicProperties: false
     # PHP 8.2+ — application code uses constants-in-traits and other 8.2
     # syntax; composer.json's `platform.php: 8.0` is the minimum-INSTALL
     # floor, but actual runtime is PHP 8.2+ (Eve / Atomic ship PHP 8.4).

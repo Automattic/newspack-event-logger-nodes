@@ -138,12 +138,12 @@ class Remote_Manager {
 					$option   = $parameters['option'] ?? '';
 					$value    = $parameters['value'] ?? null;
 					$endpoint = $parameters['endpoint'] ?? Settings_Sync::ENDPOINT;
-					if ( ! Settings_Sync::is_allowed_endpoint( (string) $endpoint ) ) {
+					if ( ! Settings_Sync::is_allowed_endpoint( self::to_string( $endpoint ) ) ) {
 						$endpoint = Settings_Sync::ENDPOINT;
 					}
 
 					// Skip stale jobs (older than sync interval).
-					$queued_at = (int) ( $parameters['queued_at'] ?? 0 );
+					$queued_at = self::to_int( $parameters['queued_at'] ?? 0 );
 					if ( $queued_at > 0 && ( \time() - $queued_at ) > self::STALE_THRESHOLD ) {
 						self::log_stale_drop( $action, \time() - $queued_at );
 						return;
@@ -165,12 +165,12 @@ class Remote_Manager {
 					}
 
 					if ( \is_string( $option ) && '' !== $option ) {
-						self::sync_setting( $option, $value, (string) $endpoint, $servers );
+						self::sync_setting( $option, $value, self::to_string( $endpoint ), $servers );
 					}
 					return;
 
 				case 'health_check':
-					$queued_at = (int) ( $parameters['queued_at'] ?? 0 );
+					$queued_at = self::to_int( $parameters['queued_at'] ?? 0 );
 					if ( $queued_at > 0 && ( \time() - $queued_at ) > self::STALE_THRESHOLD ) {
 						self::log_stale_drop( $action, \time() - $queued_at );
 						return;
@@ -245,7 +245,7 @@ class Remote_Manager {
 			);
 
 			if ( \function_exists( 'is_wp_error' ) && \is_wp_error( $response ) ) {
-				self::log_status( $server_id, 'sync_error', (string) $response->get_error_message() );
+				self::log_status( $server_id, 'sync_error', $response->get_error_message() );
 			} else {
 				$code = self::response_code( $response );
 				if ( 200 !== $code ) {
@@ -352,7 +352,7 @@ class Remote_Manager {
 			if ( '' === $local_option ) {
 				continue;
 			}
-			if ( ! Settings_Sync::is_allowed_endpoint( (string) $endpoint ) ) {
+			if ( ! Settings_Sync::is_allowed_endpoint( self::to_string( $endpoint ) ) ) {
 				continue;
 			}
 
@@ -364,7 +364,7 @@ class Remote_Manager {
 			// `newspack_nodes_num_partitions` flattens to `num_partitions`.
 			// Mirrors SettingsSync::maybe_queue_static_sync — both must use
 			// the same logic or one path silently skips substrate keys.
-			$config_key = (string) $local_option;
+			$config_key = self::to_string( $local_option );
 			foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
 				if ( 0 === \strpos( $config_key, $prefix ) ) {
 					$config_key = \substr( $config_key, \strlen( $prefix ) );
@@ -376,7 +376,7 @@ class Remote_Manager {
 				continue;
 			}
 
-			self::sync_setting( (string) $remote_option, $config[ $config_key ], (string) $endpoint, $server_ids );
+			self::sync_setting( self::to_string( $remote_option ), $config[ $config_key ], self::to_string( $endpoint ), $server_ids );
 		}
 	}
 
@@ -419,7 +419,7 @@ class Remote_Manager {
 			if ( '' === $local_option ) {
 				continue;
 			}
-			if ( ! Settings_Sync::is_allowed_endpoint( (string) $endpoint ) ) {
+			if ( ! Settings_Sync::is_allowed_endpoint( self::to_string( $endpoint ) ) ) {
 				continue;
 			}
 
@@ -429,7 +429,7 @@ class Remote_Manager {
 			// `newspack_nodes_num_partitions` flattens to `num_partitions`.
 			// Mirrors SettingsSync::maybe_queue_static_sync — both must use
 			// the same logic or one path silently skips substrate keys.
-			$config_key = (string) $local_option;
+			$config_key = self::to_string( $local_option );
 			foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
 				if ( 0 === \strpos( $config_key, $prefix ) ) {
 					$config_key = \substr( $config_key, \strlen( $prefix ) );
@@ -445,9 +445,9 @@ class Remote_Manager {
 				'remote_manager',
 				[
 					'action'    => 'sync_setting',
-					'option'    => (string) $remote_option,
+					'option'    => self::to_string( $remote_option ),
 					'value'     => $config[ $config_key ],
-					'endpoint'  => (string) $endpoint,
+					'endpoint'  => self::to_string( $endpoint ),
 					'servers'   => \array_values( $server_ids ),
 					'queued_at' => $now,
 				]
@@ -487,7 +487,7 @@ class Remote_Manager {
 			return null;
 		}
 
-		$lag = (int) ( $data['lag'] ?? 0 );
+		$lag = self::to_int( $data['lag'] ?? 0 );
 		self::log_status( $server_id, 'ok', null, $lag );
 
 		$validated = [];
@@ -498,7 +498,7 @@ class Remote_Manager {
 			$validated['custom_events'] = \array_slice( $data['custom_events'], 0, 500 );
 		}
 		if ( isset( $data['lag'] ) ) {
-			$validated['lag'] = (int) $data['lag'];
+			$validated['lag'] = self::to_int( $data['lag'] );
 		}
 
 		return $validated;
@@ -521,10 +521,10 @@ class Remote_Manager {
 	 *
 	 * @param array<string, mixed>  $server    Server config (url, auth_username, auth_password).
 	 * @param string $server_id Server ID, used only for log_status calls.
-	 * @return array<string, mixed>|null Decoded discovery payload, or null on error.
+	 * @return array<array-key, mixed>|null Decoded discovery payload, or null on error.
 	 */
 	public static function discover_from_server( array $server, string $server_id ): ?array {
-		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
+		$url  = \rtrim( self::to_string( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
 		$args = self::request_args( $server, [
 			'headers' => [ 'Content-Type' => self::COMMAND_CONTENT_TYPE ],
 			'body'    => self::command_message_body( 'discovery', 'get', '' ),
@@ -535,7 +535,7 @@ class Remote_Manager {
 			: self::wp_error_or_array( 'no_http', 'wp_remote_post unavailable' );
 
 		if ( \function_exists( 'is_wp_error' ) && \is_wp_error( $response ) ) {
-			self::log_status( $server_id, 'error', (string) $response->get_error_message() );
+			self::log_status( $server_id, 'error', $response->get_error_message() );
 			return null;
 		}
 		$code = self::response_code( $response );
@@ -652,7 +652,7 @@ class Remote_Manager {
 			return self::wp_error_or_array( 'disallowed_endpoint', 'Endpoint not in allowed prefixes' );
 		}
 
-		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
+		$url  = \rtrim( self::to_string( $server['url'] ?? '' ), '/' ) . self::COMMAND_PATH;
 		$args = self::request_args( $server, [
 			'headers' => [ 'Content-Type' => self::COMMAND_CONTENT_TYPE ],
 			'body'    => self::build_command_envelope( $endpoint, $body ),
@@ -701,7 +701,7 @@ class Remote_Manager {
 	 *
 	 * @param string $endpoint One of SettingsSync::ENDPOINT or PERF_ENDPOINT.
 	 * @param array<string, mixed>  $body     `{option, value}` pair.
-	 * @return array{0: string, 1: string, 2: array<string, mixed>} `[to, verb, named_args]`.
+	 * @return array{0: string, 1: string, 2: array<string, string|int|float|bool|array<mixed>>} `[to, verb, named_args]`.
 	 */
 	private static function resolve_command_target( string $endpoint, array $body ): array {
 		if ( Settings_Sync::PERF_ENDPOINT === $endpoint ) {
@@ -710,8 +710,8 @@ class Remote_Manager {
 			// 1:1 (newspack_event_logger_nodes_log_events etc.). Emits
 			// `--option=<opt> --value=<v>`.
 			return [ 'performance', 'settings_update', [
-				'option' => (string) ( $body['option'] ?? '' ),
-				'value'  => $body['value'] ?? '',
+				'option' => self::to_string( $body['option'] ?? '' ),
+				'value'  => self::to_arg_value( $body['value'] ?? '' ),
 			] ];
 		}
 
@@ -720,11 +720,11 @@ class Remote_Manager {
 		// wire — keeps the verb stable for callers that don't know that
 		// prefix history (legacy /settings did the same strip server-side).
 		// Emits `--<short>=<value>`.
-		$option = (string) ( $body['option'] ?? '' );
+		$option = self::to_string( $body['option'] ?? '' );
 		$short  = 0 === \strpos( $option, 'newspack_nodes_' )
 			? \substr( $option, \strlen( 'newspack_nodes_' ) )
 			: $option;
-		return [ 'settings', 'update', [ $short => $body['value'] ?? '' ] ];
+		return [ 'settings', 'update', [ $short => self::to_arg_value( $body['value'] ?? '' ) ] ];
 	}
 
 	/**
@@ -739,7 +739,7 @@ class Remote_Manager {
 			return self::wp_error_or_array( 'disallowed_endpoint', 'Endpoint not in allowed prefixes' );
 		}
 
-		$url  = \rtrim( (string) ( $server['url'] ?? '' ), '/' ) . $endpoint;
+		$url  = \rtrim( self::to_string( $server['url'] ?? '' ), '/' ) . $endpoint;
 		$args = self::request_args( $server, [] );
 
 		if ( \function_exists( 'wp_remote_get' ) ) {
@@ -752,13 +752,47 @@ class Remote_Manager {
 	// --- Helpers -------------------------------------------------------------
 
 	/**
+	 * Narrow a mixed config/server/job value to a string, reproducing the
+	 * `(string)` coercion the surrounding code already applies to scalars
+	 * (these values are always scalar in practice).
+	 *
+	 * @param mixed $value Value to coerce.
+	 */
+	private static function to_string( $value ): string {
+		return \is_scalar( $value ) ? (string) $value : '';
+	}
+
+	/**
+	 * Narrow a mixed config/server/job value to an int, reproducing the
+	 * `(int)` coercion the surrounding code already applies to scalars
+	 * (these values are always scalar in practice).
+	 *
+	 * @param mixed $value Value to coerce.
+	 */
+	private static function to_int( $value ): int {
+		return \is_scalar( $value ) ? (int) $value : 0;
+	}
+
+	/**
+	 * Narrow a mixed settings value to the type set Command_Args::format
+	 * accepts (scalar or array). Option values are always scalar/array in
+	 * practice; anything else falls back to an empty string.
+	 *
+	 * @param mixed $value Value to coerce.
+	 * @return string|int|float|bool|array<mixed>
+	 */
+	private static function to_arg_value( $value ) {
+		return ( \is_scalar( $value ) || \is_array( $value ) ) ? $value : '';
+	}
+
+	/**
 	 * Construct request args for wp_remote_*. Mirrors the legacy plugin's
 	 * defaults (timeout, ssl-verify, redirection, response-size cap) and adds
 	 * Basic-Auth headers when Application Password creds are present.
 	 *
 	 * @param array<string, mixed> $server Server config (auth_username, auth_password, token, url).
-	 * @param array<string, mixed> $extra  Args to merge in (headers, body, ...).
-	 * @return array<string, mixed>
+	 * @param array{headers?: array<string, string>, body?: string} $extra  Args to merge in (headers, body, ...).
+	 * @return array{timeout: int, sslverify: bool, redirection: int, limit_response_size: int, headers?: array<string, string>, body?: string}
 	 */
 	private static function request_args( array $server, array $extra ): array {
 		$config = Config::load_config();
@@ -766,11 +800,11 @@ class Remote_Manager {
 		$args = [
 			// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Remote server sync needs reasonable timeout.
 			'timeout'             => self::REQUEST_TIMEOUT,
-			'sslverify'           => $config['aggregator_verify_ssl'] ?? true,
+			'sslverify'           => (bool) ( $config['aggregator_verify_ssl'] ?? true ),
 			'redirection'         => 0,
 			'limit_response_size' => 1048576,
 		];
-		if ( isset( $extra['headers'] ) && \is_array( $extra['headers'] ) ) {
+		if ( isset( $extra['headers'] ) ) {
 			$args['headers'] = $extra['headers'];
 			unset( $extra['headers'] );
 		}
@@ -780,19 +814,19 @@ class Remote_Manager {
 
 		// Auth: prefer Basic Auth (Application Passwords); fall back to a
 		// `token` field if the legacy registry stored one.
-		$username = (string) ( $server['auth_username'] ?? '' );
-		$password = (string) ( $server['auth_password'] ?? '' );
+		$username = self::to_string( $server['auth_username'] ?? '' );
+		$password = self::to_string( $server['auth_password'] ?? '' );
 		if ( '' !== $username && '' !== $password ) {
-			if ( ! isset( $args['headers'] ) || ! \is_array( $args['headers'] ) ) {
+			if ( ! isset( $args['headers'] ) ) {
 				$args['headers'] = [];
 			}
 			// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- Required for HTTP Basic Auth.
 			$args['headers']['Authorization'] = 'Basic ' . \base64_encode( $username . ':' . $password );
-		} elseif ( '' !== (string) ( $server['token'] ?? '' ) ) {
-			if ( ! isset( $args['headers'] ) || ! \is_array( $args['headers'] ) ) {
+		} elseif ( '' !== self::to_string( $server['token'] ?? '' ) ) {
+			if ( ! isset( $args['headers'] ) ) {
 				$args['headers'] = [];
 			}
-			$args['headers']['Authorization'] = 'Bearer ' . (string) $server['token'];
+			$args['headers']['Authorization'] = 'Bearer ' . self::to_string( $server['token'] ?? '' );
 		}
 
 		return $args;
@@ -883,7 +917,7 @@ class Remote_Manager {
 		$name      = \ltrim( $name, '/' );
 		$path_info = '/' . $name;
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- read-only context lookup.
-		$server_name = $_SERVER['SERVER_NAME'] ?? '';
+		$server_name = self::to_string( $_SERVER['SERVER_NAME'] ?? '' );
 
 		// Generate a fresh request id.
 		$rid = '';
@@ -938,16 +972,17 @@ class Remote_Manager {
 			if ( ! \is_array( $segs ) ) {
 				continue;
 			}
-			$cur_seg    = (string) ( $cursor[ $partition_id ]['segment_id'] ?? '' );
-			$cur_offset = (int) ( $cursor[ $partition_id ]['offset'] ?? 0 );
+			$cur        = $cursor[ $partition_id ] ?? null;
+			$cur_seg    = \is_array( $cur ) ? self::to_string( $cur['segment_id'] ?? '' ) : '';
+			$cur_offset = \is_array( $cur ) ? self::to_int( $cur['offset'] ?? 0 ) : 0;
 
 			$found_current = false;
 			foreach ( $segs as $seg ) {
 				if ( ! \is_array( $seg ) ) {
 					continue;
 				}
-				$seg_id   = (string) ( $seg['id'] ?? '' );
-				$seg_size = (int) ( $seg['size'] ?? 0 );
+				$seg_id   = self::to_string( $seg['id'] ?? '' );
+				$seg_size = self::to_int( $seg['size'] ?? 0 );
 
 				if ( ! $found_current ) {
 					if ( $seg_id === $cur_seg ) {
@@ -962,7 +997,7 @@ class Remote_Manager {
 			if ( ! $found_current && '' === $cur_seg ) {
 				foreach ( $segs as $seg ) {
 					if ( \is_array( $seg ) ) {
-						$total += (int) ( $seg['size'] ?? 0 );
+						$total += self::to_int( $seg['size'] ?? 0 );
 					}
 				}
 			}
@@ -976,15 +1011,15 @@ class Remote_Manager {
 	 * Resolve the response code from a wp_remote_* response array. Returns 0
 	 * if WP isn't available or the response is malformed.
 	 *
-	 * @param mixed $response Response from wp_remote_*.
+	 * @param array<string, mixed>|\WP_Error $response Response from wp_remote_*.
 	 * @return int HTTP status code.
 	 */
 	private static function response_code( $response ): int {
 		if ( \function_exists( 'wp_remote_retrieve_response_code' ) ) {
 			return (int) \wp_remote_retrieve_response_code( $response );
 		}
-		if ( \is_array( $response ) && isset( $response['response']['code'] ) ) {
-			return (int) $response['response']['code'];
+		if ( \is_array( $response ) && isset( $response['response'] ) && \is_array( $response['response'] ) && isset( $response['response']['code'] ) ) {
+			return self::to_int( $response['response']['code'] );
 		}
 		return 0;
 	}
@@ -996,10 +1031,10 @@ class Remote_Manager {
 	 */
 	private static function response_body( $response ): string {
 		if ( \function_exists( 'wp_remote_retrieve_body' ) ) {
-			return (string) \wp_remote_retrieve_body( $response );
+			return \wp_remote_retrieve_body( $response );
 		}
 		if ( \is_array( $response ) && isset( $response['body'] ) ) {
-			return (string) $response['body'];
+			return self::to_string( $response['body'] );
 		}
 		return '';
 	}

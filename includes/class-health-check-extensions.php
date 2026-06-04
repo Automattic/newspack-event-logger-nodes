@@ -40,6 +40,7 @@ class Health_Check_Extensions {
 		$all_hooks  = [];
 		$all_events = [];
 
+		/** @var array<string, mixed> $data */
 		foreach ( $all_discovery as $server_id => $data ) {
 			// Collect discovered hooks (sanitize remote strings before storage).
 			$hooks = $data['registered_hooks'] ?? [];

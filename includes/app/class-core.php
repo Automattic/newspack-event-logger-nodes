@@ -38,12 +38,13 @@ class Core {
 			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
 		}
 		if ( \is_array( $function ) && \count( $function ) === 2 ) {
-			$class = \is_object( $function[0] ) ? \get_class( $function[0] ) : $function[0];
-			$pos   = \strrpos( $class, '\\' );
+			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : ( \is_string( $function[0] ) ? $function[0] : '' );
+			$method = \is_string( $function[1] ) ? $function[1] : '';
+			$pos    = \strrpos( $class, '\\' );
 			if ( false !== $pos ) {
 				$class = \substr( $class, $pos + 1 );
 			}
-			return "{$class}::{$function[1]}";
+			return "{$class}::{$method}";
 		}
 		if ( $function instanceof \Closure ) {
 			$ref  = new \ReflectionFunction( $function );
@@ -83,9 +84,11 @@ class Core {
 
 		// Load event filters from config.
 		$config            = Config::load_config();
-		$config_log_events = $config['log_events'] ?? [];
+		$log_events_cfg    = $config['log_events'] ?? [];
+		$config_log_events = \is_array( $log_events_cfg ) ? $log_events_cfg : [];
 
-		$this->start_priority = (int) ( $config['hook_start_priority'] ?? 1 );
+		$start_priority       = $config['hook_start_priority'] ?? 1;
+		$this->start_priority = \is_numeric( $start_priority ) ? (int) $start_priority : 1;
 
 		// Significant events get per-callback profiling.
 		// Also ensure real hooks are in log_events so they get instrumented.
@@ -94,9 +97,12 @@ class Core {
 		$sig             = $config['significant_events'] ?? [];
 		$custom_events   = $config['custom_events'] ?? [];
 		$custom_set      = \is_array( $custom_events ) ? $custom_events : [];
-		$log_events_set  = \array_flip( $config_log_events );
+		$log_events_set  = \array_flip( \array_filter( $config_log_events, 'is_string' ) );
 		if ( \is_array( $sig ) ) {
 			foreach ( $sig as $event ) {
+				if ( ! \is_string( $event ) ) {
+					continue;
+				}
 				$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
 				$this->significant[ $hook ] = true;
 				if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
@@ -186,13 +192,20 @@ class Core {
 	private static function callback_has_ref_param( $function ): bool {
 		try {
 			if ( \is_array( $function ) && \count( $function ) === 2 ) {
-				$ref = new \ReflectionMethod( $function[0], $function[1] );
+				$target = $function[0];
+				$method = $function[1];
+				if ( ( ! \is_object( $target ) && ! \is_string( $target ) ) || ! \is_string( $method ) ) {
+					return false;
+				}
+				$ref = new \ReflectionMethod( $target, $method );
 			} elseif ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
 				$ref = new \ReflectionMethod( $function );
 			} elseif ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
 				$ref = new \ReflectionMethod( $function, '__invoke' );
-			} else {
+			} elseif ( $function instanceof \Closure || \is_string( $function ) ) {
 				$ref = new \ReflectionFunction( $function );
+			} else {
+				return false;
 			}
 		} catch ( \Throwable $e ) {
 			return false;
