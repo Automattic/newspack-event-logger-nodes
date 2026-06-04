@@ -384,7 +384,8 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
-		if ( null !== $this->stats_store ) {
+		$stats_store = $this->stats_store;
+		if ( null !== $stats_store ) {
 			$now = $this->now_ts();
 			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
 				// Create finalized flame for display (scale values, strip suffixes, normalize).
@@ -393,7 +394,7 @@ class Flame_Builder_Node extends Node {
 				$aggregate['flame_raw'] = $aggregate['flame'];
 				self::finalize_flame_node( $aggregate['flame'], $total_count );
 				$aggregate['last_modified'] = $now;
-				$this->stats_store->set_url_stats( (string) $url_hash, $aggregate );
+				$stats_store->set_url_stats( (string) $url_hash, $aggregate );
 			}
 		}
 
@@ -1080,7 +1081,8 @@ class Flame_Builder_Node extends Node {
 	 * Persist combined aggregate stats (hourly, leaderboard, urls, dim, cat) to memcache.
 	 */
 	private function persist_aggregate_stats(): void {
-		if ( null === $this->stats_store ) {
+		$stats_store = $this->stats_store;
+		if ( null === $stats_store ) {
 			return;
 		}
 		if (
@@ -1100,7 +1102,7 @@ class Flame_Builder_Node extends Node {
 
 		// --- Hourly ---
 		if ( ! empty( $this->hourly_stats ) ) {
-			$existing_hourly = $this->stats_store->get_hourly();
+			$existing_hourly = $stats_store->get_hourly();
 
 			foreach ( $this->hourly_stats as $bucket_key => $stats ) {
 				if ( ! isset( $existing_hourly[ $bucket_key ] ) ) {
@@ -1116,7 +1118,7 @@ class Flame_Builder_Node extends Node {
 			}
 
 			// Expire bucket data older than the retention window.
-			$cutoff = $this->bucket_key( $this->now_ts() - $this->stats_store->ttl() );
+			$cutoff = $this->bucket_key( $this->now_ts() - $stats_store->ttl() );
 			foreach ( \array_keys( $existing_hourly ) as $bucket_key ) {
 				if ( $bucket_key < $cutoff ) {
 					unset( $existing_hourly[ $bucket_key ] );
@@ -1124,12 +1126,12 @@ class Flame_Builder_Node extends Node {
 			}
 			\ksort( $existing_hourly );
 
-			$this->stats_store->set_hourly( $existing_hourly );
+			$stats_store->set_hourly( $existing_hourly );
 		}
 
 		// --- Leaderboard (bucketed, sums-based) ---
 		foreach ( $this->leaderboard_stats as $bucket_key => $bucket_sums ) {
-			$existing = $this->stats_store->get_leaderboard_bucket( $bucket_key );
+			$existing = $stats_store->get_leaderboard_bucket( $bucket_key );
 			if ( empty( $existing ) ) {
 				$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 			}
@@ -1141,13 +1143,13 @@ class Flame_Builder_Node extends Node {
 				}
 			}
 			unset( $cat_data );
-			$this->stats_store->set_leaderboard_bucket( $bucket_key, $existing );
+			$stats_store->set_leaderboard_bucket( $bucket_key, $existing );
 		}
 
 		// --- Per-server leaderboards ---
 		foreach ( $this->leaderboard_by_server_stats as $server => $buckets ) {
 			foreach ( $buckets as $bucket_key => $bucket_sums ) {
-				$existing = $this->stats_store->get_server_leaderboard_bucket( $server, $bucket_key );
+				$existing = $stats_store->get_server_leaderboard_bucket( $server, $bucket_key );
 				if ( empty( $existing ) ) {
 					$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 				}
@@ -1159,14 +1161,14 @@ class Flame_Builder_Node extends Node {
 					}
 				}
 				unset( $cat_data );
-				$this->stats_store->set_server_leaderboard_bucket( $server, $bucket_key, $existing );
+				$stats_store->set_server_leaderboard_bucket( $server, $bucket_key, $existing );
 			}
 		}
 
 		// --- URL index (hourly buckets) ---
 		if ( ! empty( $this->url_stats ) ) {
 			foreach ( $this->url_stats as $bucket_key => $hour_data ) {
-				$existing_urls = $this->stats_store->get_url_index_hourly( $bucket_key );
+				$existing_urls = $stats_store->get_url_index_hourly( $bucket_key );
 
 				foreach ( $hour_data as $hash => $stats ) {
 					if ( ! isset( $existing_urls[ $hash ] ) ) {
@@ -1236,50 +1238,50 @@ class Flame_Builder_Node extends Node {
 					$existing_urls = \array_slice( $existing_urls, 0, 500, true );
 				}
 
-				$this->stats_store->set_url_index_hourly( $bucket_key, $existing_urls );
+				$stats_store->set_url_index_hourly( $bucket_key, $existing_urls );
 			}
 		}
 
 		// --- Dimensional (global, per-server, per-URL) ---
-		$cutoff = $this->bucket_key( $this->now_ts() - $this->stats_store->ttl() );
+		$cutoff = $this->bucket_key( $this->now_ts() - $stats_store->ttl() );
 		foreach ( $this->dim_stats as $dim => $buckets ) {
-			$existing = $this->stats_store->get_dimensional( $dim );
+			$existing = $stats_store->get_dimensional( $dim );
 			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
-			$this->stats_store->set_dimensional( $dim, $existing );
+			$stats_store->set_dimensional( $dim, $existing );
 		}
 		foreach ( $this->dim_stats_by_server as $server => $dims ) {
 			foreach ( $dims as $dim => $buckets ) {
-				$existing = $this->stats_store->get_dimensional( $dim, $server );
+				$existing = $stats_store->get_dimensional( $dim, $server );
 				$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
-				$this->stats_store->set_dimensional( $dim, $existing, $server );
+				$stats_store->set_dimensional( $dim, $existing, $server );
 			}
 		}
 		foreach ( $this->url_dim_stats as $url_hash => $dims ) {
-			$existing = $this->stats_store->get_url_dimensional( $url_hash );
+			$existing = $stats_store->get_url_dimensional( $url_hash );
 			foreach ( $dims as $dim => $buckets ) {
 				if ( ! isset( $existing[ $dim ] ) ) {
 					$existing[ $dim ] = [];
 				}
 				$this->merge_and_cap_dimensional( $existing[ $dim ], $buckets, $cutoff, Stats_Store::MAX_URL_DIM_VALUES );
 			}
-			$this->stats_store->set_url_dimensional( $url_hash, $existing );
+			$stats_store->set_url_dimensional( $url_hash, $existing );
 		}
 
 		// --- Category time series (global, per-server, per-URL) ---
 		if ( ! empty( $this->cat_stats ) ) {
-			$existing_cats = $this->stats_store->get_categories();
+			$existing_cats = $stats_store->get_categories();
 			$this->merge_and_cap_categories( $existing_cats, $this->cat_stats, $cutoff );
-			$this->stats_store->set_categories( $existing_cats );
+			$stats_store->set_categories( $existing_cats );
 		}
 		foreach ( $this->cat_stats_by_server as $server => $buckets ) {
-			$existing = $this->stats_store->get_server_categories( $server );
+			$existing = $stats_store->get_server_categories( $server );
 			$this->merge_and_cap_categories( $existing, $buckets, $cutoff );
-			$this->stats_store->set_server_categories( $server, $existing );
+			$stats_store->set_server_categories( $server, $existing );
 		}
 		foreach ( $this->url_cat_stats as $url_hash => $buckets ) {
-			$existing_url_cats = $this->stats_store->get_url_categories( $url_hash );
+			$existing_url_cats = $stats_store->get_url_categories( $url_hash );
 			$this->merge_and_cap_categories( $existing_url_cats, $buckets, $cutoff );
-			$this->stats_store->set_url_categories( $url_hash, $existing_url_cats );
+			$stats_store->set_url_categories( $url_hash, $existing_url_cats );
 		}
 	}
 
@@ -1681,7 +1683,8 @@ class Flame_Builder_Node extends Node {
 	 * @param array<int, string> $items Hook/event names — already deduped at the caller.
 	 */
 	private function emit_auto_tune( string $key, array $items ): void {
-		if ( empty( $items ) || null === $this->sink ) {
+		$sink = $this->sink;
+		if ( empty( $items ) || null === $sink ) {
 			return;
 		}
 		// Auto-tune decisions are rare and important — narrate so
@@ -1700,7 +1703,7 @@ class Flame_Builder_Node extends Node {
 			'items'   => $items,
 			'context' => [ 'significant_events' => $this->significant_events ],
 		];
-		$this->sink->fill( $msg );
+		$sink->fill( $msg );
 	}
 
 	// -------------------------------------------------------------------------

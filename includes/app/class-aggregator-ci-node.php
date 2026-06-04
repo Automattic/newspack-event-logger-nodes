@@ -73,6 +73,18 @@ class Aggregator_CI_Node extends Service_CI_Node {
 	 */
 	public ?Server_Registry $registry = null;
 
+	/**
+	 * Narrow the bootstrap-injected `$registry` to non-null, failing loud when
+	 * the bootstrap never wired it up (the documented contract for the
+	 * registry-backed verbs).
+	 */
+	public function require_registry(): Server_Registry {
+		if ( null === $this->registry ) {
+			throw new \RuntimeException( 'server registry not wired up' );
+		}
+		return $this->registry;
+	}
+
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Service',
@@ -88,8 +100,9 @@ class Aggregator_CI_Node extends Service_CI_Node {
 					// the ctor-injected registry off it (node_schema is static).
 					'handler'     => static function ( Aggregator_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$self->registry->reset_cache();
-						$servers = $self->registry->get_all();
+						$registry = $self->require_registry();
+						$registry->reset_cache();
+						$servers = $registry->get_all();
 
 						$config         = RuntimeConfig::load_config();
 						$num_partitions = \min( 16, \max( 1, (int) ( $config['num_partitions'] ?? 1 ) ) );
@@ -135,16 +148,17 @@ class Aggregator_CI_Node extends Service_CI_Node {
 					'args'        => [],
 					'handler'     => static function ( Aggregator_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$self->registry->reset_cache();
+						$registry = $self->require_registry();
+						$registry->reset_cache();
 						$out = [];
-						foreach ( $self->registry->get_all() as $id => $cfg ) {
+						foreach ( $registry->get_all() as $id => $cfg ) {
 							$out[] = [
 								'id'              => (string) $id,
 								'url'             => (string) ( $cfg['url'] ?? '' ),
 								'enabled'         => (bool) ( $cfg['enabled'] ?? false ),
 								'logs'            => $cfg['logs'] ?? [],
 								'has_credentials' => ! empty( $cfg['auth_username'] ) && ! empty( $cfg['auth_password'] ),
-								'is_config'       => $self->registry->is_config_server( (string) $id ),
+								'is_config'       => $registry->is_config_server( (string) $id ),
 							];
 						}
 						// Sequential array, NOT a map keyed by id — legacy contract the

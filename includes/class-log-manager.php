@@ -595,7 +595,8 @@ class Log_Manager {
 	 * @return string Redacted URL.
 	 */
 	private static function redact_url( string $url ): string {
-		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url );
+		// preg_replace returns null only on PCRE error; fall back to the input.
+		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
 
 	/**
@@ -690,7 +691,7 @@ class Log_Manager {
 				continue;
 			}
 			// Strip control characters to prevent log injection.
-			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', (string) $value );
+			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', (string) $value ) ?? '';
 			// Redact sensitive query parameters from URL-containing values.
 			if ( isset( $url_value_keys[ $key ] ) ) {
 				$sanitized = self::redact_url( $sanitized );
