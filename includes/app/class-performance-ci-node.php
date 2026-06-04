@@ -1041,7 +1041,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		if ( isset( $wp_filter ) && ( \is_array( $wp_filter ) || $wp_filter instanceof \Traversable ) ) {
 			foreach ( $wp_filter as $hook_name => $callbacks ) {
-				$name = (string) $hook_name;
+				$name = self::to_string( $hook_name );
 				if ( Hook_Categorizer::is_internal( $name ) ) {
 					continue;
 				}
@@ -1314,8 +1314,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$count        += self::to_int( $row['count'] ?? 0 );
 				$sum_req_time += self::to_float( $row['sum_req_time'] ?? 0 );
-				$categories    = $row['categories'] ?? [];
-				self::accumulate_leaderboard_categories( $sums, \is_array( $categories ) ? $categories : [] );
+				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
+				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
+				self::accumulate_leaderboard_categories( $sums, $categories );
 			}
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
@@ -1339,8 +1340,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$count        += self::to_int( $row['count'] ?? 0 );
 				$sum_req_time += self::to_float( $row['sum_req_time'] ?? 0 );
-				$categories    = $row['categories'] ?? [];
-				self::accumulate_leaderboard_categories( $sums, \is_array( $categories ) ? $categories : [] );
+				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
+				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
+				self::accumulate_leaderboard_categories( $sums, $categories );
 			}
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
@@ -1425,7 +1427,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-URL dimensional buckets for one dim/hash.
 	 * Mirror of PerfUrlsController::merge_url_dim.
-	 * @return array<string, mixed>
+	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
 		$merged = [];
@@ -1529,7 +1531,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Pull the per-URL aggregate stats blob (flame, profiles, last_modified).
 	 * First partition with a matching blob wins — matches legacy
 	 * PerfUrlsController::find_url_aggregate.
-	 * @return array<string, mixed>
+	 * @return array<array-key, mixed>|null Decoded per-URL stats blob from get_url_stats().
 	 */
 	private static function find_url_aggregate( string $hash ): ?array {
 		foreach ( self::stats_stores() as $store ) {
@@ -1565,7 +1567,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.log {$p}" );
 			$partition->with_index(
-				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
+				static function ( string $line, array $position, &$data = null ): ?string {
+					/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
+					/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
+					return Request_Builder_Node::format_index_entry( $line, $position, $data );
+				}
 			);
 			$partition->scan_index(
 				static function ( string $line, int $segment_id ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
@@ -1626,7 +1632,11 @@ class Performance_CI_Node extends Service_CI_Node {
 		self::name_scratch_partition( $requests, 'requests', $partition );
 		$requests->arguments( "{$log_base}/requests.log {$partition}" );
 		$requests->with_index(
-			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
+			static function ( string $line, array $position, &$data = null ): ?string {
+				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
+				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
+				return Request_Builder_Node::format_index_entry( $line, $position, $data );
+			}
 		);
 		$requests->scan_index(
 			static function ( string $line ) use ( &$result, &$entries_count, $partition, $rid ): ?bool {
@@ -1655,7 +1665,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Read the full request body from a known partition + optionally merge
 	 * any matching flame_data. Mirror of
 	 * PerfRequestsController::find_request_in_partition.
-	 * @return array<string, mixed>
+	 * @return array<array-key, mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
 	private static function find_request_in_partition( string $log_base, int $partition, string $rid, int $num_partitions ): ?array {
 		$result        = null;
@@ -1664,7 +1674,11 @@ class Performance_CI_Node extends Service_CI_Node {
 		self::name_scratch_partition( $requests, 'requests', $partition );
 		$requests->arguments( "{$log_base}/requests.log {$partition}" );
 		$requests->with_index(
-			static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
+			static function ( string $line, array $position, &$data = null ): ?string {
+				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
+				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
+				return Request_Builder_Node::format_index_entry( $line, $position, $data );
+			}
 		);
 		$requests->scan_index(
 			static function ( string $line ) use ( &$result, &$entries_count, $requests, $rid ): ?bool {
@@ -1730,7 +1744,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.log {$p}" );
 			$partition->with_index(
-				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
+				static function ( string $line, array $position, &$data = null ): ?string {
+				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
+				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
+				return Request_Builder_Node::format_index_entry( $line, $position, $data );
+			}
 			);
 			$partition->scan_index(
 				static function ( string $line ) use ( &$entries, &$scanned, $limit, $p ): ?bool {
@@ -1771,7 +1789,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * first hit wins. Returns the decoded request body (with `_partition`
 	 * stamped on it). Mirrors RequestLogController::get_detail's scan.
 	 *
-	 * @return array{0:?array<string,mixed>,1:int} Tuple of result + scanned.
+	 * @return array{0:?array<array-key,mixed>,1:int} Tuple of result + scanned (decoded body keys come from the JSON envelope).
 	 */
 	private static function find_request_envelope( string $rid ): array {
 		$config         = RuntimeConfig::load_config();
@@ -1787,7 +1805,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.log {$p}" );
 			$partition->with_index(
-				static fn ( $line, $position, &$data = null ) => Request_Builder_Node::format_index_entry( $line, $position, $data )
+				static function ( string $line, array $position, &$data = null ): ?string {
+				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
+				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
+				return Request_Builder_Node::format_index_entry( $line, $position, $data );
+			}
 			);
 			$partition->scan_index(
 				static function ( string $line ) use ( &$result, &$scanned, $partition, $rid, $p ): ?bool {
@@ -1827,7 +1849,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Search every flame partition for a flame entry matching the rid; the
 	 * first hit wins. FlameBuilder writes to whatever partition it's wired
 	 * into, so a per-rid lookup has to fan out across all of them.
-	 * @return array<string, mixed>
+	 * @return array<array-key, mixed>|null Decoded flame blob (keys come from the JSON envelope).
 	 */
 	private static function find_flame_for_rid( string $log_base, string $rid, int $num_partitions ): ?array {
 		$entries_count = 0;
@@ -1836,7 +1858,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::name_scratch_partition( $flames, 'flames', $p );
 			$flames->arguments( "{$log_base}/flames.log {$p}" );
 			$flames->with_index(
-				static fn ( $line, $position, &$data = null ) => Flame_Builder_Node::format_index_entry( $line, $position, $data )
+				static function ( string $line, array $position, ?array &$data = null ): ?string {
+					/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
+					/** @var array<string,mixed>|null $data -- by-ref pre-decoded payload from the formatter. */
+					return Flame_Builder_Node::format_index_entry( $line, $position, $data );
+				}
 			);
 			$result = null;
 			$flames->scan_index(

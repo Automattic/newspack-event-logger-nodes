@@ -66,9 +66,9 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 	 * @return array<string, mixed>
 	 */
 	public static function register_handler( $handlers ): array {
-		if ( ! \is_array( $handlers ) ) {
-			$handlers = [];
-		}
+		// Filter-boundary value; handler maps are string-keyed by design.
+		/** @var array<string, mixed> $handlers */
+		$handlers = \is_array( $handlers ) ? $handlers : [];
 		$handlers[ self::JOB_HANDLER ] = [ self::class, 'handle_job' ];
 		return $handlers;
 	}

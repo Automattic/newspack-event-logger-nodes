@@ -59,7 +59,8 @@ $newspack_profiler_state = [
 
 \add_action(
 	'plugin_loaded',
-	function ( $plugin ) use ( &$newspack_profiler_state ) {
+	function ( string $plugin ) use ( &$newspack_profiler_state ) {
+		/** @var array{request_time:int, request_ts:float, plugins:list<array{slug:string, start_ts:float, duration_ns:int|float, new_classes:int, new_files:int}>} $newspack_profiler */
 		global $newspack_profiler;
 		if ( null === $newspack_profiler_state['hr'] ) {
 			return;
@@ -110,6 +111,7 @@ $newspack_profiler_state = [
 \add_action(
 	'plugins_loaded',
 	function () {
+		/** @var array{request_time:int, request_ts:float, plugins:list<array{slug:string, start_ts:float, duration_ns:int|float, new_classes:int, new_files:int}>} $newspack_profiler */
 		global $newspack_profiler;
 
 		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Log_Manager' ) ) {

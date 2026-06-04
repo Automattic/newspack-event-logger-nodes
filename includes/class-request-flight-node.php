@@ -90,7 +90,14 @@ class Request_Flight_Node extends Timer_Node {
 		$out = [];
 		$now = ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $patron->cache->iterate() as $rid => $request ) {
-			$r = (array) $request;
+			// Cache only ever stores the \stdClass request record; rebuild a
+			// string-keyed property map (object props are always strings) so the
+			// extract_* calls get the array<string, mixed> they require.
+			if ( ! $request instanceof \stdClass ) {
+				continue;
+			}
+			$vars = \get_object_vars( $request );
+			$r    = \array_combine( \array_map( '\strval', \array_keys( $vars ) ), \array_values( $vars ) );
 			// Process-start ts — the EARLIEST point PHP began handling this
 			// request. LogManager stamps `process (start)` with the
 			// mu-profiler's wall-clock load ts (captured before any plugins

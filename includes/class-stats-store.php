@@ -122,6 +122,26 @@ class Stats_Store {
 		return \implode( ':', $parts );
 	}
 
+	/**
+	 * Coerce a memcache get() result (mixed) to a string-keyed map, [] on miss.
+	 *
+	 * Every namespace stores a string-keyed map; re-key with (string) casts so
+	 * the static type is array<string, mixed> (is_array alone leaves keys mixed).
+	 *
+	 * @param mixed $val
+	 * @return array<string, mixed>
+	 */
+	private static function map_or_empty( $val ): array {
+		if ( ! \is_array( $val ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $val as $k => $v ) {
+			$out[ (string) $k ] = $v;
+		}
+		return $out;
+	}
+
 	// -------------------------------------------------------------------------
 	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} }
 	// Single key per partition holds the rolling map.
@@ -132,7 +152,7 @@ class Stats_Store {
 	 */
 	public function get_hourly(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -179,7 +199,7 @@ class Stats_Store {
 	 */
 	public function get_url_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -268,7 +288,7 @@ class Stats_Store {
 	 */
 	public function get_leaderboard_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB, $bucket ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -299,7 +319,7 @@ class Stats_Store {
 	 */
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -425,7 +445,7 @@ class Stats_Store {
 			$parts[] = self::server_key( $server );
 		}
 		$val = Core::$memd?->get( $this->key( ...$parts ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -462,7 +482,7 @@ class Stats_Store {
 	 */
 	public function get_url_dimensional( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_DIM, $url_hash ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -533,7 +553,7 @@ class Stats_Store {
 	 */
 	public function get_categories(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -560,7 +580,7 @@ class Stats_Store {
 	 */
 	public function get_server_categories( string $server ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**
@@ -579,7 +599,7 @@ class Stats_Store {
 	 */
 	public function get_url_categories( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_CAT, $url_hash ) );
-		return \is_array( $val ) ? $val : [];
+		return self::map_or_empty( $val );
 	}
 
 	/**

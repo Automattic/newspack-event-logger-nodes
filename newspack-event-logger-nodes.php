@@ -20,7 +20,8 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_URL', \function_exists( 'plugin_dir_url' ) ? \plugin_dir_url( __FILE__ ) : '' );
+	$newspack_event_logger_nodes_url = \function_exists( 'plugin_dir_url' ) ? \plugin_dir_url( __FILE__ ) : '';
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_URL', $newspack_event_logger_nodes_url );
 }
 
 // Composer classmap autoloader. Registering it at plugin-file load time
@@ -136,15 +137,14 @@ $_newspack_event_logger_nodes_load = static function () use (
 	// and `flame-index` are read by `Cli::format_index_entry` when an
 	// operator inspects a log offset from the REPL — admin context, not
 	// worker-only.
+	// First-class callable refs: the callees' own typed signatures (incl. by-ref $data) flow through.
 	\Newspack_Nodes\Formatters::register(
 		'request-index',
-		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( $line, $position, $data )
+		\Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( ... )
 	);
 	\Newspack_Nodes\Formatters::register(
 		'flame-index',
-		static fn ( $line, $position, &$data = null )
-			=> \Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( $line, $position, $data )
+		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
 	);
 
 	// `SettingsSync::init` listens for `update_option` / `add_option` —
@@ -663,13 +663,19 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 				$asset_meta = \file_exists( $aggregator_asset_path )
 					? include $aggregator_asset_path
 					: [ 'dependencies' => [], 'version' => NEWSPACK_EVENT_LOGGER_NODES_VERSION ];
+				if ( ! \is_array( $asset_meta ) ) {
+					$asset_meta = [ 'dependencies' => [], 'version' => NEWSPACK_EVENT_LOGGER_NODES_VERSION ];
+				}
 				/** @var array<string> $detected_deps */
 				$detected_deps = \is_array( $asset_meta['dependencies'] ?? null ) ? $asset_meta['dependencies'] : [];
 				$deps          = \array_values( \array_unique( \array_merge(
 					[ 'jquery' ],
 					$detected_deps
 				) ) );
-				$version = (string) ( $asset_meta['version'] ?? ( \filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION ) );
+				// wp-scripts writes `version` as a string; coerce the (mixed) include value to a scalar before cast.
+				$asset_version = $asset_meta['version'] ?? null;
+				$asset_version = \is_scalar( $asset_version ) ? $asset_version : null;
+				$version       = (string) ( $asset_version ?? ( \filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION ) );
 				\wp_enqueue_script(
 					$agg_handle,
 					$aggregator_js_url,

@@ -267,11 +267,10 @@ class Config {
 
 		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
-			$colors = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
-			// Validate filter return type (may return any type).
-			if ( ! \is_array( $colors ) ) {
-				$colors = [];
-			}
+			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
+			// Validate filter return type (may return any type); color maps are string-keyed by design.
+			/** @var array<string, mixed> $colors */
+			$colors = \is_array( $filtered ) ? $filtered : [];
 		}
 
 		// Merge discovered events from remote spokes (available but not selected).
@@ -393,6 +392,7 @@ class Config {
 	 * @return mixed|null Resolved value, or null if not owned by `eln`.
 	 */
 	public static function resolve_eln_token( string $key ) {
+		/** @var array<string, bool> $own */
 		static $own = [
 			'is_hub'                     => true,
 			'auto_disable_threshold'     => true,

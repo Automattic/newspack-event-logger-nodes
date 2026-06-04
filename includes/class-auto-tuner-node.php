@@ -43,7 +43,9 @@ class Auto_Tuner_Node extends Node {
 			return;
 		}
 
-		$items   = \is_array( $value['items'] ?? null ) ? $value['items'] : [];
+		/** @var array<string, mixed> $items dynamic message VALUE['items'] (string[]). */
+		$items = \is_array( $value['items'] ?? null ) ? $value['items'] : [];
+		/** @var array<string, mixed> $context dynamic message VALUE['context']. */
 		$context = \is_array( $value['context'] ?? null ) ? $value['context'] : [];
 
 		if ( empty( $items ) || ! $this->authorized() ) {

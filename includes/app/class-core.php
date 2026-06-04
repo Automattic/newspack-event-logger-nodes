@@ -231,6 +231,7 @@ class Core {
 	 * @param string $hook_name Hook to wrap.
 	 */
 	private function wrap_callbacks( string $hook_name ): void {
+		/** @var \WP_Hook[] $wp_filter PHPStan drops the @global WP_Hook[] from WP docblocks on a bare global. */
 		global $wp_filter;
 		if ( ! isset( $wp_filter[ $hook_name ] ) ) {
 			return;
@@ -238,7 +239,9 @@ class Core {
 
 		$min = $this->start_priority;
 
-		foreach ( $wp_filter[ $hook_name ]->callbacks as $priority => &$priority_callbacks ) {
+		/** @var array<int, array<string, array{function: callable, accepted_args: int|string}>> $wp_filter_callbacks WP_Hook::$callbacks is stubbed as bare array; this annotates the by-ref iterand, not a copy. */
+		$wp_filter_callbacks = &$wp_filter[ $hook_name ]->callbacks;
+		foreach ( $wp_filter_callbacks as $priority => &$priority_callbacks ) {
 			if ( $priority <= $min || $priority >= PHP_INT_MAX - 1 ) {
 				continue;
 			}
