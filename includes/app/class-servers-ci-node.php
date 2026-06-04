@@ -100,10 +100,11 @@ class Servers_CI_Node extends Service_CI_Node {
 					// here (dispatch() passes $this), so it's typed concretely to read
 					// the ctor-injected registry off it (node_schema is static).
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
-						$self->registry->reset_cache();
+						$registry = $self->require_registry();
+						$registry->reset_cache();
 						$out = [];
-						foreach ( $self->registry->get_all() as $id => $config ) {
-							$out[ $id ] = self::public_shape( (string) $id, $config, $self->registry );
+						foreach ( $registry->get_all() as $id => $config ) {
+							$out[ $id ] = self::public_shape( (string) $id, $config, $registry );
 						}
 						return $out;
 					},
@@ -115,13 +116,14 @@ class Servers_CI_Node extends Service_CI_Node {
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
-						$id = self::positional_id( $args );
-						$self->registry->reset_cache();
-						$server = $self->registry->get( $id );
+						$registry = $self->require_registry();
+						$id       = self::positional_id( $args );
+						$registry->reset_cache();
+						$server = $registry->get( $id );
 						if ( null === $server ) {
 							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 						}
-						return self::public_shape( $id, $server, $self->registry );
+						return self::public_shape( $id, $server, $registry );
 					},
 				],
 				[
@@ -145,12 +147,13 @@ class Servers_CI_Node extends Service_CI_Node {
 						if ( ! Server_Registry::is_valid_id( $id ) ) {
 							throw new \RuntimeException( 'invalid server id' );
 						}
-						$self->registry->reset_cache();
-						if ( null !== $self->registry->get( $id ) ) {
+						$registry = $self->require_registry();
+						$registry->reset_cache();
+						if ( null !== $registry->get( $id ) ) {
 							throw new \RuntimeException( \esc_html( "server already exists: {$id}" ) );
 						}
 						$config = self::extract_server_config( $opts );
-						if ( ! $self->registry->add( $id, $config ) ) {
+						if ( ! $registry->add( $id, $config ) ) {
 							// Registry rejected on validate_config (non-HTTPS URL,
 							// missing url, etc.) or hit MAX_SERVERS.
 							throw new \RuntimeException( 'add failed: check URL format (must be HTTPS) and registry capacity' );
@@ -180,8 +183,9 @@ class Servers_CI_Node extends Service_CI_Node {
 						if ( '' === $id ) {
 							throw new \RuntimeException( 'id required' );
 						}
-						$self->registry->reset_cache();
-						$existing = $self->registry->get( $id );
+						$registry = $self->require_registry();
+						$registry->reset_cache();
+						$existing = $registry->get( $id );
 						if ( null === $existing ) {
 							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 						}
@@ -189,7 +193,7 @@ class Servers_CI_Node extends Service_CI_Node {
 						// string are applied; an absent --key leaves the stored field
 						// untouched. enabled/logs are typed by partial_config().
 						$partial = self::partial_config( $parsed['options'] );
-						if ( ! $self->registry->update( $id, $partial ) ) {
+						if ( ! $registry->update( $id, $partial ) ) {
 							throw new \RuntimeException( 'update failed' );
 						}
 						// Targeted full-settings sweep when `enabled` flips false → true.
@@ -210,12 +214,13 @@ class Servers_CI_Node extends Service_CI_Node {
 					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$id = self::positional_id( $args );
-						$self->registry->reset_cache();
-						if ( null === $self->registry->get( $id ) ) {
+						$registry = $self->require_registry();
+						$id       = self::positional_id( $args );
+						$registry->reset_cache();
+						if ( null === $registry->get( $id ) ) {
 							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 						}
-						if ( ! $self->registry->remove( $id ) ) {
+						if ( ! $registry->remove( $id ) ) {
 							// Config-file servers reach here.
 							throw new \RuntimeException( 'delete failed' );
 						}
@@ -231,9 +236,10 @@ class Servers_CI_Node extends Service_CI_Node {
 					],
 					'handler'     => static function ( Servers_CI_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
-						$id = self::positional_id( $args );
-						$self->registry->reset_cache();
-						$server = $self->registry->get( $id );
+						$registry = $self->require_registry();
+						$id       = self::positional_id( $args );
+						$registry->reset_cache();
+						$server = $registry->get( $id );
 						if ( null === $server ) {
 							throw new \RuntimeException( \esc_html( "server not found: {$id}" ) );
 						}
@@ -256,6 +262,26 @@ class Servers_CI_Node extends Service_CI_Node {
 	 * @param array<string, mixed>          $config   Decrypted server config from the registry.
 	 * @param Server_Registry $registry Registry for the `is_config_server` lookup.
 	 * @return array<string, mixed> Public-safe representation of the server.
+	 */
+	/**
+	 * Narrow the bootstrap-injected `$registry` to non-null, failing loud when
+	 * the bootstrap never wired it up (the documented contract for the
+	 * registry-backed verbs).
+	 */
+	public function require_registry(): Server_Registry {
+		if ( null === $this->registry ) {
+			throw new \RuntimeException( 'server registry not wired up' );
+		}
+		return $this->registry;
+	}
+
+	/**
+	 * Project a stored server config into its public dashboard shape.
+	 *
+	 * @param string               $id       Server id.
+	 * @param array<string, mixed> $config   Stored server config.
+	 * @param Server_Registry      $registry Backing registry.
+	 * @return array<string, mixed> Public server record.
 	 */
 	private static function public_shape( string $id, array $config, Server_Registry $registry ): array {
 		return [

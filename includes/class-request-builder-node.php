@@ -151,6 +151,9 @@ class Request_Builder_Node extends Node {
 	}
 
 	public function flight(): Request_Flight_Node {
+		if ( null === $this->flight ) {
+			throw new \RuntimeException( 'flight sibling not constructed' );
+		}
 		return $this->flight;
 	}
 
@@ -230,12 +233,13 @@ class Request_Builder_Node extends Node {
 		if ( '' !== $this->completed_target ) {
 			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
 		}
-		$inflight_target = $this->flight->target();
+		$flight          = $this->flight();
+		$inflight_target = $flight->target();
 		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
 			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
 		}
-		if ( self::DEFAULT_INFLIGHT_INTERVAL_MS !== $this->flight->interval() ) {
-			$out .= "cmd {$this->name}:config set_inflight_interval {$this->flight->interval()}\n";
+		if ( self::DEFAULT_INFLIGHT_INTERVAL_MS !== $flight->interval() ) {
+			$out .= "cmd {$this->name}:config set_inflight_interval {$flight->interval()}\n";
 		}
 		return $out;
 	}

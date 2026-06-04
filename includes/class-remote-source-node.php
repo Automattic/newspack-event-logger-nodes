@@ -294,12 +294,14 @@ class Remote_Source_Node extends Node {
 	 * Ensure the owned multi handle exists and is registered with the
 	 * EventFramework. Idempotent.
 	 */
-	private function ensure_multi(): void {
+	private function ensure_multi(): \CurlMultiHandle {
 		if ( null !== $this->multi ) {
-			return;
+			return $this->multi;
 		}
-		$this->multi = \curl_multi_init();
-		Event_Framework::instance()->register_curl_handle( $this, $this->multi );
+		$multi       = \curl_multi_init();
+		$this->multi = $multi;
+		Event_Framework::instance()->register_curl_handle( $this, $multi );
+		return $multi;
 	}
 
 	/**
@@ -330,7 +332,7 @@ class Remote_Source_Node extends Node {
 			return false;
 		}
 
-		$this->ensure_multi();
+		$multi = $this->ensure_multi();
 
 		// Subscription shape `topic.pN` lands in \Newspack_Nodes\Sse_Slot_Pool's per-partition
 		// aggregator pool (60s TTL) via SSE_Out's
@@ -404,7 +406,7 @@ class Remote_Source_Node extends Node {
 		$this->last_attempt    = $now;
 		$this->slot            = null;
 
-		$result = \curl_multi_add_handle( $this->multi, $ch );
+		$result = \curl_multi_add_handle( $multi, $ch );
 		if ( 0 !== $result ) {
 			$this->last_error = "curl_multi_add_handle failed: {$result}";
 			\curl_close( $ch );
@@ -1014,9 +1016,10 @@ class Remote_Source_Node extends Node {
 
 	public function remove_node(): void {
 		$this->disconnect();
-		if ( null !== $this->multi ) {
+		$multi = $this->multi;
+		if ( null !== $multi ) {
 			Event_Framework::instance()->unregister_curl_handle( $this );
-			@\curl_multi_close( $this->multi );
+			@\curl_multi_close( $multi );
 			$this->multi = null;
 		}
 		parent::remove_node();

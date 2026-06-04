@@ -518,6 +518,18 @@ class Reqgrep_Command {
 	}
 
 	/**
+	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
+	 * built in the command's setup before any line processing; a null here means
+	 * a caller invoked a processing method before setup, which is a bug.
+	 */
+	private function require_inflight(): LRU_Cache {
+		if ( null === $this->inflight ) {
+			throw new \RuntimeException( 'in-flight cache not initialized' );
+		}
+		return $this->inflight;
+	}
+
+	/**
 	 * Process a single firehose JSONL line.
 	 *
 	 * State machine:
@@ -557,7 +569,8 @@ class Reqgrep_Command {
 
 		$key = (string) ( $entry['k'] ?? '' );
 
-		$state = $this->inflight->get( $rid );
+		$inflight = $this->require_inflight();
+		$state    = $inflight->get( $rid );
 		if ( null !== $state ) {
 			// Already tracking this rid: extend it and finalize on complete.
 			$this->append_to_state( $state, $line );
@@ -565,7 +578,7 @@ class Reqgrep_Command {
 				if ( ! $this->incomplete ) {
 					$this->output_request( $state->lines, $rid );
 				}
-				$this->inflight->delete( $rid );
+				$inflight->delete( $rid );
 			}
 		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
 			// New matching rid: bootstrap state from history (if any).
@@ -591,13 +604,13 @@ class Reqgrep_Command {
 			}
 
 			$this->append_to_state( $state, $line );
-			$this->inflight->set( $rid, $state );
+			$inflight->set( $rid, $state );
 
 			if ( 'process (complete)' === $key ) {
 				if ( ! $this->incomplete ) {
 					$this->output_request( $state->lines, $rid );
 				}
-				$this->inflight->delete( $rid );
+				$inflight->delete( $rid );
 			}
 		} else {
 			// Not matching — stash in history. Bound per-rid lines to defend memory.
@@ -620,7 +633,7 @@ class Reqgrep_Command {
 
 		// Roll the LruCache on its own schedule — the on-evict callback prints
 		// `[incomplete]` for any rids that fell out of the oldest bucket.
-		$this->inflight->rotate_if_due();
+		$inflight->rotate_if_due();
 	}
 
 	/**
@@ -647,7 +660,7 @@ class Reqgrep_Command {
 	 * Print every still-in-flight request as `[incomplete]`.
 	 */
 	private function output_remaining(): void {
-		foreach ( $this->inflight->iterate() as $rid => $state ) {
+		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
 			if ( ! $state instanceof \stdClass ) {
 				continue;
 			}
