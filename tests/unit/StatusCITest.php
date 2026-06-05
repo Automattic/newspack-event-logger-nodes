@@ -67,7 +67,7 @@ class StatusCITest extends TestCase {
 		$this->use_base_dir( $this->tmp, [
 			'num_partitions' => 4,
 		] );
-		$this->activate_topologies( [ 'firehose-workers-and-jobs', 'request-workers' ] );
+		$this->activate_topologies( [ 'request-builder', 'flame-builder' ] );
 		Core::$memd = new InMemoryMemcached();
 		$interpreter         = new Status_CI_Node();
 
@@ -80,7 +80,7 @@ class StatusCITest extends TestCase {
 		$this->assertSame( \NEWSPACK_EVENT_LOGGER_NODES_VERSION, $result['version'] );
 		$this->assertSame( \NEWSPACK_NODES_VERSION, $result['runtime_version'] );
 		$this->assertSame( 4, $result['num_partitions'] );
-		$this->assertSame( [ 'firehose-workers-and-jobs', 'request-workers' ], $result['topologies'] );
+		$this->assertSame( [ 'request-builder', 'flame-builder' ], $result['topologies'] );
 		$this->assertTrue( $result['cache_available'] );
 		$this->assertIsInt( $result['timestamp'] );
 		$this->assertGreaterThanOrEqual( $before, $result['timestamp'] );
@@ -92,12 +92,12 @@ class StatusCITest extends TestCase {
 		// (`Bootstrap::get_topologies()` keys), which drops names that don't
 		// resolve to a real topology — NOT the raw config `topologies` array,
 		// which would echo the bogus name verbatim.
-		$this->activate_topologies( [ 'request-workers', 'no-such-topology' ] );
+		$this->activate_topologies( [ 'request-builder', 'no-such-topology' ] );
 		$interpreter = new Status_CI_Node();
 
 		$result = VerbHarness::fire( $interpreter, 'status', 'get' );
 
-		$this->assertSame( [ 'request-workers' ], $result['topologies'] );
+		$this->assertSame( [ 'request-builder' ], $result['topologies'] );
 	}
 
 	public function test_cache_unavailable_reports_false_when_memd_null(): void {

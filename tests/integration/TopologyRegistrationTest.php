@@ -36,8 +36,8 @@ class TopologyRegistrationTest extends TestCase {
 		\add_filter(
 			'newspack_nodes/topologies',
 			static function ( array $topologies ): array {
-				$topologies['firehose-workers-and-jobs'] = [
-					'topology'       => 'firehose-workers-and-jobs',
+				$topologies['combined'] = [
+					'topology'       => 'combined',
 					'num_partitions' => 4,
 					'stale_timeout'  => 60,
 				];
@@ -53,7 +53,7 @@ class TopologyRegistrationTest extends TestCase {
 		// `topologies` config key. Declare both as active via the operator
 		// overlay so Bootstrap::get_topologies()/expand_workers() return them.
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [
-			'firehose-workers-and-jobs',
+			'combined',
 			'aggregator',
 		];
 		\Newspack_Nodes\Config::reset();
@@ -61,13 +61,13 @@ class TopologyRegistrationTest extends TestCase {
 
 	public function test_topologies_filter_exposes_both_topologies(): void {
 		$topologies = Bootstrap::get_topologies();
-		$this->assertArrayHasKey( 'firehose-workers-and-jobs', $topologies );
+		$this->assertArrayHasKey( 'combined', $topologies );
 		$this->assertArrayHasKey( 'aggregator', $topologies );
 	}
 
 	public function test_topology_names_resolve_to_tsl_files(): void {
 		$topologies = Bootstrap::get_topologies();
-		foreach ( [ 'firehose-workers-and-jobs', 'aggregator' ] as $name ) {
+		foreach ( [ 'combined', 'aggregator' ] as $name ) {
 			$path = Topology_Registry::resolve( $topologies[ $name ]['topology'] );
 			$this->assertNotNull( $path, "topology '{$name}' must resolve to a TSL file" );
 			$this->assertFileExists( $path );
@@ -76,10 +76,10 @@ class TopologyRegistrationTest extends TestCase {
 	}
 
 	public function test_expand_workers_returns_five_rows(): void {
-		// 4 firehose-workers-and-jobs partitions + 1 aggregator partition = 5.
+		// 4 combined partitions + 1 aggregator partition = 5.
 		$workers = Bootstrap::expand_workers();
 
-		$firehose   = \array_filter( $workers, static fn ( $w ) => 'firehose-workers-and-jobs' === $w['type'] );
+		$firehose   = \array_filter( $workers, static fn ( $w ) => 'combined' === $w['type'] );
 		$aggregator = \array_filter( $workers, static fn ( $w ) => 'aggregator' === $w['type'] );
 
 		$this->assertCount( 4, $firehose );
@@ -90,7 +90,7 @@ class TopologyRegistrationTest extends TestCase {
 	public function test_each_worker_descriptor_carries_required_fields(): void {
 		$workers = Bootstrap::expand_workers();
 		foreach ( $workers as $w ) {
-			if ( 'firehose-workers-and-jobs' !== $w['type'] && 'aggregator' !== $w['type'] ) {
+			if ( 'combined' !== $w['type'] && 'aggregator' !== $w['type'] ) {
 				continue; // ignore other plugins' topologies
 			}
 			$this->assertArrayHasKey( 'topology', $w );
