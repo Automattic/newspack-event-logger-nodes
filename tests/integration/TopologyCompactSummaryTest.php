@@ -109,7 +109,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_firehose_workers_and_jobs_registers_compact_summary_fanout(): void {
-		$this->load_topology( 'firehose-workers-and-jobs' );
+		$this->load_topology( 'combined' );
 
 		$this->assertNotNull( Core::node( 'completed:tee' ), 'completed:tee should be registered' );
 		$this->assertNotNull( Core::node( 'completed:partition' ), 'completed:partition should be registered' );
@@ -117,7 +117,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_firehose_workers_only_registers_compact_summary_fanout(): void {
-		$this->load_topology( 'firehose-workers-only' );
+		$this->load_topology( 'combined' );
 
 		$this->assertNotNull( Core::node( 'completed:tee' ), 'completed:tee should be registered' );
 		$this->assertNotNull( Core::node( 'completed:partition' ), 'completed:partition should be registered' );
@@ -125,7 +125,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_completed_tee_fans_out_to_both_partitions(): void {
-		$this->load_topology( 'firehose-workers-and-jobs' );
+		$this->load_topology( 'combined' );
 
 		$tee = Core::node( 'completed:tee' );
 		$this->assertNotNull( $tee );
@@ -136,7 +136,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_request_builder_completed_target_set_to_completed_tee(): void {
-		$this->load_topology( 'firehose-workers-and-jobs' );
+		$this->load_topology( 'combined' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
@@ -147,7 +147,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_request_builder_flight_target_set_to_gyroscope_partition(): void {
-		$this->load_topology( 'firehose-workers-and-jobs' );
+		$this->load_topology( 'combined' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
@@ -155,7 +155,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_dump_config_round_trips_topology_targets(): void {
-		$this->load_topology( 'firehose-workers-and-jobs' );
+		$this->load_topology( 'combined' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );

@@ -57,9 +57,9 @@ class ExpectedLogBasenamesTest extends TestCase {
 	}
 
 	public function test_firehose_workers_only_adds_topology_outputs(): void {
-		// firehose-workers-only TSL declares: completed, errors, gyroscope, requests.
+		// request-builder TSL declares: completed, errors, gyroscope, requests.
 		// Plus the always-on runtime basenames: firehose + jobintake.
-		$this->activate_topologies( [ 'firehose-workers-only' ] );
+		$this->activate_topologies( [ 'request-builder' ] );
 		$this->assertSame(
 			[ 'completed', 'errors', 'firehose', 'gyroscope', 'jobintake', 'requests' ],
 			$this->basenames()
@@ -67,9 +67,9 @@ class ExpectedLogBasenamesTest extends TestCase {
 	}
 
 	public function test_request_workers_alone_adds_flames(): void {
-		// request-workers TSL declares: flames. (Requests partition is owned
-		// by firehose-workers-only; not in this topology's TSL.)
-		$this->activate_topologies( [ 'request-workers' ] );
+		// flame-builder TSL declares: flames. (Requests partition is owned
+		// by request-builder; not in this topology's TSL.)
+		$this->activate_topologies( [ 'flame-builder' ] );
 		$this->assertSame(
 			[ 'firehose', 'flames', 'jobintake' ],
 			$this->basenames()
@@ -77,10 +77,10 @@ class ExpectedLogBasenamesTest extends TestCase {
 	}
 
 	public function test_job_workers_topology_declares_no_partitions(): void {
-		// job-workers TSL has no `make_node Partition` lines — jobs.log is
-		// produced by firehose-workers-and-jobs (or firehose-jobs-only),
-		// not by the job-workers topology that consumes it.
-		$this->activate_topologies( [ 'job-workers' ] );
+		// job-worker TSL has no `make_node Partition` lines — jobs.log is
+		// produced by combined (or job-intake),
+		// not by the job-worker topology that consumes it.
+		$this->activate_topologies( [ 'job-worker' ] );
 		$this->assertSame(
 			[ 'firehose', 'jobintake' ],
 			$this->basenames()
@@ -88,10 +88,10 @@ class ExpectedLogBasenamesTest extends TestCase {
 	}
 
 	public function test_firehose_jobs_only_adds_jobs(): void {
-		// firehose-jobs-only TSL declares: jobs.
-		$this->activate_topologies( [ 'firehose-jobs-only' ] );
+		// job-intake TSL declares: jobs.
+		$this->activate_topologies( [ 'job-intake' ] );
 		$this->assertSame(
-			[ 'firehose', 'jobintake', 'jobs' ],
+			[ 'firehose', 'jobintake' ],
 			$this->basenames()
 		);
 	}
@@ -107,8 +107,8 @@ class ExpectedLogBasenamesTest extends TestCase {
 
 	public function test_combined_topologies_publish_union(): void {
 		$this->activate_topologies( [
-			'firehose-workers-only',
-			'request-workers',
+			'request-builder',
+			'flame-builder',
 		] );
 		$this->assertSame(
 			[ 'completed', 'errors', 'firehose', 'flames', 'gyroscope', 'jobintake', 'requests' ],
@@ -118,30 +118,30 @@ class ExpectedLogBasenamesTest extends TestCase {
 
 	public function test_disabling_request_workers_drops_flames(): void {
 		$this->activate_topologies( [
-			'firehose-workers-and-jobs',
-			'request-workers',
+			'request-builder',
+			'flame-builder',
 		] );
 		$with_flames = $this->basenames();
 		$this->assertContains( 'flames', $with_flames );
 
-		// Re-activate without request-workers.
+		// Re-activate without flame-builder.
 		\Newspack_Event_Logger_Nodes\Config::reset();
-		$this->activate_topologies( [ 'firehose-workers-and-jobs' ] );
+		$this->activate_topologies( [ 'request-builder' ] );
 		$without_flames = $this->basenames();
 		$this->assertNotContains( 'flames', $without_flames );
 	}
 
 	public function test_topology_with_live_lock_dir_keeps_its_basenames(): void {
-		// Operator just removed request-workers from config, but a
-		// pre-shrink request-workers worker is still running out its
+		// Operator just removed flame-builder from config, but a
+		// pre-shrink flame-builder worker is still running out its
 		// lifetime — its lock dir is still on disk. The filter must
 		// keep 'flames' in the set until the worker exits and releases
 		// its lock, otherwise Log_Cleaner would delete flames.log out
 		// from under it.
-		$this->activate_topologies( [ 'firehose-workers-and-jobs' ] );
-		\mkdir( "{$this->tmp}/locks/request-workers.p0.lock.d", 0755, true );
+		$this->activate_topologies( [ 'combined' ] );
+		\mkdir( "{$this->tmp}/locks/combined", 0755, true );
 		\file_put_contents(
-			"{$this->tmp}/locks/request-workers.p0.lock.d/heartbeat",
+			"{$this->tmp}/locks/combined/heartbeat",
 			(string) \getmypid()
 		);
 
@@ -157,18 +157,18 @@ class ExpectedLogBasenamesTest extends TestCase {
 		// basenames stay "expected" forever and Log_Cleaner never sees an
 		// orphan to delete.
 		//
-		// Datapoke staging hit this: app file defaults are firehose-workers-only
-		// + request-workers; operator selected firehose-jobs-only + job-workers.
+		// Datapoke staging hit this: app file defaults are request-builder
+		// + flame-builder; operator selected job-intake + job-worker.
 		// The filter unioned both and called every existing on-disk log
 		// expected, hiding the orphans the lifecycle-arm cleanup was supposed
 		// to delete.
-		$this->activate_topologies( [ 'firehose-workers-only', 'request-workers' ] );
+		$this->activate_topologies( [ 'request-builder', 'flame-builder' ] );
 		// Substrate operator overlay names a DIFFERENT subset — only this set
 		// should drive expected basenames.
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'firehose-jobs-only' ];
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'job-intake' ];
 
 		$this->assertSame(
-			[ 'firehose', 'jobintake', 'jobs' ],
+			[ 'firehose', 'jobintake' ],
 			$this->basenames(),
 			'app file-default topologies must not bleed into expected basenames when operator overlay is set'
 		);
@@ -178,7 +178,7 @@ class ExpectedLogBasenamesTest extends TestCase {
 		// After the worker exits and Lock::release() rmdirs the lock
 		// dir, the filter no longer keeps the disabled topology's
 		// basenames in the set — Log_Cleaner can now act.
-		$this->activate_topologies( [ 'firehose-workers-and-jobs' ] );
+		$this->activate_topologies( [ 'request-builder' ] );
 		// (No lock dir seeded; this is the "after settling" state.)
 		$this->assertNotContains( 'flames', $this->basenames() );
 	}
