@@ -32,11 +32,14 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 class Cache_Warmer_Tick_Node extends Timer_Node {
 
-	/** Tick cadence AND handler max-age: a warm job older than one full cycle is dropped (the next tick warms). */
+	/** DEFAULT tick cadence + the static handler's stale-drop fallback (when a job carries no `interval`). */
 	public const INTERVAL_SECONDS = 60;
 
 	/** Job handler name — shared by the enqueue (fire) and the registration so they can't drift. */
 	public const JOB_HANDLER = 'cache_warmer';
+
+	/** Per-instance warm-enqueue cadence in seconds (numeric arg overrides the default). */
+	protected int $interval_seconds = self::INTERVAL_SECONDS;
 
 	/** Unix timestamp of the last enqueue (0 = never). */
 	protected int $last_enqueue = 0;
@@ -98,7 +101,11 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 		if ( '' === $args ) {
 			$this->set_timer();
 		} elseif ( preg_match( '/^[0-9]+$/', $args ) ) {
-			$this->set_timer( (int) $args );
+			// Numeric arg = warm-enqueue interval in seconds. Keep the efficient
+			// _router heartbeat hitchhike (null) — the debounce is the real cadence
+			// gate; the ~5s router poll is plenty of granularity.
+			$this->interval_seconds = (int) $args;
+			$this->set_timer();
 		} else {
 			throw new \InvalidArgumentException( 'Bad arguments for Cache_Warmer_Tick' );
 		}
@@ -113,7 +120,7 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 	 */
 	public function fire(): void {
 		$now = \time();
-		if ( $now - $this->last_enqueue < self::INTERVAL_SECONDS ) {
+		if ( $now - $this->last_enqueue < $this->interval_seconds ) {
 			return;
 		}
 		$this->last_enqueue = $now;
@@ -125,7 +132,10 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 		$message[ Message::VALUE ] = [
 			'type'       => 'job',
 			'handler'    => self::JOB_HANDLER,
-			'parameters' => [ 'queued_at' => $now ],
+			'parameters' => [
+				'queued_at' => $now,
+				'interval'  => $this->interval_seconds,
+			],
 		];
 		parent::fill( $message );
 	}
@@ -142,8 +152,12 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 		/** @var int|float|string|bool|null $raw_queued_at */
 		$raw_queued_at = $parameters['queued_at'] ?? 0;
 		$queued_at     = (int) $raw_queued_at;
-		if ( $queued_at > 0 && ( \time() - $queued_at ) >= self::INTERVAL_SECONDS ) {
-			Core::print_less_often( 'CacheWarmerTick: dropping stale warm job (age >= ' . self::INTERVAL_SECONDS . 's)' );
+		// Read the job's own interval; fall back to the const so old/in-flight jobs
+		// that predate the threaded `interval` (or carry a malformed one) still drop correctly.
+		$raw_interval = $parameters['interval'] ?? self::INTERVAL_SECONDS;
+		$interval     = \is_numeric( $raw_interval ) ? (int) $raw_interval : self::INTERVAL_SECONDS;
+		if ( $queued_at > 0 && ( \time() - $queued_at ) >= $interval ) {
+			Core::print_less_often( 'CacheWarmerTick: dropping stale warm job (age >= ' . $interval . 's)' );
 			return;
 		}
 		if ( ! \class_exists( '\\Newspack_Cache_Warmer\\Cache_Warmer' ) ) {
@@ -156,7 +170,7 @@ class Cache_Warmer_Tick_Node extends Timer_Node {
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Control',
-			'description' => 'Queues a cache_warmer JobWorker job every 60s by default; self-starts in arguments() (optional numeric arg = interval seconds).',
+			'description' => 'Queues a cache_warmer JobWorker job (default every 60s); self-starts in arguments(); optional numeric arg = warm-enqueue interval in seconds (default 60).',
 			'arguments'   => [],
 			'commands'    => [],
 		];
