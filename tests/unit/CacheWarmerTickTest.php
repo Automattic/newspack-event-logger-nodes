@@ -14,6 +14,7 @@ use Newspack_Event_Logger_Nodes\Cache_Warmer_Tick_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -33,14 +34,25 @@ class CacheWarmerTickTest extends TestCase {
 
 		Log_Manager::reset();
 		$this->clear_log_manager_stack();
+		$this->set_registered( false );
+		Event_Framework::reset();
 	}
 
 	protected function tearDown(): void {
 		Log_Manager::reset();
 		$this->clear_log_manager_stack();
+		$this->set_registered( false );
+		Event_Framework::reset();
 		$_SERVER                   = $this->orig_server;
 		$GLOBALS['_wp_transients'] = [];
 		parent::tearDown();
+	}
+
+	/** Reset the private static init() idempotency guard so each test starts clean. */
+	private function set_registered( bool $value ): void {
+		$ref = new \ReflectionProperty( Cache_Warmer_Tick_Node::class, 'registered' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, $value );
 	}
 
 	/** Wipe LogManager's private static context stack (mirrors HealthCheckTickTest). */
@@ -150,5 +162,80 @@ class CacheWarmerTickTest extends TestCase {
 		// run_tick; if the class isn't loaded it must not fatal. The drop-in IS
 		// loaded in this suite, so assert the class exists (documents the dependency).
 		$this->assertTrue( \class_exists( '\\Newspack_Cache_Warmer\\Cache_Warmer' ) );
+	}
+
+	// ── init(): handler-filter registration + idempotency guard ──────────────
+
+	public function test_init_registers_the_job_handlers_filter(): void {
+		Cache_Warmer_Tick_Node::init();
+
+		$callbacks = $GLOBALS['_wp_actions']['newspack_nodes/job_handlers'] ?? [];
+		$this->assertContains(
+			[ Cache_Warmer_Tick_Node::class, 'register_handler' ],
+			$callbacks,
+			'init() must register register_handler on the job_handlers filter'
+		);
+	}
+
+	public function test_init_is_idempotent(): void {
+		// First call registers; the static guard must make the second call a
+		// no-op so the worker-runtime bootstrap can call init() repeatedly.
+		Cache_Warmer_Tick_Node::init();
+		Cache_Warmer_Tick_Node::init();
+
+		$callbacks = $GLOBALS['_wp_actions']['newspack_nodes/job_handlers'] ?? [];
+		$matches   = \array_filter(
+			$callbacks,
+			static fn ( $cb ) => $cb === [ Cache_Warmer_Tick_Node::class, 'register_handler' ]
+		);
+		$this->assertCount( 1, $matches, 'init() must register exactly once across repeated calls' );
+	}
+
+	// ── name() / arguments() getter passthroughs ─────────────────────────────
+
+	public function test_name_getter_returns_the_set_name(): void {
+		$node = new Cache_Warmer_Tick_Node();
+		$node->name( 'cache-warmer:tick' );
+
+		// No-arg call hits the getter branch (func_num_args() === 0 → parent::name()).
+		$this->assertSame( 'cache-warmer:tick', $node->name() );
+	}
+
+	public function test_arguments_getter_returns_the_stored_value(): void {
+		$node = new Cache_Warmer_Tick_Node();
+		$node->name( 'cache-warmer:tick' );
+		$node->arguments( '30' );
+
+		// No-arg call hits the getter branch (null === $args → return $this->arguments).
+		$this->assertSame( '30', $node->arguments() );
+	}
+
+	// ── arguments(): numeric interval arms an event-framework timer ──────────
+
+	public function test_arguments_numeric_arms_event_framework_timer(): void {
+		$node = new Cache_Warmer_Tick_Node();
+		$node->name( 'cache-warmer:tick' );
+
+		$node->arguments( '30' );
+
+		$ref    = new \ReflectionProperty( Event_Framework::class, 'timers' );
+		$ref->setAccessible( true );
+		$timers = $ref->getValue( Event_Framework::instance() );
+
+		$slot = $timers[ \spl_object_id( $node ) ] ?? null;
+		$this->assertNotNull( $slot, 'numeric arguments() must arm an event-framework timer slot' );
+		// set_timer( (int) $args ) passes the numeric arg straight through as the
+		// Event_Framework interval, so a '30' arg arms a 30-unit slot.
+		$this->assertSame( 30, $slot['interval_ms'], 'numeric arg is applied as the timer interval' );
+	}
+
+	// ── arguments(): non-numeric arg is rejected ─────────────────────────────
+
+	public function test_arguments_rejects_non_numeric_arg(): void {
+		$node = new Cache_Warmer_Tick_Node();
+		$node->name( 'cache-warmer:tick' );
+
+		$this->expectException( \InvalidArgumentException::class );
+		$node->arguments( 'not-a-number' );
 	}
 }
