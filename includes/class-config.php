@@ -159,54 +159,18 @@ class Config {
 		$config    = \array_merge( $substrate, self::load_config_defaults() );
 
 		if ( \defined( 'ABSPATH' ) && \function_exists( 'get_option' ) ) {
-			foreach ( self::$option_schema as $key => $type ) {
+			foreach ( \array_keys( self::$option_schema ) as $key ) {
 				$value = \get_option( "newspack_event_logger_nodes_{$key}" );
 				if ( false === $value || '' === $value ) {
 					continue;
 				}
-				$value = self::coerce_option_value( $value, $type );
-				if ( null !== $value ) {
-					$config[ $key ] = $value;
-				}
+				$config[ $key ] = $value;
 			}
 		}
 
 		self::$config = $config;
 
 		return $config;
-	}
-
-	/**
-	 * XXX cheap type coercion for the WP-option overlay. The write-time
-	 * sanitize callbacks store these in their typed shape, but a site that
-	 * saved them under older code (or via a raw `update_option`) hands back a
-	 * newline string / numeric string. Coerce just enough that consumers see
-	 * the schema type — NO `sanitize_text_field` (that per-element cost moved
-	 * to write time; this runs on every request). Returns null to fall back to
-	 * the file default on non-numeric int/float. Remove once stored option data
-	 * has been re-saved everywhere.
-	 *
-	 * @param mixed  $value Raw option value (already past the false/'' skip).
-	 * @param string $type  Schema-declared type tag.
-	 * @return mixed|null Coerced value, or null to keep the file default.
-	 */
-	private static function coerce_option_value( $value, string $type ) {
-		if ( 'int' === $type ) {
-			if ( ! \is_numeric( $value ) ) {
-				return null;
-			}
-			return (int) $value;
-		}
-		if ( 'float' === $type ) {
-			if ( ! \is_numeric( $value ) ) {
-				return null;
-			}
-			return (float) $value;
-		}
-		if ( 'array_strings' === $type && \is_string( $value ) ) {
-			return \array_values( \array_filter( \array_map( 'trim', \explode( "\n", $value ) ), static fn ( $v ) => (bool) $v ) );
-		}
-		return $value;
 	}
 
 	/**
@@ -408,10 +372,10 @@ class Config {
 
 		if ( 'is_hub' === $key ) {
 			// Hub-mode is the single operator switch `enable_aggregator`
-			// (architecture decision #4 / README). `enable_aggregator`
-			// passes through coerce_option_value as either the file-default
-			// bool or the raw WP-option string ('1' / ''); cast to bool so
-			// the substrate's `(string)` wrap surfaces it as '1' / ''.
+			// (architecture decision #4 / README). `enable_aggregator` is
+			// either the file-default bool or the raw WP-option string
+			// ('1' / ''); cast to bool so the substrate's `(string)` wrap
+			// surfaces it as '1' / ''.
 			return ! empty( $config['enable_aggregator'] );
 		}
 

@@ -82,7 +82,9 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_memcache_servers_wp_option_override_applies(): void {
-		\update_option( 'newspack_nodes_memcache_servers', 'test-host:11211' );
+		// Stored in its typed array shape (the substrate's sanitize_memcache_servers
+		// writes an array; the read path is a raw passthrough since coerce was removed).
+		\update_option( 'newspack_nodes_memcache_servers', [ 'test-host:11211' ] );
 		Config::reset();
 		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
 	}
@@ -185,21 +187,6 @@ class ConfigTest extends TestCase {
 	}
 
 	// ── WP option overrides ────────────────────────────────────────────────
-
-	public function test_wp_option_override_takes_effect(): void {
-		Config::reset();
-		\update_option( 'newspack_event_logger_nodes_hook_start_priority', '8' );
-		$config = Config::load_config();
-		$this->assertSame( 8, $config['hook_start_priority'] );
-	}
-
-	public function test_wp_option_invalid_int_falls_back_to_default(): void {
-		Config::reset();
-		\update_option( 'newspack_event_logger_nodes_hook_start_priority', 'not-a-number' );
-		$config = Config::load_config();
-		// Should keep the default from the config file, not the invalid WP option.
-		$this->assertSame( -10000, $config['hook_start_priority'] );
-	}
 
 	public function test_empty_wp_option_uses_file_default(): void {
 		Config::reset();
@@ -390,10 +377,9 @@ class ConfigTest extends TestCase {
 		$this->assertNull( $ref->invoke( null, 'not-an-array', 'array_strings' ) );
 	}
 
-	// aggregator_servers sanitization moved entirely to
-	// Admin::sanitize_aggregator_servers (the register_setting save path) —
-	// see AdminTest. It is no longer a load_config() schema type, so the
-	// app Config no longer carries a sanitize_option override for it.
+	// aggregator_servers is no longer a load_config() schema type, and its
+	// writes are owned by Server_Registry CRUD (not a register_setting save
+	// path), so the app Config carries no sanitize_option override for it.
 
 	public function test_sanitize_option_unknown_type_returns_null(): void {
 		$ref = new \ReflectionMethod( Config_Utils::class, 'sanitize_option' );

@@ -356,7 +356,6 @@ class LruCacheTest extends TestCase {
 
 		$cache->restore_state( [] );
 		$this->assertNull( $cache->get( 'existing' ) );
-		$this->assertTrue( $cache->is_empty() );
 	}
 
 	public function test_restore_state_with_invalid_buckets_type(): void {
@@ -410,7 +409,7 @@ class LruCacheTest extends TestCase {
 		$this->assertGreaterThan( 0, $state['current'] );
 	}
 
-	// ── flush + is_empty ──────────────────────────────────────────────────
+	// ── flush ──────────────────────────────────────────────────────────────
 
 	public function test_flush_clears_all(): void {
 		$cache = new LRU_Cache( 10, 3 );
@@ -420,18 +419,6 @@ class LruCacheTest extends TestCase {
 
 		$this->assertNull( $cache->get( 'a' ) );
 		$this->assertNull( $cache->get( 'b' ) );
-		$this->assertTrue( $cache->is_empty() );
-	}
-
-	public function test_is_empty(): void {
-		$cache = new LRU_Cache( 10, 3 );
-		$this->assertTrue( $cache->is_empty() );
-
-		$cache->set( 'k', 'v' );
-		$this->assertFalse( $cache->is_empty() );
-
-		$cache->flush();
-		$this->assertTrue( $cache->is_empty() );
 	}
 
 	// ── Combined behaviour ─────────────────────────────────────────────────

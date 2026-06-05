@@ -246,15 +246,6 @@ class Job_Intake {
 	}
 
 	/**
-	 * Get the pinned partition, or null if using round-robin.
-	 *
-	 * @return int|null Partition index or null.
-	 */
-	public function get_partition(): ?int {
-		return $this->pinned_partition;
-	}
-
-	/**
 	 * Static helper to write a single job.
 	 *
 	 * If a key is provided, jobs with the same key always go to the same partition.

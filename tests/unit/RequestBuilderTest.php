@@ -61,18 +61,44 @@ class RequestBuilderTest extends TestCase {
 		return (array) $capture->captured[ $i ][ Message::VALUE ];
 	}
 
+	/**
+	 * Read the in-flight cache count via the production GET_CACHE request
+	 * verb (the same path the dashboard reads), not a test-only accessor.
+	 */
+	private function cache_size( Request_Builder_Node $rb ): int {
+		$prev    = $rb->sink();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_REQUEST;
+		$msg[ Message::FROM ]  = 'test-probe';
+		$msg[ Message::VALUE ] = 'GET_CACHE';
+		$rb->fill( $msg );
+
+		$rb->sink( $prev );
+
+		foreach ( $capture->captured as $captured ) {
+			$type = $captured[ Message::TYPE ];
+			if ( ( $type & Message::TM_RESPONSE ) && ( $type & Message::TM_STRUCT ) ) {
+				return (int) $captured[ Message::VALUE ]['data']['pending_count'];
+			}
+		}
+		$this->fail( 'GET_CACHE reply not captured' );
+	}
+
 	// --- Basic lifecycle --------------------------------------------------
 
 	public function test_constructor_initializes_empty_cache(): void {
 		$rb = new Request_Builder_Node();
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_first_line_must_be_process_start(): void {
 		$rb = new Request_Builder_Node();
 		// Random non-start line for an unseen rid is silently dropped.
 		$this->fill( $rb, 1, 'unknown', 'init (start)', [ 'l' => '' ] );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_process_start_creates_in_flight_request(): void {
@@ -81,7 +107,7 @@ class RequestBuilderTest extends TestCase {
 			'm' => '12345 on test-host',
 			'l' => '',
 		] );
-		$this->assertSame( 1, $rb->cache_size() );
+		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
 	public function test_complete_with_url_emits_assembled_request(): void {
@@ -100,7 +126,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'GET', $req['request_method'] );
 		$this->assertEqualsWithDelta( 50.0, $req['duration_ms'], 1e-9 );
 		$this->assertSame( 200, $req['status_code'] );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_complete_without_url_skipped(): void {
@@ -122,7 +148,7 @@ class RequestBuilderTest extends TestCase {
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::VALUE ] = 'not-an-array';
 		$rb->fill( $msg );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_missing_rid_silently_dropped(): void {
@@ -131,7 +157,7 @@ class RequestBuilderTest extends TestCase {
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::VALUE ] = [ 'k' => 'process (start)', 'ts' => 1 ];
 		$rb->fill( $msg );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	// --- State callback extraction ----------------------------------------
@@ -334,7 +360,7 @@ class RequestBuilderTest extends TestCase {
 		// test_inflight_snapshot_surfaces_runaway_requests_like_legacy
 		// is the contract for this. push_stack caps the stack depth, so
 		// memory stays bounded even with the runaway request retained.
-		$this->assertSame( 1, $rb->cache_size() );
+		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
 	public function test_truncation_when_entries_exceed_max(): void {
@@ -539,7 +565,7 @@ class RequestBuilderTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		// No throw — just exercise the path.
 		$rb->maintenance();
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	// ── A1: sibling-interpreter + node_schema ─────────────────────────
@@ -905,7 +931,7 @@ class RequestBuilderTest extends TestCase {
 		$msg[ Message::KEY ]   = 'r1';
 		$msg[ Message::VALUE ] = 'raw line';
 		$rb->fill( $msg );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_fill_non_string_keyword_silently_dropped(): void {
@@ -917,7 +943,7 @@ class RequestBuilderTest extends TestCase {
 		$msg[ Message::KEY ]   = 'r1';
 		$msg[ Message::VALUE ] = [ 'n' => 1, 'rid' => 'r1', 'k' => [ 'not', 'a', 'string' ] ];
 		$rb->fill( $msg );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_fill_stores_peak_mb_and_label_on_entry(): void {
@@ -1045,7 +1071,7 @@ class RequestBuilderTest extends TestCase {
 		// (used to be a fatal `undefined index`).
 		$rb = new Request_Builder_Node();
 		$rb->restore_state( [] );
-		$this->assertSame( 0, $rb->cache_size() );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_restore_state_with_array_request_rehydrates_to_object(): void {
@@ -1260,7 +1286,7 @@ class RequestBuilderTest extends TestCase {
 		// Must not crash even though sink is null.
 		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'boom' ] );
 		// Cache still holds r1 since complete hasn't arrived.
-		$this->assertSame( 1, $rb->cache_size() );
+		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
 	// --- environment_v2 long message guard --------------------------------

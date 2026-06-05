@@ -1260,104 +1260,6 @@ class AdminTest extends TestCase {
 		$this->assertSame( 3600, $admin->sanitize_remote_max_lifespan( '3600' ) );
 	}
 
-	// ---- sanitize_aggregator_servers -------------------------------------
-
-	public function test_sanitize_aggregator_servers_returns_empty_for_non_array(): void {
-		$admin = new Admin();
-		$this->assertSame( [], $admin->sanitize_aggregator_servers( 'not-an-array' ) );
-		$this->assertSame( [], $admin->sanitize_aggregator_servers( 42 ) );
-		$this->assertSame( [], $admin->sanitize_aggregator_servers( null ) );
-	}
-
-	public function test_sanitize_aggregator_servers_drops_non_array_entries(): void {
-		$admin  = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'bad_one'  => 'scalar',
-				'good_one' => [ 'url' => 'https://example.com' ],
-			]
-		);
-		// Scalar entry dropped; valid HTTPS URL kept.
-		$this->assertArrayNotHasKey( 'bad_one', $result );
-		$this->assertArrayHasKey( 'good_one', $result );
-	}
-
-	public function test_sanitize_aggregator_servers_drops_empty_server_id(): void {
-		$admin  = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				''   => [ 'url' => 'https://example.com' ],
-				'ok' => [ 'url' => 'https://ok.example' ],
-			]
-		);
-		// Empty key is dropped silently; 'ok' is kept.
-		$this->assertArrayNotHasKey( '', $result );
-		$this->assertArrayHasKey( 'ok', $result );
-	}
-
-	public function test_sanitize_aggregator_servers_rejects_non_https_url(): void {
-		$admin  = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'http_server' => [ 'url' => 'http://example.com' ],
-				'no_url'      => [ 'url' => '' ],
-				'array_url'   => [ 'url' => [ 'not', 'a', 'string' ] ],
-				'good'        => [ 'url' => 'https://good.example' ],
-			]
-		);
-		// HTTPS required; everything non-HTTPS or non-string is dropped.
-		$this->assertSame( [ 'good' ], \array_keys( $result ) );
-	}
-
-	public function test_sanitize_aggregator_servers_normalizes_full_entry(): void {
-		$admin  = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'srv1' => [
-					'url'           => 'https://example.com',
-					'auth_username' => 'admin',
-					'auth_password' => 'secret',
-					'enabled'       => true,
-				],
-			]
-		);
-		$this->assertSame(
-			[
-				'url'           => 'https://example.com',
-				'auth_username' => 'admin',
-				'auth_password' => 'secret',
-				'enabled'       => true,
-			],
-			$result['srv1']
-		);
-	}
-
-	public function test_sanitize_aggregator_servers_defaults_enabled_true_when_missing(): void {
-		$admin  = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'srv1' => [ 'url' => 'https://example.com' ],
-			]
-		);
-		// Missing enabled → defaults to true.
-		$this->assertTrue( $result['srv1']['enabled'] );
-		// Missing credentials → empty strings.
-		$this->assertSame( '', $result['srv1']['auth_username'] );
-		$this->assertSame( '', $result['srv1']['auth_password'] );
-	}
-
-	public function test_sanitize_aggregator_servers_coerces_enabled_to_bool(): void {
-		$admin  = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'srv1' => [ 'url' => 'https://example.com', 'enabled' => 0 ],
-				'srv2' => [ 'url' => 'https://example.com', 'enabled' => '1' ],
-			]
-		);
-		$this->assertFalse( $result['srv1']['enabled'] );
-		$this->assertTrue( $result['srv2']['enabled'] );
-	}
-
 	// ---- Remote-* section + field callbacks ------------------------------
 
 	public function test_remote_settings_section_callback_describes_geometry(): void {
@@ -1665,22 +1567,6 @@ class AdminTest extends TestCase {
 		$this->assertArrayNotHasKey( '', $result );
 	}
 
-	public function test_sanitize_aggregator_servers_drops_non_string_server_id(): void {
-		// Non-string server_id (after sanitize_text_field) might become empty
-		// and get dropped. We pass an array-typed key implicitly by using
-		// `__toString`-like behaviors here; the actual loop uses `sanitize_text_field`
-		// which coerces to string. Confirms the empty-result drop.
-		$admin = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'<script>' => [ 'url' => 'https://x.test' ], // stays as 'scriptgt' (stripped)
-				'normal'   => [ 'url' => 'https://normal.test' ],
-			]
-		);
-		// 'normal' definitely makes it.
-		$this->assertArrayHasKey( 'normal', $result );
-	}
-
 	public function test_aggregator_section_callback_describes_topology_topic(): void {
 		$admin = new Admin();
 		\ob_start();
@@ -1840,19 +1726,6 @@ class AdminTest extends TestCase {
 		$admin = new Admin();
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_stats_salt' );
 		$this->assertFileExists( $this->base_dir . '/locks/request-workers.p0.lock.d/restart' );
-	}
-
-	public function test_sanitize_aggregator_servers_drops_non_string_url(): void {
-		// `url` is not a string at all → entry dropped.
-		$admin = new Admin();
-		$result = $admin->sanitize_aggregator_servers(
-			[
-				'bad'  => [ 'url' => 123 ],          // int — not is_string
-				'good' => [ 'url' => 'https://x.example' ],
-			]
-		);
-		$this->assertArrayNotHasKey( 'bad', $result );
-		$this->assertArrayHasKey( 'good', $result );
 	}
 
 	public function test_skip_urls_callback_renders_with_stored_value(): void {
