@@ -208,20 +208,6 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * Categorize multiple hooks.
-	 *
-	 * @param array<int, string> $hooks List of hook names.
-	 * @return array<string, string> Associative array of hook_name => category.
-	 */
-	public static function categorize_many( array $hooks ): array {
-		$result = [];
-		foreach ( $hooks as $hook ) {
-			$result[ $hook ] = self::categorize( $hook );
-		}
-		return $result;
-	}
-
-	/**
 	 * Get all categories with their colors.
 	 *
 	 * @return array<string, mixed> Associative array of category => color.
@@ -229,18 +215,6 @@ class Hook_Categorizer {
 	public static function get_categories(): array {
 		$config = self::get_merged_config();
 		return $config['colors'];
-	}
-
-	/**
-	 * Get color for a category.
-	 *
-	 * @param string $category Category name.
-	 * @return string Hex color code.
-	 */
-	public static function get_color( string $category ): string {
-		$config = self::get_merged_config();
-		$color  = $config['colors'][ $category ] ?? '#9E9E9E';
-		return \is_string( $color ) ? $color : '#9E9E9E';
 	}
 
 	/**

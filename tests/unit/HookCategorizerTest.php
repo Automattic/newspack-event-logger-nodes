@@ -205,41 +205,12 @@ class HookCategorizerTest extends TestCase {
 		$this->assertNotSame( 'NestedQuant', $result );
 	}
 
-	// ── categorize_many() ───────────────────────────────────────────────────
-
-	public function test_categorize_many_returns_correct_structure(): void {
-		$hooks  = [ 'wp_ajax_foo', 'admin_init', 'unknown_hook' ];
-		$result = Hook_Categorizer::categorize_many( $hooks );
-
-		$this->assertCount( 3, $result );
-		$this->assertSame( 'AJAX', $result['wp_ajax_foo'] );
-		$this->assertSame( 'Admin', $result['admin_init'] );
-		$this->assertSame( 'Other', $result['unknown_hook'] );
-	}
-
-	public function test_categorize_many_empty_input(): void {
-		$result = Hook_Categorizer::categorize_many( [] );
-		$this->assertSame( [], $result );
-	}
-
 	// ── get_categories() ────────────────────────────────────────────────────
 
 	public function test_get_categories_returns_colors(): void {
 		$cats = Hook_Categorizer::get_categories();
 		$this->assertIsArray( $cats );
 		$this->assertArrayHasKey( 'AJAX', $cats );
-	}
-
-	// ── get_color() ─────────────────────────────────────────────────────────
-
-	public function test_get_color_returns_color_for_known_category(): void {
-		$color = Hook_Categorizer::get_color( 'AJAX' );
-		$this->assertStringStartsWith( '#', $color );
-	}
-
-	public function test_get_color_returns_default_for_unknown_category(): void {
-		$color = Hook_Categorizer::get_color( 'NonexistentCategory' );
-		$this->assertSame( '#9E9E9E', $color );
 	}
 
 	// ── get_registered_hooks() ──────────────────────────────────────────────

@@ -67,9 +67,35 @@ class FlameBuilderTest extends TestCase {
 		$fb->fill( $msg );
 	}
 
+	/**
+	 * Read the in-flight per-URL accumulator count via the production
+	 * GET_STATS request verb (the same path the dashboard reads).
+	 */
+	private function stats_count( Flame_Builder_Node $fb ): int {
+		$prev    = $fb->sink();
+		$capture = new Capture_Sink_Node();
+		$fb->sink( $capture );
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_REQUEST;
+		$msg[ Message::FROM ]  = 'test-probe';
+		$msg[ Message::VALUE ] = 'GET_STATS';
+		$fb->fill( $msg );
+
+		$fb->sink( $prev );
+
+		foreach ( $capture->captured as $captured ) {
+			$type = $captured[ Message::TYPE ];
+			if ( ( $type & Message::TM_RESPONSE ) && ( $type & Message::TM_STRUCT ) ) {
+				return (int) $captured[ Message::VALUE ]['data']['stats_count'];
+			}
+		}
+		$this->fail( 'GET_STATS reply not captured' );
+	}
+
 	public function test_constructor_initializes_empty(): void {
 		$fb = new Flame_Builder_Node();
-		$this->assertSame( 0, $fb->stats_count() );
+		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	public function test_target_includes_flames_partition_and_auto_tuner(): void {
@@ -164,7 +190,7 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
 		$msg[ Message::VALUE ] = 'not-an-array';
 		$fb->fill( $msg );
-		$this->assertSame( 0, $fb->stats_count() );
+		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	public function test_non_bytestream_message_skipped(): void {
@@ -173,7 +199,7 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::TYPE ]  = Message::TM_INFO;
 		$msg[ Message::VALUE ] = $this->completed_request();
 		$fb->fill( $msg );
-		$this->assertSame( 0, $fb->stats_count() );
+		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	// --- Flame tree construction ------------------------------------------
@@ -638,7 +664,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$this->fill_request( $fb, $this->completed_request() );
 		$fb->flush(); // must not throw
-		$this->assertSame( 0, $fb->stats_count() );
+		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	public function test_finalize_strips_internal_fields(): void {
@@ -758,7 +784,7 @@ class FlameBuilderTest extends TestCase {
 		// last_flush_time is "now" from the constructor.
 		// maintenance() should be a no-op — no exception, no error.
 		$fb->maintenance();
-		$this->assertSame( 0, $fb->stats_count() );
+		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	public function test_set_custom_event_names_dispatches_to_custom_events(): void {
@@ -903,7 +929,7 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
 		$msg[ Message::VALUE ] = 'GET_STATS';
 		$fb->fill( $msg );
-		$this->assertSame( 0, $fb->stats_count(), 'response not processed as request' );
+		$this->assertSame( 0, $this->stats_count( $fb ), 'response not processed as request' );
 	}
 
 	// --- Auto-tune fire actions + memcache lock ---------------------------

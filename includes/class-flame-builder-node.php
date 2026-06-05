@@ -258,17 +258,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Total in-flight per-URL accumulator count (test helper).
-	 */
-	public function stats_count(): int {
-		$count = 0;
-		foreach ( $this->stats_cache->iterate() as $_ ) {
-			++$count;
-		}
-		return $count;
-	}
-
-	/**
 	 * Accessor for the auto-tune state.
 	 *
 	 * @return array<string, list<string>>

@@ -10,15 +10,6 @@ describe( 'performance-gyroscope/constants', () => {
 		mod = require( '../performance-gyroscope/constants' );
 	} );
 
-	it( 'exposes DASHBOARD_REFRESH_OPTIONS as a non-empty array of {label, value}', () => {
-		expect( Array.isArray( mod.DASHBOARD_REFRESH_OPTIONS ) ).toBe( true );
-		expect( mod.DASHBOARD_REFRESH_OPTIONS.length ).toBeGreaterThan( 0 );
-		mod.DASHBOARD_REFRESH_OPTIONS.forEach( ( opt ) => {
-			expect( typeof opt.label ).toBe( 'string' );
-			expect( typeof opt.value ).toBe( 'string' );
-		} );
-	} );
-
 	it( 'exposes INFLIGHT_REFRESH_OPTIONS as a non-empty array of {value (number), label}', () => {
 		expect( Array.isArray( mod.INFLIGHT_REFRESH_OPTIONS ) ).toBe( true );
 		expect( mod.INFLIGHT_REFRESH_OPTIONS.length ).toBeGreaterThan( 0 );

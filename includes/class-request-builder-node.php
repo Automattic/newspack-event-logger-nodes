@@ -290,14 +290,6 @@ class Request_Builder_Node extends Node {
 		return $all;
 	}
 
-	public function cache_size(): int {
-		$count = 0;
-		foreach ( $this->cache->iterate() as $_ ) {
-			++$count;
-		}
-		return $count;
-	}
-
 	/**
 	 * Periodic maintenance — drives rotate_if_due even with no inbound traffic.
 	 */

@@ -756,44 +756,6 @@ class Admin {
 		return $f;
 	}
 
-	/**
-	 * Sanitize the `aggregator_servers` option.
-	 *
-	 * Stored as `[ server_id => [ url, auth_username, auth_password, enabled ] ]`.
-	 * URL must be HTTPS. Non-array input becomes an empty array.
-	 *
-	 * @param mixed $value Aggregator-servers map.
-	 * @return array<string,array<string,mixed>> Sanitized map.
-	 */
-	public function sanitize_aggregator_servers( $value ): array {
-		if ( ! \is_array( $value ) ) {
-			return [];
-		}
-		$result = [];
-		foreach ( $value as $server_id => $config ) {
-			if ( ! \is_array( $config ) ) {
-				continue;
-			}
-			$server_id = \sanitize_text_field( (string) $server_id );
-			if ( '' === $server_id ) {
-				continue;
-			}
-			$url = $config['url'] ?? '';
-			if ( ! \is_string( $url ) || 0 !== \strpos( $url, 'https://' ) ) {
-				continue;
-			}
-			$auth_username = $config['auth_username'] ?? '';
-			$auth_password = $config['auth_password'] ?? '';
-			$result[ $server_id ] = [
-				'url'           => \esc_url_raw( $url ),
-				'auth_username' => \sanitize_text_field( \is_scalar( $auth_username ) ? (string) $auth_username : '' ),
-				'auth_password' => \sanitize_text_field( \is_scalar( $auth_password ) ? (string) $auth_password : '' ),
-				'enabled'       => (bool) ( $config['enabled'] ?? true ),
-			];
-		}
-		return $result;
-	}
-
 	// -- Section callbacks --------------------------------------------------
 
 	public function general_section_callback(): void {

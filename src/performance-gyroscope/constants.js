@@ -3,19 +3,6 @@
  */
 
 /**
- * Refresh interval options for dashboard auto-refresh (longer intervals).
- * Values are strings in milliseconds for SelectControl compatibility.
- */
-export const DASHBOARD_REFRESH_OPTIONS = [
-	{ label: '1s', value: '1000' },
-	{ label: '2s', value: '2000' },
-	{ label: '5s', value: '5000' },
-	{ label: '15s', value: '15000' },
-	{ label: '30s', value: '30000' },
-	{ label: '1m', value: '60000' },
-];
-
-/**
  * Refresh interval options for inflight real-time view (shorter intervals).
  * Values are numbers in seconds for SSE streaming interval.
  */

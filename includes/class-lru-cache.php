@@ -147,15 +147,6 @@ class LRU_Cache {
 	}
 
 	/**
-	 * Check if cache is empty.
-	 *
-	 * @return bool True if empty.
-	 */
-	public function is_empty(): bool {
-		return empty( $this->buckets );
-	}
-
-	/**
 	 * Get all buckets (for serialization).
 	 *
 	 * @return array<string, mixed> State array.
