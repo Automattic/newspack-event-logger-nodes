@@ -22,6 +22,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class LRU_Cache {
 
+	/** @var int Upper clamp on num_buckets; caps memory + the get()/delete() scan. */
+	private const MAX_BUCKETS = 100;
+
 	/** @var array<int, array<string, mixed>> Buckets array, indexed by bucket number. */
 	private array $buckets = [];
 
@@ -51,7 +54,7 @@ class LRU_Cache {
 	 */
 	public function __construct( int $bucket_size = 250, int $num_buckets = 5 ) {
 		$this->bucket_size = \max( 1, $bucket_size );
-		$this->num_buckets = \max( 1, \min( $num_buckets, 100 ) );
+		$this->num_buckets = \max( 1, \min( $num_buckets, self::MAX_BUCKETS ) );
 	}
 
 	/**
