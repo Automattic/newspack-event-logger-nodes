@@ -85,6 +85,9 @@ class Log_Manager {
 	/** @var int Nanoseconds-to-milliseconds divisor. */
 	private const NS_PER_MS = 1_000_000;
 
+	/** @var int Bytes-to-megabytes divisor. */
+	private const BYTES_PER_MB = 1024 * 1024;
+
 	/**
 	 * PHP error types that indicate a fatal crash.
 	 */
@@ -408,7 +411,7 @@ class Log_Manager {
 
 		// Redact sensitive query parameters in message URLs.
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
-			$data['m'] = \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $data['m'] );
+			$data['m'] = self::redact_url( $data['m'] );
 		}
 		// Validate data size to prevent breaking atomicity.
 		$data_json = \wp_json_encode( $data );
@@ -576,21 +579,33 @@ class Log_Manager {
 			}
 		}
 		for ( $i = \count( $removed ) - 1; $i >= 0; $i-- ) {
-			$entry = $removed[ $i ];
-			if ( empty( $entry['muted'] ) ) {
-				$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-				$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
-			}
+			$this->emit_orphaned_complete( $removed[ $i ], $now );
 		}
 		if ( ! empty( $match ) ) {
 			$data['duration_ms'] = \max( 0, ( $now - $start ) / self::NS_PER_MS );
 			if ( $this->log_memory ) {
-				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / 1048576, 2 );
+				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
 			}
 			if ( empty( $match['muted'] ) ) {
 				$this->message( "{$label} (complete)", $data );
 			}
 		}
+	}
+
+	/**
+	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
+	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
+	 * end-of-request stack close; muted frames are skipped.
+	 *
+	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
+	 * @param int|float $now Reference hrtime() reading.
+	 */
+	private function emit_orphaned_complete( array $entry, $now ): void {
+		if ( ! empty( $entry['muted'] ) ) {
+			return;
+		}
+		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
+		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
 	}
 
 	/**
@@ -740,17 +755,13 @@ class Log_Manager {
 		// Close any open stack entries (orphaned hooks) before final summary.
 		$now = \hrtime( true );
 		while ( \count( $this->times ) > 1 ) {
-			$entry = \array_pop( $this->times );
-			if ( empty( $entry['muted'] ) ) {
-				$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-				$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
-			}
+			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
 		}
 
 		$this->message( 'memory', [
 			'm' => [
-				'peak' => \round( \memory_get_peak_usage( true ) / 1024 / 1024, 2 ) . 'MB',
-				'end'  => \round( \memory_get_usage( true ) / 1024 / 1024, 2 ) . 'MB',
+				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
 			],
 		] );
 		$this->log_resources();

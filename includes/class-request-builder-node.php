@@ -554,7 +554,7 @@ class Request_Builder_Node extends Node {
 
 		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
-			if ( ! \is_string( $message ) || \strlen( $message ) > 8192 ) {
+			if ( ! \is_string( $message ) || \strlen( $message ) > self::MAX_PAYLOAD_SCAN_LENGTH ) {
 				return;
 			}
 			if ( \preg_match( '/^REMOTE_ADDR => "(.+)"$/', $message, $m ) ) {
