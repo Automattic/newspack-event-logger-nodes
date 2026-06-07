@@ -148,7 +148,7 @@ The substrate's single SSE surface. A client subscribes to one or more `<log>.p<
 GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...]
 ```
 
-Per-line transforms live in the browser (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …); the shared browser hook is `useMessageStream`. Hub-side aggregator connections (`Remote_Source_Node` cURL pulls) get a longer slot TTL than browsers.
+Per-line transforms live in the browser (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …); the browser consumes the stream through the runtime `_sse` node (`SseIn`) inside each dashboard's node graph. Hub-side aggregator connections (`Remote_Source_Node` cURL pulls) get a longer slot TTL than browsers.
 
 Operational discipline:
 - Memcache slot pool gates connections; new connections fail with **HTTP 429** when the pool is full or memcache is unreachable (fail-closed).

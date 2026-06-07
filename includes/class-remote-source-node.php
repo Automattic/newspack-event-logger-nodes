@@ -803,7 +803,7 @@ class Remote_Source_Node extends Node {
 		// M6 deleted the legacy `/firehose/heartbeat` REST route in favor
 		// of the substrate's `workers.heartbeat` CommandInterpreter verb
 		// dispatched via `/command`. Same wire format the dashboard JS
-		// uses for its own slot keep-alive (see useMessageStream).
+		// (the runtime `_sse` node) uses for its own slot keep-alive.
 		$endpoint = $this->url . '/wp-json/newspack-nodes/v1/command';
 		if ( $this->require_https && \stripos( $endpoint, 'https://' ) !== 0 ) {
 			$this->last_error = 'heartbeat endpoint not HTTPS';
