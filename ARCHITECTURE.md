@@ -747,7 +747,7 @@ SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as
 +-----------------+   GET /messages/stream?subscribe=firehose.pN   +-----------------+
 |  Browser opens  | ---------------------------------------------> |  Sse_Slot_Pool  |
 |  EventSource    |        (acquire slot; fail-CLOSED 429)         |  (memcache, app)|
-|  (useMessageStream)                                              +-----------------+
+|  (_sse SseIn node)                                              +-----------------+
 +-----------------+                                                       |
         |                                                                 |
         | < emit `connected` envelope (carries slot id)                   |
