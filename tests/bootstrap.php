@@ -1,4 +1,15 @@
 <?php
+/**
+ * PHPUnit bootstrap for Newspack Event Logger Nodes tests.
+ *
+ * @package Newspack_Event_Logger_Nodes
+ */
+
+if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
+	error_log("ERROR: refusing to test as root.");
+	exit( 1 );
+}
+
 // Redirect PHP's error_log() to /dev/null so negative-path tests don't spew
 // into test output. (Matches newspack-event-logger-plugins/tests/bootstrap.php:35.)
 \ini_set( 'error_log', '/dev/null' );
