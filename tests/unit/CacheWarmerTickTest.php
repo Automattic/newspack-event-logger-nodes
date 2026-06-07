@@ -16,6 +16,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Router_Node;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Cache_Warmer_Tick_Node::class )]
@@ -139,15 +140,18 @@ class CacheWarmerTickTest extends TestCase {
 
 	public function test_fire_enqueues_then_debounces(): void {
 		$node = new Cache_Warmer_Tick_Node();
+		$sink = new Capture_Sink_Node();
 		$node->name( 'cache-warmer:tick' );
-
+		$node->sink( $sink );
 		$node->fire();
 		$after_first = $this->last_enqueue( $node );
 		$this->assertGreaterThan( 0, $after_first, 'first fire must enqueue (last_enqueue advances)' );
+		$this->assertCount( 1, $sink->captured );
 
 		// Second tick within the interval must early-return — no re-enqueue.
 		$node->fire();
 		$this->assertSame( $after_first, $this->last_enqueue( $node ) );
+		$this->assertCount( 1, $sink->captured );
 	}
 
 	// ── handle_job(): stale-drop + warm ──────────────────────────────────────
@@ -273,8 +277,10 @@ class CacheWarmerTickTest extends TestCase {
 		$router->name( '_router' );
 
 		$node = new Cache_Warmer_Tick_Node();
+		$sink = new Capture_Sink_Node();
 		$node->name( 'cache-warmer:tick' );
 		$node->arguments( '5' );
+		$node->sink( $sink );
 
 		// Last enqueue 6s ago: with a 5s interval, the next fire MUST re-enqueue.
 		$this->set_last_enqueue( $node, \time() - 6 );
@@ -285,19 +291,23 @@ class CacheWarmerTickTest extends TestCase {
 			$this->last_enqueue( $node ),
 			'a 5s-interval node must re-enqueue when the last enqueue is 6s old'
 		);
+		$this->assertCount( 1, $sink->captured );
 	}
 
 	public function test_fire_default_interval_debounces_under_sixty_seconds(): void {
 		// Control: a default-60 node with the SAME 6s-old last_enqueue must NOT
 		// re-enqueue (6 < 60), proving the cadence is driven by the interval.
 		$node = new Cache_Warmer_Tick_Node();
+		$sink = new Capture_Sink_Node();
 		$node->name( 'cache-warmer:tick' );
+		$node->sink( $sink );
 
 		$prior = \time() - 6;
 		$this->set_last_enqueue( $node, $prior );
 		$node->fire();
 
 		$this->assertSame( $prior, $this->last_enqueue( $node ), 'default-60 node must not re-enqueue at 6s' );
+		$this->assertCount( 0, $sink->captured );
 	}
 
 	// ── fire(): interval is threaded into the job parameters ─────────────────

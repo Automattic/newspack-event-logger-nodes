@@ -136,6 +136,209 @@ class Request_Builder_Node extends Node {
 	}
 
 	/**
+	 * Node entry point: process a single line from firehose.log.
+	 *
+	 * @param array<int, mixed> $message Reference; not mutated.
+	 */
+	public function fill( array &$message ): void {
+		++$this->counter;
+		$type_raw = $message[ Message::TYPE ];
+		$type     = \is_scalar( $type_raw ) ? (int) $type_raw : 0;
+		if ( $type & Message::TM_REQUEST ) {
+			$this->handle_request( $message );
+			return;
+		}
+		if ( ! ( $type & Message::TM_STRUCT ) ) {
+			return;
+		}
+		$entry = $message[ Message::VALUE ];
+		$this->cache->rotate_if_due();
+		if ( ! \is_array( $entry ) ) {
+			return;
+		}
+		// Decoded firehose entry: string-keyed payload (json_decode assoc map).
+		/** @var array<string, mixed> $entry */
+
+		$key_raw = $message[ Message::KEY ] ?? '';
+		$rid     = \is_scalar( $key_raw ) ? (string) $key_raw : '';
+		if ( '' === $rid ) {
+			return;
+		}
+
+		// Intern keyword strings — json_decode allocates a new string per entry,
+		// but most entries share the same ~200 unique keywords. Interning makes
+		// all identical strings share one zval, saving ~80 bytes per entry.
+		/** @var array<string, string> $intern */
+		static $intern = [];
+		$keyword       = $entry['k'] ?? '';
+		if ( ! \is_string( $keyword ) ) {
+			return;
+		}
+		if ( \strlen( $keyword ) <= 256 && \count( $intern ) < 50000 ) {
+			$keyword = $intern[ $keyword ] ??= $keyword;
+		}
+		$n = $entry['n'] ?? 0;
+		++$this->line_counter;
+
+		// get() returns the same object instance — mutations happen in place.
+		$request = $this->cache->get( $rid );
+		if ( null === $request ) {
+			if ( 'process (start)' !== $keyword ) {
+				return;
+			}
+			$request = new \stdClass();
+			$request->rid = $rid;
+			$this->cache->set( $rid, $request );
+		}
+		// The cache only ever stores the \stdClass built above for a given rid.
+		/** @var \stdClass $request */
+
+		// Forward errors and warnings to errors.log. Pass the rid so the
+		// emitted Message carries it in KEY — errors.log readers (and any
+		// future StreamMerger forwarders) need it for the same reasons the
+		// firehose does.
+		if ( 'error' === $keyword || 'warning' === $keyword
+			|| \str_ends_with( $keyword, '(error)' )
+			|| \str_ends_with( $keyword, '(warning)' )
+		) {
+			$this->emit_error( $entry, $rid );
+		}
+
+		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
+			$this->state_callbacks[ $keyword ]( $request, $entry );
+		} elseif ( \str_ends_with( $keyword, ' (start)' ) ) {
+			$label = $entry['l'] ?? '';
+			$this->push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $label ) ? $label : '' );
+		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
+			$dur_v = $entry['duration_ms'] ?? 0;
+			$ts_v  = $entry['ts'] ?? 0;
+			$this->pop_stack(
+				$request,
+				\substr( $keyword, 0, -11 ),
+				\is_scalar( $dur_v ) ? (float) $dur_v : 0.0,
+				\is_scalar( $ts_v ) ? (float) $ts_v : 0.0
+			);
+		}
+
+		// Track per-line activity timestamps for the inflight snapshot's
+		// time_ms / est_ms / lag_ms derivation (matches legacy
+		// InflightTracker::process lines 88-90).
+		$ts_log_v             = $entry['ts'] ?? 0;
+		$request->last_log_ts = \is_scalar( $ts_log_v ) ? (float) $ts_log_v : 0.0;
+		$request->tracker_ts  = \microtime( true );
+
+		// Runaway requests stay visible in the cache so inflight_snapshot
+		// surfaces them — matches the Perl gyroscope, which displays
+		// over-depth requests reliably. Memory is still bounded: push_stack
+		// stops growing the stack at MAX_STACK_DEPTH (see the guard at
+		// push_stack line 504-506), and the LRU bucket rotation will
+		// eventually evict the runaway via evict_request (which stamps
+		// error_status=T and emits to the completed pipeline).
+		if ( $request->is_runaway ?? false ) {
+			return;
+		}
+
+		// Dynamic \stdClass property: list of stored per-entry records.
+		/** @var list<array<string, mixed>> $entries */
+		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
+		if ( isset( $request->entries ) && \count( $entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
+			$stored = [
+				'n'  => $n,
+				'ts' => $entry['ts'] ?? 0,
+				'k'  => $keyword,
+			];
+
+			// Truncate string 'm' to bound per-entry memory.
+			// Array messages are already bounded by PIPE_BUF (4KB) at the firehose writer.
+			$m = $entry['m'] ?? '';
+			if ( \is_string( $m ) && \strlen( $m ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
+				$m = \substr( $m, 0, self::MAX_ENTRY_MESSAGE_LENGTH );
+			}
+			$stored['m'] = $m;
+
+			if ( isset( $entry['l'] ) ) {
+				$stored['l'] = $entry['l'];
+			}
+			if ( isset( $entry['duration_ms'] ) ) {
+				$stored['duration_ms'] = $entry['duration_ms'];
+			}
+			if ( isset( $entry['peak_mb'] ) ) {
+				$stored['peak_mb'] = $entry['peak_mb'];
+			}
+
+			$entries[]          = $stored;
+			$request->entries   = $entries;
+		} elseif ( isset( $request->entries ) && empty( $request->truncated ) ) {
+			$request->truncated = true;
+		}
+
+		if ( 'complete' === ( $request->state ?? '' ) ) {
+			// Write immediately to get state out of RAM.
+			if ( ! empty( $request->url ) ) {
+				$this->emit_request( $request );
+			}
+			$this->cache->delete( $rid );
+		}
+	}
+
+	/**
+	 * Manifest for the topology console's palette + form rendering.
+	 * See Node::node_schema() for the shape contract.
+	 */
+	/** @param array<int, mixed> $message Incoming command Message. */
+	private function handle_request( array $message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Request_Builder::fill requires a wired sink' );
+		}
+		$value_raw = $message[ Message::VALUE ];
+		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_CACHE' === $verb ) {
+			$now     = (int) Core::$now;
+			$samples = [];
+			$oldest_rid = null;
+			$oldest_ts  = $now;
+			$count      = 0;
+			foreach ( $this->cache->iterate() as $rid => $request ) {
+				++$count;
+				$created = 0;
+				if ( \is_array( $request ) ) {
+					$proc      = $request['process'] ?? null;
+					$created_v = ( \is_array( $proc ) ? ( $proc['ts_start'] ?? null ) : null ) ?? ( $request['ts'] ?? 0 );
+					$created   = \is_scalar( $created_v ) ? (int) $created_v : 0;
+				}
+				if ( $created > 0 && $created < $oldest_ts ) {
+					$oldest_ts  = $created;
+					$oldest_rid = $rid;
+				}
+				if ( \count( $samples ) < 5 ) {
+					$samples[] = \is_scalar( $rid ) ? (string) $rid : '';
+				}
+			}
+			$payload = [
+				'pending_count' => $count,
+				'oldest_rid'    => $oldest_rid,
+				'oldest_age_s'  => null !== $oldest_rid ? $now - $oldest_ts : 0,
+				'sample'        => $samples,
+				'line_counter'  => $this->line_counter,
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink->fill( $reply );
+	}
+
+
+	/**
 	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
 	 * wired with the eviction callback. Shared between the ctor (defaults)
 	 * and arguments() (post-schema-walk).
@@ -355,153 +558,6 @@ class Request_Builder_Node extends Node {
 		}
 		$this->cache->restore_state( $cache_state );
 	}
-
-	/**
-	 * Node entry point: process a single line from firehose.log.
-	 *
-	 * @param array<int, mixed> $message Reference; not mutated.
-	 */
-	public function fill( array &$message ): void {
-		++$this->counter;
-		$type_raw = $message[ Message::TYPE ];
-		$type     = \is_scalar( $type_raw ) ? (int) $type_raw : 0;
-		if ( $type & Message::TM_REQUEST ) {
-			$this->handle_request( $message );
-			return;
-		}
-		if ( ! ( $type & Message::TM_STRUCT ) ) {
-			return;
-		}
-		$entry = $message[ Message::VALUE ];
-		$this->cache->rotate_if_due();
-		if ( ! \is_array( $entry ) ) {
-			return;
-		}
-		// Decoded firehose entry: string-keyed payload (json_decode assoc map).
-		/** @var array<string, mixed> $entry */
-
-		$key_raw = $message[ Message::KEY ] ?? '';
-		$rid     = \is_scalar( $key_raw ) ? (string) $key_raw : '';
-		if ( '' === $rid ) {
-			return;
-		}
-
-		// Intern keyword strings — json_decode allocates a new string per entry,
-		// but most entries share the same ~200 unique keywords. Interning makes
-		// all identical strings share one zval, saving ~80 bytes per entry.
-		/** @var array<string, string> $intern */
-		static $intern = [];
-		$keyword       = $entry['k'] ?? '';
-		if ( ! \is_string( $keyword ) ) {
-			return;
-		}
-		if ( \strlen( $keyword ) <= 256 && \count( $intern ) < 50000 ) {
-			$keyword = $intern[ $keyword ] ??= $keyword;
-		}
-		$n = $entry['n'] ?? 0;
-		++$this->line_counter;
-
-		// get() returns the same object instance — mutations happen in place.
-		$request = $this->cache->get( $rid );
-		if ( null === $request ) {
-			if ( 'process (start)' !== $keyword ) {
-				return;
-			}
-			$request = new \stdClass();
-			$request->rid = $rid;
-			$this->cache->set( $rid, $request );
-		}
-		// The cache only ever stores the \stdClass built above for a given rid.
-		/** @var \stdClass $request */
-
-		// Forward errors and warnings to errors.log. Pass the rid so the
-		// emitted Message carries it in KEY — errors.log readers (and any
-		// future StreamMerger forwarders) need it for the same reasons the
-		// firehose does.
-		if ( 'error' === $keyword || 'warning' === $keyword
-			|| \str_ends_with( $keyword, '(error)' )
-			|| \str_ends_with( $keyword, '(warning)' )
-		) {
-			$this->emit_error( $entry, $rid );
-		}
-
-		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
-			$this->state_callbacks[ $keyword ]( $request, $entry );
-		} elseif ( \str_ends_with( $keyword, ' (start)' ) ) {
-			$label = $entry['l'] ?? '';
-			$this->push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $label ) ? $label : '' );
-		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
-			$dur_v = $entry['duration_ms'] ?? 0;
-			$ts_v  = $entry['ts'] ?? 0;
-			$this->pop_stack(
-				$request,
-				\substr( $keyword, 0, -11 ),
-				\is_scalar( $dur_v ) ? (float) $dur_v : 0.0,
-				\is_scalar( $ts_v ) ? (float) $ts_v : 0.0
-			);
-		}
-
-		// Track per-line activity timestamps for the inflight snapshot's
-		// time_ms / est_ms / lag_ms derivation (matches legacy
-		// InflightTracker::process lines 88-90).
-		$ts_log_v             = $entry['ts'] ?? 0;
-		$request->last_log_ts = \is_scalar( $ts_log_v ) ? (float) $ts_log_v : 0.0;
-		$request->tracker_ts  = \microtime( true );
-
-		// Runaway requests stay visible in the cache so inflight_snapshot
-		// surfaces them — matches the Perl gyroscope, which displays
-		// over-depth requests reliably. Memory is still bounded: push_stack
-		// stops growing the stack at MAX_STACK_DEPTH (see the guard at
-		// push_stack line 504-506), and the LRU bucket rotation will
-		// eventually evict the runaway via evict_request (which stamps
-		// error_status=T and emits to the completed pipeline).
-		if ( $request->is_runaway ?? false ) {
-			return;
-		}
-
-		// Dynamic \stdClass property: list of stored per-entry records.
-		/** @var list<array<string, mixed>> $entries */
-		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
-		if ( isset( $request->entries ) && \count( $entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
-			$stored = [
-				'n'  => $n,
-				'ts' => $entry['ts'] ?? 0,
-				'k'  => $keyword,
-			];
-
-			// Truncate string 'm' to bound per-entry memory.
-			// Array messages are already bounded by PIPE_BUF (4KB) at the firehose writer.
-			$m = $entry['m'] ?? '';
-			if ( \is_string( $m ) && \strlen( $m ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
-				$m = \substr( $m, 0, self::MAX_ENTRY_MESSAGE_LENGTH );
-			}
-			$stored['m'] = $m;
-
-			if ( isset( $entry['l'] ) ) {
-				$stored['l'] = $entry['l'];
-			}
-			if ( isset( $entry['duration_ms'] ) ) {
-				$stored['duration_ms'] = $entry['duration_ms'];
-			}
-			if ( isset( $entry['peak_mb'] ) ) {
-				$stored['peak_mb'] = $entry['peak_mb'];
-			}
-
-			$entries[]          = $stored;
-			$request->entries   = $entries;
-		} elseif ( isset( $request->entries ) && empty( $request->truncated ) ) {
-			$request->truncated = true;
-		}
-
-		if ( 'complete' === ( $request->state ?? '' ) ) {
-			// Write immediately to get state out of RAM.
-			if ( ! empty( $request->url ) ) {
-				$this->emit_request( $request );
-			}
-			$this->cache->delete( $rid );
-		}
-	}
-
 	/**
 	 * Build the state-callback table.
 	 *
@@ -1116,59 +1172,6 @@ class Request_Builder_Node extends Node {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Manifest for the topology console's palette + form rendering.
-	 * See Node::node_schema() for the shape contract.
-	 */
-	/** @param array<int, mixed> $message Incoming command Message. */
-	private function handle_request( array $message ): void {
-		$value_raw = $message[ Message::VALUE ];
-		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
-		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
-
-		if ( 'GET_CACHE' === $verb ) {
-			$now     = (int) Core::$now;
-			$samples = [];
-			$oldest_rid = null;
-			$oldest_ts  = $now;
-			$count      = 0;
-			foreach ( $this->cache->iterate() as $rid => $request ) {
-				++$count;
-				$created = 0;
-				if ( \is_array( $request ) ) {
-					$proc      = $request['process'] ?? null;
-					$created_v = ( \is_array( $proc ) ? ( $proc['ts_start'] ?? null ) : null ) ?? ( $request['ts'] ?? 0 );
-					$created   = \is_scalar( $created_v ) ? (int) $created_v : 0;
-				}
-				if ( $created > 0 && $created < $oldest_ts ) {
-					$oldest_ts  = $created;
-					$oldest_rid = $rid;
-				}
-				if ( \count( $samples ) < 5 ) {
-					$samples[] = \is_scalar( $rid ) ? (string) $rid : '';
-				}
-			}
-			$payload = [
-				'pending_count' => $count,
-				'oldest_rid'    => $oldest_rid,
-				'oldest_age_s'  => null !== $oldest_rid ? $now - $oldest_ts : 0,
-				'sample'        => $samples,
-				'line_counter'  => $this->line_counter,
-			];
-		} else {
-			$payload = [ 'error' => "unknown request verb: {$verb}" ];
-		}
-
-		$reply                   = Message::new_message();
-		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$reply[ Message::FROM ]  = $this->name;
-		$reply[ Message::TO ]    = $message[ Message::FROM ];
-		$reply[ Message::ID ]    = $message[ Message::ID ];
-		$reply[ Message::KEY ]   = $message[ Message::KEY ];
-		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
-		$this->sink?->fill( $reply );
 	}
 
 	public static function node_schema(): array {

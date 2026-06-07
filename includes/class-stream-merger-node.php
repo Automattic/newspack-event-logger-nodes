@@ -275,6 +275,9 @@ class Stream_Merger_Node extends Timer_Node {
 	// =========================================================================
 
 	public function fill( array &$message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
+		}
 		++$this->counter;
 		/** @var int $type */
 		$type = $message[ Message::TYPE ];
@@ -282,17 +285,19 @@ class Stream_Merger_Node extends Timer_Node {
 			$this->handle_request( $message );
 			return;
 		}
-		$this->sink?->fill( $message );
 	}
 
 	/**
 	 * @param array<int, mixed> $message
 	 */
 	private function handle_request( array $message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
+		}
 		/** @var int|float|string|bool|null $raw_value */
 		$raw_value = $message[ Message::VALUE ];
 		$value     = (string) $raw_value;
-		$verb  = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_REMOTES' === $verb ) {
 			$remotes = [];
@@ -314,7 +319,7 @@ class Stream_Merger_Node extends Timer_Node {
 		$reply[ Message::ID ]    = $message[ Message::ID ];
 		$reply[ Message::KEY ]   = $message[ Message::KEY ];
 		$reply[ Message::VALUE ] = $payload;
-		$this->sink?->fill( $reply );
+		$this->sink->fill( $reply );
 	}
 
 	public function start_periodic_tick(): void {

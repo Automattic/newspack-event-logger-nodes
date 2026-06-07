@@ -714,6 +714,9 @@ class Remote_Source_Node extends Node {
 	 * @param array<int,mixed> $envelope 7-field Message array.
 	 */
 	private function forward_envelope( array $envelope ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Remote_Source::forward_envelope requires a wired sink' );
+		}
 		$value   = $envelope[ Message::VALUE ];
 		$key_raw = $envelope[ Message::KEY ];
 
@@ -753,7 +756,7 @@ class Remote_Source_Node extends Node {
 		$msg[ Message::KEY ]       = \is_scalar( $key_raw ) ? (string) $key_raw : '';
 		$msg[ Message::VALUE ]     = $value;
 		++$this->counter;
-		$this->sink?->fill( $msg );
+		$this->sink->fill( $msg );
 	}
 
 	// =========================================================================

@@ -493,7 +493,9 @@ class StreamMergerTest extends TestCase {
 
 	public function test_commit_all_writes_jsonl_per_remote(): void {
 		$sm = $this->make_merger();
+		$capture = new Capture_Sink_Node();
 		Core::$now = 1234567890.0;
+		$sm->sink( $capture );
 		$sm->add_remote( 'siteF', 'http://siteF.test/', 'tok' );
 
 		// Mutate position via envelope ID — post-M6.7 position rides each
@@ -517,6 +519,7 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 7, $decoded['siteF']['seg'] );
 		$this->assertSame( 999, $decoded['siteF']['off'] );
 		$this->assertSame( 1234567890, $decoded['_ts'] );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	// =========================================================================
@@ -1239,6 +1242,8 @@ class StreamMergerTest extends TestCase {
 
 	public function test_position_negative_clamped_to_zero(): void {
 		$sm = $this->make_merger();
+		$capture = new Capture_Sink_Node();
+		$sm->sink( $capture );
 		$sm->add_remote( 'siteNeg', 'http://siteNeg.test/', 'tok' );
 		$h = $sm->test_get_handle( 'siteNeg' );
 
@@ -1260,10 +1265,13 @@ class StreamMergerTest extends TestCase {
 		$pos = $sm->get_position( 'siteNeg' );
 		$this->assertSame( 0, $pos['segment_id'] );
 		$this->assertSame( 0, $pos['offset'] );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_position_partial_update_preserves_other_field(): void {
 		$sm = $this->make_merger();
+		$capture = new Capture_Sink_Node();
+		$sm->sink( $capture );
 		$sm->add_remote( 'sitePartial', 'http://sitePartial.test/', 'tok' );
 		$h = $sm->test_get_handle( 'sitePartial' );
 
@@ -1273,6 +1281,7 @@ class StreamMergerTest extends TestCase {
 		$pos1 = $sm->get_position( 'sitePartial' );
 		$this->assertSame( 5, $pos1['segment_id'] );
 		$this->assertSame( 100, $pos1['offset'] );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	// =========================================================================
@@ -1403,7 +1412,7 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( 0, $sm->remote_count() );
 	}
 
-	public function test_fill_increments_counter_and_passes_through(): void {
+	public function test_fill_drops_non_request_message(): void {
 		$sm      = $this->make_merger();
 		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
@@ -1414,18 +1423,22 @@ class StreamMergerTest extends TestCase {
 		$sm->fill( $msg );
 
 		// Counter incremented, message forwarded to sink.
-		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'pass-through', $capture->captured[0][ Message::VALUE ] );
+		$this->assertCount( 0, $capture->captured );
 	}
 
-	public function test_fill_without_sink_does_not_crash(): void {
-		// Without a sink, fill() must not crash on the null pass-through.
+	public function test_fill_without_sink_must_throw(): void {
+		// Without a sink, fill() must throw on the null pass-through.
 		$sm  = $this->make_merger();
 		$msg = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
 		$msg[ Message::VALUE ] = 'sinkless';
-		$sm->fill( $msg );
-		$this->addToAssertionCount( 1 );
+		$error = false;
+		try {
+			$sm->fill( $msg );
+		} catch ( \Throwable $e ) {
+			$error = true;
+		}
+		$this->assertSame( $error, true );
 	}
 
 	// =========================================================================
@@ -1655,6 +1668,8 @@ class StreamMergerTest extends TestCase {
 	public function test_tick_runs_maybe_commit_after_interval(): void {
 		// Tick should drive a commit when COMMIT_INTERVAL_S has elapsed.
 		$sm = $this->make_merger();
+		$capture = new Capture_Sink_Node();
+		$sm->sink( $capture );
 		Core::$now = 1000.0;
 		$sm->add_remote( 'siteCommit', 'http://siteCommit.test/', 'tok' );
 
@@ -1666,6 +1681,7 @@ class StreamMergerTest extends TestCase {
 		// First tick committed; verify offsetlog file exists.
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
 		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	// =========================================================================
@@ -1976,8 +1992,7 @@ class StreamMergerTest extends TestCase {
 		$msg[ Message::VALUE ] = 'a-response-not-a-request';
 		$sm->fill( $msg );
 
-		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'a-response-not-a-request', $capture->captured[0][ Message::VALUE ] );
+		$this->assertCount( 0, $capture->captured );
 	}
 
 	public function test_fire_runs_periodic_commit(): void {
@@ -1985,6 +2000,8 @@ class StreamMergerTest extends TestCase {
 		// fire()). With COMMIT_INTERVAL_S elapsed AND a remote at a non-default
 		// position, it drives commit_all() and produces an offsetlog segment file.
 		$sm = $this->make_merger();
+		$capture = new Capture_Sink_Node();
+		$sm->sink( $capture );
 		Core::$now = 1000.0;
 		$sm->add_remote( 'siteTimerFire', 'http://siteTimerFire.test/', 'tok' );
 
@@ -1997,11 +2014,12 @@ class StreamMergerTest extends TestCase {
 		// Offsetlog file exists — proves fire() ran maybe_commit().
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
 		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$this->assertCount( 1, $capture->captured );
 	}
 
-	public function test_fill_with_tm_info_non_timer_key_falls_through_to_sink(): void {
-		// TM_INFO with a KEY other than 'TIMER' must NOT trigger tick(); it
-		// falls through to the sink pass-through.
+	public function test_fill_with_tm_info_non_timer_key_is_dropped(): void {
+		// TM_INFO with a KEY other than 'TIMER' must NOT trigger tick();
+		// is dropped instead.
 		$sm      = $this->make_merger();
 		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
@@ -2012,8 +2030,7 @@ class StreamMergerTest extends TestCase {
 		$msg[ Message::VALUE ] = 'other-info';
 		$sm->fill( $msg );
 
-		$this->assertCount( 1, $capture->captured );
-		$this->assertSame( 'other-info', $capture->captured[0][ Message::VALUE ] );
+		$this->assertCount( 0, $capture->captured );
 	}
 
 	// =========================================================================
