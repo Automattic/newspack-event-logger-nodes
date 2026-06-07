@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-07
+
 ### Added
 
 - **Cache warmer runs as a JobWorker job, not wp-cron.** `Cache_Warmer_Tick_Node` (a `Timer_Node`) self-starts its timer in `arguments()` (so `make_node Cache_Warmer_Tick cache-warmer:tick` — or `… <interval>` for a custom period — arms it) and, hitchhiking `_router`'s ~5s heartbeat inside a long-lived worker (immune to wp-cron contention), enqueues a `cache_warmer` job every `INTERVAL_SECONDS` (60) by emitting a `TM_STRUCT` job Message to its `target` through the normal node-graph pipeline rather than writing to `Log_Manager` directly. The `cache_warmer` handler — registered on `newspack_nodes/job_handlers` via `Cache_Warmer_Tick_Node::init()` from the worker-runtime bootstrap — runs the drop-in's single-flight loopback (`Cache_Warmer::run_tick()`) inside the JobWorker, so the blocking warm render is isolated from the tick's loop. The handler drops any job that sat in the queue `>= INTERVAL_SECONDS` (a newer tick is already coming); there is no uniform JobWorker stale-drop — each handler enforces its own age, like `Remote_Manager::STALE_THRESHOLD`. Add to a topology with one line (`make_node Cache_Warmer_Tick cache-warmer:tick`); no `wp cron` scheduling.
