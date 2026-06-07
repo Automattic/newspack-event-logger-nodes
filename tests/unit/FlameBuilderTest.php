@@ -905,18 +905,16 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_handle_request_unknown_verb_returns_error(): void {
-		$fb      = new Flame_Builder_Node();
-		$capture = new Capture_Sink_Node();
+		$fb                    = new Flame_Builder_Node();
+		$capture               = new Capture_Sink_Node();
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_REQUEST;
+		$msg[ Message::FROM ]  = 'caller';
+		$msg[ Message::ID ]    = 'req-2';
+		$msg[ Message::VALUE ] = 'NONSENSE_VERB';
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
-
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_REQUEST;
-		$msg[ Message::FROM ]      = 'caller';
-		$msg[ Message::ID ]        = 'req-2';
-		$msg[ Message::VALUE ]     = 'NONSENSE_VERB';
 		$fb->fill( $msg );
-
 		$reply = $capture->captured[0];
 		$this->assertStringContainsString( 'unknown request verb', $reply[ Message::VALUE ]['data']['error'] );
 		$this->assertSame( 'NONSENSE_VERB', $reply[ Message::VALUE ]['verb'] );
@@ -925,11 +923,14 @@ class FlameBuilderTest extends TestCase {
 	public function test_response_messages_dont_trigger_handle_request(): void {
 		// TM_REQUEST | TM_RESPONSE should skip handle_request (it's a reply, not a request).
 		$fb                    = new Flame_Builder_Node();
+		$capture               = new Capture_Sink_Node();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
 		$msg[ Message::VALUE ] = 'GET_STATS';
+		$fb->sink( $capture );
 		$fb->fill( $msg );
 		$this->assertSame( 0, $this->stats_count( $fb ), 'response not processed as request' );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	// --- Auto-tune fire actions + memcache lock ---------------------------

@@ -1488,7 +1488,8 @@ class RemoteSourceTest extends TestCase {
 	public function test_msg_envelope_updates_position_from_envelope_id(): void {
 		// Each entry's ID = "seg:off" (set by Consumer at emit time). RemoteSource
 		// must parse + store so the next reconnect rides the same position.
-		$remote = $this->make_remote();
+		$remote   = $this->make_remote();
+		$capture  = new Capture_Sink_Node();
 		$envelope = [
 			Message::TM_STRUCT,
 			1700000000.0,
@@ -1498,11 +1499,13 @@ class RemoteSourceTest extends TestCase {
 			'rid',
 			[ 'k' => 'render', 'ts' => 1700000000 ],
 		];
+		$remote->sink( $capture );
 		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
 
 		$pos = $this->peek( $remote, 'position' );
 		$this->assertSame( 7, $pos['segment_id'] );
 		$this->assertSame( 512, $pos['offset'] );
+		$this->assertCount( 1, $capture->captured );
 	}
 
 	public function test_msg_envelope_scalar_value_passes_through(): void {

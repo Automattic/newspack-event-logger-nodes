@@ -149,6 +149,95 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Process a single completed request from requests.log.
+	 *
+	 * @param array<int, mixed> $message Reference; not mutated.
+	 */
+	public function fill( array &$message ): void {
+		++$this->counter;
+		$type_raw = $message[ Message::TYPE ];
+		$type     = \is_int( $type_raw ) ? $type_raw : 0;
+		if ( $type & Message::TM_REQUEST ) {
+			$this->handle_request( $message );
+			return;
+		}
+		if ( ! ( $type & Message::TM_STRUCT ) ) {
+			return;
+		}
+		$request = $message[ Message::VALUE ];
+		if ( ! \is_array( $request ) ) {
+			return;
+		}
+
+		$rid_raw  = $request['rid'] ?? '';
+		$rid      = \is_string( $rid_raw ) ? $rid_raw : '';
+		$url_raw  = $request['url'] ?? '';
+		$url_hash = Request_Builder_Node::url_hash( \is_string( $url_raw ) ? $url_raw : '' );
+		$entries  = $request['entries'] ?? [];
+		if ( ! \is_array( $entries ) ) {
+			$entries = [];
+		}
+
+		$duration_raw        = $request['duration_ms'] ?? 0;
+		$flame_data          = $this->build_flame_data( $entries );
+		$flame_data['value'] = \is_numeric( $duration_raw ) ? (float) $duration_raw : 0.0;
+
+		$profiles = $request['profiles'] ?? [];
+		if ( ! \is_array( $profiles ) ) {
+			$profiles = [];
+		}
+
+		if ( $this->store_flame( $rid, $url_hash, $flame_data ) ) {
+			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
+		}
+
+		// Periodic flush.
+		$now_f = \microtime( true );
+		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
+			$this->flush();
+			$this->last_flush_time = $now_f;
+		}
+	}
+
+	/** @param array<int, mixed> $message Incoming command Message. */
+	private function handle_request( array $message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Flame_Builder::fill requires a wired sink' );
+		}
+		$value_raw = $message[ Message::VALUE ];
+		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_STATS' === $verb ) {
+			$stats_count = 0;
+			foreach ( $this->stats_cache->iterate() as $_ ) {
+				++$stats_count;
+			}
+			$now = ( Core::$now ?: \microtime( true ) );
+			$payload = [
+				'stats_count'              => $stats_count,
+				'pending_url_count'        => \count( $this->pending ),
+				'pending_bucket'           => $this->pending_bucket,
+				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
+				'auto_tune_pending_count'  => \count( $this->hooks_to_disable ) + \count( $this->custom_events_to_disable ) + \count( $this->new_significant_events ),
+				'is_hub'                   => $this->is_hub,
+				'significant_events_count' => \count( $this->significant_events ),
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink->fill( $reply );
+	}
+
+	/**
 	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
 	 * alongside the base's own-name + `:config` checks. Chains parent::.
 	 */
@@ -200,7 +289,6 @@ class Flame_Builder_Node extends Node {
 	public function set_stats_store( ?Stats_Store $store ): void {
 		$this->stats_store = $store;
 	}
-
 
 	/**
 	 * Toggle hub mode (per-server tracking).
@@ -329,57 +417,6 @@ class Flame_Builder_Node extends Node {
 		if ( $now - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
 			$this->flush();
 			$this->last_flush_time = $now;
-		}
-	}
-
-	/**
-	 * Process a single completed request from requests.log.
-	 *
-	 * @param array<int, mixed> $message Reference; not mutated.
-	 */
-	public function fill( array &$message ): void {
-		++$this->counter;
-		$type_raw = $message[ Message::TYPE ];
-		$type     = \is_int( $type_raw ) ? $type_raw : 0;
-		if ( $type & Message::TM_REQUEST ) {
-			$this->handle_request( $message );
-			return;
-		}
-		if ( ! ( $type & Message::TM_STRUCT ) ) {
-			return;
-		}
-		$request = $message[ Message::VALUE ];
-		if ( ! \is_array( $request ) ) {
-			return;
-		}
-
-		$rid_raw  = $request['rid'] ?? '';
-		$rid      = \is_string( $rid_raw ) ? $rid_raw : '';
-		$url_raw  = $request['url'] ?? '';
-		$url_hash = Request_Builder_Node::url_hash( \is_string( $url_raw ) ? $url_raw : '' );
-		$entries  = $request['entries'] ?? [];
-		if ( ! \is_array( $entries ) ) {
-			$entries = [];
-		}
-
-		$duration_raw        = $request['duration_ms'] ?? 0;
-		$flame_data          = $this->build_flame_data( $entries );
-		$flame_data['value'] = \is_numeric( $duration_raw ) ? (float) $duration_raw : 0.0;
-
-		$profiles = $request['profiles'] ?? [];
-		if ( ! \is_array( $profiles ) ) {
-			$profiles = [];
-		}
-
-		if ( $this->store_flame( $rid, $url_hash, $flame_data ) ) {
-			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
-		}
-
-		// Periodic flush.
-		$now_f = \microtime( true );
-		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
-			$this->flush();
-			$this->last_flush_time = $now_f;
 		}
 	}
 
@@ -1870,45 +1907,6 @@ class Flame_Builder_Node extends Node {
 		$min        = (int) \gmdate( 'i', $timestamp );
 		$bucket_min = \str_pad( (string) ( (int) \floor( $min / self::BUCKET_MINUTES ) * self::BUCKET_MINUTES ), 2, '0', STR_PAD_LEFT );
 		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
-	}
-
-	// -------------------------------------------------------------------------
-	// Sibling-interpreter verb table + node_schema (A3).
-	// -------------------------------------------------------------------------
-
-	/** @param array<int, mixed> $message Incoming command Message. */
-	private function handle_request( array $message ): void {
-		$value_raw = $message[ Message::VALUE ];
-		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
-		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
-
-		if ( 'GET_STATS' === $verb ) {
-			$stats_count = 0;
-			foreach ( $this->stats_cache->iterate() as $_ ) {
-				++$stats_count;
-			}
-			$now = ( Core::$now ?: \microtime( true ) );
-			$payload = [
-				'stats_count'              => $stats_count,
-				'pending_url_count'        => \count( $this->pending ),
-				'pending_bucket'           => $this->pending_bucket,
-				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
-				'auto_tune_pending_count'  => \count( $this->hooks_to_disable ) + \count( $this->custom_events_to_disable ) + \count( $this->new_significant_events ),
-				'is_hub'                   => $this->is_hub,
-				'significant_events_count' => \count( $this->significant_events ),
-			];
-		} else {
-			$payload = [ 'error' => "unknown request verb: {$verb}" ];
-		}
-
-		$reply                   = Message::new_message();
-		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$reply[ Message::FROM ]  = $this->name;
-		$reply[ Message::TO ]    = $message[ Message::FROM ];
-		$reply[ Message::ID ]    = $message[ Message::ID ];
-		$reply[ Message::KEY ]   = $message[ Message::KEY ];
-		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
-		$this->sink?->fill( $reply );
 	}
 
 	public static function node_schema(): array {

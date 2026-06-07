@@ -122,6 +122,129 @@ class Job_Worker_Node extends Node {
 		return $result;
 	}
 
+	public function fill( array &$message ): void {
+		++$this->counter;
+		/** @var int $type */
+		$type = $message[ Message::TYPE ];
+		if ( $type & Message::TM_REQUEST ) {
+			$this->handle_request( $message );
+			return;
+		}
+		if ( ! ( $type & Message::TM_STRUCT ) ) {
+			return;
+		}
+		$entry = $message[ Message::VALUE ];
+		if ( ! \is_array( $entry ) ) {
+			return;
+		}
+		$encoded = \wp_json_encode( $entry );
+		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
+			Core::print_less_often( 'JobWorker: oversized entry, skipping' );
+			return;
+		}
+		// JobRouter normalizes every entry to {type, handler, parameters, ts}.
+		$kind = $entry['type'] ?? '';
+		if ( 'job' !== $kind && 'remote_job' !== $kind ) {
+			return;
+		}
+		/** @var int|float|string|bool|null $raw_handler */
+		$raw_handler = $entry['handler'] ?? '';
+		$handler     = (string) $raw_handler;
+		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
+			Core::print_less_often( "JobWorker: invalid handler name: $handler" );
+			return;
+		}
+		$handlers = ( 'remote_job' === $kind ) ? $this->remote_handlers : $this->local_handlers;
+		if ( ! isset( $handlers[ $handler ] ) ) {
+			Core::print_less_often( "JobWorker: no $kind handler registered for: $handler" );
+			return;
+		}
+		$parameters = $entry['parameters'] ?? [];
+
+		// Per-job discipline. The cleanup block runs even if the handler throws,
+		// because gc/cache cycles need to happen MOST when handlers misbehave —
+		// a crashed handler is exactly when leaks accumulate fastest.
+		$orig_server = self::begin_job_context( $handler );
+		try {
+			( $handlers[ $handler ] )( $parameters );
+		} catch ( \Throwable $e ) {
+			Core::print_less_often( "JobWorker: handler $handler threw: " . $e->getMessage() );
+		} finally {
+			self::end_job_context( $orig_server );
+		}
+		++$this->jobs_executed;
+		++$this->jobs_since_cache_flush;
+
+		// Force a GC cycle every job. Reference-counted GC can't break cycles
+		// immediately; explicit collection delays the watermark trip.
+		\gc_collect_cycles();
+
+		// Periodic object-cache flush extends per-process runtime by orders of
+		// magnitude on workloads that fan out wp_query under handler control.
+		if ( $this->jobs_since_cache_flush >= $this->cache_flush_interval ) {
+			if ( \function_exists( 'wp_cache_flush' ) ) {
+				\wp_cache_flush();
+			}
+			$this->set_state(
+				'CACHE_FLUSH',
+				[ 'jobs' => $this->cache_flush_interval ]
+			);
+			$this->jobs_since_cache_flush = 0;
+		}
+
+		// Memory watermark check. If we cross 80% of memory_limit, latch the
+		// pressure flag — topology code reads memory_pressure() in its drain
+		// predicate and exits cleanly so the supervisor respawns.
+		if ( $this->is_memory_high() && ! $this->memory_pressure ) {
+			$this->set_state( 'MEMORY_PRESSURE', [ 'usage' => \memory_get_usage( true ) ] );
+			$this->memory_pressure = true;
+		}
+
+		if ( null !== $this->between_jobs_cb ) {
+			// Pass the counter so the callback owns cadence decisions.
+			( $this->between_jobs_cb )( $this->jobs_executed );
+		}
+	}
+
+	/**
+	 * @param array<int, mixed> $message
+	 */
+	private function handle_request( array $message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Job_Worker::fill requires a wired sink' );
+		}
+		/** @var int|float|string|bool|null $raw_value */
+		$raw_value = $message[ Message::VALUE ];
+		$value     = (string) $raw_value;
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_HEALTH' === $verb ) {
+			$mem_limit = $this->memory_limit_bytes();
+			$mem_used  = \memory_get_usage( true );
+			$payload   = [
+				'memory_used_mb'           => (int) \round( $mem_used / 1048576, 1 ),
+				'memory_limit_mb'          => $mem_limit > 0 ? (int) \round( $mem_limit / 1048576, 1 ) : -1,
+				'memory_pressure'          => $this->memory_pressure,
+				'jobs_since_cache_flush'   => $this->jobs_since_cache_flush,
+				'cache_flush_interval'     => $this->cache_flush_interval,
+				'local_handler_count'      => \count( $this->local_handlers ),
+				'remote_handler_count'     => \count( $this->remote_handlers ),
+				'counter'                  => $this->counter,
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
+		$this->sink->fill( $reply );
+	}
+
 	private function validate_handler_name( string $name ): void {
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $name ) ) {
 			throw new \InvalidArgumentException( \esc_html( "invalid handler name: $name" ) );
@@ -217,90 +340,6 @@ class Job_Worker_Node extends Node {
 	 */
 	public function memory_pressure(): bool {
 		return $this->memory_pressure;
-	}
-
-	public function fill( array &$message ): void {
-		++$this->counter;
-		/** @var int $type */
-		$type = $message[ Message::TYPE ];
-		if ( $type & Message::TM_REQUEST ) {
-			$this->handle_request( $message );
-			return;
-		}
-		if ( ! ( $type & Message::TM_STRUCT ) ) {
-			return;
-		}
-		$entry = $message[ Message::VALUE ];
-		if ( ! \is_array( $entry ) ) {
-			return;
-		}
-		$encoded = \wp_json_encode( $entry );
-		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
-			Core::print_less_often( 'JobWorker: oversized entry, skipping' );
-			return;
-		}
-		// JobRouter normalizes every entry to {type, handler, parameters, ts}.
-		$kind = $entry['type'] ?? '';
-		if ( 'job' !== $kind && 'remote_job' !== $kind ) {
-			return;
-		}
-		/** @var int|float|string|bool|null $raw_handler */
-		$raw_handler = $entry['handler'] ?? '';
-		$handler     = (string) $raw_handler;
-		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
-			Core::print_less_often( "JobWorker: invalid handler name: $handler" );
-			return;
-		}
-		$handlers = ( 'remote_job' === $kind ) ? $this->remote_handlers : $this->local_handlers;
-		if ( ! isset( $handlers[ $handler ] ) ) {
-			Core::print_less_often( "JobWorker: no $kind handler registered for: $handler" );
-			return;
-		}
-		$parameters = $entry['parameters'] ?? [];
-
-		// Per-job discipline. The cleanup block runs even if the handler throws,
-		// because gc/cache cycles need to happen MOST when handlers misbehave —
-		// a crashed handler is exactly when leaks accumulate fastest.
-		$orig_server = self::begin_job_context( $handler );
-		try {
-			( $handlers[ $handler ] )( $parameters );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( "JobWorker: handler $handler threw: " . $e->getMessage() );
-		} finally {
-			self::end_job_context( $orig_server );
-		}
-		++$this->jobs_executed;
-		++$this->jobs_since_cache_flush;
-
-		// Force a GC cycle every job. Reference-counted GC can't break cycles
-		// immediately; explicit collection delays the watermark trip.
-		\gc_collect_cycles();
-
-		// Periodic object-cache flush extends per-process runtime by orders of
-		// magnitude on workloads that fan out wp_query under handler control.
-		if ( $this->jobs_since_cache_flush >= $this->cache_flush_interval ) {
-			if ( \function_exists( 'wp_cache_flush' ) ) {
-				\wp_cache_flush();
-			}
-			$this->set_state(
-				'CACHE_FLUSH',
-				[ 'jobs' => $this->cache_flush_interval ]
-			);
-			$this->jobs_since_cache_flush = 0;
-		}
-
-		// Memory watermark check. If we cross 80% of memory_limit, latch the
-		// pressure flag — topology code reads memory_pressure() in its drain
-		// predicate and exits cleanly so the supervisor respawns.
-		if ( $this->is_memory_high() && ! $this->memory_pressure ) {
-			$this->set_state( 'MEMORY_PRESSURE', [ 'usage' => \memory_get_usage( true ) ] );
-			$this->memory_pressure = true;
-		}
-
-		if ( null !== $this->between_jobs_cb ) {
-			// Pass the counter so the callback owns cadence decisions.
-			( $this->between_jobs_cb )( $this->jobs_executed );
-		}
 	}
 
 	/**
@@ -407,46 +446,6 @@ class Job_Worker_Node extends Node {
 				break;
 		}
 		return $num;
-	}
-
-	// -------------------------------------------------------------------------
-	// Requests + node_schema (A3).
-	// -------------------------------------------------------------------------
-
-	/**
-	 * @param array<int, mixed> $message
-	 */
-	private function handle_request( array $message ): void {
-		/** @var int|float|string|bool|null $raw_value */
-		$raw_value = $message[ Message::VALUE ];
-		$value     = (string) $raw_value;
-		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
-
-		if ( 'GET_HEALTH' === $verb ) {
-			$mem_limit = $this->memory_limit_bytes();
-			$mem_used  = \memory_get_usage( true );
-			$payload   = [
-				'memory_used_mb'           => (int) \round( $mem_used / 1048576, 1 ),
-				'memory_limit_mb'          => $mem_limit > 0 ? (int) \round( $mem_limit / 1048576, 1 ) : -1,
-				'memory_pressure'          => $this->memory_pressure,
-				'jobs_since_cache_flush'   => $this->jobs_since_cache_flush,
-				'cache_flush_interval'     => $this->cache_flush_interval,
-				'local_handler_count'      => \count( $this->local_handlers ),
-				'remote_handler_count'     => \count( $this->remote_handlers ),
-				'counter'                  => $this->counter,
-			];
-		} else {
-			$payload = [ 'error' => "unknown request verb: {$verb}" ];
-		}
-
-		$reply                   = Message::new_message();
-		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$reply[ Message::FROM ]  = $this->name;
-		$reply[ Message::TO ]    = $message[ Message::FROM ];
-		$reply[ Message::ID ]    = $message[ Message::ID ];
-		$reply[ Message::KEY ]   = $message[ Message::KEY ];
-		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
-		$this->sink?->fill( $reply );
 	}
 
 	public static function node_schema(): array {
