@@ -281,10 +281,6 @@ class Request_Builder_Node extends Node {
 		}
 	}
 
-	/**
-	 * Manifest for the topology console's palette + form rendering.
-	 * See Node::node_schema() for the shape contract.
-	 */
 	/** @param array<int, mixed> $message Incoming command Message. */
 	private function handle_request( array $message ): void {
 		if ( null === $this->sink ) {
@@ -1174,6 +1170,10 @@ class Request_Builder_Node extends Node {
 		return null;
 	}
 
+	/**
+	 * Manifest for the topology console's palette + form rendering.
+	 * See Node::node_schema() for the shape contract.
+	 */
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',

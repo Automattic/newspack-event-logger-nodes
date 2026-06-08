@@ -51,3 +51,7 @@ rm -rf /tmp/newspack-event-logger-nodes-test 2>/dev/null
 
 echo ""
 echo "Coverage report: /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/index.html"
+
+rm -rf /tmp/event-logger-nodes-test                   \
+       /tmp/newspack-nodes-test-*                     \
+	   /tmp/phpunit-cache-newspack-event-logger-nodes
