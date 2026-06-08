@@ -28,13 +28,13 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
-import useVirtualization from '../shared/hooks/useVirtualization';
-import ConnectionBanner from '../shared/components/ConnectionBanner';
+import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
+import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
 import {
 	formatDuration,
 	getDurationClass,
 	getStatusClass,
-} from '../shared/utils/formatUtils';
+} from '@newspack-nodes/shared/utils/formatUtils';
 import './styles/request-stream.scss';
 
 const ROW_HEIGHT = 33; // Fixed row height in pixels.

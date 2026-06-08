@@ -92,7 +92,7 @@ jest.mock( 'd3-flame-graph/dist/d3-flamegraph.css', () => ( {} ), {
 import * as React from 'react';
 import * as d3 from 'd3';
 import FlameGraph, { pruneFlameGraph } from '../FlameGraph';
-import { renderComponent } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 

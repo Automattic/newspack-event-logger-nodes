@@ -22,10 +22,7 @@ jest.mock( '../CustomEventSelectorModal', () => ( {
 
 import * as React from 'react';
 import TagInputField from '../TagInputField';
-import {
-	renderComponent,
-	act,
-} from '../../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 /**
  * Set a controlled-input's value AND dispatch a React-friendly change.

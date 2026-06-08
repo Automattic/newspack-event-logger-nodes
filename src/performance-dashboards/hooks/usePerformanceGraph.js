@@ -47,9 +47,9 @@ import {
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
 import '../nodes/register';
-import usePageVisibility from '../../shared/hooks/usePageVisibility';
-import { getCommandClient } from '../../shared/utils/commandClient';
-import unwrapCommandResponse from '../../shared/utils/unwrapCommandResponse';
+import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
+import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
+import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 
 // I/O boundary node.
 const HTTP = '_http';

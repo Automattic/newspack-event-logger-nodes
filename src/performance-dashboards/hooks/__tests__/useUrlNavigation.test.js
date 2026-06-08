@@ -11,7 +11,7 @@
  */
 
 import useUrlNavigation from '../useUrlNavigation';
-import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
+import { renderHook, act } from '../../../test-helpers/renderHook';
 
 const URLS = [
 	{ hash: 'aaa', url: '/foo' },

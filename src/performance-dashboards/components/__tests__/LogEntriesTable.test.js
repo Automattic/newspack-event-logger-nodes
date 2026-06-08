@@ -15,10 +15,7 @@
 
 import * as React from 'react';
 import LogEntriesTable from '../LogEntriesTable';
-import {
-	renderComponent,
-	act,
-} from '../../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 /**
  * Build a typical entry tree:

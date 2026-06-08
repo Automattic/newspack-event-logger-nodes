@@ -1,5 +1,5 @@
 import { Node, VALUE } from '@newspack-nodes/runtime';
-import fnv1a from '../../shared/utils/fnv1a';
+import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const RPS_WINDOW_MS = 10000;

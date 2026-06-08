@@ -27,7 +27,7 @@ jest.mock( '../ErrorLog', () => ( {
 	},
 } ) );
 
-import { act } from '../../shared/hooks/__tests__/renderHook';
+import { act } from '../../test-helpers/renderHook';
 
 // mountIndex waits on a timer-scheduled Suspense re-render (legacy
 // ReactDOM.render mode). Under run-coverage's heavy parallel load that

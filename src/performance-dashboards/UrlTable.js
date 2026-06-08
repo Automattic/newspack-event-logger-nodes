@@ -14,8 +14,8 @@ import {
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { Button, TextControl } from '@wordpress/components';
-import { STATUS_COLORS } from '../shared/utils/formatUtils';
-import useVirtualization from '../shared/hooks/useVirtualization';
+import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
+import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 
 const ROW_HEIGHT = 40;
 const URLS_PER_PAGE = 100;

@@ -13,7 +13,7 @@
 // useVirtualization expects a .components-modal__content ancestor; in
 // tests the SUT mounts at the root so closest() returns null and the
 // hook crashes on getBoundingClientRect. Mock to a no-op virtualizer.
-jest.mock( '../../../shared/hooks/useVirtualization', () => ( {
+jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
 	default: ( _ref, _row, total ) => ( {
 		startIndex: 0,
@@ -48,10 +48,7 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 
 import * as React from 'react';
 import UrlDetailView from '../UrlDetailView';
-import {
-	renderComponent,
-	act,
-} from '../../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 const baseUrlDetail = {
 	stats: { avg_ms: 100 },

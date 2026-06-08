@@ -82,7 +82,7 @@ jest.mock( 'd3', () => {
 import * as React from 'react';
 import * as d3 from 'd3';
 import ResponseTimeChart from '../ResponseTimeChart';
-import { renderComponent } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 

@@ -26,8 +26,8 @@ import ResponseTimeChart from '../ResponseTimeChart';
 import RequestProfile from '../RequestProfile';
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { getStatusColor } from '../../shared/utils/formatUtils';
-import useVirtualization from '../../shared/hooks/useVirtualization';
+import { getStatusColor } from '@newspack-nodes/shared/utils/formatUtils';
+import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 
 const ROW_HEIGHT = 40;
 
