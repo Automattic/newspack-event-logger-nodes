@@ -156,7 +156,12 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
-	it( 'reacts to event-logger-reset DOM events on its container', () => {
+	it( 'ignores legacy event-logger-reset DOM events (per-field reset is now the toggle module)', () => {
+		// The old PHP reset button dispatched `event-logger-reset` to reset the
+		// field to baked-in defaults. That mechanism was replaced by the shared
+		// admin-field-reset toggle (clears + marks for server-side delete), so
+		// TagInputField no longer listens for the event: its hidden value stays
+		// at the current values regardless of the (now-orphaned) event.
 		const hidden = setUpHiddenInput( 'urls' );
 		const containerDiv = setUpContainer( 'urls' );
 		const { unmount } = renderComponent(
@@ -176,7 +181,7 @@ describe( 'TagInputField', () => {
 				} )
 			);
 		} );
-		expect( hidden.value ).toBe( '["/default1","/default2"]' );
+		expect( hidden.value ).toBe( '["/old"]' );
 		unmount();
 	} );
 

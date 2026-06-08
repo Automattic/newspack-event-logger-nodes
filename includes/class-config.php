@@ -156,17 +156,16 @@ class Config {
 		// collisions. Substrate `load_config()` already handles the
 		// substrate sample overlay.
 		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
-		$config    = \array_merge( $substrate, self::load_config_defaults() );
+		$defaults  = \array_merge( $substrate, self::load_config_defaults() );
 
-		if ( \defined( 'ABSPATH' ) && \function_exists( 'get_option' ) ) {
-			foreach ( \array_keys( self::$option_schema ) as $key ) {
-				$value = \get_option( "newspack_event_logger_nodes_{$key}" );
-				if ( false === $value || '' === $value ) {
-					continue;
-				}
-				$config[ $key ] = $value;
-			}
-		}
+		// Presence-based overlay: a stored option (even '' / [] / false / 0) wins
+		// over the file default; only an absent option falls back. Shared rule —
+		// see Config_System\Options_Overlay.
+		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
+			$defaults,
+			\array_keys( self::$option_schema ),
+			'newspack_event_logger_nodes_'
+		);
 
 		self::$config = $config;
 

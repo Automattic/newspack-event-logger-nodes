@@ -41,6 +41,8 @@ use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\CLI;
 use Newspack_Nodes\Config as Substrate_Config;
+use Newspack_Nodes\Config_System\Field_Reset_Assets;
+use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Lock_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -82,6 +84,9 @@ class Admin {
 	public const RESET_ACTION = 'newspack_event_logger_nodes_reset_settings';
 	public const RESET_NONCE  = 'newspack_event_logger_nodes_reset_nonce';
 
+	/** Hidden-input array name carrying per-field reset marks ({option} => "1"). */
+	public const RESET_MARK_FIELD = 'newspack_event_logger_nodes_reset';
+
 	/**
 	 * Nonce action / field name for the flush-memcache-stats form.
 	 */
@@ -94,13 +99,16 @@ class Admin {
 	 * Substrate-level options (base_directory, num_partitions, num_segments,
 	 * segment_size, max_lifespan, memcache_servers, enable_workers) live on
 	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. Application
-	 * admin only owns the keys below — including the aggregator spoke list
-	 * (`aggregator_servers`).
+	 * admin only owns the keys below. (The aggregator spoke list
+	 * `aggregator_servers` is NOT here — it's managed by the ServerRegistry REST
+	 * CRUD, not the settings form, so the settings reset doesn't touch it.)
 	 *
 	 * Kept on the class so child plugins can extend via the `…_reset_options`
-	 * filter without re-listing these.
+	 * filter without re-listing these. EVERY settings-form option (booleans +
+	 * multi-selects included) must appear here so a reset clears them all, and so
+	 * the shared `Reset_Gate` attaches its gate to each.
 	 *
-	 * @var string[]
+	 * @var array<int, string>
 	 */
 	private static array $option_names = [
 		// General.
@@ -110,8 +118,13 @@ class Admin {
 		'newspack_event_logger_nodes_skip_urls',
 		'newspack_event_logger_nodes_log_events',
 		'newspack_event_logger_nodes_custom_events',
-		// Aggregator.
-		'newspack_event_logger_nodes_aggregator_servers',
+		// Aggregator. (aggregator_servers is excluded — it's managed by the
+		// ServerRegistry REST CRUD, not a settings-form field, so there's nothing
+		// to reset here.)
+		'newspack_event_logger_nodes_enable_aggregator',
+		'newspack_event_logger_nodes_remote_num_segments',
+		'newspack_event_logger_nodes_remote_segment_size',
+		'newspack_event_logger_nodes_remote_max_lifespan',
 		// Performance Workers (application-side).
 		'newspack_event_logger_nodes_significant_events',
 		'newspack_event_logger_nodes_auto_disable_threshold',
@@ -119,6 +132,26 @@ class Admin {
 		// Debugging.
 		'newspack_event_logger_nodes_log_memory',
 		'newspack_event_logger_nodes_flush_every_line',
+	];
+
+	/**
+	 * Text-like keys that get a `pre_update_option_{$option}` delete-on-blank
+	 * filter: a blank submission (or `↺` field-reset) deletes the row so the
+	 * file default resurfaces under presence-based Config, instead of storing
+	 * '' (which would override the default). This is the scalar subset of
+	 * $option_names — checkbox bools (enable_logging, log_memory,
+	 * flush_every_line) and multi-select arrays (log_urls, skip_urls,
+	 * log_events, custom_events, significant_events) are EXCLUDED: an unchecked
+	 * box or empty selection there is a real override.
+	 *
+	 * @var array<int, string>
+	 */
+	private static array $delete_on_blank_options = [
+		'newspack_event_logger_nodes_auto_disable_threshold',
+		'newspack_event_logger_nodes_auto_protect_time_threshold',
+		'newspack_event_logger_nodes_remote_num_segments',
+		'newspack_event_logger_nodes_remote_segment_size',
+		'newspack_event_logger_nodes_remote_max_lifespan',
 	];
 
 	/**
@@ -312,6 +345,8 @@ class Admin {
 			// below the form. Matches the legacy plugin's
 			// `newspack_event_logger_settings_after_form` hook.
 			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
+			Field_Reset_Assets::enqueue();
+			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
 			?>
 		</div>
 		<?php
@@ -586,6 +621,11 @@ class Admin {
 			self::SETTINGS_PAGE,
 			'newspack_event_logger_nodes_debugging_section'
 		);
+
+		// Shared per-field reset / delete-on-blank gate (Config_System\Reset_Gate):
+		// a reset toggle (any field — booleans + multi-selects included) OR a
+		// blanked text-like field deletes the row so the file default resurfaces.
+		Reset_Gate::register( self::RESET_MARK_FIELD, self::$option_names, self::$delete_on_blank_options );
 	}
 
 	// -- Sanitizers ---------------------------------------------------------
@@ -779,9 +819,15 @@ class Admin {
 	public function enable_logging_callback(): void {
 		$enabled = $this->bool_option_with_file_default( 'enable_logging', 1 );
 		?>
-		<input type="hidden" name="newspack_event_logger_nodes_enable_logging" value="0" />
-		<input type="checkbox" id="enable_logging" name="newspack_event_logger_nodes_enable_logging" value="1" <?php \checked( 1, $enabled ); ?> />
-		<label for="enable_logging"><?php \esc_html_e( 'Enable event logging', 'newspack-event-logger-nodes' ); ?></label>
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'enable_logging' ) ); ?>">
+			<div style="flex: 1;">
+				<input type="hidden" name="newspack_event_logger_nodes_enable_logging" value="0" />
+				<input type="checkbox" id="enable_logging" name="newspack_event_logger_nodes_enable_logging" value="1" <?php \checked( 1, $enabled ); ?> />
+				<label for="enable_logging"><?php \esc_html_e( 'Enable event logging', 'newspack-event-logger-nodes' ); ?></label>
+			</div>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+		</div>
 		<?php
 	}
 
@@ -819,9 +865,15 @@ class Admin {
 	public function enable_aggregator_callback(): void {
 		$enabled = $this->bool_option_with_file_default( 'enable_aggregator' );
 		?>
-		<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
-		<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
-		<label for="enable_aggregator"><?php \esc_html_e( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' ); ?></label>
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'enable_aggregator' ) ); ?>">
+			<div style="flex: 1;">
+				<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
+				<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
+				<label for="enable_aggregator"><?php \esc_html_e( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' ); ?></label>
+			</div>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+		</div>
 		<?php
 	}
 
@@ -986,7 +1038,7 @@ class Admin {
 		$count_display = ( '' === $count_value || 0 === ( \is_numeric( $count_value ) ? (int) $count_value : 0 ) ) ? '' : $count_value;
 		$time_display  = ( '' === $time_value || 0.0 === ( \is_numeric( $time_value ) ? (float) $time_value : 0.0 ) ) ? '' : $time_value;
 		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;">
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'auto_disable_threshold' ) ); ?>">
 			<div style="flex: 1;">
 				<div class="event-logger-auto-disable-row">
 					<label class="event-logger-auto-disable-label">
@@ -1009,9 +1061,8 @@ class Admin {
 				</div>
 				<p class="description"><?php \esc_html_e( 'Noisy events (count > N) get disabled. Significant events (avg >= M ms) are protected. Set to 0 to disable.', 'newspack-event-logger-nodes' ); ?></p>
 			</div>
-			<button type="button" class="button button-secondary event-logger-reset-btn"
-				onclick="document.getElementById('auto_disable_threshold').value=''; document.getElementById('auto_protect_time_threshold').value='';"
-				title="<?php \esc_attr_e( 'Clear (use defaults)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
 		</div>
 		<?php
 	}
@@ -1021,22 +1072,34 @@ class Admin {
 	public function log_memory_callback(): void {
 		$enabled = $this->bool_option_with_file_default( 'log_memory' );
 		?>
-		<input type="hidden" name="newspack_event_logger_nodes_log_memory" value="0" />
-		<label>
-			<input type="checkbox" id="log_memory" name="newspack_event_logger_nodes_log_memory" value="1" <?php \checked( 1, $enabled ); ?> />
-			<?php \esc_html_e( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' ); ?>
-		</label>
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'log_memory' ) ); ?>">
+			<div style="flex: 1;">
+				<input type="hidden" name="newspack_event_logger_nodes_log_memory" value="0" />
+				<label>
+					<input type="checkbox" id="log_memory" name="newspack_event_logger_nodes_log_memory" value="1" <?php \checked( 1, $enabled ); ?> />
+					<?php \esc_html_e( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' ); ?>
+				</label>
+			</div>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+		</div>
 		<?php
 	}
 
 	public function flush_every_line_callback(): void {
 		$enabled = $this->bool_option_with_file_default( 'flush_every_line' );
 		?>
-		<input type="hidden" name="newspack_event_logger_nodes_flush_every_line" value="0" />
-		<label>
-			<input type="checkbox" id="flush_every_line" name="newspack_event_logger_nodes_flush_every_line" value="1" <?php \checked( 1, $enabled ); ?> />
-			<?php \esc_html_e( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' ); ?>
-		</label>
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'flush_every_line' ) ); ?>">
+			<div style="flex: 1;">
+				<input type="hidden" name="newspack_event_logger_nodes_flush_every_line" value="0" />
+				<label>
+					<input type="checkbox" id="flush_every_line" name="newspack_event_logger_nodes_flush_every_line" value="1" <?php \checked( 1, $enabled ); ?> />
+					<?php \esc_html_e( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' ); ?>
+				</label>
+			</div>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+		</div>
 		<?php
 	}
 
@@ -1331,6 +1394,11 @@ class Admin {
 
 	// -- Private renderers --------------------------------------------------
 
+	/** Hidden-input name that flags $field for per-field reset (deleted on Save). */
+	private function reset_mark_name( string $field ): string {
+		return Reset_Gate::mark_name( self::RESET_MARK_FIELD, self::OPTION_PREFIX . $field );
+	}
+
 	/**
 	 * Render a tag-input field for array settings — the mount markup the
 	 * React `TagInputField` tree (built into `build/performance-logger/index.js`)
@@ -1348,7 +1416,7 @@ class Admin {
 		$values_json  = \wp_json_encode( $values ) ?: '';
 		$default_json = \wp_json_encode( $default ) ?: '';
 		?>
-		<div style="display:flex; align-items:flex-start; gap:10px;">
+		<div style="display:flex; align-items:flex-start; gap:10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( $field ) ); ?>">
 			<div style="flex:1;">
 				<input type="hidden" id="<?php echo \esc_attr( $field ); ?>_json" name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>" value="<?php echo \esc_attr( $values_json ); ?>" />
 				<div id="event-logger-<?php echo \esc_attr( $field ); ?>"
@@ -1357,10 +1425,8 @@ class Admin {
 					data-default="<?php echo \esc_attr( $default_json ); ?>"
 					class="event-logger-tag-input"></div>
 			</div>
-			<button type="button" class="button button-secondary event-logger-reset-field"
-				data-field="<?php echo \esc_attr( $field ); ?>"
-				data-default="<?php echo \esc_attr( $default_json ); ?>"
-				title="<?php \esc_attr_e( 'Reset to default', 'newspack-event-logger-nodes' ); ?>">&#x21BA;</button>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">&#x21BA;</button>
 		</div>
 		<p class="description"><?php echo \esc_html( $description ); ?></p>
 		<?php if ( '' !== $examples ) : ?>
@@ -1375,7 +1441,7 @@ class Admin {
 		$display_value = ( '' === $value || ( \is_numeric( $value ) ? (int) $value : 0 ) === $default ) ? '' : $value;
 		$input_class   = $max > 999 ? 'regular-text' : 'small-text';
 		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;">
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( $field ) ); ?>">
 			<div style="flex: 1;">
 				<input type="number" id="<?php echo \esc_attr( $field ); ?>"
 					name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>"
@@ -1386,9 +1452,8 @@ class Admin {
 					placeholder="<?php echo \esc_attr( (string) $default ); ?>" />
 				<p class="description"><?php echo \esc_html( $description ); ?></p>
 			</div>
-			<button type="button" class="button button-secondary event-logger-reset-number"
-				data-field="<?php echo \esc_attr( $field ); ?>"
-				title="<?php \esc_attr_e( 'Clear (use default)', 'newspack-event-logger-nodes' ); ?>">↺</button>
+			<button type="button" class="button button-secondary" data-nn-reset-toggle
+				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
 		</div>
 		<?php
 	}

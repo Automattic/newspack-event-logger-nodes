@@ -111,8 +111,7 @@ $_newspack_event_logger_nodes_load = static function () use (
 		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 	);
 
-	// Set the operator-override dir now (before the catalog publishes / before
-	// spawn) — it used to be set lazily inside the now-deleted topologies filter.
+	// Set the operator-override dir now (before the catalog publishes / before spawn)
 	$_newspack_event_logger_nodes_register_user_topology_dir();
 
 	// Node-class namespace registration for the service CIs. register_plugin
@@ -153,10 +152,8 @@ $_newspack_event_logger_nodes_load = static function () use (
 	// spokes, so the hook stays registered at boot.
 	\Newspack_Event_Logger_Nodes\Settings_Sync::init();
 
-	// Set the one shared Memcached handle on the substrate Core, then wire
-	// the substrate's SSE slot pool (generic rate-limiting) onto SSE_Out's
+	// Wire the substrate's SSE slot pool (generic rate-limiting) onto SSE_Out's
 	// 3-Closure seam so the unified SSE endpoint inherits the concurrency cap.
-	newspack_event_logger_nodes_init_memcached();
 	\Newspack_Nodes\SSE_Slot_Pool::wire();
 
 	// Hook instrumentation — the whole reason this plugin exists. Runs
@@ -323,33 +320,7 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 // — the four browser dashboards consume the substrate's unified
 // `/messages/stream` endpoint directly (M6.3-M6.6) and `RemoteSource`
 // (cross-server SSE pull) does the same (M6.7). The substrate's
-// SSE_Out + Topology_Stream_Controller handle every
-// SSE need now.
-
-/**
- * Build the one shared `\Memcached` handle from the substrate's
- * `memcache_servers` config (host:port strings; defaults to 127.0.0.1:11211)
- * and stash it on `\Newspack_Nodes\Core::$memd`. Left null if the PECL
- * `\Memcached` class is absent or no server registers — every consumer's
- * null-safe `Core::$memd?->...` then fails soft.
- */
-function newspack_event_logger_nodes_init_memcached(): void {
-	if ( ! \class_exists( '\Memcached' ) ) {
-		return;
-	}
-	$config  = \Newspack_Nodes\Config::load_config();
-	$servers = $config['memcache_servers'] ?? [ '127.0.0.1:11211' ];
-	if ( ! \is_array( $servers ) || empty( $servers ) ) {
-		$servers = [ '127.0.0.1:11211' ];
-	}
-	$memd = new \Memcached();
-	/** @var int|float|string|bool|null $server */
-	foreach ( $servers as $server ) {
-		$parts = \explode( ':', (string) $server );
-		$memd->addServer( $parts[0], (int) ( $parts[1] ?? 11211 ) );
-	}
-	\Newspack_Nodes\Core::$memd = empty( $memd->getServerList() ) ? null : $memd;
-}
+// SSE_Out + Topology_Stream_Controller handle every SSE need now.
 
 /**
  * Service-CommandInterpreter (interpreter) mounting.
@@ -460,9 +431,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			'newspack-nodes-performance',
 			$performance_callback
 		);
-		// Workers + Raw Logs are substrate dashboards now — they register
-		// their own submenu pages under the "Nodes" top-level via
-		// newspack-nodes/includes/admin/class-admin.php::register_event_dashboard_pages.
 		$dashboards = [
 			'newspack-nodes-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
 			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
@@ -645,13 +613,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			);
 
 			// Aggregator admin JS: powers the Test/Toggle/Remove/Add buttons
-			// on the Remote Servers section. M5.2 cutover — was a raw jQuery
-			// script under `assets/`; now a wp-scripts build entry so the
-			// `@newspack-nodes/runtime` alias resolves and the 4 CRUD verbs
-			// dispatch through the shared CommandClient against the unified
-			// `/command` endpoint (M2 Servers_CI add/update/delete/test).
-			// jQuery stays for DOM glue but the actual transport runs through
-			// the same singleton dashboards use.
+			// on the Remote Servers section.
 			$aggregator_js_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/aggregator-admin/index.js';
 			$aggregator_js_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/aggregator-admin/index.js';
 			$aggregator_asset_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/aggregator-admin/index.asset.php';

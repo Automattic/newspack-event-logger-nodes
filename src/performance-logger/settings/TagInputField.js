@@ -56,27 +56,6 @@ export default function TagInputField( {
 		}
 	}, [ values, fieldName ] );
 
-	// Listen for reset events from PHP reset buttons.
-	useEffect( () => {
-		const container = document.getElementById(
-			`event-logger-${ fieldName }`
-		);
-		if ( ! container ) {
-			return;
-		}
-
-		const handleReset = ( e ) => {
-			if ( e.detail && e.detail.field === fieldName ) {
-				setValues( e.detail.defaultValues || [] );
-			}
-		};
-
-		container.addEventListener( 'event-logger-reset', handleReset );
-		return () => {
-			container.removeEventListener( 'event-logger-reset', handleReset );
-		};
-	}, [ fieldName ] );
-
 	/**
 	 * Remove a value by index.
 	 *
