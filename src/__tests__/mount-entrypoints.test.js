@@ -135,7 +135,10 @@ describe( 'dashboard mount-entry points', () => {
 		} ).not.toThrow();
 	} );
 
-	it( 'performance-logger reset button dispatches event-logger-reset to its container', () => {
+	it( 'performance-logger no longer wires legacy reset buttons (per-field reset is the toggle module)', () => {
+		// The old in-page reset-to-baked-default mechanism was replaced by the
+		// shared admin-field-reset toggle module. performance-logger no longer
+		// binds `event-logger-reset-*` buttons, so a legacy button click is inert.
 		const div = mountContainer( 'event-logger-log_urls' );
 		div.dataset.values = '[]';
 		div.dataset.default = '[]';
@@ -151,9 +154,6 @@ describe( 'dashboard mount-entry points', () => {
 			captured = e.detail;
 		} );
 		btn.click();
-		expect( captured ).toEqual( {
-			field: 'log_urls',
-			defaultValues: [ 'default1' ],
-		} );
+		expect( captured ).toBeNull();
 	} );
 } );

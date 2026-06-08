@@ -13,10 +13,10 @@ import './styles/settings.scss';
 import './styles/hook-selector.scss';
 import './styles/custom-event-selector.scss';
 
-// Mount settings components when DOM is ready.
+// Mount settings components when DOM is ready. Per-field reset is handled by
+// the shared admin-field-reset toggle module (DOM-only, enqueued separately).
 document.addEventListener( 'DOMContentLoaded', () => {
 	initTagInputFields();
-	initResetButtons();
 } );
 
 /**
@@ -93,47 +93,4 @@ function initTagInputFields() {
 			}
 		}
 	);
-}
-
-/**
- * Initialize reset buttons for all field types.
- */
-function initResetButtons() {
-	document.querySelectorAll( '[data-field]' ).forEach( ( btn ) => {
-		if (
-			! btn.classList.contains( 'event-logger-reset-field' ) &&
-			! btn.classList.contains( 'event-logger-reset-number' ) &&
-			! btn.classList.contains( 'event-logger-reset-text' )
-		) {
-			return;
-		}
-
-		btn.addEventListener( 'click', () => {
-			const fieldName = btn.dataset.field;
-			const defaultVal = btn.dataset.default;
-
-			// Try React component first (array fields).
-			const container = document.getElementById(
-				`event-logger-${ fieldName }`
-			);
-			if ( container ) {
-				container.dispatchEvent(
-					new CustomEvent( 'event-logger-reset', {
-						detail: {
-							field: fieldName,
-							defaultValues: parseStringArray( defaultVal ),
-						},
-					} )
-				);
-				return;
-			}
-
-			// Fall back to direct input (number/text fields).
-			// Clear to empty - placeholder shows default.
-			const input = document.getElementById( fieldName );
-			if ( input ) {
-				input.value = '';
-			}
-		} );
-	} );
 }

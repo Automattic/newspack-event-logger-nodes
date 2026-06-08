@@ -215,6 +215,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 use Newspack_Event_Logger_Nodes\Admin\Admin;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Config_System\Field_Reset_Assets;
+use Newspack_Nodes\Config_System\Reset_Gate;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -576,6 +578,9 @@ class AdminTest extends TestCase {
 
 		// Submit + reset buttons present.
 		$this->assertStringContainsString( '<input type="submit"', $html );
+
+		// Per-field reset toggle highlight style is injected on the page.
+		$this->assertStringContainsString( '.is-marked [data-nn-reset-toggle]', $html );
 	}
 
 	public function test_render_settings_page_fires_settings_after_form_action(): void {
@@ -780,6 +785,9 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'type="hidden"', $out );
 		$this->assertStringContainsString( 'type="checkbox"', $out );
 		$this->assertStringContainsString( 'checked="checked"', $out );
+		// Per-field reset toggle wraps the checkbox.
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_enable_logging]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
 	}
 
 	public function test_enable_logging_callback_unchecked_when_disabled(): void {
@@ -822,6 +830,36 @@ class AdminTest extends TestCase {
 		}
 	}
 
+	public function test_enable_aggregator_callback_has_reset_toggle(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->enable_aggregator_callback();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_enable_aggregator]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
+	}
+
+	/**
+	 * Every option exposed by the settings form must be in the bulk-reset list,
+	 * so "Reset to Defaults" clears all of them (booleans + multi-selects too).
+	 */
+	public function test_reset_list_covers_every_settings_form_option(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+
+		$ref = new \ReflectionProperty( Admin::class, 'option_names' );
+		$ref->setAccessible( true );
+		$reset_list = $ref->getValue();
+
+		foreach ( \array_keys( $GLOBALS['_registered_settings'] ) as $registered ) {
+			$this->assertContains(
+				$registered,
+				$reset_list,
+				"registered settings-form option $registered is missing from the bulk-reset list"
+			);
+		}
+	}
+
 	// ---- Field callbacks: array fields (log_urls, skip_urls, etc.) -------
 
 	public function test_log_urls_callback_renders_tag_input_field_markup(): void {
@@ -843,9 +881,10 @@ class AdminTest extends TestCase {
 		\ob_start();
 		$admin->log_urls_callback();
 		$out = \ob_get_clean();
-		// Even with no values, the mount and reset button should render.
+		// Even with no values, the mount and per-field reset toggle should render.
 		$this->assertStringContainsString( 'event-logger-log_urls', $out );
-		$this->assertStringContainsString( 'event-logger-reset-field', $out );
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_log_urls]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
 	}
 
 	public function test_skip_urls_callback_uses_config_default_when_unset(): void {
@@ -953,7 +992,10 @@ class AdminTest extends TestCase {
 		// Combined description + reset button covering both fields.
 		$this->assertStringContainsString( 'Noisy events', $out );
 		$this->assertStringContainsString( 'Significant events', $out );
-		$this->assertStringContainsString( 'event-logger-reset-btn', $out );
+		// Per-field reset toggle wraps both threshold inputs (marker deletes the
+		// count option; the blanked time option deletes via the shared Reset_Gate).
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_auto_disable_threshold]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
 	}
 
 	public function test_auto_tune_callback_renders_stored_values(): void {
@@ -991,6 +1033,8 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_log_memory"', $out );
 		$this->assertStringContainsString( 'type="checkbox"', $out );
 		$this->assertStringContainsString( 'checked="checked"', $out );
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_log_memory]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
 	}
 
 	public function test_log_memory_callback_unchecked_when_disabled(): void {
@@ -1010,6 +1054,8 @@ class AdminTest extends TestCase {
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_flush_every_line"', $out );
 		$this->assertStringContainsString( 'type="checkbox"', $out );
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_flush_every_line]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
 	}
 
 	public function test_flush_every_line_callback_checked_when_enabled(): void {
@@ -1210,6 +1256,284 @@ class AdminTest extends TestCase {
 		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_auto_disable_threshold' ) );
 	}
 
+	// ---- delete_on_blank (blank text-like saves delete the row) ----------
+
+	public function test_blank_text_like_option_save_deletes_row_instead_of_storing_empty(): void {
+		// A blank submission for a text-like key means "use the file default",
+		// which under presence-based Config means DELETE the row — not store ''
+		// (which would override the default).
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] = 100;
+
+		$result = \apply_filters(
+			'pre_update_option_newspack_event_logger_nodes_auto_disable_threshold',
+			'',
+			100,
+			'newspack_event_logger_nodes_auto_disable_threshold'
+		);
+
+		$this->assertArrayNotHasKey(
+			'newspack_event_logger_nodes_auto_disable_threshold',
+			$GLOBALS['_wp_options'],
+			'blank save must delete the row so the file default resurfaces'
+		);
+		$this->assertSame( 100, $result, 'returns old value so update_option skips the write' );
+	}
+
+	public function test_blank_float_threshold_save_deletes_row(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'] = 1.5;
+
+		$result = \apply_filters(
+			'pre_update_option_newspack_event_logger_nodes_auto_protect_time_threshold',
+			'',
+			1.5,
+			'newspack_event_logger_nodes_auto_protect_time_threshold'
+		);
+
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_auto_protect_time_threshold', $GLOBALS['_wp_options'] );
+		$this->assertSame( 1.5, $result );
+	}
+
+	public function test_nonblank_text_like_option_save_passes_through(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] = 100;
+
+		$result = \apply_filters(
+			'pre_update_option_newspack_event_logger_nodes_auto_disable_threshold',
+			250,
+			100,
+			'newspack_event_logger_nodes_auto_disable_threshold'
+		);
+
+		$this->assertSame( 250, $result, 'a real value must persist' );
+	}
+
+	public function test_empty_selection_option_save_is_not_deleted(): void {
+		// Selection field (log_events): an empty array is a deliberate override
+		// and must NOT trigger delete-on-blank — no filter is attached to it.
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+
+		$result = \apply_filters(
+			'pre_update_option_newspack_event_logger_nodes_log_events',
+			[],
+			[ 'init' ],
+			'newspack_event_logger_nodes_log_events'
+		);
+
+		$this->assertSame( [], $result, 'empty selection is an override, not a reset' );
+		$this->assertArrayHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
+	}
+
+	public function test_enable_logging_checkbox_is_not_delete_on_blank(): void {
+		// Checkbox boolean: an unchecked box (0) is a real "off" override and
+		// must NOT be deleted — delete_on_blank is not attached to it.
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_enable_logging'] = 1;
+
+		$result = \apply_filters(
+			'pre_update_option_newspack_event_logger_nodes_enable_logging',
+			0,
+			1,
+			'newspack_event_logger_nodes_enable_logging'
+		);
+
+		$this->assertSame( 0, $result, 'unchecked checkbox is an override, not a reset' );
+		$this->assertArrayHasKey( 'newspack_event_logger_nodes_enable_logging', $GLOBALS['_wp_options'] );
+	}
+
+	// ---- Reset_Gate: per-field reset toggle (any field type) ---------------
+
+	public function test_reset_marked_checkbox_field_is_deleted(): void {
+		// A per-field reset toggle marks the option; on save it must delete the
+		// row even for a checkbox bool (excluded from delete-on-blank).
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_enable_logging'] = 1;
+		$_POST[ Admin::RESET_MARK_FIELD ]                                    = [ 'newspack_event_logger_nodes_enable_logging' => '1' ];
+
+		try {
+			$result = \apply_filters(
+				'pre_update_option_newspack_event_logger_nodes_enable_logging',
+				0,
+				1,
+				'newspack_event_logger_nodes_enable_logging'
+			);
+			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_enable_logging', $GLOBALS['_wp_options'], 'reset-marked field must be deleted' );
+			$this->assertSame( 1, $result, 'short-circuit returns old value' );
+		} finally {
+			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
+		}
+	}
+
+	public function test_reset_marked_selection_field_is_deleted(): void {
+		// Selection key (log_events) is excluded from delete-on-blank, but a
+		// reset mark deletes it anyway via the full-list gate.
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+		$_POST[ Admin::RESET_MARK_FIELD ]                                = [ 'newspack_event_logger_nodes_log_events' => '1' ];
+
+		try {
+			$result = \apply_filters(
+				'pre_update_option_newspack_event_logger_nodes_log_events',
+				[ 'init' ],
+				[ 'init' ],
+				'newspack_event_logger_nodes_log_events'
+			);
+			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
+			$this->assertSame( [ 'init' ], $result );
+		} finally {
+			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
+		}
+	}
+
+	public function test_reset_marked_text_field_is_deleted_even_when_value_nonblank(): void {
+		// Reset wins over a non-blank submitted value (toggle marked, field not
+		// yet cleared on the server side).
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] = 100;
+		$_POST[ Admin::RESET_MARK_FIELD ]                                            = [ 'newspack_event_logger_nodes_auto_disable_threshold' => '1' ];
+
+		try {
+			$result = \apply_filters(
+				'pre_update_option_newspack_event_logger_nodes_auto_disable_threshold',
+				250,
+				100,
+				'newspack_event_logger_nodes_auto_disable_threshold'
+			);
+			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_auto_disable_threshold', $GLOBALS['_wp_options'] );
+			$this->assertSame( 100, $result );
+		} finally {
+			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
+		}
+	}
+
+	public function test_unmarked_empty_checkbox_is_not_deleted(): void {
+		// No reset mark + a checkbox bool is not text-like: the unchecked (0)
+		// value must persist as a real override, not be deleted.
+		$admin = new Admin();
+		$admin->register_settings();
+		unset( $_POST[ Admin::RESET_MARK_FIELD ] );
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = 1;
+
+		$result = \apply_filters(
+			'pre_update_option_newspack_event_logger_nodes_log_memory',
+			0,
+			1,
+			'newspack_event_logger_nodes_log_memory'
+		);
+
+		$this->assertSame( 0, $result, 'unmarked unchecked checkbox is an override, not a reset' );
+		$this->assertArrayHasKey( 'newspack_event_logger_nodes_log_memory', $GLOBALS['_wp_options'] );
+	}
+
+	// ---- Shared Config_System wiring (Reset_Gate / Field_Reset_Assets) ----
+
+	public function test_reset_gate_registers_pre_update_filter_for_every_resettable_option(): void {
+		// Reset_Gate::register must attach a pre_update_option_{$option} gate for
+		// EVERY resettable option (booleans + multi-selects included), so a reset
+		// toggle clears them all.
+		$admin = new Admin();
+		$admin->register_settings();
+
+		$expected = [
+			'newspack_event_logger_nodes_enable_logging',
+			'newspack_event_logger_nodes_log_urls',
+			'newspack_event_logger_nodes_skip_urls',
+			'newspack_event_logger_nodes_log_events',
+			'newspack_event_logger_nodes_custom_events',
+			'newspack_event_logger_nodes_enable_aggregator',
+			'newspack_event_logger_nodes_remote_num_segments',
+			'newspack_event_logger_nodes_remote_segment_size',
+			'newspack_event_logger_nodes_remote_max_lifespan',
+			'newspack_event_logger_nodes_significant_events',
+			'newspack_event_logger_nodes_auto_disable_threshold',
+			'newspack_event_logger_nodes_auto_protect_time_threshold',
+			'newspack_event_logger_nodes_log_memory',
+			'newspack_event_logger_nodes_flush_every_line',
+		];
+		foreach ( $expected as $option ) {
+			$this->assertNotEmpty(
+				$GLOBALS['_wp_actions'][ "pre_update_option_{$option}" ] ?? [],
+				"Reset_Gate must register a pre_update_option gate for {$option}"
+			);
+		}
+	}
+
+	public function test_reset_marked_multiselect_field_is_deleted_via_shared_gate(): void {
+		// A reset-marked multi-select (log_urls) — excluded from delete-on-blank —
+		// must still be deleted by the shared Reset_Gate.
+		$admin = new Admin();
+		$admin->register_settings();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] = [ '/foo' ];
+		$_POST[ Admin::RESET_MARK_FIELD ]                              = [ 'newspack_event_logger_nodes_log_urls' => '1' ];
+
+		try {
+			$result = \apply_filters(
+				'pre_update_option_newspack_event_logger_nodes_log_urls',
+				[ '/foo' ],
+				[ '/foo' ],
+				'newspack_event_logger_nodes_log_urls'
+			);
+			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_urls', $GLOBALS['_wp_options'] );
+			$this->assertSame( [ '/foo' ], $result );
+		} finally {
+			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
+		}
+	}
+
+	public function test_reset_mark_name_matches_shared_reset_gate(): void {
+		$method = new \ReflectionMethod( Admin::class, 'reset_mark_name' );
+		$method->setAccessible( true );
+		$got = $method->invoke( new Admin(), 'enable_logging' );
+
+		$this->assertSame(
+			Reset_Gate::mark_name( Admin::RESET_MARK_FIELD, 'newspack_event_logger_nodes_enable_logging' ),
+			$got
+		);
+	}
+
+	public function test_render_settings_page_enqueues_shared_nodes_field_reset_bundle(): void {
+		$GLOBALS['_enqueued_scripts'] = [];
+		$admin                        = new Admin();
+		$admin->register_settings();
+
+		\ob_start();
+		$admin->render_settings_page();
+		\ob_end_clean();
+
+		$handles = \array_map( static fn ( $args ) => $args[0] ?? '', $GLOBALS['_enqueued_scripts'] );
+		$this->assertContains(
+			'newspack-nodes-field-reset',
+			$handles,
+			'settings page must enqueue the shared nodes-built field-reset bundle'
+		);
+		$this->assertNotContains(
+			'newspack-event-logger-nodes-field-reset',
+			$handles,
+			'the ELN-local field-reset enqueue must be gone (shared bundle only)'
+		);
+	}
+
+	public function test_render_settings_page_highlight_style_comes_from_shared_assets(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+
+		\ob_start();
+		$admin->render_settings_page();
+		$html = \ob_get_clean();
+
+		$this->assertStringContainsString( Field_Reset_Assets::highlight_style(), $html );
+	}
+
 	// ---- Remote-* sanitizers ---------------------------------------------
 
 	public function test_sanitize_remote_num_segments_returns_empty_for_empty_and_null(): void {
@@ -1282,7 +1606,8 @@ class AdminTest extends TestCase {
 		// Bounds match the sanitizer (2-16).
 		$this->assertStringContainsString( 'min="2"', $out );
 		$this->assertStringContainsString( 'max="16"', $out );
-		$this->assertStringContainsString( 'event-logger-reset-number', $out );
+		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_remote_num_segments]"', $out );
+		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
 	}
 
 	public function test_remote_num_segments_callback_shows_value_when_overridden(): void {
