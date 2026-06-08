@@ -73,8 +73,10 @@ jest.mock( 'd3', () => {
 // because the real one reaches into x.invert / x.range / dates.length on
 // the mocked d3 chain — that's out of scope here (covered separately in
 // useTimeChart tests).
-jest.mock( '../../shared/hooks/useTimeChart', () => {
-	const actual = jest.requireActual( '../../shared/hooks/useTimeChart' );
+jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
+	const actual = jest.requireActual(
+		'@newspack-nodes/shared/hooks/useTimeChart'
+	);
 	return {
 		__esModule: true,
 		...actual,
@@ -99,7 +101,7 @@ jest.mock( '../../shared/hooks/useTimeChart', () => {
 import * as React from 'react';
 import * as d3 from 'd3';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { renderComponent } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 
@@ -269,7 +271,9 @@ describe( 'CategoryTimeChart', () => {
 	 * coverage of formatYValue's branches without exporting it.
 	 */
 	function getFormatEntry() {
-		const { setupTooltip } = require( '../../shared/hooks/useTimeChart' );
+		const {
+			setupTooltip,
+		} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 		const calls = setupTooltip.mock.calls;
 		const last = calls[ calls.length - 1 ];
 		return last[ 1 ].formatEntry;
@@ -296,7 +300,9 @@ describe( 'CategoryTimeChart', () => {
 	 * formatYValue with real (nonzero) values.
 	 */
 	function lastSlotIndex() {
-		const { NUM_BUCKETS } = require( '../../shared/hooks/useTimeChart' );
+		const {
+			NUM_BUCKETS,
+		} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 		return NUM_BUCKETS - 1;
 	}
 

@@ -15,7 +15,10 @@ import {
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
-import { getStateColor, hexToRgba } from '../../shared/utils/formatUtils';
+import {
+	getStateColor,
+	hexToRgba,
+} from '@newspack-nodes/shared/utils/formatUtils';
 import {
 	computeVisibleEntries,
 	formatDots,

@@ -25,7 +25,7 @@ import * as React from 'react';
 import AggregatorStatusPage from '../event-aggregator/AggregatorStatusPage';
 import GyroscopePage from '../performance-gyroscope/GyroscopePage';
 import RequestStreamPage from '../performance-request-log/RequestStreamPage';
-import { renderComponent } from '../shared/hooks/__tests__/renderHook';
+import { renderComponent } from '../test-helpers/renderHook';
 
 describe( 'page wrappers', () => {
 	it( 'AggregatorStatusPage mounts <AggregatorStatus>', () => {

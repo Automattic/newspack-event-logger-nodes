@@ -17,7 +17,7 @@ jest.mock( '../hooks/useGyroscopeGraph', () => ( {
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import Inflight from '../Inflight';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useGyroscopeGraph } = require( '../hooks/useGyroscopeGraph' );
 

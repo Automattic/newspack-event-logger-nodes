@@ -191,6 +191,10 @@ async function makeContext( entry, outDir ) {
 	return esbuild.context( {
 		entryPoints: [ path.resolve( ROOT, entry ) ],
 		bundle: true,
+		// Resolve bare imports from the aliased @newspack-nodes/shared sources
+		// (e.g. useTimeChart's `import 'd3'`) against ELN's node_modules — the
+		// sibling newspack-nodes checkout doesn't install d3.
+		nodePaths: [ path.resolve( ROOT, 'node_modules' ) ],
 		minify: true,
 		// dump_metadata reads node.constructor.name to label classes on the
 		// canvas — without keepNames, minify mangles them to two-letter ids.
@@ -219,6 +223,12 @@ async function makeContext( entry, outDir ) {
 					ROOT,
 					'../newspack-nodes/src/debug-overlay/DebugOverlay.js'
 				),
+			// Shared React hooks/utils/components: CI sets NEWSPACK_NODES_SHARED;
+			// local dev falls back to the sibling checkout's src/shared. We alias
+			// the canonical source instead of copying it (the retired sync-shared.sh).
+			'@newspack-nodes/shared':
+				process.env.NEWSPACK_NODES_SHARED ||
+				path.resolve( ROOT, '../newspack-nodes/src/shared' ),
 		},
 		plugins: [
 			wpExternalsPlugin( usedHandles ),

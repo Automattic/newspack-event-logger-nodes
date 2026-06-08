@@ -7,7 +7,10 @@
 import { useState, useMemo, Fragment } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import { getStateColor, formatDuration } from '../shared/utils/formatUtils';
+import {
+	getStateColor,
+	formatDuration,
+} from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
  * Default number of categories to show before collapsing.

@@ -11,7 +11,7 @@
 jest.mock( '../hooks/useRequestLogGraph', () => ( {
 	useRequestLogGraph: jest.fn(),
 } ) );
-jest.mock( '../../shared/hooks/useVirtualization', () => ( {
+jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
 	default: ( _ref, _row, total ) => ( {
 		startIndex: 0,
@@ -26,7 +26,7 @@ jest.mock( '../../shared/hooks/useVirtualization', () => ( {
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import RequestStream from '../RequestStream';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 

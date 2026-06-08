@@ -5,7 +5,7 @@
  */
 
 import RequestStream from './RequestStream';
-import useAdminMenuWidth from '../shared/hooks/useAdminMenuWidth';
+import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth';
 import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 /**

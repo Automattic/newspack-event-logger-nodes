@@ -7,7 +7,7 @@
 
 import * as React from 'react';
 import RequestProfile from '../RequestProfile';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const baseProfiles = {
 	hooks: { count: 5, time: 80 },

@@ -32,8 +32,8 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
-import useVirtualization from '../shared/hooks/useVirtualization';
-import ConnectionBanner from '../shared/components/ConnectionBanner';
+import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
+import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;

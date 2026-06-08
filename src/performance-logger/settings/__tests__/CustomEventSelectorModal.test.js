@@ -21,10 +21,7 @@ beforeAll( () => {
 	React = require( 'react' );
 	CustomEventSelectorModal = require( '../CustomEventSelectorModal' ).default;
 } );
-import {
-	renderComponent,
-	act,
-} from '../../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 describe( 'CustomEventSelectorModal', () => {
 	const mounted = [];

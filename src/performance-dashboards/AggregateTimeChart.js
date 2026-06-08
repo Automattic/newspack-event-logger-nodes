@@ -8,7 +8,7 @@
 import { useCallback, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
-import { STATUS_COLORS } from '../shared/utils/formatUtils';
+import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import {
 	RETENTION_SECONDS,
 	MARGIN,
@@ -18,7 +18,7 @@ import {
 	formatXTick,
 	setupTooltip,
 	useTimeChart,
-} from '../shared/hooks/useTimeChart';
+} from '@newspack-nodes/shared/hooks/useTimeChart';
 
 /**
  * Format a value in seconds to human-readable form.

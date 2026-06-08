@@ -46,7 +46,7 @@ describe( 'HookSelectorModal', () => {
 	function mount( props ) {
 		const {
 			renderComponent,
-		} = require( '../../../shared/hooks/__tests__/renderHook' );
+		} = require( '../../../test-helpers/renderHook' );
 		const r = renderComponent(
 			React.createElement( HookSelectorModal, props )
 		);
@@ -133,7 +133,7 @@ describe( 'HookSelectorModal', () => {
 		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
 			( b ) => b.textContent.includes( 'Apply' )
 		);
-		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const { act } = require( '../../../test-helpers/renderHook' );
 		act( () => {
 			apply.click();
 		} );
@@ -159,7 +159,7 @@ describe( 'HookSelectorModal', () => {
 		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
 			( b ) => b.textContent.includes( 'Apply' )
 		);
-		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const { act } = require( '../../../test-helpers/renderHook' );
 		act( () => {
 			rec.click();
 		} );
@@ -186,7 +186,7 @@ describe( 'HookSelectorModal', () => {
 		const categoryHeader = Array.from(
 			document.querySelectorAll( '.hook-selector-category-header' )
 		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
-		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const { act } = require( '../../../test-helpers/renderHook' );
 		act( () => {
 			categoryHeader.click();
 		} );
@@ -216,7 +216,7 @@ describe( 'HookSelectorModal', () => {
 			selected: [],
 			onSelect,
 		} );
-		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const { act } = require( '../../../test-helpers/renderHook' );
 		const selectAll = Array.from(
 			document.querySelectorAll( 'button' )
 		).find( ( b ) => /Select All|Select Matches/.test( b.textContent ) );
@@ -252,7 +252,7 @@ describe( 'HookSelectorModal', () => {
 			selected: [ 'init', 'shutdown', 'wp_loaded' ],
 			onSelect,
 		} );
-		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const { act } = require( '../../../test-helpers/renderHook' );
 		const header = Array.from(
 			document.querySelectorAll( '.hook-selector-category-header' )
 		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
@@ -289,7 +289,7 @@ describe( 'HookSelectorModal', () => {
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		const { act } = require( '../../../shared/hooks/__tests__/renderHook' );
+		const { act } = require( '../../../test-helpers/renderHook' );
 		const header = Array.from(
 			document.querySelectorAll( '.hook-selector-category-header' )
 		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );

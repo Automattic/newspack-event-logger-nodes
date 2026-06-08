@@ -51,7 +51,7 @@ jest.mock( '../hooks/useUrlNavigation', () => ( {
 	default: () => mockNavState,
 } ) );
 
-jest.mock( '../../shared/hooks/usePageVisibility', () => ( {
+jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	__esModule: true,
 	default: () => true,
 } ) );
@@ -148,7 +148,7 @@ jest.mock( '@wordpress/components', () => ( {
 
 import * as React from 'react';
 import PerformanceDashboard from '../PerformanceDashboard';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 /**
  * Flush React's async passive effects inside `act` so state updates settle

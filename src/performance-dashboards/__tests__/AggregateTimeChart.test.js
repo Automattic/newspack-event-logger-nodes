@@ -71,8 +71,10 @@ jest.mock( 'd3', () => {
 	return new Proxy( {}, handler );
 } );
 
-jest.mock( '../../shared/hooks/useTimeChart', () => {
-	const actual = jest.requireActual( '../../shared/hooks/useTimeChart' );
+jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
+	const actual = jest.requireActual(
+		'@newspack-nodes/shared/hooks/useTimeChart'
+	);
 	return {
 		__esModule: true,
 		...actual,
@@ -97,7 +99,7 @@ jest.mock( '../../shared/hooks/useTimeChart', () => {
 import * as React from 'react';
 import * as d3 from 'd3';
 import AggregateTimeChart from '../AggregateTimeChart';
-import { renderComponent } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 
@@ -114,12 +116,16 @@ function bucketKeyNow() {
 }
 
 function lastSlotIndex() {
-	const { NUM_BUCKETS } = require( '../../shared/hooks/useTimeChart' );
+	const {
+		NUM_BUCKETS,
+	} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 	return NUM_BUCKETS - 1;
 }
 
 function getFormatEntry() {
-	const { setupTooltip } = require( '../../shared/hooks/useTimeChart' );
+	const {
+		setupTooltip,
+	} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 	const calls = setupTooltip.mock.calls;
 	return calls[ calls.length - 1 ][ 1 ].formatEntry;
 }
@@ -132,7 +138,7 @@ describe( 'AggregateTimeChart', () => {
 				v.mockClear();
 			}
 		} );
-		const useTimeChart = require( '../../shared/hooks/useTimeChart' );
+		const useTimeChart = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 		useTimeChart.setupTooltip.mockClear();
 		useTimeChart.drawLegend.mockClear();
 	} );

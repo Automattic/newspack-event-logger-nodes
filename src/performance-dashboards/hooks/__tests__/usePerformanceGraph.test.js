@@ -17,7 +17,7 @@
  * `opts.commandClient` so the hook never touches the network.
  */
 
-import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
+import { renderHook, act } from '../../../test-helpers/renderHook';
 import {
 	Core,
 	newMessage,

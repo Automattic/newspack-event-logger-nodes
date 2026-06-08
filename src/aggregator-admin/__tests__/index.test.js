@@ -22,7 +22,7 @@ jest.mock( '../hooks/useAggregatorAdminGraph', () => {
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import ServersAdmin from '../ServersAdmin';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const {
 	useAggregatorAdminGraph,

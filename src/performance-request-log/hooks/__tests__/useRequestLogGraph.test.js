@@ -14,7 +14,7 @@
  * value so the visibility effect is deterministic under jsdom.
  */
 
-import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
+import { renderHook, act } from '../../../test-helpers/renderHook';
 import {
 	newMessage,
 	pack,
@@ -27,7 +27,7 @@ import {
 } from '@newspack-nodes/runtime';
 
 let mockPageVisible = true;
-jest.mock( '../../../shared/hooks/usePageVisibility', () => ( {
+jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	__esModule: true,
 	default: () => mockPageVisible,
 } ) );

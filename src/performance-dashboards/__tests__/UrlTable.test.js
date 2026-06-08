@@ -6,7 +6,7 @@
  * a real scroll context).
  */
 
-jest.mock( '../../shared/hooks/useVirtualization', () => ( {
+jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
 	default: ( _ref, _row, total ) => ( {
 		startIndex: 0,
@@ -20,7 +20,7 @@ jest.mock( '../../shared/hooks/useVirtualization', () => ( {
 
 import * as React from 'react';
 import UrlTable from '../UrlTable';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const URLS = [
 	{

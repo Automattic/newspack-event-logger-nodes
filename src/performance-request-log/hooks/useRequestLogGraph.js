@@ -38,7 +38,7 @@ import {
 	newMessage,
 } from '@newspack-nodes/runtime';
 import '../nodes/register';
-import usePageVisibility from '../../shared/hooks/usePageVisibility';
+import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 
 // The I/O boundary nodes mounted from the substrate runtime.
 const SSE = '_sse';

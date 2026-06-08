@@ -19,7 +19,7 @@ import {
 	useAggregatorStatusGraph,
 	REFRESH_OPTIONS,
 } from './hooks/useAggregatorStatusGraph';
-import ConnectionBanner from '../shared/components/ConnectionBanner';
+import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
 import './styles/aggregator-status.scss';
 
 // The view model before the first poll publishes one — drives the loading gate.

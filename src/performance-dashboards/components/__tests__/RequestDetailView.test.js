@@ -25,10 +25,7 @@ jest.mock( '../LogEntriesTable', () => ( {
 
 import * as React from 'react';
 import RequestDetailView from '../RequestDetailView';
-import {
-	renderComponent,
-	act,
-} from '../../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 const baseRequest = {
 	request_method: 'GET',

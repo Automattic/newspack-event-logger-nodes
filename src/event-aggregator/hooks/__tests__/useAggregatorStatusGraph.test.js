@@ -13,7 +13,7 @@
  * gating — the old AggregatorStatus polled unconditionally.
  */
 
-import { renderHook, act } from '../../../shared/hooks/__tests__/renderHook';
+import { renderHook, act } from '../../../test-helpers/renderHook';
 import {
 	newMessage,
 	pack,

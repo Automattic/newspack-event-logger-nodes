@@ -8,7 +8,10 @@
 import { useEffect, useRef, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
-import { getStatusColor, STATUS_COLORS } from '../shared/utils/formatUtils';
+import {
+	getStatusColor,
+	STATUS_COLORS,
+} from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
  * Chart dimensions and margins.

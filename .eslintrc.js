@@ -1,7 +1,10 @@
 // ESLint config — standalone (no @wordpress/scripts dependency).
 //
-// `import/core-modules` tells eslint-plugin-import that `@newspack-nodes/*`
-// aliases resolve at runtime (build alias + jest moduleNameMapper handle resolution).
+// `import/core-modules` tells eslint-plugin-import that the exact-match
+// `@newspack-nodes/*` aliases resolve at runtime (build alias + jest
+// moduleNameMapper handle resolution). The subpath alias
+// `@newspack-nodes/shared/*` (sibling-checkout shared hooks/utils/components)
+// is whitelisted via the no-unresolved `ignore` pattern below.
 module.exports = {
 	root: true,
 	extends: [
@@ -23,6 +26,13 @@ module.exports = {
 		'no-unused-vars': [
 			'error',
 			{ ignoreRestSiblings: true, argsIgnorePattern: '^_' },
+		],
+		// The `@newspack-nodes/shared/*` subpath alias resolves at runtime
+		// (esbuild alias + jest moduleNameMapper) to the sibling newspack-nodes
+		// checkout; eslint can't follow it without the build context.
+		'import/no-unresolved': [
+			'error',
+			{ ignore: [ '^@newspack-nodes/shared/' ] },
 		],
 	},
 	overrides: [

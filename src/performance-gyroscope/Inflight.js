@@ -32,9 +32,9 @@ import {
 	getDurationClass,
 	getStateColor,
 	getStatusClass,
-} from '../shared/utils/formatUtils';
-import fnv1a from '../shared/utils/fnv1a';
-import ConnectionBanner from '../shared/components/ConnectionBanner';
+} from '@newspack-nodes/shared/utils/formatUtils';
+import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
+import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
 import './styles/inflight.scss';
 import './styles/request-stream.scss';
 

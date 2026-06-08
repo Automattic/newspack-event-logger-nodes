@@ -16,7 +16,7 @@ import {
 	formatXTick,
 	setupTooltip,
 	useTimeChart,
-} from '../shared/hooks/useTimeChart';
+} from '@newspack-nodes/shared/hooks/useTimeChart';
 
 const formatYValue = ( val, mode ) => {
 	if ( val === 0 ) {

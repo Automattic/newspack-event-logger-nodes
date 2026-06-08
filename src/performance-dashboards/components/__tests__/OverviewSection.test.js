@@ -34,7 +34,7 @@ jest.mock( '../../RequestProfile', () => ( {
 
 import * as React from 'react';
 import OverviewSection from '../OverviewSection';
-import { renderComponent } from '../../../shared/hooks/__tests__/renderHook';
+import { renderComponent } from '../../../test-helpers/renderHook';
 
 const baseStats = {
 	totalUrls: 7,

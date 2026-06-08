@@ -20,7 +20,7 @@ jest.mock( '../hooks/useAggregatorStatusGraph', () => {
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import AggregatorStatus from '../AggregatorStatus';
-import { renderComponent, act } from '../../shared/hooks/__tests__/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const {
 	useAggregatorStatusGraph,
