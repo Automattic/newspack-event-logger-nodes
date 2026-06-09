@@ -3,7 +3,9 @@
  * Application Core - Tracks request lifecycle, hook timing, plugin performance.
  *
  * Binds configured hooks individually at priority 1 (start) and PHP_INT_MAX-1 (complete)
- * to measure actual execution time of callbacks registered between those priorities.
+ * to measure actual execution time of callbacks registered between those priorities,
+ * plus a sacrificial spacer at PHP_INT_MAX-2 (see hook_spacer) so a self-removing
+ * callback can't make WP_Hook's iteration skip the complete.
  *
  * For significant events, wraps each individual callback with timing so the log shows
  * exactly which callback is slow (e.g. "photon_subsizes_filter_the_content (complete): 5000ms"
@@ -26,6 +28,10 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Core class - WordPress hook instrumentation.
  */
 class Core {
+
+	/** Priority of the sacrificial hook_spacer; wrap_callbacks treats everything at/above it as ours. */
+	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
+
 	/**
 	 * Short name for a callback (no namespace, no priority).
 	 *
@@ -130,6 +136,7 @@ class Core {
 				continue;
 			}
 			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\add_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
 			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 		}
 	}
@@ -222,8 +229,8 @@ class Core {
 	 * Wrap each callback on a hook with timing instrumentation.
 	 *
 	 * Replaces each callback's function with a closure that calls start/complete
-	 * around the original. Only wraps priorities > start_priority and < PHP_INT_MAX-1
-	 * (skips our own hook_start/hook_complete).
+	 * around the original. Only wraps priorities > start_priority and < PHP_INT_MAX-2
+	 * (skips our own hook_start/hook_spacer/hook_complete).
 	 *
 	 * Safe to call during hook execution at start_priority — callbacks at higher
 	 * priorities haven't been iterated yet, so WordPress picks up the replacements.
@@ -242,7 +249,7 @@ class Core {
 		/** @var array<int, array<string, array{function: callable, accepted_args: int|string}>> $wp_filter_callbacks WP_Hook::$callbacks is stubbed as bare array; this annotates the by-ref iterand, not a copy. */
 		$wp_filter_callbacks = &$wp_filter[ $hook_name ]->callbacks;
 		foreach ( $wp_filter_callbacks as $priority => &$priority_callbacks ) {
-			if ( $priority <= $min || $priority >= PHP_INT_MAX - 1 ) {
+			if ( $priority <= $min || $priority >= self::SPACER_PRIORITY ) {
 				continue;
 			}
 
@@ -289,6 +296,22 @@ class Core {
 			unset( $cb );
 		}
 		unset( $priority_callbacks );
+	}
+
+	/**
+	 * Sacrificial no-op registered at PHP_INT_MAX - 2.
+	 *
+	 * When a callback removes itself mid-run (es-wp-query's Shoehorn run-once
+	 * filters), WP_Hook::resort_active_iterations() parks the iteration
+	 * pointer on the next surviving priority and apply_filters' `next()` then
+	 * skips it. Without this spacer the skipped priority is hook_complete's,
+	 * losing the `(complete)` entry; with it, the spacer is consumed instead.
+	 *
+	 * @param mixed $v Filter value (passed through).
+	 * @return mixed
+	 */
+	public function hook_spacer( $v = null ) {
+		return $v;
 	}
 
 	/**
