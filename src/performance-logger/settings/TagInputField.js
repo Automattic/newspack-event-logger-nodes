@@ -9,7 +9,13 @@
  * the hook count and a "Select Hooks" button (modal is source of truth).
  */
 
-import { useState, useEffect, useMemo, useCallback } from '@wordpress/element';
+import {
+	useState,
+	useEffect,
+	useMemo,
+	useCallback,
+	useRef,
+} from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { Button } from '@wordpress/components';
 import { closeSmall } from '@wordpress/icons';
@@ -48,11 +54,29 @@ export default function TagInputField( {
 		[ defaultValues ]
 	);
 
-	// Update hidden input when values change.
+	// Skips the mount run of the value-sync effect so the initial render can't
+	// be mistaken for an edit (and drop a pending reset mark).
+	const didMountRef = useRef( false );
+
+	// Update the hidden carrier when values change. On a real edit (not the
+	// initial mount), also drop any pending per-field reset mark: the shared
+	// admin-field-reset module only auto-drops marks for non-hidden controls,
+	// and this field's only input is the hidden carrier it ignores — so without
+	// this, marking for reset then editing would leave the marker, and
+	// Reset_Gate would delete the option on Save, discarding the edit.
 	useEffect( () => {
 		const hiddenInput = document.getElementById( `${ fieldName }_json` );
 		if ( hiddenInput ) {
 			hiddenInput.value = JSON.stringify( values );
+		}
+		if ( ! didMountRef.current ) {
+			didMountRef.current = true;
+			return;
+		}
+		const wrapper = hiddenInput?.closest( '[data-nn-reset]' );
+		if ( wrapper ) {
+			wrapper.classList.remove( 'is-marked' );
+			wrapper.querySelector( '[data-nn-reset-marker]' )?.remove();
 		}
 	}, [ values, fieldName ] );
 

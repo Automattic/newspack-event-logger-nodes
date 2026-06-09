@@ -61,7 +61,9 @@ function setUpContainer( name ) {
 describe( 'TagInputField', () => {
 	afterEach( () => {
 		document
-			.querySelectorAll( 'input, div[id^="event-logger-"]' )
+			.querySelectorAll(
+				'input, div[id^="event-logger-"], [data-nn-reset]'
+			)
 			.forEach( ( n ) => n.remove() );
 	} );
 
@@ -218,6 +220,68 @@ describe( 'TagInputField', () => {
 		);
 		expect( container.textContent ).toContain( '0 events selected' );
 		expect( container.textContent ).toContain( 'CUSTOM_MODAL_CLOSED' );
+		unmount();
+	} );
+
+	// Build a reset-marked wrapper around the hidden carrier, exactly as the
+	// shared admin-field-reset module leaves it after a ↺ toggle on a
+	// react_mount field: data-nn-reset + is-marked + an injected marker input.
+	function setUpMarkedWrapper( name ) {
+		const wrapper = document.createElement( 'div' );
+		wrapper.setAttribute( 'data-nn-reset', `pfx_reset[pfx_${ name }]` );
+		wrapper.classList.add( 'is-marked' );
+		const hidden = document.createElement( 'input' );
+		hidden.id = `${ name }_json`;
+		hidden.type = 'hidden';
+		wrapper.appendChild( hidden );
+		const marker = document.createElement( 'input' );
+		marker.type = 'hidden';
+		marker.setAttribute( 'data-nn-reset-marker', '' );
+		wrapper.appendChild( marker );
+		document.body.appendChild( wrapper );
+		return { wrapper, hidden };
+	}
+
+	it( 'keeps a pending reset mark on mount (no edit yet)', () => {
+		const { wrapper } = setUpMarkedWrapper( 'urls' );
+		const { unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'urls',
+				initialValues: [ '/foo' ],
+			} )
+		);
+		// Mount syncs the hidden carrier but must NOT drop the mark.
+		expect( wrapper.classList.contains( 'is-marked' ) ).toBe( true );
+		expect(
+			wrapper.querySelector( '[data-nn-reset-marker]' )
+		).not.toBeNull();
+		unmount();
+	} );
+
+	it( 'drops the pending reset mark when the value is edited', () => {
+		// The shared reset module only auto-drops marks for non-hidden controls;
+		// a react_mount field's only input is the hidden carrier (ignored), so
+		// editing must drop the mark here — else Reset_Gate would delete the
+		// option on Save and discard the operator's edit.
+		const { wrapper, hidden } = setUpMarkedWrapper( 'urls' );
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'urls',
+				initialValues: [],
+			} )
+		);
+		const input = container.querySelector( 'input[type="text"]' );
+		act( () => {
+			setControlledValue( input, '/baz' );
+		} );
+		act( () => {
+			input.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key: 'Enter', bubbles: true } )
+			);
+		} );
+		expect( wrapper.classList.contains( 'is-marked' ) ).toBe( false );
+		expect( wrapper.querySelector( '[data-nn-reset-marker]' ) ).toBeNull();
+		expect( hidden.value ).toBe( '["/baz"]' );
 		unmount();
 	} );
 } );
