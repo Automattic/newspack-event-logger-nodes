@@ -114,9 +114,10 @@ class Remote_Manager {
 	 *                     for plugin extension. Unknown actions are dropped
 	 *                     with a rate-limited error log.
 	 *
-	 * Wraps every dispatch in begin_job_context / end_job_context so request_id
-	 * correlation flows into LogManager (per-job request_id is rotated even
-	 * across many handler invocations on a long-running worker).
+	 * Wraps every dispatch in Log_Manager::begin/end_job_context so each remote
+	 * action runs under its own `/jobs/remote_manager/{action}` request scope with
+	 * a fresh request_id (the substrate Job_Worker already wrapped the outer job;
+	 * this nests a per-action scope for finer log correlation).
 	 *
 	 * @param array<string, mixed> $parameters Job parameters.
 	 */
@@ -129,7 +130,7 @@ class Remote_Manager {
 		// Sanitize action for use in $_SERVER superglobals via begin_job_context().
 		$safe_action = \preg_replace( '/[^a-zA-Z0-9_-]/', '', \substr( $action, 0, 128 ) );
 
-		$orig_server = self::begin_job_context( 'remote_manager/' . $safe_action );
+		Log_Manager::begin_job_context( 'remote_manager/' . $safe_action );
 
 		try {
 			switch ( $action ) {
@@ -193,7 +194,7 @@ class Remote_Manager {
 					return;
 			}
 		} finally {
-			self::end_job_context( $orig_server );
+			Log_Manager::end_job_context();
 		}
 	}
 
@@ -903,58 +904,6 @@ class Remote_Manager {
 		$last = \time();
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		\error_log( \sprintf( '[EventLoggerNodes] Stale %s job dropped (age=%ds)', $action, $age ) );
-	}
-
-	/**
-	 * Wrap LogManager-context $_SERVER setup. Mirrors the upstream
-	 * JobWorker::begin_job_context behaviour so request-id correlation flows
-	 * through worker-to-worker dispatches.
-	 *
-	 * @param string $name Job name (used as request URI suffix).
-	 * @return array<string, mixed> Original $_SERVER snapshot for end_job_context.
-	 */
-	public static function begin_job_context( string $name ): array {
-		// Preserve the original $_SERVER for restoration.
-		/** @var array<string, mixed> $orig_server */
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Saved verbatim for restore.
-		$orig_server = $_SERVER;
-
-		$name      = \ltrim( $name, '/' );
-		$path_info = '/' . $name;
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- read-only context lookup.
-		$server_name = self::to_string( $_SERVER['SERVER_NAME'] ?? '' );
-
-		// Generate a fresh request id.
-		$rid = '';
-		try {
-			$rid = Log_Manager::generate_request_id();
-		} catch ( \Throwable $e ) {
-			$rid = '';
-		}
-
-		$_SERVER['UNIQUE_ID']       = $rid;
-		$_SERVER['REQUEST_URI']     = '/jobs/' . $name;
-		$_SERVER['REQUEST_METHOD']  = 'POST';
-		$_SERVER['PATH_INFO']       = $path_info;
-		$_SERVER['SCRIPT_NAME']     = $path_info;
-		$_SERVER['SCRIPT_URL']      = $path_info;
-		$_SERVER['SCRIPT_URI']      = 'https://' . $server_name . $path_info;
-		$_SERVER['QUERY_STRING']    = '';
-		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'] );
-		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
-
-		return $orig_server;
-	}
-
-	/**
-	 * Restore $_SERVER and pop the LogManager context stack. Counterpart to
-	 * begin_job_context().
-	 *
-	 * @param array<string, mixed> $orig_server Snapshot returned by begin_job_context.
-	 */
-	public static function end_job_context( array $orig_server ): void {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Restoring previously-saved value.
-		$_SERVER = $orig_server;
 	}
 
 	/**

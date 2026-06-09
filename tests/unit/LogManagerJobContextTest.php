@@ -73,4 +73,30 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertSame( '/jobs/leading', $_SERVER['REQUEST_URI'] );
 		Log_Manager::end_job_context();
 	}
+
+	public function test_empty_handler_yields_bare_jobs_uri(): void {
+		Log_Manager::begin_job_context( '' );
+		$this->assertSame( '/jobs/', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
+	public function test_begin_clears_inherited_content_headers_and_end_restores(): void {
+		// CONTENT_TYPE / CONTENT_LENGTH / HTTP_X_A8C_REQUEST_ID must not bleed
+		// from the outer request into the job context; they're restored on end.
+		$_SERVER['CONTENT_TYPE']          = 'application/json';
+		$_SERVER['CONTENT_LENGTH']        = '42';
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'inherited-id';
+
+		Log_Manager::begin_job_context( 'job/test' );
+		$this->assertArrayNotHasKey( 'CONTENT_TYPE', $_SERVER );
+		$this->assertArrayNotHasKey( 'CONTENT_LENGTH', $_SERVER );
+		$this->assertArrayNotHasKey( 'HTTP_X_A8C_REQUEST_ID', $_SERVER );
+
+		Log_Manager::end_job_context();
+		$this->assertSame( 'application/json', $_SERVER['CONTENT_TYPE'] );
+		$this->assertSame( '42', $_SERVER['CONTENT_LENGTH'] );
+		$this->assertSame( 'inherited-id', $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+
+		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'], $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+	}
 }
