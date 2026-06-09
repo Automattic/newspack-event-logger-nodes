@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-06-09
+
 ### Fixed
 
 - **Self-removing filters no longer swallow a hook's `(complete)` entry.** es-wp-query's `ES_WP_Query_Shoehorn` registers run-once `found_posts_query`/`found_posts` filters at priority 1000 that `remove_filter()` themselves mid-run. WordPress core's `WP_Hook::resort_active_iterations()` then parks the iteration pointer on the next surviving priority and `apply_filters()`' `next()` skips it — which was our `hook_complete` at `PHP_INT_MAX - 1`. Every ES-backed query therefore logged a `(start)` with no in-place `(complete)`; the spans dangled until Log_Manager's end-of-request sweep, and the flame builder nested each successive query one level deeper (a 21-query homepage stretch rendered as a bogus 47-level staircase — the same request that exposed the decode-depth bug below). `App\Core` now registers a sacrificial no-op `hook_spacer` at `PHP_INT_MAX - 2` on every instrumented hook: the pointer-skip consumes the spacer instead of the complete (verified against real `WP_Hook`, including multiple self-removals in one invocation). The spacer priority is also excluded from significant-event callback wrapping.
