@@ -231,6 +231,17 @@ $focus-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
 // Component Styles
 // =============================================================================
 
+// Scoped border-box baseline — applies only inside this app's roots, never
+// leaking into the rest of wp-admin.
+#event-logger-admin *,
+#event-logger-admin *::before,
+#event-logger-admin *::after,
+#event-logger-errors *,
+#event-logger-errors *::before,
+#event-logger-errors *::after {
+	box-sizing: border-box;
+}
+
 // Loading container
 .event-logger-performance-loading {
 	display: flex;

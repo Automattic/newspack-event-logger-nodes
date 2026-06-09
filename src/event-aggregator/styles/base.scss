@@ -115,6 +115,14 @@ $space-xl: 24px;
 // Shared Components
 // =============================================================================
 
+// Scoped border-box baseline — applies only inside this app's root, never
+// leaking into the rest of wp-admin.
+#event-aggregator-status *,
+#event-aggregator-status *::before,
+#event-aggregator-status *::after {
+	box-sizing: border-box;
+}
+
 select.event-logger-refresh-select {
 	-webkit-appearance: none;
 	-moz-appearance: none;
