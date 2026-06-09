@@ -231,6 +231,30 @@ $focus-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
 // Component Styles
 // =============================================================================
 
+// Scoped border-box baseline — applies only inside this app's roots, never
+// leaking into the rest of wp-admin. Mount ids are `event-logger-${fieldName}`
+// where fieldName carries underscores (log_urls, skip_urls, …), so the id
+// selectors can't be kebab-cased without breaking the React mount scoping.
+/* stylelint-disable selector-id-pattern */
+#event-logger-log_urls *,
+#event-logger-log_urls *::before,
+#event-logger-log_urls *::after,
+#event-logger-skip_urls *,
+#event-logger-skip_urls *::before,
+#event-logger-skip_urls *::after,
+#event-logger-log_events *,
+#event-logger-log_events *::before,
+#event-logger-log_events *::after,
+#event-logger-custom_events *,
+#event-logger-custom_events *::before,
+#event-logger-custom_events *::after,
+#event-logger-significant_events *,
+#event-logger-significant_events *::before,
+#event-logger-significant_events *::after {
+	box-sizing: border-box;
+}
+/* stylelint-enable selector-id-pattern */
+
 // Loading container
 .event-logger-performance-loading {
 	display: flex;
