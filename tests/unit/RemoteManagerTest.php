@@ -329,27 +329,6 @@ class RemoteManagerTest extends TestCase {
 		);
 	}
 
-	public function test_begin_end_job_context_round_trip(): void {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$_SERVER['SERVER_NAME']   = 'localhost';
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$_SERVER['REQUEST_URI']   = '/original';
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$_SERVER['REQUEST_METHOD'] = 'GET';
-
-		$orig = Remote_Manager::begin_job_context( 'remote_manager/sync_setting' );
-
-		// During the job, $_SERVER['REQUEST_URI'] is the job URI.
-		$this->assertSame( '/jobs/remote_manager/sync_setting', $_SERVER['REQUEST_URI'] );
-		$this->assertSame( 'POST', $_SERVER['REQUEST_METHOD'] );
-
-		Remote_Manager::end_job_context( $orig );
-
-		// $_SERVER must be fully restored.
-		$this->assertSame( '/original', $_SERVER['REQUEST_URI'] );
-		$this->assertSame( 'GET', $_SERVER['REQUEST_METHOD'] );
-	}
-
 	public function test_health_check_with_no_servers_does_not_crash(): void {
 		// Empty registry — the loop is a no-op and the discovery action still
 		// fires (with an empty payload).
@@ -1009,58 +988,6 @@ class RemoteManagerTest extends TestCase {
 		$this->assertSame( 0, $result );
 	}
 
-	// --- begin_job_context generates request_id -----------------------------
-
-	public function test_begin_job_context_generates_unique_id_when_absent(): void {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		unset( $_SERVER['UNIQUE_ID'] );
-
-		$orig = Remote_Manager::begin_job_context( 'remote_manager/test' );
-
-		// UNIQUE_ID was set during begin_job_context.
-		$this->assertNotEmpty( $_SERVER['UNIQUE_ID'] );
-
-		Remote_Manager::end_job_context( $orig );
-	}
-
-	public function test_begin_job_context_sanitizes_job_name(): void {
-		// Job name with leading slash and special chars — used as path_info.
-		$orig = Remote_Manager::begin_job_context( '/path/with/slashes' );
-
-		// REQUEST_URI strips leading slash from name and prepends /jobs/.
-		$this->assertSame( '/jobs/path/with/slashes', $_SERVER['REQUEST_URI'] );
-
-		Remote_Manager::end_job_context( $orig );
-	}
-
-	public function test_begin_job_context_clears_content_headers(): void {
-		// CONTENT_TYPE / CONTENT_LENGTH / HTTP_X_A8C_REQUEST_ID must be unset
-		// so the new job context doesn't inherit them from the request.
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$_SERVER['CONTENT_TYPE']           = 'application/json';
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$_SERVER['CONTENT_LENGTH']         = '42';
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'inherited-id';
-
-		$orig = Remote_Manager::begin_job_context( 'job/test' );
-
-		$this->assertArrayNotHasKey( 'CONTENT_TYPE', $_SERVER );
-		$this->assertArrayNotHasKey( 'CONTENT_LENGTH', $_SERVER );
-		$this->assertArrayNotHasKey( 'HTTP_X_A8C_REQUEST_ID', $_SERVER );
-
-		Remote_Manager::end_job_context( $orig );
-
-		// Restored.
-		$this->assertSame( 'application/json', $_SERVER['CONTENT_TYPE'] );
-		$this->assertSame( '42', $_SERVER['CONTENT_LENGTH'] );
-		$this->assertSame( 'inherited-id', $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
-
-		// Cleanup.
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'], $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
-	}
-
 	// --- calculate_lag edge cases ------------------------------------------
 
 	public function test_calculate_lag_handles_non_array_segments_per_partition(): void {
@@ -1161,7 +1088,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sanitizes_unicode_action_for_logging(): void {
 		// Unicode/control chars in the action should not cause issues — handle_job
 		// uses preg_replace + substr to restrict to safe chars before writing
-		// $_SERVER (via begin_job_context).
+		// $_SERVER (via Log_Manager::begin_job_context).
 		Remote_Manager::handle_job( [
 			'action' => "control\x00chars\nmixed",
 		] );
@@ -1269,7 +1196,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_round_trips_via_context(): void {
 		// Verifies $_SERVER is restored to original after handle_job runs the
-		// job (via begin_job_context / end_job_context wrapper).
+		// job (via the Log_Manager::begin/end_job_context wrapper).
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$_SERVER['REQUEST_URI']    = '/original';
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
@@ -2481,31 +2408,6 @@ class RemoteManagerTest extends TestCase {
 
 		$result = Remote_Manager::queue_sync_all_settings( [ 'spoke' ] );
 		$this->assertIsInt( $result );
-	}
-
-	// -------------------------------------------------------------------------
-	// init — DEFAULT_SERVER_ID prefix in begin_job_context with various names.
-	// -------------------------------------------------------------------------
-
-	public function test_begin_job_context_with_empty_name(): void {
-		$orig = Remote_Manager::begin_job_context( '' );
-		$this->assertSame( '/jobs/', $_SERVER['REQUEST_URI'] );
-		Remote_Manager::end_job_context( $orig );
-	}
-
-	public function test_begin_job_context_records_unique_id(): void {
-		// UNIQUE_ID generated via LogManager::generate_request_id (if available).
-		// Just verify we end up with an at-least-non-empty value in some
-		// situations where generate_request_id() is available.
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		unset( $_SERVER['UNIQUE_ID'] );
-		$orig = Remote_Manager::begin_job_context( 'something' );
-
-		// UNIQUE_ID has been set to something (could be empty string if
-		// generate_request_id failed, but it must be set).
-		$this->assertArrayHasKey( 'UNIQUE_ID', $_SERVER );
-
-		Remote_Manager::end_job_context( $orig );
 	}
 
 	// -------------------------------------------------------------------------
