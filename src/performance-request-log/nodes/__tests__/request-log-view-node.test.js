@@ -111,6 +111,49 @@ test( 'exposes a numeric rps on the node instance', () => {
 	expect( v.rps ).toBeGreaterThan( 0 );
 } );
 
+test( 'RPS tracking aggregates per second, not one entry per request (bounded window)', () => {
+	// Perf contract: the requests/second window must NOT grow one entry per
+	// request (the old `completedHistory.push`-per-request + full filter+reduce
+	// was O(n) per request). A 10s window collapses to per-second buckets, so a
+	// burst of 500 synchronous requests stays a handful of buckets — never 500.
+	const v = makeView( 'requestlog:view', { maxEntries: 100000 } );
+	for ( let i = 0; i < 500; i++ ) {
+		v.fill( rowMsg( row( { rid: `r${ i }`, url: `/p/${ i }` } ) ) );
+	}
+	expect( Array.isArray( v.rpsBuckets ) ).toBe( true );
+	expect( v.rpsBuckets.length ).toBeLessThanOrEqual( 12 );
+} );
+
+test( 'a read mid-stream then more appends keeps newest-first across the coalesce boundary', () => {
+	const v = makeView( 'requestlog:view' );
+	v.fill( rowMsg( row( { rid: 'a' } ) ) );
+	v.fill( rowMsg( row( { rid: 'b' } ) ) );
+	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'b', 'a' ] );
+	v.fill( rowMsg( row( { rid: 'c' } ) ) );
+	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'c', 'b', 'a' ] );
+} );
+
+test( 'exposes O(1) windowed reads — entriesCount + entryAt (newest-first) — for the virtual list', () => {
+	const v = makeView( 'requestlog:view' );
+	v.fill( rowMsg( row( { rid: 'a' } ) ) );
+	v.fill( rowMsg( row( { rid: 'b' } ) ) );
+	v.fill( rowMsg( row( { rid: 'c' } ) ) );
+	expect( v.entriesCount ).toBe( 3 );
+	expect( v.entryAt( 0 ).rid ).toBe( 'c' ); // newest
+	expect( v.entryAt( 2 ).rid ).toBe( 'a' ); // oldest
+	expect( v.entryAt( 3 ) ).toBeUndefined();
+} );
+
+test( 'entryAt + entriesCount respect the cap (oldest overwritten) on a small ring', () => {
+	const v = makeView( 'requestlog:view', { maxEntries: 3 } );
+	for ( let i = 0; i < 10; i++ ) {
+		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
+	}
+	expect( v.entriesCount ).toBe( 3 );
+	expect( v.entryAt( 0 ).rid ).toBe( 'r9' ); // newest
+	expect( v.entryAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
+} );
+
 test( 'touches lastEventTime on each appended row', () => {
 	const v = makeView( 'requestlog:view' );
 	expect( v.lastEventTime ).toBeNull();

@@ -2,7 +2,7 @@ import { Node, VALUE } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 
 const DEFAULT_MAX_ENTRIES = 1000;
-const RPS_WINDOW_MS = 10000;
+const RPS_WINDOW_SEC = 10;
 // Defensive bounds for raw envelope VALUEs. Mirrors the legacy
 // `transformCompletedLine` clip behavior — kept here so the view is the single
 // place that knows envelope → render-entry mapping.
@@ -32,10 +32,14 @@ const urlHash = ( url ) => {
  * `requestlog:view` — owns the Request Log view model.
  *
  * Two cadences, deliberately split for performance (mirrors rawLogsView):
- * - HIGH frequency (the request stream): `_appendRow` pushes each enriched entry
- *   onto `this.entries` and recomputes `this.rps` / `this.lastEventTime`, but does
- *   NOT publish. The React view reads these directly off the node each animation
- *   frame so a high-volume stream never re-renders React per request.
+ * - HIGH frequency (the request stream): `_appendRow` writes each enriched entry
+ *   into a fixed ring buffer (O(1): write at head, advance, overwrite oldest) and
+ *   updates `this.rps` / `this.lastEventTime`, but does NOT publish. The React
+ *   view reads the VISIBLE window straight off the node each animation frame via
+ *   `entriesCount` + `entryAt(i)` (newest-first) — O(rows-on-screen), not
+ *   O(buffer) — so a high-volume stream never re-renders or re-copies per frame.
+ *   `entries` materializes the whole buffer newest-first for the filter path +
+ *   tests only; it is NOT on the frame path.
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError })` — the pause button, the
  *   empty-state label, and the reconnect banner, consumed by
@@ -68,14 +72,68 @@ export class RequestLogViewNode extends Node {
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		this.entries = [];
+		// Ring buffer: rows written at `_head` (mod maxEntries), oldest overwritten
+		// once full. `_count` is how many slots hold a live row. Append and
+		// cap-drop are both O(1) — no shift, concat, or truncation.
+		this._ring = [];
+		this._head = 0;
+		this._count = 0;
 		this.entryCounter = 0;
-		this.completedHistory = [];
+		// Per-second RPS buckets ({ sec, count }) + their running total — bounded
+		// to the window instead of one entry per request.
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
 		this.rps = 0;
 		this.lastEventTime = null;
 		this.paused = false;
 		this.connectionError = false;
 		this._publish();
+	}
+
+	// Number of live entries in the ring (O(1)).
+	get entriesCount() {
+		return this._count;
+	}
+
+	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
+	// The virtual list reads only its on-screen window through this — never the
+	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
+	entryAt( i ) {
+		if ( i < 0 || i >= this._count ) {
+			return undefined;
+		}
+		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
+		return this._ring[ idx ];
+	}
+
+	// The whole buffer materialized newest-first — O(n), for the filter path and
+	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
+	// graph clear) reseeds the ring from the given newest-first array.
+	get entries() {
+		const out = new Array( this._count );
+		for ( let i = 0; i < this._count; i++ ) {
+			out[ i ] = this.entryAt( i );
+		}
+		return out;
+	}
+
+	set entries( value ) {
+		this._ring = [];
+		this._head = 0;
+		this._count = 0;
+		if ( Array.isArray( value ) ) {
+			// Seed oldest-first so the newest entry lands last (at head-1).
+			for ( let i = value.length - 1; i >= 0; i-- ) {
+				this._writeEntry( value[ i ] );
+			}
+		}
+	}
+
+	// Write one entry into the ring at the head and advance, capping at maxEntries.
+	_writeEntry( entry ) {
+		this._ring[ this._head ] = entry;
+		this._head = ( this._head + 1 ) % this.maxEntries;
+		this._count = Math.min( this._count + 1, this.maxEntries );
 	}
 
 	fill( message ) {
@@ -111,7 +169,7 @@ export class RequestLogViewNode extends Node {
 		}
 		const url = clip( req.url, MAX_URL_LENGTH );
 		this.entryCounter += 1;
-		this.entries.unshift( {
+		this._writeEntry( {
 			// Monotonic per-mount counter — used as the React list key so two
 			// entries with the same rid get distinct DOM nodes (a colliding rid
 			// from an aggregated spoke, or a worker's reset-then-rebuild in the
@@ -129,9 +187,6 @@ export class RequestLogViewNode extends Node {
 			user_agent: clip( req.user_agent || '', MAX_UA_LENGTH ),
 			isEven: this.entryCounter % 2 === 0,
 		} );
-		if ( this.entries.length > this.maxEntries ) {
-			this.entries.length = this.maxEntries;
-		}
 		this.lastEventTime = Date.now();
 		this._updateRequestsPerSecond( 1 );
 	}
@@ -146,29 +201,39 @@ export class RequestLogViewNode extends Node {
 		}
 	}
 
-	// Clear buffer + counter + RPS history (matches handleClear in RequestStream).
+	// Clear buffer + counter + RPS window (matches handleClear in RequestStream).
 	_clear() {
 		this.entries = [];
 		this.entryCounter = 0;
-		this.completedHistory = [];
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
 		this.rps = 0;
 	}
 
-	// Requests per second from completed requests over a 10s window. Mirrors
-	// RequestStream's updateRequestsPerSecond.
+	// Requests per second over a 10s window. Counts are aggregated into
+	// per-second buckets with a running total, so each request is O(1) (one
+	// bucket bump + bounded expiry) — not an O(n) scan of the window.
 	_updateRequestsPerSecond( completedCount ) {
-		const now = Date.now();
-		if ( completedCount > 0 ) {
-			this.completedHistory.push( { time: now, count: completedCount } );
+		if ( completedCount <= 0 ) {
+			return;
 		}
-		this.completedHistory = this.completedHistory.filter(
-			( entry ) => now - entry.time < RPS_WINDOW_MS
-		);
-		const totalInWindow = this.completedHistory.reduce(
-			( sum, entry ) => sum + entry.count,
-			0
-		);
-		this.rps = totalInWindow / ( RPS_WINDOW_MS / 1000 );
+		const sec = Math.floor( Date.now() / 1000 );
+		const last = this.rpsBuckets[ this.rpsBuckets.length - 1 ];
+		if ( last && last.sec === sec ) {
+			last.count += completedCount;
+		} else {
+			this.rpsBuckets.push( { sec, count: completedCount } );
+		}
+		this.rpsWindowTotal += completedCount;
+		const oldest = sec - RPS_WINDOW_SEC;
+		while (
+			this.rpsBuckets.length > 0 &&
+			this.rpsBuckets[ 0 ].sec <= oldest
+		) {
+			this.rpsWindowTotal -= this.rpsBuckets[ 0 ].count;
+			this.rpsBuckets.shift();
+		}
+		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
 	// Publish ONLY the low-frequency view model. `entries` / `rps` /
