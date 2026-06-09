@@ -218,9 +218,10 @@ class AppCoreTest extends TestCase {
 
 		$this->assertArrayHasKey( 'the_content', $filters );
 		$this->assertArrayHasKey( 'wp_head', $filters );
-		// Two priorities: start (from config) and complete (PHP_INT_MAX-1).
+		// Three priorities: start (from config), spacer (PHP_INT_MAX-2), complete (PHP_INT_MAX-1).
 		$priorities = \array_keys( $filters['the_content'] );
-		$this->assertCount( 2, $priorities );
+		$this->assertCount( 3, $priorities );
+		$this->assertContains( PHP_INT_MAX - 2, $priorities );
 		$this->assertContains( PHP_INT_MAX - 1, $priorities );
 	}
 
@@ -294,6 +295,14 @@ class AppCoreTest extends TestCase {
 		$GLOBALS['_wp_test_current_filter'] = 'wp_head';
 
 		$this->assertNull( $core->hook_start() );
+	}
+
+	public function test_hook_spacer_passes_through_value(): void {
+		$this->require_config_or_skip();
+		$this->use_config( [ 'enable_logging' => true ] );
+		$core = new Core();
+		$this->assertSame( 'sacrificial', $core->hook_spacer( 'sacrificial' ) );
+		$this->assertNull( $core->hook_spacer() );
 	}
 
 	public function test_hook_complete_passes_through_value(): void {
@@ -446,6 +455,41 @@ class AppCoreTest extends TestCase {
 		$core->hook_start( 'test' );
 
 		$this->assertSame( $original, $wp_filter['the_content']->callbacks[ $priority ]['our_cb']['function'] );
+	}
+
+	public function test_wrap_callbacks_skips_spacer_priority(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->use_config( [
+			'enable_logging'     => true,
+			'log_events'         => [ 'the_content' ],
+			'significant_events' => [ 'the_content hook' ],
+		] );
+
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		// The sacrificial spacer at PHP_INT_MAX-2 must never be timing-wrapped.
+		$original = function ( $v ) { return $v; };
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [
+			PHP_INT_MAX - 2 => [
+				'spacer_cb' => [
+					'function'      => $original,
+					'accepted_args' => 1,
+				],
+			],
+		];
+
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'test' );
+
+		$this->assertSame(
+			$original,
+			$wp_filter['the_content']->callbacks[ PHP_INT_MAX - 2 ]['spacer_cb']['function'],
+			'the spacer priority must be left un-wrapped'
+		);
 	}
 
 	public function test_wrap_callbacks_skips_by_reference_callbacks(): void {
