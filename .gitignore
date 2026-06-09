@@ -20,3 +20,6 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Agent tooling scratch — a regenerable symlink to the tracked .claude dir; never track it.
+.agents
