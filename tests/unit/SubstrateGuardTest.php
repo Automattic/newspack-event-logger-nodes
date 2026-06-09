@@ -77,6 +77,30 @@ class SubstrateGuardTest extends TestCase {
 		);
 	}
 
+	/**
+	 * The floor must be at least 0.13.0 — the substrate release that introduced
+	 * the Config_System\Field / Schema / Settings_Renderer classes ELN's
+	 * Settings_Schema + Admin now depend on. A lower floor lets an older
+	 * substrate (which lacks those classes) load and fatal instead of showing
+	 * the guard notice.
+	 */
+	public function test_minimum_version_requires_config_system_api(): void {
+		$this->assertTrue(
+			\version_compare( Substrate_Guard::MINIMUM_NODES_VERSION, '0.13.0', '>=' ),
+			'MINIMUM_NODES_VERSION must be >= 0.13.0 (Config_System\\Field/Schema/Settings_Renderer)'
+		);
+	}
+
+	/** The guard probes the Config_System classes ELN's settings layer instantiates. */
+	public function test_required_apis_probe_config_system_classes(): void {
+		// Non-vacuous: these are loaded in the test env, proving the probe set
+		// includes them (a missing one would flip required_apis_present() false).
+		$this->assertTrue( \class_exists( '\Newspack_Nodes\Config_System\Field' ) );
+		$this->assertTrue( \class_exists( '\Newspack_Nodes\Config_System\Schema' ) );
+		$this->assertTrue( \class_exists( '\Newspack_Nodes\Config_System\Settings_Renderer' ) );
+		$this->assertTrue( Substrate_Guard::required_apis_present() );
+	}
+
 	public function test_boot_invokes_on_ready_when_satisfied(): void {
 		$ready = false;
 		$unsat = false;

@@ -34,7 +34,7 @@ class Substrate_Guard {
 	 * config-namespace / service-CI features land in its next release; until
 	 * the substrate bumps, the capability check below is the operative floor).
 	 */
-	public const MINIMUM_NODES_VERSION = '0.4.0';
+	public const MINIMUM_NODES_VERSION = '0.13.0';
 
 	/**
 	 * Pure predicate: is the installed substrate new enough AND capable?
@@ -111,6 +111,12 @@ class Substrate_Guard {
 		'\Newspack_Nodes\Core',
 		'\Newspack_Nodes\Service_CI_Node',
 		'\Newspack_Nodes\Command_Interpreter_Node',
+		// Config System (>= 0.13.0): ELN's Settings_Schema instantiates Field +
+		// Schema; its Admin renders via Settings_Renderer. An older substrate
+		// lacks these — probe them so the guard notice fires instead of a fatal.
+		'\Newspack_Nodes\Config_System\Field',
+		'\Newspack_Nodes\Config_System\Schema',
+		'\Newspack_Nodes\Config_System\Settings_Renderer',
 	];
 
 	/**

@@ -1057,32 +1057,14 @@ class Admin {
 
 		$short = \substr( $option, \strlen( self::OPTION_PREFIX ) );
 
-		// 1. Runtime-only options (no worker impact).
-		$no_impact_options = [
-			'log_urls',
-			'skip_urls',
-		];
-		if ( \in_array( $short, $no_impact_options, true ) ) {
-			return;
-		}
-
-		// 2. Supervisor-only options (it refreshes config each loop).
-		$supervisor_only_options = [
-			'enable_logging',
-			'enable_jobs',
-		];
-		if ( \in_array( $short, $supervisor_only_options, true ) ) {
-			return;
-		}
-
-		// 2b. Aggregator: single-partition topology with a fixed lock dir
-		// (`aggregator.p0.lock.d`). Toggling enable_aggregator should kick
-		// any currently-running aggregator worker so it exits within the
-		// next drain tick instead of waiting out its ~595s lifetime.
-		// Disabling: the topology filter no longer registers `aggregator`,
-		// so SpawnController rejects the worker's self-respawn POST and
-		// no replacement starts. Enabling: the supervisor's check_config
-		// pass spawns one within ~15s.
+		// Aggregator: single-partition topology with a fixed lock dir
+		// (`aggregator.p0.lock.d`) — a special case the per-group restart below
+		// can't express. Toggling enable_aggregator should kick any currently-
+		// running aggregator worker so it exits within the next drain tick
+		// instead of waiting out its ~595s lifetime. Disabling: the topology
+		// filter no longer registers `aggregator`, so SpawnController rejects the
+		// worker's self-respawn POST and no replacement starts. Enabling: the
+		// supervisor's check_config pass spawns one within ~15s.
 		if ( 'enable_aggregator' === $short ) {
 			try {
 				$locks_dir = Config::get_locks_directory();
@@ -1093,28 +1075,18 @@ class Admin {
 			return;
 		}
 
-		// 3. Request-side workers only.
-		$request_workers_options = [
-			'auto_disable_threshold',
-			'auto_protect_time_threshold',
-			'significant_events',
-			'stats_salt',
-		];
-
-		// 4. Job-side workers only.
-		$job_workers_options = [
-			'log_events',
-			'custom_events',
-			'log_memory',
-			'flush_every_line',
-		];
-
-		$worker_groups = [];
-		if ( \in_array( $short, $request_workers_options, true ) ) {
-			$worker_groups = [ 'request-workers' ];
-		} elseif ( \in_array( $short, $job_workers_options, true ) ) {
-			$worker_groups = [ 'job-workers' ];
+		// The restart class derives from the single Settings_Schema declaration:
+		// 'supervisor_only' (refreshes config each loop → no worker restart), a
+		// worker-group array, or [] (no impact / unknown key). `stats_salt` is
+		// rotated by the flush handler, not a settings Field, so it's classified
+		// here (request-side stats producers).
+		$restart = 'stats_salt' === $short
+			? [ 'request-workers' ]
+			: Settings_Schema::get()->restart_for( $short );
+		if ( 'supervisor_only' === $restart ) {
+			return;
 		}
+		$worker_groups = \is_array( $restart ) ? $restart : [];
 
 		if ( empty( $worker_groups ) ) {
 			return;
