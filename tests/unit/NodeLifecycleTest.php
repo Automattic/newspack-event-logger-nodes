@@ -21,7 +21,6 @@ use Newspack_Event_Logger_Nodes\Auto_Tuner_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
-use Newspack_Event_Logger_Nodes\Job_Worker_Node;
 use Newspack_Event_Logger_Nodes\Remote_Source_Node;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stream_Merger_Node;
@@ -42,7 +41,6 @@ class NodeLifecycleTest extends TestCase {
 			'FlameBuilder'    => [ static fn () => new Flame_Builder_Node() ],
 			'HealthCheckTick' => [ static fn () => new Health_Check_Tick_Node() ],
 			'JobRouter'       => [ static fn () => new Job_Router_Node() ],
-			'JobWorker'       => [ static fn () => new Job_Worker_Node() ],
 			'RequestBuilder'  => [ static fn () => new Request_Builder_Node() ],
 			'RemoteSource'    => [ static fn () => ( static function () {
 				$r = new Remote_Source_Node();

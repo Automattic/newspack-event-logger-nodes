@@ -55,6 +55,9 @@ class Log_Manager {
 	/** @var array<int, self> Stack of suspended parent LogManager instances. */
 	private static $context_stack = [];
 
+	/** @var array<int, array<string, mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
+	private static array $job_server_stack = [];
+
 	/** @var array<string, mixed> Cached config (loaded once at construction). */
 	private $config = [];
 
@@ -312,6 +315,69 @@ class Log_Manager {
 		// Restore UNIQUE_ID from parent context.
 		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
 			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
+		}
+	}
+
+	/**
+	 * Enter a background-job request context.
+	 *
+	 * The substrate's Job_Worker_Node fires `newspack_nodes/job_worker/before_job`
+	 * around each handler; this is the event-logger's hooked listener. It suspends
+	 * the parent LogManager, generates a fresh per-job UNIQUE_ID, and rewrites
+	 * $_SERVER to a synthetic `/jobs/{handler}` request so any LogManager the
+	 * handler spawns picks up job-scoped context.
+	 *
+	 * Stack-based by design: the before/after-job actions thread no state, so the
+	 * original $_SERVER is pushed onto an internal LIFO restored by
+	 * end_job_context(). The snapshot is taken FIRST so a partial $_SERVER edit
+	 * mid-method still leaves a complete snapshot to restore from, and so an
+	 * unpaired/throwing begin still leaves end_job_context a snapshot to pop.
+	 * Public static so handlers (and direct callers like cron) can nest their own
+	 * sub-scopes — pair with end_job_context() in a finally block.
+	 */
+	public static function begin_job_context( string $handler ): void {
+		// $_SERVER is string-keyed by design (superglobal snapshot for restore).
+		/** @var array<string, mixed> $snapshot */
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
+		$snapshot                 = $_SERVER;
+		self::$job_server_stack[] = $snapshot;
+
+		// LogManager::suspend() pushes the parent context onto its stack.
+		self::suspend();
+
+		$path_info = '/' . \ltrim( $handler, '/' );
+		/** @var int|float|string|bool|null $raw_server_name */
+		$raw_server_name = $_SERVER['SERVER_NAME'] ?? 'localhost'; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
+		$server_name     = (string) $raw_server_name;
+
+		$_SERVER['UNIQUE_ID']       = self::generate_request_id();
+		$_SERVER['REQUEST_URI']     = '/jobs/' . \ltrim( $handler, '/' );
+		$_SERVER['REQUEST_METHOD']  = 'POST';
+		$_SERVER['PATH_INFO']       = $path_info;
+		$_SERVER['SCRIPT_NAME']     = $path_info;
+		$_SERVER['SCRIPT_URL']      = $path_info;
+		$_SERVER['SCRIPT_URI']      = 'https://' . $server_name . $path_info;
+		$foundation_base = \defined( 'NEWSPACK_FOUNDATION_BASE' ) ? \NEWSPACK_FOUNDATION_BASE : '';
+		$_SERVER['SCRIPT_FILENAME'] = ( \is_string( $foundation_base ) ? $foundation_base : '' ) . '/template';
+		$_SERVER['QUERY_STRING']    = '';
+		unset(
+			$_SERVER['CONTENT_TYPE'],
+			$_SERVER['CONTENT_LENGTH'],
+			$_SERVER['HTTP_X_A8C_REQUEST_ID']
+		);
+	}
+
+	/**
+	 * Leave a background-job request context: resume the parent LogManager and
+	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
+	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
+	 * so a throwing/unpaired begin can't fatal here.
+	 */
+	public static function end_job_context(): void {
+		self::resume();
+		if ( ! empty( self::$job_server_stack ) ) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
+			$_SERVER = \array_pop( self::$job_server_stack );
 		}
 	}
 

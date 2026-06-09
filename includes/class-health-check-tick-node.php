@@ -16,9 +16,10 @@
  *     under one supervisor process, sharing the Router heartbeat.
  *
  * Why enqueue rather than call `RemoteManager::health_check()` synchronously:
- *   - JobWorker handles begin_job_context / end_job_context, request_id
- *     correlation, and STALE_THRESHOLD drops uniformly across every
- *     job type. Inlining bypasses that bookkeeping.
+ *   - The job pipeline handles request_id correlation and STALE_THRESHOLD
+ *     drops uniformly across every job type. Inlining bypasses that
+ *     bookkeeping. (Log_Manager::begin/end_job_context wraps this tick in a
+ *     synthetic /jobs/health-check-tick context, same as a dispatched job.)
  *   - The sweep can block on cURL probes against every remote; the
  *     aggregator topology's drain loop should keep moving.
  *
@@ -107,7 +108,7 @@ class Health_Check_Tick_Node extends Timer_Node {
 		// so the parent LogManager is disabled. begin_job_context suspends
 		// it, swaps REQUEST_URI to /jobs/health-check-tick, and the fresh
 		// LogManager built on first instance() call is enabled.
-		$orig_server = Job_Worker_Node::begin_job_context( 'health-check-tick' );
+		Log_Manager::begin_job_context( 'health-check-tick' );
 		try {
 			$log_manager = Log_Manager::instance();
 			$log_manager->message(
@@ -124,7 +125,7 @@ class Health_Check_Tick_Node extends Timer_Node {
 			);
 			$log_manager->flush();
 		} finally {
-			Job_Worker_Node::end_job_context( $orig_server );
+			Log_Manager::end_job_context();
 		}
 	}
 
