@@ -1883,7 +1883,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					if ( '' === $data ) {
 						return false;
 					}
-					$decoded = \json_decode( \trim( $data ), true, 64 );
+					$decoded = \json_decode( \trim( $data ), true, Flame_Builder_Node::FLAME_JSON_DEPTH );
 					$flame   = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
 					if ( \is_array( $flame ) ) {
 						$result = $flame;

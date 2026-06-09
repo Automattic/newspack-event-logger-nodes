@@ -31,6 +31,9 @@ class Flame_Builder_Node extends Node {
 	private const MAX_RECURSION_DEPTH = 50;
 	private const MAX_STACK_DEPTH     = 50;
 
+	/** json_decode depth for packed flame lines: 2 JSON levels per span (object + children array) makes the worst case ~2×MAX_STACK_DEPTH+1 incl. the Message envelope; +8 is slack. */
+	public const FLAME_JSON_DEPTH = 2 * self::MAX_STACK_DEPTH + 8;
+
 	/** Pre-compiled regex patterns for flame data parsing. */
 	const PATTERN_START    = '/^(.+?) \(start\)$/';
 	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
@@ -544,7 +547,7 @@ class Flame_Builder_Node extends Node {
 	 */
 	public static function format_index_entry( string $line, array $position, ?array &$data = null ): ?string {
 		// $line is the packed Message (positional JSON); VALUE is index 6.
-		$decoded = \json_decode( $line, true, 64 );
+		$decoded = \json_decode( $line, true, self::FLAME_JSON_DEPTH );
 		$value   = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
 		if ( ! \is_array( $value ) || empty( $value['rid'] ) ) {
 			return null;

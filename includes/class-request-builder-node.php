@@ -24,10 +24,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Request_Builder_Node extends Node {
 
-	/**
-	 * Maximum stack depth before request is considered runaway and evicted.
-	 * Matches json_decode depth limit (64) with headroom.
-	 */
+	/** Maximum stack depth before request is considered runaway and evicted. */
 	private const MAX_STACK_DEPTH = 50;
 
 	/**
