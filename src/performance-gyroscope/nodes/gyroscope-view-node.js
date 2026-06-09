@@ -1,6 +1,6 @@
 import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
 
-const RPS_WINDOW_MS = 10000;
+const RPS_WINDOW_SEC = 10;
 
 /**
  * `gyroscope:view` — owns the in-flight request model.
@@ -49,7 +49,10 @@ export class GyroscopeViewNode extends Node {
 	constructor() {
 		super();
 		this.requests = new Map(); // All requests keyed by rid.
-		this.completedHistory = []; // Completed requests with timestamps for rps.
+		// Per-second RPS buckets ({ sec, count }) + their running total — bounded
+		// to the window instead of one entry per snapshot tick.
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
 		this.rps = 0;
 		this.lastEventTime = null;
 		this.connectionError = false;
@@ -122,10 +125,11 @@ export class GyroscopeViewNode extends Node {
 		}
 	}
 
-	// Reset map + rps history (matches handleBeforeConnect in Inflight).
+	// Reset map + rps window (matches handleBeforeConnect in Inflight).
 	_clear() {
 		this.requests.clear();
-		this.completedHistory = [];
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
 		this.rps = 0;
 	}
 
@@ -149,21 +153,32 @@ export class GyroscopeViewNode extends Node {
 			.slice( 0, maxRows );
 	}
 
-	// Requests per second from completed requests over a 10s window. Mirrors
-	// Inflight's updateRequestsPerSecond.
+	// Requests per second over a 10s window. Counts are aggregated into
+	// per-second buckets with a running total, so each tick is O(1) (one bucket
+	// bump + bounded expiry) — not an O(n) scan of the window. Unlike the
+	// append-driven views, snapshot() calls this every tick INCLUDING idle ticks
+	// (completedCount 0), so expiry always runs — that's what decays rps to 0
+	// once completions stop.
 	_updateRequestsPerSecond( completedCount ) {
-		const now = Date.now();
+		const sec = Math.floor( Date.now() / 1000 );
 		if ( completedCount > 0 ) {
-			this.completedHistory.push( { time: now, count: completedCount } );
+			const last = this.rpsBuckets[ this.rpsBuckets.length - 1 ];
+			if ( last && last.sec === sec ) {
+				last.count += completedCount;
+			} else {
+				this.rpsBuckets.push( { sec, count: completedCount } );
+			}
+			this.rpsWindowTotal += completedCount;
 		}
-		this.completedHistory = this.completedHistory.filter(
-			( entry ) => now - entry.time < RPS_WINDOW_MS
-		);
-		const totalInWindow = this.completedHistory.reduce(
-			( sum, entry ) => sum + entry.count,
-			0
-		);
-		this.rps = totalInWindow / ( RPS_WINDOW_MS / 1000 );
+		const oldest = sec - RPS_WINDOW_SEC;
+		while (
+			this.rpsBuckets.length > 0 &&
+			this.rpsBuckets[ 0 ].sec <= oldest
+		) {
+			this.rpsWindowTotal -= this.rpsBuckets[ 0 ].count;
+			this.rpsBuckets.shift();
+		}
+		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
 	// Publish ONLY the low-frequency view model. `requests` / `rps` /

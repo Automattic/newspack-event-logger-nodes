@@ -209,6 +209,22 @@ test( 'snapshot() updates rps from the reaped completed count', () => {
 	expect( v.rps ).toBeGreaterThan( 0 );
 } );
 
+test( 'RPS tracking aggregates per second, not one entry per tick (bounded window)', () => {
+	// Perf contract: the requests/second window must NOT grow one entry per
+	// snapshot tick (the old `completedHistory.push` + full filter+reduce was
+	// O(n) per tick). A 10s window collapses to per-second buckets, so 500
+	// complete+snapshot cycles stay a handful of buckets — never 500.
+	const v = makeView( 'gyroscope:view' );
+	for ( let i = 0; i < 500; i++ ) {
+		v.fill(
+			completeEnvelope( { rid: `r${ i }`, url: '/x', duration_ms: 5 } )
+		);
+		v.snapshot( 100 );
+	}
+	expect( Array.isArray( v.rpsBuckets ) ).toBe( true );
+	expect( v.rpsBuckets.length ).toBeLessThanOrEqual( 12 );
+} );
+
 test( 'touches lastEventTime on each processed envelope', () => {
 	const v = makeView( 'gyroscope:view' );
 	expect( v.lastEventTime ).toBeNull();

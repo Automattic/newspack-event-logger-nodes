@@ -1,7 +1,7 @@
 import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
 
 const DEFAULT_MAX_ENTRIES = 5000;
-const RPS_WINDOW_MS = 10000;
+const RPS_WINDOW_SEC = 10;
 const MAX_M_LENGTH = 1000;
 
 /**
@@ -14,10 +14,12 @@ const MAX_M_LENGTH = 1000;
  *
  * Two cadences, deliberately split for performance (mirrors requestLogView):
  * - HIGH frequency (the error stream): `_appendEnvelope` validates + enriches
- *   each envelope, pushes onto `this.entries`, and recomputes `this.rps` /
- *   `this.lastEventTime`, but does NOT publish. The React view reads these
- *   directly off the node each animation frame so a high-volume stream never
- *   re-renders React per error.
+ *   each envelope, writes it into a fixed ring buffer (O(1): write at head,
+ *   advance, overwrite oldest), and updates `this.rps` / `this.lastEventTime`, but
+ *   does NOT publish. The React view reads the VISIBLE window straight off the
+ *   node each animation frame via `entriesCount` + `entryAt(i)` (newest-first) —
+ *   O(rows-on-screen), not O(buffer). `entries` materializes the whole buffer
+ *   newest-first for the filter path + tests only; it is NOT on the frame path.
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError, lastEventTime })` — the pause
  *   button, the reconnect banner, and the "Xs ago" staleness label, consumed by
@@ -48,14 +50,68 @@ export class PerfErrorsViewNode extends Node {
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		this.entries = [];
+		// Ring buffer: rows written at `_head` (mod maxEntries), oldest overwritten
+		// once full. `_count` is how many slots hold a live row. Append and
+		// cap-drop are both O(1) — no shift, concat, or truncation.
+		this._ring = [];
+		this._head = 0;
+		this._count = 0;
 		this.entryCounter = 0;
-		this.completedHistory = [];
+		// Per-second RPS buckets ({ sec, count }) + their running total — bounded
+		// to the window instead of one entry per error.
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
 		this.rps = 0;
 		this.lastEventTime = null;
 		this.paused = false;
 		this.connectionError = false;
 		this._publish();
+	}
+
+	// Number of live entries in the ring (O(1)).
+	get entriesCount() {
+		return this._count;
+	}
+
+	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
+	// The virtual list reads only its on-screen window through this — never the
+	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
+	entryAt( i ) {
+		if ( i < 0 || i >= this._count ) {
+			return undefined;
+		}
+		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
+		return this._ring[ idx ];
+	}
+
+	// The whole buffer materialized newest-first — O(n), for the filter path and
+	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
+	// graph clear) reseeds the ring from the given newest-first array.
+	get entries() {
+		const out = new Array( this._count );
+		for ( let i = 0; i < this._count; i++ ) {
+			out[ i ] = this.entryAt( i );
+		}
+		return out;
+	}
+
+	set entries( value ) {
+		this._ring = [];
+		this._head = 0;
+		this._count = 0;
+		if ( Array.isArray( value ) ) {
+			// Seed oldest-first so the newest entry lands last (at head-1).
+			for ( let i = value.length - 1; i >= 0; i-- ) {
+				this._writeEntry( value[ i ] );
+			}
+		}
+	}
+
+	// Write one entry into the ring at the head and advance, capping at maxEntries.
+	_writeEntry( entry ) {
+		this._ring[ this._head ] = entry;
+		this._head = ( this._head + 1 ) % this.maxEntries;
+		this._count = Math.min( this._count + 1, this.maxEntries );
 	}
 
 	fill( message ) {
@@ -99,7 +155,7 @@ export class PerfErrorsViewNode extends Node {
 		}
 
 		this.entryCounter += 1;
-		this.entries.unshift( {
+		this._writeEntry( {
 			// Monotonic per-mount counter — used as the React list key (id) so two
 			// entries with the same rid get distinct DOM nodes.
 			seq: this.entryCounter,
@@ -110,9 +166,6 @@ export class PerfErrorsViewNode extends Node {
 			m,
 			isEven: this.entryCounter % 2 === 0,
 		} );
-		if ( this.entries.length > this.maxEntries ) {
-			this.entries.length = this.maxEntries;
-		}
 		this.lastEventTime = Date.now();
 		this._updateRequestsPerSecond( 1 );
 	}
@@ -127,29 +180,39 @@ export class PerfErrorsViewNode extends Node {
 		}
 	}
 
-	// Clear buffer + counter + RPS history (matches handleClear in ErrorLog).
+	// Clear buffer + counter + RPS window (matches handleClear in ErrorLog).
 	_clear() {
 		this.entries = [];
 		this.entryCounter = 0;
-		this.completedHistory = [];
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
 		this.rps = 0;
 	}
 
-	// Errors per second over a 10s window. Mirrors RequestStream's
-	// updateRequestsPerSecond; harmless here (ErrorLog may ignore rps).
+	// Errors per second over a 10s window. Counts are aggregated into per-second
+	// buckets with a running total, so each error is O(1) (one bucket bump +
+	// bounded expiry) — not an O(n) scan of the window.
 	_updateRequestsPerSecond( completedCount ) {
-		const now = Date.now();
-		if ( completedCount > 0 ) {
-			this.completedHistory.push( { time: now, count: completedCount } );
+		if ( completedCount <= 0 ) {
+			return;
 		}
-		this.completedHistory = this.completedHistory.filter(
-			( entry ) => now - entry.time < RPS_WINDOW_MS
-		);
-		const totalInWindow = this.completedHistory.reduce(
-			( sum, entry ) => sum + entry.count,
-			0
-		);
-		this.rps = totalInWindow / ( RPS_WINDOW_MS / 1000 );
+		const sec = Math.floor( Date.now() / 1000 );
+		const last = this.rpsBuckets[ this.rpsBuckets.length - 1 ];
+		if ( last && last.sec === sec ) {
+			last.count += completedCount;
+		} else {
+			this.rpsBuckets.push( { sec, count: completedCount } );
+		}
+		this.rpsWindowTotal += completedCount;
+		const oldest = sec - RPS_WINDOW_SEC;
+		while (
+			this.rpsBuckets.length > 0 &&
+			this.rpsBuckets[ 0 ].sec <= oldest
+		) {
+			this.rpsWindowTotal -= this.rpsBuckets[ 0 ].count;
+			this.rpsBuckets.shift();
+		}
+		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
 	// Publish ONLY the low-frequency view model. `entries` / `rps` are the

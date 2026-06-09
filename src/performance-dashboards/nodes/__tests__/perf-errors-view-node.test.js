@@ -59,6 +59,49 @@ test( 'appends rows newest-first with seq + isEven, capped', () => {
 	expect( v.entries[ 0 ].seq ).toBe( 3 );
 } );
 
+test( 'RPS tracking aggregates per second, not one entry per error (bounded window)', () => {
+	// Perf contract: the errors/second window must NOT grow one entry per error
+	// (the old `completedHistory.push`-per-error + full filter+reduce was O(n)
+	// per error). A 10s window collapses to per-second buckets, so a burst of
+	// 500 synchronous errors stays a handful of buckets — never 500.
+	const v = makeView( 'perferrors:view', { maxEntries: 100000 } );
+	for ( let i = 0; i < 500; i++ ) {
+		v.fill( envMsg( `r${ i }`, { ts: i, k: 'error', m: `m${ i }` } ) );
+	}
+	expect( Array.isArray( v.rpsBuckets ) ).toBe( true );
+	expect( v.rpsBuckets.length ).toBeLessThanOrEqual( 12 );
+} );
+
+test( 'a read mid-stream then more appends keeps newest-first across the coalesce boundary', () => {
+	const v = makeView( 'perferrors:view' );
+	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
+	v.fill( envMsg( 'b', { ts: 2, k: 'error', m: 'y' } ) );
+	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'b', 'a' ] );
+	v.fill( envMsg( 'c', { ts: 3, k: 'error', m: 'z' } ) );
+	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'c', 'b', 'a' ] );
+} );
+
+test( 'exposes O(1) windowed reads — entriesCount + entryAt (newest-first) — for the virtual list', () => {
+	const v = makeView( 'perferrors:view' );
+	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
+	v.fill( envMsg( 'b', { ts: 2, k: 'error', m: 'y' } ) );
+	v.fill( envMsg( 'c', { ts: 3, k: 'error', m: 'z' } ) );
+	expect( v.entriesCount ).toBe( 3 );
+	expect( v.entryAt( 0 ).rid ).toBe( 'c' ); // newest
+	expect( v.entryAt( 2 ).rid ).toBe( 'a' ); // oldest
+	expect( v.entryAt( 3 ) ).toBeUndefined();
+} );
+
+test( 'entryAt + entriesCount respect the cap (oldest overwritten) on a small ring', () => {
+	const v = makeView( 'perferrors:view', { maxEntries: 3 } );
+	for ( let i = 0; i < 10; i++ ) {
+		v.fill( envMsg( `r${ i }`, { ts: i, k: 'error', m: `m${ i }` } ) );
+	}
+	expect( v.entriesCount ).toBe( 3 );
+	expect( v.entryAt( 0 ).rid ).toBe( 'r9' ); // newest
+	expect( v.entryAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
+} );
+
 test( 'enriches each row with seq, id (= seq), rid, ts, k, m and an even/odd flag', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'first', { ts: 111, k: 'error', m: 'one' } ) );
