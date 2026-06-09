@@ -622,6 +622,27 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNull( Flame_Builder_Node::parse_flame_index( 'too-short' ) );
 	}
 
+	public function test_format_index_entry_decodes_flame_at_max_stack_depth(): void {
+		// A MAX_STACK_DEPTH (50) flame nests ~2 JSON levels per span; the old
+		// depth-64 decode returned null, silently skipping the index entry.
+		$flame = [ 'name' => 'leaf', 'value' => 1, 'children' => [] ];
+		for ( $i = 0; $i < 49; $i++ ) {
+			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
+		}
+		$flame['rid']      = 'deep-rid';
+		$flame['url_hash'] = 'deadbeef0001';
+
+		$msg                   = Message::new_message();
+		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
+		$msg[ Message::VALUE ] = $flame;
+		$line                  = Message::packed( $msg );
+
+		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => \strlen( $line ) ];
+		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
+		$this->assertNotNull( $entry );
+		$this->assertSame( 'deep-rid', Flame_Builder_Node::parse_flame_index( $entry )['rid'] );
+	}
+
 	// --- save/restore state -----------------------------------------------
 
 	public function test_save_and_restore_pending_state_round_trip(): void {

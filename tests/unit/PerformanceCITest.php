@@ -937,6 +937,44 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'flame_data', $result );
 	}
 
+	public function test_request_detail_verb_merges_flame_data_at_max_stack_depth(): void {
+		// A MAX_STACK_DEPTH (50) flame nests ~2 JSON levels per span. Both the
+		// write-side index formatter and this read path used depth-64 decodes,
+		// so deep flames were written but never indexed or returned.
+		$rid = $this->write_request( [
+			'rid'            => 'rid-deep-flame-12345678901234567',
+			'url'            => '/with-deep-flame',
+			'timestamp'      => 1700000700,
+			'duration_ms'    => 12,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'request_method' => 'GET',
+		] );
+
+		$flame = [ 'name' => 'leaf', 'value' => 1, 'children' => [] ];
+		for ( $i = 0; $i < 49; $i++ ) {
+			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
+		}
+		$flame['rid']      = $rid;
+		$flame['url_hash'] = Request_Builder_Node::url_hash( '/with-deep-flame' );
+		$this->write_flame( $flame );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'request_detail',
+			$rid
+		);
+
+		$this->assertArrayHasKey( 'flame_data', $result );
+		$node = $result['flame_data'];
+		for ( $depth = 0; \is_array( $node ) && ! empty( $node['children'] ); $depth++ ) {
+			$node = $node['children'][0];
+		}
+		$this->assertSame( 49, $depth, 'deep flame should round-trip intact' );
+	}
+
 	public function test_request_detail_verb_requires_rid(): void {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(

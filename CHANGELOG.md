@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deep flame graphs (>~32 span levels) no longer vanish from the request detail view.** `Flame_Builder` allows flame trees up to `MAX_STACK_DEPTH` (50) span levels — ~2 JSON nesting levels per span — but both the write-side index formatter (`Flame_Builder_Node::format_index_entry`) and the read-side lookup (`Performance_CI_Node::find_flame_for_rid`) decoded packed flame lines with `json_decode( …, 64 )`. A flame deeper than ~32 spans (typical of slow page renders with many nested ES-backed queries) failed both decodes: the blob was written to `flames.log` but never indexed and never returned, so the dashboard silently showed no flame graph. Both sites now decode with the new `Flame_Builder_Node::FLAME_JSON_DEPTH` (`2 × MAX_STACK_DEPTH + 8`), keeping the decode budget tied to what the builder can emit. Note: deep flames written before this fix have no index entries and stay unfindable; only newly assembled requests benefit.
+
 ## [0.13.0] - 2026-06-09
 
 ### Changed
