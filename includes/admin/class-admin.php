@@ -37,12 +37,14 @@
 namespace Newspack_Event_Logger_Nodes\Admin;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\Settings_Schema;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\CLI;
 use Newspack_Nodes\Config as Substrate_Config;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
+use Newspack_Nodes\Config_System\Settings_Renderer;
 use Newspack_Nodes\Lock_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -103,56 +105,31 @@ class Admin {
 	 * `aggregator_servers` is NOT here — it's managed by the ServerRegistry REST
 	 * CRUD, not the settings form, so the settings reset doesn't touch it.)
 	 *
-	 * Kept on the class so child plugins can extend via the `…_reset_options`
-	 * filter without re-listing these. EVERY settings-form option (booleans +
-	 * multi-selects included) must appear here so a reset clears them all, and so
-	 * the shared `Reset_Gate` attaches its gate to each.
+	 * Derived from the single Settings_Schema in `register_settings()` (the
+	 * `setting_option_names()` set). Kept as a property of this exact name because
+	 * AdminTest reads it by reflection and `handle_reset_settings()` reads it as
+	 * the base reset list (extendable via the `…_reset_options` filter). EVERY
+	 * settings-form option (booleans + multi-selects included) appears here so a
+	 * reset clears them all and the shared `Reset_Gate` attaches its gate to each.
+	 * (aggregator_servers is excluded — managed by the ServerRegistry REST CRUD,
+	 * not a settings-form field.)
 	 *
 	 * @var array<int, string>
 	 */
-	private static array $option_names = [
-		// General.
-		'newspack_event_logger_nodes_enable_logging',
-		// Instrumentation.
-		'newspack_event_logger_nodes_log_urls',
-		'newspack_event_logger_nodes_skip_urls',
-		'newspack_event_logger_nodes_log_events',
-		'newspack_event_logger_nodes_custom_events',
-		// Aggregator. (aggregator_servers is excluded — it's managed by the
-		// ServerRegistry REST CRUD, not a settings-form field, so there's nothing
-		// to reset here.)
-		'newspack_event_logger_nodes_enable_aggregator',
-		'newspack_event_logger_nodes_remote_num_segments',
-		'newspack_event_logger_nodes_remote_segment_size',
-		'newspack_event_logger_nodes_remote_max_lifespan',
-		// Performance Workers (application-side).
-		'newspack_event_logger_nodes_significant_events',
-		'newspack_event_logger_nodes_auto_disable_threshold',
-		'newspack_event_logger_nodes_auto_protect_time_threshold',
-		// Debugging.
-		'newspack_event_logger_nodes_log_memory',
-		'newspack_event_logger_nodes_flush_every_line',
-	];
+	private static array $option_names = [];
 
 	/**
 	 * Text-like keys that get a `pre_update_option_{$option}` delete-on-blank
-	 * filter: a blank submission (or `↺` field-reset) deletes the row so the
-	 * file default resurfaces under presence-based Config, instead of storing
-	 * '' (which would override the default). This is the scalar subset of
-	 * $option_names — checkbox bools (enable_logging, log_memory,
-	 * flush_every_line) and multi-select arrays (log_urls, skip_urls,
-	 * log_events, custom_events, significant_events) are EXCLUDED: an unchecked
-	 * box or empty selection there is a real override.
+	 * filter: a blank submission (or `↺` field-reset) deletes the row so the file
+	 * default resurfaces under presence-based Config, instead of storing '' (which
+	 * would override the default). The scalar subset of $option_names — checkbox
+	 * bools and multi-select arrays are EXCLUDED (an unchecked box / empty
+	 * selection is a real override). Derived from the Schema's
+	 * `delete_on_blank_options()` in `register_settings()`.
 	 *
 	 * @var array<int, string>
 	 */
-	private static array $delete_on_blank_options = [
-		'newspack_event_logger_nodes_auto_disable_threshold',
-		'newspack_event_logger_nodes_auto_protect_time_threshold',
-		'newspack_event_logger_nodes_remote_num_segments',
-		'newspack_event_logger_nodes_remote_segment_size',
-		'newspack_event_logger_nodes_remote_max_lifespan',
-	];
+	private static array $delete_on_blank_options = [];
 
 	/**
 	 * Permission gate: `manage_options` baseline + optional `allowed_users`
@@ -231,7 +208,7 @@ class Admin {
 		// (int, string, array) are compared as-is.
 		$default = $defaults[ $key ];
 		if ( \is_bool( $default ) ) {
-			$default = (int) $default;
+			$default = self::bool_to_int( $default );
 		}
 		if ( $value !== $default ) {
 			return $value;
@@ -362,270 +339,22 @@ class Admin {
 	 * `add_settings_section/field()` on `self::SETTINGS_PAGE`.
 	 */
 	public function register_settings(): void {
-		// Boolean toggle.
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_enable_logging',
-			[ 'sanitize_callback' => 'absint' ]
-		);
+		$schema = Settings_Schema::get();
 
-		// General section.
-		\add_settings_section(
-			'newspack_event_logger_nodes_general_section',
-			\__( 'General', 'newspack-event-logger-nodes' ),
-			[ $this, 'general_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'enable_logging',
-			\__( 'Enable Logging', 'newspack-event-logger-nodes' ),
-			[ $this, 'enable_logging_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_general_section'
-		);
+		// Cache the derived reset surface under the historical property names so
+		// `handle_reset_settings()` (base list) and AdminTest's reflection reads
+		// see the same set the Reset_Gate is wired against.
+		self::$option_names            = $schema->setting_option_names();
+		self::$delete_on_blank_options = $schema->delete_on_blank_options();
 
-		// -- Instrumentation (URL filters + hooks to time) ------------------
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_log_urls',
-			[ 'sanitize_callback' => [ $this, 'sanitize_array_strings' ] ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_skip_urls',
-			[ 'sanitize_callback' => [ $this, 'sanitize_array_strings' ] ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_log_events',
-			[ 'sanitize_callback' => [ $this, 'sanitize_array_strings' ] ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_custom_events',
-			[ 'sanitize_callback' => [ $this, 'sanitize_custom_events' ] ]
-		);
-
-		\add_settings_section(
-			'newspack_event_logger_nodes_instrumentation_section',
-			\__( 'Instrumentation', 'newspack-event-logger-nodes' ),
-			[ $this, 'instrumentation_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'log_urls',
-			\__( 'Log URLs', 'newspack-event-logger-nodes' ),
-			[ $this, 'log_urls_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_instrumentation_section'
-		);
-		\add_settings_field(
-			'skip_urls',
-			\__( 'Skip URLs', 'newspack-event-logger-nodes' ),
-			[ $this, 'skip_urls_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_instrumentation_section'
-		);
-		\add_settings_field(
-			'log_events',
-			\__( 'Log Events', 'newspack-event-logger-nodes' ),
-			[ $this, 'log_events_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_instrumentation_section'
-		);
-		\add_settings_field(
-			'custom_events',
-			\__( 'Custom Events', 'newspack-event-logger-nodes' ),
-			[ $this, 'custom_events_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_instrumentation_section'
-		);
-
-		// -- Performance Workers section -----------------------------------
-		// A3: enable_workers / enable_jobs / enable_aggregator gates are gone.
-		// Worker fleet activation is driven by the substrate's flat
-		// `topologies` config list (managed in the substrate Admin's
-		// Topologies multi-select). What stays here are the per-fleet
-		// app-level knobs that DON'T toggle whether a fleet runs:
-		// auto-tune thresholds, significant-events whitelist.
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_significant_events',
-			[
-				'sanitize_callback' => [ $this, 'sanitize_array_strings' ],
-				'autoload'          => false,
-			]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_auto_disable_threshold',
-			[
-				'sanitize_callback' => [ $this, 'sanitize_int_or_empty' ],
-				'autoload'          => false,
-			]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_auto_protect_time_threshold',
-			[
-				'sanitize_callback' => [ $this, 'sanitize_float_or_empty' ],
-				'autoload'          => false,
-			]
-		);
-
-		\add_settings_section(
-			'newspack_event_logger_nodes_workers_section',
-			\__( 'Performance Workers', 'newspack-event-logger-nodes' ),
-			[ $this, 'workers_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'auto_tune',
-			\__( 'Auto-Tune', 'newspack-event-logger-nodes' ),
-			[ $this, 'auto_tune_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_workers_section'
-		);
-		\add_settings_field(
-			'significant_events',
-			\__( 'Significant Events', 'newspack-event-logger-nodes' ),
-			[ $this, 'significant_events_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_workers_section'
-		);
-
-		// -- Remote Servers section -----------------------------------------
-		// Aggregator spoke list is managed by the Remote Servers REST CRUD
-		// (ServerRegistry → encrypted WP option) — NOT a settings-form
-		// field. The aggregator fleet itself runs whenever 'aggregator' is
-		// in the substrate `topologies` list.
-
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_enable_aggregator',
-			[
-				'type'              => 'boolean',
-				'sanitize_callback' => static fn ( $v ): int => empty( $v ) ? 0 : 1,
-				'default'           => 0,
-				'autoload'          => true,
-			]
-		);
-
-		\add_settings_section(
-			'newspack_event_logger_nodes_aggregator_section',
-			\__( 'Remote Servers', 'newspack-event-logger-nodes' ),
-			[ $this, 'aggregator_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'enable_aggregator',
-			\__( 'Enable Aggregator', 'newspack-event-logger-nodes' ),
-			[ $this, 'enable_aggregator_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_aggregator_section'
-		);
-		\add_settings_field(
-			'configured_servers',
-			\__( 'Configured Servers', 'newspack-event-logger-nodes' ),
-			[ $this, 'configured_servers_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_aggregator_section'
-		);
-
-		// -- Remote Server Settings section ---------------------------------
-		// Storage geometry pushed to remote spokes via SettingsSync. The
-		// hub stores these under `_remote_*` so retuning a spoke doesn't
-		// accidentally retune the hub itself; spokes receive them under
-		// the substrate's `newspack_nodes_*` keys.
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_remote_num_segments',
-			[
-				'type'              => 'string',
-				'sanitize_callback' => [ $this, 'sanitize_remote_num_segments' ],
-			]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_remote_segment_size',
-			[
-				'type'              => 'string',
-				'sanitize_callback' => [ $this, 'sanitize_remote_segment_size' ],
-			]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_remote_max_lifespan',
-			[
-				'type'              => 'string',
-				'sanitize_callback' => [ $this, 'sanitize_remote_max_lifespan' ],
-			]
-		);
-		\add_settings_section(
-			'newspack_event_logger_nodes_remote_settings_section',
-			\__( 'Remote Server Settings', 'newspack-event-logger-nodes' ),
-			[ $this, 'remote_settings_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'remote_num_segments',
-			\__( 'Remote Segment Count', 'newspack-event-logger-nodes' ),
-			[ $this, 'remote_num_segments_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_remote_settings_section'
-		);
-		\add_settings_field(
-			'remote_segment_size',
-			\__( 'Remote Segment Size', 'newspack-event-logger-nodes' ),
-			[ $this, 'remote_segment_size_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_remote_settings_section'
-		);
-		\add_settings_field(
-			'remote_max_lifespan',
-			\__( 'Remote Min Retention', 'newspack-event-logger-nodes' ),
-			[ $this, 'remote_max_lifespan_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_remote_settings_section'
-		);
-
-		// -- Debugging section ----------------------------------------------
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_log_memory',
-			[ 'sanitize_callback' => 'absint' ]
-		);
-		\register_setting(
-			self::OPTIONS_GROUP,
-			'newspack_event_logger_nodes_flush_every_line',
-			[ 'sanitize_callback' => 'absint' ]
-		);
-
-		\add_settings_section(
-			'newspack_event_logger_nodes_debugging_section',
-			\__( 'Debugging', 'newspack-event-logger-nodes' ),
-			[ $this, 'debugging_section_callback' ],
-			self::SETTINGS_PAGE
-		);
-		\add_settings_field(
-			'log_memory',
-			\__( 'Log Memory', 'newspack-event-logger-nodes' ),
-			[ $this, 'log_memory_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_debugging_section'
-		);
-		\add_settings_field(
-			'flush_every_line',
-			\__( 'Flush Every Line', 'newspack-event-logger-nodes' ),
-			[ $this, 'flush_every_line_callback' ],
-			self::SETTINGS_PAGE,
-			'newspack_event_logger_nodes_debugging_section'
-		);
+		$schema->register_options( self::OPTIONS_GROUP );
 
 		// Shared per-field reset / delete-on-blank gate (Config_System\Reset_Gate):
 		// a reset toggle (any field — booleans + multi-selects included) OR a
 		// blanked text-like field deletes the row so the file default resurfaces.
 		Reset_Gate::register( self::RESET_MARK_FIELD, self::$option_names, self::$delete_on_blank_options );
+
+		$schema->register_sections_and_fields( self::SETTINGS_PAGE );
 	}
 
 	// -- Sanitizers ---------------------------------------------------------
@@ -636,11 +365,22 @@ class Admin {
 	 * @param mixed $input Input value.
 	 * @return string|int Empty string or sanitized integer.
 	 */
-	public function sanitize_int_or_empty( $input ) {
+	public static function sanitize_int_or_empty( $input ) {
 		if ( '' === $input || null === $input ) {
 			return '';
 		}
 		return \absint( \is_scalar( $input ) ? $input : 0 );
+	}
+
+	/**
+	 * Coerce any truthy/falsy value to int 0/1. The single 0/1 sanitizer for
+	 * `enable_aggregator` (collapses the old inline closure + 'boolean' type into
+	 * one Field): `register_args` carry type=boolean/default=0/autoload=true.
+	 *
+	 * @param mixed $value Input value.
+	 */
+	public static function sanitize_bool_int( $value ): int {
+		return empty( $value ) ? 0 : 1;
 	}
 
 	/**
@@ -649,7 +389,7 @@ class Admin {
 	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
 	 * @return int|string Clamped segment count, or '' when blank/unset.
 	 */
-	public function sanitize_remote_num_segments( int|string|null $value ): int|string {
+	public static function sanitize_remote_num_segments( int|string|null $value ): int|string {
 		if ( '' === $value || null === $value ) {
 			return '';
 		}
@@ -662,7 +402,7 @@ class Admin {
 	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
 	 * @return int|string Clamped byte size, or '' when blank/unset.
 	 */
-	public function sanitize_remote_segment_size( int|string|null $value ): int|string {
+	public static function sanitize_remote_segment_size( int|string|null $value ): int|string {
 		if ( '' === $value || null === $value ) {
 			return '';
 		}
@@ -675,7 +415,7 @@ class Admin {
 	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
 	 * @return int|string Clamped lifespan in seconds, or '' when blank/unset.
 	 */
-	public function sanitize_remote_max_lifespan( int|string|null $value ): int|string {
+	public static function sanitize_remote_max_lifespan( int|string|null $value ): int|string {
 		if ( '' === $value || null === $value ) {
 			return '';
 		}
@@ -697,7 +437,7 @@ class Admin {
 	 * @param mixed $value Array, JSON string, or other (treated as empty).
 	 * @return array<string> Sanitized list of strings (zero-indexed).
 	 */
-	public function sanitize_array_strings( mixed $value ): array {
+	public static function sanitize_array_strings( mixed $value ): array {
 		// React tree posts JSON via a hidden input — decode first.
 		if ( \is_string( $value ) ) {
 			$trimmed = \trim( $value );
@@ -749,7 +489,7 @@ class Admin {
 	 * @param mixed $value List of hook names, JSON, or assoc array.
 	 * @return array<string,bool> Assoc map keyed by hook name, values `true`.
 	 */
-	public function sanitize_custom_events( $value ): array {
+	public static function sanitize_custom_events( $value ): array {
 		// Detect assoc-shaped input (idempotent path on re-save).
 		if ( \is_array( $value ) ) {
 			$first_key = \array_key_first( $value );
@@ -765,7 +505,7 @@ class Admin {
 			}
 		}
 
-		$names = $this->sanitize_array_strings( $value );
+		$names = self::sanitize_array_strings( $value );
 		$out   = [];
 		foreach ( $names as $name ) {
 			$out[ $name ] = true;
@@ -782,7 +522,7 @@ class Admin {
 	 * @param mixed $input Input value.
 	 * @return string|float Empty string or sanitized float.
 	 */
-	public function sanitize_float_or_empty( $input ) {
+	public static function sanitize_float_or_empty( $input ) {
 		if ( '' === $input || null === $input ) {
 			return '';
 		}
@@ -798,37 +538,51 @@ class Admin {
 
 	// -- Section callbacks --------------------------------------------------
 
-	public function general_section_callback(): void {
+	public static function general_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Enable or disable event logging.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	public function instrumentation_section_callback(): void {
+	public static function instrumentation_section_callback(): void {
 		echo '<p>' . \esc_html__( 'URL filters and hooks to time. Use Browse Hooks / Browse Events to populate from the recommended set.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	public function workers_section_callback(): void {
+	public static function workers_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Automatically disable noisy events and protect slow ones.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	public function debugging_section_callback(): void {
+	public static function debugging_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
 	// -- Field callbacks ----------------------------------------------------
 
-	public function enable_logging_callback(): void {
-		$enabled = $this->bool_option_with_file_default( 'enable_logging', 1 );
-		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'enable_logging' ) ); ?>">
-			<div style="flex: 1;">
-				<input type="hidden" name="newspack_event_logger_nodes_enable_logging" value="0" />
-				<input type="checkbox" id="enable_logging" name="newspack_event_logger_nodes_enable_logging" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'enable_logging', 1 ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
-				<label for="enable_logging"><?php \esc_html_e( 'Enable event logging', 'newspack-event-logger-nodes' ); ?></label>
-			</div>
-			<button type="button" class="button button-secondary" data-nn-reset-toggle
-				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
-		</div>
-		<?php
+	public static function enable_logging_callback(): void {
+		self::render_checkbox(
+			'enable_logging',
+			\__( 'Enable event logging', 'newspack-event-logger-nodes' ),
+			1
+		);
+	}
+
+	/**
+	 * Echo a boolean checkbox via the shared Settings_Renderer: checked from the
+	 * stored option (file-default fallback), the `data-nn-reset-default` hint from
+	 * the file default, all under the per-field reset wrapper.
+	 *
+	 * @param string $field        Option short-name (no prefix).
+	 * @param string $label        Visible label text.
+	 * @param int    $hard_default 0/1 fallback when neither WP option nor file default exists.
+	 */
+	private static function render_checkbox( string $field, string $label, int $hard_default = 0 ): void {
+		$html = Settings_Renderer::checkbox(
+			$field,
+			self::OPTION_PREFIX . $field,
+			1 === self::bool_option_with_file_default( $field, $hard_default ),
+			1 === self::bool_file_default( $field, $hard_default ),
+			$label,
+			self::reset_mark_name( $field )
+		);
+		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Settings_Renderer escapes every field.
 	}
 
 	/**
@@ -844,8 +598,8 @@ class Admin {
 	 *                              default are absent (e.g., on a brand-new install
 	 *                              with no config-file override for this key).
 	 */
-	private function bool_option_with_file_default( string $short_key, int $hard_default = 0 ): int {
-		$file_default = $this->bool_file_default( $short_key, $hard_default );
+	private static function bool_option_with_file_default( string $short_key, int $hard_default = 0 ): int {
+		$file_default = self::bool_file_default( $short_key, $hard_default );
 		$stored       = \get_option(
 			"newspack_event_logger_nodes_{$short_key}",
 			$file_default
@@ -862,75 +616,77 @@ class Admin {
 	 * @param string $short_key    Option key without the `newspack_event_logger_nodes_` prefix.
 	 * @param int    $hard_default 0 or 1 — used only if the file default is absent.
 	 */
-	private function bool_file_default( string $short_key, int $hard_default = 0 ): int {
+	private static function bool_file_default( string $short_key, int $hard_default = 0 ): int {
 		$defaults = Config::load_config_defaults();
 		return \array_key_exists( $short_key, $defaults )
-			? (int) (bool) $defaults[ $short_key ]
+			? self::bool_to_int( $defaults[ $short_key ] )
 			: $hard_default;
+	}
+
+	/**
+	 * The single bool→int 0/1 coercion shared by the checkbox render path
+	 * (`bool_file_default`) and the default-write skip (`skip_default_writes`).
+	 *
+	 * @param mixed $value Any value (only bools are coerced; numerics pass via (int)(bool)).
+	 */
+	private static function bool_to_int( $value ): int {
+		return (int) (bool) $value;
 	}
 
 	// ---- Aggregator field callbacks --------------------------------------
 
-	public function aggregator_section_callback(): void {
+	public static function aggregator_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	public function enable_aggregator_callback(): void {
-		$enabled = $this->bool_option_with_file_default( 'enable_aggregator' );
-		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'enable_aggregator' ) ); ?>">
-			<div style="flex: 1;">
-				<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
-				<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'enable_aggregator' ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
-				<label for="enable_aggregator"><?php \esc_html_e( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' ); ?></label>
-			</div>
-			<button type="button" class="button button-secondary" data-nn-reset-toggle
-				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
-		</div>
-		<?php
+	public static function enable_aggregator_callback(): void {
+		self::render_checkbox(
+			'enable_aggregator',
+			\__( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' )
+		);
 	}
 
-	public function remote_settings_section_callback(): void {
+	public static function remote_settings_section_callback(): void {
 		echo '<p>' . \esc_html__(
 			'Storage geometry pushed to remote spokes (may differ from hub settings). Blank fields use the config-file default.',
 			'newspack-event-logger-nodes'
 		) . '</p>';
 	}
 
-	public function remote_num_segments_callback(): void {
-		$default_raw = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_num_segments'] ?? 2;
-		$default     = \is_numeric( $default_raw ) ? (int) $default_raw : 0;
-		$this->render_number_field(
+	public static function remote_num_segments_callback(): void {
+		self::render_number_field(
 			'remote_num_segments',
-			$default,
+			self::number_default( 'remote_num_segments', 2 ),
 			2,
 			16,
 			\__( 'Number of log segments on remote servers (2-16).', 'newspack-event-logger-nodes' )
 		);
 	}
 
-	public function remote_segment_size_callback(): void {
-		$default_raw = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_segment_size'] ?? 10485760;
-		$default     = \is_numeric( $default_raw ) ? (int) $default_raw : 0;
-		$this->render_number_field(
+	public static function remote_segment_size_callback(): void {
+		self::render_number_field(
 			'remote_segment_size',
-			$default,
+			self::number_default( 'remote_segment_size', 10485760 ),
 			1024 * 1024,
 			256 * 1024 * 1024,
 			\__( 'Segment size on remote servers in bytes (1MB-256MB).', 'newspack-event-logger-nodes' )
 		);
 	}
 
-	public function remote_max_lifespan_callback(): void {
-		$default_raw = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()['remote_max_lifespan'] ?? 3600;
-		$default     = \is_numeric( $default_raw ) ? (int) $default_raw : 0;
-		$this->render_number_field(
+	public static function remote_max_lifespan_callback(): void {
+		self::render_number_field(
 			'remote_max_lifespan',
-			$default,
+			self::number_default( 'remote_max_lifespan', 3600 ),
 			60,
 			604800,
 			\__( 'Minimum retention on remote servers in seconds. Spokes keep data at least this long for the aggregator to pull.', 'newspack-event-logger-nodes' )
 		);
+	}
+
+	/** The int file default for a number field, or $fallback when absent/non-numeric. */
+	private static function number_default( string $field, int $fallback ): int {
+		$raw = Config::load_config_defaults()[ $field ] ?? $fallback;
+		return \is_numeric( $raw ) ? (int) $raw : 0;
 	}
 
 	/**
@@ -947,7 +703,7 @@ class Admin {
 	 * the mount node (React owns the rows + form, re-listing after each mutation
 	 * instead of reloading the page).
 	 */
-	public function configured_servers_callback(): void {
+	public static function configured_servers_callback(): void {
 		?>
 		<div id="event-aggregator-servers"></div>
 		<?php
@@ -955,10 +711,10 @@ class Admin {
 
 	// ---- Instrumentation field callbacks ---------------------------------
 
-	public function log_urls_callback(): void {
+	public static function log_urls_callback(): void {
 		$stored = \get_option( 'newspack_event_logger_nodes_log_urls', [] );
-		$values = $this->normalize_string_list( $stored );
-		$this->render_array_field(
+		$values = self::normalize_string_list( $stored );
+		self::render_array_field(
 			'log_urls',
 			$values,
 			[],
@@ -967,18 +723,18 @@ class Admin {
 		);
 	}
 
-	public function skip_urls_callback(): void {
+	public static function skip_urls_callback(): void {
 		// Defaults are the operator-shipped values in the config FILE, not
 		// the merged-with-WP-options view — clicking "Reset to default" on
 		// a field that the operator just modified should restore the file
 		// value, not the value they just typed.
 		$defaults = Config::load_config_defaults();
-		$default  = $this->normalize_string_list( $defaults['skip_urls'] ?? [] );
+		$default  = self::normalize_string_list( $defaults['skip_urls'] ?? [] );
 		$stored   = \get_option( 'newspack_event_logger_nodes_skip_urls', null );
 		$values   = ( null === $stored || false === $stored )
 			? $default
-			: $this->normalize_string_list( $stored );
-		$this->render_array_field(
+			: self::normalize_string_list( $stored );
+		self::render_array_field(
 			'skip_urls',
 			$values,
 			$default,
@@ -987,15 +743,15 @@ class Admin {
 		);
 	}
 
-	public function log_events_callback(): void {
+	public static function log_events_callback(): void {
 		$defaults = Config::load_config_defaults();
 		// Reset chip restores the file-default `log_events` value (not
 		// `recommended_log_events` — that's a separate config key that
 		// drives the Select Hooks modal's highlight, not the runtime list).
-		$default  = $this->normalize_string_list( $defaults['log_events'] ?? [] );
+		$default  = self::normalize_string_list( $defaults['log_events'] ?? [] );
 		$stored   = \get_option( 'newspack_event_logger_nodes_log_events', [] );
-		$values   = $this->normalize_string_list( $stored );
-		$this->render_array_field(
+		$values   = self::normalize_string_list( $stored );
+		self::render_array_field(
 			'log_events',
 			$values,
 			$default,
@@ -1004,13 +760,13 @@ class Admin {
 		);
 	}
 
-	public function custom_events_callback(): void {
+	public static function custom_events_callback(): void {
 		// custom_events is stored as assoc array; the React tree expects a flat
 		// list of strings (the keys).
 		$stored = \get_option( 'newspack_event_logger_nodes_custom_events', [] );
 		$values = \is_array( $stored ) ? \array_keys( $stored ) : [];
-		$values = $this->normalize_string_list( $values );
-		$this->render_array_field(
+		$values = self::normalize_string_list( $values );
+		self::render_array_field(
 			'custom_events',
 			$values,
 			[],
@@ -1021,11 +777,11 @@ class Admin {
 
 	// ---- Workers field callbacks -----------------------------------------
 
-	public function significant_events_callback(): void {
+	public static function significant_events_callback(): void {
 		$stored = \get_option( 'newspack_event_logger_nodes_significant_events', [] );
-		$values = $this->normalize_string_list( $stored );
+		$values = self::normalize_string_list( $stored );
 		\sort( $values, SORT_NATURAL | SORT_FLAG_CASE );
-		$this->render_array_field(
+		self::render_array_field(
 			'significant_events',
 			$values,
 			[],
@@ -1042,7 +798,7 @@ class Admin {
 	 * Layout: .event-logger-auto-disable-row flexbox + .event-logger-auto-disable-label
 	 * spans (defined in src/performance-logger/styles/settings.scss).
 	 */
-	public function auto_tune_callback(): void {
+	public static function auto_tune_callback(): void {
 		$count_value   = \get_option( 'newspack_event_logger_nodes_auto_disable_threshold', '' );
 		$time_value    = \get_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '' );
 		// Hide a stored 0 so the placeholder ("0") shows through — operators
@@ -1051,7 +807,7 @@ class Admin {
 		$count_display = ( '' === $count_value || 0 === ( \is_numeric( $count_value ) ? (int) $count_value : 0 ) ) ? '' : $count_value;
 		$time_display  = ( '' === $time_value || 0.0 === ( \is_numeric( $time_value ) ? (float) $time_value : 0.0 ) ) ? '' : $time_value;
 		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'auto_disable_threshold' ) ); ?>">
+		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( self::reset_mark_name( 'auto_disable_threshold' ) ); ?>">
 			<div style="flex: 1;">
 				<div class="event-logger-auto-disable-row">
 					<label class="event-logger-auto-disable-label">
@@ -1082,38 +838,18 @@ class Admin {
 
 	// ---- Debugging field callbacks ---------------------------------------
 
-	public function log_memory_callback(): void {
-		$enabled = $this->bool_option_with_file_default( 'log_memory' );
-		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'log_memory' ) ); ?>">
-			<div style="flex: 1;">
-				<input type="hidden" name="newspack_event_logger_nodes_log_memory" value="0" />
-				<label>
-					<input type="checkbox" id="log_memory" name="newspack_event_logger_nodes_log_memory" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'log_memory' ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
-					<?php \esc_html_e( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' ); ?>
-				</label>
-			</div>
-			<button type="button" class="button button-secondary" data-nn-reset-toggle
-				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
-		</div>
-		<?php
+	public static function log_memory_callback(): void {
+		self::render_checkbox(
+			'log_memory',
+			\__( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' )
+		);
 	}
 
-	public function flush_every_line_callback(): void {
-		$enabled = $this->bool_option_with_file_default( 'flush_every_line' );
-		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'flush_every_line' ) ); ?>">
-			<div style="flex: 1;">
-				<input type="hidden" name="newspack_event_logger_nodes_flush_every_line" value="0" />
-				<label>
-					<input type="checkbox" id="flush_every_line" name="newspack_event_logger_nodes_flush_every_line" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'flush_every_line' ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
-					<?php \esc_html_e( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' ); ?>
-				</label>
-			</div>
-			<button type="button" class="button button-secondary" data-nn-reset-toggle
-				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
-		</div>
-		<?php
+	public static function flush_every_line_callback(): void {
+		self::render_checkbox(
+			'flush_every_line',
+			\__( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' )
+		);
 	}
 
 	/**
@@ -1125,7 +861,7 @@ class Admin {
 	 * @param mixed $stored Raw option value.
 	 * @return array<int,string>
 	 */
-	private function normalize_string_list( $stored ): array {
+	private static function normalize_string_list( $stored ): array {
 		if ( ! \is_array( $stored ) ) {
 			return [];
 		}
@@ -1160,7 +896,9 @@ class Admin {
 			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
 		}
 
-		$options = self::$option_names;
+		// Derive the base reset list from the Schema so this handler works even
+		// when invoked before `register_settings()` populated the cached property.
+		$options = Settings_Schema::get()->setting_option_names();
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_reset_options', $options );
 			if ( \is_array( $filtered ) ) {
@@ -1408,7 +1146,7 @@ class Admin {
 	// -- Private renderers --------------------------------------------------
 
 	/** Hidden-input name that flags $field for per-field reset (deleted on Save). */
-	private function reset_mark_name( string $field ): string {
+	private static function reset_mark_name( string $field ): string {
 		return Reset_Gate::mark_name( self::RESET_MARK_FIELD, self::OPTION_PREFIX . $field );
 	}
 
@@ -1425,49 +1163,37 @@ class Admin {
 	 * @param string         $description Field description.
 	 * @param string         $examples    Optional example values.
 	 */
-	private function render_array_field( string $field, array $values, array $default, string $description, string $examples = '' ): void {
-		$values_json  = \wp_json_encode( $values ) ?: '';
-		$default_json = \wp_json_encode( $default ) ?: '';
-		?>
-		<div style="display:flex; align-items:flex-start; gap:10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( $field ) ); ?>">
-			<div style="flex:1;">
-				<input type="hidden" id="<?php echo \esc_attr( $field ); ?>_json" name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>" value="<?php echo \esc_attr( $values_json ); ?>" />
-				<div id="event-logger-<?php echo \esc_attr( $field ); ?>"
-					data-field="<?php echo \esc_attr( $field ); ?>"
-					data-values="<?php echo \esc_attr( $values_json ); ?>"
-					data-default="<?php echo \esc_attr( $default_json ); ?>"
-					class="event-logger-tag-input"></div>
-			</div>
-			<button type="button" class="button button-secondary" data-nn-reset-toggle
-				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">&#x21BA;</button>
-		</div>
-		<p class="description"><?php echo \esc_html( $description ); ?></p>
-		<?php if ( '' !== $examples ) : ?>
-		<p class="description"><?php \esc_html_e( 'Examples:', 'newspack-event-logger-nodes' ); ?> <?php echo \esc_html( $examples ); ?></p>
-		<?php endif; ?>
-		<?php
+	private static function render_array_field( string $field, array $values, array $default, string $description, string $examples = '' ): void {
+		$html = Settings_Renderer::react_mount(
+			$field,
+			'event-logger-' . $field,
+			'event-logger-tag-input',
+			self::OPTION_PREFIX . $field,
+			\wp_json_encode( $values ) ?: '',
+			\wp_json_encode( $default ) ?: '',
+			$description,
+			self::reset_mark_name( $field )
+		);
+		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Settings_Renderer escapes every field.
+		if ( '' !== $examples ) {
+			echo '<p class="description">'
+				. \esc_html__( 'Examples:', 'newspack-event-logger-nodes' ) . ' '
+				. \esc_html( $examples ) . '</p>';
+		}
 	}
 
-	private function render_number_field( string $field, int $default, int $min, int $max, string $description ): void {
+	private static function render_number_field( string $field, int $default, int $min, int $max, string $description ): void {
 		$value = \get_option( self::OPTION_PREFIX . $field, '' );
-		// Show empty (with placeholder) if not set or equals default.
-		$display_value = ( '' === $value || ( \is_numeric( $value ) ? (int) $value : 0 ) === $default ) ? '' : $value;
-		$input_class   = $max > 999 ? 'regular-text' : 'small-text';
-		?>
-		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( $field ) ); ?>">
-			<div style="flex: 1;">
-				<input type="number" id="<?php echo \esc_attr( $field ); ?>"
-					name="<?php echo \esc_attr( self::OPTION_PREFIX . $field ); ?>"
-					value="<?php echo \esc_attr( \is_scalar( $display_value ) ? (string) $display_value : '' ); ?>"
-					min="<?php echo \esc_attr( (string) $min ); ?>"
-					max="<?php echo \esc_attr( (string) $max ); ?>"
-					class="<?php echo \esc_attr( $input_class ); ?>"
-					placeholder="<?php echo \esc_attr( (string) $default ); ?>" />
-				<p class="description"><?php echo \esc_html( $description ); ?></p>
-			</div>
-			<button type="button" class="button button-secondary" data-nn-reset-toggle
-				title="<?php \esc_attr_e( 'Reset to default (toggle, then Save)', 'newspack-event-logger-nodes' ); ?>">↺</button>
-		</div>
-		<?php
+		$html  = Settings_Renderer::number(
+			$field,
+			self::OPTION_PREFIX . $field,
+			\is_scalar( $value ) ? (string) $value : '',
+			$default,
+			$min,
+			$max,
+			$description,
+			self::reset_mark_name( $field )
+		);
+		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Settings_Renderer escapes every field.
 	}
 }

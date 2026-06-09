@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings admin + config migrated onto the shared `newspack-nodes` Config System.** The three parallel arrays `Config` and `Admin` hand-maintained in lockstep (`Config::$option_schema`, `Admin::$option_names`, `Admin::$delete_on_blank_options`) collapse into one declarative `Settings_Schema`; the overlay key-list, register/reset surface, section+field render loop, and worker-restart classification all derive from it (the bespoke `auto_tune` + `configured_servers` controls and the hand-coded `maybe_request_worker_restart` special cases — `enable_aggregator`'s single lock, `stats_salt`, `enable_jobs` — are preserved). Field markup routes through the shared `Settings_Renderer` (`checkbox`/`number`/`react_mount`). Behavior is byte-identical — overlay keys, registered options, delete-on-blank set, reset gating, and the rendered markup are unchanged (verified against the pre-migration literals). Two latent divergences are resolved along the way: `enable_aggregator` is now typed once (a single `bool` Field, no separate inline closure), and the bool→int default coercion is single-sourced in `bool_to_int()`. Requires a `newspack-nodes` build carrying `Field::overlay` + the `Settings_Renderer::checkbox()`/`react_mount()` additions.
+
 ## [0.12.1] - 2026-06-09
 
 ### Fixed

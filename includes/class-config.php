@@ -42,35 +42,6 @@ class Config {
 	private static $config_defaults = null;
 
 	/**
-	 * Option schema — every key loaded on every `load_config()` call.
-	 *
-	 * @var array<string, string>
-	 */
-	private static $option_schema = [
-		'allowed_users'               => 'array_strings',
-		'enable_logging'              => 'bool',
-		'skip_urls'                   => 'array_strings',
-		'log_urls'                    => 'array_strings',
-		'log_events'                  => 'array_strings',
-		'custom_events'               => 'array_strings',
-		'significant_events'          => 'array_strings',
-		'auto_disable_threshold'      => 'int',
-		'auto_protect_time_threshold' => 'float',
-		'log_memory'                  => 'bool',
-		'flush_every_line'            => 'bool',
-		'hook_start_priority'         => 'int',
-		// Gates the Aggregator status dashboard menu entry (admin checkbox) —
-		// must overlay so load_config() reflects the WP option, not just the file.
-		'enable_aggregator'           => 'bool',
-		// NOTE: aggregator_servers is intentionally NOT in this per-request
-		// schema. It holds encrypted spoke credentials, is admin/hub-only,
-		// and is read lazily by ServerRegistry (get_wp_servers() + the file
-		// default via load_config_defaults()). Putting it here would mean a
-		// get_option + sanitize of that blob on every frontend request for a
-		// value load_config() never returns to any consumer.
-	];
-
-	/**
 	 * Fully-qualified option names that must NOT autoload. Single source of
 	 * truth for the autoload policy every write path consults via
 	 * `autoload_for()`. These are read on every request by `load_config()`,
@@ -117,8 +88,9 @@ class Config {
 			return;
 		}
 		$options = \array_keys( self::$non_autoloaded_options );
-		foreach ( \array_keys( self::$option_schema ) as $key ) {
-			$options[] = "newspack_event_logger_nodes_{$key}";
+		$schema  = Settings_Schema::get();
+		foreach ( $schema->overlay_keys() as $key ) {
+			$options[] = $schema->prefix() . $key;
 		}
 		foreach ( \array_unique( $options ) as $option ) {
 			\wp_set_option_autoload( $option, self::autoload_for( $option ) );
@@ -160,11 +132,14 @@ class Config {
 
 		// Presence-based overlay: a stored option (even '' / [] / false / 0) wins
 		// over the file default; only an absent option falls back. Shared rule —
-		// see Config_System\Options_Overlay.
+		// see Config_System\Options_Overlay. The overlay key-set comes from the
+		// single Settings_Schema (aggregator_servers + the remote_* direct-read
+		// options stay OUT of it — see Settings_Schema).
+		$schema = Settings_Schema::get();
 		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
 			$defaults,
-			\array_keys( self::$option_schema ),
-			'newspack_event_logger_nodes_'
+			$schema->overlay_keys(),
+			$schema->prefix()
 		);
 
 		self::$config = $config;
