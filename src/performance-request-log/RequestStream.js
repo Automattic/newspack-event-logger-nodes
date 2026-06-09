@@ -23,7 +23,14 @@
  * are newest-first - user scrolls down to see history.
  */
 
-import { useState, useEffect, useRef, useMemo, memo } from '@wordpress/element';
+import {
+	useState,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useMemo,
+	memo,
+} from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
@@ -276,14 +283,25 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	const isAdjustingScrollRef = useRef( false ); // Skip scroll events during programmatic adjustment.
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 ); // Rows worth of animation offset.
 
-	// Last rendered buffer length — drives the smooth/virtual scroll math each
-	// frame (replaces the old per-batch newCount the SSE handler tracked).
-	const lastRenderedCountRef = useRef( 0 );
-	// Last filtered length seen by the rAF — for scroll compensation.
-	const filteredCountRef = useRef( 0 );
+	// Newest UNFILTERED buffer seq the rAF has observed — drives the "Xs ago"
+	// staleness. Keyed off the monotonic seq (not buffer.length, and not the
+	// filtered view) so staleness reflects every arrival and keeps ticking once
+	// the buffer saturates its cap and rotates at constant length.
+	const lastSeenSeqRef = useRef( 0 );
+	// Newest seq the layout effect has already smooth-scrolled for, and the
+	// filter that was active then — so it compensates once per genuinely-new row
+	// and re-baselines (no spurious scroll) when the filter changes.
+	const lastCompensatedSeqRef = useRef( null );
+	const lastCompensatedFilterRef = useRef( filter );
 	// Last state we pushed to React — so idle frames (nothing changed) push no
-	// new refs and don't re-render.
-	const pushedRef = useRef( { count: -1, filter: null, rps: -1 } );
+	// new refs and don't re-render. `topSeq` catches cap rotation (length
+	// constant, newest seq climbing); `count` catches clear/filter shrink.
+	const pushedRef = useRef( {
+		topSeq: -1,
+		count: -1,
+		filter: null,
+		rps: -1,
+	} );
 	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
 	const filterRef = useRef( filter );
 	filterRef.current = filter;
@@ -301,8 +319,10 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		: null;
 
 	// Animation/read loop. Reads the high-volume buffer (node.entries) directly
-	// every frame, snapshots + filters it, drives the smooth scroll, and pushes
-	// the cheap derived state (entries snapshot + RPS) to React only when changed.
+	// every frame, snapshots + filters it, decays the smooth-scroll offset, and
+	// pushes the cheap derived state (entries snapshot + RPS) to React only when
+	// changed. The new-row offset compensation lives in the layout effect below
+	// so it lands in the same commit as the row it compensates for.
 	useEffect( () => {
 		const animate = () => {
 			const node = Core.node( VIEW_NODE );
@@ -310,14 +330,17 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			const rps = node?.rps ?? 0;
 			const filterLower = filterRef.current.toLowerCase();
 
-			// New rows since last frame → drive scroll + staleness.
-			const newCount = Math.max(
-				0,
-				buffer.length - lastRenderedCountRef.current
-			);
-			if ( newCount > 0 && node?.lastEventTime ) {
+			// Staleness tracks the UNFILTERED buffer's newest seq, so "Xs ago"
+			// reflects buffer-wide arrivals regardless of the URL filter — and
+			// keeps ticking once the buffer caps (seq climbs at constant length).
+			const bufferTopSeq = buffer.length ? buffer[ 0 ].seq : 0;
+			if (
+				bufferTopSeq > lastSeenSeqRef.current &&
+				node?.lastEventTime
+			) {
 				lastEventTimeRef.current = node.lastEventTime;
 			}
+			lastSeenSeqRef.current = bufferTopSeq;
 
 			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
 			// what we draw / count.
@@ -327,24 +350,9 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				  )
 				: buffer.slice();
 
-			// Visible-count delta in the filtered view, for scroll compensation.
-			const visibleNewCount = snapshot.length - filteredCountRef.current;
-			const list = listRef.current;
-			const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
-
-			filteredCountRef.current = snapshot.length;
-			lastRenderedCountRef.current = buffer.length;
-
-			if ( visibleNewCount > 0 ) {
-				if ( isAtTop ) {
-					// Compensate offset — decay will smooth-scroll to 0.
-					offsetRef.current -= visibleNewCount * ROW_HEIGHT;
-				} else if ( list ) {
-					// Maintain scroll position when scrolled down.
-					isAdjustingScrollRef.current = true;
-					list.scrollTop += visibleNewCount * ROW_HEIGHT;
-				}
-			}
+			// Newest seq of the rendered (filtered) view drives change detection —
+			// robust to the cap, where length is pinned but the seq keeps climbing.
+			const topSeq = snapshot.length ? snapshot[ 0 ].seq : 0;
 
 			// Decay offset toward 0 (smooth scroll), updating virtualization when
 			// the offset crosses row boundaries.
@@ -360,15 +368,18 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				Math.abs( offsetRef.current ) / ROW_HEIGHT
 			);
 
-			// Push the cheap derived state ONLY when it changed — the snapshot
-			// (count rides the array identity), the filter, and RPS. Skipping
-			// unchanged frames keeps idle frames from re-rendering React.
+			// Push the cheap derived state ONLY when it changed — the newest seq
+			// (catches cap rotation at constant length), the count (clear / filter
+			// shrink), the filter, and RPS. Skipping unchanged frames keeps idle
+			// frames from re-rendering React.
 			const pushed = pushedRef.current;
 			if (
+				topSeq !== pushed.topSeq ||
 				snapshot.length !== pushed.count ||
 				filterRef.current !== pushed.filter
 			) {
 				setEntries( snapshot );
+				pushed.topSeq = topSeq;
 				pushed.count = snapshot.length;
 				pushed.filter = filterRef.current;
 			}
@@ -453,6 +464,48 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		[ entries, filter, filterLower ]
 	);
 
+	// Smooth-scroll compensation, atomic with the row it compensates for. This
+	// runs synchronously after React commits the new rows but before paint, so
+	// the offset that holds the existing rows in place lands in the SAME paint as
+	// the prepended row — no jump-then-correct flicker. Keyed on the newest
+	// committed seq (robust to the cap, where length is constant) and re-baselines
+	// on a filter change so a filter switch doesn't read as new rows.
+	useLayoutEffect( () => {
+		const topSeq = filteredEntries.length ? filteredEntries[ 0 ].seq : 0;
+		const prevSeq = lastCompensatedSeqRef.current;
+		const filterChanged = lastCompensatedFilterRef.current !== filter;
+		lastCompensatedFilterRef.current = filter;
+		// Don't advance the baseline past an empty list — the first real row is
+		// the baseline, so it doesn't slide in.
+		if ( topSeq > 0 ) {
+			lastCompensatedSeqRef.current = topSeq;
+		}
+
+		// First observation (baseline), a filter switch, or no newer row → no
+		// smooth scroll.
+		if ( null === prevSeq || filterChanged || topSeq <= prevSeq ) {
+			return;
+		}
+
+		// Newly-prepended rows = the leading run with seq newer than last time.
+		const firstOld = filteredEntries.findIndex( ( e ) => e.seq <= prevSeq );
+		const newRows = -1 === firstOld ? filteredEntries.length : firstOld;
+
+		const list = listRef.current;
+		const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
+		if ( isAtTop ) {
+			// Hold the existing rows in place; the rAF decays the offset to 0.
+			offsetRef.current -= newRows * ROW_HEIGHT;
+			if ( contentRef.current ) {
+				contentRef.current.style.transform = `translate3d(0,${ offsetRef.current }px,0)`;
+			}
+		} else {
+			// Maintain scroll position when the user is reading history below.
+			isAdjustingScrollRef.current = true;
+			list.scrollTop += newRows * ROW_HEIGHT;
+		}
+	}, [ filteredEntries, filter ] );
+
 	// Memoize grid template.
 	const gridTemplate = useMemo(
 		() =>
@@ -476,9 +529,15 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	// reflects 0 entries.
 	const handleClear = () => {
 		clear();
-		filteredCountRef.current = 0;
-		lastRenderedCountRef.current = 0;
-		pushedRef.current = { count: 0, filter: filterRef.current, rps: 0 };
+		lastSeenSeqRef.current = 0;
+		lastEventTimeRef.current = null; // no arrivals since clear → hide "Xs ago".
+		lastCompensatedSeqRef.current = null; // re-baseline: first post-clear row won't slide.
+		pushedRef.current = {
+			topSeq: 0,
+			count: 0,
+			filter: filterRef.current,
+			rps: 0,
+		};
 		setEntries( [] );
 		offsetRef.current = 0;
 	};
