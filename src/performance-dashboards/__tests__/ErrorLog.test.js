@@ -271,4 +271,91 @@ describe( 'ErrorLog', () => {
 			/wait|no|empty/i
 		);
 	} );
+
+	it( 'keeps rendering the newest row after the buffer saturates its cap', () => {
+		// At the cap the node rotates at constant length while the newest seq
+		// climbs — change detection must key off seq, not length (the freeze bug).
+		const rotated = ( top ) =>
+			[ top, top - 1, top - 2 ].map( ( s ) =>
+				entry( { seq: s, rid: `r-${ s }`, m: `m-${ s }` } )
+			);
+		const node = registerViewFixture( { entries: rotated( 3 ) } );
+		const { container } = mount( { maxEntries: 3 } );
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-3' );
+		node.entries = rotated( 4 );
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-4' );
+		expect( container.textContent ).not.toContain( 'r-1' );
+	} );
+
+	it( 'applies the full one-row offset when a new row is committed at the top', () => {
+		// Compensation lives in a useLayoutEffect keyed on committed entries, so
+		// the offset lands in the same commit as the new row (no flicker).
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		const content = container.querySelector(
+			'.event-logger-error-log-content'
+		);
+		expect( content.style.transform ).toBe( '' );
+		node.entries = [
+			entry( { seq: 2, rid: 'r-2' } ),
+			entry( { seq: 1, rid: 'r-1' } ),
+		];
+		tickFrame();
+		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+	} );
+
+	it( 'tracks staleness from unfiltered arrivals while a non-matching filter is active', () => {
+		const node = registerViewFixture( { entries: [] } );
+		const { container } = mount();
+		tickFrame();
+		const input = container.querySelector(
+			'.event-logger-error-log-search'
+		);
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'zzz-no-match' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		node.entries = [
+			entry( { seq: 1, rid: 'r-1', k: 'error', m: 'boom' } ),
+		];
+		node.lastEventTime = Date.now() - 3000;
+		tickFrame();
+		expect(
+			container.querySelector( '.event-logger-error-log-stats' )
+				.textContent
+		).toMatch( /\d+s ago/ );
+	} );
+
+	it( 'clears the staleness display on Clear', () => {
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		// The rAF reads the instance prop (mirrors the real view node).
+		node.lastEventTime = Date.now() - 8000;
+		const { container } = mount();
+		tickFrame();
+		expect(
+			container.querySelector( '.event-logger-error-log-stats' )
+				.textContent
+		).toMatch( /\d+s ago/ );
+		node.entries = [];
+		const clearBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Clear' );
+		act( () => clearBtn.click() );
+		tickFrame();
+		expect(
+			container.querySelector( '.event-logger-error-log-stats' )
+				.textContent
+		).not.toMatch( /\d+s ago/ );
+	} );
 } );

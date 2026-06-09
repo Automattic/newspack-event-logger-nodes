@@ -488,4 +488,133 @@ describe( 'RequestStream', () => {
 		// After the snap, the transform must be cleared and offset is zero.
 		expect( content.style.transform ).toBe( '' );
 	} );
+
+	it( 'keeps rendering the newest row after the buffer saturates its cap', () => {
+		// At the cap the node rotates: newest unshifted, oldest dropped, so
+		// buffer.length is constant while the newest seq keeps climbing. Change
+		// detection must key off the newest seq, not the length — otherwise the
+		// view freezes at the cap (the "stops scrolling at 1000" bug).
+		const rotated = ( top ) =>
+			[ top, top - 1, top - 2 ].map( ( s ) =>
+				entry( { seq: s, rid: `r-${ s }`, url: `/u/${ s }` } )
+			);
+		const node = registerViewFixture( { entries: rotated( 3 ) } );
+		const { container } = mount( { maxEntries: 3 } );
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-3' );
+		// Buffer rotates: length still 3, newest seq is now 4, oldest (1) gone.
+		node.entries = rotated( 4 );
+		tickFrame();
+		expect( container.textContent ).toContain( 'r-4' );
+		expect( container.textContent ).not.toContain( 'r-1' );
+	} );
+
+	it( 'applies the full one-row offset when a new row is committed at the top', () => {
+		// The compensation lives in a useLayoutEffect keyed on the committed
+		// entries, so the offset lands in the SAME commit as the new row (no
+		// jump-then-correct flicker). At commit the offset is a full ROW_HEIGHT
+		// up — the rAF only decays it on subsequent frames.
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame(); // baseline render — no scroll for the first row.
+		const content = container.querySelector(
+			'.event-logger-request-stream-content'
+		);
+		expect( content.style.transform ).toBe( '' );
+		node.entries = [
+			entry( { seq: 2, rid: 'r-2' } ),
+			entry( { seq: 1, rid: 'r-1' } ),
+		];
+		tickFrame();
+		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+	} );
+
+	it( 'tracks staleness from unfiltered arrivals while a non-matching filter is active', () => {
+		// Staleness reflects the buffer-wide stream, not the filtered view: an
+		// arrival the filter hides must still refresh "Xs ago".
+		const node = registerViewFixture( { entries: [] } );
+		const { container } = mount();
+		tickFrame();
+		const input = container.querySelector(
+			'.event-logger-request-stream-search'
+		);
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'zzz-no-match' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		// An unfiltered request arrives that does NOT match the filter.
+		node.entries = [ entry( { seq: 1, rid: 'r-1', url: '/other' } ) ];
+		node.lastEventTime = Date.now() - 3000;
+		tickFrame();
+		const stats = container.querySelector(
+			'.event-logger-request-stream-stats'
+		);
+		expect( stats.textContent ).toMatch( /\d+s ago/ );
+	} );
+
+	it( 'clears the staleness display on Clear', () => {
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+			lastEventTime: Date.now() - 8000,
+		} );
+		const { container } = mount();
+		tickFrame();
+		expect(
+			container.querySelector( '.event-logger-request-stream-stats' )
+				.textContent
+		).toMatch( /\d+s ago/ );
+		// Clear empties the log; the node buffer empties too.
+		node.entries = [];
+		const clearBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Clear' );
+		act( () => clearBtn.click() );
+		tickFrame();
+		expect(
+			container.querySelector( '.event-logger-request-stream-stats' )
+				.textContent
+		).not.toMatch( /\d+s ago/ );
+	} );
+
+	it( 'baselines the first row after Clear (no slide), then slides the next', () => {
+		// After Clear the node counter resets, so post-clear seqs restart at 1.
+		// The first row re-establishes the baseline and must NOT slide; the next
+		// genuinely-new row slides in.
+		const node = registerViewFixture( {
+			entries: [
+				entry( { seq: 3, rid: 'r-3' } ),
+				entry( { seq: 2, rid: 'r-2' } ),
+				entry( { seq: 1, rid: 'r-1' } ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+		const content = container.querySelector(
+			'.event-logger-request-stream-content'
+		);
+		node.entries = [];
+		const clearBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Clear' );
+		act( () => clearBtn.click() );
+		tickFrame();
+		expect( content.style.transform ).toBe( '' );
+		// First post-clear row — baseline, no slide.
+		node.entries = [ entry( { seq: 1, rid: 'a' } ) ];
+		tickFrame();
+		expect( content.style.transform ).toBe( '' );
+		// Second post-clear row — slides.
+		node.entries = [
+			entry( { seq: 2, rid: 'b' } ),
+			entry( { seq: 1, rid: 'a' } ),
+		];
+		tickFrame();
+		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+	} );
 } );
