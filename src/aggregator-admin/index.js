@@ -14,16 +14,13 @@
 import { createRoot } from '@wordpress/element';
 import './nodes/register';
 import ServersAdmin from './ServersAdmin';
-import DebugOverlay from '@newspack-nodes/debug-overlay';
 
 // Mount into the PHP-emitted container (Admin::configured_servers_callback).
+// No DebugOverlay here: this bundle renders into the operator-facing SETTINGS
+// page (the Configured Servers section), not a technical dashboard, so the
+// sticky `?nodes-debug=1` dev HUD must not follow the operator onto it.
 const mount = document.getElementById( 'event-aggregator-servers' );
 if ( mount ) {
 	const root = createRoot( mount );
-	root.render(
-		<>
-			<ServersAdmin />
-			<DebugOverlay storageKey="newspack-nodes:debug:aggregator-admin" />
-		</>
-	);
+	root.render( <ServersAdmin /> );
 }
