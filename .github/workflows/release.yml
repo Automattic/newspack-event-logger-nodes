@@ -59,6 +59,7 @@ jobs:
         env:
           NEWSPACK_NODES_RUNTIME: ${{ github.workspace }}/.newspack-nodes/src/runtime/index.js
           NEWSPACK_NODES_DEBUG_OVERLAY: ${{ github.workspace }}/.newspack-nodes/src/debug-overlay/DebugOverlay.js
+          NEWSPACK_NODES_SHARED: ${{ github.workspace }}/.newspack-nodes/src/shared
         run: |
           npm ci --prefer-offline --no-audit --no-fund
           npm run release:archive
