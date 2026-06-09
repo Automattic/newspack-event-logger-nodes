@@ -1067,6 +1067,72 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'checked="checked"', $out );
 	}
 
+	// ---- data-nn-reset-default on checkboxes -----------------------------
+
+	/**
+	 * Each checkbox must advertise its FILE default via data-nn-reset-default so
+	 * the shared reset-toggle JS previews the real restored state ("1" if the
+	 * file default is truthy, "0" if falsy) instead of blanket-unchecking.
+	 *
+	 * @return array<string,array{0:string,1:array<string,mixed>,2:string}>
+	 */
+	public function reset_default_provider(): array {
+		return [
+			'enable_logging default true'     => [ 'enable_logging_callback', [ 'enable_logging' => true ], '1' ],
+			'enable_aggregator default false' => [ 'enable_aggregator_callback', [ 'enable_aggregator' => false ], '0' ],
+			'log_memory default false'        => [ 'log_memory_callback', [ 'log_memory' => false ], '0' ],
+			'flush_every_line default false'  => [ 'flush_every_line_callback', [ 'flush_every_line' => false ], '0' ],
+		];
+	}
+
+	/**
+	 * @dataProvider reset_default_provider
+	 *
+	 * @param string              $callback  Admin method to invoke.
+	 * @param array<string,mixed> $defaults  File-config defaults to inject.
+	 * @param string              $expected  Expected data-nn-reset-default value.
+	 */
+	public function test_checkbox_carries_file_default_reset_attribute( string $callback, array $defaults, string $expected ): void {
+		Config::reset();
+		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, $defaults );
+
+		try {
+			$admin = new Admin();
+			\ob_start();
+			$admin->$callback();
+			$out = \ob_get_clean();
+			$this->assertStringContainsString( 'data-nn-reset-default="' . $expected . '"', $out );
+		} finally {
+			Config::reset();
+		}
+	}
+
+	/**
+	 * The attribute must reflect the FILE default a reset restores, NOT the
+	 * current stored option: a default-enabled box must still advertise "1"
+	 * even after the operator has stored 0.
+	 */
+	public function test_reset_default_attribute_ignores_stored_value(): void {
+		Config::reset();
+		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, [ 'enable_logging' => true ] );
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
+
+		try {
+			$admin = new Admin();
+			\ob_start();
+			$admin->enable_logging_callback();
+			$out = \ob_get_clean();
+			$this->assertStringNotContainsString( 'checked="checked"', $out, 'stored 0 should render unchecked' );
+			$this->assertStringContainsString( 'data-nn-reset-default="1"', $out, 'reset default must mirror the file default, not the stored value' );
+		} finally {
+			Config::reset();
+		}
+	}
+
 	// ---- maybe_request_worker_restart additional branches ---------------
 
 	public function test_maybe_request_worker_restart_request_workers_for_auto_disable_threshold(): void {

@@ -822,7 +822,7 @@ class Admin {
 		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'enable_logging' ) ); ?>">
 			<div style="flex: 1;">
 				<input type="hidden" name="newspack_event_logger_nodes_enable_logging" value="0" />
-				<input type="checkbox" id="enable_logging" name="newspack_event_logger_nodes_enable_logging" value="1" <?php \checked( 1, $enabled ); ?> />
+				<input type="checkbox" id="enable_logging" name="newspack_event_logger_nodes_enable_logging" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'enable_logging', 1 ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
 				<label for="enable_logging"><?php \esc_html_e( 'Enable event logging', 'newspack-event-logger-nodes' ); ?></label>
 			</div>
 			<button type="button" class="button button-secondary" data-nn-reset-toggle
@@ -845,15 +845,28 @@ class Admin {
 	 *                              with no config-file override for this key).
 	 */
 	private function bool_option_with_file_default( string $short_key, int $hard_default = 0 ): int {
-		$defaults     = Config::load_config_defaults();
-		$file_default = \array_key_exists( $short_key, $defaults )
-			? (int) (bool) $defaults[ $short_key ]
-			: $hard_default;
-		$stored = \get_option(
+		$file_default = $this->bool_file_default( $short_key, $hard_default );
+		$stored       = \get_option(
 			"newspack_event_logger_nodes_{$short_key}",
 			$file_default
 		);
 		return \is_numeric( $stored ) ? (int) $stored : 0;
+	}
+
+	/**
+	 * The file-config default for a boolean toggle as 0/1 — what a reset
+	 * restores (reset deletes the option row, resurfacing this value). Used by
+	 * the `data-nn-reset-default` attribute so the reset-toggle JS previews the
+	 * real default state, NOT the current stored value.
+	 *
+	 * @param string $short_key    Option key without the `newspack_event_logger_nodes_` prefix.
+	 * @param int    $hard_default 0 or 1 — used only if the file default is absent.
+	 */
+	private function bool_file_default( string $short_key, int $hard_default = 0 ): int {
+		$defaults = Config::load_config_defaults();
+		return \array_key_exists( $short_key, $defaults )
+			? (int) (bool) $defaults[ $short_key ]
+			: $hard_default;
 	}
 
 	// ---- Aggregator field callbacks --------------------------------------
@@ -868,7 +881,7 @@ class Admin {
 		<div style="display: flex; align-items: flex-start; gap: 10px;" data-nn-reset="<?php echo \esc_attr( $this->reset_mark_name( 'enable_aggregator' ) ); ?>">
 			<div style="flex: 1;">
 				<input type="hidden" name="newspack_event_logger_nodes_enable_aggregator" value="0" />
-				<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" <?php \checked( 1, $enabled ); ?> />
+				<input type="checkbox" id="enable_aggregator" name="newspack_event_logger_nodes_enable_aggregator" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'enable_aggregator' ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
 				<label for="enable_aggregator"><?php \esc_html_e( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' ); ?></label>
 			</div>
 			<button type="button" class="button button-secondary" data-nn-reset-toggle
@@ -1076,7 +1089,7 @@ class Admin {
 			<div style="flex: 1;">
 				<input type="hidden" name="newspack_event_logger_nodes_log_memory" value="0" />
 				<label>
-					<input type="checkbox" id="log_memory" name="newspack_event_logger_nodes_log_memory" value="1" <?php \checked( 1, $enabled ); ?> />
+					<input type="checkbox" id="log_memory" name="newspack_event_logger_nodes_log_memory" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'log_memory' ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
 					<?php \esc_html_e( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' ); ?>
 				</label>
 			</div>
@@ -1093,7 +1106,7 @@ class Admin {
 			<div style="flex: 1;">
 				<input type="hidden" name="newspack_event_logger_nodes_flush_every_line" value="0" />
 				<label>
-					<input type="checkbox" id="flush_every_line" name="newspack_event_logger_nodes_flush_every_line" value="1" <?php \checked( 1, $enabled ); ?> />
+					<input type="checkbox" id="flush_every_line" name="newspack_event_logger_nodes_flush_every_line" value="1" data-nn-reset-default="<?php echo $this->bool_file_default( 'flush_every_line' ) ? '1' : '0'; ?>" <?php \checked( 1, $enabled ); ?> />
 					<?php \esc_html_e( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' ); ?>
 				</label>
 			</div>
