@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.11.0
+ * Version: 0.12.0
  * Author: Automattic
  * Requires Plugins: newspack-nodes
  * Text Domain: newspack-event-logger-nodes
@@ -14,7 +14,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.11.0' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.12.0' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -101,6 +101,14 @@ $_newspack_event_logger_nodes_load = static function () use (
 		\Newspack_Nodes\Config::RESET_ACTION,
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
 	);
+
+	// Job request-context glue. The substrate's Job_Worker_Node fires these
+	// around each handler; the event-logger hooks LogManager's suspend +
+	// synthetic /jobs/{handler} $_SERVER rewrite (begin) and resume + restore
+	// (end). Job_Worker_Node moved to the substrate; this is the app-specific
+	// context that stayed behind.
+	\add_action( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context' ] );
+	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ] );
 
 	// One-call substrate registration: registers the application namespace and
 	// the stock-topology dir. Topologies are NOT plugin-owned — the substrate
@@ -284,21 +292,22 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
  * a closure-bound static so we don't pollute $GLOBALS.
  */
 ( static function (): void {
-	$orig_server = null;
+	$entered = false;
 	\add_action(
 		'newspack_nodes/before_supervisor_run',
-		static function () use ( &$orig_server ): void {
-			$orig_server = \Newspack_Event_Logger_Nodes\Job_Worker_Node::begin_job_context( 'newspack-nodes/supervisor' );
+		static function () use ( &$entered ): void {
+			\Newspack_Event_Logger_Nodes\Log_Manager::begin_job_context( 'newspack-nodes/supervisor' );
+			$entered = true;
 		}
 	);
 	\add_action(
 		'newspack_nodes/after_supervisor_run',
-		static function () use ( &$orig_server ): void {
-			if ( null === $orig_server ) {
+		static function () use ( &$entered ): void {
+			if ( ! $entered ) {
 				return;
 			}
-			\Newspack_Event_Logger_Nodes\Job_Worker_Node::end_job_context( $orig_server );
-			$orig_server = null;
+			\Newspack_Event_Logger_Nodes\Log_Manager::end_job_context();
+			$entered = false;
 		}
 	);
 } )();

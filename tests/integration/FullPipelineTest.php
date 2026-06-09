@@ -3,12 +3,12 @@ namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
-use Newspack_Event_Logger_Nodes\Job_Worker_Node;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Job_Worker_Node;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tee_Node;
