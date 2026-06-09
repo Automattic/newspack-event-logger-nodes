@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-09
+
 ### Fixed
 
 - **Per-field reset toggle now previews a settings checkbox's real default.** Arming a reset (`↺`) cleared every checkbox to unchecked regardless of its default, so a default-enabled box (e.g. "Enable event logging") looked like it would be disabled while the reset was pending (Save was always correct). Each checkbox now carries a `data-nn-reset-default` attribute — the file-config default, via the new `bool_file_default()` helper extracted from `bool_option_with_file_default()` — so the shared reset JS previews the correct state.
