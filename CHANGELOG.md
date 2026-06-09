@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-09
+
 ### Changed
 
 - **Scoped `box-sizing: border-box` baseline per dashboard.** Each React dashboard bundle (performance dashboards, gyroscope, request-log, logger, aggregator) now applies a `border-box` reset scoped to its own mount root, so the rule can't leak into the rest of wp-admin.
