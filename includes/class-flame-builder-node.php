@@ -23,6 +23,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Flame builder node class.
  */
 class Flame_Builder_Node extends Node {
+	use \Newspack_Nodes\Schema_Reflection;
 
 	const EMA_SAMPLE_LIMIT   = 1000;
 	const FLUSH_INTERVAL_SEC = 5;
@@ -146,9 +147,10 @@ class Flame_Builder_Node extends Node {
 		$this->auto_tuner = new Auto_Tuner_Node();
 		$this->auto_tuner->patron( $this );
 
-		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
-		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
 		parent::__construct();
+		// Wire the sibling :config interpreter from node_schema()['commands']
+		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
+		$this->auto_wire_interpreter();
 	}
 
 	/**

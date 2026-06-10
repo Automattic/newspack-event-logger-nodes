@@ -49,6 +49,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 // Note: cURL is required for SSE multiplexing — wp_remote_get() doesn't support it.
 
 class Remote_Source_Node extends Node {
+	use \Newspack_Nodes\Schema_Reflection;
 
 	// ----- Reconnect / liveness tuning (mirrors upstream class-sse-client.php) -----
 
@@ -100,9 +101,7 @@ class Remote_Source_Node extends Node {
 	private int     $last_heartbeat  = 0;
 
 	/**
-	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
-	 * which the base setter parses against `node_schema()['arguments']`.
-	 *
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments().
 	 * Credentials and URL come from the ServerRegistry entry that StreamMerger
 	 * looked up — RemoteSource doesn't read the registry itself.
 	 */
@@ -111,10 +110,9 @@ class Remote_Source_Node extends Node {
 	}
 
 	/**
-	 * Setter chains through the base schema walker (which assigns server_id /
-	 * url / auth_username / auth_password / auth_token / remote_topic /
-	 * partition from positional tokens or schema defaults), then rtrims the
-	 * URL and clamps partition to >= 0 to match the legacy ctor.
+	 * Store the raw string, parse positional tokens via parse_schema_args()
+	 * (server_id / url / auth_username / auth_password / auth_token / remote_topic /
+	 * partition), then rtrim the URL and clamp partition to >= 0.
 	 *
 	 * Note: this positional-string path can't represent middle-empty values
 	 * (whitespace tokenization collapses empties). Production callers
@@ -134,6 +132,7 @@ class Remote_Source_Node extends Node {
 		if ( '' === $args ) {
 			return $result;
 		}
+		$this->parse_schema_args( $args );
 		$this->url       = \rtrim( $this->url, '/' );
 		$this->partition = \max( 0, $this->partition );
 		return $result;
