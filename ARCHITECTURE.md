@@ -136,7 +136,7 @@ When workers spawn via the HMAC endpoint, the substrate sets `NEWSPACK_NODES_WOR
 
 ### PIPE_BUF and truncation
 
-Per-line writes go to `Topic::fill()` → `Partition::fill()`, which appends via `fwrite(O_APPEND)`. POSIX guarantees atomic appends only when the payload fits in `PIPE_BUF` (4096 bytes on Linux). `MAX_DATA_SIZE = 3840` leaves headroom for the JSON envelope around `m`. Anything larger gets replaced with `{"truncated":true}` and a `error_log` line directing the caller to `Job_Intake::queue()` (which goes through `Partition::allow_large_writes()` and the per-partition write lock). Truncation is silent at the firehose level — it has to be, because the firehose is fire-and-forget — so size discipline is the caller's responsibility.
+Per-line writes go to `Topic::fill()` → `Partition::fill()`, which appends via `fwrite(O_APPEND)`. POSIX guarantees atomic appends only when the payload fits in `PIPE_BUF` (4096 bytes on Linux). `MAX_DATA_SIZE = 3840` leaves headroom for the JSON envelope around `m`. Anything larger is truncated: an `error_log` notice fires, the category gets `" (truncated)"` appended, and the data is replaced with a 1000-char excerpt (`['m' => substr($data_json, 0, 1000) . '...']`). Oversize payloads belong in `Job_Intake::queue()` (which goes through `Partition::allow_large_writes()` and the per-partition write lock). Truncation never throws — the firehose is fire-and-forget — so size discipline is the caller's responsibility.
 
 ### Per-request lifecycle
 
@@ -705,7 +705,7 @@ Two write paths into the job queue:
 - Payload exceeds 4KB (serialized option blobs, image-handler args, large arrays).
 - Job is local-only (jobintake never aggregates; entries stay on the originating site).
 
-Using the wrong path silently loses jobs. Log_Manager truncates anything >4KB to `['truncated' => true]`. Job_Intake never aggregates so spoke jobs there never reach the hub.
+Using the wrong path loses jobs. Log_Manager truncates data over `MAX_DATA_SIZE` (3840B) to a 1000-char excerpt with `" (truncated)"` appended to the category, so the handler never sees a parseable payload. Job_Intake never aggregates so spoke jobs there never reach the hub.
 
 Job_Intake has three partition-selection modes:
 
