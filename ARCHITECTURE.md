@@ -31,51 +31,51 @@ This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monore
 |   WordPress request                                                      |
 |       |                                                                  |
 |       v                                                                  |
-|   Log_Manager  --produce()-->  Topic(firehose.log)                        |
+|   Log_Manager  --produce()-->  Topic(firehose.log)                       |
 |                                  |                                       |
 |                                  v                                       |
 |                         Partition.write()  =>  /logs/firehose.log/pN/    |
 |                         (4KB PIPE_BUF atomic)                            |
 |                                                                          |
-|   Job_Intake::queue()  --produce()-->  Topic(jobintake.log)               |
+|   Job_Intake::queue()  --produce()-->  Topic(jobintake.log)              |
 |                                          |                               |
 |                                          v                               |
 |                                 Partition.write() with allow_large       |
 |                                 (auto-locked, up to 10MB)                |
 +--------------------------------------------------------------------------+
 
-+--------------------------------------------------------------------------+
-|                       READ PATH (Worker, ~595s lifespan)                 |
-|                                                                          |
-|  topology combined.pN:                                                  |
-|                                                                          |
-|    Consumer(firehose.log)  ----+                                         |
-|                                |                                         |
-|                                v                                         |
-|                              Tee  ----> Request_Builder_Node ----> requests.log|
-|                                |                       +---> errors.log  |
-|                                |                       +---> completed.log/   |
-|                                |                       +---> gyroscope.log    |
-|                                |                                         |
-|                                +-------> Job_Router_Node     ----> jobs.log    |
-|    Consumer(jobintake.log) -------------> jobs.log (direct)              |
-|    Consumer(requests.log)  -------------> Flame_Builder_Node -> flames.log|
-|                                              +---> Stats_Store -> mc     |
-|                                                                          |
-|  topology flame-builder.pN:                                             |
-|                                                                          |
-|    Consumer(requests.log) ----> Flame_Builder_Node ----> flames.log            |
-|                                              +---> Stats_Store -> mc     |
-|                                                                          |
-|  substrate stock job-worker.pN topology (not shipped here):              |
-|                                                                          |
-|    Consumer(jobs.log) ----> Job_Worker_Node ----> registered handlers          |
-+--------------------------------------------------------------------------+
++---------------------------------------------------------------------------------+
+|                       READ PATH (Worker, ~595s lifespan)                        |
+|                                                                                 |
+|  topology combined.pN:                                                          |
+|                                                                                 |
+|    Consumer(firehose.log)  ----+                                                |
+|                                |                                                |
+|                                v                                                |
+|                              Tee  ----> Request_Builder_Node ----> requests.log |
+|                                |                       +---> errors.log         |
+|                                |                       +---> completed.log/     |
+|                                |                       +---> gyroscope.log      |
+|                                |                                                |
+|                                +-------> Job_Router_Node     ----> jobs.log     |
+|    Consumer(jobintake.log) -------------> jobs.log (direct)                     |
+|    Consumer(requests.log)  -------------> Flame_Builder_Node -> flames.log      |
+|                                              +---> Stats_Store -> mc            |
+|                                                                                 |
+|  topology flame-builder.pN:                                                     |
+|                                                                                 |
+|    Consumer(requests.log) ----> Flame_Builder_Node ----> flames.log             |
+|                                              +---> Stats_Store -> mc            |
+|                                                                                 |
+|  substrate stock job-worker.pN topology (not shipped here):                     |
+|                                                                                 |
+|    Consumer(jobs.log) ----> Job_Worker_Node ----> registered handlers           |
++---------------------------------------------------------------------------------+
 
 +--------------------------------------------------------------------------+
 |                       AGGREGATOR HUB (one per site)                      |
 |                                                                          |
-|  Stream_Merger_Node (cURL multi)                                               |
+|  Stream_Merger_Node (cURL multi)                                         |
 |     |                                                                    |
 |     +-- SSE pull -->  remote spoke 1 firehose                            |
 |     +-- SSE pull -->  remote spoke 2 firehose                            |
@@ -559,13 +559,13 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               |  nodes (hub)                |
               |  enable_aggregator on       |
               |                             |
-              |  Stream_Merger_Node pulls from    |
-              |  configured spokes          |
+              |  Stream_Merger_Node pulls   |
+              |  from configured spokes     |
               |                             |
-              |  Remote_Manager handles      |
+              |  Remote_Manager handles     |
               |  remote_job dispatch        |
               |                             |
-              |  Settings_Sync fans out      |
+              |  Settings_Sync fans out     |
               |  options to spokes          |
               +-----------------------------+
 ```
@@ -662,7 +662,7 @@ Two write paths into the job queue:
 
 ```
 +--------------------------+         +---------------------------+
-|  Log_Manager              |         |  Job_Intake::queue()       |
+|  Log_Manager             |         |  Job_Intake::queue()      |
 |  per-request, <4KB jobs  |         |  large jobs >4KB          |
 |  k:"job" in firehose     |         |  written to jobintake.log |
 +--------+-----------------+         +-------------+-------------+
@@ -790,11 +790,11 @@ SSE is now a single substrate surface: the substrate's `SSE_Out_Node` doubles as
         | < emit `connected` envelope (carries slot id)                   |
         v                                                                 |
   SSE_Out_Node drain loop (substrate):                                    |
-    flush each partition's new messages as 7-field envelopes             |
+    flush each partition's new messages as 7-field envelopes              |
     emit idle `heartbeat` when no traffic                                 |
-    flush before the framework sleeps (per-tick, not per-event)          |
+    flush before the framework sleeps (per-tick, not per-event)           |
         |                                                                 |
-  Browser POSTs the keepalive heartbeat to refresh its slot ------------+
+  Browser POSTs the keepalive heartbeat to refresh its slot --------------+
   If the tab dies, the slot expires and the next slot check drops it.
 ```
 
