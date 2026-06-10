@@ -34,6 +34,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 class Stream_Merger_Node extends Timer_Node {
+	use \Newspack_Nodes\Schema_Reflection;
 
 	/** Offsetlog commit cadence. */
 	public const COMMIT_INTERVAL_S = 5;
@@ -81,9 +82,8 @@ class Stream_Merger_Node extends Timer_Node {
 	private bool $remotes_loaded = false;
 
 	/**
-	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
-	 * which the base setter parses against `node_schema()['arguments']`. The
-	 * override below clamps partition to >= 0.
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
+	 * whose override clamps partition to >= 0.
 	 *
 	 * The owned HealthCheckTick sibling is mounted here because its construction
 	 * doesn't depend on the positional args — it's a structural part of every
@@ -96,15 +96,15 @@ class Stream_Merger_Node extends Timer_Node {
 		$this->health_check = new Health_Check_Tick_Node();
 		$this->health_check->patron( $this );
 
-		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
-		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
 		parent::__construct();
+		// Wire the sibling :config interpreter from node_schema()['commands']
+		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
+		$this->auto_wire_interpreter();
 	}
 
 	/**
-	 * Setter chains through the base schema walker (which assigns remote_topic
-	 * and partition from positional tokens or schema defaults), then clamps
-	 * partition to >= 0 to match the legacy ctor's `max(0, ...)`.
+	 * Store the raw string, parse positional tokens via parse_schema_args()
+	 * (remote_topic and partition), then clamp partition to >= 0.
 	 *
 	 * @param string|null $args
 	 * @return string
@@ -117,6 +117,7 @@ class Stream_Merger_Node extends Timer_Node {
 		if ( '' === $args ) {
 			return $result;
 		}
+		$this->parse_schema_args( $args );
 		$this->partition = \max( 0, $this->partition );
 		$this->start_periodic_tick();
 		return $result;

@@ -23,6 +23,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Request builder node class.
  */
 class Request_Builder_Node extends Node {
+	use \Newspack_Nodes\Schema_Reflection;
 
 	/** Maximum stack depth before request is considered runaway and evicted. */
 	private const MAX_STACK_DEPTH = 50;
@@ -75,14 +76,12 @@ class Request_Builder_Node extends Node {
 	private $line_counter = 0;
 
 	/**
-	 * Tachikoma-parity: no-arg ctor. Positional config arrives via `arguments()`,
-	 * which the base setter parses against `node_schema()['arguments']`. The
-	 * override below rebuilds the LRU_Cache with the schema-walked dimensions.
+	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
+	 * whose override rebuilds the LRU_Cache with the parsed dimensions.
 	 *
 	 * The Flight sibling and state_callbacks DO NOT depend on the positional
 	 * args, so they're set up here in the no-arg ctor — present on every
-	 * Request_Builder instance, regardless of whether arguments() is ever
-	 * called.
+	 * Request_Builder instance, regardless of whether arguments() is ever called.
 	 */
 	public function __construct() {
 		// Initial cache uses schema defaults so the no-arg ctor produces a
@@ -106,16 +105,16 @@ class Request_Builder_Node extends Node {
 			$this->flight->sink( $ci );
 		}
 
-		// Base ctor auto-wires the sibling :config interpreter from node_schema()['commands']
-		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
 		parent::__construct();
+		// Wire the sibling :config interpreter from node_schema()['commands']
+		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
+		$this->auto_wire_interpreter();
 	}
 
 	/**
-	 * Setter chains through the base schema walker (which assigns
-	 * bucket_size / num_buckets from positional tokens or schema defaults),
-	 * then rebuilds the LRU_Cache with the new dimensions. The cache builds
-	 * here — not in the ctor — because it depends on the positional args.
+	 * Store the raw string, parse positional tokens via parse_schema_args()
+	 * (bucket_size / num_buckets), then rebuild the LRU_Cache with the new
+	 * dimensions (here — not the ctor — because it depends on the positional args).
 	 *
 	 * @param string|null $args
 	 * @return string
@@ -128,6 +127,7 @@ class Request_Builder_Node extends Node {
 		if ( '' === $args ) {
 			return $result;
 		}
+		$this->parse_schema_args( $args );
 		$this->cache = $this->build_cache();
 		return $result;
 	}

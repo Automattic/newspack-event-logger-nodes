@@ -40,7 +40,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 class Health_Check_Tick_Node extends Timer_Node {
-
 	/**
 	 * Minimum seconds between consecutive sweeps. Matches legacy
 	 * newspack-event-aggregator's 5-minute debounce. Router TIMER fires

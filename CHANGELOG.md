@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Application nodes adopt the substrate's new `Schema_Reflection` trait.** The substrate moved positional-arg parsing + `:config` interpreter auto-wiring off the base `Node` into an opt-in `Schema_Reflection` trait. `Request_Builder_Node`, `Stream_Merger_Node`, `Flame_Builder_Node` (auto-wire a `:config` sibling) and `Remote_Source_Node` (parses positional args) now `use \Newspack_Nodes\Schema_Reflection`, call `$this->parse_schema_args()` in their `arguments()` override, and call `$this->auto_wire_interpreter()` in their ctor. `Cache_Warmer_Tick_Node` / `Health_Check_Tick_Node` parse their single arg inline and carry no trait. Requires `newspack-nodes` with the `Schema_Reflection` trait. Behavior unchanged.
 - **`Remote_Source_Node`'s bespoke `dump_node()` secret-redaction override is removed; the substrate now redacts credentials for every node.** The substrate's `Node::dump_node()` redacts any secret-named property (`auth_password`/`auth_token` included) by default, so the per-node override here was redundant — and would have left any *other* credential-bearing node unprotected. Behavior is unchanged: `dump_node my_remote` from the REPL still shows the credential slots as `[REDACTED]`. Requires `newspack-nodes` with base-`dump_node` redaction.
 
 ### Fixed
 
 - **`AdminTest::reset_default_provider` data provider is now static.** PHPUnit 10 deprecates non-static `@dataProvider` methods (a hard error in PHPUnit 11); the suite ran clean except for this one deprecation. Test-only.
+- **Application test temp dirs no longer collide with the substrate's under parallel coverage.** ELN inherited the substrate `make_temp_dir()`, which defaulted to the `newspack-nodes-test-` prefix — so under `run-coverage` (nodes + ELN run in parallel) each suite's `run-coverage.sh` `rm -rf`'d the *other's* live temp dirs. ELN's `TestCase` now defaults to its own `newspack-event-logger-nodes-test-` prefix and `run-coverage.sh` purges only that. Test-only.
 
 ## [0.13.1] - 2026-06-09
 

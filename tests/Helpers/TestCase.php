@@ -6,6 +6,17 @@ use Newspack_Nodes\Tests\TestCase as RuntimeTestCase;
 abstract class TestCase extends RuntimeTestCase {
 
 	/**
+	 * ELN-specific default prefix so app temp dirs live in their OWN namespace,
+	 * not the substrate's `newspack-nodes-test-`. Under parallel run-coverage the
+	 * nodes and ELN suites each `rm -rf` their prefix; sharing one prefix had each
+	 * suite deleting the other's LIVE temp dirs mid-run. Inherits the parent's
+	 * PID + more-entropy uniqueness and auto-cleanup.
+	 */
+	protected function make_temp_dir( string $prefix = 'newspack-event-logger-nodes-test-' ): string {
+		return parent::make_temp_dir( $prefix );
+	}
+
+	/**
 	 * Same as the substrate helper but also resets the application Config
 	 * cache so its merged result picks up the new file.
 	 */

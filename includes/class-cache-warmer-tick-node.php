@@ -31,7 +31,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 class Cache_Warmer_Tick_Node extends Timer_Node {
-
 	/** DEFAULT tick cadence + the static handler's stale-drop fallback (when a job carries no `interval`). */
 	public const INTERVAL_SECONDS = 60;
 
