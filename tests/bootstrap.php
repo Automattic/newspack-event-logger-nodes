@@ -10,15 +10,9 @@ if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
 	exit( 1 );
 }
 
-// Redirect PHP's error_log() to /dev/null so negative-path tests don't spew
-// into test output. (Matches newspack-event-logger-plugins/tests/bootstrap.php:35.)
 \ini_set( 'error_log', '/dev/null' );
-
-// Point Config at the baseline test config so app + substrate `base_directory`
-// lands in `/tmp/newspack-event-logger-nodes-test` for any test that doesn't
-// override it. Tests that need a per-test base_dir use `TestCase::use_base_dir()`.
 \putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . __DIR__ . '/newspack-event-logger-nodes-test-config.php' );
-
+\define( 'NONCE_SALT', 'newspack-nodes-test-nonce-salt' );
 \define( 'ABSPATH', '/' );
 
 if ( ! function_exists( 'plugin_dir_path' ) ) {
@@ -470,6 +464,11 @@ if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
 }
 
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/newspack-nodes.php';
+// The substrate no longer wires its runtime at plugin-file scope (it defers to
+// Bootstrap::ensure_runtime_wired() at REST/admin/CLI/cron entry points), so
+// boot it explicitly here — registers the node-class namespaces, the
+// `<config:…>` token namespace, the stock-topology dir, and Core::$memd.
+\Newspack_Nodes\Bootstrap::ensure_runtime_wired();
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CaptureSink.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/BoundedTicks.php';
