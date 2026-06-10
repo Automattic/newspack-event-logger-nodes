@@ -17,7 +17,7 @@ Read AGENTS.md for the application's architecture decisions and key files; this 
 - Touching the React dashboards (any tree under `src/`)
 - Adding an application Node subclass (RequestBuilder-style processor)
 - Modifying topology files under `topologies/`
-- Changes to LogManager, JobIntake, StreamMerger, FlameBuilder, Stats_Store, SettingsSync, RemoteManager
+- Changes to Log_Manager, Job_Intake, Stream_Merger_Node, Flame_Builder_Node, Stats_Store, Settings_Sync, Remote_Manager
 
 ## Phases
 
@@ -37,18 +37,21 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
    - `newspack_nodes/remote_job_handlers` — dispatched on the hub for `k:"remote_job"` entries (the rewritten product of spoke-aggregated `k:"job"` lines). Use when the work should run centrally on the hub after aggregation.
    Registering under both is the right call when local + aggregated copies need handling under the same name but with potentially different logic (e.g. local handler runs unconditionally, hub handler filters by a per-entry attribute).
 3. Validate inputs at the handler boundary; the substrate rate-limits you on size (10MB cap per job) but doesn't validate content.
-4. **Size discipline**: if the payload could exceed 4KB, write via `JobIntake::queue($handler_name, $payload)` instead of LogManager. JobIntake is the auto-locked large-write path.
+4. **Size discipline**: if the payload could exceed 4KB, write via `Job_Intake::queue( $handler_name, $parameters )` instead of Log_Manager. `$parameters` is the array passed through to the handler (the optional 3rd arg is a partition key). Job_Intake is the auto-locked large-write path.
+
+A worked example of a timer-driven local handler: `Cache_Warmer_Tick_Node` (a `Timer_Node` that hitchhikes the `_router` heartbeat) enqueues a `cache_warmer` job every `INTERVAL_SECONDS` (60s) and registers its handler on `newspack_nodes/job_handlers`. The standalone cache-warmer feature pairs it with the `mu-plugins/01-newspack-cache-warmer.php` drop-in and the `scripts/schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh` operator scripts.
 
 #### Adding a service CI verb
 
-Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/command` (POST one or more envelopes per request, dispatched against the addressed node) and `/wp-json/newspack-nodes/v1/messages/stream` (GET SSE). There are no per-plugin REST controllers anymore. `Performance_Controller_Base` survives in `includes/rest/` as an orphaned helper with no callers outside its own tests — slated for review/deletion; do NOT extend or call it in new code.
+Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/command` (POST one or more envelopes per request, dispatched against the addressed node) and `/wp-json/newspack-nodes/v1/messages/stream` (GET SSE). There are no per-plugin REST controllers anymore.
 
-1. Pick the right service CI class (files under `includes/app/class-*-ci.php`): `Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`.
+1. Pick the right service CI class (files under `includes/app/class-*-ci-node.php`): `Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`.
 2. Add a new verb entry in that CI's `node_schema()['commands']` array — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field; gate inside the handler instead (see step 4).
-3. Handler signature is the substrate's `static function ( <ConcreteCI>_Node $self, string $args, array $envelope = [], mixed $payload = null ): mixed` — `$self` is concretely typed to the dispatching CI so the closure can read injected dependencies (registries, stores) off it; `node_schema()` is static so anything stateful comes through `$self`.
-4. Capability gate: call `self::require_manage_options()` at the top of the handler — it's a `Service_CI_Node` static helper that throws `TM_COMMAND|TM_ERROR` for non-admins. Worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag the substrate sets pre-dispatch. (Don't reach for `Performance_Controller_Base` in `includes/rest/` — it's orphaned dead code; see above.)
+3. Handler signature is `static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array`. Most handlers type `$self` as `Command_Interpreter_Node`; only the registry-injected CIs (`Servers_CI_Node`, `Aggregator_CI_Node`) type `$self` to the concrete `*_CI_Node` so the closure can read injected dependencies (registries, stores) off `$self`. `node_schema()` is static, so anything stateful comes through `$self`.
+4. Capability gate: call `self::require_manage_options()` at the top of the handler — a `protected static` helper on `Service_CI_Node` that throws a `\RuntimeException` for non-admins, which the interpreter's central catch (step 5) turns into a `TM_COMMAND|TM_ERROR` reply along the FROM trail. Worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag the substrate sets pre-dispatch.
 5. Throw freely — the substrate wraps thrown errors as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument validation.
 6. Stats reads are fail-soft (`null` / `[]` / `false`). Slot-pool ops are fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
+7. Adding a *config field* (not a verb)? Declare a single `Field` in `Settings_Schema` (`includes/class-settings-schema.php`) — the v0.13.0 declarative source from which the Config overlay keys, the admin register/render loop, and the worker-restart classification (`restart:` keys like `job-workers` / `request-workers` — restart labels, NOT topology names) all derive. Don't hand-maintain parallel option arrays; that was retired.
 
 #### Adding a React dashboard / page
 
@@ -57,8 +60,9 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 1. Source under `src/{tree-name}/`. Build via wp-scripts (`npm run build`).
 2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the `page_to_tree` map.
 3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`, `CommandClient`).
-4. Hook layout per dashboard:
-   - `const { interpreter, router, teardown: teardownSpine } = mountExospine();` — exospine returns the request-scope interpreter, the `_router`, and a teardown.
+4. Hook layout per dashboard. Two valid `mountExospine` call forms:
+   - **Bare** — `const { interpreter, teardown: teardownSpine } = mountExospine();` returns the request-scope interpreter and a teardown directly. Use only when the tree has no overlay/reinit (the one current example is `useHookCatalogGraph`).
+   - **Build-callback** — `const { teardown } = mountExospine( build );` where `build` receives `{ interpreter }`, wires the graph, and returns `{ teardown }`. The substrate snapshots Core and rebuilds via `Core.reinit()` on "Reset Graph". Every reinit-capable dashboard (request-log, aggregator-admin, performance, gyroscope, error-log) uses this form.
    - Mount only the substrate boundary nodes the dashboard needs:
      - `_sse` (`SseIn` — EventSource ingress) — required for live-stream dashboards (request log, gyroscope, error log).
      - `_http` (`HttpOut` — POST /command boundary; `http.client = new CommandClient({ baseUrl: data.restUrl, nonce: data.nonce })`) — required for any command-fanout dashboard.
@@ -69,14 +73,14 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 5. View contract (canonical, enforced in `event-logger-nodes-review`):
    - Command-fanout views own a `pending` Map keyed by `message[ID]`; the hook stashes `{ resolve, reject }` resolvers before filling each TM_COMMAND. Pure-SSE views don't need `pending`.
    - TM_ERROR envelopes route through an internal `_errorMessage(payload)` helper that coerces string / `{message}` / fallback payloads to a human-readable string — never thrown inline from `fill()` (that crashes React).
-   - View-model updates preserve prior data on partial replies (per-slice last-modified dedup in `performanceView`; servers-list-replaces-table in `serversView`). Don't wholesale-clobber the model on every reply — preserve sibling slices.
+   - View-model updates preserve prior data on partial replies (per-slice last-modified dedup in `performance-view-node`; servers-list-replaces-table in `servers-view-node`). Don't wholesale-clobber the model on every reply — preserve sibling slices.
    - No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on a production dashboard tree — they're for the console tree only and would collide with the debug-overlay's REPL.
 6. Reference implementations:
-   - Command-fanout (CRUD): `src/aggregator-admin/hooks/useAggregatorAdminGraph.js` + `src/aggregator-admin/nodes/serversView.js`.
-   - Command-poll: `src/event-aggregator/hooks/useAggregatorStatusGraph.js` + `src/event-aggregator/nodes/aggregatorView.js`.
+   - Command-fanout (CRUD): `src/aggregator-admin/hooks/useAggregatorAdminGraph.js` + `src/aggregator-admin/nodes/servers-view-node.js`.
+   - Command-poll: `src/event-aggregator/hooks/useAggregatorStatusGraph.js` + `src/event-aggregator/nodes/aggregator-view-node.js`.
    - SSE-stream: `src/performance-request-log/hooks/useRequestLogGraph.js`.
-   - Sliced data model with incremental merge: `src/performance-dashboards/nodes/performanceView.js`.
-7. Shared hooks live in `src/shared/` (synced copies; canonical source is `newspack-nodes/src/shared/`). Import via `../shared/hooks/...`.
+   - Sliced data model with incremental merge: `src/performance-dashboards/nodes/performance-view-node.js`.
+7. Shared hooks/utils are imported from the substrate via the `@newspack-nodes/shared/...` alias (resolved by esbuild + jest to `newspack-nodes/src/shared`). There is no local `src/shared/` and no sync step. The one ELN-owned test helper (`renderHook`) lives in `src/test-helpers/`.
 
 #### Adding an application Node subclass
 
@@ -88,8 +92,10 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 
 1. Live under `includes/cli/class-<verb>-command.php`. Register in `newspack-event-logger-nodes.php` inside the `WP_CLI` block.
 2. Validate inputs at the boundary; long-running commands should accept an `--allow-root` flag (WP-CLI convention).
-3. **Make blocking work injectable.** If the command reads stdin in a loop, calls `sleep` between iterations, or polls a file, accept the relevant resource/iteration-count as a parameter so tests can drive it deterministically. Pattern: `process_stdin( $stream = STDIN, int $max_iterations = PHP_INT_MAX )` — production passes defaults, tests pass a `php://memory` stream and a small iteration cap. See `Reqgrep_Command::process_stdin` and `Reqgrep_Command::follow_mode` for the canonical examples.
-4. Same for the readline/non-readline split — accept the TTY flag rather than calling `posix_isatty` inline; tests pass `false` to exercise the non-blocking path.
+3. **Make blocking work injectable.** If the command reads stdin in a loop, calls `sleep` between iterations, or polls a file, accept the relevant resource/iteration-count as a parameter so tests can drive it deterministically. Two distinct seams in `Reqgrep_Command`:
+   - `process_stdin( $stream = null )` — stream-injection seam; defaults to null (resolving STDIN inside), tests pass a `php://memory` resource.
+   - `follow_mode( int $max_iterations = PHP_INT_MAX )` — iteration-cap seam; production passes the default, tests pass a small number.
+   Keep them separate — don't fold the cap into the stdin reader.
 
 #### Removing dead code
 
@@ -127,12 +133,17 @@ Workers cache loaded classes for the duration of their process lifetime (~595s d
 # Restart all worker types in one shot.
 wp nodes restart all --all-partitions
 
-# Or per topology (run `wp nodes types` first to discover what's live).
-wp nodes restart firehose-workers-and-jobs --all-partitions
-wp nodes restart request-workers           --all-partitions
-wp nodes restart job-workers               --all-partitions
-wp nodes restart aggregator                --all-partitions   # hub-only; errors out on spokes (substrate validates against active topologies)
+# Or per topology — the basename of the `.tsl` file (run `wp nodes types`
+# first to enumerate cataloged topologies). Current topologies: combined,
+# request-builder, job-router, flame-builder, performance, aggregator.
+wp nodes restart combined        --all-partitions
+wp nodes restart request-builder --all-partitions
+wp nodes restart job-router      --all-partitions
+wp nodes restart flame-builder   --all-partitions
+wp nodes restart aggregator      --all-partitions   # hub-only; errors out on spokes (substrate validates against active topologies)
 ```
+
+The worker-CLI verbs (`wp nodes {types,run,restart,status}` and `{ls,cli}`) are all registered by the **substrate**. This plugin registers only `wp nodes reqgrep` (in the `WP_CLI` block of `newspack-event-logger-nodes.php`).
 
 ### Phase 5: Live-verify
 
@@ -149,7 +160,7 @@ wp nodes reqgrep --recent | head -10
 wp nodes reqgrep --follow
 ```
 
-For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic; the page slugs land at `/wp-admin/admin.php?page=newspack-nodes-*`.
+For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic. Telemetry dashboards land at `/wp-admin/admin.php?page=newspack-nodes-*` (`-performance`, `-errors`, `-gyroscope`, `-stream`, `-aggregator`); the Settings / hook-catalog tree (`performance-logger`) is served at `page=newspack-event-logger-nodes`.
 
 For job handler changes: queue a job (via the legitimate caller), wait, check `wp nodes ls` for job-workers heartbeat, optionally reqgrep for the rid.
 

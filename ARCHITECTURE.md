@@ -4,6 +4,8 @@ Event-logger application built on the [`newspack-nodes`](../newspack-nodes/) run
 
 This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo wholesale. There's no shadow mode or dual emission — the legacy plugins write to `/volumes/pyrobase/tmp/event-logger`, this one defaults to `/tmp/newspack-nodes`, so they coexist by isolating their storage.
 
+**Substrate floor.** The entire deferred bootstrap (run on `plugins_loaded` priority 11) is gated by `Substrate_Guard::boot()`, which version-floors the substrate at `MINIMUM_NODES_VERSION = '0.13.0'` and probes for the required APIs (`register_plugin`, the config-namespace split, …) before wiring anything. If `newspack-nodes` is absent or too old, the guard bails and renders an admin notice instead of fataling — the event logger stays inactive until the substrate is resolved.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -45,7 +47,7 @@ This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monore
 +--------------------------------------------------------------------------+
 |                       READ PATH (Worker, ~595s lifespan)                 |
 |                                                                          |
-|  topology firehose-workers-and-jobs.pN:                                  |
+|  topology combined.pN:                                                  |
 |                                                                          |
 |    Consumer(firehose.log)  ----+                                         |
 |                                |                                         |
@@ -56,15 +58,16 @@ This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monore
 |                                |                       +---> gyroscope.log    |
 |                                |                                         |
 |                                +-------> Job_Router_Node     ----> jobs.log    |
-|                                              ^                           |
-|    Consumer(jobintake.log) -------+----------'                           |
+|    Consumer(jobintake.log) -------------> jobs.log (direct)              |
+|    Consumer(requests.log)  -------------> Flame_Builder_Node -> flames.log|
+|                                              +---> Stats_Store -> mc     |
 |                                                                          |
-|  topology request-workers.pN:                                            |
+|  topology flame-builder.pN:                                             |
 |                                                                          |
 |    Consumer(requests.log) ----> Flame_Builder_Node ----> flames.log            |
 |                                              +---> Stats_Store -> mc     |
 |                                                                          |
-|  topology job-workers.pN:                                                |
+|  substrate stock job-worker.pN topology (not shipped here):              |
 |                                                                          |
 |    Consumer(jobs.log) ----> Job_Worker_Node ----> registered handlers          |
 +--------------------------------------------------------------------------+
@@ -121,7 +124,7 @@ class Log_Manager {
 
 ### URL-secret redaction
 
-Every URL written to the firehose (REQUEST_URI, HTTP_REFERER, redirect targets) passes through `URL_REDACT_PATTERN`. Query-string values for `api_key`, `token`, `secret`, `bearer`, etc. become `=REDACTED`. The list intentionally errs broad — anything that looks like a credential gets blanked. The pattern is compiled once at file load; redaction is a single `preg_replace` per URL.
+Every URL written to the firehose (REQUEST_URI, HTTP_REFERER, redirect targets) passes through `URL_REDACT_PATTERN`. Query-string values for `api_key`, `token`, `secret`, `bearer`, etc. become `=[REDACTED]`. The list intentionally errs broad — anything that looks like a credential gets blanked. The pattern is compiled once at file load; redaction is a single `preg_replace` per URL.
 
 ### Refuse-root
 
@@ -138,107 +141,139 @@ Per-line writes go to `Topic::fill()` → `Partition::fill()`, which appends via
 ### Per-request lifecycle
 
 ```
-plugins_loaded         Log_Manager::instance() — constructs, registers shutdown hook
-hook_start (priority 1)  ::start( hook_name )
-hook callback runs
-hook_start (priority MAX-1)  ::complete( hook_name )
+plugins_loaded             Log_Manager::instance() — constructs, registers shutdown hook
+hook_start (priority -10000)   App\Core::hook_start( hook_name )
+hook callbacks run
+hook_spacer (priority MAX-2)   App\Core::hook_spacer — sacrificial no-op
+hook_complete (priority MAX-1) App\Core::hook_complete( hook_name )
 …
-shutdown               ::finish()   — closes orphaned start entries, emits (process complete)
+shutdown                   ::finish()   — closes orphaned start entries, emits (process complete)
 ```
+
+The shipped default start priority is `-10000` (`hook_start_priority` in `newspack-event-logger-nodes-config.php`); `App\Core` falls back to `1` only when the key is absent. The `hook_spacer` at `PHP_INT_MAX-2` (`App\Core::SPACER_PRIORITY`) is a sacrificial no-op registered on every instrumented hook so a self-removing filter (e.g. es-wp-query) that unhooks itself mid-run can't shift the WP filter pointer past `hook_complete` and skip the matching close.
 
 Orphaned `start`s (callback threw, exit called, fatal error before `complete`) get a synthetic `complete` at `finish()` time with `error_status='I'` so Request_Builder_Node can render the request as incomplete in the dashboards instead of waiting for a `complete` that will never arrive.
 
 ## Topologies
 
-Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is a line-oriented script the substrate's topology loader interprets per partition: `make_node <Type> <name> [ctor args…]` instantiates a Node, `connect_node <from> <to>` wires a sink, `cmd <node>:config <verb> [args…]` runs a config verb on the node, and `var <key> = <value>` declares frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. Tokens like `<partition>`, `<config:logs_dir>`, `<config:num_partitions>` are interpolated at load time against the substrate Config; `<eln:auto_disable_threshold>`, `<eln:is_hub>`, etc., resolve against the application Config (the v0.4.0 namespace split). The `make_node` first argument is a **shell name** that the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`) resolve under the substrate's own prefix. Six topologies ship.
+Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is a line-oriented script the substrate's topology loader interprets per partition: `make_node <Type> <name> [ctor args…]` instantiates a Node, `connect_node <from> <to>` wires a sink, `cmd <node>:config <verb> [args…]` runs a config verb on the node, and `var <key> = <value>` declares frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. Tokens like `<partition>`, `<config:logs_dir>`, `<config:num_partitions>` are interpolated at load time against the substrate Config; `<eln:auto_disable_threshold>`, `<eln:is_hub>`, etc., resolve against the application Config (the v0.4.0 namespace split). The `make_node` first argument is a **shell name** that the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`) resolve under the substrate's own prefix. Six `.tsl` files ship: `combined`, `performance`, `request-builder`, `flame-builder`, `job-router`, and `aggregator`. Job *dispatch* (`Job_Worker_Node` tailing `jobs.log`) is NOT a file shipped here — it comes from the substrate's stock `job-worker` topology (the local `job-worker.tsl` was deleted in v0.12.0 when `Job_Worker_Node` moved to the substrate).
 
-### `topologies/firehose-workers-and-jobs.tsl` (default)
+### `topologies/combined.tsl`
 
-Per-partition fanout worker, both branches. Tails `firehose.log` + `jobintake.log`; fans out to `Request_Builder` + `Job_Router`; writes `requests.log`, `errors.log`, `completed.log`, `gyroscope.log`, `jobs.log`.
+The everything-in-one worker. Tails `firehose.log` + `requests.log` + `jobintake.log`; runs `Request_Builder` + `Flame_Builder` + `Job_Router`; writes `requests.log`, `errors.log`, `completed.log`, `gyroscope.log`, `flames.log`, `jobs.log`.
 
 ```tsl
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:offsets_dir>/firehose.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> <config:offsets_dir>/requests.p<partition>
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> <config:offsets_dir>/jobintake.p<partition>
+make_node Request_Builder request-builder 100 3
+make_node Flame_Builder flame-builder
+make_node Job_Router job-router
+make_node Partition completed:partition <config:logs_dir>/completed.log <partition> 1048576 <config:num_segments> 0
+make_node Partition gyroscope:partition <config:logs_dir>/gyroscope.log <partition> 1048576 <config:num_segments> 0
+make_node Partition errors:partition <config:logs_dir>/errors.log <partition> ...
 make_node Partition requests:partition <config:logs_dir>/requests.log <partition> ...
+make_node Partition flames:partition <config:logs_dir>/flames.log <partition> ...
+make_node Partition jobs:partition <config:logs_dir>/jobs.log <partition> ...
+make_node Tee completed:tee
+make_node Tee firehose:tee
+cmd request-builder:config set_completed_target completed:tee
+cmd request-builder:config set_errors_target errors:partition
+cmd request-builder:config set_inflight_interval 1000
+cmd request-builder:config set_inflight_target gyroscope:partition
+cmd flame-builder:config configure_stats <partition>
+cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
+cmd flame-builder:config set_is_hub <eln:is_hub>
+cmd flame-builder:config set_significant_events <eln:significant_events_csv>
 cmd requests:partition:config allow_large_writes
 cmd requests:partition:config with_index request-index
-make_node Partition errors:partition <config:logs_dir>/errors.log <partition> ...
-cmd errors:partition:config allow_large_writes
-
-# Compact-summary fan-out: drives request-log + gyroscope dashboards.
-make_node Tee       completed:tee
-make_node Partition completed:partition <config:logs_dir>/completed.log <partition> 1048576 ...
-make_node Partition gyroscope:partition <config:logs_dir>/gyroscope.log <partition> 1048576 ...
-
-make_node Request_Builder request-builder
-connect_node request-builder requests:partition
-cmd request-builder:config set_errors_target     errors:partition
-cmd request-builder:config set_completed_target  completed:tee
-cmd request-builder:config set_inflight_target   gyroscope:partition
-cmd request-builder:config set_inflight_interval 1000
-connect_node completed:tee completed:partition
-connect_node completed:tee gyroscope:partition
-
-make_node Partition jobs:partition <config:logs_dir>/jobs.log <partition> ...
+cmd flames:partition:config allow_large_writes
+cmd flames:partition:config with_index flame-index
 cmd jobs:partition:config allow_large_writes
-make_node Job_Router job-router
-connect_node job-router jobs:partition
-
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> ...
-make_node Tee firehose:tee
+connect_node firehose:consumer firehose:tee
 connect_node firehose:tee request-builder
 connect_node firehose:tee job-router
-connect_node firehose:consumer firehose:tee
-
-make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> ...
-connect_node jobintake:consumer job-router
+connect_node request-builder requests:partition
+connect_node completed:tee completed:partition
+connect_node completed:tee gyroscope:partition
+connect_node requests:consumer flame-builder
+connect_node flame-builder flames:partition
+connect_node job-router jobs:partition
+connect_node jobintake:consumer jobs:partition
 ```
 
-The Tee is only on the firehose side because that source has multiple targets. The jobintake side has one target (`Job_Router`) and connects directly. **A Consumer's `connect_node()` goes to a Tee only when the source has more than one target.** Single-target inputs connect directly to the consumer node. Number of Tees = number of source-fan-outs, not number of sources.
+The Tee is on the firehose side because that source fans out to two targets (`request-builder` + `job-router`). The jobintake Consumer here connects directly to `jobs:partition` (the intake side is already routed at write time, so it bypasses `Job_Router` in this topology). **A Consumer's `connect_node()` goes to a Tee only when the source has more than one target.** Single-target inputs connect directly. Number of Tees = number of source-fan-outs, not number of sources.
 
 `cmd <partition>:config allow_large_writes` on the output Partitions lifts the per-message cap to 10MB and acquires a per-Partition lock (PIPE_BUF 4KB is otherwise the atomic-append ceiling). `Request_Builder` JSON regularly exceeds 4KB on pages with many timed hooks. The `completed:tee` fan-out carries the per-request compact summary `Request_Builder` emits at request-complete time; `gyroscope:partition` additionally receives the periodic in-flight snapshots from the hidden `Request_Flight_Node` sibling (interval set via `set_inflight_interval`).
 
-### `topologies/firehose-workers-only.tsl` and `firehose-jobs-only.tsl`
+### `topologies/performance.tsl`
 
-Two single-branch variants of the default. `firehose-workers-only` keeps just the `Request_Builder` branch (`requests.log` / `errors.log` / `completed.log` / `gyroscope.log`) — the firehose Consumer connects straight to `request-builder` with no Tee, since it's the only target. `firehose-jobs-only` keeps just the `Job_Router` branch (`jobs.log`), with both the firehose and jobintake Consumers feeding `job-router`. The default config ships `firehose-workers-only` + `request-workers` active and lists the other two as commented alternatives.
+`combined` minus the job branch — `Request_Builder` + `Flame_Builder` only. Tails `firehose.log` + `requests.log`; writes `requests.log`, `errors.log`, `completed.log`, `gyroscope.log`, `flames.log`. The firehose Consumer connects straight to `request-builder` (single target, no Tee). Use it where job dispatch lives in a separate fleet (or the substrate stock `job-worker`) and you want request assembly + flame stats in one worker group.
 
-### `topologies/request-workers.tsl`
+### `topologies/request-builder.tsl`
+
+Just the assembly branch. Tails `firehose.log`; `Request_Builder` writes `requests.log`, `errors.log`, and the `completed:tee` fan-out to `completed.log` + `gyroscope.log`. No Flame_Builder, no jobs — this is the `firehose → requests` half on its own.
+
+```tsl
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> ...
+make_node Partition completed:partition <config:logs_dir>/completed.log <partition> 1048576 ...
+make_node Partition errors:partition <config:logs_dir>/errors.log <partition> ...
+make_node Partition gyroscope:partition <config:logs_dir>/gyroscope.log <partition> 1048576 ...
+make_node Partition requests:partition <config:logs_dir>/requests.log <partition> ...
+make_node Request_Builder request-builder
+make_node Tee       completed:tee
+cmd request-builder:config set_completed_target  completed:tee
+cmd request-builder:config set_errors_target     errors:partition
+cmd request-builder:config set_inflight_interval 1000
+cmd request-builder:config set_inflight_target   gyroscope:partition
+cmd requests:partition:config allow_large_writes
+cmd requests:partition:config with_index request-index
+connect_node completed:tee completed:partition
+connect_node completed:tee gyroscope:partition
+connect_node firehose:consumer request-builder
+connect_node request-builder requests:partition
+```
+
+### `topologies/flame-builder.tsl`
 
 Per-partition flame builder. Tails `requests.log`; `Flame_Builder` emits `flames.log` and bumps the 9-namespace memcache schema via `Stats_Store`.
 
 ```tsl
+make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> ...
+make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.log <partition> ...
+cmd flame-builder:config configure_stats <partition>
+cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
+cmd flame-builder:config set_is_hub <eln:is_hub>
+cmd flame-builder:config set_significant_events <eln:significant_events_csv>
 cmd flames:partition:config allow_large_writes
 cmd flames:partition:config with_index flame-index
-
-make_node Flame_Builder flame-builder
-connect_node flame-builder flames:partition
-cmd flame-builder:config configure_stats <partition>
-cmd flame-builder:config set_is_hub <eln:is_hub>
-cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
-cmd flame-builder:config set_significant_events <eln:significant_events_csv>
-
-make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> ...
 connect_node requests:consumer flame-builder
+connect_node flame-builder flames:partition
 ```
 
 `configure_stats <partition>` constructs the per-partition `Stats_Store`; the auto-tune verbs feed the noisy/significant-event detection (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). The `<config:…>` tokens resolve against the substrate Config (`logs_dir`, `num_partitions`, `segment_size`, etc.); the `<eln:…>` tokens resolve against the application Config (`auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events_csv`, `is_hub`, `aggregator_*`) — the v0.4.0 split that gave app-owned values their own token namespace so substrate-only resolvers can't accidentally swallow them.
 
-### `topologies/job-workers.tsl`
+### `topologies/job-router.tsl`
 
-Per-partition job dispatcher. Tails `jobs.log`; `Job_Worker` dispatches to registered `newspack_nodes/job_handlers` (and `newspack_nodes/remote_job_handlers` on the hub).
+The job-routing half. Tails `firehose.log` + `jobintake.log`; `Job_Router` normalizes both sources and writes `jobs.log`. Dispatch of those `jobs.log` lines is the substrate stock `job-worker` topology, not this file.
 
 ```tsl
-var stale_timeout = 600;
-
-make_node Job_Worker job-worker
-make_node Consumer jobs:consumer <config:logs_dir>/jobs.log <partition> ...
-connect_node jobs:consumer job-worker
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> ...
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> ...
+make_node Job_Router job-router
+make_node Partition jobs:partition <config:logs_dir>/jobs.log <partition> ...
+cmd jobs:partition:config allow_large_writes
+connect_node firehose:consumer job-router
+connect_node job-router jobs:partition
+connect_node jobintake:consumer job-router
 ```
 
-`Job_Worker` loads its handler maps from the filters at construction so they're populated when the first `jobs.log` line arrives. The `var stale_timeout = 600` frontmatter lifts the lock-stale timeout (job handlers run user code that can be slow) so in-flight jobs aren't killed mid-execution.
+Both Consumers feed `job-router` directly — each has a single target, so neither needs a Tee. `Job_Router` disambiguates the two sources by the Consumer name stamped on the Message FROM (see [Job_Router_Node](#job_router_node)).
 
 ### `topologies/aggregator.tsl`
 
-Hub-side ingest. One `Stream_Merger` pulls from configured spokes via SSE; sinks into a multi-partition Topic that KEY-routes by URL hash so each downstream firehose-workers partition sees its own slice.
+Hub-side ingest. One `Stream_Merger` pulls from configured spokes via SSE; sinks into a multi-partition Topic that KEY-routes by URL hash so each downstream firehose-consuming partition sees its own slice.
 
 ```tsl
 make_node Topic firehose:topic <config:logs_dir>/firehose.log <config:num_partitions> ...
@@ -253,7 +288,7 @@ connect_node stream-merger firehose:topic
 
 ### Topology resolution
 
-As of v0.5.0, the `topologies` key lives on the substrate — `newspack-event-logger-nodes-config.php` no longer owns it. The plugin only **publishes its catalog**: at boot, it calls `register_stock_dir( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' )` on `Newspack_Nodes\Topology_Registry`, so anyone calling `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor) finds the stock `.tsl` files. Which catalog entries actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — this plugin only publishes the "what topologies exist" set; the substrate filters it by what the operator has checked. `num_partitions` defaults also come from the substrate config, so one setting drives both `Log_Manager` (write side) and the worker fleet (read side); hardcoding diverges them.
+As of v0.5.0, the `topologies` key lives on the substrate — `newspack-event-logger-nodes-config.php` no longer owns it. The plugin only **publishes its catalog**: at boot, it calls `Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' )` — one call that registers the application namespace prefix (for `make_node` short-name resolution) AND the stock-topology dir together — so anyone calling `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor) finds the stock `.tsl` files. Which catalog entries actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — this plugin only publishes the "what topologies exist" set; the substrate filters it by what the operator has checked. `num_partitions` defaults also come from the substrate config, so one setting drives both `Log_Manager` (write side) and the worker fleet (read side); hardcoding diverges them.
 
 Cost on regular WP requests is one array append at boot — the `.tsl` files themselves aren't parsed yet. Actual resolution + parsing happens in three places, none on the page-render hot path: supervisor's `check_config()` tick (every 15s), worker bootstrap (once per spawn), REST workers/dashboard reads.
 
@@ -294,7 +329,7 @@ class Request_Flight_Node extends Timer_Node {
 }
 ```
 
-The node is hidden from the topology console by the substrate's patron filter in `dump_metadata`. Its configuration surfaces on the patron's `:config` interpreter as `set_inflight_target` / `set_inflight_interval` — the `firehose-workers-*` topologies wire those with `cmd request-builder:config set_inflight_target gyroscope:partition` + `set_inflight_interval 1000`. Because the snapshot rides `Request_Builder_Node`'s own in-flight map (the same `LRU_Cache` buckets it already maintains for request assembly), there's no second tracker to keep coherent — the previous standalone `InflightTracker` class (deleted in commit `99a8a1b`, along with the four legacy per-stream SSE controllers) was a separate in-memory copy of state the builder already held.
+The node is hidden from the topology console by the substrate's patron filter in `dump_metadata`. Its configuration surfaces on the patron's `:config` interpreter as `set_inflight_target` / `set_inflight_interval` — the `combined` / `performance` / `request-builder` topologies wire those with `cmd request-builder:config set_inflight_target gyroscope:partition` + `set_inflight_interval 1000`. Because the snapshot rides `Request_Builder_Node`'s own in-flight map (the same `LRU_Cache` buckets it already maintains for request assembly), there's no second tracker to keep coherent — the previous standalone `InflightTracker` class (deleted in the M6 consolidation, along with the legacy per-stream SSE controllers) was a separate in-memory copy of state the builder already held.
 
 The gyroscope partition therefore carries two interleaved record shapes: per-request `complete` rows (via the `completed:tee` fan-out) and the periodic active-state rows `Request_Flight_Node` emits. The browser dispatches them client-side (`transformGyroscopeLine`); there's no longer a server-side `GyroscopeStreamController`.
 
@@ -310,6 +345,8 @@ class Flame_Builder_Node extends Node {
     const FLUSH_INTERVAL_SEC    = 5;
     const ENTRY_LIMIT_URL_UPPER = 40;
     const ENTRY_LIMIT_URL_LOWER = 20;
+    private const MAX_STACK_DEPTH = 50;                          // flame-tree depth cap
+    public const FLAME_JSON_DEPTH = 2 * self::MAX_STACK_DEPTH + 8; // json_decode budget (2 levels/span)
     const DIM_FIELDS            = [
         'status'  => 'status_category',
         'method'  => 'request_method',
@@ -323,6 +360,8 @@ class Flame_Builder_Node extends Node {
 ```
 
 Flush every 5s via Router-hitchhike Timer; flush on shutdown via `cleanup` (TM_EOF handler).
+
+`MAX_STACK_DEPTH = 50` bounds flame-tree depth; `FLAME_JSON_DEPTH = 2 × MAX_STACK_DEPTH + 8` is the `json_decode` depth used on both write (`format_index_entry`) and read (`Performance_CI_Node::find_flame_for_rid`) so a legitimately deep flame tree round-trips instead of decoding to `null`.
 
 ### Auto_Tuner_Node
 
@@ -346,7 +385,7 @@ The KEY discriminates the option being tuned; Auto_Tuner_Node dispatches by KEY 
 | `disable_custom_events` | `newspack_event_logger_nodes_custom_events` minus the items (significant events preserved) | same |
 | `add_significant_events` | `newspack_event_logger_nodes_significant_events` ∪ items | same |
 
-Replaces the legacy `AutoTuneHandlers` six-listener pattern (hub @ priority 5 + standalone @ priority 10 × three events). Both sides used to wire on WP actions; both sides ran in the same request-workers process; the action plumbing was intra-process IPC dressed up as hooks. Expressing it as a Node with `fill()` dispatch is one straight path through the same logic.
+Replaces the legacy `AutoTuneHandlers` six-listener pattern (hub @ priority 5 + standalone @ priority 10 × three events). Both sides used to wire on WP actions; both sides ran in the same flame-builder worker process; the action plumbing was intra-process IPC dressed up as hooks. Expressing it as a Node with `fill()` dispatch is one straight path through the same logic.
 
 **Local-write suppression**: Auto_Tuner_Node wraps every `update_option` in `Settings_Sync::suppress_sync(true)` / `suppress_sync(false)` so the local write doesn't re-trigger Settings_Sync's `update_option` listener (which would re-queue the same remote sync that Auto_Tuner_Node just queued). The hub fan-out happens *before* the local write so a failed fan-out (memcache down, Job_Intake stale) doesn't block the local update.
 
@@ -399,12 +438,23 @@ public function fill( array &$message ): void {
 
 Image-handler circular refs (`wp_generate_attachment_metadata` loading full-resolution images into GD) are the documented reason for the discipline. Preserve in any successor.
 
+### Cache_Warmer_Tick_Node
+
+A `Timer_Node` that queues a `cache_warmer` JobWorker job every `INTERVAL_SECONDS` (default 60) from inside a long-lived worker, replacing the unreliable wp-cron trigger (which competes with the supervisor and every other minute-cron for a slot). The tick hitchhikes `_router`'s ~5s TIMER heartbeat and debounces to its interval, so cadence is immune to cron contention. It enqueues rather than warming inline because the warm render blocks for seconds; the JobWorker isolates it (own request_id, GC cycle, cache-flush cadence) and keeps this worker's drain loop moving.
+
+```tsl
+make_node Cache_Warmer_Tick cache-warmer:tick   # timer self-starts in arguments()
+```
+
+The `cache_warmer` job handler (`JOB_HANDLER`) is registered on the standard JobWorker filter and reuses the refresh-ahead drop-in's single-flight loopback. That drop-in ships as `mu-plugins/01-newspack-cache-warmer.php` (mu-plugin, separate from the plugin zip — `release/01-newspack-cache-warmer.php`); operators schedule/unschedule it via `scripts/schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh`.
+
 ### Stream_Merger_Node
 
-Hub-side fan-in over remote spokes. `Stream_Merger_Node` is now a coordinator: it instantiates one `Remote_Source_Node` child per `Server_Registry::get_enabled()` entry (each owns its own cURL easy handle on a shared multi-handle registered with `Event_Framework`, plus its own SSE parser and cursor), holds the single shared offsetlog for the whole hub, and periodically walks its children to commit positions. The per-remote SSE pull, reconnect/backoff, and envelope parsing live in `Remote_Source_Node` (M6.7 migrated its feed to the substrate's `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume). The `process_sse_chunk` sketch below describes the SSE-line parsing each source performs.
+Hub-side fan-in over remote spokes. `Stream_Merger_Node` is now a coordinator: it instantiates one `Remote_Source_Node` child per `Server_Registry::get_enabled()` entry (each owns its own cURL easy handle on a shared multi-handle registered with `Event_Framework`, plus its own SSE parser and cursor), owns one shared offsetlog `Partition_Node` (`$offsetlog`) for the whole hub, and periodically walks its children to commit positions. The offsetlog is a named sibling registered in `Core`; `Stream_Merger_Node::remove_node()` tears it down explicitly (`$this->offsetlog?->remove_node()`) along with each `Remote_Source_Node` child and the `Health_Check_Tick` sibling so a removed merger doesn't leak nodes in `Core`. The per-remote SSE pull, reconnect/backoff, and envelope parsing live in `Remote_Source_Node` (M6.7 migrated its feed to the substrate's `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume). `Stream_Merger_Node::MAX_BACKOFF` / `INITIAL_BACKOFF` are aliases of the `Remote_Source_Node` constants. `Stream_Merger_Node`'s own `process_sse_chunk()` is a **test-only delegate** — it lazily spins up a synthetic `__test__` `Remote_Source_Node` and forwards the chunk to it so prototype-era fixtures keep working; production never calls it. The real parsing path below lives in `Remote_Source_Node`.
 
 ```php
-class Stream_Merger_Node extends Node {
+// includes/class-remote-source-node.php — the production SSE-parse path.
+class Remote_Source_Node extends Node {
     public const MAX_BACKOFF     = 30;
     public const INITIAL_BACKOFF = 1;
 
@@ -413,27 +463,21 @@ class Stream_Merger_Node extends Node {
         while ( ( $pos = strpos( $this->buffer, "\n\n" ) ) !== false ) {
             $event        = substr( $this->buffer, 0, $pos );
             $this->buffer = substr( $this->buffer, $pos + 2 );
-            $this->process_event( $event );
+            // Extract data: lines, apply newspack_nodes/aggregator_ingest_line filter
+            // (the k:"job" -> k:"remote_job" rewrite for hub topologies),
+            // emit TM_BYTESTREAM with VALUE = filtered payload into the shared Topic sink.
         }
-    }
-
-    private function process_event( string $event ): void {
-        // Extract data: lines, apply newspack_nodes/aggregator_ingest_line filter
-        // (the k:"job" -> k:"remote_job" rewrite for hub topologies),
-        // emit TM_BYTESTREAM with VALUE = filtered payload.
-        $payload = apply_filters( 'newspack_nodes/aggregator_ingest_line', $payload );
-        // ... build message, fill into sink (the Topic).
     }
 }
 ```
 
-Position advances on successful local-Topic write OR on intentional drop by an ingest filter (matches existing `class-stream-merger.php` behavior); failed writes leave the remote position unchanged so the next iteration re-fetches.
+Position advances on successful local-Topic write OR on intentional drop by an ingest filter; failed writes leave the remote position unchanged so the next iteration re-fetches. Per-remote reconnect uses `current_backoff` (starts at `INITIAL_BACKOFF`, capped at `MAX_BACKOFF`).
 
 Stream_Merger_Node does NOT perform the `k:"job"` -> `k:"remote_job"` rewrite itself. The rewrite is a `newspack_nodes/aggregator_ingest_line` filter (renamed from `newspack_event_aggregator_ingest_line`) registered by the application plugin's hub-side bootstrap; Stream_Merger_Node applies the filter chain. Plugins that don't load the rewrite filter (because they're spokes, not hubs) get raw `k:"job"` entries through.
 
 ### Stats production (owned by Flame_Builder_Node)
 
-There is no longer a separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed (commit `8a7e815`); `Flame_Builder_Node` is the single stats producer, owning flame generation AND the 9-namespace memcache fan-out via its injected `Stats_Store`. The `request-workers` topology wires the store with `cmd flame-builder:config configure_stats <partition>`.
+There is no longer a separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed in the M6 consolidation; `Flame_Builder_Node` is the single stats producer, owning flame generation AND the 9-namespace memcache fan-out via its injected `Stats_Store`. The `flame-builder` (and `performance` / `combined`) topologies wire the store with `cmd flame-builder:config configure_stats <partition>`.
 
 Each completed request bumps the schema across the same dimension set the reader paths whitelist:
 
@@ -595,7 +639,7 @@ Outbound HTTP to spokes plus a registered `remote_manager` job handler. Two dist
    - `health_check` → idempotent shortcut for dispatchers that prefer queueing over `add_action`.
    - Anything else → looked up in `newspack_event_logger_nodes/remote_actions` filter for plugin extension. Unknown actions log via `print_less_often` and drop.
 
-Stale-job protection: every `remote_manager` job carries `queued_at`. Jobs older than `STALE_THRESHOLD` (~300s, just over the discovery interval) drop with a rate-limited error log. Prevents a stuck cron tick from blasting through dozens of obsolete sync requests in a row.
+Stale-job protection: every `remote_manager` job carries `queued_at`. Jobs older than `STALE_THRESHOLD` (600s) drop with a rate-limited error log. Prevents a stuck cron tick from blasting through dozens of obsolete sync requests in a row.
 
 Caps: `MAX_SERVERS = 100`, `MAX_SETTINGS = 50` per sync. Prevents a filter-abuse from triggering an unbounded fan-out.
 
@@ -686,6 +730,10 @@ $config = \Newspack_Event_Logger_Nodes\Config::load_config_defaults(); // file-o
 
 `load_config()` is the single zero-arg entry point — every key in the `$option_schema` whitelist is loaded on every call, including `auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events`, and the substrate keys merged in from `RuntimeConfig::load_config()`. The result is cached in a static for the rest of the request, so the cost is one round of `get_option` per schema key on first call. `load_config_defaults()` is the file-only escape hatch used by `Server_Registry` to read `aggregator_servers` defaults without the circular WP-option merge (`aggregator_servers` is intentionally not in the per-request schema — admin/hub-only, read lazily).
 
+### Settings_Schema: one Field per setting
+
+`Settings_Schema` (`includes/class-settings-schema.php`) is the single declaration both `Config` and `Admin` derive from — one `\Newspack_Nodes\Config_System\Field` per setting, collected into a `Schema`. It replaced the three parallel arrays `Config` and `Admin` used to hand-maintain in lockstep (`Config::$option_schema`, `Admin::$option_names`, `Admin::$delete_on_blank_options`). `Config` reads it for the overlay key-list + autoload sweep; `Admin` reads it to drive the `register_setting` / `add_settings_field` loops, the reset list, and the delete-on-blank classification. Substrate keys (`base_directory`, partitioning, `memcache_servers`, `topologies`) are owned by the substrate's own Settings_Schema under `newspack_nodes_*` and reach this plugin via the `array_merge(RuntimeConfig::load_config(), …)` layering — never declared here. `aggregator_servers` is the one carve-out: it has an option name and file default but is neither an overlay key nor a form field (encrypted spoke credentials, read lazily by `Server_Registry`), so it's absent from the Field set. The schema layer builds on the shared `\Newspack_Nodes\Config_System` (`Field`, `Schema`, plus the substrate's renderer / overlay / reset-gate machinery).
+
 ### Application option keys
 
 | Option | Type | Loaded by | Default | Use |
@@ -694,7 +742,7 @@ $config = \Newspack_Event_Logger_Nodes\Config::load_config_defaults(); // file-o
 | `enable_aggregator` | bool | `load_config()` | `false` | Gates the Aggregator admin submenu (operator-visible side of hub-mode); push-side fanout listeners are themselves ungated and rely on no-consumer-as-no-op |
 | `log_urls` | array of strings | `load_config()` | `[]` | URL substring allowlist (empty = log everything) |
 | `skip_urls` | array of strings | `load_config()` | substrate-command paths | URL substring denylist; wins over `log_urls` |
-| `log_events` | array of strings | `load_config()` | `[]` | Hook names to instrument (start/complete pairs at priority 1 / MAX-1) |
+| `log_events` | array of strings | `load_config()` | `[]` | Hook names to instrument (start at `hook_start_priority`, default -10000; complete at MAX-1) |
 | `custom_events` | array of strings | `load_config()` | `[]` | Custom event names to log |
 | `auto_disable_threshold` | int | `load_config()` | `0` (off) | Per-hook count threshold for auto-disable |
 | `auto_protect_time_threshold` | float | `load_config()` | `0.0` (off) | Per-hook mean-time threshold (seconds) for auto-promote-to-significant |
@@ -736,11 +784,11 @@ Most config keys read through `Config::load_config()` which has a 5s in-process 
 
 There is no per-endpoint controller hierarchy anymore. The dashboards and admin tooling reach the application through the substrate's **command protocol**: one `POST /wp-json/newspack-nodes/v1/command` endpoint that routes a TM_COMMAND envelope to a named service CI node (`performance`, `events`, `status`, `logger`, `settings`, `servers`, `aggregator`, `discovery`). Each verb's request/response shape is documented in [API.md](API.md) (still expressed under the legacy `newspack-nodes/v1/*` and `newspack-nodes-aggregator/v1/*` paths for the reader's mental model — those are the verbs each CI exposes, not standalone routes). The CIs mount on `newspack_nodes/request_graph_ready`.
 
-`Performance_Controller_Base` survives in `includes/rest/` as an orphaned REST helper class (capability check, partition validation, fixed-window rate limit at 600req/60s with memcache-fail-open, `not_found_error()` shape). No production CI extends or calls it; its only callers are its own unit tests. The class is slated for review/deletion — don't extend it in new code, and don't treat its rate-limit constants as live policy.
+The whole `includes/rest/` directory — including the orphaned `Performance_Controller_Base` helper class — has been deleted. The command-protocol CIs are the only REST surface now; nothing extends a per-endpoint controller base. `tests/integration/M2BootstrapTest.php` carries a regression guard so a future revert that reintroduces `includes/rest/` would fail.
 
 ### Real-time path: `/messages/stream` + slot pool
 
-SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as the `GET /wp-json/newspack-nodes/v1/messages/stream` controller. A client subscribes to one or more partitions (`?subscribe=firehose.pN`), `SSE_Out` runs the drain loop, and emits a 7-field message envelope per line plus an idle `heartbeat` event when no data flows. The five per-stream controllers (`FirehoseStreamController`, `RequestsStreamController`, `GyroscopeStreamController`, `ErrorsStreamController`, `RawlogsController`) and their `SSEControllerBase` parent were all deleted in the M6 consolidation; the browser dashboards and the hub-side `Remote_Source_Node` cross-server pull all consume `/messages/stream` directly.
+SSE is now a single substrate surface: the substrate's `SSE_Out_Node` doubles as the `GET /wp-json/newspack-nodes/v1/messages/stream` controller. A client subscribes to one or more partitions (`?subscribe=firehose.pN`), `SSE_Out_Node` runs the drain loop, and emits a 7-field message envelope per line plus an idle `heartbeat` event when no data flows. The per-stream SSE controllers and their `SSEControllerBase` parent were all deleted in the M6 consolidation (`includes/rest/` is gone entirely); the browser dashboards and the hub-side `Remote_Source_Node` cross-server pull all consume `/messages/stream` directly.
 
 ```
 +-----------------+   GET /messages/stream?subscribe=firehose.pN   +-----------------+
@@ -751,7 +799,7 @@ SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as
         |                                                                 |
         | < emit `connected` envelope (carries slot id)                   |
         v                                                                 |
-  SSE_Out drain loop (substrate):                                         |
+  SSE_Out_Node drain loop (substrate):                                    |
     flush each partition's new messages as 7-field envelopes             |
     emit idle `heartbeat` when no traffic                                 |
     flush before the framework sleeps (per-tick, not per-event)          |
@@ -764,7 +812,7 @@ SSE is now a single substrate surface: the substrate's `SSE_Out` node doubles as
 
 ### React trees
 
-6 dashboards (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) plus a `shared` helpers tree ride the substrate's `_http` / `_sse` / `_heartbeat` spine: each dashboard mounts a graph that builds TM_COMMANDs (TO=`_http/<ci-name>`) and resolves replies via a pending-Map keyed on `message[ID]`; SSE-driven dashboards additionally mount `_sse` (subscribing to the relevant `<log>.pN` feeds) and a `_heartbeat` Node that keeps the slot alive against `_http/workers`. Source-of-truth shared hooks/utils live in `src/shared/` — but the *canonical* copies live in `newspack-nodes`; this plugin's `src/shared/*` are synced copies (the nodes build re-runs `sync-shared`). Edit the canonical in `newspack-nodes`, run `sync-shared.sh`. The four per-dashboard line transforms (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …) live per-tree and turn raw envelope VALUEs into the shape each dashboard renders.
+6 dashboards (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) ride the substrate's `_http` / `_sse` / `_heartbeat` spine: each dashboard mounts a graph that builds TM_COMMANDs (TO=`_http/<ci-name>`) and resolves replies via a pending-Map keyed on `message[ID]`; SSE-driven dashboards additionally mount `_sse` (subscribing to the relevant `<log>.pN` feeds) and a `_heartbeat` Node that keeps the slot alive against `_http/workers`. Shared hooks/utils/components are NOT copied into this plugin — there is no local `src/shared/` tree. They're imported via the `@newspack-nodes/shared/*` path alias (e.g. `import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth'`), which esbuild + jest resolve to the `newspack-nodes` sibling checkout's `src/shared`. The old synced-copy mechanism (`sync-shared.sh`) was retired in v0.12.0. The four per-dashboard line transforms (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …) live per-tree and turn raw envelope VALUEs into the shape each dashboard renders.
 
 ### Canonical view contract (v0.8.0)
 

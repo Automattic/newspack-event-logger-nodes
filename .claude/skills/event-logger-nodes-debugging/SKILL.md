@@ -41,13 +41,13 @@ The output handles multiple wire formats — both the new positional Message env
 
 ## Inspecting via the REPL
 
-Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the default combined firehose+jobs topology is `firehose-workers-and-jobs`, so:
+Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the default combined Request_Builder + Flame_Builder + Job_Router topology is `combined` (the `topologies/combined.tsl` file), so:
 
 ```bash
-wp nodes cli firehose-workers-and-jobs.p0
+wp nodes cli combined.p0
 ```
 
-(Other topology names: `firehose-workers-only`, `firehose-jobs-only`, `request-workers`, `job-workers`, `aggregator` — only those a deployment has actually spawned will show in `wp nodes ls`.)
+Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes ls`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (`job-workers` / `request-workers` are NOT topologies — they're worker-restart labels declared in `Settings_Schema`'s `restart:` keys.)
 
 From the prompt:
 
@@ -55,6 +55,7 @@ From the prompt:
 status                                  # local mode summary (no command sent to worker)
 ls -alst                                # all nodes with COUNT/SINK/TARGET columns (-a=all, -l=count+target, -s=sink, -t=target)
 dump request-builder                    # state of Request_Builder_Node, including LRU cache stats (alias of dump_node)
+dump flame-builder                      # Flame_Builder_Node — start here when flame/stats memcache fan-out is missing
 dump firehose:tee                       # Tee's target list
 ls -a request-builder                   # all nodes that sink into request-builder
 cd request-builder                      # change cwd so subsequent verbs route there
@@ -63,7 +64,7 @@ command_node "" ping                    # dispatch a verb at the cwd without typ
 
 Valid `ls` column flags are `-a`, `-c`, `-l`, `-s`, `-t` (combinable, e.g. `-alst`). There is no `-o` flag — substrate moved off the legacy `sink/owner` model to the rule-#2 `sink/target` model.
 
-For job-workers / request-workers / aggregator pivots, use the matching reader id (`job-workers.p0`, `request-workers.p0`, `aggregator.p0`, etc.). Run `wp nodes types` to see the topologies the substrate cataloged and `wp nodes ls` to see what's actually live.
+For other pivots, use the matching reader id — the topology name plus partition, e.g. `job-worker.p0`, `request-builder.p0`, `aggregator.p0`. Run `wp nodes types` to see the topologies the substrate cataloged and `wp nodes ls` to see what's actually live — those are authoritative; topology names vary per-deployment via the substrate `topologies` config.
 
 Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes ls' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes ls` to see what's actually live.
 
@@ -82,7 +83,7 @@ wp option get newspack_event_logger_nodes_stats_salt
 
 # Force a flush (rotates salt, all old keys orphan via TTL).
 wp option update newspack_event_logger_nodes_stats_salt $(openssl rand -hex 4)
-wp nodes restart firehose-workers-and-jobs --all-partitions   # pick up new salt
+wp nodes restart combined --all-partitions   # pick up new salt (or `restart all`)
 ```
 
 **Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
@@ -119,7 +120,7 @@ There is no per-plugin SSE controller layer anymore — `SSEControllerBase` was 
 
 This plugin wires the substrate's `SSE_Slot_Pool` onto `SSE_Out`'s 3-Closure seam at boot (`\Newspack_Nodes\SSE_Slot_Pool::wire()` in `newspack-event-logger-nodes.php`), so the unified SSE endpoint inherits the concurrency cap — fail-CLOSED (HTTP 429 if memcache is down — slot pool IS the rate limit).
 
-On the client side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`) — `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI (which internally calls `SSE_Slot_Pool::touch`). Per-line transforms moved from server PHP to browser JS (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`).
+On the client side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`) — `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI (which internally calls `SSE_Slot_Pool::touch`). Per-line shape-mapping moved from server PHP to the browser, inlined into each dashboard view node's `fill()` (`request-log-view-node.js`, etc.) — the standalone transform helpers were deleted, so the view is now the single place that knows the envelope → render-entry mapping.
 
 If you're getting unexpected 429s: the slot pool is exhausted. Inspect `evlog:sse:*` keys in memcache. The `newspack_event_logger_nodes/sse_rate_limited` action fires on every reject (logged to PHP `error_log` by default).
 
@@ -153,17 +154,19 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 ## Common failure modes
 
-**Dashboard rate-limit hit immediately.** The Service-CI verbs are NOT rate-limited at the CI layer — the only 429s you should see come from the substrate's SSE slot pool (concurrent `/messages/stream` connections, not commands). A 429 on a `/command` POST means something inside the substrate's `HTTP_In_Node` rejected it, not a per-CI throttle. (`Performance_Controller_Base::RATE_LIMIT_REQUESTS = 600/60s` exists in `includes/rest/` but is dead — no CI uses it.)
+**Dashboard rate-limit hit immediately.** The Service-CI verbs are NOT rate-limited at the CI layer — the only 429s you should see come from the substrate's SSE slot pool (concurrent `/messages/stream` connections, not commands). A 429 on a `/command` POST means something inside the substrate's `HTTP_In_Node` rejected it, not a per-CI throttle. There is no per-CI rate limit — the old REST controller layer (and its `includes/rest/` directory) was deleted in the Service-CI cutover.
 
 **`reqgrep --recent` shows nothing but the firehose is being written.** Two possibilities: the LogManager early-returned (e.g., running as root), so no entries are being written; OR the firehose path doesn't match (check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`).
 
-**Worker positions are stale on the workers dashboard.** Consumer publishes its position to memcache every ~10 seconds via `np:pos:{path}:p{N}`. If the dashboard shows old positions, either memcache is down (fail-soft, falls back to disk offsetlog) or the consumer process is wedged (heartbeat would also be stale).
+**Worker positions are stale on the workers dashboard.** Consumer publishes its position to memcache every ~10 seconds via `np:pos:{host}:{source_base_dir}:p{N}`. If the dashboard shows old positions, either memcache is down (fail-soft, falls back to disk offsetlog) or the consumer process is wedged (heartbeat would also be stale).
 
 **Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at 4KB and the handler saw `{"truncated": true}`. Use `JobIntake::queue()` instead.
 
 **SettingsSync silently doing nothing.** SettingsSync ITSELF is ungated and always queues a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check whether the hub side actually has an aggregator topology live (`enable_aggregator` truthy in the merged Config, default OFF) and remotes registered. The legacy `enable_workers` toggle was retired in v0.5.0.
 
 **`outputs` log-reader filter array.** Plural, not singular. Singular is silent failure.
+
+**Cache warmer not firing.** The warmer is two pieces: `Cache_Warmer_Tick_Node` (a `Timer_Node` that hitchhikes the `_router` heartbeat and enqueues a `cache_warmer` job every 60s) and the `01-newspack-cache-warmer.php` mu-plugin drop-in that performs the actual warm loopback. Common misses: (1) the drop-in's cron is NOT auto-scheduled — schedule `eln_cache_warmer_tick` manually (`scripts/schedule-cache-warmer.sh`, or `wp cron event schedule eln_cache_warmer_tick now eln_cache_warmer_minute`); (2) the loopback secret/auth options (`eln_cache_warmer_secret`, `eln_cache_warmer_auth`) aren't set, so the warm request is rejected; (3) the cold-group prefixes the drop-in is told to miss don't match the site's actual cache groups, so nothing is forced cold. If the tick fires but nothing warms, `handle_job` logs `CacheWarmerTick: drop-in not installed` — the mu-plugin isn't loaded.
 
 ## Inspecting on disk
 
@@ -175,8 +178,13 @@ head -c 800 {base_dir}/logs/firehose.log/p0/0.log
 # Job-intake (large jobs).
 ls -la {base_dir}/logs/jobintake.log/p0/
 
-# RequestBuilder writes assembled requests to requests.log (with .idx companion for drilldown).
+# RequestBuilder writes assembled requests to requests.log; the drilldown index
+# is a sibling `<segment_id>.idx` next to each `<segment_id>.log` (with_index request-index).
 ls -la {base_dir}/logs/requests.log/p0/
+
+# Flames partition (Flame_Builder output; backs the flame-graph drilldown) —
+# also indexed with a sibling `<segment_id>.idx` (with_index flame-index).
+ls -la {base_dir}/logs/flames.log/p0/
 
 # Compact per-request summaries (drives the Request Log + Gyroscope dashboards).
 ls -la {base_dir}/logs/completed.log/p0/
