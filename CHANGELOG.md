@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-10
+
 ### Changed
 
 - **Application nodes adopt the substrate's new `Schema_Reflection` trait.** The substrate moved positional-arg parsing + `:config` interpreter auto-wiring off the base `Node` into an opt-in `Schema_Reflection` trait. `Request_Builder_Node`, `Stream_Merger_Node`, `Flame_Builder_Node` (auto-wire a `:config` sibling) and `Remote_Source_Node` (parses positional args) now `use \Newspack_Nodes\Schema_Reflection`, call `$this->parse_schema_args()` in their `arguments()` override, and call `$this->auto_wire_interpreter()` in their ctor. `Cache_Warmer_Tick_Node` / `Health_Check_Tick_Node` parse their single arg inline and carry no trait. Requires `newspack-nodes` with the `Schema_Reflection` trait. Behavior unchanged.
