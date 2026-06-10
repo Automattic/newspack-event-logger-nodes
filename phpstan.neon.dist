@@ -15,9 +15,8 @@ parameters:
         disallowedShortTernary: false
         noVariableVariables: false
     checkDynamicProperties: false
-    # PHP 8.2+ — application code uses constants-in-traits and other 8.2
-    # syntax; composer.json's `platform.php: 8.0` is the minimum-INSTALL
-    # floor, but actual runtime is PHP 8.2+ (Eve / Atomic ship PHP 8.4).
+    # PHP 8.2+ — this application depends on the PHP 8.2+ substrate and is
+    # deployed to Eve / Atomic where PHP 8.4 is available.
     phpVersion: 80200
     paths:
         - newspack-event-logger-nodes.php

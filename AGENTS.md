@@ -29,7 +29,7 @@ WordPress VIP Go (enforced by `phpcs.xml.dist`):
 - Yoda conditions
 - `[]` arrays, arrow functions, spread operator allowed
 - Tab indentation, spaces inside parentheses
-- PHP 8.0+ typed properties; constructor property promotion where it shortens
+- PHP 8.2+; constructor property promotion where it shortens
 - Conventional commits
 
 ## Build / Test
