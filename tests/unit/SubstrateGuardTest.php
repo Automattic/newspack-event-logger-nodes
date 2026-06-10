@@ -101,6 +101,29 @@ class SubstrateGuardTest extends TestCase {
 		$this->assertTrue( Substrate_Guard::required_apis_present() );
 	}
 
+	/**
+	 * The floor must be at least 0.15.0 — the substrate release that introduced
+	 * the `Schema_Reflection` trait. ELN's `Request_Builder_Node` /
+	 * `Stream_Merger_Node` / `Flame_Builder_Node` / `Remote_Source_Node`
+	 * `use \Newspack_Nodes\Schema_Reflection`, which fatals at class-load on an
+	 * older substrate. A lower floor lets nodes 0.13/0.14 satisfy the guard and
+	 * then fatal on the missing trait instead of showing the guard notice.
+	 */
+	public function test_minimum_version_requires_schema_reflection_trait(): void {
+		$this->assertTrue(
+			\version_compare( Substrate_Guard::MINIMUM_NODES_VERSION, '0.15.0', '>=' ),
+			'MINIMUM_NODES_VERSION must be >= 0.15.0 (Schema_Reflection trait)'
+		);
+	}
+
+	/** The guard probes the `Schema_Reflection` trait ELN's nodes `use`. */
+	public function test_required_apis_probe_schema_reflection_trait(): void {
+		// Non-vacuous: the trait is loaded in the test env, proving the probe set
+		// includes it (its absence would flip required_apis_present() false).
+		$this->assertTrue( \trait_exists( '\Newspack_Nodes\Schema_Reflection' ) );
+		$this->assertTrue( Substrate_Guard::required_apis_present() );
+	}
+
 	public function test_boot_invokes_on_ready_when_satisfied(): void {
 		$ready = false;
 		$unsat = false;

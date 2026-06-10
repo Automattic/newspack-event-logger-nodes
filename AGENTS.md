@@ -8,7 +8,7 @@ This plugin owns: `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, 
 
 WordPress loads plugins alphabetically. `newspack-event-logger-nodes` sorts BEFORE `newspack-nodes` (`-event-` < `-nodes`), so the runtime's `\Newspack_Nodes\Node` class is NOT available at this plugin's file-load time.
 
-Workaround: `newspack-event-logger-nodes.php` defers the wiring (CommandInterpreter namespace + `Topology_Registry` mounts + `App\Core` init) via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). The deferred bootstrap is mediated by `Substrate_Guard::boot()`, which version-floors the substrate (`MINIMUM_NODES_VERSION = 0.13.0`) and probes the required APIs before wiring — or renders an admin notice if the substrate is absent/too old. Priority 11 is intentional; don't lower it. Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
+Workaround: `newspack-event-logger-nodes.php` defers the wiring (CommandInterpreter namespace + `Topology_Registry` mounts + `App\Core` init) via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). The deferred bootstrap is mediated by `Substrate_Guard::boot()`, which version-floors the substrate (`MINIMUM_NODES_VERSION = 0.15.0`) and probes the required APIs before wiring — or renders an admin notice if the substrate is absent/too old. Priority 11 is intentional; don't lower it. Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
 
 ## Workflow discipline (mandatory)
 
@@ -121,7 +121,7 @@ These are intentional. Don't "fix" them.
 | Path | What |
 |------|------|
 | `newspack-event-logger-nodes.php` | Plugin entry; `Substrate_Guard`-gated deferred loader; `register_namespace` for node-class resolution; service-CI mount on `request_graph_ready`; stock-topology dir registration |
-| `includes/class-substrate-guard.php` | `Substrate_Guard` — runtime-floor guard gating the entire deferred bootstrap at `MINIMUM_NODES_VERSION` (0.13.0); renders the admin notice when the substrate is absent/too old |
+| `includes/class-substrate-guard.php` | `Substrate_Guard` — runtime-floor guard gating the entire deferred bootstrap at `MINIMUM_NODES_VERSION` (0.15.0); renders the admin notice when the substrate is absent/too old |
 | `includes/class-settings-schema.php` | `Settings_Schema` — the single declarative Field/Schema source (one `Field` per setting) from which Config overlay keys, the admin register/render loop, and worker-restart classification all derive (replaced three parallel hand-maintained arrays in v0.13.0) |
 | `includes/class-cache-warmer-tick-node.php` | `Cache_Warmer_Tick_Node` — a `Timer_Node` that hitchhikes the `_router` heartbeat and enqueues a `cache_warmer` job every `INTERVAL_SECONDS` (60s); registers the handler on `newspack_nodes/job_handlers` (v0.11.0) |
 | `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings). The active `.tsl` topology list moved to the substrate's `topologies` key in v0.5.0 |

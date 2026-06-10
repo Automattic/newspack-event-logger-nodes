@@ -30,11 +30,11 @@ class Substrate_Guard {
 
 	/**
 	 * Lowest newspack-nodes version ELN was developed against. Raise this as
-	 * ELN adopts newer substrate releases (the substrate's register_plugin /
-	 * config-namespace / service-CI features land in its next release; until
-	 * the substrate bumps, the capability check below is the operative floor).
+	 * ELN adopts newer substrate releases. 0.15.0 introduced the
+	 * `Schema_Reflection` trait that ELN's nodes `use` (a class-load fatal on
+	 * an older substrate); the trait probe below is the belt-and-suspenders.
 	 */
-	public const MINIMUM_NODES_VERSION = '0.13.0';
+	public const MINIMUM_NODES_VERSION = '0.15.0';
 
 	/**
 	 * Pure predicate: is the installed substrate new enough AND capable?
@@ -93,6 +93,11 @@ class Substrate_Guard {
 				return false;
 			}
 		}
+		foreach ( self::REQUIRED_TRAITS as $trait ) {
+			if ( ! \trait_exists( $trait ) ) {
+				return false;
+			}
+		}
 		foreach ( self::REQUIRED_METHODS as [ $class, $method ] ) {
 			if ( ! \method_exists( $class, $method ) ) {
 				return false;
@@ -117,6 +122,16 @@ class Substrate_Guard {
 		'\Newspack_Nodes\Config_System\Field',
 		'\Newspack_Nodes\Config_System\Schema',
 		'\Newspack_Nodes\Config_System\Settings_Renderer',
+	];
+
+	/**
+	 * Substrate traits ELN's nodes `use`. `Schema_Reflection` (>= 0.15.0) is
+	 * `use`d by Request_Builder_Node / Stream_Merger_Node / Flame_Builder_Node /
+	 * Remote_Source_Node; an older substrate lacks it and those classes fatal at
+	 * load — probe it so the guard notice fires instead.
+	 */
+	private const REQUIRED_TRAITS = [
+		'\Newspack_Nodes\Schema_Reflection',
 	];
 
 	/**
