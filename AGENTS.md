@@ -2,13 +2,13 @@
 
 WordPress plugin: the application layer of the new event-logger. Replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo with two plugins — this one (application) and `newspack-nodes` (runtime substrate). High-throughput request-lifecycle logging, real-time SSE streaming, flame-graph generation, hub/spoke aggregation — expressed as Nodes.
 
-This plugin owns: `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Job_Intake`, `Stream_Merger_Node`, `Remote_Source_Node`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`, the `App\*_CI_Node` service CIs, React dashboards, topology files. (`Job_Worker_Node` moved to the `newspack-nodes` substrate; this plugin keeps only the job request-context glue — `Log_Manager::begin/end_job_context`, hooked onto the substrate's `newspack_nodes/job_worker/{before,after}_job` actions.) (Node subclasses carry a `_Node` suffix; helpers like `Log_Manager` / `Stats_Store` / `Server_Registry` don't.) Depends on `newspack-nodes` for everything substrate-level. Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached` built once by this plugin's bootstrap) — there is no plugin-local cache class.
+This plugin owns: `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Job_Intake`, `Stream_Merger_Node`, `Remote_Source_Node`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`, the `App\*_CI_Node` service CIs, React dashboards, topology files. (`Job_Worker_Node` moved to the `newspack-nodes` substrate; this plugin keeps only the job request-context glue — `Log_Manager::begin/end_job_context`, hooked onto the substrate's `newspack_nodes/job_worker/{before,after}_job` actions.) (Node subclasses carry a `_Node` suffix; helpers like `Log_Manager` / `Stats_Store` / `Server_Registry` don't.) Depends on `newspack-nodes` for everything substrate-level. Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached` built once by the substrate's `\Newspack_Nodes\Bootstrap::init_memcached()` from `memcache_servers`); this plugin only reads it — there is no plugin-local cache class.
 
 ## Plugin Load Order
 
 WordPress loads plugins alphabetically. `newspack-event-logger-nodes` sorts BEFORE `newspack-nodes` (`-event-` < `-nodes`), so the runtime's `\Newspack_Nodes\Node` class is NOT available at this plugin's file-load time.
 
-Workaround: `newspack-event-logger-nodes.php` defers the `require_once` block via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
+Workaround: `newspack-event-logger-nodes.php` defers the wiring (CommandInterpreter namespace + `Topology_Registry` mounts + `App\Core` init) via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). The deferred bootstrap is mediated by `Substrate_Guard::boot()`, which version-floors the substrate (`MINIMUM_NODES_VERSION = 0.13.0`) and probes the required APIs before wiring — or renders an admin notice if the substrate is absent/too old. Priority 11 is intentional; don't lower it. Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
 
 ## Workflow discipline (mandatory)
 
@@ -120,7 +120,10 @@ These are intentional. Don't "fix" them.
 
 | Path | What |
 |------|------|
-| `newspack-event-logger-nodes.php` | Plugin entry; deferred loader; `register_namespace` for node-class resolution; memcache bootstrap; service-CI mount on `request_graph_ready`; stock-topology dir registration |
+| `newspack-event-logger-nodes.php` | Plugin entry; `Substrate_Guard`-gated deferred loader; `register_namespace` for node-class resolution; service-CI mount on `request_graph_ready`; stock-topology dir registration |
+| `includes/class-substrate-guard.php` | `Substrate_Guard` — runtime-floor guard gating the entire deferred bootstrap at `MINIMUM_NODES_VERSION` (0.13.0); renders the admin notice when the substrate is absent/too old |
+| `includes/class-settings-schema.php` | `Settings_Schema` — the single declarative Field/Schema source (one `Field` per setting) from which Config overlay keys, the admin register/render loop, and worker-restart classification all derive (replaced three parallel hand-maintained arrays in v0.13.0) |
+| `includes/class-cache-warmer-tick-node.php` | `Cache_Warmer_Tick_Node` — a `Timer_Node` that hitchhikes the `_router` heartbeat and enqueues a `cache_warmer` job every `INTERVAL_SECONDS` (60s); registers the handler on `newspack_nodes/job_handlers` (v0.11.0) |
 | `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings). The active `.tsl` topology list moved to the substrate's `topologies` key in v0.5.0 |
 | `includes/class-config.php` | Application config loader (substrate keys live in `newspack-nodes`) |
 | `includes/class-log-manager.php` | `Log_Manager` — per-request firehose writer; redacts URL secrets; refuses root |
@@ -131,12 +134,14 @@ These are intentional. Don't "fix" them.
 | `includes/class-{server-registry,settings-sync,remote-manager,health-check-extensions,health-check-tick}.php` | Hub-side fanout + remote-spoke management: `Server_Registry`, `Settings_Sync`, `Remote_Manager`, `Health_Check_Extensions` helpers + `Health_Check_Tick_Node` |
 | `includes/class-{lru-cache,hook-categorizer}.php` | Helpers: `LRU_Cache`, `Hook_Categorizer` |
 | `includes/app/class-core.php` | WP-lifecycle hook instrumentation |
-| `includes/app/class-{discovery,status,settings,logger,events,servers,aggregator,performance}-ci.php` | Service CIs (`*_CI_Node`) mounted on `request_graph_ready`; the command-protocol REST surface |
+| `includes/app/class-{discovery,status,settings,logger,events,servers,aggregator,performance}-ci-node.php` | Service CIs (`*_CI_Node`) mounted on `request_graph_ready`; the command-protocol REST surface |
 | `includes/admin/class-admin.php` | Application settings UI |
 | `includes/cli/class-reqgrep-command.php` | `Reqgrep_Command` — `wp nodes reqgrep` application-aware firehose filter |
-| `topologies/` | Per-partition node graphs as declarative `.tsl` files (firehose-workers-and-jobs, firehose-workers-only, firehose-jobs-only, request-workers, job-workers, aggregator) |
-| `src/` | React dashboard trees (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`, plus `shared` helpers) |
-| `tests/` | PHPUnit suite (unit + integration + Rest) |
+| `topologies/` | Per-partition node graphs as declarative `.tsl` files; topology name = filename (no `name:` frontmatter): `aggregator`, `combined`, `performance`, `request-builder`, `job-router`, `flame-builder`. (Worker-restart classes — `job-workers`, `request-workers` — are separate labels declared in `Settings_Schema`'s `restart:` keys, not topology names.) |
+| `mu-plugins/` | Drop-ins shipped alongside the plugin: `00-newspack-profiler.php` (standalone profiler — also copied to `release/` and attached to the GitHub release) and `01-newspack-cache-warmer.php` (refresh-ahead cache-warmer drop-in, namespace `Newspack_Cache_Warmer`) |
+| `scripts/` | `build.mjs` (esbuild dashboard builder invoked by `npm run build`); `schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh` (cache-warmer operator scripts); `pre-push` |
+| `src/` | React dashboard trees (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) |
+| `tests/` | PHPUnit suite (unit + integration + Rest); config at `tests/phpunit.xml` |
 
 ## Common Pitfalls
 
@@ -146,7 +151,7 @@ These are mistakes that have actually happened. Pay attention.
 - **PIPE_BUF (4096 bytes) for firehose writes.** `Log_Manager` truncates >4KB to `{"truncated": true}`. Anything that might exceed (job payloads with serialized option blobs, image-handler args, full `Settings_Sync` sweeps) MUST use `Job_Intake::queue()`.
 - **`outputs` (plural), not `output`.** Log reader registration uses `outputs` array. Singular is silent failure.
 - **Hub vs spoke routing.** Nodes only ever write `k:"job"`. Every node's `Job_Worker_Node` dispatches its own `job` entries against `newspack_nodes/job_handlers`. On the hub, `Stream_Merger_Node`'s `newspack_nodes/aggregator_ingest_line` filter rewrites incoming spoke lines to `k:"remote_job"`; the hub's `Job_Worker_Node` dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent — a job type registers under whichever side(s) should handle it (local on every node, hub-aggregated, or both).
-- **One shared `Core::$memd` handle — read it, don't build your own.** Caching is the single `\Newspack_Nodes\Core::$memd` (`\Memcached`), built once at boot by `newspack_event_logger_nodes_init_memcached()` from the substrate's `memcache_servers` config (defaults to `127.0.0.1:11211`). Consumers (`Stats_Store`, the service CIs) read `Core::$memd` directly with null-safe `Core::$memd?->...`; don't hardcode server lists or new up a second connection.
+- **One shared `Core::$memd` handle — read it, don't build your own.** Caching is the single `\Newspack_Nodes\Core::$memd` (`\Memcached`), built once at boot by the substrate's `\Newspack_Nodes\Bootstrap::init_memcached()` from its `memcache_servers` config (defaults to `127.0.0.1:11211`). Consumers (`Stats_Store`, the service CIs) read `Core::$memd` directly with null-safe `Core::$memd?->...`; don't hardcode server lists or new up a second connection.
 - **Tests set `Core::$memd` to an in-memory `\Memcached` double.** There is no `Cache_Interface` / `Memcached_Cache` to inject — the substrate ships an in-memory `\Memcached` double (`tests/Helpers/InMemoryMemcached.php`) that tests assign to `Core::$memd` in setUp. New cache call-sites read `Core::$memd`; nothing should type-hint a cache interface.
 - **Salt rotation requires worker restart.** `Stats_Store::flush_all()` orphans keys, but workers cache `prefix` at construction. Restart workers after rotation for immediate effect.
 - **Stats fail-soft, SSE slots fail-closed.** Don't unify them. Dashboards must show "no data" on memcache failure. SSE connections must reject (HTTP 429) — the slot pool IS the rate limit.
@@ -156,6 +161,7 @@ These are mistakes that have actually happened. Pay attention.
 - **`wp nodes cli {reader}` requires the worker to exist.** As of substrate update, `attach_to_worker` checks for `{base}/locks/{reader}.lock.d/`. Typo'd reader ids fail fast with "no worker '<id>' (run `wp nodes ls` to list active workers)" — no silent ghost-IPC creation. If you script `wp nodes cli`, surface that error.
 - **Substrate now passes all message types through Partition/Topic.** Previously TM_REQUEST/TM_ERROR/TM_EOF were silently dropped — that broke pivoted-mode error responses (TM_COMMAND|TM_ERROR from a throwing verb on the worker), `request_node` cli verbs, and the stdin-close drain. Application data partitions (firehose.log, jobintake.log, requests.log, flames.log, jobs.log) only emit TM_BYTESTREAM / TM_STRUCT in practice, so the broader contract is a no-op for the application's write path — but you can now use Partitions as ad-hoc message transports if needed.
 - **Piped `wp nodes cli` sessions drain cleanly.** Substrate now does a TM_EOF round-trip on stdin close (cli emits TM_EOF, worker bounces, cli exits after the echo). Scripted reqgrep/cli pipelines no longer need a trailing `sleep N`.
+- **`App\Core` hook instrumentation has two non-obvious correctness mechanisms — don't strip them.** (1) `wrap_callbacks()` skips any callback whose reflection says it takes a by-reference param (`callback_has_ref_param()`); wrapping those would break the WordPress by-reference contract. (2) A sacrificial `hook_spacer` is registered at `PHP_INT_MAX - 2` (`SPACER_PRIORITY`) so a self-removing complete-hook at `PHP_INT_MAX - 1` still fires (v0.13.1). `wrap_callbacks` treats everything at/above the spacer priority as ours and leaves it alone.
 
 ## Local Skills
 
@@ -170,3 +176,4 @@ These are mistakes that have actually happened. Pay attention.
 - **API**: `API.md` (REST endpoint reference)
 - **Migration**: cutover from the legacy `newspack-event-logger-plugins` monorepo is summarized in `README.md`; the legacy stack writes to `/volumes/pyrobase/tmp/event-logger`, this plugin defaults to `/tmp/newspack-nodes`, and the WP-CLI verbs are distinct (`wp eventlog reqgrep` vs `wp nodes reqgrep`), so the two coexist by isolating their storage.
 - **Runtime**: `../newspack-nodes/` — substrate this plugin depends on
+- **Config System** (v0.13.0 migration): the settings layer now builds on the substrate's `Newspack_Nodes\Config_System\{Field, Schema, Settings_Renderer, Options_Overlay, Reset_Gate}` classes — `Settings_Schema` declares the Fields; the renderer + overlay + reset-gate are substrate-owned. The former local `src/admin-field-reset/` JS module and its `sync-shared.sh` copy were removed in favor of the substrate's `@newspack-nodes/shared` build aliases (resolved in `scripts/build.mjs`).

@@ -15,7 +15,7 @@ See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the wire shape of
 
 The substrate enforces `current_user_can( 'manage_options' )` on `/command` and `/messages/stream`; insufficient permissions return `403 Forbidden`. Each verb handler that needs a capability check also calls `self::require_manage_options()` at the top, so a misconfigured substrate-side gate still rejects writes.
 
-There is no rate-limit gate on `/command` itself; the per-verb cost (memcache reads, partition index walks, filesystem scans) is the budget. (`Performance_Controller_Base::check_rate_limit()` survives in `includes/rest/` as an orphaned helper with no callers outside its own tests — slated for review/deletion. Don't reach for it.)
+There is no rate-limit gate on `/command` itself; the per-verb cost (memcache reads, partition index walks, filesystem scans) is the budget.
 
 SSE rate-limiting is independent and **fail-closed**: the substrate's `SSE_Out_Node` consults the substrate's `\Newspack_Nodes\SSE_Slot_Pool` before opening headers, and memcache down means HTTP 429. The slot pool IS the rate limit and cannot fall through silently.
 
@@ -41,7 +41,9 @@ The reply is a TM_COMMAND-shaped envelope routed back via `TO=FROM` pivot, with 
 
 ## Service CIs
 
-Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci.php` exposes. The schema-driven CIs (`events`, `settings`, `servers`, `aggregator`, `performance`) declare verbs in a static `node_schema()['commands']` array (name + args + handler); the legacy-shape CIs (`status`, `discovery`, `logger`) build the same commands table directly in their constructor via `$this->commands([…])`. Either way: **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
+Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci-node.php` (`<Name>_CI_Node`, e.g. `Discovery_CI_Node`) exposes. All eight CIs declare their verbs in a static `node_schema()['commands']` array (name + args + handler); the inherited `Service_CI_Node` constructor builds the commands table from the schema, so none define a per-class constructor. **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
+
+The verb handlers come from this plugin's `Newspack_Event_Logger_Nodes\App\` namespace: `newspack-event-logger-nodes.php` registers it via `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' )`, and the CIs mount on the substrate's `newspack_nodes/request_graph_ready` action.
 
 ### `discovery` — spoke-side hook + event roster
 
@@ -72,7 +74,7 @@ Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings 
 
 | Verb | Args | Returns |
 |------|------|---------|
-| `config` | — | Full filterable config (`Config::load_config()` result). |
+| `config` | — | Full filterable **substrate** config (`Newspack_Nodes\Config::load_config()` result) — the substrate config snapshot, NOT the application `Config` superset. |
 | `hooks` | — | `{ hooks: [{name, category}], categories: {…} }` flattened via `Hook_Categorizer`. |
 
 Read-only — settings WRITES live on the `performance` CI (`config_update`, `settings_update`, `hooks_configure`).
@@ -82,6 +84,8 @@ Read-only — settings WRITES live on the `performance` CI (`config_update`, `se
 | Verb | Args | Returns |
 |------|------|---------|
 | `stats` | — | `{ data: { time_series: [{hour, count, sum_ms, sum_peak_mb}, ...] }, meta: {} }` — per-partition hourly buckets read from `Stats_Store` and merged. Fail-soft on memcache outage (empty `time_series`). Note the envelope shape differs from `performance.timing`, which returns `{ time_series: […] }` flat. |
+
+`events.stats` (and the `performance` stats verbs) build one `Stats_Store` per partition, reading `num_partitions` straight from substrate config — **unclamped**, unlike `aggregator.status`, which clamps the same value to `1..16`.
 
 ### `servers` — remote-spoke registry CRUD
 
@@ -115,7 +119,7 @@ The largest CI; every Performance-tree dashboard verb lives here.
 | `overview` | `{ server?, breakdown?, categories?: bool }` | High-level performance stats across all partitions. Comma-separated `breakdown`: single-dim returns `breakdown_time_series` flat; multi-dim returns `breakdowns` keyed by dim. `categories=true` adds `category_time_series`. Requires `manage_options`. |
 | `urls` | `{ sort? = 'count', order? = 'desc', limit?: int = 50 (1..1000), offset?: int = 0 (0..10000), search?, server? }` | `{ data: [...], total, limit, offset }` — paginated/sortable URL leaderboard. Sort whitelisted against `URL_SORTS`; unknown sort falls back to `count`. Requires `manage_options`. |
 | `url_detail` | `{ hash (required, `[a-f0-9]{8,64}`), breakdown?, categories?: bool }` | `{ stats, requests, aggregate_flame, aggregate_profiles, last_modified[, breakdown_time_series, category_time_series] }`. Throws TM_ERROR `URL not found` for unknown hashes. Requires `manage_options`. |
-| `request_search` | `{ rid (required, `[a-zA-Z0-9_-]{1,128}`) }` | `{ rid, partition, url_hash }` so the dashboard can deep-link without scanning every partition. Requires `manage_options`. |
+| `request_search` | `{ rid (required, non-empty) }` | `{ rid, partition, url_hash }` so the dashboard can deep-link without scanning every partition. Requires `manage_options`. |
 | `request_detail` | `{ rid (required), partition?: int = 0 }` | Full request body + merged flame data. Throws TM_ERROR `invalid partition` for out-of-range partition; `Request not found` for unknown rid. Requires `manage_options`. |
 | `timing` | — | `{ time_series: [...] }` — merged hourly timing buckets across partitions. Requires `manage_options`. |
 | `dashboard` | — | `{ overview, urls }` — the overview payload plus the full URL index from a single shared `load_index()` call (the heavy memcache fan-out). Requires `manage_options`. |
@@ -148,7 +152,7 @@ The substrate's single SSE surface. A client subscribes to one or more `<log>.p<
 GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...]
 ```
 
-Per-line transforms live in the browser (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …); the browser consumes the stream through the runtime `_sse` node (`SseIn`) inside each dashboard's node graph. Hub-side aggregator connections (`Remote_Source_Node` cURL pulls) get a longer slot TTL than browsers.
+Per-line transforms live in the browser, inside each dashboard's view node (e.g. `RequestLogViewNode`, `GyroscopeViewNode`, `PerfErrorsViewNode`); the browser consumes the stream through the runtime `_sse` node (`SseInNode`) inside each dashboard's node graph. Hub-side aggregator connections (`Remote_Source_Node` cURL pulls) get a longer slot TTL than browsers.
 
 Operational discipline:
 - Memcache slot pool gates connections; new connections fail with **HTTP 429** when the pool is full or memcache is unreachable (fail-closed).
@@ -166,4 +170,4 @@ The runtime substrate's HMAC-validated worker bootstrap endpoint, listed for ori
 POST /wp-json/newspack-nodes/v1/workers/spawn
 ```
 
-Not for public callers. See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the full request/response shape and authentication details.
+Not for public callers. This path is owned/defined by the **substrate** (`newspack-nodes`); nothing in this plugin registers or constrains it. Treat [`../newspack-nodes/API.md`](../newspack-nodes/API.md) as authoritative for its exact request/response shape and HMAC authentication details.
