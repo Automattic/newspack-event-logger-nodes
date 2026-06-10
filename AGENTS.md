@@ -8,7 +8,7 @@ This plugin owns: `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, 
 
 WordPress loads plugins alphabetically. `newspack-event-logger-nodes` sorts BEFORE `newspack-nodes` (`-event-` < `-nodes`), so the runtime's `\Newspack_Nodes\Node` class is NOT available at this plugin's file-load time.
 
-Workaround: `newspack-event-logger-nodes.php` defers the wiring (CommandInterpreter namespace + `Topology_Registry` mounts + `App\Core` init) via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). The deferred bootstrap is mediated by `Substrate_Guard::boot()`, which version-floors the substrate (`MINIMUM_NODES_VERSION = 0.15.0`) and probes the required APIs before wiring — or renders an admin notice if the substrate is absent/too old. Priority 11 is intentional; don't lower it. Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
+Workaround: `newspack-event-logger-nodes.php` defers the wiring (CommandInterpreter namespace + `Topology_Registry` mounts + `App\Core` init) via a closure run on `plugins_loaded` priority 11 (when both plugins are loaded). The deferred bootstrap is gated on a `class_exists( '\Newspack_Nodes\Node' )` presence check — it wires ELN when the substrate is present, no-ops otherwise (`Requires Plugins: newspack-nodes` keeps it active on WP 6.5+). Priority 11 is intentional; don't lower it. Tests bypass this — they require the runtime explicitly in `tests/bootstrap.php`.
 
 ## Workflow discipline (mandatory)
 
@@ -120,10 +120,8 @@ These are intentional. Don't "fix" them.
 
 | Path | What |
 |------|------|
-| `newspack-event-logger-nodes.php` | Plugin entry; `Substrate_Guard`-gated deferred loader; `register_namespace` for node-class resolution; service-CI mount on `request_graph_ready`; stock-topology dir registration |
-| `includes/class-substrate-guard.php` | `Substrate_Guard` — runtime-floor guard gating the entire deferred bootstrap at `MINIMUM_NODES_VERSION` (0.15.0); renders the admin notice when the substrate is absent/too old |
+| `newspack-event-logger-nodes.php` | Plugin entry; deferred loader (`class_exists` substrate-presence-gated); `register_namespace` for node-class resolution; service-CI mount on `request_graph_ready`; stock-topology dir registration |
 | `includes/class-settings-schema.php` | `Settings_Schema` — the single declarative Field/Schema source (one `Field` per setting) from which Config overlay keys, the admin register/render loop, and worker-restart classification all derive (replaced three parallel hand-maintained arrays in v0.13.0) |
-| `includes/class-cache-warmer-tick-node.php` | `Cache_Warmer_Tick_Node` — a `Timer_Node` that hitchhikes the `_router` heartbeat and enqueues a `cache_warmer` job every `INTERVAL_SECONDS` (60s); registers the handler on `newspack_nodes/job_handlers` (v0.11.0) |
 | `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings). The active `.tsl` topology list moved to the substrate's `topologies` key in v0.5.0 |
 | `includes/class-config.php` | Application config loader (substrate keys live in `newspack-nodes`) |
 | `includes/class-log-manager.php` | `Log_Manager` — per-request firehose writer; redacts URL secrets; refuses root |
@@ -138,8 +136,8 @@ These are intentional. Don't "fix" them.
 | `includes/admin/class-admin.php` | Application settings UI |
 | `includes/cli/class-reqgrep-command.php` | `Reqgrep_Command` — `wp nodes reqgrep` application-aware firehose filter |
 | `topologies/` | Per-partition node graphs as declarative `.tsl` files; topology name = filename (no `name:` frontmatter): `aggregator`, `combined`, `performance`, `request-builder`, `job-router`, `flame-builder`. (Worker-restart classes — `job-workers`, `request-workers` — are separate labels declared in `Settings_Schema`'s `restart:` keys, not topology names.) |
-| `mu-plugins/` | Drop-ins shipped alongside the plugin: `00-newspack-profiler.php` (standalone profiler — also copied to `release/` and attached to the GitHub release) and `01-newspack-cache-warmer.php` (refresh-ahead cache-warmer drop-in, namespace `Newspack_Cache_Warmer`) |
-| `scripts/` | `build.mjs` (esbuild dashboard builder invoked by `npm run build`); `schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh` (cache-warmer operator scripts); `pre-push` |
+| `mu-plugins/` | Drop-in shipped alongside the plugin: `00-newspack-profiler.php` (standalone profiler — also copied to `release/` and attached to the GitHub release). (The refresh-ahead cache warmer moved to its own `newspack-cache-cozy` plugin in v0.15.0.) |
+| `scripts/` | `build.mjs` (esbuild dashboard builder invoked by `npm run build`); `pre-push` |
 | `src/` | React dashboard trees (`aggregator-admin`, `event-aggregator`, `performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) |
 | `tests/` | PHPUnit suite (unit + integration + Rest); config at `tests/phpunit.xml` |
 

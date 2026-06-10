@@ -5,8 +5,7 @@ parameters:
     # phpstan-strict-rules: the full set EXCEPT rules that fight WordPress /
     # node-runtime idioms — empty() (pervasive WP), truthy conditionals
     # (if ($count) / !$str), short ternary ($x ?: $y), and dynamic property /
-    # method access (Node $this->{$name} per make_node decision #11, the
-    # cache-warmer decorator's dynamic delegation to WP_Object_Cache).
+    # method access (Node $this->{$name} per make_node decision #11).
     # checkDynamicProperties is off too (dynamic node config assignment).
     strictRules:
         allRules: true

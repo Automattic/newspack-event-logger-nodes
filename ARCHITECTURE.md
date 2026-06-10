@@ -4,7 +4,7 @@ Event-logger application built on the [`newspack-nodes`](../newspack-nodes/) run
 
 This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo wholesale. There's no shadow mode or dual emission — the legacy plugins write to `/volumes/pyrobase/tmp/event-logger`, this one defaults to `/tmp/newspack-nodes`, so they coexist by isolating their storage.
 
-**Substrate floor.** The entire deferred bootstrap (run on `plugins_loaded` priority 11) is gated by `Substrate_Guard::boot()`, which version-floors the substrate at `MINIMUM_NODES_VERSION = '0.13.0'` and probes for the required APIs (`register_plugin`, the config-namespace split, …) before wiring anything. If `newspack-nodes` is absent or too old, the guard bails and renders an admin notice instead of fataling — the event logger stays inactive until the substrate is resolved.
+**Substrate presence.** The entire deferred bootstrap (run on `plugins_loaded` priority 11) is gated on a `class_exists( '\Newspack_Nodes\Node' )` presence check: it wires the event logger when the substrate is loaded, and no-ops otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the class check is the graceful fallback. (The plugins deploy together, so a present-but-mismatched substrate isn't a case worth designing around — there's no version floor.)
 
 ## Table of Contents
 
@@ -437,16 +437,6 @@ public function fill( array &$message ): void {
 ```
 
 Image-handler circular refs (`wp_generate_attachment_metadata` loading full-resolution images into GD) are the documented reason for the discipline. Preserve in any successor.
-
-### Cache_Warmer_Tick_Node
-
-A `Timer_Node` that queues a `cache_warmer` JobWorker job every `INTERVAL_SECONDS` (default 60) from inside a long-lived worker, replacing the unreliable wp-cron trigger (which competes with the supervisor and every other minute-cron for a slot). The tick hitchhikes `_router`'s ~5s TIMER heartbeat and debounces to its interval, so cadence is immune to cron contention. It enqueues rather than warming inline because the warm render blocks for seconds; the JobWorker isolates it (own request_id, GC cycle, cache-flush cadence) and keeps this worker's drain loop moving.
-
-```tsl
-make_node Cache_Warmer_Tick cache-warmer:tick   # timer self-starts in arguments()
-```
-
-The `cache_warmer` job handler (`JOB_HANDLER`) is registered on the standard JobWorker filter and reuses the refresh-ahead drop-in's single-flight loopback. That drop-in ships as `mu-plugins/01-newspack-cache-warmer.php` (mu-plugin, separate from the plugin zip — `release/01-newspack-cache-warmer.php`); operators schedule/unschedule it via `scripts/schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh`.
 
 ### Stream_Merger_Node
 

@@ -39,7 +39,7 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
 3. Validate inputs at the handler boundary; the substrate rate-limits you on size (10MB cap per job) but doesn't validate content.
 4. **Size discipline**: if the payload could exceed 4KB, write via `Job_Intake::queue( $handler_name, $parameters )` instead of Log_Manager. `$parameters` is the array passed through to the handler (the optional 3rd arg is a partition key). Job_Intake is the auto-locked large-write path.
 
-A worked example of a timer-driven local handler: `Cache_Warmer_Tick_Node` (a `Timer_Node` that hitchhikes the `_router` heartbeat) enqueues a `cache_warmer` job every `INTERVAL_SECONDS` (60s) and registers its handler on `newspack_nodes/job_handlers`. The standalone cache-warmer feature pairs it with the `mu-plugins/01-newspack-cache-warmer.php` drop-in and the `scripts/schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh` operator scripts.
+A worked example of a timer-driven local handler: `Health_Check_Tick_Node` (a `Timer_Node` that hitchhikes the `_router` heartbeat) enqueues a job every interval and registers its handler on `newspack_nodes/job_handlers`. (The sibling `newspack-cache-cozy` plugin is the same pattern as a standalone, node-only plugin — a good reference when building one from scratch.)
 
 #### Adding a service CI verb
 

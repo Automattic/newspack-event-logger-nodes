@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-10
+
+### Changed
+
+- **`Substrate_Guard` is gone; the deferred bootstrap is gated on a plain `class_exists` substrate-presence check.** The guard's version floor + API probe + admin notice solved a non-problem: `Requires Plugins: newspack-nodes` keeps the runtime active on WP 6.5+, and the two plugins deploy together, so a present-but-too-old substrate isn't a real case. The `plugins_loaded` priority-11 bootstrap now simply no-ops when `\Newspack_Nodes\Node` isn't loaded. `includes/class-substrate-guard.php` + its test are removed.
+
+### Removed
+
+- **The refresh-ahead cache warmer moved to its own plugin, `newspack-cache-cozy`.** `Cache_Warmer_Tick_Node`, the `mu-plugins/01-newspack-cache-warmer.php` drop-in (`Newspack_Cache_Warmer\Cache_Warmer` + `Cold_Read_Object_Cache`), the `scripts/schedule-cache-warmer.sh` / `unschedule-cache-warmer.sh` operator scripts, and the three cache-warmer test files are gone from this plugin. The `Cache_Warmer_Tick_Node::init()` call is dropped from the worker-runtime bootstrap, and the drop-in is no longer copied into `release/` or attached to the GitHub release. Cache warming is now a focused, independently-released plugin that builds on the same substrate. **Migration:** install `newspack-cache-cozy` (plugin zip + its own `01-newspack-cache-cozy.php` mu-plugin drop-in) to keep warming; remove the stale `01-newspack-cache-warmer.php` drop-in. The new plugin uses its own option/cron keys (`newspack_cache_cozy_*`), so the old `eln_cache_warmer_*` options orphan harmlessly.
+
 ## [0.14.0] - 2026-06-10
 
 ### Changed
