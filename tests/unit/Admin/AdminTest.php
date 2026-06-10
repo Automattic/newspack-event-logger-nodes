@@ -1076,7 +1076,7 @@ class AdminTest extends TestCase {
 	 *
 	 * @return array<string,array{0:string,1:array<string,mixed>,2:string}>
 	 */
-	public function reset_default_provider(): array {
+	public static function reset_default_provider(): array {
 		return [
 			'enable_logging default true'     => [ 'enable_logging_callback', [ 'enable_logging' => true ], '1' ],
 			'enable_aggregator default false' => [ 'enable_aggregator_callback', [ 'enable_aggregator' => false ], '0' ],

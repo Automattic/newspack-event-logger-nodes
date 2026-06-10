@@ -191,23 +191,7 @@ class Remote_Source_Node extends Node {
 		++$this->counter;
 	}
 
-	/**
-	 * Override Node::dump_node to redact application-password and bearer-token
-	 * fields before they hit the REPL. Default reflection-based dump would
-	 * print the raw secrets — `dump_node my_remote` from the topology console
-	 * was a credential-disclosure vector.
-	 *
-	 * @return array<string, mixed>
-	 */
-	public function dump_node(): array {
-		$snapshot = parent::dump_node();
-		foreach ( [ 'auth_password', 'auth_token' ] as $k ) {
-			if ( isset( $snapshot[ $k ] ) && '' !== $snapshot[ $k ] ) {
-				$snapshot[ $k ] = '[REDACTED]';
-			}
-		}
-		return $snapshot;
-	}
+	// dump_node() secret redaction is handled by the base Node (auth_password / auth_token match its patterns).
 
 	// =========================================================================
 	// Configuration / DI

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Remote_Source_Node`'s bespoke `dump_node()` secret-redaction override is removed; the substrate now redacts credentials for every node.** The substrate's `Node::dump_node()` redacts any secret-named property (`auth_password`/`auth_token` included) by default, so the per-node override here was redundant — and would have left any *other* credential-bearing node unprotected. Behavior is unchanged: `dump_node my_remote` from the REPL still shows the credential slots as `[REDACTED]`. Requires `newspack-nodes` with base-`dump_node` redaction.
+
+### Fixed
+
+- **`AdminTest::reset_default_provider` data provider is now static.** PHPUnit 10 deprecates non-static `@dataProvider` methods (a hard error in PHPUnit 11); the suite ran clean except for this one deprecation. Test-only.
+
 ## [0.13.1] - 2026-06-09
 
 ### Fixed
