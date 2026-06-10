@@ -166,7 +166,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **`outputs` log-reader filter array.** Plural, not singular. Singular is silent failure.
 
-**Cache warmer not firing.** The warmer is two pieces: `Cache_Warmer_Tick_Node` (a `Timer_Node` that hitchhikes the `_router` heartbeat and enqueues a `cache_warmer` job every 60s) and the `01-newspack-cache-warmer.php` mu-plugin drop-in that performs the actual warm loopback. Common misses: (1) the drop-in's cron is NOT auto-scheduled — schedule `eln_cache_warmer_tick` manually (`scripts/schedule-cache-warmer.sh`, or `wp cron event schedule eln_cache_warmer_tick now eln_cache_warmer_minute`); (2) the loopback secret/auth options (`eln_cache_warmer_secret`, `eln_cache_warmer_auth`) aren't set, so the warm request is rejected; (3) the cold-group prefixes the drop-in is told to miss don't match the site's actual cache groups, so nothing is forced cold. If the tick fires but nothing warms, `handle_job` logs `CacheWarmerTick: drop-in not installed` — the mu-plugin isn't loaded.
+**Cache warmer.** The refresh-ahead cache warmer was extracted to its own plugin, `newspack-cache-cozy` (v0.15.0). It no longer lives here — debug it from that plugin's repo.
 
 ## Inspecting on disk
 

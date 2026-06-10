@@ -491,12 +491,6 @@ require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
 
-// The cache warmer is a self-contained mu-plugin drop-in (not autoloaded).
-// Load its classes for the unit tests; SKIP_BOOT suppresses the file's
-// maybe_install_for_request() side effect so requiring it doesn't install.
-\define( 'NEWSPACK_CACHE_WARMER_SKIP_BOOT', true );
-require_once \dirname( __DIR__ ) . '/mu-plugins/01-newspack-cache-warmer.php';
-
 // Widen the substrate Config's allowed_config_dirs so tests using
 // `LOCAL_NEWSPACK_NODES_CONF=...path-inside-this-plugin/tests/configs/...php`
 // validate. Production paths in `/usr/src` are covered by the default

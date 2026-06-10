@@ -101,11 +101,7 @@ Inherited from substrate: array VALUE → `TM_STRUCT`. String VALUE → `TM_BYTE
 
 LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobIntake all use TM_STRUCT. `Stream_Merger_Node`'s own messages are TM_STRUCT; the raw-remote-SSE-chunk TM_BYTESTREAM path is in `Remote_Source_Node`, which forwards the remote envelope's TYPE (string VALUE).
 
-### 14. Cache warmer invariants (v0.11.0)
-
-`Cache_Warmer_Tick_Node` is a `Timer_Node` that self-arms in `arguments()` and hitchhikes the `_router` heartbeat to enqueue a `cache_warmer` job every `INTERVAL_SECONDS` (60s). It overrides `fire()` (the Timer_Node fire()-override rule — NEVER override `fire_cb()`, NEVER delegate `fire()` to a `tick()` helper), and registers the job handler on `newspack_nodes/job_handlers`. The static handler drops a job whose age exceeds the carried `interval` (its own stale-drop — there is no uniform stale-drop in JobWorker). The work runs via the `mu-plugins/01-newspack-cache-warmer.php` drop-in, which tags itself `NEWSPACK_NODES_WORKER_TYPE = 'cache-warmer'` (so its own requests are excluded from stats) and authenticates with the encrypted `eln_cache_warmer_auth` credential. A diff that overrides `fire_cb()` here, drops the stale-age check, or strips the worker-type tag is a regression.
-
-### 15. Flame JSON decode-depth invariant (v0.13.1)
+### 14. Flame JSON decode-depth invariant (v0.13.1)
 
 `Flame_Builder_Node::FLAME_JSON_DEPTH` (= `2 * MAX_STACK_DEPTH + 8`) MUST be the `json_decode` depth for packed flame lines on BOTH sides — write (`Flame_Builder_Node`) and read (`Performance_CI_Node::find_flame_for_rid`). A diff that hardcodes a literal `64` (or any other depth) for flame-line decode silently drops deep flames — that was a real shipped bug. Use the constant.
 
@@ -145,9 +141,9 @@ A diff that lands a new dashboard or hook without these is a regression to the p
 
 Settings live in ONE declarative `Settings_Schema` (`includes/class-settings-schema.php`) — one `Field` per setting — from which the Config overlay keys, the admin register/render loop, and worker-restart classification (`Schema::restart_for()`) all derive. The parallel `Config::$option_schema` + `Admin::$option_names` arrays were collapsed into it in v0.13.0; reset / delete-on-blank is handled by the substrate's `Config_System\Reset_Gate`. A diff that adds a new setting should add a `Field` to `Settings_Schema` (with its `restart:` keys), NOT reintroduce a parallel `Admin` array. Reset/blank-delete behavior belongs to `Reset_Gate`, not hand-rolled.
 
-### 20. Substrate version floor — bump the guard with the API
+### 20. Substrate presence gate
 
-`includes/class-substrate-guard.php` version-floors the substrate at `MINIMUM_NODES_VERSION` (raised to `0.13.0` in v0.13.0) and probes the required substrate APIs (`Config_System\Field` / `Schema` / `Settings_Renderer`) before wiring; an older/absent substrate renders an admin notice instead of fataling. A diff that starts using a NEW substrate API without raising `MINIMUM_NODES_VERSION` (and adding it to the API probe) will silently no-op on an older runtime — flag it.
+The deferred bootstrap (`plugins_loaded` priority 11) is gated on `class_exists( '\Newspack_Nodes\Node' )` — it wires ELN when the substrate is present, no-ops otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WP 6.5+; the plugins deploy together, so there is no version floor (a present-but-too-old substrate isn't a real case). A diff that re-introduces a `MINIMUM_NODES_VERSION` floor / admin-notice guard is re-adding machinery we deliberately removed — flag it.
 
 ### 21. Hook-instrumentation invariants (v0.11.0 / v0.13.1)
 
