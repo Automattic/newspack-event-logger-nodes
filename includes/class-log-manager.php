@@ -140,36 +140,20 @@ class Log_Manager {
 	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
 
 	public function __construct() {
-		// Block re-entrant instance() calls during construction. Config::load_config()
-		// triggers get_option() which can fall through to wpdb->get_results() →
-		// apply_filters( 'query', ... ) → Core::hook_start → LogManager::instance().
-		// Without assigning self first, re-entry sees a still-null $instance and
-		// spawns a SECOND LM, recursing until xdebug's 512-frame limit kills the
-		// request. The partial instance is safe to return: $enabled defaults to
-		// false (set true only by matches_url_filter, which runs at the end of
-		// this constructor), so re-entrant hook_start short-circuits at its
-		// existing `! $lm->enabled` check.
+		// Assign self FIRST: load_config() can re-enter instance(); a null $instance would spawn a second LM and recurse.
 		self::$instance = $this;
-
 		$this->config = Config::load_config();
-
 		if ( empty( $this->config['enable_logging'] ) ) {
 			return;
 		}
-
 		$this->log_memory       = ! empty( $this->config['log_memory'] );
 		$this->flush_every_line = ! empty( $this->config['flush_every_line'] );
-
-		// Refuse to run as root - creates permission problems for www-data workers.
 		if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
 			return;
 		}
-
-		// skip_urls and log_urls are handled identically — both prefix-match the request path with a '?' terminator appended (see matches_url_filter / compile_url_filter), so a pattern ending in '?' is exact and one without is a prefix.
 		$this->skip_regex = self::compile_url_filter( $this->config['skip_urls'] ?? [] );
 		$this->log_regex  = self::compile_url_filter( $this->config['log_urls'] ?? [] );
 
-		// Dynamic mu-profiler global; restore its file-scope shape (PHPStan widens `global` to mixed).
 		/** @var array{request_time?: float, request_ts?: int|float}|null $newspack_profiler */
 		global $newspack_profiler;
 		if ( null !== $newspack_profiler ) {
@@ -184,13 +168,21 @@ class Log_Manager {
 	}
 
 	/**
+	 * Get the singleton instance.
+	 *
+	 * @return self
+	 */
+	public static function instance() {
+		return self::$instance ??= new self();
+	}
+
+	/**
 	 * Finish initialization
 	 *
 	 * @param array<string, mixed> $config
 	 */
 	private function init_firehose( array $config ): void {
-		// Set request ID FIRST — Topic constructor may trigger re-entrant
-		// message() calls (via Config::load_config filters), and those need a valid rid.
+		// Set request_id FIRST: the Topic ctor can re-enter message(), which needs a valid rid.
 		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
 		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
@@ -203,36 +195,22 @@ class Log_Manager {
 		$base_dir            = Config::get_logs_directory() . '/firehose.log';
 		$num_partitions      = self::to_int( $config['num_partitions'] ?? 1 );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
-		// Partition route by request_id, not by URL. Keeps every entry for a
-		// single request (WP + gyrate sub-renders + jobs spawned from it) in
-		// the same partition so RequestBuilder reconciles cleanly. URL-based
-		// routing split entries when producers disagreed on the URL shape
-		// (LogManager wrote path-only, Gyrobase::Log wrote scheme://host/path).
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
-		// Pass segment_size/num_segments/max_lifespan from core config to avoid Topic
-		// calling load_config(), which fires option schema filters and re-enters LogManager.
 		$segment_size = self::to_int( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
 		$num_segments = self::to_int( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
 		$max_lifespan = self::to_int( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
-		// One firehose Topic per process. Reuse the canonical `firehose:topic` if it
-		// already exists — the aggregator topology's `make_node Topic firehose:topic`, or
-		// a concurrently-suspended parent job context's — so every context shares the same
-		// N-partition writer (each message self-routes by KEY=request_id). Create ours
-		// (self-patron + interpreter-sink) only when none exists; never removed — it's
-		// process-wide infrastructure, exactly one, reused.
 		$existing = Core::node( 'firehose:topic' );
 		if ( $existing instanceof Topic_Node ) {
 			$this->topic = $existing;
 		} else {
 			$this->topic = new Topic_Node();
 			$this->topic->name( 'firehose:topic' );
-			// Self-patron (Log_Manager is not a Node) so dump_metadata hides our plumbing from the canvas.
+			$this->topic->arguments( "{$base_dir} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
 			$this->topic->patron( $this->topic );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 			if ( null !== $ci ) {
 				$this->topic->sink( $ci );
 			}
-			$this->topic->arguments( "{$base_dir} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
 		}
 	}
 
@@ -259,15 +237,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Get the singleton instance.
-	 *
-	 * @return self
-	 */
-	public static function instance() {
-		return self::$instance ??= new self();
-	}
-
-	/**
 	 * Reset the singleton instance.
 	 *
 	 * Call before changing REQUEST_URI to log a different request context.
@@ -290,7 +259,6 @@ class Log_Manager {
 	public static function suspend(): void {
 		if ( null !== self::$instance ) {
 			self::$instance->topic?->flush();
-			// Save UNIQUE_ID so resume() can restore it (child may overwrite it).
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- saving our own generated ID for restore.
 			$saved                           = $_SERVER['UNIQUE_ID'] ?? null;
 			self::$instance->saved_unique_id = \is_string( $saved ) ? $saved : null;
@@ -390,23 +358,11 @@ class Log_Manager {
 		if ( $this->started || ! $this->enabled || $this->finished ) {
 			return $this->started ?? false;
 		}
-
-		// Guard against re-entry. init_firehose() calls Config::get_logs_directory()
-		// which calls Config::load_config() which applies the
-		// `newspack_event_logger_nodes_option_schema_core` filter. If an admin has
-		// added that (or any other internal Event Logger filter) to log_events
-		// — something the admin UI's "all known filters" selector can easily
-		// do by accident — then Core::hook_start is registered on it, and
-		// apply_filters re-enters ensure_started() → stack overflow. Marking
-		// started true here short-circuits the reentry at the top of this
-		// method; messages that arrive during init_firehose just accumulate in
-		// write_buffer and flush normally once the firehose is set up.
+		// Set started=true BEFORE init_firehose: it can re-enter ensure_started(); this short-circuits the recursion.
 		$this->started = true;
-
 		\register_shutdown_function( [ $this, 'finish' ] );
 		$this->init_firehose( $this->config );
 		$this->log_process();
-
 		return true;
 	}
 
@@ -416,9 +372,6 @@ class Log_Manager {
 	 * @return void
 	 */
 	private function log_process(): void {
-		// First request in a process: use mu-profiler's start time (captured at
-		// PHP startup, before plugins load). Subsequent requests after reset()
-		// (job workers, Pyrobase templates) use current time.
 		$process_hr   = $this->request_time ?? \hrtime( true );
 		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
 
@@ -427,12 +380,6 @@ class Log_Manager {
 		if ( '' !== $worker_type ) {
 			$process_data['worker_type'] = $worker_type;
 		}
-
-		// Stamp the firehose entry with the mu-profiler's wall-clock ts when
-		// available — that's the real request-start, captured before any
-		// plugin runs. Without it, the entry ts defaults to microtime(true)
-		// at emit time (deep inside WP bootstrap), which inflates
-		// RequestBuilder's "in flight since" by hundreds of ms.
 		if ( null !== $this->request_ts ) {
 			$process_data['ts'] = $this->request_ts;
 		}
@@ -459,27 +406,12 @@ class Log_Manager {
 	 * @return bool True on success.
 	 */
 	public function message( string $category, array $data = [] ): bool {
-		// Make sure process (start) lands first. Without this, any code path that
-		// calls message()/error()/warning()/info() before the first start() leaves
-		// process (start) stranded at whatever line_number ensure_started later
-		// happens to fire at — wp-admin requests in particular show it at line 28+
-		// because admin hooks log via error()/warning() before start() is reached.
-		// ensure_started is re-entry safe ($this->started is set first thing).
-		//
-		// Returns false when LogManager is in a state that can't accept writes
-		// (skip_urls match → enabled=false; or process is shutting down).
-		// Callers that maintain paired state — start()/complete()'s timer stack
-		// in particular — should short-circuit on a false return rather than
-		// accumulating bookkeeping for a message that never landed.
 		if ( ! $this->ensure_started() ) {
 			return false;
 		}
-
-		// Redact sensitive query parameters in message URLs.
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = self::redact_url( $data['m'] );
 		}
-		// Validate data size to prevent breaking atomicity.
 		$data_json = \wp_json_encode( $data );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -490,37 +422,22 @@ class Log_Manager {
 		if ( null === $this->topic ) {
 			return false;
 		}
-		// rid lives in Message::KEY (set below) — drop from the inner entry to
-		// stop duplicating ~40 bytes per line. Readers back-fill `entry['rid']`
-		// from KEY at extraction time so the broad set of `$entry['rid']`
-		// consumers keeps working.
-		// Strip a caller-supplied `rid` defensively so misuse (or hostile
-		// input via `message($k, $_POST)`) can't smuggle a fake request id —
-		// previously rid was set on the left of the `+` so user values lost,
-		// but now the slot is empty and the union would let it through.
+		// Strip caller-supplied rid: the real one lives in Message::KEY; this stops a forged rid being smuggled in.
 		unset( $data['rid'] );
-		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
 
-		// One entry per Message; Topic hashes KEY to a partition and Partition packs + appends.
+		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
 		$msg                                       = \Newspack_Nodes\Message::new_message();
 		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
 		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $msg );
-
 		++$this->line_number;
 
-		// Debug-mode: force-drain the Partition batch immediately so logs
-		// survive OOM/crash between this message and the next size-threshold
-		// or timer-driven flush. Matches legacy LogManager::message() behavior
-		// when `flush_every_line` is set.
 		if ( $this->flush_every_line ) {
 			$this->topic->flush();
 		}
 
-		// Stop detailed logging after MAX_LOG_LINES to bound downstream state.
-		// Don't disable started — finish() needs it to close the stack cleanly.
 		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
 			$this->line_limited = true;
 		}
@@ -601,15 +518,11 @@ class Log_Manager {
 	 * @param array<string, mixed>  $data  Additional data to include in the start event.
 	 */
 	public function start( string $label, array $data = [] ): void {
-		// Prevent unbounded timer stack growth.
 		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
 			return;
 		}
 		$muted = $this->line_limited;
 		if ( ! $muted ) {
-			// Short-circuit on a false return — the emit failed (LogManager
-			// disabled or shutting down), so adding a timer-stack entry would
-			// leak bookkeeping for a complete() that has nothing to pair with.
 			if ( false === $this->message( "{$label} (start)", $data ) ) {
 				return;
 			}
@@ -681,7 +594,6 @@ class Log_Manager {
 	 * @return string Redacted URL.
 	 */
 	private static function redact_url( string $url ): string {
-		// preg_replace returns null only on PCRE error; fall back to the input.
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
 
@@ -692,11 +604,9 @@ class Log_Manager {
 	 * @return bool True if sensitive.
 	 */
 	private static function is_sensitive_key( string $key ): bool {
-		// O(1) hash lookup for exact matches.
 		if ( isset( self::$sensitive_keys[ $key ] ) ) {
 			return true;
 		}
-		// Check for sensitive substrings.
 		$key_upper = \strtoupper( $key );
 		foreach ( self::$sensitive_substrings as $pattern ) {
 			if ( false !== \strpos( $key_upper, $pattern ) ) {
@@ -713,16 +623,11 @@ class Log_Manager {
 	 * @return bool True if URL should be logged.
 	 */
 	public function matches_url_filter( string $url ): bool {
-		// Match the path (query string removed) with a '?' appended as a terminator, so a pattern ending in '?' matches exactly and one without matches as a prefix.
 		$target = \explode( '?', $url, 2 )[0] . '?';
-
-		// Check skip regex first (always skip these).
 		if ( null !== $this->skip_regex && \preg_match( $this->skip_regex, $target ) ) {
 			$this->enabled = false;
 			return false;
 		}
-
-		// Check log regex (if set, only log matching URLs).
 		if ( null === $this->log_regex ) {
 			$this->enabled = true;
 			return true;  // No filter = log all.
@@ -765,7 +670,6 @@ class Log_Manager {
 			'REDIRECT_URL'          => true,
 			'REQUEST_URI'           => true,
 		];
-
 		$keys = \array_keys( $_SERVER );
 		\sort( $keys );
 		foreach ( $keys as $key ) {
@@ -777,9 +681,7 @@ class Log_Manager {
 			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
 				continue;
 			}
-			// Strip control characters to prevent log injection.
 			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
-			// Redact sensitive query parameters from URL-containing values.
 			if ( isset( $url_value_keys[ $key ] ) ) {
 				$sanitized = self::redact_url( $sanitized );
 			}
@@ -798,13 +700,13 @@ class Log_Manager {
 			return;
 		}
 		$info = [
-			\sprintf( 'utime => %f', ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'stime => %f', ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'maxrss => %d', $r['ru_maxrss'] ?? 0 ),
-			\sprintf( 'minflt => %d', $r['ru_minflt'] ?? 0 ), \sprintf( 'majflt => %d', $r['ru_majflt'] ?? 0 ),
-			\sprintf( 'inblock => %d', $r['ru_inblock'] ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
+			\sprintf( 'utime => %f',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'stime => %f',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'maxrss => %d',   $r['ru_maxrss']   ?? 0 ),
+			\sprintf( 'minflt => %d',   $r['ru_minflt']   ?? 0 ), \sprintf( 'majflt => %d',  $r['ru_majflt']  ?? 0 ),
+			\sprintf( 'inblock => %d',  $r['ru_inblock']  ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
 			\sprintf( 'nsignals => %d', $r['ru_nsignals'] ?? 0 ),
-			\sprintf( 'nvcsw => %d', $r['ru_nvcsw'] ?? 0 ), \sprintf( 'nivcsw => %d', $r['ru_nivcsw'] ?? 0 ),
+			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
 		];
 		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
 	}
@@ -817,8 +719,6 @@ class Log_Manager {
 			return;
 		}
 		$this->finished = true;
-
-		// Close any open stack entries (orphaned hooks) before final summary.
 		$now = \hrtime( true );
 		while ( \count( $this->times ) > 1 ) {
 			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
@@ -831,8 +731,6 @@ class Log_Manager {
 			],
 		] );
 		$this->log_resources();
-
-		// Detect fatal error for tagging.
 		$complete_extra = [];
 		$error          = \error_get_last();
 		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
