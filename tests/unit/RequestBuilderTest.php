@@ -799,6 +799,7 @@ class RequestBuilderTest extends TestCase {
 		// console's live view misses the request-builder → gyroscope:partition
 		// edge — even though edit view (which reads the TSL) shows it correctly.
 		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' ); // names the flight sibling so target() can start its hitchhike.
 		$rb->connect_node( 'main:target' );
 		$rb->set_errors_target( 'errors:target' );
 		$rb->flight()->target( 'gyroscope:partition' );
@@ -814,6 +815,7 @@ class RequestBuilderTest extends TestCase {
 		// If the flight sibling's target is already in the primary array,
 		// don't duplicate it in the union.
 		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' ); // names the flight sibling so target() can start its hitchhike.
 		$rb->target( [ 'main:target', 'gyroscope:partition' ] );
 		$rb->flight()->target( 'gyroscope:partition' );
 

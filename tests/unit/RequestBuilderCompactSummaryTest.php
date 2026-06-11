@@ -24,7 +24,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderCompactSummaryTest extends TestCase {
 
-	/** set_inflight_interval drives Flight's Router-hitchhike, which needs a live _router. */
+	/** set_inflight_target drives Flight's Router-hitchhike, which needs a live _router. */
 	protected function setUp(): void {
 		parent::setUp();
 		( new Router_Node() )->name( Node_Names::ROUTER );
@@ -208,12 +208,10 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$verbs = $interpreter->commands();
 		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
 		$verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' );
-		$verbs['set_inflight_interval']( $interpreter, '1500' );
 
 		$dump = $rb->dump_config();
 
 		$this->assertStringContainsString( 'cmd rb:config set_completed_target completed:tee', $dump );
 		$this->assertStringContainsString( 'cmd rb:config set_inflight_target gyroscope:partition', $dump );
-		$this->assertStringContainsString( 'cmd rb:config set_inflight_interval 1500', $dump );
 	}
 }

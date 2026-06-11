@@ -24,7 +24,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 class RequestFlightTest extends TestCase {
 
 	/**
-	 * Flight registers its snapshot hitchhike via set_interval(), which needs a
+	 * Flight registers its snapshot hitchhike when a target is set, which needs a
 	 * live _router (as in a real worker). Provide one; Core::reset() in the parent
 	 * setUp clears it between tests.
 	 */
@@ -89,19 +89,6 @@ class RequestFlightTest extends TestCase {
 		$flight = $patron->flight();
 		$this->assertSame( $patron, $flight->patron() );
 		$this->assertSame( 'rb-patron:flight', $flight->name() );
-	}
-
-	public function test_set_interval_reschedules(): void {
-		$flight = new Request_Flight_Node();
-		$flight->name( 'flight' );
-		$flight->set_interval( 500 );
-		$this->assertSame( 500, $flight->interval() );
-	}
-
-	public function test_default_interval(): void {
-		// Default interval matches Perl InstrumentalityFlight's 1000ms.
-		$flight = new Request_Flight_Node();
-		$this->assertSame( 1000, $flight->interval() );
 	}
 
 	public function test_fire_without_sink_is_safe(): void {
@@ -194,29 +181,47 @@ class RequestFlightTest extends TestCase {
 		$this->assertSame( $batch['r-2']['timestamp'],      $got[0][ Message::VALUE ][1]['start_time'] );
 	}
 
-	public function test_snapshot_hitchhikes_router_timer(): void {
-		// With a live _router present, configuring the snapshot interval registers
-		// Flight on the Router's TIMER event via no-arg set_timer() (hitchhike). A
-		// Router tick then drives fire() -> snapshot emit — proving Flight rides the
-		// Router's 1s cadence rather than allocating its own EventFramework slot.
+	public function test_setting_target_enables_snapshot_hitchhike(): void {
+		// Setting the inflight target IS what enables snapshots: it registers Flight
+		// on the Router's TIMER (no-arg set_timer hitchhike). A Router tick then
+		// drives fire() -> snapshot emit. There is no separate interval verb.
 		$router = Core::node( Node_Names::ROUTER );
 
 		$rb = new Request_Builder_Node();
-		$rb->name( 'rb-hh' );
+		$rb->name( 'rb-en' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 1.0 ] );
+
+		$rb->flight()->target( 'gyroscope_partition' );
+
+		$router->fire_cb();
+
+		$emitted = \array_values(
+			\array_filter( $got, static fn( $m ) => 'inflight' === ( $m[ Message::KEY ] ?? '' ) )
+		);
+		$this->assertCount( 1, $emitted, 'setting the target drove a Router-tick snapshot emit' );
+		$this->assertSame( 'gyroscope_partition', $emitted[0][ Message::TO ] );
+	}
+
+	public function test_clearing_target_stops_snapshot_hitchhike(): void {
+		// Clearing the target disables snapshots (stop_timer / unregister), so a
+		// later Router tick emits nothing.
+		$router = Core::node( Node_Names::ROUTER );
+
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-dis' );
 		$got = [];
 		$rb->sink( $this->capture_sink( $got ) );
 		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 1.0 ] );
 
 		$flight = $rb->flight();
 		$flight->target( 'gyroscope_partition' );
-		$flight->set_interval( 1000 ); // starts the Router hitchhike (named + router present).
+		$flight->target( '' );
 
-		$router->fire_cb(); // Router tick -> flight.fire_cb -> fire() -> snapshot emit.
+		$router->fire_cb();
 
-		$emitted = \array_values(
-			\array_filter( $got, static fn( $m ) => 'inflight' === ( $m[ Message::KEY ] ?? '' ) )
-		);
-		$this->assertCount( 1, $emitted, 'Router TIMER tick drove the Flight snapshot emit' );
-		$this->assertSame( 'gyroscope_partition', $emitted[0][ Message::TO ] );
+		$emitted = \array_filter( $got, static fn( $m ) => 'inflight' === ( $m[ Message::KEY ] ?? '' ) );
+		$this->assertSame( [], $emitted, 'cleared target must stop the snapshot hitchhike' );
 	}
 }

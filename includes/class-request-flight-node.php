@@ -7,7 +7,7 @@
  *
  * Hidden from the topology editor by the substrate's patron filter in
  * dump_metadata; configuration surfaces on the patron's :config interpreter as
- * `set_inflight_target` / `set_inflight_interval`.
+ * `set_inflight_target` (a non-empty target enables snapshots; an empty one stops them).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -16,18 +16,11 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Timer_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
 class Request_Flight_Node extends Timer_Node {
-	private const DEFAULT_INTERVAL_MS = 1000;
-
-	/** Configured snapshot interval (cosmetic round-trip value). Distinct from the
-	 * inherited Timer_Node::$interval_ms, which the scheduler owns and the
-	 * Router-hitchhike overwrites with the Router's cadence. */
-	private int $inflight_interval_ms = self::DEFAULT_INTERVAL_MS;
 
 	/**
 	 * Hidden from the palette: this is a patron-linked sibling Request_Builder
@@ -42,13 +35,30 @@ class Request_Flight_Node extends Timer_Node {
 		] );
 	}
 
-	public function set_interval( int $ms ): void {
-		$this->inflight_interval_ms = $ms;
-		$this->set_timer();
-	}
-
-	public function interval(): int {
-		return $this->inflight_interval_ms;
+	/**
+	 * Setting a destination IS what enables snapshots: a non-empty target
+	 * registers the Router-TIMER hitchhike (no-arg set_timer), clearing it
+	 * stops snapshotting. The snapshot cadence is the Router's tick — there is
+	 * no separate interval knob. The hitchhike preconditions (named sibling +
+	 * live _router) are the worker's job, same as Request_Builder's arguments().
+	 *
+	 * @param array<int, string>|string|null $value
+	 * @return array<int, string>|string
+	 */
+	public function target( $value = null ) {
+		if ( null === $value ) {
+			return parent::target();
+		}
+		$result = parent::target( $value );
+		// Start only for a non-empty STRING target — the same condition fire()
+		// emits on. An empty string or the array fan-out form (which fire() can't
+		// emit to) stops, so "armed" and "will emit" never disagree.
+		if ( \is_string( $value ) && '' !== $value ) {
+			$this->set_timer();
+		} else {
+			$this->stop_timer();
+		}
+		return $result;
 	}
 
 	/**

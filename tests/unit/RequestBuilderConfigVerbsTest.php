@@ -9,7 +9,6 @@
  *
  *     cmd request-builder:config set_completed_target completed:tee
  *     cmd request-builder:config set_inflight_target  gyroscope:partition
- *     cmd request-builder:config set_inflight_interval 2500
  *
  * The Flight verbs proxy through `$patron->flight()` (the hidden sibling
  * attached in RequestBuilder's ctor) rather than touching $patron state
@@ -31,7 +30,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderConfigVerbsTest extends TestCase {
 
-	/** set_inflight_interval drives Flight's Router-hitchhike, which needs a live _router. */
+	/** set_inflight_target drives Flight's Router-hitchhike, which needs a live _router. */
 	protected function setUp(): void {
 		parent::setUp();
 		( new Router_Node() )->name( Node_Names::ROUTER );
@@ -94,24 +93,6 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		// Empty arg clears the errors target.
 		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, '' ) );
 		$this->assertSame( '', $this->read_private( $rb, 'errors_target' ) );
-	}
-
-	public function test_set_inflight_interval_verb_calls_flight_set_interval(): void {
-		$rb = new Request_Builder_Node();
-		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
-		$verbs = $interpreter->commands();
-		$this->assertArrayHasKey( 'set_inflight_interval', $verbs );
-		$this->assertSame( 'ok', $verbs['set_inflight_interval']( $interpreter, '2500' ) );
-		$this->assertSame( 2500, $rb->flight()->interval() );
-	}
-
-	public function test_set_inflight_interval_rejects_non_numeric(): void {
-		$rb = new Request_Builder_Node();
-		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
-		$verbs = $interpreter->commands();
-		$this->assertStringContainsString( 'usage:', $verbs['set_inflight_interval']( $interpreter, 'abc' ) );
 	}
 
 	private function read_private( object $obj, string $name ) {
