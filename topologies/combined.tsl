@@ -17,7 +17,6 @@ make_node Tee completed:tee
 make_node Tee firehose:tee
 cmd request-builder:config set_completed_target completed:tee
 cmd request-builder:config set_errors_target errors:partition
-cmd request-builder:config set_inflight_interval 1000
 cmd request-builder:config set_inflight_target gyroscope:partition
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>

@@ -428,9 +428,6 @@ class Request_Builder_Node extends Timer_Node {
 		$this->errors_target = $target;
 	}
 
-	/** Flight's default snapshot interval (ms); a non-default value is dumped. */
-	private const DEFAULT_INFLIGHT_INTERVAL_MS = 1000;
-
 	/**
 	 * Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
@@ -444,13 +441,9 @@ class Request_Builder_Node extends Timer_Node {
 		if ( '' !== $this->completed_target ) {
 			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
 		}
-		$flight          = $this->flight();
-		$inflight_target = $flight->target();
+		$inflight_target = $this->flight()->target();
 		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
 			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
-		}
-		if ( self::DEFAULT_INFLIGHT_INTERVAL_MS !== $flight->interval() ) {
-			$out .= "cmd {$this->name}:config set_inflight_interval {$flight->interval()}\n";
 		}
 		return $out;
 	}
@@ -1227,34 +1220,17 @@ class Request_Builder_Node extends Timer_Node {
 				],
 				[
 					'name'        => 'set_inflight_target',
-					'description' => 'Periodically emit an in-flight request snapshot to a named partition (typically the gyroscope) via the hidden Flight sibling.',
+					'description' => 'Emit periodic in-flight request snapshots (on the Router tick) to a named partition (typically the gyroscope) via the hidden Flight sibling. Setting a target enables snapshots; an empty arg clears it and stops them.',
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
-						// Empty arg clears Flight's target — its fire_cb early-returns
-						// on the target check, disabling the periodic snapshot emit.
+						// Flight::target() registers the Router-TIMER hitchhike for a
+						// non-empty target and stops it for an empty one.
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->flight()->target( $args );
-						return 'ok';
-					},
-				],
-				[
-					'name'        => 'set_inflight_interval',
-					'description' => 'Set the Flight sibling timer interval (milliseconds) between in-flight snapshot emissions.',
-					'args'        => [
-						[ 'name' => 'ms', 'type' => 'int', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$args = \trim( $args );
-						if ( ! \ctype_digit( $args ) ) {
-							return 'usage: set_inflight_interval <ms>';
-						}
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->flight()->set_interval( (int) $args );
 						return 'ok';
 					},
 				],

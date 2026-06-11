@@ -14,7 +14,6 @@ make_node Request_Builder request-builder
 make_node Tee       completed:tee
 cmd request-builder:config set_completed_target  completed:tee
 cmd request-builder:config set_errors_target     errors:partition
-cmd request-builder:config set_inflight_interval 1000
 cmd request-builder:config set_inflight_target   gyroscope:partition
 cmd requests:partition:config allow_large_writes
 cmd requests:partition:config with_index request-index
