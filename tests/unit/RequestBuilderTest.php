@@ -6,6 +6,8 @@ use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -28,6 +30,17 @@ use PHPUnit\Framework\Attributes\CoversClass;
  */
 #[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderTest extends TestCase {
+
+	/**
+	 * The builder registers its maintenance hitchhike in arguments(), which needs
+	 * a live _router (as in a real worker). Provide one so arguments()-calling
+	 * tests follow the production name -> arguments -> sink lifecycle. Core::reset()
+	 * in the parent setUp clears it between tests.
+	 */
+	protected function setUp(): void {
+		parent::setUp();
+		( new Router_Node() )->name( Node_Names::ROUTER );
+	}
 
 	/**
 	 * Build a firehose-line message for fill().
@@ -427,12 +440,120 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 2, $errors );
 	}
 
+	// --- Idle timeout via the builder's own Router-hitchhike timer --------
+
+	/**
+	 * Age the cache's rotation clock so the next rotate_if_due() fires a rotation,
+	 * letting a test drive timed (idle) rotation deterministically without sleeping.
+	 */
+	private function force_rotation_due( \Newspack_Event_Logger_Nodes\LRU_Cache $cache ): void {
+		$ro       = new \ReflectionObject( $cache );
+		$interval = $ro->getProperty( 'rotate_interval' );
+		$interval->setAccessible( true );
+		$last = $ro->getProperty( 'last_rotation' );
+		$last->setAccessible( true );
+		$last->setValue( $cache, \microtime( true ) - (float) $interval->getValue( $cache ) - 1.0 );
+	}
+
+	public function test_builder_timer_times_out_stalled_request_with_no_traffic(): void {
+		// A stalled in-flight request (opened with a URL, never completes) must
+		// time out from the request-builder's OWN periodic timer — no further
+		// firehose line ever arrives to drive rotate_if_due() via fill(). The
+		// builder hitchhikes the Router's TIMER; fire() drives maintenance(). Here
+		// we call its fire_cb() directly (exactly what the Router calls each tick).
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( '100 2' ); // bucket_size=100 (no capacity rotation), num_buckets=2.
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+
+		$primary = null;
+		foreach ( $capture->captured as $m ) {
+			if ( '' === ( $m[ Message::TO ] ?? '' ) ) {
+				$primary = (array) $m[ Message::VALUE ];
+			}
+		}
+		$this->assertNotNull( $primary, 'stalled request timed out to requests.log on a builder timer tick' );
+		$this->assertSame( 'r1', $primary['rid'] );
+		$this->assertSame( 'T', $primary['error_status'] );
+	}
+
+	public function test_builder_timeout_is_also_sent_to_completed_target(): void {
+		// A timed-out request must ALSO reach completed:tee so the gyroscope reaps
+		// it (and the aggregator sees the resolution), carrying error_status='T'.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( '100 2' );
+		$rb->set_completed_target( 'completed:tee' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+
+		$completed = null;
+		foreach ( $capture->captured as $m ) {
+			if ( 'completed:tee' === ( $m[ Message::TO ] ?? '' ) ) {
+				$completed = (array) $m[ Message::VALUE ];
+			}
+		}
+		$this->assertNotNull( $completed, 'timed-out request mirrored to the completed target' );
+		$this->assertSame( 'r1', $completed['rid'] );
+		$this->assertSame( 'T', $completed['error_status'] );
+	}
+
+	public function test_builder_maintenance_hitchhikes_router_timer(): void {
+		// With a live _router present, wiring the named builder registers it on the
+		// Router's TIMER event via no-arg set_timer() (hitchhike). A Router tick then
+		// drives the builder's maintenance(), timing out a stalled request — proving
+		// the request-builder rides the Router's 1s cadence rather than its own slot.
+		$router = Core::node( Node_Names::ROUTER );
+
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( '100 2' ); // named + _router present => hitchhike registers here.
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+
+		$this->force_rotation_due( $rb->cache );
+		$router->fire_cb();
+		$this->force_rotation_due( $rb->cache );
+		$router->fire_cb();
+
+		$primary = null;
+		foreach ( $capture->captured as $m ) {
+			if ( '' === ( $m[ Message::TO ] ?? '' ) ) {
+				$primary = (array) $m[ Message::VALUE ];
+			}
+		}
+		$this->assertNotNull( $primary, 'Router TIMER tick drove the builder maintenance timeout' );
+		$this->assertSame( 'r1', $primary['rid'] );
+		$this->assertSame( 'T', $primary['error_status'] );
+	}
+
 	// --- LRU eviction (timed-out) -----------------------------------------
 
 	public function test_lru_eviction_emits_orphan_with_error_status_t(): void {
 		// bucket_size=1, num_buckets=2: one item per bucket, two buckets retained.
 		// After r2's set, r1's bucket is the oldest and gets evicted.
 		$rb      = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
 		$rb->arguments( "1 2" );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -723,6 +844,7 @@ class RequestBuilderTest extends TestCase {
 		// Open r1 with NO `request` keyword → url stays empty → evict_request
 		// hits the `empty( $request->url )` early return.
 		$rb      = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
 		$rb->arguments( "1 2" );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -741,6 +863,7 @@ class RequestBuilderTest extends TestCase {
 		// guard the path. Stuff a complete-state stdClass directly into the
 		// cache via restore_state and force a rotation.
 		$rb      = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
 		$rb->arguments( "1 2" );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1320,6 +1443,7 @@ class RequestBuilderTest extends TestCase {
 	 */
 	public function test_constructible_via_no_arg_ctor_and_arguments_setter(): void {
 		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
 		$rb->arguments( '7 5' );
 		$ref = new \ReflectionClass( $rb );
 		$this->assertSame( 7, $ref->getProperty( 'bucket_size' )->getValue( $rb ) );

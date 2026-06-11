@@ -5,7 +5,10 @@ use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Callback_Node;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -19,6 +22,17 @@ use PHPUnit\Framework\Attributes\CoversClass;
  */
 #[CoversClass( Request_Flight_Node::class )]
 class RequestFlightTest extends TestCase {
+
+	/**
+	 * Flight registers its snapshot hitchhike via set_interval(), which needs a
+	 * live _router (as in a real worker). Provide one; Core::reset() in the parent
+	 * setUp clears it between tests.
+	 */
+	protected function setUp(): void {
+		parent::setUp();
+		( new Router_Node() )->name( Node_Names::ROUTER );
+	}
+
 	/**
 	 * Sink that records every fill() into the by-ref array.
 	 *
@@ -79,6 +93,7 @@ class RequestFlightTest extends TestCase {
 
 	public function test_set_interval_reschedules(): void {
 		$flight = new Request_Flight_Node();
+		$flight->name( 'flight' );
 		$flight->set_interval( 500 );
 		$this->assertSame( 500, $flight->interval() );
 	}
@@ -177,5 +192,31 @@ class RequestFlightTest extends TestCase {
 		$this->assertSame( $batch['r-2']['url'],            $got[0][ Message::VALUE ][1]['url'] );
 		$this->assertSame( $batch['r-2']['request_method'], $got[0][ Message::VALUE ][1]['method'] );
 		$this->assertSame( $batch['r-2']['timestamp'],      $got[0][ Message::VALUE ][1]['start_time'] );
+	}
+
+	public function test_snapshot_hitchhikes_router_timer(): void {
+		// With a live _router present, configuring the snapshot interval registers
+		// Flight on the Router's TIMER event via no-arg set_timer() (hitchhike). A
+		// Router tick then drives fire() -> snapshot emit — proving Flight rides the
+		// Router's 1s cadence rather than allocating its own EventFramework slot.
+		$router = Core::node( Node_Names::ROUTER );
+
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-hh' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 1.0 ] );
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->set_interval( 1000 ); // starts the Router hitchhike (named + router present).
+
+		$router->fire_cb(); // Router tick -> flight.fire_cb -> fire() -> snapshot emit.
+
+		$emitted = \array_values(
+			\array_filter( $got, static fn( $m ) => 'inflight' === ( $m[ Message::KEY ] ?? '' ) )
+		);
+		$this->assertCount( 1, $emitted, 'Router TIMER tick drove the Flight snapshot emit' );
+		$this->assertSame( 'gyroscope_partition', $emitted[0][ Message::TO ] );
 	}
 }
