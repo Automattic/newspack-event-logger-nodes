@@ -16,6 +16,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Timer_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -23,7 +24,10 @@ use Newspack_Nodes\Timer_Node;
 class Request_Flight_Node extends Timer_Node {
 	private const DEFAULT_INTERVAL_MS = 1000;
 
-	private int $interval_ms = self::DEFAULT_INTERVAL_MS;
+	/** Configured snapshot interval (cosmetic round-trip value). Distinct from the
+	 * inherited Timer_Node::$interval_ms, which the scheduler owns and the
+	 * Router-hitchhike overwrites with the Router's cadence. */
+	private int $inflight_interval_ms = self::DEFAULT_INTERVAL_MS;
 
 	/**
 	 * Hidden from the palette: this is a patron-linked sibling Request_Builder
@@ -39,15 +43,20 @@ class Request_Flight_Node extends Timer_Node {
 	}
 
 	public function set_interval( int $ms ): void {
-		$this->interval_ms = $ms;
-		$this->set_timer( $ms );
+		$this->inflight_interval_ms = $ms;
+		$this->set_timer();
 	}
 
 	public function interval(): int {
-		return $this->interval_ms;
+		return $this->inflight_interval_ms;
 	}
 
-	public function fire_cb(): void {
+	/**
+	 * Router-TIMER tick (Timer_Node::fire_cb guards the null-sink case and calls
+	 * this). Snapshot the patron's in-flight map and emit one compact batch to the
+	 * configured gyroscope target.
+	 */
+	protected function fire(): void {
 		$batch = $this->inflight_snapshot();
 		if ( empty( $batch ) ) {
 			return;
@@ -58,8 +67,9 @@ class Request_Flight_Node extends Timer_Node {
 		if ( ! \is_string( $this->target ) || '' === $this->target ) {
 			return;
 		}
+		// Timer_Node::fire_cb() already early-returns on a null sink, but this guard
+		// also narrows ?Node -> Node for the static analyzer before ->fill() below.
 		if ( null === $this->sink ) {
-			// Sink propagates from RequestBuilder via overridden sink() in Task 22.
 			return;
 		}
 		$msg                       = Message::new_message();

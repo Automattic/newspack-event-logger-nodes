@@ -14,6 +14,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Timer_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -22,7 +23,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Request builder node class.
  */
-class Request_Builder_Node extends Node {
+class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
 
 	/** Maximum stack depth before request is considered runaway and evicted. */
@@ -124,11 +125,16 @@ class Request_Builder_Node extends Node {
 			return parent::arguments();
 		}
 		$result = parent::arguments( $args );
-		if ( '' === $args ) {
-			return $result;
+		if ( '' !== $args ) {
+			$this->parse_schema_args( $args );
+			$this->cache = $this->build_cache();
 		}
-		$this->parse_schema_args( $args );
-		$this->cache = $this->build_cache();
+		// make_node calls arguments() right after name(), with the worker's _router
+		// already present (name -> arguments -> sink), so by here we are named and a
+		// Router exists: register the maintenance tick on the Router's TIMER (no-arg
+		// hitchhike). Idle/low-traffic partitions never call fill(), the only other
+		// driver of the cache's idle rotation. Mirrors Timer_Node::arguments('').
+		$this->set_timer();
 		return $result;
 	}
 
@@ -397,6 +403,15 @@ class Request_Builder_Node extends Node {
 			return parent::sink( $node );
 		}
 		return parent::sink();
+	}
+
+	/**
+	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
+	 * request times out (error_status='T') and is emitted to both requests.log and
+	 * the completed target even on a partition with no inbound firehose traffic.
+	 */
+	protected function fire(): void {
+		$this->maintenance();
 	}
 
 	/**

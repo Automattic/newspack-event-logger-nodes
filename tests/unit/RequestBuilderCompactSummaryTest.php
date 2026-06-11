@@ -6,6 +6,8 @@ use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -21,6 +23,12 @@ use PHPUnit\Framework\Attributes\CoversClass;
  */
 #[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderCompactSummaryTest extends TestCase {
+
+	/** set_inflight_interval drives Flight's Router-hitchhike, which needs a live _router. */
+	protected function setUp(): void {
+		parent::setUp();
+		( new Router_Node() )->name( Node_Names::ROUTER );
+	}
 
 	/**
 	 * Sink that records every fill() into the by-ref array.
