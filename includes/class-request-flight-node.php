@@ -50,9 +50,6 @@ class Request_Flight_Node extends Timer_Node {
 			return parent::target();
 		}
 		$result = parent::target( $value );
-		// Start only for a non-empty STRING target — the same condition fire()
-		// emits on. An empty string or the array fan-out form (which fire() can't
-		// emit to) stops, so "armed" and "will emit" never disagree.
 		if ( \is_string( $value ) && '' !== $value ) {
 			$this->set_timer();
 		} else {
