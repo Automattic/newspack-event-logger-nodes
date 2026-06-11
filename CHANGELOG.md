@@ -7,15 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Raise the declared PHP floor to 8.2, matching the `newspack-nodes` substrate this plugin depends on.
-
-## [0.15.0] - 2026-06-10
+## [0.15.0] - 2026-06-11
 
 ### Changed
 
 - **`Substrate_Guard` is gone; the deferred bootstrap is gated on a plain `class_exists` substrate-presence check.** The guard's version floor + API probe + admin notice solved a non-problem: `Requires Plugins: newspack-nodes` keeps the runtime active on WP 6.5+, and the two plugins deploy together, so a present-but-too-old substrate isn't a real case. The `plugins_loaded` priority-11 bootstrap now simply no-ops when `\Newspack_Nodes\Node` isn't loaded. `includes/class-substrate-guard.php` + its test are removed.
+- Raise the declared PHP floor to 8.2, matching the `newspack-nodes` substrate this plugin depends on.
 
 ### Removed
 
