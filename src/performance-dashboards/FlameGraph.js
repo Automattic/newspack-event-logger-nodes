@@ -246,9 +246,12 @@ const findNodeByPath = ( node, path ) => {
 	return null;
 };
 
-// Default pruning thresholds: drop frames below 0.1% of total, cap at 1000 nodes.
+// Pruning thresholds. A frame survives if it is among the top PRUNE_SOFT_MAX_NODES
+// frames OR is at least PRUNE_MIN_FRACTION of the total — small frames are only
+// dropped once the graph is large. PRUNE_HARD_MAX_NODES is the absolute ceiling.
 const PRUNE_MIN_FRACTION = 0.001;
-const PRUNE_MAX_NODES = 1000;
+const PRUNE_SOFT_MAX_NODES = 1000;
+const PRUNE_HARD_MAX_NODES = 5000;
 
 /**
  * Clone a flame node, keeping only descendants whose value >= cutoff.
@@ -298,14 +301,19 @@ const collectNonRootValues = ( node, values, isRoot ) => {
 /**
  * Prune a flame graph tree for rendering.
  *
- * Drops frames smaller than `minFraction` of the total (root) time, then — if
- * the tree is still larger than `maxNodes` — raises the cutoff to keep only the
- * largest `maxNodes` frames. The root is always preserved.
+ * A frame is kept if it is among the largest `softMaxNodes` frames OR is at
+ * least `minFraction` of the total (root) time — so small frames are never
+ * stripped while the graph is under the soft cap, and stay visible past it as
+ * long as they clear the fraction. `hardMaxNodes` is an absolute ceiling that
+ * raises the cutoff to the largest frames if survivors still exceed it. The
+ * root is always preserved. Frame values are monotonic down the tree (a child
+ * never exceeds its parent), so a single value cutoff prunes consistently.
  *
- * @param {Object} root                  Flame graph root (value = total time).
- * @param {Object} [options]             Tuning.
- * @param {number} [options.minFraction] Min fraction of total to keep (default 0.001).
- * @param {number} [options.maxNodes]    Hard cap on rendered node count (default 1000).
+ * @param {Object} root                   Flame graph root (value = total time).
+ * @param {Object} [options]              Tuning.
+ * @param {number} [options.minFraction]  Min fraction of total kept past the soft cap (default 0.001).
+ * @param {number} [options.softMaxNodes] Frames ranked within this are always kept (default 1000).
+ * @param {number} [options.hardMaxNodes] Absolute ceiling on rendered node count (default 5000).
  * @return {Object} Pruned tree (a copy; the input is not mutated).
  */
 export const pruneFlameGraph = ( root, options = {} ) => {
@@ -313,18 +321,34 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 		return root;
 	}
 	const minFraction = options.minFraction ?? PRUNE_MIN_FRACTION;
-	const maxNodes = options.maxNodes ?? PRUNE_MAX_NODES;
+	const softMaxNodes = options.softMaxNodes ?? PRUNE_SOFT_MAX_NODES;
+	const hardMaxNodes = options.hardMaxNodes ?? PRUNE_HARD_MAX_NODES;
 	const total = root.value || 0;
 
-	let cutoff = total * minFraction;
+	// Under the soft cap, every frame is within the top `softMaxNodes` by rank,
+	// so nothing is stripped for being small — keep all (the common case; skips
+	// the sort below). Clone for immutability.
+	if ( countNodes( root ) <= softMaxNodes ) {
+		return cloneAboveCutoff( root, 0 );
+	}
+
+	const values = [];
+	collectNonRootValues( root, values, true );
+	values.sort( ( a, b ) => b - a );
+
+	// Value of the frame at rank `maxNodes` (root counts toward the cap, so the
+	// (maxNodes - 1)th-largest non-root frame). 0 when there are fewer than that
+	// many frames, meaning "keep everything".
+	const valueAtRank = ( maxNodes ) => values[ maxNodes - 2 ] ?? 0;
+
+	// Keep frames that are EITHER in the top `softMaxNodes` OR >= minFraction of
+	// total — i.e. down to whichever cutoff is more inclusive (lower).
+	let cutoff = Math.min( total * minFraction, valueAtRank( softMaxNodes ) );
 	let pruned = cloneAboveCutoff( root, cutoff );
 
-	if ( countNodes( pruned ) > maxNodes ) {
-		// Too many survivors — keep only the largest (maxNodes - 1) non-root frames.
-		const values = [];
-		collectNonRootValues( pruned, values, true );
-		values.sort( ( a, b ) => b - a );
-		cutoff = Math.max( cutoff, values[ maxNodes - 2 ] ?? Infinity );
+	if ( countNodes( pruned ) > hardMaxNodes ) {
+		// Still too many — raise the cutoff to the largest `hardMaxNodes` frames.
+		cutoff = Math.max( cutoff, valueAtRank( hardMaxNodes ) );
 		pruned = cloneAboveCutoff( root, cutoff );
 	}
 
@@ -351,7 +375,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	// Memoize color mapper (stable reference since it no longer depends on data).
 	const colorMapper = useMemo( () => createColorMapper(), [] );
 
-	// Prune tiny frames (< 0.1% of total) and cap node count before rendering.
+	// Keep top frames + everything >= 0.1% of total; cap node count before rendering.
 	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
 
 	// Create/update chart when data changes.
