@@ -371,7 +371,9 @@ describe( 'pruneFlameGraph', () => {
 		expect( pruneFlameGraph( undefined ) ).toBe( undefined );
 	} );
 
-	it( 'drops children below 0.1% of the total (root) time', () => {
+	it( 'keeps small frames when the graph is under the soft cap', () => {
+		// Only three frames — far under the soft cap — so nothing is stripped
+		// for being small, even the 0.05% sliver.
 		const root = {
 			name: 'process',
 			value: 1000,
@@ -384,34 +386,105 @@ describe( 'pruneFlameGraph', () => {
 		const pruned = pruneFlameGraph( root );
 		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
 			'A',
+			'tiny',
 			'C',
 		] );
 	} );
 
-	it( 'drops an entire subtree when its parent is below threshold', () => {
+	it( 'keeps every frame at exactly the soft cap, including sub-0.1% ones', () => {
+		// Root + 2 children == softMaxNodes 3, so every frame is within the top
+		// softMaxNodes by rank — nothing is stripped for being small.
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [
+				{ name: 'A', value: 500, children: [] },
+				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% — below 0.1%.
+			],
+		};
+		const pruned = pruneFlameGraph( root, { softMaxNodes: 3 } );
+		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
+			'A',
+			'tiny',
+		] );
+	} );
+
+	it( 'keeps a small subtree when the graph is under the soft cap', () => {
 		const root = {
 			name: 'process',
 			value: 1000,
 			children: [
 				{
 					name: 'sliver',
-					value: 0.4, // below 0.1% of 1000.
+					value: 0.4, // below 0.1% of 1000, but we are under the soft cap.
 					children: [ { name: 'deep', value: 0.4, children: [] } ],
 				},
 			],
 		};
 		const pruned = pruneFlameGraph( root );
-		expect( pruned.children ).toHaveLength( 0 );
+		expect( pruned.children ).toHaveLength( 1 );
+		expect( pruned.children[ 0 ].children ).toHaveLength( 1 );
 	} );
 
-	it( 'keeps children exactly at the threshold', () => {
+	it( 'once over the soft cap, drops frames that are both ranked out and below 0.1%', () => {
+		// softMaxNodes 2 means only the top 1 non-root frame is guaranteed.
+		// medium is ranked out but >= 0.1%, so it survives; tiny is ranked out
+		// AND below 0.1%, so it is the only one dropped.
 		const root = {
 			name: 'process',
 			value: 1000,
-			children: [ { name: 'edge', value: 1, children: [] } ], // exactly 0.1%.
+			children: [
+				{ name: 'big1', value: 500, children: [] },
+				{ name: 'big2', value: 200, children: [] },
+				{ name: 'medium', value: 5, children: [] }, // 0.5% — above 0.1%.
+				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% — below 0.1%.
+			],
 		};
-		const pruned = pruneFlameGraph( root );
-		expect( pruned.children ).toHaveLength( 1 );
+		const pruned = pruneFlameGraph( root, { softMaxNodes: 2 } );
+		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
+			'big1',
+			'big2',
+			'medium',
+		] );
+	} );
+
+	it( 'keeps the top frames past the soft cap even when they are below 0.1%', () => {
+		// Only one frame clears 0.1%; the soft cap still guarantees the top
+		// (softMaxNodes - 1) frames, so a sub-0.1% frame survives by rank.
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [
+				{ name: 'a', value: 500, children: [] },
+				{ name: 'b', value: 0.6, children: [] }, // 0.06% — kept by rank.
+				{ name: 'c', value: 0.5, children: [] },
+				{ name: 'd', value: 0.4, children: [] },
+			],
+		};
+		const pruned = pruneFlameGraph( root, { softMaxNodes: 3 } );
+		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
+			'a',
+			'b',
+		] );
+	} );
+
+	it( 'enforces the hard cap even when every frame clears 0.1%', () => {
+		const root = {
+			name: 'process',
+			value: 1000,
+			children: [
+				{ name: 'a', value: 500, children: [] },
+				{ name: 'b', value: 400, children: [] },
+				{ name: 'c', value: 300, children: [] },
+				{ name: 'd', value: 200, children: [] },
+			],
+		};
+		const pruned = pruneFlameGraph( root, {
+			softMaxNodes: 2,
+			hardMaxNodes: 2,
+		} );
+		// Root + 1 largest child only.
+		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [ 'a' ] );
 	} );
 
 	it( 'does not mutate the input tree', () => {
@@ -423,24 +496,7 @@ describe( 'pruneFlameGraph', () => {
 				{ name: 'tiny', value: 0.5, children: [] },
 			],
 		};
-		pruneFlameGraph( root );
+		pruneFlameGraph( root, { softMaxNodes: 1 } );
 		expect( root.children ).toHaveLength( 2 );
-	} );
-
-	it( 'caps the node count to maxNodes, keeping the largest', () => {
-		// All ten children are well above 0.1%, so only the cap can trim them.
-		const children = [ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 ].map( ( v ) => ( {
-			name: `n${ v }`,
-			value: v,
-			children: [],
-		} ) );
-		const root = { name: 'process', value: 100, children };
-		const pruned = pruneFlameGraph( root, { maxNodes: 4 } );
-		// Root + 3 largest children.
-		expect( pruned.children.map( ( c ) => c.name ) ).toEqual( [
-			'n10',
-			'n9',
-			'n8',
-		] );
 	} );
 } );

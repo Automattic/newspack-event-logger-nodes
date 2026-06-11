@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Performance flame graphs no longer prune small frames that should be visible.** `pruneFlameGraph` previously applied the 0.1%-of-total cutoff unconditionally, so even a small flame graph lost every frame under 0.1% — frames vanished purely for being small, well before any node-count limit. A frame is now kept if it is among the largest `softMaxNodes` (1000) frames **OR** is at least 0.1% of the total, so nothing is stripped while the graph is under the soft cap and sub-0.1% frames stay visible past it only once they're also ranked out. A new `hardMaxNodes` (5000) absolute ceiling replaces the old 1000-node hard cap. The `pruneFlameGraph` option `maxNodes` is replaced by `softMaxNodes` / `hardMaxNodes`.
+
 ## [0.15.0] - 2026-06-11
 
 ### Changed
