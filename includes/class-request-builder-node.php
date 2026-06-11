@@ -129,11 +129,6 @@ class Request_Builder_Node extends Timer_Node {
 			$this->parse_schema_args( $args );
 			$this->cache = $this->build_cache();
 		}
-		// make_node calls arguments() right after name(), with the worker's _router
-		// already present (name -> arguments -> sink), so by here we are named and a
-		// Router exists: register the maintenance tick on the Router's TIMER (no-arg
-		// hitchhike). Idle/low-traffic partitions never call fill(), the only other
-		// driver of the cache's idle rotation. Mirrors Timer_Node::arguments('').
 		$this->set_timer();
 		return $result;
 	}
