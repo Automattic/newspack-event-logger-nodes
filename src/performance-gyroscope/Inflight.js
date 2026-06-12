@@ -40,6 +40,10 @@ import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
 const VIEW_NODE = 'gyroscope:view';
+// The shared SSE connector owns stream liveness — it stamps lastEventTime on
+// every frame AND on the server's idle heartbeats — so the "Xs ago" staleness
+// reads it, not the view node (which only advances on row arrivals).
+const SSE_NODE = '_sse';
 // The low-frequency view model before the view node publishes one.
 const EMPTY_VIEW = { connectionError: false };
 
@@ -241,7 +245,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		}
 		setRequests( node.snapshot( maxRows ) );
 		setRequestsPerSecond( node.rps );
-		setLastEventTime( node.lastEventTime );
+		setLastEventTime( Core.node( SSE_NODE )?.lastEventTime ?? null );
 	}, [ maxRows ] );
 
 	// Ticking "Xs ago" display.

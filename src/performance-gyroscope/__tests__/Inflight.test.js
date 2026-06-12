@@ -158,6 +158,25 @@ describe( 'Inflight', () => {
 		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
 	} );
 
+	it( 'sources "Xs ago" staleness from the _sse connector, not row arrivals', () => {
+		// The connector owns stream liveness (it sees data rows AND heartbeats), so
+		// an idle-but-healthy stream — view node with no row arrivals — still shows a
+		// fresh "ago" off the connector's lastEventTime.
+		registerViewFixture(); // no view-node lastEventTime
+		Core.nodes.set( '_sse', { lastEventTime: Date.now() } );
+		const { container } = mount();
+		tickRefresh();
+		expect( container.textContent ).toMatch( /\d+s ago/ );
+	} );
+
+	it( 'hides "Xs ago" when the _sse stream is closed (lastEventTime null)', () => {
+		registerViewFixture( { lastEventTime: Date.now() } ); // view-node time is ignored now
+		Core.nodes.set( '_sse', { lastEventTime: null } );
+		const { container } = mount();
+		tickRefresh();
+		expect( container.textContent ).not.toMatch( /\d+s ago/ );
+	} );
+
 	it( 'does not throw when the view node is absent (no fixture registered)', () => {
 		const { container } = mount();
 		expect( () => tickRefresh() ).not.toThrow();

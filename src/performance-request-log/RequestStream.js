@@ -46,6 +46,7 @@ import './styles/request-stream.scss';
 
 const ROW_HEIGHT = 33; // Fixed row height in pixels.
 const VIEW_NODE = 'requestlog:view';
+const SSE_NODE = '_sse';
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
@@ -283,11 +284,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	const isAdjustingScrollRef = useRef( false ); // Skip scroll events during programmatic adjustment.
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 ); // Rows worth of animation offset.
 
-	// Newest UNFILTERED buffer seq the rAF has observed — drives the "Xs ago"
-	// staleness. Keyed off the monotonic seq (not buffer.length, and not the
-	// filtered view) so staleness reflects every arrival and keeps ticking once
-	// the buffer saturates its cap and rotates at constant length.
-	const lastSeenSeqRef = useRef( 0 );
 	// Newest seq the layout effect has already smooth-scrolled for, and the
 	// filter that was active then — so it compensates once per genuinely-new row
 	// and re-baselines (no spurious scroll) when the filter changes.
@@ -305,7 +301,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
 	const filterRef = useRef( filter );
 	filterRef.current = filter;
-	// Last node lastEventTime the rAF observed — drives the "Xs ago" staleness.
+	// Last _sse connector lastEventTime the rAF observed — drives "Xs ago".
 	const lastEventTimeRef = useRef( null );
 
 	// Ticking "Xs ago" display.
@@ -330,17 +326,13 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			const rps = node?.rps ?? 0;
 			const filterLower = filterRef.current.toLowerCase();
 
-			// Staleness tracks the UNFILTERED buffer's newest seq, so "Xs ago"
-			// reflects buffer-wide arrivals regardless of the URL filter — and
-			// keeps ticking once the buffer caps (seq climbs at constant length).
-			const bufferTopSeq = buffer.length ? buffer[ 0 ].seq : 0;
-			if (
-				bufferTopSeq > lastSeenSeqRef.current &&
-				node?.lastEventTime
-			) {
-				lastEventTimeRef.current = node.lastEventTime;
-			}
-			lastSeenSeqRef.current = bufferTopSeq;
+			// Staleness reflects CONNECTION liveness, owned by the shared _sse
+			// connector (it stamps lastEventTime on every frame AND the server's
+			// idle heartbeats), so an idle-but-healthy stream resets "Xs ago"
+			// instead of climbing; a real drop (no heartbeats) leaves it frozen
+			// and "ago" climbs as the intended warning.
+			lastEventTimeRef.current =
+				Core.node( SSE_NODE )?.lastEventTime ?? null;
 
 			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
 			// what we draw / count.
@@ -529,8 +521,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	// reflects 0 entries.
 	const handleClear = () => {
 		clear();
-		lastSeenSeqRef.current = 0;
-		lastEventTimeRef.current = null; // no arrivals since clear → hide "Xs ago".
 		lastCompensatedSeqRef.current = null; // re-baseline: first post-clear row won't slide.
 		pushedRef.current = {
 			topSeq: 0,
