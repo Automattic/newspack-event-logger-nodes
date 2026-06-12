@@ -428,7 +428,7 @@ export default function UrlDetailView( {
 					</h3>
 					<Button
 						variant={ errorsOnly ? 'primary' : 'secondary' }
-						isSmall
+						size="small"
 						onClick={ () => setErrorsOnly( ! errorsOnly ) }
 					>
 						{ errorsOnly

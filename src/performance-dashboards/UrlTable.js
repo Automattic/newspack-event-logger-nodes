@@ -350,7 +350,7 @@ export default function UrlTable( {
 				</div>
 				<Button
 					variant={ errorsOnly ? 'primary' : 'secondary' }
-					isSmall
+					size="small"
 					onClick={ () => setErrorsOnly( ! errorsOnly ) }
 				>
 					{ errorsOnly

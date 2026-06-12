@@ -27,6 +27,17 @@ module.exports = {
 			'error',
 			{ ignoreRestSiblings: true, argsIgnorePattern: '^_' },
 		],
+		'react/forbid-component-props': [
+			'error',
+			{
+				forbid: [
+					{
+						propName: 'isSmall',
+						message: 'Deprecated in WP 6.2 — use size="small".',
+					},
+				],
+			},
+		],
 		// The `@newspack-nodes/shared/*` subpath alias resolves at runtime
 		// (esbuild alias + jest moduleNameMapper) to the sibling newspack-nodes
 		// checkout; eslint can't follow it without the build context.
