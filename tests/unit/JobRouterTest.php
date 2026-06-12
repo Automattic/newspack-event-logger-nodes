@@ -9,7 +9,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * JobRouter is a pure router: it pulls job-shaped entries from the firehose
- * and jobintake sources, normalizes them to {type, handler, parameters, ts},
+ * and jobintake sources, normalizes them to {k, handler, parameters, ts},
  * and forwards via parent::fill to its target (jobs:partition in topology).
  * It never dispatches handlers itself; that's JobWorker's job.
  *
@@ -64,6 +64,26 @@ class JobRouterTest extends TestCase {
 		];
 	}
 
+	public function test_output_is_keyed_by_k_for_job_worker_dispatch(): void {
+		// JobRouter output must carry the kind under `k` — the same field
+		// Job_Worker dispatches on and Job_Intake writes — so a firehose job
+		// round-trips to the handler with zero field renaming anywhere.
+		$entry = $this->firehose_entry( 'job', 'sync_user', [ 'id' => 42 ] );
+		$msg = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $msg );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame(
+			[
+				'k'          => 'job',
+				'handler'    => 'sync_user',
+				'parameters' => [ 'id' => 42 ],
+				'ts'         => 1700000000.0,
+			],
+			$this->sink->captured[0][ Message::VALUE ]
+		);
+	}
+
 	public function test_firehose_job_forwards_normalized(): void {
 		$entry = $this->firehose_entry( 'job', 'sync_user', [ 'id' => 42 ] );
 		$msg = $this->msg( 'firehose:consumer', $entry );
@@ -73,7 +93,7 @@ class JobRouterTest extends TestCase {
 		$out = $this->sink->captured[0];
 		$this->assertSame(
 			[
-				'type'       => 'job',
+				'k'          => 'job',
 				'handler'    => 'sync_user',
 				'parameters' => [ 'id' => 42 ],
 				'ts'         => 1700000000.0,
@@ -82,13 +102,13 @@ class JobRouterTest extends TestCase {
 		);
 	}
 
-	public function test_firehose_remote_job_forwards_with_type_remote_job(): void {
+	public function test_firehose_remote_job_forwards_with_k_remote_job(): void {
 		$entry = $this->firehose_entry( 'remote_job', 'hub_op', [ 'k' => 'v' ] );
 		$msg = $this->msg( 'firehose:consumer', $entry );
 		$this->jr->fill( $msg );
 
 		$this->assertCount( 1, $this->sink->captured );
-		$this->assertSame( 'remote_job', $this->sink->captured[0][ Message::VALUE ]['type'] );
+		$this->assertSame( 'remote_job', $this->sink->captured[0][ Message::VALUE ]['k'] );
 		$this->assertSame( 'hub_op', $this->sink->captured[0][ Message::VALUE ]['handler'] );
 	}
 
@@ -100,7 +120,7 @@ class JobRouterTest extends TestCase {
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame(
 			[
-				'type'       => 'job',
+				'k'          => 'job',
 				'handler'    => 'process_image',
 				'parameters' => [ 'url' => '/x.jpg' ],
 				'ts'         => 1700000000.0,
@@ -118,7 +138,7 @@ class JobRouterTest extends TestCase {
 		$this->jr->fill( $msg );
 
 		$this->assertCount( 1, $this->sink->captured );
-		$this->assertSame( 'job', $this->sink->captured[0][ Message::VALUE ]['type'] );
+		$this->assertSame( 'job', $this->sink->captured[0][ Message::VALUE ]['k'] );
 	}
 
 	public function test_unknown_source_dropped_silently(): void {

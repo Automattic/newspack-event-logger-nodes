@@ -20,8 +20,10 @@
  * - jobintake: entries the JobIntake API wrote directly to jobintake.log.
  *              The job body lives at the top level; `k` carries the type.
  *
- * Output shape (one wire form for jobs.log, regardless of source):
- *   { type, handler, parameters, ts }
+ * Output shape (one wire form for jobs.log, regardless of source) — the kind
+ * stays under `k`, the same field Job_Intake writes and Job_Worker dispatches
+ * on, so nothing downstream has to rename it:
+ *   { k, handler, parameters, ts }
  *
  * SECURITY:
  * - Handler name must match HANDLER_NAME_PATTERN before reaching disk.
@@ -80,15 +82,14 @@ class Job_Router_Node extends Node {
 			return;
 		}
 
-		// Resolve type from the entry-level `k`. This is the canonical
-		// dispatch field — it's what LogManager::message() writes from the
-		// category argument, and what StreamMerger's rewrite filter mutates
-		// from 'job' to 'remote_job' on the hub. A redundant producer-set
-		// `m.type` (PHP LogManager whack-cdn etc.) is NOT consulted: it
-		// would otherwise revert the rewrite at dispatch time, since
-		// StreamMerger only touches the entry-level `k`. For jobintake the
-		// entry is flat (no `m` wrap) so $body IS $entry; reading
-		// $entry['k'] handles both branches uniformly.
+		// Resolve the kind from the entry-level `k` — the canonical dispatch
+		// field. It's what LogManager::message() writes from the category
+		// argument, and the field StreamMerger's rewrite filter mutates from
+		// 'job' to 'remote_job' on the hub. Read it (never a body-level field)
+		// so that hub rewrite is honored at dispatch. For jobintake the entry
+		// is flat (no `m` wrap) so $body IS $entry; reading $entry['k'] handles
+		// both branches uniformly, and `k` is carried through to jobs.log
+		// unrenamed (JobWorker dispatches on the same field).
 		/** @var int|float|string|bool|null $raw_type */
 		$raw_type = $entry['k'] ?? '';
 		$type     = (string) $raw_type;
@@ -118,7 +119,7 @@ class Job_Router_Node extends Node {
 		}
 
 		$normalized = [
-			'type'       => $type,
+			'k'          => $type,
 			'handler'    => $handler,
 			'parameters' => $parameters,
 			'ts'         => $body['ts'] ?? $entry['ts'] ?? \microtime( true ),
