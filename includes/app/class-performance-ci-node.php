@@ -148,641 +148,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const REQUEST_LIST_MAX_LIMIT = 1000;
 
 	/**
-	 * Schema-driven dispatch: each of the 17 verbs is declared once in
-	 * `verbs[]` carrying its `handler`. The inherited Service_CI_Node ctor
-	 * builds the commands table from this schema. Stats-reading verbs build
-	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
-	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
-	 */
-	public static function node_schema(): array {
-		return [
-			'category'    => 'Service',
-			'description' => 'Performance-dashboard surface: overview, URLs, requests, hooks, config, settings.',
-			'arguments'        => [],
-			'commands'       => [
-				[
-					'name'        => 'overview',
-					'description' => 'High-level performance stats across all partitions.',
-					'args'        => [
-						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Optional args mirror the legacy PerfOverviewController query
-				// params: `server` scopes the leaderboard / breakdown /
-				// categories; `breakdown` is a comma-separated dim list
-				// (single-dim → flat `breakdown_time_series`; multi-dim →
-				// nested `breakdowns: {dim => series}`); `--categories`
-				// adds `category_time_series` (global or per-server).
-				$opts       = Command_Args::parse( $args )['options'];
-				$server     = (string) ( $opts['server'] ?? '' );
-				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
-				$categories = self::flag( $opts, 'categories' );
-
-				$payload                       = self::build_overview_payload( self::load_index() );
-				$payload['global_leaderboard'] = '' === $server
-					? self::build_global_leaderboard()
-					: self::build_server_leaderboard( $server );
-
-				if ( '' !== $breakdown ) {
-					$dims = \array_values(
-						\array_filter(
-							\array_map( 'trim', \explode( ',', $breakdown ) ),
-							static fn ( $d ) => \in_array( $d, self::DIMENSIONS, true )
-						)
-					);
-					if ( 1 === \count( $dims ) ) {
-						$payload['breakdown_time_series'] = self::merge_dim_across_partitions( $dims[0], $server );
-					} elseif ( ! empty( $dims ) ) {
-						$payload['breakdowns'] = [];
-						foreach ( $dims as $dim ) {
-							$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server );
-						}
-					}
-				}
-
-				if ( $categories ) {
-					$payload['category_time_series'] = '' === $server
-						? self::merge_categories_across_partitions()
-						: self::merge_server_categories_across_partitions( $server );
-				}
-
-				return $payload;
-					},
-				],
-				[
-					'name'        => 'urls',
-					'description' => 'Paginated/sortable URL leaderboard.',
-					'args'        => [
-						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
-						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
-						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 50 ],
-						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
-						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				$opts    = Command_Args::parse( $args )['options'];
-				$sort    = (string) ( $opts['sort']   ?? 'count' );
-				$order   = (string) ( $opts['order']  ?? 'desc' );
-				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
-				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
-				$search  = (string) ( $opts['search'] ?? '' );
-				$server  = (string) ( $opts['server'] ?? '' );
-
-				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
-					$sort = 'count';
-				}
-				if ( 'asc' !== $order && 'desc' !== $order ) {
-					$order = 'desc';
-				}
-
-				$index = self::load_index();
-
-				if ( '' !== $server ) {
-					$srv   = \strtolower( $server );
-					$index = \array_values( \array_filter(
-						$index,
-						static fn ( $e ) => false !== \strpos( \strtolower( self::to_string( $e['url'] ?? '' ) ), $srv )
-					) );
-				}
-				if ( '' !== $search ) {
-					$term  = \strtolower( $search );
-					$index = \array_values( \array_filter(
-						$index,
-						static fn ( $e ) => false !== \strpos( \strtolower( self::to_string( $e['url'] ?? '' ) ), $term )
-					) );
-				}
-
-				$total = \count( $index );
-
-				\usort(
-					$index,
-					static fn ( $a, $b ) => 'asc' === $order
-						? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
-						: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 )
-				);
-
-				return [
-					'data'   => \array_slice( $index, $offset, $limit ),
-					'total'  => $total,
-					'limit'  => $limit,
-					'offset' => $offset,
-				];
-					},
-				],
-				[
-					'name'        => 'url_detail',
-					'description' => 'Single-URL detail incl. aggregate flame data.',
-					'args'        => [
-						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				$parsed = Command_Args::parse( $args );
-				$opts   = $parsed['options'];
-				$hash   = $parsed['positional'][0] ?? '';
-				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
-					throw new \RuntimeException( 'invalid hash format' );
-				}
-
-				$index = self::load_index();
-				$stats = null;
-				foreach ( $index as $entry ) {
-					if ( ( $entry['hash'] ?? '' ) === $hash ) {
-						$stats = [
-							'hash'         => $hash,
-							'url'          => $entry['url'] ?? '',
-							'count'        => $entry['count'] ?? 0,
-							'avg_ms'       => $entry['avg_ms'] ?? 0,
-							'min_ms'       => $entry['min_ms'] ?? 0,
-							'max_ms'       => $entry['max_ms'] ?? 0,
-							'p50_ms'       => $entry['p50_ms'] ?? 0,
-							'p95_ms'       => $entry['p95_ms'] ?? 0,
-							'p99_ms'       => $entry['p99_ms'] ?? 0,
-							'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
-							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
-							'last_updated' => $entry['last_updated'] ?? 0,
-							// Per-URL time series (consumed by UrlDetailView +
-							// urlRequestsPerSecond). Matches legacy
-							// PerfUrlsController::build_url_time_series.
-							'time_series'  => self::build_url_time_series( $hash ),
-						];
-						break;
-					}
-				}
-				if ( null === $stats ) {
-					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
-				}
-
-				$aggregate = self::find_url_aggregate( $hash );
-				$flame     = $aggregate['flame']
-					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
-
-				$payload = [
-					'stats'              => $stats,
-					'requests'           => self::find_recent_requests_for_url( $hash ),
-					'aggregate_flame'    => $flame,
-					'aggregate_profiles' => $aggregate['profiles'] ?? null,
-					'last_modified'      => $aggregate['last_modified'] ?? 0,
-				];
-
-				$breakdown = (string) ( $opts['breakdown'] ?? '' );
-				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
-					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown );
-				}
-
-				if ( self::flag( $opts, 'categories' ) ) {
-					$payload['category_time_series'] = self::merge_url_categories( $hash );
-				}
-
-				return $payload;
-					},
-				],
-				[
-					'name'        => 'request_search',
-					'description' => 'Locate a request by rid across partitions.',
-					'args'        => [
-						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				$rid = Command_Args::parse( $args )['positional'][0] ?? '';
-				if ( '' === $rid ) {
-					throw new \RuntimeException( 'rid required' );
-				}
-
-				$config         = RuntimeConfig::load_config();
-				$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
-				$base_dir       = RuntimeConfig::get_base_directory();
-				$log_base       = $base_dir . '/logs';
-				$scanned        = 0;
-
-				for ( $p = 0; $p < $num_partitions; $p++ ) {
-					$found = self::find_request_index_entry( $log_base, $p, $rid, $scanned );
-					if ( null !== $found ) {
-						return $found;
-					}
-					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
-						break;
-					}
-				}
-
-				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
-					},
-				],
-				[
-					'name'        => 'request_detail',
-					'description' => 'Full request + flame data for a known {rid, partition}.',
-					'args'        => [
-						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				$parsed = Command_Args::parse( $args );
-				$rid    = $parsed['positional'][0] ?? '';
-				if ( '' === $rid ) {
-					throw new \RuntimeException( 'rid required' );
-				}
-				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
-
-				$config         = RuntimeConfig::load_config();
-				$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
-				$base_dir       = RuntimeConfig::get_base_directory();
-				$log_base       = $base_dir . '/logs';
-
-				if ( $partition < 0 || $partition >= $num_partitions ) {
-					throw new \RuntimeException( 'invalid partition' );
-				}
-
-				$result = self::find_request_in_partition( $log_base, $partition, $rid, $num_partitions );
-				if ( null === $result ) {
-					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
-				}
-				return $result;
-					},
-				],
-				[
-					'name'        => 'timing',
-					'description' => 'Merged hourly timing buckets across partitions.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerformanceController::get_timing — merged
-				// hourly buckets across partitions. The legacy "data + meta"
-				// wrapper is dropped (REST artifact); the interpreter returns the inner
-				// payload directly.
-				return [
-					'time_series' => self::merge_hourly_across_partitions(),
-				];
-					},
-				],
-				[
-					'name'        => 'dashboard',
-					'description' => 'Overview payload + full URL index in one round-trip.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerformanceController::get_dashboard:
-				// nest the overview payload alongside the full URL index so
-				// the dashboard tree fans in with one round-trip. `load_index`
-				// is the heavy memcache fan-out — share it across both keys.
-				$index = self::load_index();
-				return [
-					'overview' => self::build_overview_payload( $index ),
-					'urls'     => $index,
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_registered',
-					'description' => 'Registered hooks grouped by category.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfHooksController::get_registered_hooks.
-				// The legacy controller also returned `total_hooks` as the sum
-				// of all category buckets; recomputing here keeps the contract
-				// identical without trusting the categorizer to sum for us.
-				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
-				$total       = 0;
-				foreach ( $by_category as $list ) {
-					$total += \is_array( $list ) ? \count( $list ) : 0;
-				}
-				return [
-					'total_hooks'       => $total,
-					'categories'        => Hook_Categorizer::get_categories(),
-					'hooks_by_category' => $by_category,
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_categories',
-					'description' => 'Hook categories + merged config.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfHooksController::get_hook_categories
-				// — same shape the React tree consumes.
-				return [
-					'categories' => Hook_Categorizer::get_categories(),
-					'config'     => Hook_Categorizer::get_merged_config(),
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_available',
-					'description' => 'All runtime hooks for the picker UI.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
-				// Walks $wp_actions (fired hooks) and $wp_filter (registered
-				// but never-fired hooks), excludes Event Logger's own internal
-				// hooks (instrumenting them loops via Config::load_config),
-				// and removes anything the operator has marked as a custom
-				// event so the picker doesn't double-list it.
-				return [
-					'hooks' => self::collect_available_hooks(),
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_configure',
-					'description' => 'Persist selected hooks / custom events.',
-					'args'        => [
-						[ 'name' => 'hooks', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				$opts          = Command_Args::parse( $args )['options'];
-				$hooks         = self::csv( $opts, 'hooks' );
-				$custom_events = self::csv( $opts, 'custom_events' );
-				$configured    = 0;
-
-				if ( [] !== $hooks ) {
-					$flat = [];
-					foreach ( $hooks as $h ) {
-						$h = \sanitize_text_field( $h );
-						if ( '' !== $h ) {
-							$flat[] = $h;
-						}
-					}
-					\update_option( 'newspack_event_logger_nodes_log_events', $flat, AppConfig::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
-					$configured += \count( $flat );
-				}
-
-				if ( [] !== $custom_events ) {
-					$assoc = [];
-					foreach ( $custom_events as $event ) {
-						$event = \sanitize_text_field( $event );
-						if ( '' !== $event ) {
-							$assoc[ $event ] = true;
-						}
-					}
-					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc, AppConfig::autoload_for( 'newspack_event_logger_nodes_custom_events' ) );
-					$configured += \count( $assoc );
-				}
-
-				// Application Config caches the merged custom_events / log_events;
-				// reset so the very next verb call (e.g. hooks_available) re-reads
-				// the freshly-written WP options.
-				AppConfig::reset();
-
-				return [
-					'success'          => true,
-					'hooks_configured' => $configured,
-				];
-					},
-				],
-				[
-					'name'        => 'config_get',
-					'description' => 'Read the nine perf-tuning options.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfConfigController::get_config, with one
-				// fix: the legacy controller called `RuntimeConfig::load_config()`
-				// which reads `newspack_nodes_` options — but the perf-tuning
-				// keys live under the `newspack_event_logger_nodes_` prefix on
-				// the application Config. AppConfig::load_config() is the right
-				// source. The legacy bug was masked because the legacy test
-				// asserted on key presence only, never on the actual values.
-				$cfg = AppConfig::load_config();
-				return [
-					'config' => [
-						'log_events'                  => $cfg['log_events']    ?? [],
-						'custom_events'               => $cfg['custom_events'] ?? [],
-						'log_urls'                    => $cfg['log_urls']      ?? [],
-						'skip_urls'                   => $cfg['skip_urls']     ?? [],
-						'auto_disable_threshold'      => self::to_int( $cfg['auto_disable_threshold']      ?? 0 ),
-						'auto_protect_time_threshold' => self::to_float( $cfg['auto_protect_time_threshold'] ?? 0.0 ),
-						'significant_events'          => $cfg['significant_events'] ?? [],
-						'log_memory'                  => ! empty( $cfg['log_memory'] ),
-						'flush_every_line'            => ! empty( $cfg['flush_every_line'] ),
-					],
-				];
-					},
-				],
-				[
-					'name'        => 'config_update',
-					'description' => 'Bulk-update the nine perf-tuning options.',
-					'args'        => [
-						[ 'name' => 'log_events', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'log_urls', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'skip_urls', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'auto_disable_threshold', 'type' => 'int', 'required' => false ],
-						[ 'name' => 'auto_protect_time_threshold', 'type' => 'float', 'required' => false ],
-						[ 'name' => 'significant_events', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'log_memory', 'type' => 'bool', 'required' => false ],
-						[ 'name' => 'flush_every_line', 'type' => 'bool', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfConfigController::update_config — the
-				// bulk write path for the nine perf-tuning options. Options absent
-				// from the args string are untouched (partial update). Unknown
-				// options are silently ignored to match the legacy whitelist sweep.
-				$opts    = Command_Args::parse( $args )['options'];
-				$updated = [];
-				foreach ( self::CONFIG_MAP as $param => $cfg ) {
-					// Only options actually present in the args string are applied;
-					// a missing `--param` means "leave that setting untouched".
-					if ( ! \array_key_exists( $param, $opts ) ) {
-						continue;
-					}
-					// *_events / *_urls arrive as comma-lists; bool flags resolve via
-					// flag() so `--param=0`/`--param=false` map to false; int/float
-					// hard-cast through coerce_config_value on the raw option string.
-					switch ( $cfg['type'] ) {
-						case 'array_assoc':
-						case 'array_bool':
-							$value = self::coerce_config_value( self::csv( $opts, $param ), $cfg['type'] );
-							break;
-						case 'bool':
-							$value = self::flag( $opts, $param );
-							break;
-						default:
-							$value = self::coerce_config_value( $opts[ $param ], $cfg['type'] );
-					}
-					\update_option( $cfg['option'], $value, AppConfig::autoload_for( $cfg['option'] ) );
-					$updated[] = $param;
-				}
-
-				if ( ! empty( $updated ) ) {
-					AppConfig::reset();
-				}
-
-				return [
-					'success' => true,
-					'updated' => $updated,
-				];
-					},
-				],
-				[
-					'name'        => 'settings_update',
-					'description' => 'Single-option perf setting write with sync guard.',
-					'args'        => [
-						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfSettingsController::update_setting —
-				// single-option write path with the suppress_sync guard so a
-				// remotely-synced setting applied on a spoke doesn't bounce
-				// back as a re-sync (mirrors the inbound REST polarity). This
-				// `--option=<opt> --value="<v>"` grammar is the exact shape the
-				// hub→spoke forwarder emits, so it must not drift.
-				$opts   = Command_Args::parse( $args )['options'];
-				$option = (string) ( $opts['option'] ?? '' );
-				if ( '' === $option ) {
-					throw new \RuntimeException( 'option required' );
-				}
-				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
-					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
-				}
-				if ( ! \array_key_exists( 'value', $opts ) ) {
-					throw new \RuntimeException( 'value required' );
-				}
-
-				// The value rides the wire as a string; array-typed options carry
-				// it as a comma-list that the array sanitizer expects pre-split.
-				// Drop empty tokens so a cleared/empty value (`--value=""`, or the
-				// forwarder's empty list) yields [] not [''] (which would otherwise
-				// survive into add_action('') downstream).
-				$type     = self::SETTINGS_OPTIONS[ $option ];
-				$raw_value = true === $opts['value'] ? '' : $opts['value'];
-				$value    = 'array' === $type ? self::csv( [ 'v' => $raw_value ], 'v' ) : $raw_value;
-
-				$sanitized = self::sanitize_settings_value( $value, $type );
-				if ( null === $sanitized ) {
-					throw new \RuntimeException( 'invalid value for option' );
-				}
-
-				// suppress_sync guard + try/finally so the flag is restored on
-				// update_option failure. Autoload follows the central policy
-				// (Config::autoload_for): hot-path scalars autoloaded, large
-				// list options (log_events / custom_events) kept off the
-				// per-request alloptions blob.
-				Settings_Sync::suppress_sync( true );
-				try {
-					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
-				} finally {
-					Settings_Sync::suppress_sync( false );
-				}
-
-				AppConfig::reset();
-
-				return [
-					'option'  => $option,
-					'updated' => $ok,
-				];
-					},
-				],
-				[
-					'name'        => 'request_log_list',
-					'description' => 'Recent request list across partitions.',
-					'args'        => [
-						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 100 ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy RequestLogController::get_list.
-				// Limit clamped 1..1000 (default 100); fan out across
-				// partitions; sort by timestamp DESC; slice to limit.
-				$opts  = Command_Args::parse( $args )['options'];
-				$limit = isset( $opts['limit'] )
-					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $opts['limit'] ) )
-					: self::REQUEST_LIST_DEFAULT_LIMIT;
-
-				[ $entries, $scanned ] = self::collect_request_list( $limit );
-
-				\usort( $entries, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
-				$entries = \array_slice( $entries, 0, $limit );
-
-				return [
-					'data' => $entries,
-					'meta' => [
-						'limit'   => $limit,
-						'scanned' => $scanned,
-					],
-				];
-					},
-				],
-				[
-					'name'        => 'request_log_detail',
-					'description' => 'Full request envelope for one request id.',
-					'args'        => [
-						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy RequestLogController::get_detail.
-				// Empty id is a real usage error → throw so the central
-				// catch surfaces TM_COMMAND|TM_ERROR. Unknown-but-non-empty
-				// id returns the legacy stub-compatible empty-entries shape
-				// (NOT 404 — the React tree polls these and `expected to
-				// exist soon` is a normal state).
-				$rid = Command_Args::parse( $args )['positional'][0] ?? '';
-				if ( '' === $rid ) {
-					throw new \RuntimeException( 'id required' );
-				}
-
-				[ $result, $scanned ] = self::find_request_envelope( $rid );
-
-				if ( null === $result ) {
-					return [
-						'data' => [
-							'request_id' => $rid,
-							'entries'    => [],
-						],
-						'meta' => [ 'scanned' => $scanned ],
-					];
-				}
-
-				// Normalize the entries shape — React tree expects `entries[]`.
-				// Body with no `events` key is wrapped as a single entry; the
-				// _partition marker lets the tree key on partition.
-				$entries = $result['events'] ?? [ $result ];
-				return [
-					'data' => [
-						'request_id' => $rid,
-						'entries'    => $entries,
-					],
-					'meta' => [ 'scanned' => $scanned ],
-				];
-					},
-				],
-			],
-		];
-	}
-
-	/**
 	 * Resolve a Command_Args boolean flag. A bare `--flag` parses to `true`;
 	 * A bare `--flag` and `--flag=1` / `--flag=true` are truthy; `--flag=0` /
 	 * `--flag=false` and an absent key are false. (The matching false-set is the
@@ -1901,5 +1266,640 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Schema-driven dispatch: each of the 17 verbs is declared once in
+	 * `verbs[]` carrying its `handler`. The inherited Service_CI_Node ctor
+	 * builds the commands table from this schema. Stats-reading verbs build
+	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
+	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
+	 */
+	public static function node_schema(): array {
+		return [
+			'category'    => 'Service',
+			'description' => 'Performance-dashboard surface: overview, URLs, requests, hooks, config, settings.',
+			'arguments'        => [],
+			'commands'       => [
+				[
+					'name'        => 'overview',
+					'description' => 'High-level performance stats across all partitions.',
+					'args'        => [
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Optional args mirror the legacy PerfOverviewController query
+				// params: `server` scopes the leaderboard / breakdown /
+				// categories; `breakdown` is a comma-separated dim list
+				// (single-dim → flat `breakdown_time_series`; multi-dim →
+				// nested `breakdowns: {dim => series}`); `--categories`
+				// adds `category_time_series` (global or per-server).
+				$opts       = Command_Args::parse( $args )['options'];
+				$server     = (string) ( $opts['server'] ?? '' );
+				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
+				$categories = self::flag( $opts, 'categories' );
+
+				$payload                       = self::build_overview_payload( self::load_index() );
+				$payload['global_leaderboard'] = '' === $server
+					? self::build_global_leaderboard()
+					: self::build_server_leaderboard( $server );
+
+				if ( '' !== $breakdown ) {
+					$dims = \array_values(
+						\array_filter(
+							\array_map( 'trim', \explode( ',', $breakdown ) ),
+							static fn ( $d ) => \in_array( $d, self::DIMENSIONS, true )
+						)
+					);
+					if ( 1 === \count( $dims ) ) {
+						$payload['breakdown_time_series'] = self::merge_dim_across_partitions( $dims[0], $server );
+					} elseif ( ! empty( $dims ) ) {
+						$payload['breakdowns'] = [];
+						foreach ( $dims as $dim ) {
+							$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server );
+						}
+					}
+				}
+
+				if ( $categories ) {
+					$payload['category_time_series'] = '' === $server
+						? self::merge_categories_across_partitions()
+						: self::merge_server_categories_across_partitions( $server );
+				}
+
+				return $payload;
+					},
+				],
+				[
+					'name'        => 'urls',
+					'description' => 'Paginated/sortable URL leaderboard.',
+					'args'        => [
+						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
+						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 50 ],
+						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
+						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				$opts    = Command_Args::parse( $args )['options'];
+				$sort    = (string) ( $opts['sort']   ?? 'count' );
+				$order   = (string) ( $opts['order']  ?? 'desc' );
+				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
+				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
+				$search  = (string) ( $opts['search'] ?? '' );
+				$server  = (string) ( $opts['server'] ?? '' );
+
+				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
+					$sort = 'count';
+				}
+				if ( 'asc' !== $order && 'desc' !== $order ) {
+					$order = 'desc';
+				}
+
+				$index = self::load_index();
+
+				if ( '' !== $server ) {
+					$srv   = \strtolower( $server );
+					$index = \array_values( \array_filter(
+						$index,
+						static fn ( $e ) => false !== \strpos( \strtolower( self::to_string( $e['url'] ?? '' ) ), $srv )
+					) );
+				}
+				if ( '' !== $search ) {
+					$term  = \strtolower( $search );
+					$index = \array_values( \array_filter(
+						$index,
+						static fn ( $e ) => false !== \strpos( \strtolower( self::to_string( $e['url'] ?? '' ) ), $term )
+					) );
+				}
+
+				$total = \count( $index );
+
+				\usort(
+					$index,
+					static fn ( $a, $b ) => 'asc' === $order
+						? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
+						: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 )
+				);
+
+				return [
+					'data'   => \array_slice( $index, $offset, $limit ),
+					'total'  => $total,
+					'limit'  => $limit,
+					'offset' => $offset,
+				];
+					},
+				],
+				[
+					'name'        => 'url_detail',
+					'description' => 'Single-URL detail incl. aggregate flame data.',
+					'args'        => [
+						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				$parsed = Command_Args::parse( $args );
+				$opts   = $parsed['options'];
+				$hash   = $parsed['positional'][0] ?? '';
+				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
+					throw new \RuntimeException( 'invalid hash format' );
+				}
+
+				$index = self::load_index();
+				$stats = null;
+				foreach ( $index as $entry ) {
+					if ( ( $entry['hash'] ?? '' ) === $hash ) {
+						$stats = [
+							'hash'         => $hash,
+							'url'          => $entry['url'] ?? '',
+							'count'        => $entry['count'] ?? 0,
+							'avg_ms'       => $entry['avg_ms'] ?? 0,
+							'min_ms'       => $entry['min_ms'] ?? 0,
+							'max_ms'       => $entry['max_ms'] ?? 0,
+							'p50_ms'       => $entry['p50_ms'] ?? 0,
+							'p95_ms'       => $entry['p95_ms'] ?? 0,
+							'p99_ms'       => $entry['p99_ms'] ?? 0,
+							'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
+							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
+							'last_updated' => $entry['last_updated'] ?? 0,
+							// Per-URL time series (consumed by UrlDetailView +
+							// urlRequestsPerSecond). Matches legacy
+							// PerfUrlsController::build_url_time_series.
+							'time_series'  => self::build_url_time_series( $hash ),
+						];
+						break;
+					}
+				}
+				if ( null === $stats ) {
+					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
+				}
+
+				$aggregate = self::find_url_aggregate( $hash );
+				$flame     = $aggregate['flame']
+					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
+
+				$payload = [
+					'stats'              => $stats,
+					'requests'           => self::find_recent_requests_for_url( $hash ),
+					'aggregate_flame'    => $flame,
+					'aggregate_profiles' => $aggregate['profiles'] ?? null,
+					'last_modified'      => $aggregate['last_modified'] ?? 0,
+				];
+
+				$breakdown = (string) ( $opts['breakdown'] ?? '' );
+				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
+					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown );
+				}
+
+				if ( self::flag( $opts, 'categories' ) ) {
+					$payload['category_time_series'] = self::merge_url_categories( $hash );
+				}
+
+				return $payload;
+					},
+				],
+				[
+					'name'        => 'request_search',
+					'description' => 'Locate a request by rid across partitions.',
+					'args'        => [
+						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				$rid = Command_Args::parse( $args )['positional'][0] ?? '';
+				if ( '' === $rid ) {
+					throw new \RuntimeException( 'rid required' );
+				}
+
+				$config         = RuntimeConfig::load_config();
+				$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
+				$base_dir       = RuntimeConfig::get_base_directory();
+				$log_base       = $base_dir . '/logs';
+				$scanned        = 0;
+
+				for ( $p = 0; $p < $num_partitions; $p++ ) {
+					$found = self::find_request_index_entry( $log_base, $p, $rid, $scanned );
+					if ( null !== $found ) {
+						return $found;
+					}
+					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
+						break;
+					}
+				}
+
+				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+					},
+				],
+				[
+					'name'        => 'request_detail',
+					'description' => 'Full request + flame data for a known {rid, partition}.',
+					'args'        => [
+						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				$parsed = Command_Args::parse( $args );
+				$rid    = $parsed['positional'][0] ?? '';
+				if ( '' === $rid ) {
+					throw new \RuntimeException( 'rid required' );
+				}
+				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
+
+				$config         = RuntimeConfig::load_config();
+				$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
+				$base_dir       = RuntimeConfig::get_base_directory();
+				$log_base       = $base_dir . '/logs';
+
+				if ( $partition < 0 || $partition >= $num_partitions ) {
+					throw new \RuntimeException( 'invalid partition' );
+				}
+
+				$result = self::find_request_in_partition( $log_base, $partition, $rid, $num_partitions );
+				if ( null === $result ) {
+					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+				}
+				return $result;
+					},
+				],
+				[
+					'name'        => 'timing',
+					'description' => 'Merged hourly timing buckets across partitions.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerformanceController::get_timing — merged
+				// hourly buckets across partitions. The legacy "data + meta"
+				// wrapper is dropped (REST artifact); the interpreter returns the inner
+				// payload directly.
+				return [
+					'time_series' => self::merge_hourly_across_partitions(),
+				];
+					},
+				],
+				[
+					'name'        => 'dashboard',
+					'description' => 'Overview payload + full URL index in one round-trip.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerformanceController::get_dashboard:
+				// nest the overview payload alongside the full URL index so
+				// the dashboard tree fans in with one round-trip. `load_index`
+				// is the heavy memcache fan-out — share it across both keys.
+				$index = self::load_index();
+				return [
+					'overview' => self::build_overview_payload( $index ),
+					'urls'     => $index,
+				];
+					},
+				],
+				[
+					'name'        => 'hooks_registered',
+					'description' => 'Registered hooks grouped by category.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfHooksController::get_registered_hooks.
+				// The legacy controller also returned `total_hooks` as the sum
+				// of all category buckets; recomputing here keeps the contract
+				// identical without trusting the categorizer to sum for us.
+				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
+				$total       = 0;
+				foreach ( $by_category as $list ) {
+					$total += \is_array( $list ) ? \count( $list ) : 0;
+				}
+				return [
+					'total_hooks'       => $total,
+					'categories'        => Hook_Categorizer::get_categories(),
+					'hooks_by_category' => $by_category,
+				];
+					},
+				],
+				[
+					'name'        => 'hooks_categories',
+					'description' => 'Hook categories + merged config.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfHooksController::get_hook_categories
+				// — same shape the React tree consumes.
+				return [
+					'categories' => Hook_Categorizer::get_categories(),
+					'config'     => Hook_Categorizer::get_merged_config(),
+				];
+					},
+				],
+				[
+					'name'        => 'hooks_available',
+					'description' => 'All runtime hooks for the picker UI.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
+				// Walks $wp_actions (fired hooks) and $wp_filter (registered
+				// but never-fired hooks), excludes Event Logger's own internal
+				// hooks (instrumenting them loops via Config::load_config),
+				// and removes anything the operator has marked as a custom
+				// event so the picker doesn't double-list it.
+				return [
+					'hooks' => self::collect_available_hooks(),
+				];
+					},
+				],
+				[
+					'name'        => 'hooks_configure',
+					'description' => 'Persist selected hooks / custom events.',
+					'args'        => [
+						[ 'name' => 'hooks', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				$opts          = Command_Args::parse( $args )['options'];
+				$hooks         = self::csv( $opts, 'hooks' );
+				$custom_events = self::csv( $opts, 'custom_events' );
+				$configured    = 0;
+
+				if ( [] !== $hooks ) {
+					$flat = [];
+					foreach ( $hooks as $h ) {
+						$h = \sanitize_text_field( $h );
+						if ( '' !== $h ) {
+							$flat[] = $h;
+						}
+					}
+					\update_option( 'newspack_event_logger_nodes_log_events', $flat, AppConfig::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
+					$configured += \count( $flat );
+				}
+
+				if ( [] !== $custom_events ) {
+					$assoc = [];
+					foreach ( $custom_events as $event ) {
+						$event = \sanitize_text_field( $event );
+						if ( '' !== $event ) {
+							$assoc[ $event ] = true;
+						}
+					}
+					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc, AppConfig::autoload_for( 'newspack_event_logger_nodes_custom_events' ) );
+					$configured += \count( $assoc );
+				}
+
+				// Application Config caches the merged custom_events / log_events;
+				// reset so the very next verb call (e.g. hooks_available) re-reads
+				// the freshly-written WP options.
+				AppConfig::reset();
+
+				return [
+					'success'          => true,
+					'hooks_configured' => $configured,
+				];
+					},
+				],
+				[
+					'name'        => 'config_get',
+					'description' => 'Read the nine perf-tuning options.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfConfigController::get_config, with one
+				// fix: the legacy controller called `RuntimeConfig::load_config()`
+				// which reads `newspack_nodes_` options — but the perf-tuning
+				// keys live under the `newspack_event_logger_nodes_` prefix on
+				// the application Config. AppConfig::load_config() is the right
+				// source. The legacy bug was masked because the legacy test
+				// asserted on key presence only, never on the actual values.
+				$cfg = AppConfig::load_config();
+				return [
+					'config' => [
+						'log_events'                  => $cfg['log_events']    ?? [],
+						'custom_events'               => $cfg['custom_events'] ?? [],
+						'log_urls'                    => $cfg['log_urls']      ?? [],
+						'skip_urls'                   => $cfg['skip_urls']     ?? [],
+						'auto_disable_threshold'      => self::to_int( $cfg['auto_disable_threshold']      ?? 0 ),
+						'auto_protect_time_threshold' => self::to_float( $cfg['auto_protect_time_threshold'] ?? 0.0 ),
+						'significant_events'          => $cfg['significant_events'] ?? [],
+						'log_memory'                  => ! empty( $cfg['log_memory'] ),
+						'flush_every_line'            => ! empty( $cfg['flush_every_line'] ),
+					],
+				];
+					},
+				],
+				[
+					'name'        => 'config_update',
+					'description' => 'Bulk-update the nine perf-tuning options.',
+					'args'        => [
+						[ 'name' => 'log_events', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'log_urls', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'skip_urls', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'auto_disable_threshold', 'type' => 'int', 'required' => false ],
+						[ 'name' => 'auto_protect_time_threshold', 'type' => 'float', 'required' => false ],
+						[ 'name' => 'significant_events', 'type' => 'json', 'required' => false ],
+						[ 'name' => 'log_memory', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'flush_every_line', 'type' => 'bool', 'required' => false ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfConfigController::update_config — the
+				// bulk write path for the nine perf-tuning options. Options absent
+				// from the args string are untouched (partial update). Unknown
+				// options are silently ignored to match the legacy whitelist sweep.
+				$opts    = Command_Args::parse( $args )['options'];
+				$updated = [];
+				foreach ( self::CONFIG_MAP as $param => $cfg ) {
+					// Only options actually present in the args string are applied;
+					// a missing `--param` means "leave that setting untouched".
+					if ( ! \array_key_exists( $param, $opts ) ) {
+						continue;
+					}
+					// *_events / *_urls arrive as comma-lists; bool flags resolve via
+					// flag() so `--param=0`/`--param=false` map to false; int/float
+					// hard-cast through coerce_config_value on the raw option string.
+					switch ( $cfg['type'] ) {
+						case 'array_assoc':
+						case 'array_bool':
+							$value = self::coerce_config_value( self::csv( $opts, $param ), $cfg['type'] );
+							break;
+						case 'bool':
+							$value = self::flag( $opts, $param );
+							break;
+						default:
+							$value = self::coerce_config_value( $opts[ $param ], $cfg['type'] );
+					}
+					\update_option( $cfg['option'], $value, AppConfig::autoload_for( $cfg['option'] ) );
+					$updated[] = $param;
+				}
+
+				if ( ! empty( $updated ) ) {
+					AppConfig::reset();
+				}
+
+				return [
+					'success' => true,
+					'updated' => $updated,
+				];
+					},
+				],
+				[
+					'name'        => 'settings_update',
+					'description' => 'Single-option perf setting write with sync guard.',
+					'args'        => [
+						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy PerfSettingsController::update_setting —
+				// single-option write path with the suppress_sync guard so a
+				// remotely-synced setting applied on a spoke doesn't bounce
+				// back as a re-sync (mirrors the inbound REST polarity). This
+				// `--option=<opt> --value="<v>"` grammar is the exact shape the
+				// hub→spoke forwarder emits, so it must not drift.
+				$opts   = Command_Args::parse( $args )['options'];
+				$option = (string) ( $opts['option'] ?? '' );
+				if ( '' === $option ) {
+					throw new \RuntimeException( 'option required' );
+				}
+				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
+					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
+				}
+				if ( ! \array_key_exists( 'value', $opts ) ) {
+					throw new \RuntimeException( 'value required' );
+				}
+
+				// The value rides the wire as a string; array-typed options carry
+				// it as a comma-list that the array sanitizer expects pre-split.
+				// Drop empty tokens so a cleared/empty value (`--value=""`, or the
+				// forwarder's empty list) yields [] not [''] (which would otherwise
+				// survive into add_action('') downstream).
+				$type     = self::SETTINGS_OPTIONS[ $option ];
+				$raw_value = true === $opts['value'] ? '' : $opts['value'];
+				$value    = 'array' === $type ? self::csv( [ 'v' => $raw_value ], 'v' ) : $raw_value;
+
+				$sanitized = self::sanitize_settings_value( $value, $type );
+				if ( null === $sanitized ) {
+					throw new \RuntimeException( 'invalid value for option' );
+				}
+
+				// suppress_sync guard + try/finally so the flag is restored on
+				// update_option failure. Autoload follows the central policy
+				// (Config::autoload_for): hot-path scalars autoloaded, large
+				// list options (log_events / custom_events) kept off the
+				// per-request alloptions blob.
+				Settings_Sync::suppress_sync( true );
+				try {
+					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
+				} finally {
+					Settings_Sync::suppress_sync( false );
+				}
+
+				AppConfig::reset();
+
+				return [
+					'option'  => $option,
+					'updated' => $ok,
+				];
+					},
+				],
+				[
+					'name'        => 'request_log_list',
+					'description' => 'Recent request list across partitions.',
+					'args'        => [
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 100 ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy RequestLogController::get_list.
+				// Limit clamped 1..1000 (default 100); fan out across
+				// partitions; sort by timestamp DESC; slice to limit.
+				$opts  = Command_Args::parse( $args )['options'];
+				$limit = isset( $opts['limit'] )
+					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $opts['limit'] ) )
+					: self::REQUEST_LIST_DEFAULT_LIMIT;
+
+				[ $entries, $scanned ] = self::collect_request_list( $limit );
+
+				\usort( $entries, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
+				$entries = \array_slice( $entries, 0, $limit );
+
+				return [
+					'data' => $entries,
+					'meta' => [
+						'limit'   => $limit,
+						'scanned' => $scanned,
+					],
+				];
+					},
+				],
+				[
+					'name'        => 'request_log_detail',
+					'description' => 'Full request envelope for one request id.',
+					'args'        => [
+						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Lifted from legacy RequestLogController::get_detail.
+				// Empty id is a real usage error → throw so the central
+				// catch surfaces TM_COMMAND|TM_ERROR. Unknown-but-non-empty
+				// id returns the legacy stub-compatible empty-entries shape
+				// (NOT 404 — the React tree polls these and `expected to
+				// exist soon` is a normal state).
+				$rid = Command_Args::parse( $args )['positional'][0] ?? '';
+				if ( '' === $rid ) {
+					throw new \RuntimeException( 'id required' );
+				}
+
+				[ $result, $scanned ] = self::find_request_envelope( $rid );
+
+				if ( null === $result ) {
+					return [
+						'data' => [
+							'request_id' => $rid,
+							'entries'    => [],
+						],
+						'meta' => [ 'scanned' => $scanned ],
+					];
+				}
+
+				// Normalize the entries shape — React tree expects `entries[]`.
+				// Body with no `events` key is wrapped as a single entry; the
+				// _partition marker lets the tree key on partition.
+				$entries = $result['events'] ?? [ $result ];
+				return [
+					'data' => [
+						'request_id' => $rid,
+						'entries'    => $entries,
+					],
+					'meta' => [ 'scanned' => $scanned ],
+				];
+					},
+				],
+			],
+		];
 	}
 }

@@ -139,6 +139,15 @@ class Remote_Source_Node extends Node {
 	}
 
 	/**
+	 * Node contract. RemoteSource is a *source* — like Tail, it generates
+	 * messages from an external stream and pushes them down its sink. It
+	 * doesn't accept upstream messages.
+	 */
+	public function fill( array &$message ): void {
+		++$this->counter;
+	}
+
+	/**
 	 * Programmatic configuration entry point for StreamMerger. Sets every
 	 * field directly (so middle-empty values round-trip correctly) and
 	 * writes a redacted summary string into `$this->arguments` so
@@ -179,15 +188,6 @@ class Remote_Source_Node extends Node {
 			$this->remote_topic,
 			(string) $this->partition,
 		] );
-	}
-
-	/**
-	 * Node contract. RemoteSource is a *source* — like Tail, it generates
-	 * messages from an external stream and pushes them down its sink. It
-	 * doesn't accept upstream messages.
-	 */
-	public function fill( array &$message ): void {
-		++$this->counter;
 	}
 
 	// dump_node() secret redaction is handled by the base Node (auth_password / auth_token match its patterns).

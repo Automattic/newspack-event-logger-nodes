@@ -123,6 +123,152 @@ class Stream_Merger_Node extends Timer_Node {
 		return $result;
 	}
 
+	// =========================================================================
+	// Node interface
+	// =========================================================================
+
+	public function fill( array &$message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
+		}
+		++$this->counter;
+		/** @var int $type */
+		$type = $message[ Message::TYPE ];
+		if ( $type & Message::TM_REQUEST ) {
+			$this->handle_request( $message );
+			return;
+		}
+	}
+
+	// =========================================================================
+	// Periodic tick: walk children + commit offsetlog.
+	// =========================================================================
+
+	// fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
+	// each TIMER tick. Drives every remote's poll + the debounced offsetlog commit.
+	public function fire(): void {
+		foreach ( $this->remote_nodes as $server_id => $remote ) {
+			if ( '__test__' === $server_id ) {
+				continue;
+			}
+			$remote->tick();
+		}
+		$this->maybe_commit();
+	}
+
+	/**
+	 * @param array<int, mixed> $message
+	 */
+	private function handle_request( array $message ): void {
+		if ( null === $this->sink ) {
+			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
+		}
+		/** @var int|float|string|bool|null $raw_value */
+		$raw_value = $message[ Message::VALUE ];
+		$value     = (string) $raw_value;
+		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
+
+		if ( 'GET_REMOTES' === $verb ) {
+			$remotes = [];
+			foreach ( $this->remote_nodes as $server_id => $remote ) {
+				$remotes[ $server_id ] = $remote->current_status();
+			}
+			$payload = [
+				'count'   => \count( $remotes ),
+				'remotes' => $remotes,
+			];
+		} else {
+			$payload = [ 'error' => "unknown request verb: {$verb}" ];
+		}
+
+		$reply                   = Message::new_message();
+		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
+		$reply[ Message::FROM ]  = $this->name;
+		$reply[ Message::TO ]    = $message[ Message::FROM ];
+		$reply[ Message::ID ]    = $message[ Message::ID ];
+		$reply[ Message::KEY ]   = $message[ Message::KEY ];
+		$reply[ Message::VALUE ] = $payload;
+		$this->sink->fill( $reply );
+	}
+
+	private function maybe_commit(): void {
+		$now = Core::$now;
+		if ( $now - $this->last_commit_time < self::COMMIT_INTERVAL_S ) {
+			return;
+		}
+		$this->commit_all();
+		$this->last_commit_time = $now;
+	}
+
+	/**
+	 * Write a single JSONL line to the offsetlog covering all remotes.
+	 *
+	 * Format: TM_STRUCT envelope with VALUE = `{ "<server_id>": {"seg":N,"off":M}, ..., "_ts":t }`
+	 * — one decode per restore.
+	 */
+	public function commit_all(): void {
+		if ( empty( $this->remote_nodes ) ) {
+			return;
+		}
+		$offsetlog = $this->ensure_offsetlog();
+		if ( null === $offsetlog ) {
+			return;
+		}
+		$entry = [];
+		foreach ( $this->remote_nodes as $server_id => $remote ) {
+			if ( '__test__' === $server_id ) {
+				continue;
+			}
+			$pos = $remote->position();
+			$entry[ $server_id ] = [
+				'seg' => $pos['segment_id'],
+				'off' => $pos['offset'],
+			];
+		}
+		if ( empty( $entry ) ) {
+			return;
+		}
+		$entry['_ts'] = (int) Core::$now;
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::VALUE ]     = $entry;
+		$offsetlog->fill( $msg );
+		$offsetlog->flush();
+	}
+
+	private function ensure_offsetlog(): ?Partition_Node {
+		if ( null !== $this->offsetlog ) {
+			return $this->offsetlog;
+		}
+		$offsets_dir = Config::get_offsets_directory();
+		if ( '' === $offsets_dir ) {
+			return null;
+		}
+		$dir = "{$offsets_dir}/aggregator.p{$this->partition}";
+		if ( ! \is_dir( $dir ) ) {
+			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
+			@\mkdir( $dir, 0755, true );
+		}
+		// Offsetlog is a single-partition Partition: the merger's spoke
+		// partition is encoded in the dir name (`aggregator.p{N}`), so the
+		// inner Partition's own partition axis is always 0. Matches the
+		// pattern Consumer uses for its offsetlog.
+		$this->offsetlog = new Partition_Node();
+		// Named, patron-linked plumbing sibling (Tachikoma make_node parity):
+		// `{merger}:offsetlog`, falling back to the stable partition-dir basename
+		// when the merger is unnamed. patron() hides it from the canvas.
+		$prefix = '' !== $this->name ? $this->name : "aggregator.p{$this->partition}";
+		$this->offsetlog->name( "{$prefix}:offsetlog" );
+		$this->offsetlog->patron( $this );
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $this->offsetlog->sink() && null !== $ci ) {
+			$this->offsetlog->sink( $ci );
+		}
+		$this->offsetlog->arguments( "{$dir} 0" );
+		return $this->offsetlog;
+	}
+
 	/**
 	 * Pre-check the `{name}:health-check` sibling name for collisions before the base
 	 * commits a rename. HealthCheck is application-specific; the parent handles the
@@ -269,58 +415,6 @@ class Stream_Merger_Node extends Timer_Node {
 			$out .= "cmd {$this->name}:config set_require_https false\n";
 		}
 		return $out;
-	}
-
-	// =========================================================================
-	// Node interface
-	// =========================================================================
-
-	public function fill( array &$message ): void {
-		if ( null === $this->sink ) {
-			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
-		}
-		++$this->counter;
-		/** @var int $type */
-		$type = $message[ Message::TYPE ];
-		if ( $type & Message::TM_REQUEST ) {
-			$this->handle_request( $message );
-			return;
-		}
-	}
-
-	/**
-	 * @param array<int, mixed> $message
-	 */
-	private function handle_request( array $message ): void {
-		if ( null === $this->sink ) {
-			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
-		}
-		/** @var int|float|string|bool|null $raw_value */
-		$raw_value = $message[ Message::VALUE ];
-		$value     = (string) $raw_value;
-		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
-
-		if ( 'GET_REMOTES' === $verb ) {
-			$remotes = [];
-			foreach ( $this->remote_nodes as $server_id => $remote ) {
-				$remotes[ $server_id ] = $remote->current_status();
-			}
-			$payload = [
-				'count'   => \count( $remotes ),
-				'remotes' => $remotes,
-			];
-		} else {
-			$payload = [ 'error' => "unknown request verb: {$verb}" ];
-		}
-
-		$reply                   = Message::new_message();
-		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$reply[ Message::FROM ]  = $this->name;
-		$reply[ Message::TO ]    = $message[ Message::FROM ];
-		$reply[ Message::ID ]    = $message[ Message::ID ];
-		$reply[ Message::KEY ]   = $message[ Message::KEY ];
-		$reply[ Message::VALUE ] = $payload;
-		$this->sink->fill( $reply );
 	}
 
 	public function start_periodic_tick(): void {
@@ -571,68 +665,6 @@ class Stream_Merger_Node extends Timer_Node {
 		$this->remote_nodes['__test__']->process_sse_chunk( $chunk );
 	}
 
-	// =========================================================================
-	// Periodic tick: walk children + commit offsetlog.
-	// =========================================================================
-
-	// fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
-	// each TIMER tick. Drives every remote's poll + the debounced offsetlog commit.
-	public function fire(): void {
-		foreach ( $this->remote_nodes as $server_id => $remote ) {
-			if ( '__test__' === $server_id ) {
-				continue;
-			}
-			$remote->tick();
-		}
-		$this->maybe_commit();
-	}
-
-	private function maybe_commit(): void {
-		$now = Core::$now;
-		if ( $now - $this->last_commit_time < self::COMMIT_INTERVAL_S ) {
-			return;
-		}
-		$this->commit_all();
-		$this->last_commit_time = $now;
-	}
-
-	/**
-	 * Write a single JSONL line to the offsetlog covering all remotes.
-	 *
-	 * Format: TM_STRUCT envelope with VALUE = `{ "<server_id>": {"seg":N,"off":M}, ..., "_ts":t }`
-	 * — one decode per restore.
-	 */
-	public function commit_all(): void {
-		if ( empty( $this->remote_nodes ) ) {
-			return;
-		}
-		$offsetlog = $this->ensure_offsetlog();
-		if ( null === $offsetlog ) {
-			return;
-		}
-		$entry = [];
-		foreach ( $this->remote_nodes as $server_id => $remote ) {
-			if ( '__test__' === $server_id ) {
-				continue;
-			}
-			$pos = $remote->position();
-			$entry[ $server_id ] = [
-				'seg' => $pos['segment_id'],
-				'off' => $pos['offset'],
-			];
-		}
-		if ( empty( $entry ) ) {
-			return;
-		}
-		$entry['_ts'] = (int) Core::$now;
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::VALUE ]     = $entry;
-		$offsetlog->fill( $msg );
-		$offsetlog->flush();
-	}
-
 	/**
 	 * Read the offsetlog and push the latest position for $server_id into
 	 * $remote BEFORE its first connect() — used by add_remote().
@@ -677,38 +709,6 @@ class Stream_Merger_Node extends Timer_Node {
 			(int) $raw_seg,
 			(int) $raw_off
 		);
-	}
-
-	private function ensure_offsetlog(): ?Partition_Node {
-		if ( null !== $this->offsetlog ) {
-			return $this->offsetlog;
-		}
-		$offsets_dir = Config::get_offsets_directory();
-		if ( '' === $offsets_dir ) {
-			return null;
-		}
-		$dir = "{$offsets_dir}/aggregator.p{$this->partition}";
-		if ( ! \is_dir( $dir ) ) {
-			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
-			@\mkdir( $dir, 0755, true );
-		}
-		// Offsetlog is a single-partition Partition: the merger's spoke
-		// partition is encoded in the dir name (`aggregator.p{N}`), so the
-		// inner Partition's own partition axis is always 0. Matches the
-		// pattern Consumer uses for its offsetlog.
-		$this->offsetlog = new Partition_Node();
-		// Named, patron-linked plumbing sibling (Tachikoma make_node parity):
-		// `{merger}:offsetlog`, falling back to the stable partition-dir basename
-		// when the merger is unnamed. patron() hides it from the canvas.
-		$prefix = '' !== $this->name ? $this->name : "aggregator.p{$this->partition}";
-		$this->offsetlog->name( "{$prefix}:offsetlog" );
-		$this->offsetlog->patron( $this );
-		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-		if ( null === $this->offsetlog->sink() && null !== $ci ) {
-			$this->offsetlog->sink( $ci );
-		}
-		$this->offsetlog->arguments( "{$dir} 0" );
-		return $this->offsetlog;
 	}
 
 	// =========================================================================

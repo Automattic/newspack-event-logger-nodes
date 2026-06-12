@@ -117,6 +117,43 @@ class Auto_Tuner_Node extends Node {
 		$this->persist( 'newspack_event_logger_nodes_log_events', $updated );
 	}
 
+	// --- Persist + fan-out -----------------------------------------------------
+
+	/**
+	 * Remote fan-out (when the aggregator is on) + local update_option (with
+	 * SettingsSync's static listener suppressed so the local write doesn't
+	 * re-queue what we just queued).
+	 *
+	 * @param mixed $value New option value to persist.
+	 */
+	private function persist( string $option, $value ): void {
+		// Always queue the remote fan-out job. AutoTuner only touches
+		// PERF_TUNING_OPTIONS (log_events, custom_events,
+		// significant_events), which the Performance_CI_Node
+		// `settings_update` verb owns — not /settings. Without an
+		// aggregator topology + enabled remotes, the queued job has
+		// no consumer (silent no-op).
+		Settings_Sync::queue_job(
+			'remote_manager',
+			[
+				'action'    => 'sync_setting',
+				'option'    => $option,
+				'value'     => $value,
+				'endpoint'  => Settings_Sync::PERF_ENDPOINT,
+				'queued_at' => \time(),
+			]
+		);
+		if ( ! \function_exists( 'update_option' ) ) {
+			return;
+		}
+		Settings_Sync::suppress_sync( true );
+		try {
+			\update_option( $option, $value, Config::autoload_for( $option ) );
+		} finally {
+			Settings_Sync::suppress_sync( false );
+		}
+	}
+
 	/**
 	 * @param array<string, mixed> $context
 	 * @param array<string, mixed> $events
@@ -157,43 +194,6 @@ class Auto_Tuner_Node extends Node {
 		$merged   = \array_values( \array_unique( $combined ) );
 
 		$this->persist( 'newspack_event_logger_nodes_significant_events', $merged );
-	}
-
-	// --- Persist + fan-out -----------------------------------------------------
-
-	/**
-	 * Remote fan-out (when the aggregator is on) + local update_option (with
-	 * SettingsSync's static listener suppressed so the local write doesn't
-	 * re-queue what we just queued).
-	 *
-	 * @param mixed $value New option value to persist.
-	 */
-	private function persist( string $option, $value ): void {
-		// Always queue the remote fan-out job. AutoTuner only touches
-		// PERF_TUNING_OPTIONS (log_events, custom_events,
-		// significant_events), which the Performance_CI_Node
-		// `settings_update` verb owns — not /settings. Without an
-		// aggregator topology + enabled remotes, the queued job has
-		// no consumer (silent no-op).
-		Settings_Sync::queue_job(
-			'remote_manager',
-			[
-				'action'    => 'sync_setting',
-				'option'    => $option,
-				'value'     => $value,
-				'endpoint'  => Settings_Sync::PERF_ENDPOINT,
-				'queued_at' => \time(),
-			]
-		);
-		if ( ! \function_exists( 'update_option' ) ) {
-			return;
-		}
-		Settings_Sync::suppress_sync( true );
-		try {
-			\update_option( $option, $value, Config::autoload_for( $option ) );
-		} finally {
-			Settings_Sync::suppress_sync( false );
-		}
 	}
 
 	public static function node_schema(): array {

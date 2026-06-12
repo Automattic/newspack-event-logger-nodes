@@ -20,18 +20,6 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * `useNodeState('servers:view','view')`. Mirrors aggregator:view.
  */
 export class ServersViewNode extends Node {
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description: 'Owns the Configured-Servers admin view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
-		};
-	}
-
 	constructor() {
 		super();
 		this.model = {
@@ -86,16 +74,6 @@ export class ServersViewNode extends Node {
 		}
 	}
 
-	// Turn the raw `{ id:public_shape }` map into the render model.
-	_applyServers( servers ) {
-		this.model = {
-			...this.model,
-			servers: Object.values( servers || {} ),
-			loading: false,
-			error: null,
-		};
-	}
-
 	// Store the error + clear loading; keep prior servers.
 	_applyError( payload ) {
 		this.model = {
@@ -107,6 +85,16 @@ export class ServersViewNode extends Node {
 
 	_publish() {
 		this.setState( 'view', this.model );
+	}
+
+	// Turn the raw `{ id:public_shape }` map into the render model.
+	_applyServers( servers ) {
+		this.model = {
+			...this.model,
+			servers: Object.values( servers || {} ),
+			loading: false,
+			error: null,
+		};
 	}
 
 	// Reject every in-flight pending promise before the node is removed, so a
@@ -121,6 +109,17 @@ export class ServersViewNode extends Node {
 		}
 		this.pending.clear();
 		super.removeNode();
+	}
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Configured-Servers admin view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
 	}
 }
 

@@ -23,18 +23,6 @@ import {
  * consumed by `useNodeState('aggregator:view','view')`.
  */
 export class AggregatorViewNode extends Node {
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description: 'Owns the Aggregator Status view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
-		};
-	}
-
 	constructor() {
 		super();
 		this.model = {
@@ -77,6 +65,19 @@ export class AggregatorViewNode extends Node {
 		this._publish();
 	}
 
+	// Store the error + clear loading; keep prior servers (old catch behavior).
+	_applyError( error ) {
+		this.model = {
+			...this.model,
+			error,
+			loading: false,
+		};
+	}
+
+	_publish() {
+		this.setState( 'view', this.model );
+	}
+
 	// Turn the raw status map into the render model (matches the old fetchStatus
 	// success path + the render-time connected-count computation).
 	_applyStatus( status, now ) {
@@ -98,17 +99,15 @@ export class AggregatorViewNode extends Node {
 			lastRefresh: Date.now(),
 		};
 	}
-
-	// Store the error + clear loading; keep prior servers (old catch behavior).
-	_applyError( error ) {
-		this.model = {
-			...this.model,
-			error,
-			loading: false,
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Aggregator Status view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
 		};
-	}
-
-	_publish() {
-		this.setState( 'view', this.model );
 	}
 }

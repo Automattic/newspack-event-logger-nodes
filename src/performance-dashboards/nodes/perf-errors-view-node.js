@@ -35,18 +35,6 @@ const MAX_M_LENGTH = 1000;
  * Buffer + entry-enrichment logic migrated verbatim from `ErrorLog.js`.
  */
 export class PerfErrorsViewNode extends Node {
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description: 'Owns the Error Log view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
-		};
-	}
-
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
@@ -68,52 +56,6 @@ export class PerfErrorsViewNode extends Node {
 		this._publish();
 	}
 
-	// Number of live entries in the ring (O(1)).
-	get entriesCount() {
-		return this._count;
-	}
-
-	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
-	// The virtual list reads only its on-screen window through this — never the
-	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
-	entryAt( i ) {
-		if ( i < 0 || i >= this._count ) {
-			return undefined;
-		}
-		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
-		return this._ring[ idx ];
-	}
-
-	// The whole buffer materialized newest-first — O(n), for the filter path and
-	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
-	// graph clear) reseeds the ring from the given newest-first array.
-	get entries() {
-		const out = new Array( this._count );
-		for ( let i = 0; i < this._count; i++ ) {
-			out[ i ] = this.entryAt( i );
-		}
-		return out;
-	}
-
-	set entries( value ) {
-		this._ring = [];
-		this._head = 0;
-		this._count = 0;
-		if ( Array.isArray( value ) ) {
-			// Seed oldest-first so the newest entry lands last (at head-1).
-			for ( let i = value.length - 1; i >= 0; i-- ) {
-				this._writeEntry( value[ i ] );
-			}
-		}
-	}
-
-	// Write one entry into the ring at the head and advance, capping at maxEntries.
-	_writeEntry( entry ) {
-		this._ring[ this._head ] = entry;
-		this._head = ( this._head + 1 ) % this.maxEntries;
-		this._count = Math.min( this._count + 1, this.maxEntries );
-	}
-
 	fill( message ) {
 		const value = message[ VALUE ];
 		if ( value && typeof value === 'object' && value.action ) {
@@ -127,6 +69,37 @@ export class PerfErrorsViewNode extends Node {
 			// path and deliberately does NOT publish.
 			this._appendEnvelope( message );
 		}
+	}
+
+	_control( value ) {
+		if ( 'pause' === value.action ) {
+			this.paused = value.paused;
+		} else if ( 'clear' === value.action ) {
+			this._clear();
+		} else if ( 'connection' === value.action ) {
+			this.connectionError = value.connectionError;
+		}
+	}
+
+	// Clear buffer + counter + RPS window (matches handleClear in ErrorLog).
+	_clear() {
+		this.entries = [];
+		this.entryCounter = 0;
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
+		this.rps = 0;
+	}
+
+	// Publish ONLY the low-frequency view model. `entries` / `rps` are the
+	// high-frequency buffer the rAF reads off the node directly. `lastEventTime`
+	// is also rAF-read off the node; publishing it lets the banner / empty-state /
+	// "Xs ago" re-render at low frequency.
+	_publish() {
+		this.setState( 'view', {
+			paused: this.paused,
+			connectionError: this.connectionError,
+			lastEventTime: this.lastEventTime,
+		} );
 	}
 
 	// A raw stream envelope: KEY=rid, VALUE={ts, k, m, n}. Validate + enrich +
@@ -170,23 +143,11 @@ export class PerfErrorsViewNode extends Node {
 		this._updateRequestsPerSecond( 1 );
 	}
 
-	_control( value ) {
-		if ( 'pause' === value.action ) {
-			this.paused = value.paused;
-		} else if ( 'clear' === value.action ) {
-			this._clear();
-		} else if ( 'connection' === value.action ) {
-			this.connectionError = value.connectionError;
-		}
-	}
-
-	// Clear buffer + counter + RPS window (matches handleClear in ErrorLog).
-	_clear() {
-		this.entries = [];
-		this.entryCounter = 0;
-		this.rpsBuckets = [];
-		this.rpsWindowTotal = 0;
-		this.rps = 0;
+	// Write one entry into the ring at the head and advance, capping at maxEntries.
+	_writeEntry( entry ) {
+		this._ring[ this._head ] = entry;
+		this._head = ( this._head + 1 ) % this.maxEntries;
+		this._count = Math.min( this._count + 1, this.maxEntries );
 	}
 
 	// Errors per second over a 10s window. Counts are aggregated into per-second
@@ -215,15 +176,53 @@ export class PerfErrorsViewNode extends Node {
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
-	// Publish ONLY the low-frequency view model. `entries` / `rps` are the
-	// high-frequency buffer the rAF reads off the node directly. `lastEventTime`
-	// is also rAF-read off the node; publishing it lets the banner / empty-state /
-	// "Xs ago" re-render at low frequency.
-	_publish() {
-		this.setState( 'view', {
-			paused: this.paused,
-			connectionError: this.connectionError,
-			lastEventTime: this.lastEventTime,
-		} );
+	// Number of live entries in the ring (O(1)).
+	get entriesCount() {
+		return this._count;
+	}
+
+	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
+	// The virtual list reads only its on-screen window through this — never the
+	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
+	entryAt( i ) {
+		if ( i < 0 || i >= this._count ) {
+			return undefined;
+		}
+		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
+		return this._ring[ idx ];
+	}
+
+	// The whole buffer materialized newest-first — O(n), for the filter path and
+	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
+	// graph clear) reseeds the ring from the given newest-first array.
+	get entries() {
+		const out = new Array( this._count );
+		for ( let i = 0; i < this._count; i++ ) {
+			out[ i ] = this.entryAt( i );
+		}
+		return out;
+	}
+
+	set entries( value ) {
+		this._ring = [];
+		this._head = 0;
+		this._count = 0;
+		if ( Array.isArray( value ) ) {
+			// Seed oldest-first so the newest entry lands last (at head-1).
+			for ( let i = value.length - 1; i >= 0; i-- ) {
+				this._writeEntry( value[ i ] );
+			}
+		}
+	}
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Error Log view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
 	}
 }

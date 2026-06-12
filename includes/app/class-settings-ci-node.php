@@ -65,6 +65,50 @@ class Settings_CI_Node extends Service_CI_Node {
 	];
 
 	/**
+	 * Build the canonical four-key snapshot from the substrate Config.
+	 *
+	 * @return array{num_partitions:int,num_segments:int,segment_size:int,max_lifespan:int}
+	 */
+	private static function snapshot(): array {
+		$config = RuntimeConfig::load_config();
+		/** @var int|float|string|bool|null $num_partitions */
+		$num_partitions = $config['num_partitions'] ?? 0;
+		/** @var int|float|string|bool|null $num_segments */
+		$num_segments = $config['num_segments'] ?? 0;
+		/** @var int|float|string|bool|null $segment_size */
+		$segment_size = $config['segment_size'] ?? 0;
+		/** @var int|float|string|bool|null $max_lifespan */
+		$max_lifespan = $config['max_lifespan'] ?? 0;
+		return [
+			'num_partitions' => (int) $num_partitions,
+			'num_segments'   => (int) $num_segments,
+			'segment_size'   => (int) $segment_size,
+			'max_lifespan'   => (int) $max_lifespan,
+		];
+	}
+
+	/**
+	 * Type-coerce + bounds-check. Value-equivalent with legacy
+	 * SettingsController::sanitize_value (int branch only — the legacy
+	 * whitelist is int-only).
+	 *
+	 * @param mixed $value Raw input.
+	 * @param int   $min   Per-key minimum (inclusive).
+	 * @param int   $max   Shared upper bound (inclusive).
+	 * @return int|null Sanitized int, or null if rejected.
+	 */
+	private static function sanitize_int( mixed $value, int $min, int $max ): ?int {
+		if ( ! \is_numeric( $value ) ) {
+			return null;
+		}
+		$int = (int) $value;
+		if ( $int < $min || $int > $max ) {
+			return null;
+		}
+		return $int;
+	}
+
+	/**
 	 * Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
 	 * its `handler`. The inherited Service_CI_Node ctor builds the commands
 	 * table from this schema. Configuration-only verbs; no service dependencies.
@@ -124,49 +168,5 @@ class Settings_CI_Node extends Service_CI_Node {
 				],
 			],
 		];
-	}
-
-	/**
-	 * Build the canonical four-key snapshot from the substrate Config.
-	 *
-	 * @return array{num_partitions:int,num_segments:int,segment_size:int,max_lifespan:int}
-	 */
-	private static function snapshot(): array {
-		$config = RuntimeConfig::load_config();
-		/** @var int|float|string|bool|null $num_partitions */
-		$num_partitions = $config['num_partitions'] ?? 0;
-		/** @var int|float|string|bool|null $num_segments */
-		$num_segments = $config['num_segments'] ?? 0;
-		/** @var int|float|string|bool|null $segment_size */
-		$segment_size = $config['segment_size'] ?? 0;
-		/** @var int|float|string|bool|null $max_lifespan */
-		$max_lifespan = $config['max_lifespan'] ?? 0;
-		return [
-			'num_partitions' => (int) $num_partitions,
-			'num_segments'   => (int) $num_segments,
-			'segment_size'   => (int) $segment_size,
-			'max_lifespan'   => (int) $max_lifespan,
-		];
-	}
-
-	/**
-	 * Type-coerce + bounds-check. Value-equivalent with legacy
-	 * SettingsController::sanitize_value (int branch only — the legacy
-	 * whitelist is int-only).
-	 *
-	 * @param mixed $value Raw input.
-	 * @param int   $min   Per-key minimum (inclusive).
-	 * @param int   $max   Shared upper bound (inclusive).
-	 * @return int|null Sanitized int, or null if rejected.
-	 */
-	private static function sanitize_int( mixed $value, int $min, int $max ): ?int {
-		if ( ! \is_numeric( $value ) ) {
-			return null;
-		}
-		$int = (int) $value;
-		if ( $int < $min || $int > $max ) {
-			return null;
-		}
-		return $int;
 	}
 }
