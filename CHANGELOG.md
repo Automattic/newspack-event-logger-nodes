@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-12
+
 ### Changed
 
 - **Worker requests get their own `{base_url}?{worker_type}` per-URL stats row, with timing, and are fully excluded from global aggregates.** `Request_Builder_Node` now captures the `NEWSPACK_NODES_WORKER_TYPE` value (sanitized `[a-z0-9_-]`) into `worker_type`, and `emit_request()` rewrites `$request->url` to `{base}?{worker_type}` once (so the index line, compact summary, and stats all read the same effective URL) instead of colliding worker hits onto the real URL. `url_hash()` no longer strips at `?` (callers already strip the real query upstream; the only surviving `?` is the intentional worker marker), so the synthetic row hashes distinctly. `Flame_Builder_Node::accumulate_all_stats()` splits its single timing gate into `$record_timing` (per-URL flame / url_stats / url_dim / cat_by_url keep worker timing) and `$count_global` (hourly, dimensional global + per-server, leaderboard, categories drop workers entirely).
