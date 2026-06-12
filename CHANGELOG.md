@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Worker-output partitions drop the cross-process write lock for `void_warranty`.** The `requests` / `flames` / `jobs` partitions (large request records exceed PIPE_BUF) now opt into the substrate's lock-free `void_warranty` instead of `allow_large_writes`. Each is written by exactly one worker fleet, and the substrate now refuses to enable or spawn a topology set where two fleets would write the same partition (write-conflict detection at the admin sanitizer + supervisor), so the per-partition exclusivity lock is redundant — its sole job was guarding against a second writer that enforcement now prevents. Requires `newspack-nodes` with `void_warranty` + write-conflict enforcement.
+
 ### Fixed
 
 - **Stalled in-flight requests now time out on idle / low-traffic partitions.** `Request_Builder_Node` is now a `Timer_Node` that hitchhikes the Router's 1s TIMER (registered in `arguments()`) and rotates its in-flight cache on each tick, so a request that never completes is evicted and written to `requests.log` with `error_status='T'` even when no further firehose lines arrive to drive rotation via `fill()`. The timed-out request is also emitted to `completed:tee`, so the gyroscope reaps it. `Request_Flight_Node` likewise fires via the Router hitchhike — its `fire()` replaces the old `fire_cb()` override, and setting its in-flight target now *is* what enables snapshots (a non-empty target starts the hitchhike, an empty one stops it); the snapshot cadence is the Router's tick. Previously an idle request-builder never rotated, so a stalled request sat invisible: absent from `requests.log`, unclickable, and missing from "Show Errors". (The separate worker-respawn-boundary loss is addressed by the offsetlog snapshot below.)

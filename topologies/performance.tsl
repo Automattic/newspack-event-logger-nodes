@@ -18,9 +18,9 @@ cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
 cmd flame-builder:config set_is_hub <eln:is_hub>
 cmd flame-builder:config set_significant_events <eln:significant_events_csv>
-cmd requests:partition:config allow_large_writes
+cmd requests:partition:config void_warranty
 cmd requests:partition:config with_index request-index
-cmd flames:partition:config allow_large_writes
+cmd flames:partition:config void_warranty
 cmd flames:partition:config with_index flame-index
 connect_node firehose:consumer request-builder
 connect_node request-builder requests:partition
