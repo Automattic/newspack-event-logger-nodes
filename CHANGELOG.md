@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-06-11
+
 ### Added
 
 - **Debug overlay renders registration edges.** The bundled debug overlay — which inlines the substrate's `parseMetadata` / `SchematicCanvas` via the `@newspack-nodes/debug-overlay` alias — now draws node-name event registrations as dashed, informational edges between visible nodes (dotted, event-name hover tooltip, not click-deletable). Requires `newspack-nodes` with the `registrations` `dump_metadata` field.
