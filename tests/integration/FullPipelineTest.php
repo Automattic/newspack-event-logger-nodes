@@ -121,7 +121,7 @@ class FullPipelineTest extends TestCase {
 		$consumer->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/r/p0" );
 		$consumer->name( 'firehose:consumer' );
 		$consumer->sink( $tee );
-		$consumer->poll();
+		$this->pump_consumer( $consumer );
 
 		// 1. JobRouter forwarded → JobWorker dispatched 'echo_job' with parameters.
 		$this->assertCount( 1, $job_executions );

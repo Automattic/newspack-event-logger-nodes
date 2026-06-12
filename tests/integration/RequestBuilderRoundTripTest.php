@@ -60,7 +60,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$consumer = new Consumer_Node();
 		$consumer->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/rb/p0" );
 		$consumer->sink( $rb );
-		$consumer->poll();
+		$this->pump_consumer( $consumer );
 
 		$this->assertCount( 1, $capture->captured );
 		$assembled = $capture->captured[0][ Message::VALUE ];
@@ -92,8 +92,8 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$c1->name( 'firehose:consumer' );
 		$c1->sink( $rb1 );
 		$c1->set_snapshot_node( 'request-builder' );
-		$c1->poll();       // r1 now in-flight in rb1's cache.
-		$c1->checkpoint(); // co-commit {offset, cache} into the offsetlog.
+		$this->pump_consumer( $c1 ); // r1 now in-flight in rb1's cache.
+		$c1->checkpoint();           // co-commit {offset, cache} into the offsetlog.
 
 		// Old worker process dies; the offsetlog (with the cache) persists on disk.
 		Core::reset();
@@ -107,11 +107,12 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$c2->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/rb/p0" ); // stashes the cache + resumes the cursor
 		$c2->name( 'firehose:consumer' );
 		$c2->sink( $rb2 );
-		$c2->set_snapshot_node( 'request-builder' ); // restores r1 into rb2.
+		$c2->set_snapshot_node( 'request-builder' ); // records the name; restore is deferred to the first poll.
 
 		// The completion arrives AFTER the respawn.
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
-		$c2->poll();
+		// The first poll (poll_init) restores r1 into rb2, then drains the completion.
+		$this->pump_consumer( $c2 );
 
 		$this->assertCount( 1, $capture2->captured, 'the request that spanned the respawn must still complete' );
 		$assembled = $capture2->captured[0][ Message::VALUE ];
