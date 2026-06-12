@@ -7,6 +7,7 @@
 make_node Consumer requests:consumer <config:logs_dir>/requests.log <partition> <config:offsets_dir>/requests.p<partition>
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.log <partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
+cmd requests:consumer:config set_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
 cmd flame-builder:config set_is_hub <eln:is_hub>
