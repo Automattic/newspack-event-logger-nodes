@@ -168,14 +168,16 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'mounts FlameGraph when aggregate_flame has children', () => {
+	it( 'mounts FlameGraph when aggregate_flame has children', async () => {
 		const { container, unmount } = mount( {
 			urlDetail: {
 				...baseUrlDetail,
 				aggregate_flame: { children: [ { name: 'x' } ] },
 			},
 		} );
-		// Lazy import resolves async; check the section header to assert mount.
+		// FlameGraph is lazy; flush its import resolution inside act so the
+		// suspended-resource completion doesn't warn (header renders eagerly).
+		await act( async () => {} );
 		expect( container.textContent ).toContain( 'Aggregate Flame Graph' );
 		unmount();
 	} );
