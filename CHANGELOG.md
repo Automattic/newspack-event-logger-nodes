@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-06-12
+
 ### Changed
 
 - **`Job_Router_Node` emits the job kind under `k`, not `type`.** The normalized jobs.log entry is now `{ k, handler, parameters, ts }`, matching what `Job_Intake` already writes and what the substrate `Job_Worker_Node` dispatches on — so the kind field is the same `k` from firehose category → jobs.log → worker, with no rename at any hop. Requires `newspack-nodes` with the `k`-reading `Job_Worker_Node`.
