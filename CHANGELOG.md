@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Job_Router_Node` emits the job kind under `k`, not `type`.** The normalized jobs.log entry is now `{ k, handler, parameters, ts }`, matching what `Job_Intake` already writes and what the substrate `Job_Worker_Node` dispatches on — so the kind field is the same `k` from firehose category → jobs.log → worker, with no rename at any hop. Requires `newspack-nodes` with the `k`-reading `Job_Worker_Node`.
+
+### Fixed
+
+- **Jobs queued via `Job_Intake` (large/`jobintake.log` payloads) are no longer silently dropped.** `Job_Intake` writes entries keyed by `k`, but the substrate executor read `type`; in topologies that wire `jobintake:consumer` straight to `jobs:partition` (e.g. `combined`), every jobintake-sourced job — third-party event imports (film times, Ticketmaster, …) and any other `write_job()` caller — was read off jobs.log and discarded before reaching its handler. Normalizing the kind field to `k` end-to-end restores dispatch.
+
 ## [0.16.0] - 2026-06-11
 
 ### Added

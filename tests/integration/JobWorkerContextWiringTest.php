@@ -23,7 +23,7 @@ class JobWorkerContextWiringTest extends TestCase {
 	private function job_message( string $handler ): array {
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'type' => 'job', 'handler' => $handler, 'parameters' => [] ];
+		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => $handler, 'parameters' => [] ];
 		return $msg;
 	}
 
