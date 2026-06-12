@@ -1648,7 +1648,7 @@ class RemoteManagerTest extends TestCase {
 		// At least one POST happened. The substrate-key endpoint maps to
 		// Settings_CI.update, which expects short-name args (no `newspack_nodes_`
 		// prefix). The remap from remote_num_segments → num_segments is the
-		// load-bearing assertion here — both the prefix-strip + the local→remote
+		// key assertion here — both the prefix-strip + the local→remote
 		// option name remap have to land for the spoke to apply the change.
 		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
 		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'settings' );
@@ -1658,7 +1658,7 @@ class RemoteManagerTest extends TestCase {
 		// (The app config file default wins over the substrate option via the
 		// load_config() array_merge layering, so read it from Config rather than
 		// hard-coding the option value — the remap from remote_num_segments →
-		// num_segments is the load-bearing assertion here.)
+		// num_segments is the key assertion here.)
 		$this->assertSame(
 			'--num_segments=' . Config::load_config()['num_segments'],
 			$value['arguments']

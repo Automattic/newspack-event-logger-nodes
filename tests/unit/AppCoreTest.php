@@ -815,7 +815,7 @@ class AppCoreTest extends TestCase {
 
 	public function test_wrapped_callback_completes_timer_on_throw(): void {
 		// The wrapper must call $lm->complete() even when the original
-		// callback throws — this is the load-bearing finally-block invariant
+		// callback throws — this is the critical finally-block invariant
 		// that prevents orphaned timers stalling the request profiler.
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->use_config( [

@@ -54,7 +54,7 @@ class LruCacheTest extends TestCase {
 	public function test_set_object_returns_same_reference(): void {
 		// LRU spec note: storing objects gives zero-copy mutation since PHP
 		// objects are references. Mutating through get() must mutate the stored
-		// object too — load-bearing behaviour for the InflightTracker pattern.
+		// object too — essential behaviour for the InflightTracker pattern.
 		$cache  = new LRU_Cache( 10, 3 );
 		$object = new \stdClass();
 		$object->count = 0;

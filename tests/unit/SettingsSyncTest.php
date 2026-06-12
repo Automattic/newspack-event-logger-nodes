@@ -135,7 +135,7 @@ class SettingsSyncTest extends TestCase {
 
 	public function test_encrypt_uses_random_nonce(): void {
 		// Same plaintext encrypted twice must yield distinct ciphertexts (nonce
-		// is fresh per call). This is a load-bearing security property — repeat
+		// is fresh per call). This is a critical security property — repeat
 		// nonces under a fixed key break sodium's confidentiality guarantees.
 		$plaintext = 'identical-input';
 		$a = Settings_Sync::encrypt( $plaintext );
