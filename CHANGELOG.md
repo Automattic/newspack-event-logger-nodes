@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Admin dashboard form controls opt into the WordPress 40px default size + no-bottom-margin styles.** Added `__next40pxDefaultSize` to every `TextControl` / `SelectControl` / `SearchControl` and `__nextHasNoMarginBottom` to the `SearchControl` / `CheckboxControl` that lacked it (across the performance dashboards, URL detail, overview, and the hook/custom-event selector modals). Clears the `@wordpress/components` 6.7/6.8 deprecation notices; those controls now render at the 40px height that becomes the WordPress default in 7.1.
+- **The Performance Dashboard + Settings entry points mount via React 18 `createRoot` instead of the deprecated `render()`.** `performance-dashboards` (AdminApp + ErrorLogPage) and `performance-logger` (tag-input fields) now `createRoot( container ).render( … )`, matching the other dashboard entry points and removing the "ReactDOM.render is no longer supported in React 18" warning.
+
 ## [0.17.0] - 2026-06-12
 
 ### Changed

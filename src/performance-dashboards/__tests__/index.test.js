@@ -1,19 +1,23 @@
 /**
- * Tests for performance-dashboards/index.js — covers the AdminApp +
- * ErrorLogPage components defined inline alongside the mount logic.
- *
- * mount-entrypoints.test.js already exercises the DOMContentLoaded
- * + render() path, but it doesn't drive the inner handleError state
- * machine (lines 51 / 57-60 / 72 of index.js). To get those, we mount
- * the dashboard mounting hook with a container present and trigger
- * the onError callback on the PerformanceDashboard mock.
+ * Tests for the inline AdminApp + ErrorLogPage page components defined in
+ * performance-dashboards/index.js. The DOMContentLoaded → createRoot mount path
+ * is covered by mount-entrypoints.test.js; here we render the components
+ * DIRECTLY so we can drive AdminApp's error state machine (handleError + the 5s
+ * auto-clear effect) and the Suspense LoadingFallback without the document-level
+ * listener-accumulation / multi-root hazards of re-requiring the entry module.
  */
 
 let mockOnError = null;
+// When set, the lazy dashboard suspends forever so the Suspense fallback shows.
+let mockStallDashboard = false;
 jest.mock( '../PerformanceDashboard', () => ( {
 	__esModule: true,
 	default: ( props ) => {
 		const React = require( 'react' );
+		if ( mockStallDashboard ) {
+			// eslint-disable-next-line no-throw-literal
+			throw new Promise( () => {} );
+		}
 		mockOnError = props.onError;
 		return React.createElement( 'div', null, 'PERFORMANCE_DASHBOARD' );
 	},
@@ -27,149 +31,65 @@ jest.mock( '../ErrorLog', () => ( {
 	},
 } ) );
 
-import { act } from '../../test-helpers/renderHook';
+import { act, renderComponent } from '../../test-helpers/renderHook';
+import { AdminApp, ErrorLogPage } from '../index';
 
-// mountIndex waits on a timer-scheduled Suspense re-render (legacy
-// ReactDOM.render mode). Under run-coverage's heavy parallel load that
-// wall-clock wait dilates well past jest's 5s default, timing out the test
-// even though the poll would resolve given a little more room. Raise the
-// budget; the poll still returns the instant the lazy chunk resolves, so this
-// only costs time on a genuinely starved box.
-jest.setTimeout( 30000 );
+describe( 'performance-dashboards — AdminApp + ErrorLogPage', () => {
+	let views;
 
-describe( 'performance-dashboards/index.js — AdminApp + ErrorLogPage', () => {
 	beforeEach( () => {
-		// Recover from any fake-timer state a previous test left active
-		// (e.g. the auto-clear test calls useFakeTimers() before its
-		// assertions; if any throw before useRealTimers() at the end, the
-		// next test's mountIndex would hang on its setTimeout(50) fallback
-		// because fake timers swallow it).
 		jest.useRealTimers();
-		jest.resetModules();
-		while ( document.body.firstChild ) {
-			document.body.removeChild( document.body.firstChild );
-		}
 		mockOnError = null;
+		mockStallDashboard = false;
+		views = [];
 	} );
 
-	/**
-	 * Suspense + React.lazy: in test environment, lazy imports require
-	 * real microtask flushing. This helper drains them, then dispatches
-	 * DOMContentLoaded (which triggers the render() call) and waits long
-	 * enough for the lazy import to resolve.
-	 *
-	 * @param {HTMLElement} admin The container element to return after mount.
-	 */
-	async function mountIndex( admin ) {
-		require( '../index.js' );
-		await act( async () => {
-			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		} );
-		// Poll-drain lazy import microtasks until the PerformanceDashboard
-		// mock fires (it captures props.onError into mockOnError). Fixed-
-		// length microtask + real-timer waits were race-prone under load;
-		// polling is deterministic — we proceed as soon as the lazy chunk
-		// has resolved, and bail (caller will assert and fail clearly) if
-		// it never does within the budget.
-		for ( let i = 0; i < 100; i++ ) {
-			if ( null !== mockOnError ) {
-				return admin;
-			}
-			await act( async () => {
-				await Promise.resolve();
-			} );
-		}
-		// The microtask loop above CANNOT flush the post-Suspense re-render:
-		// index.js mounts via legacy ReactDOM.render, so React resolves the
-		// lazy import on a microtask but schedules the resulting re-render
-		// through its scheduler (MessageChannel/setTimeout in jsdom) — a
-		// MACROTASK. The mounted PerformanceDashboard (which captures onError)
-		// only appears after the event loop ticks. A single fixed wait here was
-		// the marginal, load-sensitive part — under coverage/parallel workers
-		// the scheduler tick can exceed it. Poll on real timers instead,
-		// returning the instant the mock fires (≈1s budget).
-		for ( let i = 0; i < 40; i++ ) {
-			if ( null !== mockOnError ) {
-				return admin;
-			}
-			await act( async () => {
-				await new Promise( ( r ) => setTimeout( r, 25 ) );
-			} );
-		}
-		return admin;
+	afterEach( () => {
+		views.forEach( ( v ) => v.unmount() );
+	} );
+
+	// Mount a component and flush the lazy import microtask so the
+	// PerformanceDashboard mock renders and captures its onError prop.
+	async function mount( element ) {
+		const view = renderComponent( element );
+		views.push( view );
+		await act( async () => {} );
+		return view;
 	}
 
 	it( 'AdminApp displays an error Notice and auto-clears it after 5s', async () => {
-		const admin = document.createElement( 'div' );
-		admin.id = 'event-logger-admin';
-		document.body.appendChild( admin );
-		await mountIndex( admin );
+		const { container } = await mount( <AdminApp /> );
 		expect( mockOnError ).toEqual( expect.any( Function ) );
-		// Fire an error.
 		jest.useFakeTimers();
 		await act( async () => {
 			mockOnError( new Error( 'oh no' ) );
 		} );
-		expect( admin.textContent ).toContain( 'oh no' );
-		// Advance 6 seconds — the effect's 5s timeout fires.
+		expect( container.textContent ).toContain( 'oh no' );
+		// Advance past the effect's 5s auto-clear timeout.
 		await act( async () => {
 			jest.advanceTimersByTime( 6000 );
 		} );
-		expect( admin.textContent ).not.toContain( 'oh no' );
+		expect( container.textContent ).not.toContain( 'oh no' );
 		jest.useRealTimers();
 	} );
 
 	it( 'AdminApp falls back to "An error occurred" when error has no message', async () => {
-		const admin = document.createElement( 'div' );
-		admin.id = 'event-logger-admin';
-		document.body.appendChild( admin );
-		await mountIndex( admin );
+		const { container } = await mount( <AdminApp /> );
 		await act( async () => {
 			mockOnError( {} );
 		} );
-		expect( admin.textContent ).toContain( 'An error occurred' );
+		expect( container.textContent ).toContain( 'An error occurred' );
 	} );
 
-	it( 'mount script renders ErrorLogPage when #event-logger-errors exists', async () => {
-		const errors = document.createElement( 'div' );
-		errors.id = 'event-logger-errors';
-		document.body.appendChild( errors );
-		require( '../index.js' );
-		await act( async () => {
-			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		} );
-		// Suspense fallback shows initially; let lazy import resolve.
-		await act( async () => {
-			await Promise.resolve();
-			await Promise.resolve();
-			await Promise.resolve();
-		} );
-		expect( errors.parentNode ).toBe( document.body );
+	it( 'AdminApp shows the LoadingFallback while the dashboard chunk loads', () => {
+		mockStallDashboard = true;
+		const view = renderComponent( <AdminApp /> );
+		views.push( view );
+		expect( view.container.textContent ).toContain( 'Loading' );
 	} );
 
-	it( 'LoadingFallback renders its message prop', () => {
-		// We can't import LoadingFallback directly (not exported), but
-		// the AdminApp uses it inside Suspense — assert the fallback
-		// renders the configured message while PerformanceDashboard is
-		// still loading. Use a stalled lazy import for that.
-		jest.resetModules();
-		jest.doMock( '../PerformanceDashboard', () => ( {
-			__esModule: true,
-			default: () => {
-				const r = require( 'react' );
-				return r.createElement( 'div', null, 'NEVER' );
-			},
-		} ) );
-		const admin = document.createElement( 'div' );
-		admin.id = 'event-logger-admin';
-		document.body.appendChild( admin );
-		require( '../index.js' );
-		// Dispatch DOMContentLoaded synchronously so the render() call
-		// runs. We don't await — the Suspense fallback should be visible.
-		act( () => {
-			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		} );
-		// The fallback text "Loading dashboard..." is rendered.
-		expect( admin.textContent ).toContain( 'Loading' );
+	it( 'ErrorLogPage renders the error log view', async () => {
+		const { container } = await mount( <ErrorLogPage /> );
+		expect( container.textContent ).toContain( 'ERROR_LOG' );
 	} );
 } );

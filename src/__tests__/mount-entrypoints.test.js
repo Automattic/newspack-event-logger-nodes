@@ -156,4 +156,47 @@ describe( 'dashboard mount-entry points', () => {
 		btn.click();
 		expect( captured ).toBeNull();
 	} );
+
+	// The createRoot deprecation surfaces via console.error; capture it and assert
+	// the legacy-render notice never fires (the entrypoints mount via createRoot).
+	function renderDeprecationOnMount( moduleId, prepare ) {
+		prepare();
+		const errSpy = jest
+			.spyOn( console, 'error' )
+			.mockImplementation( () => {} );
+		require( moduleId );
+		document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		const surfaced = errSpy.mock.calls
+			.map( ( c ) => String( c[ 0 ] ) )
+			.join( '\n' );
+		errSpy.mockRestore();
+		return surfaced;
+	}
+
+	it( 'performance-dashboards/index.js mounts via createRoot (no React 18 render deprecation)', () => {
+		const surfaced = renderDeprecationOnMount(
+			'../performance-dashboards',
+			() => {
+				mountContainer( 'event-logger-admin' );
+				mountContainer( 'event-logger-errors' );
+			}
+		);
+		expect( surfaced ).not.toContain(
+			'ReactDOM.render is no longer supported'
+		);
+	} );
+
+	it( 'performance-logger/index.js mounts tag fields via createRoot (no React 18 render deprecation)', () => {
+		const surfaced = renderDeprecationOnMount(
+			'../performance-logger',
+			() => {
+				const div = mountContainer( 'event-logger-log_urls' );
+				div.dataset.values = '[]';
+				div.dataset.default = '[]';
+			}
+		);
+		expect( surfaced ).not.toContain(
+			'ReactDOM.render is no longer supported'
+		);
+	} );
 } );

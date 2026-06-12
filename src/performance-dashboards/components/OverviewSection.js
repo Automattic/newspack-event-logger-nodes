@@ -136,6 +136,7 @@ export default function OverviewSection( {
 							} }
 						>
 							<TextControl
+								__next40pxDefaultSize
 								placeholder={ __(
 									'Search request ID…',
 									'newspack-event-logger-nodes'
@@ -202,6 +203,7 @@ export default function OverviewSection( {
 								) }
 							</span>
 							<SelectControl
+								__next40pxDefaultSize
 								value={ refreshInterval }
 								options={ DASHBOARD_REFRESH_OPTIONS }
 								onChange={ setRefreshInterval }
@@ -293,6 +295,7 @@ export default function OverviewSection( {
 								>
 									{ isMultiServer && (
 										<SelectControl
+											__next40pxDefaultSize
 											label={ __(
 												'Server',
 												'newspack-event-logger-nodes'
@@ -305,6 +308,7 @@ export default function OverviewSection( {
 										/>
 									) }
 									<SelectControl
+										__next40pxDefaultSize
 										label={ __(
 											'Metric',
 											'newspack-event-logger-nodes'
@@ -316,6 +320,7 @@ export default function OverviewSection( {
 										style={ { minWidth: '180px' } }
 									/>
 									<SelectControl
+										__next40pxDefaultSize
 										label={ __(
 											'Breakdown',
 											'newspack-event-logger-nodes'

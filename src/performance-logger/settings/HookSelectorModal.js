@@ -337,6 +337,8 @@ export default function HookSelectorModal( {
 		>
 			<div className="hook-selector-header">
 				<SearchControl
+					__next40pxDefaultSize
+					__nextHasNoMarginBottom
 					value={ search }
 					onChange={ setSearch }
 					placeholder={ __(
@@ -442,6 +444,7 @@ export default function HookSelectorModal( {
 										{ isExpanded ? '▼' : '▶' }
 									</span>
 									<CheckboxControl
+										__nextHasNoMarginBottom
 										checked={ allSelected }
 										indeterminate={ someSelected }
 										onChange={ () =>
