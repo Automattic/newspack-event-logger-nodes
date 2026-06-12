@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workers no longer leak into global hourly peak memory, global dimensional count/peak, or the global hook auto-tune signal.** The prior single gate excluded workers from global *timing* but still bumped global hourly `sum_peak_mb` and global dimensional `c`/`m` unconditionally, and worker profiles could still drive plugin-wide `hooks_to_disable` / `custom_events_to_disable` (noisy-hook detection); the two-gate split closes all three leaks.
 - **The cron-backstop supervisor's stats URL is `/jobs/newspack-nodes?supervisor`, not `/jobs/newspack-nodes/supervisor?supervisor`.** The job-context handler dropped the redundant `/supervisor` path segment (the `?supervisor` suffix already comes from `worker_type`).
 
+### Removed
+
+- **The orphaned `worker_type` firehose-keyword state callback in `Request_Builder_Node`.** It was a museum-era workaround (the old plugins emitted an explicit `message('worker_type', …)` because the env var was set *after* the environment block was logged); the substrate now sets `NEWSPACK_NODES_WORKER_TYPE` before the environment block, so worker detection flows solely through the `environment_v2` env-var line and nothing produces a `k='worker_type'` entry anymore.
+
 ## [0.16.2] - 2026-06-12
 
 ### Changed

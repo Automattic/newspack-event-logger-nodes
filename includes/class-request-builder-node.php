@@ -637,10 +637,6 @@ class Request_Builder_Node extends Timer_Node {
 			}
 		};
 
-		$s['worker_type'] = function ( \stdClass $request, array $entry ): void {
-			$request->is_worker = true;
-		};
-
 		$s['memory'] = function ( \stdClass $request, array $entry ): void {
 			$m = $entry['m'] ?? [];
 			if ( \is_array( $m ) && isset( $m['peak'] ) && \is_scalar( $m['peak'] ) ) {
