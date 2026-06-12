@@ -80,6 +80,15 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 	}
 
+	public function test_supervisor_job_context_is_newspack_nodes(): void {
+		// The supervisor wrap passes 'newspack-nodes' so its row is
+		// /jobs/newspack-nodes (worker_type='supervisor' supplies the
+		// ?supervisor suffix downstream) — not /jobs/newspack-nodes/supervisor.
+		Log_Manager::begin_job_context( 'newspack-nodes' );
+		$this->assertSame( '/jobs/newspack-nodes', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
 	public function test_begin_clears_inherited_content_headers_and_end_restores(): void {
 		// CONTENT_TYPE / CONTENT_LENGTH / HTTP_X_A8C_REQUEST_ID must not bleed
 		// from the outer request into the job context; they're restored on end.

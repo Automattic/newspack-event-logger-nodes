@@ -320,10 +320,10 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		// Worker requests carry no timing (has_timing false): count increments,
-		// timed_count stays 0, so min_ms must persist as 0 — never the sentinel.
+		// A zero-duration request carries no timing (record_timing false): count
+		// increments, timed_count stays 0, so min_ms must persist as 0 — never the sentinel.
 		$now = \time();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w', 'duration_ms' => 0.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
 		$bucket   = $store->bucket_key_for( $now );
@@ -333,6 +333,26 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, $index[ $url_hash ]['count'] );
 		$this->assertSame( 0, $index[ $url_hash ]['timed_count'] );
 		$this->assertSame( 0, $index[ $url_hash ]['min_ms'] );
+	}
+
+	public function test_url_index_worker_request_now_records_timing(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb    = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// Workers now keep per-URL timing on their own ?worker_type row.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?supervisor', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$bucket   = $store->bucket_key_for( $now );
+		$index    = $store->get_url_index_hourly( $bucket );
+		$url_hash = Request_Builder_Node::url_hash( '/w?supervisor' );
+		$this->assertArrayHasKey( $url_hash, $index );
+		$this->assertSame( 1, $index[ $url_hash ]['count'] );
+		$this->assertSame( 1, $index[ $url_hash ]['timed_count'] );
+		$this->assertEqualsWithDelta( 100.0, $index[ $url_hash ]['min_ms'], 1e-6 );
 	}
 
 	public function test_url_index_min_ms_real_when_timed_request_mixed_in(): void {
@@ -491,6 +511,72 @@ class FlameBuilderTest extends TestCase {
 		}
 	}
 
+	public function test_worker_request_records_url_timing_but_no_global(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$req = $this->completed_request( [
+			'url'         => '/?cache-cozy',
+			'duration_ms' => 40.0,
+			'is_worker'   => true,
+			'peak_mb'     => 12.0,
+			'timestamp'   => $now,
+			'profiles'    => [ 'wpdb' => [ 'time' => 0.2, 'count' => 3, 'ts' => $now, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$fb->flush();
+
+		$bucket   = $store->bucket_key_for( $now );
+		$url_hash = Request_Builder_Node::url_hash( '/?cache-cozy' );
+
+		// Per-URL timing IS kept for the synthetic worker row.
+		$index = $store->get_url_index_hourly( $bucket );
+		$this->assertArrayHasKey( $url_hash, $index );
+		$this->assertSame( 1, $index[ $url_hash ]['count'] );
+		$this->assertSame( 1, $index[ $url_hash ]['timed_count'] );
+		$this->assertEqualsWithDelta( 40.0, $index[ $url_hash ]['sum_ms'], 1e-6 );
+
+		// Global hourly: no count, no timing, and no peak (closed leak).
+		foreach ( $store->get_hourly() as $stats ) {
+			$this->assertSame( 0, $stats['count'], 'worker excluded from global count' );
+			$this->assertSame( 0, $stats['sum_ms'], 'worker excluded from global timing' );
+			$this->assertSame( 0, $stats['sum_peak_mb'], 'worker peak leak closed' );
+		}
+
+		// Global dimensional: no count and no peak contribution.
+		$dim = $store->get_dimensional( 'status' );
+		foreach ( $dim as $vals ) {
+			foreach ( $vals as $cell ) {
+				$this->assertSame( 0, $cell['c'], 'worker excluded from global dimensional count' );
+				$this->assertSame( 0, $cell['m'], 'worker excluded from global dimensional peak' );
+			}
+		}
+
+		// Global leaderboard + categories: untouched by the worker.
+		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket ) );
+		$this->assertEmpty( $store->get_categories()[ $bucket ] ?? [] );
+	}
+
+	public function test_non_worker_request_records_global_count_and_peak(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$hourly = $store->get_hourly();
+		$bucket = \array_keys( $hourly )[0];
+		$this->assertSame( 1, $hourly[ $bucket ]['count'] );
+		$this->assertEqualsWithDelta( 40.0, $hourly[ $bucket ]['sum_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 12.0, $hourly[ $bucket ]['sum_peak_mb'], 1e-6 );
+	}
+
 	public function test_per_server_tracking_only_when_hub(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -556,6 +642,23 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$state = $fb->get_auto_tune_state();
 		$this->assertSame( [ 'wpdb' ], $state['hooks'] );
+	}
+
+	public function test_noisy_hook_detection_excludes_worker_requests(): void {
+		// Auto-disable is a global signal: worker traffic feeds only its own
+		// per-URL row, never the plugin-wide hooks_to_disable decision.
+		$fb = new Flame_Builder_Node();
+		$fb->set_auto_tune( 100, 0.0 );
+
+		$req = $this->completed_request( [
+			'is_worker' => true,
+			'profiles'  => [
+				'wpdb hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertEmpty( $state['hooks'], 'worker traffic must not drive global hook auto-disable' );
 	}
 
 	public function test_callback_categories_skipped_from_auto_tune(): void {

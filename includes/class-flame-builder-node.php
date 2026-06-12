@@ -742,9 +742,11 @@ class Flame_Builder_Node extends Node {
 		$error_status = $request['error_status'] ?? '-';
 		$is_timed_out = 'T' === $error_status;
 		$is_worker    = ! empty( $request['is_worker'] );
-		// Exclude from timing stats: timed-out (synthetic duration) and workers (skew averages).
-		$has_timing = $duration_ms > 0 && ! $is_timed_out && ! $is_worker;
-		$now        = $this->now_ts();
+		// Two gates: per-URL rows keep worker timing (their own ?worker_type row can't
+		// skew real URLs); global aggregates drop workers entirely (count, timing, peak).
+		$record_timing = $duration_ms > 0 && ! $is_timed_out;
+		$count_global  = ! $is_worker;
+		$now           = $this->now_ts();
 
 		// --- 1. Per-URL aggregate (LRU, sums-not-means) ---
 		$cached    = $this->stats_cache->get( $url_hash );
@@ -790,7 +792,8 @@ class Flame_Builder_Node extends Node {
 
 		$flame = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
 		$flame['count'] = ( \is_numeric( $flame['count'] ?? null ) ? $flame['count'] : 0 ) + 1;
-		if ( $has_timing ) {
+		// Per-URL: workers keep timing on their own row.
+		if ( $record_timing ) {
 			$flame['sum_value'] = ( \is_numeric( $flame['sum_value'] ?? null ) ? $flame['sum_value'] : 0 ) + $duration_ms;
 			$flame_children     = \is_array( $flame['children'] ?? null ) ? $flame['children'] : [];
 			$incoming_children  = \is_array( $flame_data['children'] ?? null ) ? $flame_data['children'] : [];
@@ -834,7 +837,8 @@ class Flame_Builder_Node extends Node {
 			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
 			$us = $this->pending['url_stats'][ $url_hash ];
 			++$us['count'];
-			if ( $has_timing ) {
+			// Per-URL: workers keep timing on their own row.
+			if ( $record_timing ) {
 				++$us['timed_count'];
 				$us['sum_ms'] += $duration_ms;
 				$us['max_ms']  = \max( $us['max_ms'], $duration_ms );
@@ -845,7 +849,7 @@ class Flame_Builder_Node extends Node {
 			if ( $status_category >= 2 && $status_category <= 5 ) {
 				++$us[ "count_{$status_category}xx" ];
 			}
-			if ( $has_timing ) {
+			if ( $record_timing ) {
 				$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
 				$us['min_ms'] = \min( $us['min_ms'], $duration_ms );
 				if ( \count( $us['durations'] ) < $max_dur ) {
@@ -875,11 +879,14 @@ class Flame_Builder_Node extends Node {
 			'sum_ms'      => \is_numeric( $hourly['sum_ms'] ?? null ) ? $hourly['sum_ms'] : 0,
 			'sum_peak_mb' => \is_numeric( $hourly['sum_peak_mb'] ?? null ) ? $hourly['sum_peak_mb'] : 0,
 		];
-		if ( $has_timing ) {
-			++$hourly['count'];
-			$hourly['sum_ms'] += $duration_ms;
+		// Global: workers contribute nothing — count, timing, AND peak.
+		if ( $count_global ) {
+			if ( $record_timing ) {
+				++$hourly['count'];
+				$hourly['sum_ms'] += $duration_ms;
+			}
+			$hourly['sum_peak_mb'] += $hourly_peak_num;
 		}
-		$hourly['sum_peak_mb'] += $hourly_peak_num;
 		$this->pending['hourly'] = $hourly;
 		$status_code_raw = $request['status_code'] ?? 0;
 		$status_cat      = (int) \floor( ( \is_numeric( $status_code_raw ) ? (float) $status_code_raw : 0 ) / 100 );
@@ -895,7 +902,7 @@ class Flame_Builder_Node extends Node {
 		$server_name    = \is_string( $server_raw ) ? $server_raw : '';
 		$dim_peak_raw   = $request['peak_mb'] ?? 0;
 		$dim_peak_mb    = \is_numeric( $dim_peak_raw ) ? (float) $dim_peak_raw : 0.0;
-		$dim_duration   = $has_timing ? $duration_ms : 0;
+		$dim_duration   = $record_timing ? $duration_ms : 0;
 
 		foreach ( self::DIM_FIELDS as $dim => $field ) {
 			$field_raw = $request[ $field ] ?? '';
@@ -909,16 +916,18 @@ class Flame_Builder_Node extends Node {
 					$intern_full = true;
 				}
 			}
-			// Global.
-			if ( ! isset( $this->pending['dim'][ $dim ][ $val ] ) ) {
-				$this->pending['dim'][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
+			// Global: workers contribute nothing — count, timing, AND peak.
+			if ( $count_global ) {
+				if ( ! isset( $this->pending['dim'][ $dim ][ $val ] ) ) {
+					$this->pending['dim'][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
+				}
+				++$this->pending['dim'][ $dim ][ $val ]['c'];
+				$this->pending['dim'][ $dim ][ $val ]['s'] += $dim_duration;
+				$this->pending['dim'][ $dim ][ $val ]['m'] += $dim_peak_mb;
 			}
-			++$this->pending['dim'][ $dim ][ $val ]['c'];
-			$this->pending['dim'][ $dim ][ $val ]['s'] += $dim_duration;
-			$this->pending['dim'][ $dim ][ $val ]['m'] += $dim_peak_mb;
 
-			// Per-server (hub mode only; skip 'server' dimension — redundant).
-			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim ) {
+			// Per-server (hub mode only; skip 'server' dimension — redundant). Global: drop workers.
+			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim && $count_global ) {
 				if ( ! isset( $this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] ) ) {
 					$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
 				}
@@ -937,7 +946,9 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// --- 4. Profile data (per-URL + global leaderboard) - SINGLE LOOP ---
-		if ( ! empty( $profiles ) && $has_timing ) {
+		// Enter on per-URL gate so workers accrue their own row; each GLOBAL write
+		// inside is separately guarded by $count_global.
+		if ( ! empty( $profiles ) && $record_timing ) {
 			$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
 			$prof_cats          = $aggregate_profiles['categories'] ?? [];
 			$aggregate_profiles['categories'] = \is_array( $prof_cats ) ? $prof_cats : [];
@@ -949,14 +960,17 @@ class Flame_Builder_Node extends Node {
 			$req_time        = 0.0;
 			$count_threshold = $this->auto_disable_threshold;
 
-			// Initialize "total" pseudo-category.
-			if ( ! isset( $this->pending['cat']['total'] ) ) {
-				$this->pending['cat']['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+			// Global: workers excluded from the "total" pseudo-category.
+			if ( $count_global ) {
+				if ( ! isset( $this->pending['cat']['total'] ) ) {
+					$this->pending['cat']['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+				}
+				$this->pending['cat']['total']['t'] += $duration_ms;
+				++$this->pending['cat']['total']['n'];
 			}
-			$this->pending['cat']['total']['t'] += $duration_ms;
-			++$this->pending['cat']['total']['n'];
 
-			if ( $this->is_hub && '' !== $server_name ) {
+			// Global per-server: drop workers.
+			if ( $this->is_hub && '' !== $server_name && $count_global ) {
 				if ( ! isset( $this->pending['cat_by_server'][ $server_name ]['total'] ) ) {
 					$this->pending['cat_by_server'][ $server_name ]['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
 				}
@@ -970,9 +984,9 @@ class Flame_Builder_Node extends Node {
 			$this->pending['cat_by_url'][ $url_hash ]['total']['t'] += $duration_ms;
 			++$this->pending['cat_by_url'][ $url_hash ]['total']['n'];
 
-			// Per-server leaderboard (hub mode only).
+			// Per-server leaderboard (hub mode only). Global: drop workers.
 			$slb = null;
-			if ( $this->is_hub && '' !== $server_name ) {
+			if ( $this->is_hub && '' !== $server_name && $count_global ) {
 				if ( ! isset( $this->pending['leaderboard_by_server'][ $server_name ] ) ) {
 					$this->pending['leaderboard_by_server'][ $server_name ] = [
 						'count'        => 0,
@@ -1026,20 +1040,23 @@ class Flame_Builder_Node extends Node {
 				$pcat['sum_count'] += $cat_count;
 				$pcat['ts']        = \max( $pcat['ts'] ?? 0, $cat_ts );
 
-				// Global leaderboard category.
-				if ( ! isset( $lb['categories'][ $category ] ) ) {
-					$lb['categories'][ $category ] = [
-						'samples'   => 0,
-						'sum_time'  => 0.0,
-						'sum_count' => 0.0,
-						'entries'   => [],
-					];
+				// Global leaderboard category: workers excluded.
+				$lcat = null;
+				if ( $count_global ) {
+					if ( ! isset( $lb['categories'][ $category ] ) ) {
+						$lb['categories'][ $category ] = [
+							'samples'   => 0,
+							'sum_time'  => 0.0,
+							'sum_count' => 0.0,
+							'entries'   => [],
+						];
+					}
+					/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $lcat */
+					$lcat              = &$lb['categories'][ $category ];
+					++$lcat['samples'];
+					$lcat['sum_time']  += $cat_time;
+					$lcat['sum_count'] += $cat_count;
 				}
-				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $lcat */
-				$lcat              = &$lb['categories'][ $category ];
-				++$lcat['samples'];
-				$lcat['sum_time']  += $cat_time;
-				$lcat['sum_count'] += $cat_count;
 
 				// Per-server leaderboard.
 				if ( null !== $slb ) {
@@ -1079,16 +1096,20 @@ class Flame_Builder_Node extends Node {
 					unset( $scat );
 				}
 
-				// Category time series (pending bucket).
-				if ( ! isset( $this->pending['cat'][ $category ] ) ) {
-					$this->pending['cat'][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
+				// Global category time series (pending bucket): workers excluded.
+				if ( $count_global ) {
+					$cat_bucket   = $this->pending['cat'][ $category ] ?? [ 't' => 0, 'c' => 0, 'n' => 0 ];
+					$cat_total    = $this->pending['cat']['total'] ?? [ 't' => 0, 'c' => 0, 'n' => 0 ];
+					$cat_bucket['t'] += $cat_time;
+					$cat_bucket['c'] += $cat_count;
+					++$cat_bucket['n'];
+					$cat_total['c']  += $cat_count;
+					$this->pending['cat'][ $category ] = $cat_bucket;
+					$this->pending['cat']['total']      = $cat_total;
 				}
-				$this->pending['cat'][ $category ]['t'] += $cat_time;
-				$this->pending['cat'][ $category ]['c'] += $cat_count;
-				++$this->pending['cat'][ $category ]['n'];
-				$this->pending['cat']['total']['c'] += $cat_count;
 
-				if ( $this->is_hub && '' !== $server_name ) {
+				// Global per-server category series: drop workers.
+				if ( $this->is_hub && '' !== $server_name && $count_global ) {
 					if ( ! isset( $this->pending['cat_by_server'][ $server_name ][ $category ] ) ) {
 						$this->pending['cat_by_server'][ $server_name ][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
 					}
@@ -1107,8 +1128,9 @@ class Flame_Builder_Node extends Node {
 				$this->pending['cat_by_url'][ $url_hash ]['total']['c'] += $cat_count;
 
 				// Significant event detection (avg time per call exceeds threshold).
+				// Global signal — skipped for workers, whose global category ref stays null.
 				$time_threshold = $this->auto_protect_time_threshold;
-				if ( ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
+				if ( null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
 					$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
 					if ( $avg_per_call >= $time_threshold ) {
 						$base_name = \explode( ' ', $category, 2 )[0];
@@ -1135,12 +1157,15 @@ class Flame_Builder_Node extends Node {
 						$pcat['entries'][ $name ][1] += $entry_count;
 						++$pcat['entries'][ $name ][2];
 
-						if ( ! isset( $lcat['entries'][ $name ] ) ) {
-							$lcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+						// Global entries: skipped for workers, whose global category ref stays null.
+						if ( null !== $lcat ) {
+							if ( ! isset( $lcat['entries'][ $name ] ) ) {
+								$lcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
+							}
+							$lcat['entries'][ $name ][0] += $entry_time;
+							$lcat['entries'][ $name ][1] += $entry_count;
+							++$lcat['entries'][ $name ][2];
 						}
-						$lcat['entries'][ $name ][0] += $entry_time;
-						$lcat['entries'][ $name ][1] += $entry_count;
-						++$lcat['entries'][ $name ][2];
 					}
 
 					// Trim with hysteresis (cap by sum_time).
@@ -1148,15 +1173,17 @@ class Flame_Builder_Node extends Node {
 						\uasort( $pcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 						$pcat['entries'] = \array_slice( $pcat['entries'], 0, self::ENTRY_LIMIT_URL_LOWER, true );
 					}
-					if ( \count( $lcat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
+					// Global cap: skipped for workers, whose global category ref stays null.
+					if ( null !== $lcat && \count( $lcat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
 						\uasort( $lcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 						$lcat['entries'] = \array_slice( $lcat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
 					}
 				}
 
-				// Noisy detection. Significant-event filtering is performed at
-				// apply_auto_tune time (matching upstream), not here.
-				if ( ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
+				// Noisy detection. Global auto-tune signal — workers excluded, like
+				// every other global aggregate. Significant-event filtering is
+				// performed at apply_auto_tune time (matching upstream), not here.
+				if ( $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
 					$base_name = \explode( ' ', $category, 2 )[0];
 					if ( isset( $this->custom_event_names[ $base_name ] ) ) {
 						$this->custom_events_to_disable[ $base_name ] = true;
@@ -1168,11 +1195,13 @@ class Flame_Builder_Node extends Node {
 				unset( $lcat );
 			}
 
-			// Top-level sums.
+			// Top-level sums: per-URL kept; global leaderboard drops workers.
 			$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
 			$prof['sum_req_time'] = ( $prof['sum_req_time'] ?? 0 ) + $req_time;
-			$lb['count']          = ( $lb['count']          ?? 0 ) + 1;
-			$lb['sum_req_time']   = ( $lb['sum_req_time']   ?? 0 ) + $req_time;
+			if ( $count_global ) {
+				$lb['count']        = ( $lb['count']        ?? 0 ) + 1;
+				$lb['sum_req_time'] = ( $lb['sum_req_time'] ?? 0 ) + $req_time;
+			}
 
 			if ( null !== $slb ) {
 				$slb['count']        = ( $slb['count']        ?? 0 ) + 1;

@@ -261,9 +261,10 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 
 /**
  * Wrap the substrate's cron-backstop supervisor run with a fresh LogManager
- * job context so the 595s tick logs as `/jobs/newspack-nodes/supervisor`
- * (tagged `worker_type='supervisor'`) instead of as an untagged
- * `/wp-cron.php` request that counts in global averages.
+ * job context so the 595s tick logs as `/jobs/newspack-nodes` (tagged
+ * `worker_type='supervisor'`, which supplies the `?supervisor` URL suffix
+ * downstream — no `/supervisor` path segment to double it) instead of as an
+ * untagged `/wp-cron.php` request that counts in global averages.
  *
  * The substrate (Bootstrap::run_supervisor_tick) sets the env var BEFORE
  * firing `before_supervisor_run`, so begin_job_context's fresh LogManager
@@ -275,7 +276,7 @@ function newspack_event_logger_nodes_expected_log_basenames( array $basenames ):
 	\add_action(
 		'newspack_nodes/before_supervisor_run',
 		static function () use ( &$entered ): void {
-			\Newspack_Event_Logger_Nodes\Log_Manager::begin_job_context( 'newspack-nodes/supervisor' );
+			\Newspack_Event_Logger_Nodes\Log_Manager::begin_job_context( 'newspack-nodes' );
 			$entered = true;
 		}
 	);
