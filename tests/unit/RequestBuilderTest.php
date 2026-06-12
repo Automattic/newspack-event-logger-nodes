@@ -21,8 +21,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
  *  - `process (start)` — initializes the request, populates timestamp/process_id/host
  *  - `process (complete)` — terminal: emits the assembled doc downstream
  *  - `request` — extracts URL + method
- *  - `environment_v2` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / etc.
- *  - `worker_type` — sets is_worker=true
+ *  - `environment_v2` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / NEWSPACK_NODES_WORKER_TYPE / etc.
  *  - `memory` — extracts peak_mb
  *
  * Anything else with " (start)" / " (complete)" suffix pushes/pops the LIFO
@@ -283,6 +282,23 @@ class RequestBuilderTest extends TestCase {
 
 		$req = $this->captured_request( $capture );
 		$this->assertSame( 'eviltypex', $req['worker_type'] );
+	}
+
+	public function test_bare_worker_type_keyword_no_longer_flags_worker(): void {
+		// The museum-era explicit `worker_type` keyword entry is no longer produced
+		// (the substrate sets the env var before the environment block is logged), so
+		// worker detection flows solely through the environment_v2 env-var line.
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'worker_type', [ 'm' => 'supervisor' ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		$this->assertEmpty( $req['is_worker'] ?? null, 'a bare worker_type keyword must not flag is_worker' );
 	}
 
 	public function test_emit_request_appends_worker_type_to_url(): void {
