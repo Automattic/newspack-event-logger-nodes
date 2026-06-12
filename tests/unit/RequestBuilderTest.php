@@ -256,6 +256,116 @@ class RequestBuilderTest extends TestCase {
 		$this->assertTrue( $req['is_worker'] );
 	}
 
+	public function test_environment_v2_captures_worker_type_value(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'NEWSPACK_NODES_WORKER_TYPE => "cache-cozy"' ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		$this->assertTrue( $req['is_worker'] );
+		$this->assertSame( 'cache-cozy', $req['worker_type'] );
+	}
+
+	public function test_environment_v2_sanitizes_worker_type_value(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'NEWSPACK_NODES_WORKER_TYPE => "evil/../type?x"' ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 'eviltypex', $req['worker_type'] );
+	}
+
+	public function test_emit_request_appends_worker_type_to_url(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$req = (object) [
+			'state'       => 'complete',
+			'url'         => 'https://x.test/',
+			'worker_type' => 'supervisor',
+			'rid'         => 'r1',
+			'timestamp'   => 1,
+			'duration_ms' => 5,
+		];
+		$rb->emit_request( $req );
+
+		$value = $capture->captured[0][ Message::VALUE ];
+		$this->assertSame( 'https://x.test/?supervisor', $value['url'] );
+	}
+
+	public function test_emit_request_leaves_non_worker_url(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$req = (object) [
+			'state'       => 'complete',
+			'url'         => 'https://x.test/',
+			'rid'         => 'r2',
+			'timestamp'   => 1,
+			'duration_ms' => 5,
+		];
+		$rb->emit_request( $req );
+
+		$this->assertSame( 'https://x.test/', $capture->captured[0][ Message::VALUE ]['url'] );
+	}
+
+	public function test_emit_request_does_not_double_append_when_url_has_query(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$req = (object) [
+			'state'       => 'complete',
+			'url'         => 'https://x.test/?already',
+			'worker_type' => 'supervisor',
+			'rid'         => 'r3',
+			'timestamp'   => 1,
+			'duration_ms' => 5,
+		];
+		$rb->emit_request( $req );
+
+		$this->assertSame( 'https://x.test/?already', $capture->captured[0][ Message::VALUE ]['url'] );
+	}
+
+	public function test_emit_request_worker_url_reaches_compact_summary(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->set_completed_target( 'summary-sink' );
+
+		$req = (object) [
+			'state'       => 'complete',
+			'url'         => 'https://x.test/',
+			'worker_type' => 'supervisor',
+			'rid'         => 'r4',
+			'timestamp'   => 1,
+			'duration_ms' => 5,
+		];
+		$rb->emit_request( $req );
+
+		// Both the full doc and the compact summary read the one mutated URL.
+		$urls = \array_map(
+			static fn( $m ) => $m[ Message::VALUE ]['url'] ?? null,
+			$capture->captured
+		);
+		foreach ( $urls as $url ) {
+			$this->assertSame( 'https://x.test/?supervisor', $url );
+		}
+		$this->assertGreaterThanOrEqual( 2, \count( $urls ) );
+	}
+
 	public function test_memory_extracts_peak_mb(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
@@ -598,14 +708,21 @@ class RequestBuilderTest extends TestCase {
 
 	// --- url_hash + index format -----------------------------------------
 
-	public function test_url_hash_deterministic_strips_query(): void {
+	public function test_url_hash_is_deterministic_over_full_string(): void {
 		$h1 = Request_Builder_Node::url_hash( '/post/123' );
-		$h2 = Request_Builder_Node::url_hash( '/post/123?foo=bar' );
-		$this->assertSame( $h1, $h2, 'query string ignored' );
 		$this->assertSame( 12, \strlen( $h1 ) );
 		// Determinism: same input produces same hash across calls.
-		$h3 = Request_Builder_Node::url_hash( '/post/123' );
-		$this->assertSame( $h1, $h3 );
+		$h2 = Request_Builder_Node::url_hash( '/post/123' );
+		$this->assertSame( $h1, $h2 );
+	}
+
+	public function test_url_hash_distinguishes_worker_suffix(): void {
+		// Callers strip the real query upstream; the only '?' that reaches
+		// url_hash is the intentional ?worker_type marker, which must hash
+		// distinctly so the synthetic row doesn't re-collide onto the real URL.
+		$base = Request_Builder_Node::url_hash( 'https://x.test/' );
+		$wt   = Request_Builder_Node::url_hash( 'https://x.test/?supervisor' );
+		$this->assertNotSame( $base, $wt );
 	}
 
 	public function test_format_index_entry_round_trip(): void {

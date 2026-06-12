@@ -630,8 +630,10 @@ class Request_Builder_Node extends Timer_Node {
 				$request->http_from = $m[1];
 			} elseif ( \preg_match( '/^HTTP_X_JA4_HASH => "(.+)"$/', $message, $m ) ) {
 				$request->ja4_hash = $m[1];
-			} elseif ( \preg_match( '/^NEWSPACK_NODES_WORKER_TYPE => ".+"$/', $message ) ) {
-				$request->is_worker = true;
+			} elseif ( \preg_match( '/^NEWSPACK_NODES_WORKER_TYPE => "(.+)"$/', $message, $m ) ) {
+				// Capture the value so the worker gets its own ?worker_type URL row.
+				$request->is_worker   = true;
+				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $m[1] ) ?? '';
 			}
 		};
 
@@ -862,6 +864,15 @@ class Request_Builder_Node extends Timer_Node {
 	 * doc and the one-line summary gets both with one source call.
 	 */
 	public function emit_request( \stdClass $request ): void {
+		// Workers get their own URL row (?worker_type) so warm/supervisor/job hits
+		// don't merge onto the real URL. One mutation here -> index line, compact
+		// summary, and stats all read the same effective URL. Real query is already
+		// stripped upstream, so the '?' guard only blocks a double-append.
+		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
+		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
+		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
+			$request->url = $url . '?' . $worker_type;
+		}
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ] = Core::$now;
@@ -1107,9 +1118,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * @return string 12-character hex hash.
 	 */
 	public static function url_hash( string $url ): string {
-		$str   = \explode( '?', $url, 2 )[0] ?: $url;
-		$hash1 = self::fnv1a32( $str );
-		$hash2 = self::fnv1a32( $str, $hash1 ^ 0x811c9dc5 );
+		// Hash the full string: callers already strip the real query string upstream,
+		// so the only '?' that survives here is the intentional ?worker_type marker --
+		// stripping it would re-collide the synthetic row onto the real URL.
+		$hash1 = self::fnv1a32( $url );
+		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
 		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
 	}
 
