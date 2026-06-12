@@ -126,79 +126,6 @@ class Settings_Sync {
 	}
 
 	/**
-	 * Wire static listeners on the WP option update / add hooks. Idempotent —
-	 * safe to call multiple times (uses a static guard so multiple plugin
-	 * activation paths don't double-register).
-	 */
-	public static function init(): void {
-		static $registered = false;
-		if ( $registered ) {
-			return;
-		}
-		$registered = true;
-
-		if ( \function_exists( 'add_action' ) ) {
-			\add_action( 'update_option', [ self::class, 'on_static_option_update' ], 10, 3 );
-			\add_action( 'add_option', [ self::class, 'on_static_option_add' ], 10, 2 );
-		}
-		if ( \function_exists( 'add_filter' ) ) {
-			\add_filter( 'newspack_event_logger_nodes/synced_settings', [ self::class, 'register_synced_settings' ] );
-		}
-	}
-
-	/**
-	 * Register the local→remote settings list for the periodic full-sync sweep.
-	 *
-	 * Returned array entries each carry `{local_option, remote_option, endpoint}`
-	 * so RemoteManager::sync_all_settings() can resolve the local config value
-	 * and POST it to the right remote name without re-traversing the option
-	 * schema.
-	 *
-	 * @param array<string, mixed> $settings Existing settings.
-	 * @return array<int|string, mixed> Modified settings (list entries appended).
-	 */
-	public static function register_synced_settings( array $settings ): array {
-		// Core options with name remap.
-		foreach ( self::SYNCED_OPTIONS as $local => $remote ) {
-			$settings[] = [
-				'local_option'  => $local,
-				'remote_option' => $remote,
-				'endpoint'      => self::ENDPOINT,
-			];
-		}
-		// Performance-tuning options synced 1:1, posted to PerfSettingsController.
-		foreach ( self::PERF_TUNING_OPTIONS as $option ) {
-			$settings[] = [
-				'local_option'  => $option,
-				'remote_option' => $option,
-				'endpoint'      => self::PERF_ENDPOINT,
-			];
-		}
-		return $settings;
-	}
-
-	/**
-	 * Suppress static-mode sync fan-out during inbound setting updates.
-	 *
-	 * Call this before update_option() when applying a remotely-synced setting
-	 * to prevent the update_option hook from re-queuing the sync. Used by
-	 * HealthCheckExtensions::merge_hooks() and the inbound REST settings
-	 * controller.
-	 *
-	 * @param bool $suppress True to suppress, false to re-enable.
-	 */
-	public static function suppress_sync( bool $suppress = true ): void {
-		self::$static_syncing = $suppress;
-	}
-
-	/**
-	 * Whether static-mode sync is currently suppressed. Test helper.
-	 */
-	public static function is_sync_suppressed(): bool {
-		return self::$static_syncing;
-	}
-
-	/**
 	 * WP `update_option` listener (3-arg signature: option, old, new).
 	 *
 	 * @param string $option    Option name.
@@ -207,16 +134,6 @@ class Settings_Sync {
 	 */
 	public static function on_static_option_update( string $option, $old_value, $new_value ): void {
 		self::maybe_queue_static_sync( $option, $new_value );
-	}
-
-	/**
-	 * WP `add_option` listener (2-arg signature: option, value).
-	 *
-	 * @param string $option Option name.
-	 * @param mixed  $value  Option value.
-	 */
-	public static function on_static_option_add( string $option, $value ): void {
-		self::maybe_queue_static_sync( $option, $value );
 	}
 
 	/**
@@ -311,22 +228,13 @@ class Settings_Sync {
 	}
 
 	/**
-	 * Validate that an endpoint starts with one of the allowed prefixes.
-	 * Public so RemoteManager and tests can share the check.
+	 * WP `add_option` listener (2-arg signature: option, value).
+	 *
+	 * @param string $option Option name.
+	 * @param mixed  $value  Option value.
 	 */
-	public static function is_allowed_endpoint( string $endpoint ): bool {
-		foreach ( self::ALLOWED_ENDPOINT_PREFIXES as $prefix ) {
-			if ( 0 === \strpos( $endpoint, $prefix ) ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	// --- Instance-mode (legacy closure-dispatch with encryption) -------------
-
-	public function suppress_instance_sync( bool $suppress = true ): void {
-		$this->syncing = $suppress;
+	public static function on_static_option_add( string $option, $value ): void {
+		self::maybe_queue_static_sync( $option, $value );
 	}
 
 	// (Instance suppress_sync alias removed — collided with static method;
@@ -361,31 +269,6 @@ class Settings_Sync {
 	}
 
 	/**
-	 * Apply an inbound encrypted settings payload. Returns the decoded payload
-	 * (`['option' => string, 'value' => mixed]`) on success, null on tamper /
-	 * malformed input.
-	 *
-	 * @param string $ciphertext base64(nonce . ciphertext) from a sync sender.
-	 * @return array{option:string,value:mixed}|null
-	 */
-	public static function decode_payload( string $ciphertext ): ?array {
-		$plaintext = self::decrypt( $ciphertext );
-		if ( null === $plaintext ) {
-			return null;
-		}
-		$decoded = \json_decode( $plaintext, true );
-		if ( ! \is_array( $decoded ) || ! isset( $decoded['option'] ) ) {
-			return null;
-		}
-		/** @var int|float|string|bool|null $raw_option */
-		$raw_option = $decoded['option'];
-		return [
-			'option' => (string) $raw_option,
-			'value'  => $decoded['value'] ?? null,
-		];
-	}
-
-	/**
 	 * Encrypt a plaintext for wire transmission. Returns '' on failure (sodium
 	 * unavailable, key derivation failed, etc.) — caller treats empty as
 	 * fail-closed and skips the dispatch.
@@ -409,6 +292,53 @@ class Settings_Sync {
 		}
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- wire format requires base64.
 		return \base64_encode( $nonce . $ciphertext );
+	}
+
+	/**
+	 * Derive a 32-byte key from wp_salt('auth') via generic hash. Returns ''
+	 * if sodium hash isn't available — callers treat that as fail-closed.
+	 */
+	private static function encryption_key(): string {
+		if ( ! \function_exists( 'sodium_crypto_generichash' ) ) {
+			return '';
+		}
+		if ( ! \function_exists( 'wp_salt' ) ) {
+			return '';
+		}
+		$salt = \wp_salt( 'auth' );
+		if ( '' === $salt ) {
+			return '';
+		}
+		try {
+			return \sodium_crypto_generichash( $salt, '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
+		} catch ( \Throwable $e ) {
+			return '';
+		}
+	}
+
+	/**
+	 * Apply an inbound encrypted settings payload. Returns the decoded payload
+	 * (`['option' => string, 'value' => mixed]`) on success, null on tamper /
+	 * malformed input.
+	 *
+	 * @param string $ciphertext base64(nonce . ciphertext) from a sync sender.
+	 * @return array{option:string,value:mixed}|null
+	 */
+	public static function decode_payload( string $ciphertext ): ?array {
+		$plaintext = self::decrypt( $ciphertext );
+		if ( null === $plaintext ) {
+			return null;
+		}
+		$decoded = \json_decode( $plaintext, true );
+		if ( ! \is_array( $decoded ) || ! isset( $decoded['option'] ) ) {
+			return null;
+		}
+		/** @var int|float|string|bool|null $raw_option */
+		$raw_option = $decoded['option'];
+		return [
+			'option' => (string) $raw_option,
+			'value'  => $decoded['value'] ?? null,
+		];
 	}
 
 	/**
@@ -445,24 +375,94 @@ class Settings_Sync {
 	}
 
 	/**
-	 * Derive a 32-byte key from wp_salt('auth') via generic hash. Returns ''
-	 * if sodium hash isn't available — callers treat that as fail-closed.
+	 * Wire static listeners on the WP option update / add hooks. Idempotent —
+	 * safe to call multiple times (uses a static guard so multiple plugin
+	 * activation paths don't double-register).
 	 */
-	private static function encryption_key(): string {
-		if ( ! \function_exists( 'sodium_crypto_generichash' ) ) {
-			return '';
+	public static function init(): void {
+		static $registered = false;
+		if ( $registered ) {
+			return;
 		}
-		if ( ! \function_exists( 'wp_salt' ) ) {
-			return '';
+		$registered = true;
+
+		if ( \function_exists( 'add_action' ) ) {
+			\add_action( 'update_option', [ self::class, 'on_static_option_update' ], 10, 3 );
+			\add_action( 'add_option', [ self::class, 'on_static_option_add' ], 10, 2 );
 		}
-		$salt = \wp_salt( 'auth' );
-		if ( '' === $salt ) {
-			return '';
+		if ( \function_exists( 'add_filter' ) ) {
+			\add_filter( 'newspack_event_logger_nodes/synced_settings', [ self::class, 'register_synced_settings' ] );
 		}
-		try {
-			return \sodium_crypto_generichash( $salt, '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
-		} catch ( \Throwable $e ) {
-			return '';
+	}
+
+	/**
+	 * Register the local→remote settings list for the periodic full-sync sweep.
+	 *
+	 * Returned array entries each carry `{local_option, remote_option, endpoint}`
+	 * so RemoteManager::sync_all_settings() can resolve the local config value
+	 * and POST it to the right remote name without re-traversing the option
+	 * schema.
+	 *
+	 * @param array<string, mixed> $settings Existing settings.
+	 * @return array<int|string, mixed> Modified settings (list entries appended).
+	 */
+	public static function register_synced_settings( array $settings ): array {
+		// Core options with name remap.
+		foreach ( self::SYNCED_OPTIONS as $local => $remote ) {
+			$settings[] = [
+				'local_option'  => $local,
+				'remote_option' => $remote,
+				'endpoint'      => self::ENDPOINT,
+			];
 		}
+		// Performance-tuning options synced 1:1, posted to PerfSettingsController.
+		foreach ( self::PERF_TUNING_OPTIONS as $option ) {
+			$settings[] = [
+				'local_option'  => $option,
+				'remote_option' => $option,
+				'endpoint'      => self::PERF_ENDPOINT,
+			];
+		}
+		return $settings;
+	}
+
+	/**
+	 * Suppress static-mode sync fan-out during inbound setting updates.
+	 *
+	 * Call this before update_option() when applying a remotely-synced setting
+	 * to prevent the update_option hook from re-queuing the sync. Used by
+	 * HealthCheckExtensions::merge_hooks() and the inbound REST settings
+	 * controller.
+	 *
+	 * @param bool $suppress True to suppress, false to re-enable.
+	 */
+	public static function suppress_sync( bool $suppress = true ): void {
+		self::$static_syncing = $suppress;
+	}
+
+	/**
+	 * Whether static-mode sync is currently suppressed. Test helper.
+	 */
+	public static function is_sync_suppressed(): bool {
+		return self::$static_syncing;
+	}
+
+	/**
+	 * Validate that an endpoint starts with one of the allowed prefixes.
+	 * Public so RemoteManager and tests can share the check.
+	 */
+	public static function is_allowed_endpoint( string $endpoint ): bool {
+		foreach ( self::ALLOWED_ENDPOINT_PREFIXES as $prefix ) {
+			if ( 0 === \strpos( $endpoint, $prefix ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// --- Instance-mode (legacy closure-dispatch with encryption) -------------
+
+	public function suppress_instance_sync( bool $suppress = true ): void {
+		$this->syncing = $suppress;
 	}
 }

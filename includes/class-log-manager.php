@@ -168,12 +168,207 @@ class Log_Manager {
 	}
 
 	/**
-	 * Get the singleton instance.
+	 * Compile a URL-filter pattern list into a start-anchored regex, or null.
 	 *
-	 * @return self
+	 * Patterns prefix-match the request path with a '?' terminator appended
+	 * (see matches_url_filter), so a pattern ending in '?' matches exactly.
+	 *
+	 * @param mixed $urls Config value, expected to be an array of pattern strings.
+	 * @return string|null Compiled regex, or null when there are no patterns.
 	 */
-	public static function instance() {
-		return self::$instance ??= new self();
+	private static function compile_url_filter( $urls ): ?string {
+		if ( ! \is_array( $urls ) || empty( $urls ) ) {
+			return null;
+		}
+		$patterns = \array_filter( \array_map( static fn( $u ) => \trim( self::to_string( $u ) ), $urls ), static fn ( $v ) => (bool) $v );
+		if ( empty( $patterns ) ) {
+			return null;
+		}
+		// `/^(?:a|b)/i` — start-anchored; the (?:) group anchors EVERY alternative.
+		return '/^(?:' . \implode( '|', \array_map( fn( $p ) => \preg_quote( $p, '/' ), $patterns ) ) . ')/i';
+	}
+
+	/**
+	 * Narrow a mixed $_SERVER / config value to a string, reproducing the
+	 * `(string)` coercion the surrounding code already applies to scalars
+	 * (these values are always scalar strings in practice).
+	 *
+	 * @param mixed $value Value to coerce.
+	 */
+	private static function to_string( $value ): string {
+		return \is_scalar( $value ) ? (string) $value : '';
+	}
+
+	/**
+	 * Check if URL matches the configured filter patterns.
+	 *
+	 * @param string $url URL to check.
+	 * @return bool True if URL should be logged.
+	 */
+	public function matches_url_filter( string $url ): bool {
+		$target = \explode( '?', $url, 2 )[0] . '?';
+		if ( null !== $this->skip_regex && \preg_match( $this->skip_regex, $target ) ) {
+			$this->enabled = false;
+			return false;
+		}
+		if ( null === $this->log_regex ) {
+			$this->enabled = true;
+			return true;  // No filter = log all.
+		}
+		if ( \preg_match( $this->log_regex, $target ) ) {
+			$this->enabled = true;
+			return true;
+		}
+		$this->enabled = false;
+		return false;
+	}
+
+	/**
+	 * Leave a background-job request context: resume the parent LogManager and
+	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
+	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
+	 * so a throwing/unpaired begin can't fatal here.
+	 */
+	public static function end_job_context(): void {
+		self::resume();
+		if ( ! empty( self::$job_server_stack ) ) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
+			$_SERVER = \array_pop( self::$job_server_stack );
+		}
+	}
+
+	/**
+	 * Finish the current LogManager and restore the parent from the stack.
+	 *
+	 * The current context gets finish() called (logging process complete),
+	 * then the parent context is restored as the active instance.
+	 */
+	public static function resume(): void {
+		if ( null !== self::$instance ) {
+			self::$instance->finish();
+		}
+		self::$instance = ! empty( self::$context_stack )
+			? \array_pop( self::$context_stack )
+			: null;
+		// Restore UNIQUE_ID from parent context.
+		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
+			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
+		}
+	}
+
+	/**
+	 * Log final summary including memory usage and resources.
+	 */
+	public function finish(): void {
+		if ( $this->finished || ! $this->started ) {
+			return;
+		}
+		$this->finished = true;
+		$now = \hrtime( true );
+		while ( \count( $this->times ) > 1 ) {
+			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
+		}
+
+		$this->message( 'memory', [
+			'm' => [
+				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+			],
+		] );
+		$this->log_resources();
+		$complete_extra = [];
+		$error          = \error_get_last();
+		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
+			$complete_extra['fatal_error']  = \substr( $error['message'], 0, 1024 );
+			$complete_extra['fatal_file']   = $error['file'];
+			$complete_extra['fatal_line']   = $error['line'];
+			$complete_extra['fatal_type']   = $error['type'];
+			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
+			$complete_extra['error_status'] = 'F';
+		}
+
+		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
+		$this->topic?->flush();
+		$this->started = false;
+	}
+
+	/**
+	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
+	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
+	 * end-of-request stack close; muted frames are skipped.
+	 *
+	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
+	 * @param int|float $now Reference hrtime() reading.
+	 */
+	private function emit_orphaned_complete( array $entry, $now ): void {
+		if ( ! empty( $entry['muted'] ) ) {
+			return;
+		}
+		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
+		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
+	}
+
+	/**
+	 * Log a message with the given category and data.
+	 *
+	 * @param string $category Event category/keyword.
+	 * @param array<string, mixed>  $data     Additional data to include.
+	 * @return bool True on success.
+	 */
+	public function message( string $category, array $data = [] ): bool {
+		if ( ! $this->ensure_started() ) {
+			return false;
+		}
+		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
+			$data['m'] = self::redact_url( $data['m'] );
+		}
+		$data_json = \wp_json_encode( $data );
+		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d).', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
+			$category .= ' (truncated)';
+			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
+		}
+		if ( null === $this->topic ) {
+			return false;
+		}
+		// Strip caller-supplied rid: the real one lives in Message::KEY; this stops a forged rid being smuggled in.
+		unset( $data['rid'] );
+
+		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
+		$msg                                       = \Newspack_Nodes\Message::new_message();
+		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
+		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
+		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		$this->topic->fill( $msg );
+		++$this->line_number;
+
+		if ( $this->flush_every_line ) {
+			$this->topic->flush();
+		}
+
+		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
+			$this->line_limited = true;
+		}
+		return true;
+	}
+
+	/**
+	 * Ensure that full logging has started.
+	 *
+	 * @return bool True if logging is started.
+	 */
+	private function ensure_started(): bool {
+		if ( $this->started || ! $this->enabled || $this->finished ) {
+			return $this->started ?? false;
+		}
+		// Set started=true BEFORE init_firehose: it can re-enter ensure_started(); this short-circuits the recursion.
+		$this->started = true;
+		\register_shutdown_function( [ $this, 'finish' ] );
+		$this->init_firehose( $this->config );
+		$this->log_process();
+		return true;
 	}
 
 	/**
@@ -228,12 +423,199 @@ class Log_Manager {
 	}
 
 	/**
-	 * Get the request ID for the current request.
+	 * Narrow a mixed config value to an int, reproducing the `(int)`
+	 * coercion the surrounding code already applies to scalars (these
+	 * values are always scalar in practice).
 	 *
-	 * @return string
+	 * @param mixed $value Value to coerce.
 	 */
-	public function get_request_id(): string {
-		return $this->request_id;
+	private static function to_int( $value ): int {
+		return \is_scalar( $value ) ? (int) $value : 0;
+	}
+
+	/**
+	 * Log process details
+	 *
+	 * @return void
+	 */
+	private function log_process(): void {
+		$process_hr   = $this->request_time ?? \hrtime( true );
+		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
+
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
+		$worker_type = \sanitize_text_field( self::to_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
+		if ( '' !== $worker_type ) {
+			$process_data['worker_type'] = $worker_type;
+		}
+		if ( null !== $this->request_ts ) {
+			$process_data['ts'] = $this->request_ts;
+		}
+
+		$this->message( 'process (start)', $process_data );
+		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
+
+		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
+		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
+		$scheme       = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
+		$redacted_url = self::redact_url( $this->request_url );
+		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
+		$this->message( 'request', [ 'm' => "{$method} {$full_url}" ] );
+
+		$this->log_environment();
+		$this->log_resources();
+	}
+
+	/**
+	 * Redact sensitive query parameters from a URL.
+	 *
+	 * @param string $url URL to redact.
+	 * @return string Redacted URL.
+	 */
+	private static function redact_url( string $url ): string {
+		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
+	}
+
+	private function log_environment(): void {
+		/** @var array<string, true> $url_value_keys */
+		static $url_value_keys = [
+			'HTTP_REFERER'          => true,
+			'QUERY_STRING'          => true,
+			'REDIRECT_QUERY_STRING' => true,
+			'REDIRECT_URL'          => true,
+			'REQUEST_URI'           => true,
+		];
+		$keys = \array_keys( $_SERVER );
+		\sort( $keys );
+		foreach ( $keys as $key ) {
+			if ( ! isset( $_SERVER[ $key ] ) ) {
+				continue;
+			}
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized below with preg_replace.
+			$value = $_SERVER[ $key ];
+			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
+				continue;
+			}
+			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
+			if ( isset( $url_value_keys[ $key ] ) ) {
+				$sanitized = self::redact_url( $sanitized );
+			}
+			$this->message( 'environment_v2', [
+				'm' => \sprintf( '%s => "%s"',
+					$key,
+					\str_replace( '"', '\\"', $sanitized )
+				)
+			] );
+		}
+	}
+
+	/**
+	 * Check if a $_SERVER key should be redacted.
+	 *
+	 * @param string $key Server variable key.
+	 * @return bool True if sensitive.
+	 */
+	private static function is_sensitive_key( string $key ): bool {
+		if ( isset( self::$sensitive_keys[ $key ] ) ) {
+			return true;
+		}
+		$key_upper = \strtoupper( $key );
+		foreach ( self::$sensitive_substrings as $pattern ) {
+			if ( false !== \strpos( $key_upper, $pattern ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private function log_resources(): void {
+		$r = \getrusage();
+		if ( ! $r ) {
+			return;
+		}
+		$info = [
+			\sprintf( 'utime => %f',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'stime => %f',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'maxrss => %d',   $r['ru_maxrss']   ?? 0 ),
+			\sprintf( 'minflt => %d',   $r['ru_minflt']   ?? 0 ), \sprintf( 'majflt => %d',  $r['ru_majflt']  ?? 0 ),
+			\sprintf( 'inblock => %d',  $r['ru_inblock']  ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
+			\sprintf( 'nsignals => %d', $r['ru_nsignals'] ?? 0 ),
+			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
+		];
+		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
+	}
+
+	/**
+	 * Drain every materialized Partition's in-memory batch to disk.
+	 *
+	 * Equivalent of the legacy `flush_buffer()`. Callers that hand off to a
+	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
+	 * pyrobase's template execution) call this BEFORE `proc_open` so the
+	 * parent's buffered Messages land in segment order before the child starts
+	 * appending. Without it, the subprocess can write between the parent's
+	 * accumulated Messages and the next size-threshold / timer flush, leaving
+	 * entries on disk out of logical order.
+	 */
+	public function flush(): void {
+		$this->topic?->flush();
+	}
+
+	/**
+	 * Extract plugin slug from a file path.
+	 *
+	 * @param string $file File path from error_get_last().
+	 * @return string|null Plugin slug or null if not in plugins dir.
+	 */
+	private static function extract_plugin_slug( string $file ): ?string {
+		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
+			return null;
+		}
+		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
+		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
+			return null;
+		}
+		$relative = \substr( $file, \strlen( $plugins_dir ) );
+		$slug     = \explode( '/', $relative )[0];
+		if ( '.php' === \substr( $slug, -4 ) ) {
+			$slug = \substr( $slug, 0, -4 );
+		}
+		return $slug;
+	}
+
+	/**
+	 * Complete a labeled operation and log the duration.
+	 *
+	 * @param string $label Label that was passed to start().
+	 * @param array<string, mixed>  $data  Additional data to include in the complete event.
+	 */
+	public function complete( string $label, array $data = [] ): void {
+		if ( \count( $this->times ) < 1 ) {
+			return;
+		}
+		$now     = \hrtime( true );
+		$start   = $now;
+		$removed = [];
+		$match   = [];
+		for ( $i = \count( $this->times ) - 1; $i >= 0; $i-- ) {
+			$entry = $this->times[ $i ];
+			if ( $label === $entry['label'] ) {
+				$start   = $entry['ts'];
+				$removed = \array_splice( $this->times, $i );
+				$match   = \array_shift( $removed );
+				break;
+			}
+		}
+		for ( $i = \count( $removed ) - 1; $i >= 0; $i-- ) {
+			$this->emit_orphaned_complete( $removed[ $i ], $now );
+		}
+		if ( ! empty( $match ) ) {
+			$data['duration_ms'] = \max( 0, ( $now - $start ) / self::NS_PER_MS );
+			if ( $this->log_memory ) {
+				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
+			}
+			if ( empty( $match['muted'] ) ) {
+				$this->message( "{$label} (complete)", $data );
+			}
+		}
 	}
 
 	/**
@@ -250,40 +632,56 @@ class Log_Manager {
 	}
 
 	/**
-	 * Suspend the current LogManager and push it onto the context stack.
+	 * Log an error message.
 	 *
-	 * The suspended instance keeps its state (timers, request ID, buffer)
-	 * intact. A new instance will be created on the next instance() call.
-	 * Call resume() to restore the parent context.
+	 * @param string $message Error message.
+	 * @return bool True on success.
 	 */
-	public static function suspend(): void {
-		if ( null !== self::$instance ) {
-			self::$instance->topic?->flush();
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- saving our own generated ID for restore.
-			$saved                           = $_SERVER['UNIQUE_ID'] ?? null;
-			self::$instance->saved_unique_id = \is_string( $saved ) ? $saved : null;
-			self::$context_stack[]           = self::$instance;
-			self::$instance                  = null;
-		}
+	public function error( string $message ): bool {
+		return $this->message( 'error', [ 'm' => $message ] );
 	}
 
 	/**
-	 * Finish the current LogManager and restore the parent from the stack.
+	 * Log a warning message.
 	 *
-	 * The current context gets finish() called (logging process complete),
-	 * then the parent context is restored as the active instance.
+	 * @param string $message Warning message.
+	 * @return bool True on success.
 	 */
-	public static function resume(): void {
-		if ( null !== self::$instance ) {
-			self::$instance->finish();
+	public function warning( string $message ): bool {
+		return $this->message( 'warning', [ 'm' => $message ] );
+	}
+
+	/**
+	 * Log an info message.
+	 *
+	 * @param string $message Info message.
+	 * @return bool True on success.
+	 */
+	public function info( string $message ): bool {
+		return $this->message( 'info', [ 'm' => $message ] );
+	}
+
+	/**
+	 * Start timing a labeled operation.
+	 *
+	 * @param string $label Label for the timer (e.g., 'query', 'template').
+	 * @param array<string, mixed>  $data  Additional data to include in the start event.
+	 */
+	public function start( string $label, array $data = [] ): void {
+		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
+			return;
 		}
-		self::$instance = ! empty( self::$context_stack )
-			? \array_pop( self::$context_stack )
-			: null;
-		// Restore UNIQUE_ID from parent context.
-		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
-			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
+		$muted = $this->line_limited;
+		if ( ! $muted ) {
+			if ( false === $this->message( "{$label} (start)", $data ) ) {
+				return;
+			}
 		}
+		$entry = [ 'label' => $label, 'ts' => \hrtime( true ), 'muted' => $muted ];
+		if ( ! empty( $data['m'] ) ) {
+			$entry['m'] = $data['m'];
+		}
+		$this->times[] = $entry;
 	}
 
 	/**
@@ -336,157 +734,39 @@ class Log_Manager {
 	}
 
 	/**
-	 * Leave a background-job request context: resume the parent LogManager and
-	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
-	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
-	 * so a throwing/unpaired begin can't fatal here.
+	 * Suspend the current LogManager and push it onto the context stack.
+	 *
+	 * The suspended instance keeps its state (timers, request ID, buffer)
+	 * intact. A new instance will be created on the next instance() call.
+	 * Call resume() to restore the parent context.
 	 */
-	public static function end_job_context(): void {
-		self::resume();
-		if ( ! empty( self::$job_server_stack ) ) {
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
-			$_SERVER = \array_pop( self::$job_server_stack );
+	public static function suspend(): void {
+		if ( null !== self::$instance ) {
+			self::$instance->topic?->flush();
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- saving our own generated ID for restore.
+			$saved                           = $_SERVER['UNIQUE_ID'] ?? null;
+			self::$instance->saved_unique_id = \is_string( $saved ) ? $saved : null;
+			self::$context_stack[]           = self::$instance;
+			self::$instance                  = null;
 		}
 	}
 
 	/**
-	 * Ensure that full logging has started.
+	 * Get the singleton instance.
 	 *
-	 * @return bool True if logging is started.
+	 * @return self
 	 */
-	private function ensure_started(): bool {
-		if ( $this->started || ! $this->enabled || $this->finished ) {
-			return $this->started ?? false;
-		}
-		// Set started=true BEFORE init_firehose: it can re-enter ensure_started(); this short-circuits the recursion.
-		$this->started = true;
-		\register_shutdown_function( [ $this, 'finish' ] );
-		$this->init_firehose( $this->config );
-		$this->log_process();
-		return true;
+	public static function instance() {
+		return self::$instance ??= new self();
 	}
 
 	/**
-	 * Log process details
+	 * Get the request ID for the current request.
 	 *
-	 * @return void
+	 * @return string
 	 */
-	private function log_process(): void {
-		$process_hr   = $this->request_time ?? \hrtime( true );
-		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
-
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
-		$worker_type = \sanitize_text_field( self::to_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
-		if ( '' !== $worker_type ) {
-			$process_data['worker_type'] = $worker_type;
-		}
-		if ( null !== $this->request_ts ) {
-			$process_data['ts'] = $this->request_ts;
-		}
-
-		$this->message( 'process (start)', $process_data );
-		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
-
-		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
-		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
-		$scheme       = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
-		$redacted_url = self::redact_url( $this->request_url );
-		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
-		$this->message( 'request', [ 'm' => "{$method} {$full_url}" ] );
-
-		$this->log_environment();
-		$this->log_resources();
-	}
-
-	/**
-	 * Log a message with the given category and data.
-	 *
-	 * @param string $category Event category/keyword.
-	 * @param array<string, mixed>  $data     Additional data to include.
-	 * @return bool True on success.
-	 */
-	public function message( string $category, array $data = [] ): bool {
-		if ( ! $this->ensure_started() ) {
-			return false;
-		}
-		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
-			$data['m'] = self::redact_url( $data['m'] );
-		}
-		$data_json = \wp_json_encode( $data );
-		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d).', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
-			$category .= ' (truncated)';
-			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
-		}
-		if ( null === $this->topic ) {
-			return false;
-		}
-		// Strip caller-supplied rid: the real one lives in Message::KEY; this stops a forged rid being smuggled in.
-		unset( $data['rid'] );
-
-		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
-		$msg                                       = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
-		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
-		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		$this->topic->fill( $msg );
-		++$this->line_number;
-
-		if ( $this->flush_every_line ) {
-			$this->topic->flush();
-		}
-
-		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
-			$this->line_limited = true;
-		}
-		return true;
-	}
-
-	/**
-	 * Log an error message.
-	 *
-	 * @param string $message Error message.
-	 * @return bool True on success.
-	 */
-	public function error( string $message ): bool {
-		return $this->message( 'error', [ 'm' => $message ] );
-	}
-
-	/**
-	 * Log a warning message.
-	 *
-	 * @param string $message Warning message.
-	 * @return bool True on success.
-	 */
-	public function warning( string $message ): bool {
-		return $this->message( 'warning', [ 'm' => $message ] );
-	}
-
-	/**
-	 * Log an info message.
-	 *
-	 * @param string $message Info message.
-	 * @return bool True on success.
-	 */
-	public function info( string $message ): bool {
-		return $this->message( 'info', [ 'm' => $message ] );
-	}
-
-	/**
-	 * Drain every materialized Partition's in-memory batch to disk.
-	 *
-	 * Equivalent of the legacy `flush_buffer()`. Callers that hand off to a
-	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
-	 * pyrobase's template execution) call this BEFORE `proc_open` so the
-	 * parent's buffered Messages land in segment order before the child starts
-	 * appending. Without it, the subprocess can write between the parent's
-	 * accumulated Messages and the next size-threshold / timer flush, leaving
-	 * entries on disk out of logical order.
-	 */
-	public function flush(): void {
-		$this->topic?->flush();
+	public function get_request_id(): string {
+		return $this->request_id;
 	}
 
 	/**
@@ -509,286 +789,6 @@ class Log_Manager {
 		$ref_init = new \ReflectionMethod( Partition_Node::class, 'init_current_segment' );
 		$ref_init->setAccessible( true );
 		$ref_init->invoke( $partition );
-	}
-
-	/**
-	 * Start timing a labeled operation.
-	 *
-	 * @param string $label Label for the timer (e.g., 'query', 'template').
-	 * @param array<string, mixed>  $data  Additional data to include in the start event.
-	 */
-	public function start( string $label, array $data = [] ): void {
-		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
-			return;
-		}
-		$muted = $this->line_limited;
-		if ( ! $muted ) {
-			if ( false === $this->message( "{$label} (start)", $data ) ) {
-				return;
-			}
-		}
-		$entry = [ 'label' => $label, 'ts' => \hrtime( true ), 'muted' => $muted ];
-		if ( ! empty( $data['m'] ) ) {
-			$entry['m'] = $data['m'];
-		}
-		$this->times[] = $entry;
-	}
-
-	/**
-	 * Complete a labeled operation and log the duration.
-	 *
-	 * @param string $label Label that was passed to start().
-	 * @param array<string, mixed>  $data  Additional data to include in the complete event.
-	 */
-	public function complete( string $label, array $data = [] ): void {
-		if ( \count( $this->times ) < 1 ) {
-			return;
-		}
-		$now     = \hrtime( true );
-		$start   = $now;
-		$removed = [];
-		$match   = [];
-		for ( $i = \count( $this->times ) - 1; $i >= 0; $i-- ) {
-			$entry = $this->times[ $i ];
-			if ( $label === $entry['label'] ) {
-				$start   = $entry['ts'];
-				$removed = \array_splice( $this->times, $i );
-				$match   = \array_shift( $removed );
-				break;
-			}
-		}
-		for ( $i = \count( $removed ) - 1; $i >= 0; $i-- ) {
-			$this->emit_orphaned_complete( $removed[ $i ], $now );
-		}
-		if ( ! empty( $match ) ) {
-			$data['duration_ms'] = \max( 0, ( $now - $start ) / self::NS_PER_MS );
-			if ( $this->log_memory ) {
-				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
-			}
-			if ( empty( $match['muted'] ) ) {
-				$this->message( "{$label} (complete)", $data );
-			}
-		}
-	}
-
-	/**
-	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
-	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
-	 * end-of-request stack close; muted frames are skipped.
-	 *
-	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
-	 * @param int|float $now Reference hrtime() reading.
-	 */
-	private function emit_orphaned_complete( array $entry, $now ): void {
-		if ( ! empty( $entry['muted'] ) ) {
-			return;
-		}
-		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
-	}
-
-	/**
-	 * Redact sensitive query parameters from a URL.
-	 *
-	 * @param string $url URL to redact.
-	 * @return string Redacted URL.
-	 */
-	private static function redact_url( string $url ): string {
-		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
-	}
-
-	/**
-	 * Check if a $_SERVER key should be redacted.
-	 *
-	 * @param string $key Server variable key.
-	 * @return bool True if sensitive.
-	 */
-	private static function is_sensitive_key( string $key ): bool {
-		if ( isset( self::$sensitive_keys[ $key ] ) ) {
-			return true;
-		}
-		$key_upper = \strtoupper( $key );
-		foreach ( self::$sensitive_substrings as $pattern ) {
-			if ( false !== \strpos( $key_upper, $pattern ) ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
-	 * Check if URL matches the configured filter patterns.
-	 *
-	 * @param string $url URL to check.
-	 * @return bool True if URL should be logged.
-	 */
-	public function matches_url_filter( string $url ): bool {
-		$target = \explode( '?', $url, 2 )[0] . '?';
-		if ( null !== $this->skip_regex && \preg_match( $this->skip_regex, $target ) ) {
-			$this->enabled = false;
-			return false;
-		}
-		if ( null === $this->log_regex ) {
-			$this->enabled = true;
-			return true;  // No filter = log all.
-		}
-		if ( \preg_match( $this->log_regex, $target ) ) {
-			$this->enabled = true;
-			return true;
-		}
-		$this->enabled = false;
-		return false;
-	}
-
-	/**
-	 * Compile a URL-filter pattern list into a start-anchored regex, or null.
-	 *
-	 * Patterns prefix-match the request path with a '?' terminator appended
-	 * (see matches_url_filter), so a pattern ending in '?' matches exactly.
-	 *
-	 * @param mixed $urls Config value, expected to be an array of pattern strings.
-	 * @return string|null Compiled regex, or null when there are no patterns.
-	 */
-	private static function compile_url_filter( $urls ): ?string {
-		if ( ! \is_array( $urls ) || empty( $urls ) ) {
-			return null;
-		}
-		$patterns = \array_filter( \array_map( static fn( $u ) => \trim( self::to_string( $u ) ), $urls ), static fn ( $v ) => (bool) $v );
-		if ( empty( $patterns ) ) {
-			return null;
-		}
-		// `/^(?:a|b)/i` — start-anchored; the (?:) group anchors EVERY alternative.
-		return '/^(?:' . \implode( '|', \array_map( fn( $p ) => \preg_quote( $p, '/' ), $patterns ) ) . ')/i';
-	}
-
-	private function log_environment(): void {
-		/** @var array<string, true> $url_value_keys */
-		static $url_value_keys = [
-			'HTTP_REFERER'          => true,
-			'QUERY_STRING'          => true,
-			'REDIRECT_QUERY_STRING' => true,
-			'REDIRECT_URL'          => true,
-			'REQUEST_URI'           => true,
-		];
-		$keys = \array_keys( $_SERVER );
-		\sort( $keys );
-		foreach ( $keys as $key ) {
-			if ( ! isset( $_SERVER[ $key ] ) ) {
-				continue;
-			}
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized below with preg_replace.
-			$value = $_SERVER[ $key ];
-			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
-				continue;
-			}
-			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
-			if ( isset( $url_value_keys[ $key ] ) ) {
-				$sanitized = self::redact_url( $sanitized );
-			}
-			$this->message( 'environment_v2', [
-				'm' => \sprintf( '%s => "%s"',
-					$key,
-					\str_replace( '"', '\\"', $sanitized )
-				)
-			] );
-		}
-	}
-
-	private function log_resources(): void {
-		$r = \getrusage();
-		if ( ! $r ) {
-			return;
-		}
-		$info = [
-			\sprintf( 'utime => %f',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'stime => %f',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'maxrss => %d',   $r['ru_maxrss']   ?? 0 ),
-			\sprintf( 'minflt => %d',   $r['ru_minflt']   ?? 0 ), \sprintf( 'majflt => %d',  $r['ru_majflt']  ?? 0 ),
-			\sprintf( 'inblock => %d',  $r['ru_inblock']  ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
-			\sprintf( 'nsignals => %d', $r['ru_nsignals'] ?? 0 ),
-			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
-		];
-		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
-	}
-
-	/**
-	 * Log final summary including memory usage and resources.
-	 */
-	public function finish(): void {
-		if ( $this->finished || ! $this->started ) {
-			return;
-		}
-		$this->finished = true;
-		$now = \hrtime( true );
-		while ( \count( $this->times ) > 1 ) {
-			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
-		}
-
-		$this->message( 'memory', [
-			'm' => [
-				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-			],
-		] );
-		$this->log_resources();
-		$complete_extra = [];
-		$error          = \error_get_last();
-		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
-			$complete_extra['fatal_error']  = \substr( $error['message'], 0, 1024 );
-			$complete_extra['fatal_file']   = $error['file'];
-			$complete_extra['fatal_line']   = $error['line'];
-			$complete_extra['fatal_type']   = $error['type'];
-			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
-			$complete_extra['error_status'] = 'F';
-		}
-
-		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
-		$this->topic?->flush();
-		$this->started = false;
-	}
-
-	/**
-	 * Extract plugin slug from a file path.
-	 *
-	 * @param string $file File path from error_get_last().
-	 * @return string|null Plugin slug or null if not in plugins dir.
-	 */
-	private static function extract_plugin_slug( string $file ): ?string {
-		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
-			return null;
-		}
-		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
-		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
-			return null;
-		}
-		$relative = \substr( $file, \strlen( $plugins_dir ) );
-		$slug     = \explode( '/', $relative )[0];
-		if ( '.php' === \substr( $slug, -4 ) ) {
-			$slug = \substr( $slug, 0, -4 );
-		}
-		return $slug;
-	}
-
-	/**
-	 * Narrow a mixed $_SERVER / config value to a string, reproducing the
-	 * `(string)` coercion the surrounding code already applies to scalars
-	 * (these values are always scalar strings in practice).
-	 *
-	 * @param mixed $value Value to coerce.
-	 */
-	private static function to_string( $value ): string {
-		return \is_scalar( $value ) ? (string) $value : '';
-	}
-
-	/**
-	 * Narrow a mixed config value to an int, reproducing the `(int)`
-	 * coercion the surrounding code already applies to scalars (these
-	 * values are always scalar in practice).
-	 *
-	 * @param mixed $value Value to coerce.
-	 */
-	private static function to_int( $value ): int {
-		return \is_scalar( $value ) ? (int) $value : 0;
 	}
 
 }

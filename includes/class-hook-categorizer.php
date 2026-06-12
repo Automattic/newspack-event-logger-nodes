@@ -56,6 +56,126 @@ class Hook_Categorizer {
 	public static ?\Closure $read_file = null;
 
 	/**
+	 * Get registered hooks grouped by category.
+	 *
+	 * @return array<string, mixed> Associative array of category => [hooks...].
+	 */
+	public static function get_registered_hooks_by_category(): array {
+		$hooks      = self::get_registered_hooks();
+		$categories = self::get_categories();
+
+		// Initialize all categories.
+		$grouped = [];
+		foreach ( \array_keys( $categories ) as $category ) {
+			$grouped[ $category ] = [];
+		}
+
+		// Categorize each hook, skipping Event Logger's own internal filters.
+		// Instrumenting them is a no-op at best (Core::hook_start rejects the
+		// prefixes) and used to cause a bootstrap reentry loop, so there's no
+		// reason to surface them in the picker at all.
+		foreach ( $hooks as $hook ) {
+			if ( self::is_internal( $hook ) ) {
+				continue;
+			}
+			$category                = self::categorize( $hook );
+			$grouped[ $category ][] = $hook;
+		}
+
+		// Remove empty categories.
+		return \array_filter( $grouped );
+	}
+
+	/**
+	 * Get all registered hooks from WordPress.
+	 *
+	 * @return array<int, string> Array of hook names that have callbacks attached.
+	 */
+	public static function get_registered_hooks(): array {
+		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
+		global $wp_filter;
+
+		$hooks = [];
+		foreach ( $wp_filter as $hook_name => $hook_obj ) {
+			if ( ! empty( $hook_obj->callbacks ) ) {
+				$hooks[ $hook_name ] = true;
+			}
+		}
+
+		// Include already-selected hooks so they appear in the browse modal
+		// even if not registered on the current page (e.g. worker-only hooks).
+		$selected = \get_option( 'newspack_event_logger_nodes_log_events', [] );
+		if ( \is_array( $selected ) ) {
+			foreach ( $selected as $hook ) {
+				if ( \is_string( $hook ) && '' !== $hook ) {
+					$hooks[ $hook ] = true;
+				}
+			}
+		}
+
+		$result = \array_keys( $hooks );
+		\sort( $result );
+		return $result;
+	}
+
+	/**
+	 * Get all categories with their colors.
+	 *
+	 * @return array<string, mixed> Associative array of category => color.
+	 */
+	public static function get_categories(): array {
+		$config = self::get_merged_config();
+		return $config['colors'];
+	}
+
+	/**
+	 * Get merged configuration (base + user customizations).
+	 *
+	 * @return array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
+	 */
+	public static function get_merged_config(): array {
+		if ( null !== self::$merged_config ) {
+			return self::$merged_config;
+		}
+
+		$base          = self::get_base_config();
+		$customizations = self::get_user_customizations();
+
+		$base_colors    = $base['_colors'] ?? [];
+		$user_colors    = $customizations['colors'] ?? [];
+		$base_patterns  = $base['_patterns'] ?? [];
+		$user_patterns_all = $customizations['patterns'] ?? [];
+		$overrides      = $customizations['overrides'] ?? [];
+
+		// Merge colors (user overrides base).
+		/** @var array<string, mixed> $colors config dynamic output. */
+		$colors = \array_merge( \is_array( $base_colors ) ? $base_colors : [], \is_array( $user_colors ) ? $user_colors : [] );
+
+		// Merge patterns (user patterns added to base).
+		/** @var array<string, mixed> $patterns config dynamic output. */
+		$patterns = \is_array( $base_patterns ) ? $base_patterns : [];
+		if ( \is_array( $user_patterns_all ) ) {
+			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
+				$category = (string) $raw_category;
+				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
+					$patterns[ $category ] = [];
+				}
+				$patterns[ $category ] = \array_merge( $patterns[ $category ], \is_array( $user_patterns ) ? $user_patterns : [] );
+			}
+		}
+
+		/** @var array<string, mixed> $overrides_map config dynamic output. */
+		$overrides_map       = \is_array( $overrides ) ? $overrides : [];
+		self::$merged_config = [
+			'colors'    => $colors,
+			'patterns'  => $patterns,
+			'overrides' => $overrides_map,
+		];
+
+		return self::$merged_config;
+	}
+
+	/**
 	 * Load base configuration from hook_categories.json.
 	 *
 	 * @return array<string, mixed> Base configuration.
@@ -106,50 +226,35 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * Get merged configuration (base + user customizations).
+	 * Is this hook one of our own internal filters/actions?
 	 *
-	 * @return array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
+	 * Used everywhere a list of hooks is presented to the operator or
+	 * instrumented by `Core::hook_start`. Nodes uses two naming styles —
+	 * slash for actions (`newspack_nodes/spawn_worker`,
+	 * `newspack_event_logger_nodes/sse_connected`) and underscore for
+	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
+	 * prefix list covers both. Instrumenting our own filters is never an
+	 * answer to a real "where is time going" question, and binding
+	 * `hook_start`/`hook_complete` to substrate filters can loop via
+	 * `Config::load_config` during LogManager bootstrap.
+	 *
+	 * @param string $hook_name Hook to test.
+	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
 	 */
-	public static function get_merged_config(): array {
-		if ( null !== self::$merged_config ) {
-			return self::$merged_config;
-		}
-
-		$base          = self::get_base_config();
-		$customizations = self::get_user_customizations();
-
-		$base_colors    = $base['_colors'] ?? [];
-		$user_colors    = $customizations['colors'] ?? [];
-		$base_patterns  = $base['_patterns'] ?? [];
-		$user_patterns_all = $customizations['patterns'] ?? [];
-		$overrides      = $customizations['overrides'] ?? [];
-
-		// Merge colors (user overrides base).
-		/** @var array<string, mixed> $colors config dynamic output. */
-		$colors = \array_merge( \is_array( $base_colors ) ? $base_colors : [], \is_array( $user_colors ) ? $user_colors : [] );
-
-		// Merge patterns (user patterns added to base).
-		/** @var array<string, mixed> $patterns config dynamic output. */
-		$patterns = \is_array( $base_patterns ) ? $base_patterns : [];
-		if ( \is_array( $user_patterns_all ) ) {
-			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
-				$category = (string) $raw_category;
-				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
-					$patterns[ $category ] = [];
-				}
-				$patterns[ $category ] = \array_merge( $patterns[ $category ], \is_array( $user_patterns ) ? $user_patterns : [] );
+	public static function is_internal( string $hook_name ): bool {
+		/** @var array<int, string> $prefixes */
+		static $prefixes = [
+			'newspack_event_logger_nodes_',
+			'newspack_event_logger_nodes/',
+			'newspack_nodes_',
+			'newspack_nodes/',
+		];
+		foreach ( $prefixes as $prefix ) {
+			if ( \str_starts_with( $hook_name, $prefix ) ) {
+				return true;
 			}
 		}
-
-		/** @var array<string, mixed> $overrides_map config dynamic output. */
-		$overrides_map       = \is_array( $overrides ) ? $overrides : [];
-		self::$merged_config = [
-			'colors'    => $colors,
-			'patterns'  => $patterns,
-			'overrides' => $overrides_map,
-		];
-
-		return self::$merged_config;
+		return false;
 	}
 
 	/**
@@ -205,111 +310,6 @@ class Hook_Categorizer {
 		}
 
 		return 'Other';
-	}
-
-	/**
-	 * Get all categories with their colors.
-	 *
-	 * @return array<string, mixed> Associative array of category => color.
-	 */
-	public static function get_categories(): array {
-		$config = self::get_merged_config();
-		return $config['colors'];
-	}
-
-	/**
-	 * Is this hook one of our own internal filters/actions?
-	 *
-	 * Used everywhere a list of hooks is presented to the operator or
-	 * instrumented by `Core::hook_start`. Nodes uses two naming styles —
-	 * slash for actions (`newspack_nodes/spawn_worker`,
-	 * `newspack_event_logger_nodes/sse_connected`) and underscore for
-	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
-	 * prefix list covers both. Instrumenting our own filters is never an
-	 * answer to a real "where is time going" question, and binding
-	 * `hook_start`/`hook_complete` to substrate filters can loop via
-	 * `Config::load_config` during LogManager bootstrap.
-	 *
-	 * @param string $hook_name Hook to test.
-	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
-	 */
-	public static function is_internal( string $hook_name ): bool {
-		/** @var array<int, string> $prefixes */
-		static $prefixes = [
-			'newspack_event_logger_nodes_',
-			'newspack_event_logger_nodes/',
-			'newspack_nodes_',
-			'newspack_nodes/',
-		];
-		foreach ( $prefixes as $prefix ) {
-			if ( \str_starts_with( $hook_name, $prefix ) ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
-	 * Get all registered hooks from WordPress.
-	 *
-	 * @return array<int, string> Array of hook names that have callbacks attached.
-	 */
-	public static function get_registered_hooks(): array {
-		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
-		global $wp_filter;
-
-		$hooks = [];
-		foreach ( $wp_filter as $hook_name => $hook_obj ) {
-			if ( ! empty( $hook_obj->callbacks ) ) {
-				$hooks[ $hook_name ] = true;
-			}
-		}
-
-		// Include already-selected hooks so they appear in the browse modal
-		// even if not registered on the current page (e.g. worker-only hooks).
-		$selected = \get_option( 'newspack_event_logger_nodes_log_events', [] );
-		if ( \is_array( $selected ) ) {
-			foreach ( $selected as $hook ) {
-				if ( \is_string( $hook ) && '' !== $hook ) {
-					$hooks[ $hook ] = true;
-				}
-			}
-		}
-
-		$result = \array_keys( $hooks );
-		\sort( $result );
-		return $result;
-	}
-
-	/**
-	 * Get registered hooks grouped by category.
-	 *
-	 * @return array<string, mixed> Associative array of category => [hooks...].
-	 */
-	public static function get_registered_hooks_by_category(): array {
-		$hooks      = self::get_registered_hooks();
-		$categories = self::get_categories();
-
-		// Initialize all categories.
-		$grouped = [];
-		foreach ( \array_keys( $categories ) as $category ) {
-			$grouped[ $category ] = [];
-		}
-
-		// Categorize each hook, skipping Event Logger's own internal filters.
-		// Instrumenting them is a no-op at best (Core::hook_start rejects the
-		// prefixes) and used to cause a bootstrap reentry loop, so there's no
-		// reason to surface them in the picker at all.
-		foreach ( $hooks as $hook ) {
-			if ( self::is_internal( $hook ) ) {
-				continue;
-			}
-			$category                = self::categorize( $hook );
-			$grouped[ $category ][] = $hook;
-		}
-
-		// Remove empty categories.
-		return \array_filter( $grouped );
 	}
 
 	/**

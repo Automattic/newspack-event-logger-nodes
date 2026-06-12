@@ -58,20 +58,6 @@ class LRU_Cache {
 	}
 
 	/**
-	 * Set time-based rotation interval.
-	 *
-	 * @param float    $seconds  Seconds between rotations.
-	 * @param callable $on_evict Called with (key, value) for each evicted item.
-	 * @return self
-	 */
-	public function with_timed_rotation( float $seconds, callable $on_evict ): self {
-		$this->rotate_interval = $seconds;
-		$this->on_evict        = $on_evict;
-		$this->last_rotation   = \microtime( true );
-		return $this;
-	}
-
-	/**
 	 * Get item from cache.
 	 *
 	 * @param string $key Cache key.
@@ -97,6 +83,47 @@ class LRU_Cache {
 	}
 
 	/**
+	 * Rotate to new bucket if current is full.
+	 */
+	private function maybe_rotate(): void {
+		if ( \count( $this->buckets[ $this->current ] ) < $this->bucket_size ) {
+			return;
+		}
+		$this->force_rotate();
+	}
+
+	/**
+	 * Force a bucket rotation, evicting the oldest bucket if at capacity.
+	 */
+	private function force_rotate(): void {
+		$this->last_rotation = \microtime( true );
+		++$this->current;
+		$this->buckets[ $this->current ] = [];
+
+		if ( \count( $this->buckets ) > $this->num_buckets ) {
+			$oldest = \min( \array_keys( $this->buckets ) );
+			$this->evict_bucket( $oldest );
+		}
+	}
+
+	/**
+	 * Evict a bucket, calling the on_evict callback for each item.
+	 *
+	 * @param int $index Bucket index to evict.
+	 */
+	private function evict_bucket( int $index ): void {
+		if ( ! isset( $this->buckets[ $index ] ) ) {
+			return;
+		}
+		if ( $this->on_evict ) {
+			foreach ( $this->buckets[ $index ] as $key => $value ) {
+				( $this->on_evict )( $key, $value );
+			}
+		}
+		unset( $this->buckets[ $index ] );
+	}
+
+	/**
 	 * Set item in cache.
 	 *
 	 * @param string $key   Cache key.
@@ -110,6 +137,35 @@ class LRU_Cache {
 
 		$this->buckets[ $this->current ][ $key ] = $value;
 		$this->maybe_rotate();
+	}
+
+	/**
+	 * Rotate if time interval has elapsed.
+	 *
+	 * Call this periodically from the processing loop.
+	 */
+	public function rotate_if_due(): void {
+		if ( $this->rotate_interval <= 0 ) {
+			return;
+		}
+		$now = \microtime( true );
+		if ( $now - $this->last_rotation >= $this->rotate_interval ) {
+			$this->force_rotate();
+		}
+	}
+
+	/**
+	 * Set time-based rotation interval.
+	 *
+	 * @param float    $seconds  Seconds between rotations.
+	 * @param callable $on_evict Called with (key, value) for each evicted item.
+	 * @return self
+	 */
+	public function with_timed_rotation( float $seconds, callable $on_evict ): self {
+		$this->rotate_interval = $seconds;
+		$this->on_evict        = $on_evict;
+		$this->last_rotation   = \microtime( true );
+		return $this;
 	}
 
 	/**
@@ -186,61 +242,5 @@ class LRU_Cache {
 		/** @var array<int, array<string, mixed>> $buckets */
 		$this->buckets = $buckets;
 		$this->current = (int) \max( 0, \min( $current, $max_key ) );
-	}
-
-	/**
-	 * Rotate if time interval has elapsed.
-	 *
-	 * Call this periodically from the processing loop.
-	 */
-	public function rotate_if_due(): void {
-		if ( $this->rotate_interval <= 0 ) {
-			return;
-		}
-		$now = \microtime( true );
-		if ( $now - $this->last_rotation >= $this->rotate_interval ) {
-			$this->force_rotate();
-		}
-	}
-
-	/**
-	 * Force a bucket rotation, evicting the oldest bucket if at capacity.
-	 */
-	private function force_rotate(): void {
-		$this->last_rotation = \microtime( true );
-		++$this->current;
-		$this->buckets[ $this->current ] = [];
-
-		if ( \count( $this->buckets ) > $this->num_buckets ) {
-			$oldest = \min( \array_keys( $this->buckets ) );
-			$this->evict_bucket( $oldest );
-		}
-	}
-
-	/**
-	 * Evict a bucket, calling the on_evict callback for each item.
-	 *
-	 * @param int $index Bucket index to evict.
-	 */
-	private function evict_bucket( int $index ): void {
-		if ( ! isset( $this->buckets[ $index ] ) ) {
-			return;
-		}
-		if ( $this->on_evict ) {
-			foreach ( $this->buckets[ $index ] as $key => $value ) {
-				( $this->on_evict )( $key, $value );
-			}
-		}
-		unset( $this->buckets[ $index ] );
-	}
-
-	/**
-	 * Rotate to new bucket if current is full.
-	 */
-	private function maybe_rotate(): void {
-		if ( \count( $this->buckets[ $this->current ] ) < $this->bucket_size ) {
-			return;
-		}
-		$this->force_rotate();
 	}
 }

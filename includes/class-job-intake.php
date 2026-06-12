@@ -100,50 +100,30 @@ class Job_Intake {
 	}
 
 	/**
-	 * Destructor — release any per-Partition write locks still held.
-	 */
-	public function __destruct() {
-		$this->close();
-	}
-
-	/**
-	 * Pin all writes to a specific partition.
+	 * Write multiple jobs in a batch.
 	 *
-	 * @param int $partition Partition index.
-	 * @return self For chaining.
+	 * @param array<int, array<string, mixed>> $jobs Zero-indexed list of ['handler' => string, 'parameters' => array].
+	 * @param string|null                      $key  Optional partition key for all jobs.
+	 * @return int Number of jobs successfully written.
 	 */
-	public function partition( int $partition ): self {
-		$this->pinned_partition = \max( 0, \min( $partition, $this->num_partitions - 1 ) );
-		return $this;
-	}
+	public function queue_many( array $jobs, ?string $key = null ): int {
+		$written = 0;
 
-	/**
-	 * Lazily materialize the Partition for a given index. The per-Partition
-	 * `allow_large_writes()` call acquires the partition's write lock — blocks
-	 * up to ~65s on a respawn race, throws on a genuine concurrent writer.
-	 */
-	private function partition_handle( int $partition ): Partition_Node {
-		if ( isset( $this->partitions[ $partition ] ) ) {
-			return $this->partitions[ $partition ];
+		foreach ( $jobs as $job ) {
+			$handler    = $job['handler'] ?? '';
+			$parameters = $job['parameters'] ?? [];
+
+			if ( ! \is_string( $handler ) || ! \is_array( $parameters ) ) {
+				continue;
+			}
+
+			/** @var array<string, mixed> $parameters */
+			if ( $this->write_job( $handler, $parameters, $key ) ) {
+				++$written;
+			}
 		}
-		$log_base = $this->base_dir . '/logs/jobintake.log';
-		// Suffix names with a process+object-id token so a second JobIntake
-		// instantiated mid-process (e.g. during tests, or after a close) doesn't
-		// clash with stale Core registrations from the previous instance.
-		$instance_token = \getmypid() . '-' . \spl_object_id( $this );
-		$p              = new Partition_Node();
-		$p->name( "jobintake.{$instance_token}.p{$partition}" );
-		// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
-		$p->patron( $p );
-		// Rule 4: sink into the interpreter only when one is in scope.
-		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-		if ( null === $p->sink() && null !== $ci ) {
-			$p->sink( $ci );
-		}
-		$p->arguments( "{$log_base} {$partition}" );
-		$p->allow_large_writes();
-		$this->partitions[ $partition ] = $p;
-		return $p;
+
+		return $written;
 	}
 
 	/**
@@ -202,47 +182,32 @@ class Job_Intake {
 	}
 
 	/**
-	 * Close all open Partitions. `Partition::remove_node()` flushes the batch
-	 * and releases the per-Partition write lock.
+	 * Lazily materialize the Partition for a given index. The per-Partition
+	 * `allow_large_writes()` call acquires the partition's write lock — blocks
+	 * up to ~65s on a respawn race, throws on a genuine concurrent writer.
 	 */
-	public function close(): void {
-		foreach ( $this->partitions as $partition ) {
-			$partition->flush();
-			$base = $partition->name();
-			if ( '' !== $base ) {
-				\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
-				\Newspack_Nodes\Core::unregister_node( "{$base}:heartbeat" );
-			}
-			$partition->remove_node();
+	private function partition_handle( int $partition ): Partition_Node {
+		if ( isset( $this->partitions[ $partition ] ) ) {
+			return $this->partitions[ $partition ];
 		}
-		$this->partitions = [];
-	}
-
-	/**
-	 * Write multiple jobs in a batch.
-	 *
-	 * @param array<int, array<string, mixed>> $jobs Zero-indexed list of ['handler' => string, 'parameters' => array].
-	 * @param string|null                      $key  Optional partition key for all jobs.
-	 * @return int Number of jobs successfully written.
-	 */
-	public function queue_many( array $jobs, ?string $key = null ): int {
-		$written = 0;
-
-		foreach ( $jobs as $job ) {
-			$handler    = $job['handler'] ?? '';
-			$parameters = $job['parameters'] ?? [];
-
-			if ( ! \is_string( $handler ) || ! \is_array( $parameters ) ) {
-				continue;
-			}
-
-			/** @var array<string, mixed> $parameters */
-			if ( $this->write_job( $handler, $parameters, $key ) ) {
-				++$written;
-			}
+		$log_base = $this->base_dir . '/logs/jobintake.log';
+		// Suffix names with a process+object-id token so a second JobIntake
+		// instantiated mid-process (e.g. during tests, or after a close) doesn't
+		// clash with stale Core registrations from the previous instance.
+		$instance_token = \getmypid() . '-' . \spl_object_id( $this );
+		$p              = new Partition_Node();
+		$p->name( "jobintake.{$instance_token}.p{$partition}" );
+		// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
+		$p->patron( $p );
+		// Rule 4: sink into the interpreter only when one is in scope.
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $p->sink() && null !== $ci ) {
+			$p->sink( $ci );
 		}
-
-		return $written;
+		$p->arguments( "{$log_base} {$partition}" );
+		$p->allow_large_writes();
+		$this->partitions[ $partition ] = $p;
+		return $p;
 	}
 
 	/**
@@ -288,5 +253,40 @@ class Job_Intake {
 			$intake->close();
 		}
 		return $result;
+	}
+
+	/**
+	 * Close all open Partitions. `Partition::remove_node()` flushes the batch
+	 * and releases the per-Partition write lock.
+	 */
+	public function close(): void {
+		foreach ( $this->partitions as $partition ) {
+			$partition->flush();
+			$base = $partition->name();
+			if ( '' !== $base ) {
+				\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
+				\Newspack_Nodes\Core::unregister_node( "{$base}:heartbeat" );
+			}
+			$partition->remove_node();
+		}
+		$this->partitions = [];
+	}
+
+	/**
+	 * Destructor — release any per-Partition write locks still held.
+	 */
+	public function __destruct() {
+		$this->close();
+	}
+
+	/**
+	 * Pin all writes to a specific partition.
+	 *
+	 * @param int $partition Partition index.
+	 * @return self For chaining.
+	 */
+	public function partition( int $partition ): self {
+		$this->pinned_partition = \max( 0, \min( $partition, $this->num_partitions - 1 ) );
+		return $this;
 	}
 }
