@@ -70,19 +70,6 @@ function makeOpId() {
 const HTTP_TO = '_http/performance';
 
 export class PerformanceCommandNode extends Node {
-	// Command-builder source: its fetch* methods are called directly by the hook
-	// to mint control messages; it has no fill() entry — no input port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description:
-				'Builds Performance Dashboard commands from hook calls.',
-			arguments: [],
-			commands: [],
-			accepts_fill: false,
-		};
-	}
-
 	constructor( onError, viewName ) {
 		super();
 		this._onError = onError;
@@ -351,5 +338,17 @@ export class PerformanceCommandNode extends Node {
 		out[ TO ] = this.target;
 		out[ VALUE ] = value;
 		this.sink.fill( out );
+	}
+	// Command-builder source: its fetch* methods are called directly by the hook
+	// to mint control messages; it has no fill() entry — no input port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description:
+				'Builds Performance Dashboard commands from hook calls.',
+			arguments: [],
+			commands: [],
+			accepts_fill: false,
+		};
 	}
 }

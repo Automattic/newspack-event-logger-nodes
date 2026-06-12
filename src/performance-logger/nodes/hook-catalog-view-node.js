@@ -21,18 +21,6 @@ import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
  * `useNodeState('hookcatalog:view','view')`. Mirrors servers:view.
  */
 export class HookCatalogViewNode extends Node {
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description: 'Owns the Performance Logger hook-catalog view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
-		};
-	}
-
 	constructor() {
 		super();
 		this.model = {
@@ -87,6 +75,19 @@ export class HookCatalogViewNode extends Node {
 		}
 	}
 
+	// Store the error + clear loading; keep prior hooksByCategory.
+	_applyError( payload ) {
+		this.model = {
+			...this.model,
+			error: _errorMessage( payload ),
+			loading: false,
+		};
+	}
+
+	_publish() {
+		this.setState( 'view', this.model );
+	}
+
 	// Extract hooks_by_category from the raw payload into the render model.
 	_applyCatalog( payload ) {
 		const hooks =
@@ -100,18 +101,16 @@ export class HookCatalogViewNode extends Node {
 			error: null,
 		};
 	}
-
-	// Store the error + clear loading; keep prior hooksByCategory.
-	_applyError( payload ) {
-		this.model = {
-			...this.model,
-			error: _errorMessage( payload ),
-			loading: false,
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Performance Logger hook-catalog view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
 		};
-	}
-
-	_publish() {
-		this.setState( 'view', this.model );
 	}
 }
 

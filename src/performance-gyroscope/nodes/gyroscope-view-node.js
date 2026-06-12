@@ -34,18 +34,6 @@ const RPS_WINDOW_SEC = 10;
  * `updateRequestsPerSecond` + `handleBeforeConnect`).
  */
 export class GyroscopeViewNode extends Node {
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description: 'Owns the in-flight gyroscope request view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
-		};
-	}
-
 	constructor() {
 		super();
 		this.requests = new Map(); // All requests keyed by rid.
@@ -133,6 +121,15 @@ export class GyroscopeViewNode extends Node {
 		this.rps = 0;
 	}
 
+	// Publish ONLY the low-frequency view model. `requests` / `rps` /
+	// `lastEventTime` are the high-frequency state the refresh tick reads off the
+	// node directly via snapshot() — keeping them out of setState is what stops a
+	// busy stream re-rendering React per message. `connectionError` is low-frequency
+	// (only flips on connect/disconnect) so it rides setState for the reconnect banner.
+	_publish() {
+		this.setState( 'view', { connectionError: this.connectionError } );
+	}
+
 	// Build the render snapshot AND reap completed entries (like Gyroscope.pm
 	// fire() / Inflight's renderRequests): collect all requests, delete the ones
 	// marked complete (they show for exactly one tick), update RPS from that
@@ -180,13 +177,15 @@ export class GyroscopeViewNode extends Node {
 		}
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
-
-	// Publish ONLY the low-frequency view model. `requests` / `rps` /
-	// `lastEventTime` are the high-frequency state the refresh tick reads off the
-	// node directly via snapshot() — keeping them out of setState is what stops a
-	// busy stream re-rendering React per message. `connectionError` is low-frequency
-	// (only flips on connect/disconnect) so it rides setState for the reconnect banner.
-	_publish() {
-		this.setState( 'view', { connectionError: this.connectionError } );
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the in-flight gyroscope request view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
 	}
 }

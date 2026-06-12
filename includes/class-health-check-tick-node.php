@@ -58,21 +58,6 @@ class Health_Check_Tick_Node extends Timer_Node {
 	}
 
 	/**
-	 * Register with `_router`'s TIMER event so `fill()` receives a TM_INFO
-	 * tick on every Router heartbeat. Called by the aggregator topology
-	 * after node construction. Same Router-hitchhike pattern StreamMerger
-	 * uses — see StreamMerger::start_periodic_tick().
-	 */
-	public function start_periodic_tick(): void {
-		if ( '' === $this->name || null === Core::node( Node_Names::ROUTER ) ) {
-			Core::print_less_often( 'HealthCheckTick::start_periodic_tick: no _router; periodic tick disabled' );
-			return;
-		}
-		// Router-hitchhike: notify_timer() calls fire_cb() -> fire() each tick.
-		$this->set_timer();
-	}
-
-	/**
 	 * fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
 	 * each TIMER tick. Enqueues a `remote_manager` health_check job if the debounce
 	 * window has elapsed and there's at least one enabled remote. Silently no-ops:
@@ -126,6 +111,21 @@ class Health_Check_Tick_Node extends Timer_Node {
 		} finally {
 			Log_Manager::end_job_context();
 		}
+	}
+
+	/**
+	 * Register with `_router`'s TIMER event so `fill()` receives a TM_INFO
+	 * tick on every Router heartbeat. Called by the aggregator topology
+	 * after node construction. Same Router-hitchhike pattern StreamMerger
+	 * uses — see StreamMerger::start_periodic_tick().
+	 */
+	public function start_periodic_tick(): void {
+		if ( '' === $this->name || null === Core::node( Node_Names::ROUTER ) ) {
+			Core::print_less_often( 'HealthCheckTick::start_periodic_tick: no _router; periodic tick disabled' );
+			return;
+		}
+		// Router-hitchhike: notify_timer() calls fire_cb() -> fire() each tick.
+		$this->set_timer();
 	}
 
 	// -------------------------------------------------------------------------

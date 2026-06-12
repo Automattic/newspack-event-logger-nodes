@@ -279,6 +279,15 @@ class Request_Builder_Node extends Timer_Node {
 		}
 	}
 
+	/**
+	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
+	 * request times out (error_status='T') and is emitted to both requests.log and
+	 * the completed target even on a partition with no inbound firehose traffic.
+	 */
+	protected function fire(): void {
+		$this->maintenance();
+	}
+
 	/** @param array<int, mixed> $message Incoming command Message. */
 	private function handle_request( array $message ): void {
 		if ( null === $this->sink ) {
@@ -331,320 +340,26 @@ class Request_Builder_Node extends Timer_Node {
 		$this->sink->fill( $reply );
 	}
 
-
 	/**
-	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
-	 * wired with the eviction callback. Shared between the ctor (defaults)
-	 * and arguments() (post-schema-walk).
-	 */
-	private function build_cache(): LRU_Cache {
-		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
-			->with_timed_rotation(
-				self::BUCKET_ROTATION_S,
-				function ( string $rid, $request ): void {
-					$this->evict_request( $rid, $request );
-				}
-			);
-	}
-
-	public function flight(): Request_Flight_Node {
-		if ( null === $this->flight ) {
-			throw new \RuntimeException( 'flight sibling not constructed' );
-		}
-		return $this->flight;
-	}
-
-	/**
-	 * Pre-check the `{name}:flight` sibling name for collisions before the base
-	 * commits a rename. Flight is application-specific; the parent handles the
-	 * :config interpreter sibling.
-	 */
-	protected function check_name_availability( string $name ): void {
-		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
-			throw new \RuntimeException( \esc_html( "node name collision: {$name}:flight already registered" ) );
-		}
-		parent::check_name_availability( $name );
-	}
-
-	/**
-	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
-	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
-	 * Mirrors Node::set_sibling_names for the :config interpreter.
-	 */
-	protected function set_sibling_names( ?string $name = null ): void {
-		$this->flight?->name( "{$name}:flight" );
-		parent::set_sibling_names( $name );
-	}
-
-	/** Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan. */
-	public function remove_node(): void {
-		if ( null !== $this->flight ) {
-			$this->flight->remove_node();
-		}
-		parent::remove_node();
-	}
-
-	/**
-	 * Override Node::sink() so the auto-sink wiring make_node performs on
-	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
-	 * Flight's $this->sink stays null and its in-flight emits drop on the
-	 * floor.
-	 */
-	public function sink( ?Node $node = null ): ?Node {
-		if ( \func_num_args() > 0 ) {
-			if ( null !== $this->flight ) {
-				$this->flight->sink( $node );
-			}
-			return parent::sink( $node );
-		}
-		return parent::sink();
-	}
-
-	/**
-	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
-	 * request times out (error_status='T') and is emitted to both requests.log and
-	 * the completed target even on a partition with no inbound firehose traffic.
-	 */
-	protected function fire(): void {
-		$this->maintenance();
-	}
-
-	/**
-	 * Set the named target for compact-summary completed-request lines.
-	 */
-	public function set_completed_target( string $target ): void {
-		$this->completed_target = $target;
-	}
-
-	/**
-	 * Set the named target for error/warning forwarding.
-	 */
-	public function set_errors_target( string $target ): void {
-		$this->errors_target = $target;
-	}
-
-	/**
-	 * Emit the base config plus this node's verb-config, from STATE — one
-	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
-	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
-	 */
-	public function dump_config(): string {
-		$out = parent::dump_config();
-		if ( '' !== $this->errors_target ) {
-			$out .= "cmd {$this->name}:config set_errors_target {$this->errors_target}\n";
-		}
-		if ( '' !== $this->completed_target ) {
-			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
-		}
-		$inflight_target = $this->flight()->target();
-		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
-			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
-		}
-		return $out;
-	}
-
-	/**
-	 * Expose every named destination this node actually writes to so
-	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
-	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
-	 * (which Node::target stores in $this->target) plus the
-	 * conditional errors_target / completed_target the topology may have
-	 * wired, plus the flight sibling's own target (the periodic in-flight
-	 * snapshot stream, typically wired to `gyroscope:partition`).
+	 * Emit an error/warning entry via the named errors_target.
 	 *
-	 * Without this override `errors:partition`, `completed:tee`, and the
-	 * flight sibling's target would orphan on the topology console (nodes
-	 * with `0` count, no inbound edges) even though RequestBuilder /
-	 * RequestFlight writes to them.
+	 * @param array<string, mixed> $entry Decoded entry.
+	 * @param string $rid   Request id — propagated to Message::KEY so
+	 *                      downstream readers can identify the request
+	 *                      without re-parsing the entry payload.
 	 */
-	public function target( $value = null ) {
-		if ( null !== $value ) {
-			return parent::target( $value );
-		}
-		$primary = parent::target();
-		$extras  = [];
-		if ( '' !== $this->errors_target ) {
-			$extras[] = $this->errors_target;
-		}
-		if ( '' !== $this->completed_target ) {
-			$extras[] = $this->completed_target;
-		}
-		if ( null !== $this->flight ) {
-			$flight_target = $this->flight->target();
-			if ( \is_string( $flight_target ) && '' !== $flight_target ) {
-				$extras[] = $flight_target;
-			}
-		}
-		if ( ! $extras ) {
-			return $primary;
-		}
-		$all = \is_array( $primary )
-			? $primary
-			: ( '' !== $primary ? [ $primary ] : [] );
-		foreach ( $extras as $e ) {
-			if ( ! \in_array( $e, $all, true ) ) {
-				$all[] = $e;
-			}
-		}
-		return $all;
-	}
-
-	/**
-	 * Periodic maintenance — drives rotate_if_due even with no inbound traffic.
-	 */
-	public function maintenance(): void {
-		$this->cache->rotate_if_due();
-	}
-
-	/**
-	 * Save state for persistence.
-	 *
-	 * Persists the full request cache (including entries and profiles)
-	 * so in-flight requests retain trace data across worker restarts.
-	 * Orphan eviction is handled by LRU bucket rotation.
-	 *
-	 * @return array<string, mixed> State to persist.
-	 */
-	public function save_state(): array {
-		// Convert objects to arrays for serialization.
-		$state = $this->cache->get_state();
-		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
-			foreach ( $state['buckets'] as &$bucket ) {
-				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as $key => &$val ) {
-						if ( $val instanceof \stdClass ) {
-							$val = (array) $val;
-						}
-					}
-					unset( $val );
-				}
-			}
-			unset( $bucket );
-		}
-		return [ 'request_cache' => $state ];
-	}
-
-	/**
-	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
-	 *
-	 * @param array<string, mixed> $saved Saved state from save_state().
-	 */
-	public function restore_state( array $saved ): void {
-		if ( ! isset( $saved['request_cache'] ) ) {
+	private function emit_error( array $entry, string $rid ): void {
+		if ( '' === $this->errors_target || null === $this->sink ) {
 			return;
 		}
-		$cache_state = $saved['request_cache'];
-		if ( ! \is_array( $cache_state ) ) {
-			return;
-		}
-		// Persisted cache snapshot: string-keyed by design (LRU_Cache::get_state()).
-		/** @var array<string, mixed> $cache_state */
-		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
-			foreach ( $cache_state['buckets'] as &$bucket ) {
-				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as $key => &$val ) {
-						if ( \is_array( $val ) ) {
-							$val = (object) $val;
-						}
-					}
-					unset( $val );
-				}
-			}
-			unset( $bucket );
-		}
-		$this->cache->restore_state( $cache_state );
-	}
-	/**
-	 * Build the state-callback table.
-	 *
-	 * @return array<string,callable>
-	 */
-	private function build_state_callbacks(): array {
-		$s = [];
-
-		$s['process (start)'] = function ( \stdClass $request, array $entry ): void {
-			$payload = $entry['m'] ?? '';
-			if ( \is_array( $payload ) ) {
-				$payload = $payload['m'] ?? '';
-			}
-			if ( \is_string( $payload ) && strlen( $payload ) < self::MAX_ENTRY_MESSAGE_LENGTH && \preg_match( '/^(\d+) on (\S+)/', $payload, $m ) ) {
-				$request->process_id = $m[1];
-				$request->host       = $m[2];
-			}
-			$request->timestamp   = $entry['ts'] ?? \microtime( true );
-			$request->stack       = [ [ 'process', '' ] ];
-			$request->profiles    = [];
-			$request->entries     = [];
-			$request->state       = 'process';
-			$request->initialized = true;
-		};
-
-		$s['process (complete)'] = function ( \stdClass $request, array $entry ): void {
-			$request->duration_ms = $entry['duration_ms'] ?? 0;
-			$request->status_code = $entry['status_code'] ?? 0;
-			$error_status         = $entry['error_status'] ?? '-';
-			if ( ! \is_string( $error_status ) || 1 !== \strlen( $error_status ) || ! \in_array( $error_status, [ '-', 'F', 'T' ], true ) ) {
-				$error_status = '-';
-			}
-			$request->error_status = $error_status;
-			$request->state        = 'complete';
-		};
-
-		$s['request'] = function ( \stdClass $request, array $entry ): void {
-			$message = $entry['m'] ?? '';
-			if ( ! \is_string( $message ) ) {
-				return;
-			}
-			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
-				// Strip query string — URL hash already ignores it for merging,
-				// and keeping it wastes memory and makes the URL table noisy.
-				$request->url = \explode( '?', $m[1], 2 )[0];
-			}
-			$parts                   = \explode( ' ', $message, 2 );
-			$request->request_method = $parts[0];
-		};
-
-		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
-			$message = $entry['m'] ?? '';
-			if ( ! \is_string( $message ) || \strlen( $message ) > self::MAX_PAYLOAD_SCAN_LENGTH ) {
-				return;
-			}
-			if ( \preg_match( '/^REMOTE_ADDR => "(.+)"$/', $message, $m ) ) {
-				$ip = \trim( $m[1] );
-				$request->remote_addr = \filter_var( $ip, FILTER_VALIDATE_IP ) ? $ip : '';
-			} elseif ( \preg_match( '/^HTTP_USER_AGENT => "(.+)"$/', $message, $m ) ) {
-				$request->user_agent = $m[1];
-			} elseif ( \preg_match( '/^HTTP_X_FORWARDED_FOR => "(.+)"$/', $message, $m ) ) {
-				if ( empty( $request->remote_addr ) ) {
-					$parts = \explode( ',', $m[1], 2 );
-					$ip    = \trim( $parts[0] );
-					if ( \filter_var( $ip, FILTER_VALIDATE_IP ) ) {
-						$request->remote_addr = $ip;
-					}
-				}
-			} elseif ( \preg_match( '/^SERVER_NAME => "(.+)"$/', $message, $m ) ) {
-				$request->server_name = $m[1];
-			} elseif ( \preg_match( '/^GEOIP_COUNTRY_CODE => "(.+)"$/', $message, $m ) ) {
-				$request->country_code = $m[1];
-			} elseif ( \preg_match( '/^HTTP_FROM => "(.+)"$/', $message, $m ) ) {
-				$request->http_from = $m[1];
-			} elseif ( \preg_match( '/^HTTP_X_JA4_HASH => "(.+)"$/', $message, $m ) ) {
-				$request->ja4_hash = $m[1];
-			} elseif ( \preg_match( '/^NEWSPACK_NODES_WORKER_TYPE => "(.+)"$/', $message, $m ) ) {
-				// Capture the value so the worker gets its own ?worker_type URL row.
-				$request->is_worker   = true;
-				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $m[1] ) ?? '';
-			}
-		};
-
-		$s['memory'] = function ( \stdClass $request, array $entry ): void {
-			$m = $entry['m'] ?? [];
-			if ( \is_array( $m ) && isset( $m['peak'] ) && \is_scalar( $m['peak'] ) ) {
-				$request->peak_mb = (float) $m['peak'];
-			}
-		};
-
-		return $s;
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::TO ]        = $this->errors_target;
+		$msg[ Message::KEY ]       = $rid;
+		$msg[ Message::VALUE ]     = $entry;
+		$this->sink->fill( $msg );
 	}
 
 	/**
@@ -819,36 +534,6 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Handle a single evicted request from LRU bucket rotation.
-	 *
-	 * Incomplete requests get written with error_status=T.
-	 * Called by the LruCache eviction callback — LruCache stores mixed
-	 * values, so the runtime type isn't guaranteed by the signature; the
-	 * instanceof gate is the real validation.
-	 *
-	 * @param string $rid     Request ID.
-	 * @param mixed  $request Request object (expected \stdClass).
-	 */
-	private function evict_request( string $rid, $request ): void {
-		if ( ! ( $request instanceof \stdClass ) || empty( $request->url ) ) {
-			return;
-		}
-		if ( 'complete' === ( $request->state ?? '' ) ) {
-			return;
-		}
-		$now = \time();
-		// Dynamic \stdClass property is mixed by design; the int cast is intentional.
-		/** @var int|float|string $ts_raw */
-		$ts_raw                 = $request->timestamp ?? $now;
-		$start_ts               = (int) $ts_raw;
-		$request->error_status  = 'T';
-		$request->duration_ms   = ( $now - $start_ts ) * 1000;
-		$request->status_code   = $request->status_code ?? 0;
-		$request->state         = 'complete';
-		$this->emit_request( $request );
-	}
-
-	/**
 	 * Emit a completed request as a TM_STRUCT message to the main sink.
 	 *
 	 * KEY = rid so downstream readers / aggregator forwarders can identify
@@ -880,6 +565,27 @@ class Request_Builder_Node extends Timer_Node {
 		$msg[ Message::VALUE ]     = (array) $request;
 		parent::fill( $msg );
 		$this->emit_compact_summary( $request );
+	}
+
+	/**
+	 * Fire the secondary compact-summary emit. Silent no-op when the
+	 * topology hasn't wired completed_target or a sink isn't attached.
+	 *
+	 * @param \stdClass|array<string, mixed> $request Completed request envelope.
+	 */
+	private function emit_compact_summary( $request ): void {
+		if ( '' === $this->completed_target || null === $this->sink ) {
+			return;
+		}
+		$summary                   = $this->build_compact_summary( $request );
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::TO ]        = $this->completed_target;
+		$msg[ Message::KEY ]       = $summary['rid'];
+		$msg[ Message::VALUE ]     = $summary;
+		$this->sink->fill( $msg );
 	}
 
 	/**
@@ -933,24 +639,340 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Fire the secondary compact-summary emit. Silent no-op when the
-	 * topology hasn't wired completed_target or a sink isn't attached.
-	 *
-	 * @param \stdClass|array<string, mixed> $request Completed request envelope.
+	 * Periodic maintenance — drives rotate_if_due even with no inbound traffic.
 	 */
-	private function emit_compact_summary( $request ): void {
-		if ( '' === $this->completed_target || null === $this->sink ) {
+	public function maintenance(): void {
+		$this->cache->rotate_if_due();
+	}
+
+
+	/**
+	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
+	 * wired with the eviction callback. Shared between the ctor (defaults)
+	 * and arguments() (post-schema-walk).
+	 */
+	private function build_cache(): LRU_Cache {
+		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
+			->with_timed_rotation(
+				self::BUCKET_ROTATION_S,
+				function ( string $rid, $request ): void {
+					$this->evict_request( $rid, $request );
+				}
+			);
+	}
+
+	public function flight(): Request_Flight_Node {
+		if ( null === $this->flight ) {
+			throw new \RuntimeException( 'flight sibling not constructed' );
+		}
+		return $this->flight;
+	}
+
+	/**
+	 * Pre-check the `{name}:flight` sibling name for collisions before the base
+	 * commits a rename. Flight is application-specific; the parent handles the
+	 * :config interpreter sibling.
+	 */
+	protected function check_name_availability( string $name ): void {
+		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
+			throw new \RuntimeException( \esc_html( "node name collision: {$name}:flight already registered" ) );
+		}
+		parent::check_name_availability( $name );
+	}
+
+	/**
+	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
+	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
+	 * Mirrors Node::set_sibling_names for the :config interpreter.
+	 */
+	protected function set_sibling_names( ?string $name = null ): void {
+		$this->flight?->name( "{$name}:flight" );
+		parent::set_sibling_names( $name );
+	}
+
+	/** Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan. */
+	public function remove_node(): void {
+		if ( null !== $this->flight ) {
+			$this->flight->remove_node();
+		}
+		parent::remove_node();
+	}
+
+	/**
+	 * Override Node::sink() so the auto-sink wiring make_node performs on
+	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
+	 * Flight's $this->sink stays null and its in-flight emits drop on the
+	 * floor.
+	 */
+	public function sink( ?Node $node = null ): ?Node {
+		if ( \func_num_args() > 0 ) {
+			if ( null !== $this->flight ) {
+				$this->flight->sink( $node );
+			}
+			return parent::sink( $node );
+		}
+		return parent::sink();
+	}
+
+	/**
+	 * Set the named target for compact-summary completed-request lines.
+	 */
+	public function set_completed_target( string $target ): void {
+		$this->completed_target = $target;
+	}
+
+	/**
+	 * Set the named target for error/warning forwarding.
+	 */
+	public function set_errors_target( string $target ): void {
+		$this->errors_target = $target;
+	}
+
+	/**
+	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 */
+	public function dump_config(): string {
+		$out = parent::dump_config();
+		if ( '' !== $this->errors_target ) {
+			$out .= "cmd {$this->name}:config set_errors_target {$this->errors_target}\n";
+		}
+		if ( '' !== $this->completed_target ) {
+			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
+		}
+		$inflight_target = $this->flight()->target();
+		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
+			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
+		}
+		return $out;
+	}
+
+	/**
+	 * Expose every named destination this node actually writes to so
+	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
+	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
+	 * (which Node::target stores in $this->target) plus the
+	 * conditional errors_target / completed_target the topology may have
+	 * wired, plus the flight sibling's own target (the periodic in-flight
+	 * snapshot stream, typically wired to `gyroscope:partition`).
+	 *
+	 * Without this override `errors:partition`, `completed:tee`, and the
+	 * flight sibling's target would orphan on the topology console (nodes
+	 * with `0` count, no inbound edges) even though RequestBuilder /
+	 * RequestFlight writes to them.
+	 */
+	public function target( $value = null ) {
+		if ( null !== $value ) {
+			return parent::target( $value );
+		}
+		$primary = parent::target();
+		$extras  = [];
+		if ( '' !== $this->errors_target ) {
+			$extras[] = $this->errors_target;
+		}
+		if ( '' !== $this->completed_target ) {
+			$extras[] = $this->completed_target;
+		}
+		if ( null !== $this->flight ) {
+			$flight_target = $this->flight->target();
+			if ( \is_string( $flight_target ) && '' !== $flight_target ) {
+				$extras[] = $flight_target;
+			}
+		}
+		if ( ! $extras ) {
+			return $primary;
+		}
+		$all = \is_array( $primary )
+			? $primary
+			: ( '' !== $primary ? [ $primary ] : [] );
+		foreach ( $extras as $e ) {
+			if ( ! \in_array( $e, $all, true ) ) {
+				$all[] = $e;
+			}
+		}
+		return $all;
+	}
+
+	/**
+	 * Save state for persistence.
+	 *
+	 * Persists the full request cache (including entries and profiles)
+	 * so in-flight requests retain trace data across worker restarts.
+	 * Orphan eviction is handled by LRU bucket rotation.
+	 *
+	 * @return array<string, mixed> State to persist.
+	 */
+	public function save_state(): array {
+		// Convert objects to arrays for serialization.
+		$state = $this->cache->get_state();
+		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
+			foreach ( $state['buckets'] as &$bucket ) {
+				if ( \is_array( $bucket ) ) {
+					foreach ( $bucket as $key => &$val ) {
+						if ( $val instanceof \stdClass ) {
+							$val = (array) $val;
+						}
+					}
+					unset( $val );
+				}
+			}
+			unset( $bucket );
+		}
+		return [ 'request_cache' => $state ];
+	}
+
+	/**
+	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
+	 *
+	 * @param array<string, mixed> $saved Saved state from save_state().
+	 */
+	public function restore_state( array $saved ): void {
+		if ( ! isset( $saved['request_cache'] ) ) {
 			return;
 		}
-		$summary                   = $this->build_compact_summary( $request );
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->completed_target;
-		$msg[ Message::KEY ]       = $summary['rid'];
-		$msg[ Message::VALUE ]     = $summary;
-		$this->sink->fill( $msg );
+		$cache_state = $saved['request_cache'];
+		if ( ! \is_array( $cache_state ) ) {
+			return;
+		}
+		// Persisted cache snapshot: string-keyed by design (LRU_Cache::get_state()).
+		/** @var array<string, mixed> $cache_state */
+		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
+			foreach ( $cache_state['buckets'] as &$bucket ) {
+				if ( \is_array( $bucket ) ) {
+					foreach ( $bucket as $key => &$val ) {
+						if ( \is_array( $val ) ) {
+							$val = (object) $val;
+						}
+					}
+					unset( $val );
+				}
+			}
+			unset( $bucket );
+		}
+		$this->cache->restore_state( $cache_state );
+	}
+	/**
+	 * Build the state-callback table.
+	 *
+	 * @return array<string,callable>
+	 */
+	private function build_state_callbacks(): array {
+		$s = [];
+
+		$s['process (start)'] = function ( \stdClass $request, array $entry ): void {
+			$payload = $entry['m'] ?? '';
+			if ( \is_array( $payload ) ) {
+				$payload = $payload['m'] ?? '';
+			}
+			if ( \is_string( $payload ) && strlen( $payload ) < self::MAX_ENTRY_MESSAGE_LENGTH && \preg_match( '/^(\d+) on (\S+)/', $payload, $m ) ) {
+				$request->process_id = $m[1];
+				$request->host       = $m[2];
+			}
+			$request->timestamp   = $entry['ts'] ?? \microtime( true );
+			$request->stack       = [ [ 'process', '' ] ];
+			$request->profiles    = [];
+			$request->entries     = [];
+			$request->state       = 'process';
+			$request->initialized = true;
+		};
+
+		$s['process (complete)'] = function ( \stdClass $request, array $entry ): void {
+			$request->duration_ms = $entry['duration_ms'] ?? 0;
+			$request->status_code = $entry['status_code'] ?? 0;
+			$error_status         = $entry['error_status'] ?? '-';
+			if ( ! \is_string( $error_status ) || 1 !== \strlen( $error_status ) || ! \in_array( $error_status, [ '-', 'F', 'T' ], true ) ) {
+				$error_status = '-';
+			}
+			$request->error_status = $error_status;
+			$request->state        = 'complete';
+		};
+
+		$s['request'] = function ( \stdClass $request, array $entry ): void {
+			$message = $entry['m'] ?? '';
+			if ( ! \is_string( $message ) ) {
+				return;
+			}
+			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
+				// Strip query string — URL hash already ignores it for merging,
+				// and keeping it wastes memory and makes the URL table noisy.
+				$request->url = \explode( '?', $m[1], 2 )[0];
+			}
+			$parts                   = \explode( ' ', $message, 2 );
+			$request->request_method = $parts[0];
+		};
+
+		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
+			$message = $entry['m'] ?? '';
+			if ( ! \is_string( $message ) || \strlen( $message ) > self::MAX_PAYLOAD_SCAN_LENGTH ) {
+				return;
+			}
+			if ( \preg_match( '/^REMOTE_ADDR => "(.+)"$/', $message, $m ) ) {
+				$ip = \trim( $m[1] );
+				$request->remote_addr = \filter_var( $ip, FILTER_VALIDATE_IP ) ? $ip : '';
+			} elseif ( \preg_match( '/^HTTP_USER_AGENT => "(.+)"$/', $message, $m ) ) {
+				$request->user_agent = $m[1];
+			} elseif ( \preg_match( '/^HTTP_X_FORWARDED_FOR => "(.+)"$/', $message, $m ) ) {
+				if ( empty( $request->remote_addr ) ) {
+					$parts = \explode( ',', $m[1], 2 );
+					$ip    = \trim( $parts[0] );
+					if ( \filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+						$request->remote_addr = $ip;
+					}
+				}
+			} elseif ( \preg_match( '/^SERVER_NAME => "(.+)"$/', $message, $m ) ) {
+				$request->server_name = $m[1];
+			} elseif ( \preg_match( '/^GEOIP_COUNTRY_CODE => "(.+)"$/', $message, $m ) ) {
+				$request->country_code = $m[1];
+			} elseif ( \preg_match( '/^HTTP_FROM => "(.+)"$/', $message, $m ) ) {
+				$request->http_from = $m[1];
+			} elseif ( \preg_match( '/^HTTP_X_JA4_HASH => "(.+)"$/', $message, $m ) ) {
+				$request->ja4_hash = $m[1];
+			} elseif ( \preg_match( '/^NEWSPACK_NODES_WORKER_TYPE => "(.+)"$/', $message, $m ) ) {
+				// Capture the value so the worker gets its own ?worker_type URL row.
+				$request->is_worker   = true;
+				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $m[1] ) ?? '';
+			}
+		};
+
+		$s['memory'] = function ( \stdClass $request, array $entry ): void {
+			$m = $entry['m'] ?? [];
+			if ( \is_array( $m ) && isset( $m['peak'] ) && \is_scalar( $m['peak'] ) ) {
+				$request->peak_mb = (float) $m['peak'];
+			}
+		};
+
+		return $s;
+	}
+
+	/**
+	 * Handle a single evicted request from LRU bucket rotation.
+	 *
+	 * Incomplete requests get written with error_status=T.
+	 * Called by the LruCache eviction callback — LruCache stores mixed
+	 * values, so the runtime type isn't guaranteed by the signature; the
+	 * instanceof gate is the real validation.
+	 *
+	 * @param string $rid     Request ID.
+	 * @param mixed  $request Request object (expected \stdClass).
+	 */
+	private function evict_request( string $rid, $request ): void {
+		if ( ! ( $request instanceof \stdClass ) || empty( $request->url ) ) {
+			return;
+		}
+		if ( 'complete' === ( $request->state ?? '' ) ) {
+			return;
+		}
+		$now = \time();
+		// Dynamic \stdClass property is mixed by design; the int cast is intentional.
+		/** @var int|float|string $ts_raw */
+		$ts_raw                 = $request->timestamp ?? $now;
+		$start_ts               = (int) $ts_raw;
+		$request->error_status  = 'T';
+		$request->duration_ms   = ( $now - $start_ts ) * 1000;
+		$request->status_code   = $request->status_code ?? 0;
+		$request->state         = 'complete';
+		$this->emit_request( $request );
 	}
 
 	/** @param array<string, mixed> $request Completed request record. */
@@ -988,28 +1010,6 @@ class Request_Builder_Node extends Timer_Node {
 			return $request[ $fallback_field ];
 		}
 		return $default;
-	}
-
-	/**
-	 * Emit an error/warning entry via the named errors_target.
-	 *
-	 * @param array<string, mixed> $entry Decoded entry.
-	 * @param string $rid   Request id — propagated to Message::KEY so
-	 *                      downstream readers can identify the request
-	 *                      without re-parsing the entry payload.
-	 */
-	private function emit_error( array $entry, string $rid ): void {
-		if ( '' === $this->errors_target || null === $this->sink ) {
-			return;
-		}
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->errors_target;
-		$msg[ Message::KEY ]       = $rid;
-		$msg[ Message::VALUE ]     = $entry;
-		$this->sink->fill( $msg );
 	}
 
 	/**

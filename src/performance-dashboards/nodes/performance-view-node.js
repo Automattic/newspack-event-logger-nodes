@@ -41,18 +41,6 @@ import {
  * model — no per-message React concern like the request stream.
  */
 export class PerformanceViewNode extends Node {
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
-	static nodeSchema() {
-		return {
-			category: 'Hidden',
-			description: 'Owns the Performance Dashboard view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
-		};
-	}
-
 	constructor() {
 		super();
 		this.model = {
@@ -151,6 +139,10 @@ export class PerformanceViewNode extends Node {
 		} );
 	}
 
+	_publish() {
+		this.setState( 'view', { ...this.model } );
+	}
+
 	// Store a slice result. urlDetail goes through the incremental merge (which
 	// may skip republishing); every other slice stamps lastRefresh + publishes.
 	_applyResult( v ) {
@@ -238,10 +230,6 @@ export class PerformanceViewNode extends Node {
 		}
 	}
 
-	_publish() {
-		this.setState( 'view', { ...this.model } );
-	}
-
 	// Settle every in-flight resolveOnly pending promise before the node is
 	// removed, so a graph teardown / Reset-Graph reinit doesn't strand a caller
 	// awaiting a reply that will now never land on this (removed) node — the
@@ -259,6 +247,17 @@ export class PerformanceViewNode extends Node {
 		}
 		this.pending.clear();
 		super.removeNode();
+	}
+	// Consume-and-publish view-model terminal: fill() mutates state + publishes
+	// via setState, never forwards — no output port.
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the Performance Dashboard view model.',
+			arguments: [],
+			commands: [],
+			has_target: false,
+		};
 	}
 }
 

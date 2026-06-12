@@ -29,6 +29,29 @@ use Newspack_Nodes\Service_CI_Node;
 
 class Discovery_CI_Node extends Service_CI_Node {
 
+	/**
+	 * Pull a flat de-duplicated string list out of either an indexed-string
+	 * array or an `assoc[name => true]` shape. Lift of the legacy
+	 * `DiscoveryController::extract_string_list` private helper.
+	 *
+	 * @param mixed $value Raw config value.
+	 * @return array<int,string>
+	 */
+	private static function extract_string_list( mixed $value ): array {
+		if ( ! \is_array( $value ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $value as $key => $entry ) {
+			if ( \is_string( $key ) && '' !== $key && ! \is_numeric( $key ) ) {
+				$out[] = $key;
+			} elseif ( \is_string( $entry ) && '' !== $entry ) {
+				$out[] = $entry;
+			}
+		}
+		return \array_values( \array_unique( $out ) );
+	}
+
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Service',
@@ -59,28 +82,5 @@ class Discovery_CI_Node extends Service_CI_Node {
 				],
 			],
 		];
-	}
-
-	/**
-	 * Pull a flat de-duplicated string list out of either an indexed-string
-	 * array or an `assoc[name => true]` shape. Lift of the legacy
-	 * `DiscoveryController::extract_string_list` private helper.
-	 *
-	 * @param mixed $value Raw config value.
-	 * @return array<int,string>
-	 */
-	private static function extract_string_list( mixed $value ): array {
-		if ( ! \is_array( $value ) ) {
-			return [];
-		}
-		$out = [];
-		foreach ( $value as $key => $entry ) {
-			if ( \is_string( $key ) && '' !== $key && ! \is_numeric( $key ) ) {
-				$out[] = $key;
-			} elseif ( \is_string( $entry ) && '' !== $entry ) {
-				$out[] = $entry;
-			}
-		}
-		return \array_values( \array_unique( $out ) );
 	}
 }
