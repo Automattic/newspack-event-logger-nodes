@@ -65,10 +65,15 @@ function registerViewFixture( {
 	return node;
 }
 
+// Production assigns each entry a unique `id` (perf-errors-view-node's
+// entryCounter), and ErrorRow keys on it — so the factory must mint a unique id
+// per call, else multi-entry fixtures collide on `id:1` (duplicate React keys).
+let nextEntryId = 0;
 function entry( overrides = {} ) {
+	nextEntryId += 1;
 	return {
 		seq: 1,
-		id: 1,
+		id: nextEntryId,
 		rid: 'r1',
 		ts: 1748960000,
 		k: 'error',
