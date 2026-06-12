@@ -45,7 +45,6 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
-use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
@@ -80,6 +79,9 @@ class Reqgrep_Command {
 
 	/** Output-buffer drain cap (defends against non-erasable userland buffers). */
 	private const OB_DRAIN_CAP = 16;
+
+	/** Per-read chunk for the cat/follow reader — bounds CLI memory on multi-GB segments. */
+	private const READ_CHUNK_BYTES = 10 * 1024 * 1024;
 
 	/** Live-follow sleep when no segments produced new bytes (microseconds). */
 	private const FOLLOW_IDLE_USLEEP = 100_000;
@@ -475,7 +477,7 @@ class Reqgrep_Command {
 		// would balloon the CLI process.
 		$consumed = 0;
 		$pending  = '';
-		$max      = Consumer_Node::MAX_POLL_BYTES;
+		$max      = self::READ_CHUNK_BYTES;
 		while ( $consumed < $length ) {
 			$want  = \min( $max, $length - $consumed );
 			$bytes = $partition->read_at( $seg, $offset + $consumed, $want );

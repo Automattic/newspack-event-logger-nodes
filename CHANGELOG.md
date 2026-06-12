@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Reqgrep_Command` carries its own `READ_CHUNK_BYTES` for the cat/follow reader.** The CLI firehose reader chunked its `read_at` loop by the substrate's `Consumer_Node::MAX_POLL_BYTES`; that constant was removed when `Consumer_Node` moved to one-block-per-poll reads, so reqgrep now owns a `READ_CHUNK_BYTES` (10 MB) constant for bounding CLI memory — a separate concern from the node's per-poll event-loop yield. Requires `newspack-nodes` with the new Consumer read path.
 - **Worker-output partitions drop the cross-process write lock for `void_warranty`.** The `requests` / `flames` / `jobs` partitions (large request records exceed PIPE_BUF) now opt into the substrate's lock-free `void_warranty` instead of `allow_large_writes`. Each is written by exactly one worker fleet, and the substrate now refuses to enable or spawn a topology set where two fleets would write the same partition (write-conflict detection at the admin sanitizer + supervisor), so the per-partition exclusivity lock is redundant — its sole job was guarding against a second writer that enforcement now prevents. Requires `newspack-nodes` with `void_warranty` + write-conflict enforcement.
 
 ### Fixed
