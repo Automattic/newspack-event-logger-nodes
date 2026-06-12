@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-06-12
+
 ### Changed
 
 - **Deprecated `isSmall` Button prop migrated to `size="small"`.** The two errors-only toggle Buttons (URL table + URL detail view) still passed `isSmall`, deprecated in WP 6.2; both now use the documented `size="small"` replacement. A `react/forbid-component-props` eslint rule bans `isSmall` at the JSX-attribute level so it can't creep back in, and the plugin header now declares `Requires at least: 6.5` — the dashboards run on core's `window.wp.components`, and the Button `size` prop needs WP 6.4+.
