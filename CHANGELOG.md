@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Debug overlay renders registration edges.** The bundled debug overlay — which inlines the substrate's `parseMetadata` / `SchematicCanvas` via the `@newspack-nodes/debug-overlay` alias — now draws node-name event registrations as dashed, informational edges between visible nodes (dotted, event-name hover tooltip, not click-deletable). Requires `newspack-nodes` with the `registrations` `dump_metadata` field.
+
 ### Changed
 
 - **Worker-output partitions drop the cross-process write lock for `void_warranty`.** The `requests` / `flames` / `jobs` partitions (large request records exceed PIPE_BUF) now opt into the substrate's lock-free `void_warranty` instead of `allow_large_writes`. Each is written by exactly one worker fleet, and the substrate now refuses to enable or spawn a topology set where two fleets would write the same partition (write-conflict detection at the admin sanitizer + supervisor), so the per-partition exclusivity lock is redundant — its sole job was guarding against a second writer that enforcement now prevents. Requires `newspack-nodes` with `void_warranty` + write-conflict enforcement.
