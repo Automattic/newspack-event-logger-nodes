@@ -309,8 +309,27 @@ describe( 'ErrorLog', () => {
 		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
 	} );
 
-	it( 'tracks staleness from unfiltered arrivals while a non-matching filter is active', () => {
-		const node = registerViewFixture( { entries: [] } );
+	it( 'sources the staleness display from the _sse connector lastEventTime', () => {
+		// Staleness now reflects CONNECTION liveness, owned by the shared _sse
+		// connector — the rAF reads its lastEventTime, not the view node's.
+		registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1', k: 'error', m: 'boom' } ) ],
+		} );
+		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 5000 } );
+		const { container } = mount();
+		tickFrame();
+		expect(
+			container.querySelector( '.event-logger-error-log-stats' )
+				.textContent
+		).toMatch( /\d+s ago/ );
+	} );
+
+	it( 'staleness is connection-driven, so a filter never affects it', () => {
+		// Staleness reflects the _sse connection's liveness, not the displayed
+		// rows — so a non-matching filter (which hides every row) still shows
+		// "Xs ago" off the connector.
+		registerViewFixture( { entries: [] } );
+		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 3000 } );
 		const { container } = mount();
 		tickFrame();
 		const input = container.querySelector(
@@ -324,10 +343,6 @@ describe( 'ErrorLog', () => {
 			setter.call( input, 'zzz-no-match' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		node.entries = [
-			entry( { seq: 1, rid: 'r-1', k: 'error', m: 'boom' } ),
-		];
-		node.lastEventTime = Date.now() - 3000;
 		tickFrame();
 		expect(
 			container.querySelector( '.event-logger-error-log-stats' )
@@ -335,12 +350,13 @@ describe( 'ErrorLog', () => {
 		).toMatch( /\d+s ago/ );
 	} );
 
-	it( 'clears the staleness display on Clear', () => {
+	it( 'Clear keeps the live-stream staleness (connection still alive)', () => {
+		// Clear empties the displayed rows, but the _sse connection is still
+		// alive — so "Xs ago" must persist (Clear no longer touches staleness).
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
-		// The rAF reads the instance prop (mirrors the real view node).
-		node.lastEventTime = Date.now() - 8000;
+		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 8000 } );
 		const { container } = mount();
 		tickFrame();
 		expect(
@@ -356,6 +372,34 @@ describe( 'ErrorLog', () => {
 		expect(
 			container.querySelector( '.event-logger-error-log-stats' )
 				.textContent
-		).not.toMatch( /\d+s ago/ );
+		).toMatch( /\d+s ago/ );
+	} );
+
+	it( 'resets "Xs ago" when an idle stream gets a heartbeat (connector lastEventTime advances)', () => {
+		// An idle stream (no new rows) whose _sse lastEventTime advances on a
+		// heartbeat must reset "Xs ago" — that is the whole point of sourcing
+		// staleness from the connector.
+		jest.useFakeTimers();
+		registerViewFixture( { entries: [] } );
+		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 12000 } );
+		const { container } = mount();
+		tickFrame();
+		// Advance the 1s display timer so the ticking "now" re-reads the ref.
+		act( () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
+		const stats = container.querySelector(
+			'.event-logger-error-log-stats'
+		);
+		expect( stats.textContent ).toMatch( /1[123]s ago/ );
+		// A heartbeat advances the connector's lastEventTime to now — "Xs ago"
+		// must reset to a small value instead of climbing past 12s.
+		Core.node( '_sse' ).lastEventTime = Date.now();
+		tickFrame();
+		act( () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
+		expect( stats.textContent ).toMatch( /[01]s ago/ );
+		jest.useRealTimers();
 	} );
 } );
