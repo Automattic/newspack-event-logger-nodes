@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Deprecated `isSmall` Button prop migrated to `size="small"`.** The two errors-only toggle Buttons (URL table + URL detail view) still passed `isSmall`, deprecated in WP 6.2; both now use the documented `size="small"` replacement. A `react/forbid-component-props` eslint rule bans `isSmall` at the JSX-attribute level so it can't creep back in, and the plugin header now declares `Requires at least: 6.5` — the dashboards run on core's `window.wp.components`, and the Button `size` prop needs WP 6.4+.
+
 - **Admin dashboard form controls opt into the WordPress 40px default size + no-bottom-margin styles.** Added `__next40pxDefaultSize` to every `TextControl` / `SelectControl` / `SearchControl` and `__nextHasNoMarginBottom` to the `SearchControl` / `CheckboxControl` that lacked it (across the performance dashboards, URL detail, overview, and the hook/custom-event selector modals). Clears the `@wordpress/components` 6.7/6.8 deprecation notices; those controls now render at the 40px height that becomes the WordPress default in 7.1.
 - **The Performance Dashboard + Settings entry points mount via React 18 `createRoot` instead of the deprecated `render()`.** `performance-dashboards` (AdminApp + ErrorLogPage) and `performance-logger` (tag-input fields) now `createRoot( container ).render( … )`, matching the other dashboard entry points and removing the "ReactDOM.render is no longer supported in React 18" warning.
 

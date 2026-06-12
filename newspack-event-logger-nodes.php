@@ -5,6 +5,7 @@
  * Version: 0.17.0
  * Author: Automattic
  * Requires Plugins: newspack-nodes
+ * Requires at least: 6.5
  * Requires PHP: 8.2
  * Text Domain: newspack-event-logger-nodes
  * Domain Path: /languages
