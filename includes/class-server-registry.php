@@ -54,16 +54,6 @@ class Server_Registry {
 	private ?array $servers = null;
 
 	/**
-	 * Singleton accessor.
-	 */
-	public static function get_instance(): Server_Registry {
-		if ( null === self::$instance ) {
-			self::$instance = new self();
-		}
-		return self::$instance;
-	}
-
-	/**
 	 * Public constructor — kept public for direct instantiation in tests.
 	 */
 	public function __construct() {
@@ -77,20 +67,6 @@ class Server_Registry {
 	 */
 	public function get_servers(): array {
 		return $this->get_all();
-	}
-
-	/**
-	 * Numeric-keyed list view of get_all().
-	 *
-	 * @return array<int, mixed> Sequential array of server configs (id keyed in field).
-	 */
-	public function list_servers(): array {
-		$out = [];
-		foreach ( $this->get_all() as $id => $cfg ) {
-			$cfg['id'] = $id;
-			$out[]     = $cfg;
-		}
-		return $out;
 	}
 
 	/**
@@ -162,6 +138,63 @@ class Server_Registry {
 	}
 
 	/**
+	 * Decrypt a stored value.
+	 *
+	 * Handles both encrypted (prefixed) and legacy plaintext values. A pre-
+	 * encryption row passes through unchanged so spoke upgrades don't break.
+	 *
+	 * @param string $stored Stored value (may be encrypted or plaintext).
+	 * @return string Decrypted plaintext, original value if not encrypted, or empty on decrypt failure.
+	 */
+	private static function decrypt( string $stored ): string {
+		// Plaintext path: anything that doesn't carry the ENCRYPTED_PREFIX
+		// (e.g. a config-file Application Password the operator typed in
+		// directly) flows through unchanged. Mirrors the docstring's
+		// "original value if not encrypted" contract — without this guard
+		// the prefix-strip + base64_decode below silently nukes any plaintext
+		// password that contains non-base64 characters (such as the spaces
+		// WordPress Application Passwords come formatted with).
+		if ( 0 !== \strpos( $stored, self::ENCRYPTED_PREFIX ) ) {
+			return $stored;
+		}
+		if ( ! \function_exists( 'sodium_crypto_secretbox_open' ) ) {
+			return '';
+		}
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- binary-safe storage.
+		$decoded = \base64_decode( \substr( $stored, \strlen( self::ENCRYPTED_PREFIX ) ), true );
+		if ( false === $decoded || \strlen( $decoded ) < SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ) {
+			return '';
+		}
+		$nonce      = \substr( $decoded, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$ciphertext = \substr( $decoded, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$plaintext  = \sodium_crypto_secretbox_open( $ciphertext, $nonce, self::encryption_key() );
+		return false === $plaintext ? '' : $plaintext;
+	}
+
+	/**
+	 * Derive a 32-byte encryption key from `wp_salt('auth')`.
+	 *
+	 * @return string 32-byte key for sodium_crypto_secretbox.
+	 */
+	private static function encryption_key(): string {
+		return \sodium_crypto_generichash( \wp_salt( 'auth' ), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
+	}
+
+	/**
+	 * Numeric-keyed list view of get_all().
+	 *
+	 * @return array<int, mixed> Sequential array of server configs (id keyed in field).
+	 */
+	public function list_servers(): array {
+		$out = [];
+		foreach ( $this->get_all() as $id => $cfg ) {
+			$cfg['id'] = $id;
+			$out[]     = $cfg;
+		}
+		return $out;
+	}
+
+	/**
 	 * Get only enabled servers.
 	 *
 	 * @return array<array-key, array<string, mixed>> Keys are array-key (not string): PHP coerces numeric server-id keys to int.
@@ -184,23 +217,6 @@ class Server_Registry {
 	public function get( string $id ): ?array {
 		$servers = $this->get_all();
 		return $servers[ $id ] ?? null;
-	}
-
-	/**
-	 * Check whether a server ID originates from the config file.
-	 *
-	 * Reads file-only defaults via `Config::load_config_defaults()` to avoid the
-	 * circular case where `load_config()` would merge the WP option into
-	 * `aggregator_servers` and make every WP-option server look like a config
-	 * server.
-	 *
-	 * @param string $id Server ID.
-	 * @return bool True if the server is defined in the config file.
-	 */
-	public function is_config_server( string $id ): bool {
-		$defaults = Config::load_config_defaults();
-		$file     = $defaults['aggregator_servers'] ?? [];
-		return \is_array( $file ) && isset( $file[ $id ] );
 	}
 
 	/**
@@ -245,6 +261,192 @@ class Server_Registry {
 
 		$this->audit( 'added', $id, \array_keys( $validated ) );
 		return true;
+	}
+
+	/**
+	 * Validate a server ID format.
+	 *
+	 * @param string $id Server ID to validate.
+	 * @return bool True if valid.
+	 */
+	public static function is_valid_id( string $id ): bool {
+		return 1 === \preg_match( '/^[a-zA-Z0-9_-]{1,64}$/', $id );
+	}
+
+	/**
+	 * Validate and sanitize a full server configuration.
+	 *
+	 * @param array<string, mixed> $config Raw configuration.
+	 * @return array<string, mixed>|null Validated configuration or null if invalid.
+	 */
+	private function validate_config( array $config ): ?array {
+		// URL is required, must be string, must be HTTPS.
+		if ( empty( $config['url'] ) || ! \is_string( $config['url'] ) ) {
+			return null;
+		}
+		$url = \function_exists( 'esc_url_raw' )
+			? \esc_url_raw( $config['url'] )
+			: $config['url'];
+		if ( '' === $url ) {
+			return null;
+		}
+		if ( 0 !== \strpos( $url, 'https://' ) ) {
+			return null;
+		}
+
+		$validated = [
+			'url'           => \rtrim( $url, '/' ),
+			'auth_username' => '',
+			'auth_password' => '',
+			'enabled'       => true,
+			'logs'          => [ 'firehose.log' ],
+		];
+
+		// auth_username — sanitize + 256-byte cap.
+		if ( ! empty( $config['auth_username'] ) && \is_string( $config['auth_username'] ) ) {
+			$username = \function_exists( 'sanitize_text_field' )
+				? \sanitize_text_field( $config['auth_username'] )
+				: \trim( \preg_replace( '/[\x00-\x1f\x7f]/', '', $config['auth_username'] ) ?? '' );
+			if ( \strlen( $username ) > 256 ) {
+				$username = \substr( $username, 0, 256 );
+			}
+			$validated['auth_username'] = $username;
+		}
+
+		// auth_password — strip control chars, 256-byte cap, encrypt.
+		if ( ! empty( $config['auth_password'] ) && \is_string( $config['auth_password'] ) ) {
+			$password = $config['auth_password'];
+			if ( 0 !== \strpos( $password, self::ENCRYPTED_PREFIX ) ) {
+				// New plaintext password — sanitize, cap, encrypt.
+				$password = \preg_replace( '/[\x00-\x1f\x7f]/', '', $password ) ?? '';
+				if ( \strlen( $password ) > 256 ) {
+					$password = \substr( $password, 0, 256 );
+				}
+				$password = self::encrypt( $password );
+			} else {
+				// Already encrypted — verify it actually decrypts; reject if not.
+				$decrypted = self::decrypt( $password );
+				if ( '' === $decrypted ) {
+					$password = '';
+				}
+			}
+			$validated['auth_password'] = $password;
+		}
+
+		// enabled flag.
+		if ( \array_key_exists( 'enabled', $config ) ) {
+			$validated['enabled'] = (bool) $config['enabled'];
+		}
+
+		// logs[] — filename allowlist.
+		if ( ! empty( $config['logs'] ) && \is_array( $config['logs'] ) ) {
+			$logs = [];
+			foreach ( $config['logs'] as $log ) {
+				if ( \is_string( $log ) && 1 === \preg_match( '/^[a-zA-Z0-9_.-]+\.log$/', $log ) ) {
+					$logs[] = $log;
+				}
+			}
+			if ( ! empty( $logs ) ) {
+				$validated['logs'] = $logs;
+			}
+		}
+
+		return $validated;
+	}
+
+	/**
+	 * Encrypt a string for storage.
+	 *
+	 * Returns the wire-format string (`$enc$<base64>`) on success, or empty on
+	 * failure / empty input.
+	 *
+	 * @param string $plaintext Value to encrypt.
+	 */
+	private static function encrypt( string $plaintext ): string {
+		if ( '' === $plaintext || ! \function_exists( 'sodium_crypto_secretbox' ) ) {
+			return '';
+		}
+		$nonce      = \random_bytes( SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		$ciphertext = \sodium_crypto_secretbox( $plaintext, $nonce, self::encryption_key() );
+		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- binary-safe storage.
+		return self::ENCRYPTED_PREFIX . \base64_encode( $nonce . $ciphertext );
+	}
+
+	/**
+	 * Get only the WP-option-managed servers (excludes config-file defaults).
+	 *
+	 * Write paths use this so we never accidentally persist a config-file
+	 * default into the WP option (would shadow file changes forever).
+	 *
+	 * @return array<array-key, mixed>
+	 */
+	private function get_wp_servers(): array {
+		$option = \get_option( self::OPTION_KEY, [] );
+		return \is_array( $option ) ? $option : [];
+	}
+
+	/**
+	 * Persist the WP-managed server map.
+	 *
+	 * Uses 3-arg form when WP's full update_option is available (the third arg
+	 * marks the option as non-autoloaded so it doesn't bloat every request's
+	 * option cache); falls back to 2-arg for stripped-down test stubs.
+	 *
+	 * @param array<array-key, mixed> $wp_servers Map of id => validated config.
+	 */
+	private static function write_option( array $wp_servers ): void {
+		$arity = self::update_option_arity();
+		if ( $arity >= 3 ) {
+			\update_option( self::OPTION_KEY, $wp_servers, false );
+		} else {
+			\update_option( self::OPTION_KEY, $wp_servers );
+		}
+	}
+
+	/**
+	 * Reflect on update_option once to determine its parameter count.
+	 *
+	 * Production WP defines a 3-arg update_option (option, value, autoload).
+	 * Test bootstraps may define a 2-arg fake. Cached for the process.
+	 */
+	private static function update_option_arity(): int {
+		/** @var int|null $arity */
+		static $arity = null;
+		if ( null === $arity ) {
+			try {
+				$arity = ( new \ReflectionFunction( 'update_option' ) )->getNumberOfParameters();
+			} catch ( \ReflectionException $e ) {
+				$arity = 2;
+			}
+		}
+		return $arity;
+	}
+
+	/**
+	 * Append an audit-trail entry to PHP error_log.
+	 *
+	 * Goes to error_log (not LogManager) intentionally: avoids feedback loops if
+	 * the log pipeline itself is unhealthy.
+	 *
+	 * @param string $action Verb: added | updated | removed | registered.
+	 * @param string $id     Server ID acted upon.
+	 * @param array<string>  $fields Field names (sanitized — never values).
+	 */
+	private function audit( string $action, string $id, array $fields ): void {
+		$user_id  = \function_exists( 'get_current_user_id' ) ? \get_current_user_id() : 0;
+		$ts       = \gmdate( 'c' );
+		$fieldstr = empty( $fields ) ? '' : ' fields=' . \implode( ',', $fields );
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log(
+			\sprintf(
+				'[EventLogger] ServerRegistry %s id=%s user=%d ts=%s%s',
+				$action,
+				$id,
+				$user_id,
+				$ts,
+				$fieldstr
+			)
+		);
 	}
 
 	/**
@@ -336,6 +538,23 @@ class Server_Registry {
 	}
 
 	/**
+	 * Check whether a server ID originates from the config file.
+	 *
+	 * Reads file-only defaults via `Config::load_config_defaults()` to avoid the
+	 * circular case where `load_config()` would merge the WP option into
+	 * `aggregator_servers` and make every WP-option server look like a config
+	 * server.
+	 *
+	 * @param string $id Server ID.
+	 * @return bool True if the server is defined in the config file.
+	 */
+	public function is_config_server( string $id ): bool {
+		$defaults = Config::load_config_defaults();
+		$file     = $defaults['aggregator_servers'] ?? [];
+		return \is_array( $file ) && isset( $file[ $id ] );
+	}
+
+	/**
 	 * Remove a server.
 	 *
 	 * Config-file servers can't be removed via the API — they reappear on next
@@ -371,6 +590,16 @@ class Server_Registry {
 	}
 
 	/**
+	 * Singleton accessor.
+	 */
+	public static function get_instance(): Server_Registry {
+		if ( null === self::$instance ) {
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	/**
 	 * Reset the in-process cache so the next read rebuilds from disk + option.
 	 *
 	 * Long-running workers (JobWorker) call this between jobs so post-admin
@@ -378,234 +607,5 @@ class Server_Registry {
 	 */
 	public function reset_cache(): void {
 		$this->servers = null;
-	}
-
-	/**
-	 * Validate a server ID format.
-	 *
-	 * @param string $id Server ID to validate.
-	 * @return bool True if valid.
-	 */
-	public static function is_valid_id( string $id ): bool {
-		return 1 === \preg_match( '/^[a-zA-Z0-9_-]{1,64}$/', $id );
-	}
-
-	/**
-	 * Get only the WP-option-managed servers (excludes config-file defaults).
-	 *
-	 * Write paths use this so we never accidentally persist a config-file
-	 * default into the WP option (would shadow file changes forever).
-	 *
-	 * @return array<array-key, mixed>
-	 */
-	private function get_wp_servers(): array {
-		$option = \get_option( self::OPTION_KEY, [] );
-		return \is_array( $option ) ? $option : [];
-	}
-
-	/**
-	 * Persist the WP-managed server map.
-	 *
-	 * Uses 3-arg form when WP's full update_option is available (the third arg
-	 * marks the option as non-autoloaded so it doesn't bloat every request's
-	 * option cache); falls back to 2-arg for stripped-down test stubs.
-	 *
-	 * @param array<array-key, mixed> $wp_servers Map of id => validated config.
-	 */
-	private static function write_option( array $wp_servers ): void {
-		$arity = self::update_option_arity();
-		if ( $arity >= 3 ) {
-			\update_option( self::OPTION_KEY, $wp_servers, false );
-		} else {
-			\update_option( self::OPTION_KEY, $wp_servers );
-		}
-	}
-
-	/**
-	 * Reflect on update_option once to determine its parameter count.
-	 *
-	 * Production WP defines a 3-arg update_option (option, value, autoload).
-	 * Test bootstraps may define a 2-arg fake. Cached for the process.
-	 */
-	private static function update_option_arity(): int {
-		/** @var int|null $arity */
-		static $arity = null;
-		if ( null === $arity ) {
-			try {
-				$arity = ( new \ReflectionFunction( 'update_option' ) )->getNumberOfParameters();
-			} catch ( \ReflectionException $e ) {
-				$arity = 2;
-			}
-		}
-		return $arity;
-	}
-
-	/**
-	 * Validate and sanitize a full server configuration.
-	 *
-	 * @param array<string, mixed> $config Raw configuration.
-	 * @return array<string, mixed>|null Validated configuration or null if invalid.
-	 */
-	private function validate_config( array $config ): ?array {
-		// URL is required, must be string, must be HTTPS.
-		if ( empty( $config['url'] ) || ! \is_string( $config['url'] ) ) {
-			return null;
-		}
-		$url = \function_exists( 'esc_url_raw' )
-			? \esc_url_raw( $config['url'] )
-			: $config['url'];
-		if ( '' === $url ) {
-			return null;
-		}
-		if ( 0 !== \strpos( $url, 'https://' ) ) {
-			return null;
-		}
-
-		$validated = [
-			'url'           => \rtrim( $url, '/' ),
-			'auth_username' => '',
-			'auth_password' => '',
-			'enabled'       => true,
-			'logs'          => [ 'firehose.log' ],
-		];
-
-		// auth_username — sanitize + 256-byte cap.
-		if ( ! empty( $config['auth_username'] ) && \is_string( $config['auth_username'] ) ) {
-			$username = \function_exists( 'sanitize_text_field' )
-				? \sanitize_text_field( $config['auth_username'] )
-				: \trim( \preg_replace( '/[\x00-\x1f\x7f]/', '', $config['auth_username'] ) ?? '' );
-			if ( \strlen( $username ) > 256 ) {
-				$username = \substr( $username, 0, 256 );
-			}
-			$validated['auth_username'] = $username;
-		}
-
-		// auth_password — strip control chars, 256-byte cap, encrypt.
-		if ( ! empty( $config['auth_password'] ) && \is_string( $config['auth_password'] ) ) {
-			$password = $config['auth_password'];
-			if ( 0 !== \strpos( $password, self::ENCRYPTED_PREFIX ) ) {
-				// New plaintext password — sanitize, cap, encrypt.
-				$password = \preg_replace( '/[\x00-\x1f\x7f]/', '', $password ) ?? '';
-				if ( \strlen( $password ) > 256 ) {
-					$password = \substr( $password, 0, 256 );
-				}
-				$password = self::encrypt( $password );
-			} else {
-				// Already encrypted — verify it actually decrypts; reject if not.
-				$decrypted = self::decrypt( $password );
-				if ( '' === $decrypted ) {
-					$password = '';
-				}
-			}
-			$validated['auth_password'] = $password;
-		}
-
-		// enabled flag.
-		if ( \array_key_exists( 'enabled', $config ) ) {
-			$validated['enabled'] = (bool) $config['enabled'];
-		}
-
-		// logs[] — filename allowlist.
-		if ( ! empty( $config['logs'] ) && \is_array( $config['logs'] ) ) {
-			$logs = [];
-			foreach ( $config['logs'] as $log ) {
-				if ( \is_string( $log ) && 1 === \preg_match( '/^[a-zA-Z0-9_.-]+\.log$/', $log ) ) {
-					$logs[] = $log;
-				}
-			}
-			if ( ! empty( $logs ) ) {
-				$validated['logs'] = $logs;
-			}
-		}
-
-		return $validated;
-	}
-
-	/**
-	 * Derive a 32-byte encryption key from `wp_salt('auth')`.
-	 *
-	 * @return string 32-byte key for sodium_crypto_secretbox.
-	 */
-	private static function encryption_key(): string {
-		return \sodium_crypto_generichash( \wp_salt( 'auth' ), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
-	}
-
-	/**
-	 * Encrypt a string for storage.
-	 *
-	 * Returns the wire-format string (`$enc$<base64>`) on success, or empty on
-	 * failure / empty input.
-	 *
-	 * @param string $plaintext Value to encrypt.
-	 */
-	private static function encrypt( string $plaintext ): string {
-		if ( '' === $plaintext || ! \function_exists( 'sodium_crypto_secretbox' ) ) {
-			return '';
-		}
-		$nonce      = \random_bytes( SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
-		$ciphertext = \sodium_crypto_secretbox( $plaintext, $nonce, self::encryption_key() );
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- binary-safe storage.
-		return self::ENCRYPTED_PREFIX . \base64_encode( $nonce . $ciphertext );
-	}
-
-	/**
-	 * Decrypt a stored value.
-	 *
-	 * Handles both encrypted (prefixed) and legacy plaintext values. A pre-
-	 * encryption row passes through unchanged so spoke upgrades don't break.
-	 *
-	 * @param string $stored Stored value (may be encrypted or plaintext).
-	 * @return string Decrypted plaintext, original value if not encrypted, or empty on decrypt failure.
-	 */
-	private static function decrypt( string $stored ): string {
-		// Plaintext path: anything that doesn't carry the ENCRYPTED_PREFIX
-		// (e.g. a config-file Application Password the operator typed in
-		// directly) flows through unchanged. Mirrors the docstring's
-		// "original value if not encrypted" contract — without this guard
-		// the prefix-strip + base64_decode below silently nukes any plaintext
-		// password that contains non-base64 characters (such as the spaces
-		// WordPress Application Passwords come formatted with).
-		if ( 0 !== \strpos( $stored, self::ENCRYPTED_PREFIX ) ) {
-			return $stored;
-		}
-		if ( ! \function_exists( 'sodium_crypto_secretbox_open' ) ) {
-			return '';
-		}
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode -- binary-safe storage.
-		$decoded = \base64_decode( \substr( $stored, \strlen( self::ENCRYPTED_PREFIX ) ), true );
-		if ( false === $decoded || \strlen( $decoded ) < SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ) {
-			return '';
-		}
-		$nonce      = \substr( $decoded, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
-		$ciphertext = \substr( $decoded, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
-		$plaintext  = \sodium_crypto_secretbox_open( $ciphertext, $nonce, self::encryption_key() );
-		return false === $plaintext ? '' : $plaintext;
-	}
-
-	/**
-	 * Append an audit-trail entry to PHP error_log.
-	 *
-	 * Goes to error_log (not LogManager) intentionally: avoids feedback loops if
-	 * the log pipeline itself is unhealthy.
-	 *
-	 * @param string $action Verb: added | updated | removed | registered.
-	 * @param string $id     Server ID acted upon.
-	 * @param array<string>  $fields Field names (sanitized — never values).
-	 */
-	private function audit( string $action, string $id, array $fields ): void {
-		$user_id  = \function_exists( 'get_current_user_id' ) ? \get_current_user_id() : 0;
-		$ts       = \gmdate( 'c' );
-		$fieldstr = empty( $fields ) ? '' : ' fields=' . \implode( ',', $fields );
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		\error_log(
-			\sprintf(
-				'[EventLogger] ServerRegistry %s id=%s user=%d ts=%s%s',
-				$action,
-				$id,
-				$user_id,
-				$ts,
-				$fieldstr
-			)
-		);
 	}
 }

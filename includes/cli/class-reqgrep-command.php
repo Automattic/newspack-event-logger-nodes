@@ -282,410 +282,6 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Detect whether `$stream` has piped data attached. fstat() reports the
-	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
-	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
-	 *
-	 * Defaults to STDIN; tests pass a php://memory resource so the dispatch
-	 * decision is observable without a real STDIN pipe.
-	 *
-	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
-	 */
-	private function stdin_has_data( $stream = null ): bool {
-		if ( null === $stream ) {
-			if ( ! \defined( 'STDIN' ) ) {
-				return false;
-			}
-			$stream = STDIN;
-		}
-		// Closed / non-resource → not piped data.
-		if ( ! \is_resource( $stream ) ) {
-			return false;
-		}
-		$stat = @\fstat( $stream );
-		if ( ! $stat ) {
-			return false;
-		}
-		$file_type = $stat['mode'] & 0170000;
-		return 0010000 === $file_type || 0100000 === $file_type;
-	}
-
-	/**
-	 * Stdin pipe mode: read line-by-line from `$stream`, run each through
-	 * process_line, then flush incomplete requests so the operator can see
-	 * partial state.
-	 *
-	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled
-	 * with fixture lines to drive the loop deterministically.
-	 *
-	 * @param resource|null $stream Source stream (defaults to STDIN).
-	 */
-	private function process_stdin( $stream = null ): void {
-		if ( null === $stream ) {
-			$stream = \defined( 'STDIN' ) ? STDIN : null;
-			if ( null === $stream ) {
-				return;
-			}
-		}
-		while ( ( $line = \fgets( $stream ) ) !== false ) {
-			$this->process_line( $line );
-		}
-		$this->output_remaining();
-	}
-
-	/**
-	 * Cat mode: walk each partition's segments oldest-first, stream every line
-	 * through process_line, then flush incomplete requests.
-	 */
-	private function cat_mode(): void {
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$partition = $this->get_partition( $p );
-			$segments  = $partition->get_segments( true );
-			if ( empty( $segments ) ) {
-				continue;
-			}
-
-			// Resolve cat-offset starting segment.
-			$start_seg = ( 'recent' === $this->cat_offset && \count( $segments ) >= 2 )
-				? $segments[ \count( $segments ) - 2 ]['id']
-				: $segments[0]['id'];
-
-			foreach ( $segments as $s ) {
-				if ( $s['id'] < $start_seg ) {
-					continue;
-				}
-				$this->stream_segment_lines( $partition, $s['id'], 0, $s['size'] );
-			}
-		}
-		$this->output_remaining();
-	}
-
-	/**
-	 * Follow mode: open a cursor per partition pointing at the tail of the
-	 * newest segment, then loop polling each partition for new bytes. Mirrors
-	 * the legacy FirehoseReader('end') behavior.
-	 *
-	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever
-	 * until SIGINT). Tests pass a small number to drive a bounded number of
-	 * polls and assert on output without an infinite loop.
-	 */
-	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
-		$cursors = $this->seed_follow_cursors();
-
-		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
-		\WP_CLI::log( 'Following ' . $this->num_partitions . ' partition(s)... (Ctrl+C to stop)' );
-
-		for ( $i = 0; $i < $max_iterations; $i++ ) {
-			$had_data = $this->follow_tick( $cursors );
-			if ( ! $had_data ) {
-				\usleep( self::FOLLOW_IDLE_USLEEP );
-			}
-		}
-	}
-
-	/**
-	 * One iteration of the follow-mode poll. Mutates `$cursors` in place,
-	 * returns true iff any partition yielded new bytes this tick. Extracted
-	 * so tests can drive a known number of ticks without a while(true).
-	 *
-	 * @param array<int,array{seg:int,off:int}> $cursors Per-partition cursor state.
-	 */
-	private function follow_tick( array &$cursors ): bool {
-		$had_data = false;
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$partition = $this->get_partition( $p );
-			$segments  = $partition->get_segments( true );
-			if ( empty( $segments ) ) {
-				continue;
-			}
-
-			$cursor = $cursors[ $p ];
-
-			// Walk every segment ≥ cursor.seg; advance cursor as bytes consumed.
-			foreach ( $segments as $s ) {
-				if ( $s['id'] < $cursor['seg'] ) {
-					continue;
-				}
-				$start = ( $s['id'] === $cursor['seg'] ) ? $cursor['off'] : 0;
-				$len   = $s['size'] - $start;
-				if ( $len <= 0 ) {
-					// Move the cursor forward to the start of the next segment so
-					// we don't restart at this seg's tail next iteration.
-					if ( $s['id'] > $cursor['seg'] ) {
-						$cursor['seg'] = $s['id'];
-						$cursor['off'] = 0;
-					}
-					continue;
-				}
-				$consumed      = $this->stream_segment_lines( $partition, $s['id'], $start, $len );
-				$cursor['seg'] = $s['id'];
-				$cursor['off'] = $start + $consumed;
-				if ( $consumed > 0 ) {
-					$had_data = true;
-				}
-			}
-
-			$cursors[ $p ] = $cursor;
-		}
-		return $had_data;
-	}
-
-	/**
-	 * Build the initial follow-mode cursor map: each partition starts at the
-	 * tail of its newest segment so we don't replay history on attach.
-	 *
-	 * @return array<int,array{seg:int,off:int}>
-	 */
-	private function seed_follow_cursors(): array {
-		$cursors = [];
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$partition = $this->get_partition( $p );
-			$segments  = $partition->get_segments( true );
-			if ( empty( $segments ) ) {
-				$cursors[ $p ] = [ 'seg' => 0, 'off' => 0 ];
-				continue;
-			}
-			$newest        = \end( $segments );
-			$cursors[ $p ] = [
-				'seg' => $newest['id'],
-				'off' => $newest['size'],
-			];
-		}
-		return $cursors;
-	}
-
-	/**
-	 * Read a contiguous byte range from a segment, split into lines, and feed
-	 * each to process_line. Returns the number of complete-line bytes consumed
-	 * (so callers can advance their cursor).
-	 *
-	 * Trailing partial lines are NOT consumed — the caller's next poll will
-	 * pick them up once the writer flushes a newline.
-	 *
-	 * @param Partition_Node $partition Partition instance.
-	 * @param int       $seg       Segment id.
-	 * @param int       $offset    Start offset within segment.
-	 * @param int       $length    Bytes to read.
-	 * @return int Bytes consumed (offset advance).
-	 */
-	private function stream_segment_lines( Partition_Node $partition, int $seg, int $offset, int $length ): int {
-		if ( $length <= 0 ) {
-			return 0;
-		}
-		// Chunk large ranges to keep memory peak bounded — `read_at` itself
-		// is uncapped, but a single fread of an entire multi-GB segment
-		// would balloon the CLI process.
-		$consumed = 0;
-		$pending  = '';
-		$max      = self::READ_CHUNK_BYTES;
-		while ( $consumed < $length ) {
-			$want  = \min( $max, $length - $consumed );
-			$bytes = $partition->read_at( $seg, $offset + $consumed, $want );
-			if ( '' === $bytes ) {
-				break;
-			}
-			$buffer    = $pending . $bytes;
-			$lines     = \explode( "\n", $buffer );
-			$pending   = \array_pop( $lines );
-			foreach ( $lines as $line ) {
-				$this->process_line( $line . "\n" );
-			}
-			$consumed += \strlen( $bytes );
-		}
-		// Tell the caller how many bytes lived inside complete lines.
-		return $consumed - \strlen( $pending );
-	}
-
-	/**
-	 * Lazily resolve a Partition for a given partition index.
-	 *
-	 * @param int $partition Partition index.
-	 * @return Partition_Node
-	 */
-	private function get_partition( int $partition ): Partition_Node {
-		if ( ! isset( $this->partition_cache[ $partition ] ) ) {
-			// Name the sibling after the firehose log basename; suffix with a
-			// process+object-id token so a second command run doesn't clash with
-			// stale Core registrations.
-			$role           = \pathinfo( $this->base_dir, PATHINFO_FILENAME ) ?: 'firehose';
-			$instance_token = \getmypid() . '-' . \spl_object_id( $this );
-			$p              = new Partition_Node();
-			$p->name( "{$role}.{$instance_token}.p{$partition}" );
-			// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
-			$p->patron( $p );
-			// Rule 4: sink into the interpreter only when one is in scope.
-			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-			if ( null === $p->sink() && null !== $ci ) {
-				$p->sink( $ci );
-			}
-			$p->arguments( "{$this->base_dir} {$partition}" );
-			$this->partition_cache[ $partition ] = $p;
-		}
-		return $this->partition_cache[ $partition ];
-	}
-
-	/**
-	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
-	 * built in the command's setup before any line processing; a null here means
-	 * a caller invoked a processing method before setup, which is a bug.
-	 */
-	private function require_inflight(): LRU_Cache {
-		if ( null === $this->inflight ) {
-			throw new \RuntimeException( 'in-flight cache not initialized' );
-		}
-		return $this->inflight;
-	}
-
-	/**
-	 * Process a single firehose JSONL line.
-	 *
-	 * State machine:
-	 *  - Already-tracked rid: append; print on `process (complete)`.
-	 *  - New rid + line matches pattern: pull history, append, start tracking.
-	 *  - No match: stash in history (bounded by num_buckets × bucket_size).
-	 *
-	 * @param string $line Raw log line (with or without trailing newline).
-	 */
-	private function process_line( string $line ): void {
-		$line = \trim( $line );
-		if ( '' === $line ) {
-			return;
-		}
-
-		// Lines on disk are 7-element positional Message envelopes (the firehose
-		// writes packed Messages); stdin pipes and legacy callers may pass
-		// entry-shape JSON directly. Detect either: a list-shaped decode is the
-		// envelope (entry payload at Message::VALUE; rid at Message::KEY); a
-		// hash carries rid inside. We decode once for control flow but spool
-		// $line verbatim — raw mode echoes whatever came in, and formatted
-		// mode decodes again at output time.
-		$decoded = \json_decode( $line, true, 64 );
-		if ( ! \is_array( $decoded ) ) {
-			return;
-		}
-		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
-			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			$rid   = self::to_str( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
-		} else {
-			$entry = $decoded;
-			$rid   = self::to_str( $entry['rid'] ?? '' );
-		}
-		if ( ! \is_array( $entry ) || '' === $rid ) {
-			return;
-		}
-
-		$key = self::to_str( $entry['k'] ?? '' );
-
-		$inflight = $this->require_inflight();
-		$state    = $inflight->get( $rid );
-		if ( $state instanceof \stdClass ) {
-			// Already tracking this rid: extend it and finalize on complete.
-			$this->append_to_state( $state, $line );
-			if ( 'process (complete)' === $key ) {
-				if ( ! $this->incomplete ) {
-					$this->output_request( self::to_lines( $state->lines ), $rid );
-				}
-				$inflight->delete( $rid );
-			}
-		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
-			// New matching rid: bootstrap state from history (if any).
-			$state        = new \stdClass();
-			$state->lines = [];
-			$state->bytes = 0;
-
-			$found_history = false;
-			foreach ( $this->history as $recent ) {
-				if ( isset( $recent[ $rid ] ) ) {
-					$found_history = true;
-					foreach ( $recent[ $rid ] as $hist_line ) {
-						if ( ! $this->append_to_state( $state, $hist_line ) ) {
-							break 2; // Cap hit — stop merging history.
-						}
-					}
-				}
-			}
-
-			$n = self::to_int( $entry['n'] ?? 0 );
-			if ( ! $found_history && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
-				\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
-			}
-
-			$this->append_to_state( $state, $line );
-			$inflight->set( $rid, $state );
-
-			if ( 'process (complete)' === $key ) {
-				if ( ! $this->incomplete ) {
-					$this->output_request( self::to_lines( $state->lines ), $rid );
-				}
-				$inflight->delete( $rid );
-			}
-		} else {
-			// Not matching — stash in history. Bound per-rid lines to defend memory.
-			$recent_idx = \count( $this->history ) - 1;
-			if ( ! isset( $this->history[ $recent_idx ][ $rid ] ) ) {
-				$this->history[ $recent_idx ][ $rid ] = [];
-			}
-			if ( \count( $this->history[ $recent_idx ][ $rid ] ) < self::MAX_LINES_PER_REQUEST_IN_HISTORY ) {
-				$this->history[ $recent_idx ][ $rid ][] = $line;
-			}
-
-			// Rotate history buckets when current overflows; trim to num_buckets.
-			if ( \count( $this->history[ $recent_idx ], COUNT_RECURSIVE ) > $this->bucket_size ) {
-				$this->history[] = [];
-			}
-			if ( \count( $this->history ) > $this->num_buckets ) {
-				\array_shift( $this->history );
-			}
-		}
-
-		// Roll the LruCache on its own schedule — the on-evict callback prints
-		// `[incomplete]` for any rids that fell out of the oldest bucket.
-		$inflight->rotate_if_due();
-	}
-
-	/**
-	 * Append a line to the in-flight request state, respecting line + byte caps.
-	 *
-	 * @param \stdClass $state State object with ->lines and ->bytes fields.
-	 * @param string    $line  Raw JSON line (already m-truncated).
-	 * @return bool True if appended; false if a cap was hit (caller may stop).
-	 */
-	private function append_to_state( \stdClass $state, string $line ): bool {
-		$line_bytes = \strlen( $line );
-		// Dynamic \stdClass state: ->bytes is always int, ->lines always a string list.
-		$bytes = \is_int( $state->bytes ) ? $state->bytes : 0;
-		if ( ! \is_array( $state->lines ) ) {
-			$state->lines = [];
-		}
-		// Reference (not a copy) so the append mutates the property in place —
-		// a copy-into-local + write-back triggers copy-on-write on every line.
-		/** @var list<string> $lines */
-		$lines = &$state->lines;
-		if ( $bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
-			return false;
-		}
-		if ( \count( $lines ) >= self::MAX_LINES_PER_REQUEST ) {
-			return false;
-		}
-		$lines[]      = $line;
-		$state->bytes = $bytes + $line_bytes;
-		return true;
-	}
-
-	/**
-	 * Print every still-in-flight request as `[incomplete]`.
-	 */
-	private function output_remaining(): void {
-		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
-			if ( ! $state instanceof \stdClass ) {
-				continue;
-			}
-			$this->output_request( self::to_lines( $state->lines ), self::to_str( $rid ) );
-			echo "[incomplete]\n\n";
-		}
-	}
-
-	/**
 	 * Output a completed request — either the raw JSON lines (raw mode) or the
 	 * formatted indented tree.
 	 *
@@ -850,17 +446,6 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Coerce a decoded-JSON scalar to string, reproducing the prior `(string)`
-	 * cast for the scalar field values the firehose actually emits; non-scalars
-	 * (which the old casts would have warned/erred on) become ''.
-	 *
-	 * @param mixed $value Decoded value.
-	 */
-	private static function to_str( $value ): string {
-		return \is_scalar( $value ) ? (string) $value : '';
-	}
-
-	/**
 	 * Coerce a decoded-JSON numeric to int, reproducing the prior `(int)` cast
 	 * for the numeric field values the firehose emits; non-numerics become 0.
 	 *
@@ -881,6 +466,17 @@ class Reqgrep_Command {
 	}
 
 	/**
+	 * Coerce a decoded-JSON scalar to string, reproducing the prior `(string)`
+	 * cast for the scalar field values the firehose actually emits; non-scalars
+	 * (which the old casts would have warned/erred on) become ''.
+	 *
+	 * @param mixed $value Decoded value.
+	 */
+	private static function to_str( $value ): string {
+		return \is_scalar( $value ) ? (string) $value : '';
+	}
+
+	/**
 	 * Narrow a stdClass `->lines` value (always built from string appends in
 	 * append_to_state) to a list of strings for output_request.
 	 *
@@ -892,5 +488,409 @@ class Reqgrep_Command {
 			return [];
 		}
 		return \array_values( \array_filter( $value, 'is_string' ) );
+	}
+
+	/**
+	 * Detect whether `$stream` has piped data attached. fstat() reports the
+	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
+	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
+	 *
+	 * Defaults to STDIN; tests pass a php://memory resource so the dispatch
+	 * decision is observable without a real STDIN pipe.
+	 *
+	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
+	 */
+	private function stdin_has_data( $stream = null ): bool {
+		if ( null === $stream ) {
+			if ( ! \defined( 'STDIN' ) ) {
+				return false;
+			}
+			$stream = STDIN;
+		}
+		// Closed / non-resource → not piped data.
+		if ( ! \is_resource( $stream ) ) {
+			return false;
+		}
+		$stat = @\fstat( $stream );
+		if ( ! $stat ) {
+			return false;
+		}
+		$file_type = $stat['mode'] & 0170000;
+		return 0010000 === $file_type || 0100000 === $file_type;
+	}
+
+	/**
+	 * Stdin pipe mode: read line-by-line from `$stream`, run each through
+	 * process_line, then flush incomplete requests so the operator can see
+	 * partial state.
+	 *
+	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled
+	 * with fixture lines to drive the loop deterministically.
+	 *
+	 * @param resource|null $stream Source stream (defaults to STDIN).
+	 */
+	private function process_stdin( $stream = null ): void {
+		if ( null === $stream ) {
+			$stream = \defined( 'STDIN' ) ? STDIN : null;
+			if ( null === $stream ) {
+				return;
+			}
+		}
+		while ( ( $line = \fgets( $stream ) ) !== false ) {
+			$this->process_line( $line );
+		}
+		$this->output_remaining();
+	}
+
+	/**
+	 * Process a single firehose JSONL line.
+	 *
+	 * State machine:
+	 *  - Already-tracked rid: append; print on `process (complete)`.
+	 *  - New rid + line matches pattern: pull history, append, start tracking.
+	 *  - No match: stash in history (bounded by num_buckets × bucket_size).
+	 *
+	 * @param string $line Raw log line (with or without trailing newline).
+	 */
+	private function process_line( string $line ): void {
+		$line = \trim( $line );
+		if ( '' === $line ) {
+			return;
+		}
+
+		// Lines on disk are 7-element positional Message envelopes (the firehose
+		// writes packed Messages); stdin pipes and legacy callers may pass
+		// entry-shape JSON directly. Detect either: a list-shaped decode is the
+		// envelope (entry payload at Message::VALUE; rid at Message::KEY); a
+		// hash carries rid inside. We decode once for control flow but spool
+		// $line verbatim — raw mode echoes whatever came in, and formatted
+		// mode decodes again at output time.
+		$decoded = \json_decode( $line, true, 64 );
+		if ( ! \is_array( $decoded ) ) {
+			return;
+		}
+		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
+			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
+			$rid   = self::to_str( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
+		} else {
+			$entry = $decoded;
+			$rid   = self::to_str( $entry['rid'] ?? '' );
+		}
+		if ( ! \is_array( $entry ) || '' === $rid ) {
+			return;
+		}
+
+		$key = self::to_str( $entry['k'] ?? '' );
+
+		$inflight = $this->require_inflight();
+		$state    = $inflight->get( $rid );
+		if ( $state instanceof \stdClass ) {
+			// Already tracking this rid: extend it and finalize on complete.
+			$this->append_to_state( $state, $line );
+			if ( 'process (complete)' === $key ) {
+				if ( ! $this->incomplete ) {
+					$this->output_request( self::to_lines( $state->lines ), $rid );
+				}
+				$inflight->delete( $rid );
+			}
+		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
+			// New matching rid: bootstrap state from history (if any).
+			$state        = new \stdClass();
+			$state->lines = [];
+			$state->bytes = 0;
+
+			$found_history = false;
+			foreach ( $this->history as $recent ) {
+				if ( isset( $recent[ $rid ] ) ) {
+					$found_history = true;
+					foreach ( $recent[ $rid ] as $hist_line ) {
+						if ( ! $this->append_to_state( $state, $hist_line ) ) {
+							break 2; // Cap hit — stop merging history.
+						}
+					}
+				}
+			}
+
+			$n = self::to_int( $entry['n'] ?? 0 );
+			if ( ! $found_history && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
+				\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
+			}
+
+			$this->append_to_state( $state, $line );
+			$inflight->set( $rid, $state );
+
+			if ( 'process (complete)' === $key ) {
+				if ( ! $this->incomplete ) {
+					$this->output_request( self::to_lines( $state->lines ), $rid );
+				}
+				$inflight->delete( $rid );
+			}
+		} else {
+			// Not matching — stash in history. Bound per-rid lines to defend memory.
+			$recent_idx = \count( $this->history ) - 1;
+			if ( ! isset( $this->history[ $recent_idx ][ $rid ] ) ) {
+				$this->history[ $recent_idx ][ $rid ] = [];
+			}
+			if ( \count( $this->history[ $recent_idx ][ $rid ] ) < self::MAX_LINES_PER_REQUEST_IN_HISTORY ) {
+				$this->history[ $recent_idx ][ $rid ][] = $line;
+			}
+
+			// Rotate history buckets when current overflows; trim to num_buckets.
+			if ( \count( $this->history[ $recent_idx ], COUNT_RECURSIVE ) > $this->bucket_size ) {
+				$this->history[] = [];
+			}
+			if ( \count( $this->history ) > $this->num_buckets ) {
+				\array_shift( $this->history );
+			}
+		}
+
+		// Roll the LruCache on its own schedule — the on-evict callback prints
+		// `[incomplete]` for any rids that fell out of the oldest bucket.
+		$inflight->rotate_if_due();
+	}
+
+	/**
+	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
+	 * built in the command's setup before any line processing; a null here means
+	 * a caller invoked a processing method before setup, which is a bug.
+	 */
+	private function require_inflight(): LRU_Cache {
+		if ( null === $this->inflight ) {
+			throw new \RuntimeException( 'in-flight cache not initialized' );
+		}
+		return $this->inflight;
+	}
+
+	/**
+	 * Append a line to the in-flight request state, respecting line + byte caps.
+	 *
+	 * @param \stdClass $state State object with ->lines and ->bytes fields.
+	 * @param string    $line  Raw JSON line (already m-truncated).
+	 * @return bool True if appended; false if a cap was hit (caller may stop).
+	 */
+	private function append_to_state( \stdClass $state, string $line ): bool {
+		$line_bytes = \strlen( $line );
+		// Dynamic \stdClass state: ->bytes is always int, ->lines always a string list.
+		$bytes = \is_int( $state->bytes ) ? $state->bytes : 0;
+		if ( ! \is_array( $state->lines ) ) {
+			$state->lines = [];
+		}
+		// Reference (not a copy) so the append mutates the property in place —
+		// a copy-into-local + write-back triggers copy-on-write on every line.
+		/** @var list<string> $lines */
+		$lines = &$state->lines;
+		if ( $bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
+			return false;
+		}
+		if ( \count( $lines ) >= self::MAX_LINES_PER_REQUEST ) {
+			return false;
+		}
+		$lines[]      = $line;
+		$state->bytes = $bytes + $line_bytes;
+		return true;
+	}
+
+	/**
+	 * Print every still-in-flight request as `[incomplete]`.
+	 */
+	private function output_remaining(): void {
+		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
+			if ( ! $state instanceof \stdClass ) {
+				continue;
+			}
+			$this->output_request( self::to_lines( $state->lines ), self::to_str( $rid ) );
+			echo "[incomplete]\n\n";
+		}
+	}
+
+	/**
+	 * Follow mode: open a cursor per partition pointing at the tail of the
+	 * newest segment, then loop polling each partition for new bytes. Mirrors
+	 * the legacy FirehoseReader('end') behavior.
+	 *
+	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever
+	 * until SIGINT). Tests pass a small number to drive a bounded number of
+	 * polls and assert on output without an infinite loop.
+	 */
+	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
+		$cursors = $this->seed_follow_cursors();
+
+		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
+		\WP_CLI::log( 'Following ' . $this->num_partitions . ' partition(s)... (Ctrl+C to stop)' );
+
+		for ( $i = 0; $i < $max_iterations; $i++ ) {
+			$had_data = $this->follow_tick( $cursors );
+			if ( ! $had_data ) {
+				\usleep( self::FOLLOW_IDLE_USLEEP );
+			}
+		}
+	}
+
+	/**
+	 * Build the initial follow-mode cursor map: each partition starts at the
+	 * tail of its newest segment so we don't replay history on attach.
+	 *
+	 * @return array<int,array{seg:int,off:int}>
+	 */
+	private function seed_follow_cursors(): array {
+		$cursors = [];
+		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
+			$partition = $this->get_partition( $p );
+			$segments  = $partition->get_segments( true );
+			if ( empty( $segments ) ) {
+				$cursors[ $p ] = [ 'seg' => 0, 'off' => 0 ];
+				continue;
+			}
+			$newest        = \end( $segments );
+			$cursors[ $p ] = [
+				'seg' => $newest['id'],
+				'off' => $newest['size'],
+			];
+		}
+		return $cursors;
+	}
+
+	/**
+	 * Lazily resolve a Partition for a given partition index.
+	 *
+	 * @param int $partition Partition index.
+	 * @return Partition_Node
+	 */
+	private function get_partition( int $partition ): Partition_Node {
+		if ( ! isset( $this->partition_cache[ $partition ] ) ) {
+			// Name the sibling after the firehose log basename; suffix with a
+			// process+object-id token so a second command run doesn't clash with
+			// stale Core registrations.
+			$role           = \pathinfo( $this->base_dir, PATHINFO_FILENAME ) ?: 'firehose';
+			$instance_token = \getmypid() . '-' . \spl_object_id( $this );
+			$p              = new Partition_Node();
+			$p->name( "{$role}.{$instance_token}.p{$partition}" );
+			// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
+			$p->patron( $p );
+			// Rule 4: sink into the interpreter only when one is in scope.
+			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+			if ( null === $p->sink() && null !== $ci ) {
+				$p->sink( $ci );
+			}
+			$p->arguments( "{$this->base_dir} {$partition}" );
+			$this->partition_cache[ $partition ] = $p;
+		}
+		return $this->partition_cache[ $partition ];
+	}
+
+	/**
+	 * One iteration of the follow-mode poll. Mutates `$cursors` in place,
+	 * returns true iff any partition yielded new bytes this tick. Extracted
+	 * so tests can drive a known number of ticks without a while(true).
+	 *
+	 * @param array<int,array{seg:int,off:int}> $cursors Per-partition cursor state.
+	 */
+	private function follow_tick( array &$cursors ): bool {
+		$had_data = false;
+		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
+			$partition = $this->get_partition( $p );
+			$segments  = $partition->get_segments( true );
+			if ( empty( $segments ) ) {
+				continue;
+			}
+
+			$cursor = $cursors[ $p ];
+
+			// Walk every segment ≥ cursor.seg; advance cursor as bytes consumed.
+			foreach ( $segments as $s ) {
+				if ( $s['id'] < $cursor['seg'] ) {
+					continue;
+				}
+				$start = ( $s['id'] === $cursor['seg'] ) ? $cursor['off'] : 0;
+				$len   = $s['size'] - $start;
+				if ( $len <= 0 ) {
+					// Move the cursor forward to the start of the next segment so
+					// we don't restart at this seg's tail next iteration.
+					if ( $s['id'] > $cursor['seg'] ) {
+						$cursor['seg'] = $s['id'];
+						$cursor['off'] = 0;
+					}
+					continue;
+				}
+				$consumed      = $this->stream_segment_lines( $partition, $s['id'], $start, $len );
+				$cursor['seg'] = $s['id'];
+				$cursor['off'] = $start + $consumed;
+				if ( $consumed > 0 ) {
+					$had_data = true;
+				}
+			}
+
+			$cursors[ $p ] = $cursor;
+		}
+		return $had_data;
+	}
+
+	/**
+	 * Read a contiguous byte range from a segment, split into lines, and feed
+	 * each to process_line. Returns the number of complete-line bytes consumed
+	 * (so callers can advance their cursor).
+	 *
+	 * Trailing partial lines are NOT consumed — the caller's next poll will
+	 * pick them up once the writer flushes a newline.
+	 *
+	 * @param Partition_Node $partition Partition instance.
+	 * @param int       $seg       Segment id.
+	 * @param int       $offset    Start offset within segment.
+	 * @param int       $length    Bytes to read.
+	 * @return int Bytes consumed (offset advance).
+	 */
+	private function stream_segment_lines( Partition_Node $partition, int $seg, int $offset, int $length ): int {
+		if ( $length <= 0 ) {
+			return 0;
+		}
+		// Chunk large ranges to keep memory peak bounded — `read_at` itself
+		// is uncapped, but a single fread of an entire multi-GB segment
+		// would balloon the CLI process.
+		$consumed = 0;
+		$pending  = '';
+		$max      = self::READ_CHUNK_BYTES;
+		while ( $consumed < $length ) {
+			$want  = \min( $max, $length - $consumed );
+			$bytes = $partition->read_at( $seg, $offset + $consumed, $want );
+			if ( '' === $bytes ) {
+				break;
+			}
+			$buffer    = $pending . $bytes;
+			$lines     = \explode( "\n", $buffer );
+			$pending   = \array_pop( $lines );
+			foreach ( $lines as $line ) {
+				$this->process_line( $line . "\n" );
+			}
+			$consumed += \strlen( $bytes );
+		}
+		// Tell the caller how many bytes lived inside complete lines.
+		return $consumed - \strlen( $pending );
+	}
+
+	/**
+	 * Cat mode: walk each partition's segments oldest-first, stream every line
+	 * through process_line, then flush incomplete requests.
+	 */
+	private function cat_mode(): void {
+		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
+			$partition = $this->get_partition( $p );
+			$segments  = $partition->get_segments( true );
+			if ( empty( $segments ) ) {
+				continue;
+			}
+
+			// Resolve cat-offset starting segment.
+			$start_seg = ( 'recent' === $this->cat_offset && \count( $segments ) >= 2 )
+				? $segments[ \count( $segments ) - 2 ]['id']
+				: $segments[0]['id'];
+
+			foreach ( $segments as $s ) {
+				if ( $s['id'] < $start_seg ) {
+					continue;
+				}
+				$this->stream_segment_lines( $partition, $s['id'], 0, $s['size'] );
+			}
+		}
+		$this->output_remaining();
 	}
 }
