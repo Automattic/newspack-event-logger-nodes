@@ -109,6 +109,8 @@ export default function CustomEventSelectorModal( {
 		>
 			<div className="custom-event-header">
 				<SearchControl
+					__next40pxDefaultSize
+					__nextHasNoMarginBottom
 					value={ search }
 					onChange={ setSearch }
 					placeholder={ __(

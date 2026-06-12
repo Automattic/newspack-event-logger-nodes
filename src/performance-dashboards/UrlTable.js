@@ -338,6 +338,7 @@ export default function UrlTable( {
 			>
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
 					<TextControl
+						__next40pxDefaultSize
 						placeholder={ __(
 							'Search URLs…',
 							'newspack-event-logger-nodes'

@@ -5,7 +5,7 @@
  */
 
 import {
-	render,
+	createRoot,
 	useState,
 	useEffect,
 	lazy,
@@ -44,7 +44,7 @@ function LoadingFallback( {
  *
  * @return {import('react').ReactElement} Rendered component.
  */
-function AdminApp() {
+export function AdminApp() {
 	const [ error, setError ] = useState( null );
 
 	/**
@@ -116,7 +116,7 @@ import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth';
  *
  * @return {import('react').ReactElement} Rendered component.
  */
-function ErrorLogPage() {
+export function ErrorLogPage() {
 	const menuWidth = useAdminMenuWidth();
 
 	return (
@@ -158,11 +158,11 @@ function ErrorLogPage() {
 document.addEventListener( 'DOMContentLoaded', () => {
 	const dashboardContainer = document.getElementById( 'event-logger-admin' );
 	if ( dashboardContainer ) {
-		render( <AdminApp />, dashboardContainer );
+		createRoot( dashboardContainer ).render( <AdminApp /> );
 	}
 
 	const errorsContainer = document.getElementById( 'event-logger-errors' );
 	if ( errorsContainer ) {
-		render( <ErrorLogPage />, errorsContainer );
+		createRoot( errorsContainer ).render( <ErrorLogPage /> );
 	}
 } );

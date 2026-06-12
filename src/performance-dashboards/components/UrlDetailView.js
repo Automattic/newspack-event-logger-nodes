@@ -259,6 +259,7 @@ export default function UrlDetailView( {
 							} }
 						>
 							<SelectControl
+								__next40pxDefaultSize
 								label={ __(
 									'Metric',
 									'newspack-event-logger-nodes'
@@ -270,6 +271,7 @@ export default function UrlDetailView( {
 								style={ { minWidth: '180px' } }
 							/>
 							<SelectControl
+								__next40pxDefaultSize
 								label={ __(
 									'Breakdown',
 									'newspack-event-logger-nodes'

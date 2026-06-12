@@ -4,7 +4,7 @@
  * Settings page UI components for tag input fields.
  */
 
-import { render } from '@wordpress/element';
+import { createRoot } from '@wordpress/element';
 
 import './nodes/register';
 import TagInputField from './settings/TagInputField';
@@ -78,7 +78,7 @@ function initTagInputFields() {
 				const defaultValues = parseStringArray(
 					container.dataset.default
 				);
-				render(
+				createRoot( container ).render(
 					<TagInputField
 						fieldName={ fieldName }
 						initialValues={ initialValues }
@@ -87,8 +87,7 @@ function initTagInputFields() {
 						showHookSelector={ showHookSelector }
 						hookSelectorMode={ hookSelectorMode }
 						showCustomSelector={ showCustomSelector }
-					/>,
-					container
+					/>
 				);
 			}
 		}

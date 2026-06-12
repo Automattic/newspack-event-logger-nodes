@@ -962,6 +962,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			<div className="log-entries-search">
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
 					<TextControl
+						__next40pxDefaultSize
 						placeholder={ __(
 							'Search entries…',
 							'newspack-event-logger-nodes'
