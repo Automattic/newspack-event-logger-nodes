@@ -30,10 +30,10 @@ import { HookCatalogViewNode } from '../hook-catalog-view-node';
 beforeEach( () => Core.reset() );
 
 // Construct + name the node directly — the createX factory is gone (make_node
-// builds it in production); bare-new + setName is the test seam.
+// builds it in production); bare-new + name= is the test seam.
 function makeView( name ) {
 	const node = new HookCatalogViewNode();
-	node.setName( name );
+	node.name = name;
 	return node;
 }
 

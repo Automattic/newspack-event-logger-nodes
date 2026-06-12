@@ -36,14 +36,14 @@ import { PerformanceViewNode } from '../performance-view-node';
 beforeEach( () => Core.reset() );
 
 // Construct + name a command node directly — the createX factory is gone
-// (make_node builds it in production); bare-new + setName is the test seam.
+// (make_node builds it in production); bare-new + name= is the test seam.
 // The viewName default lives in the ctor, so a no-arg make_node still routes.
 function makeCommand( name, opts = {} ) {
 	const node = new PerformanceCommandNode(
 		opts.onError,
 		opts.viewName || 'performance:view'
 	);
-	node.setName( name );
+	node.name = name;
 	return node;
 }
 
@@ -53,7 +53,7 @@ function mount( opts = {} ) {
 	const outbox = [];
 	const sink = { fill: ( m ) => outbox.push( m ) };
 	const view = new PerformanceViewNode();
-	view.setName( 'performance:view' );
+	view.name = 'performance:view';
 	view.sink = sink;
 	const command = makeCommand( 'performance:command', opts );
 	command.sink = sink;
@@ -344,7 +344,7 @@ describe( 'performance:command — close() guard', () => {
 } );
 
 describe( 'performance:command — node identity', () => {
-	test( 'setName names the node', () => {
+	test( 'name= names the node', () => {
 		Core.reset();
 		const n = makeCommand( 'performance:command', {} );
 		expect( n.name ).toBe( 'performance:command' );
