@@ -25,14 +25,14 @@ import {
 } from '@newspack-nodes/runtime';
 import { ServersViewNode } from '../servers-view-node';
 
-// setName registers in the per-process Core registry; clear it between tests.
+// Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
 // Construct + name the node directly — the createX factory is gone (make_node
-// builds it in production); bare-new + setName is the test seam.
+// builds it in production); bare-new + name= is the test seam.
 function makeView( name ) {
 	const node = new ServersViewNode();
-	node.setName( name );
+	node.name = name;
 	return node;
 }
 
