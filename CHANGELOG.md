@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-06-12
+
 ### Changed
 
 - **SSE dashboard "Xs ago" staleness now reflects connection liveness, not row arrivals.** The Request Log and Error Log dashboards (and the Gyroscope's in-flight view) source their "Xs ago" indicator from the shared `_sse` connector's `lastEventTime` instead of their own view node's. The connector stamps `lastEventTime` on every inbound frame AND on the server's idle heartbeats, so an idle-but-healthy stream resets "Xs ago" to ~0 instead of showing a climbing counter that looks like a dead connection; a real drop (no heartbeats) leaves it frozen and "ago" climbs as the intended warning. Side effect: Clear no longer hides "Xs ago" — clearing the displayed rows leaves the live connection untouched, so the staleness persists. Requires `newspack-nodes` with the `_sse` connector exposing a public `lastEventTime`.
