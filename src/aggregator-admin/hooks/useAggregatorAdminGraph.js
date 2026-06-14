@@ -161,7 +161,7 @@ export function useAggregatorAdminGraph( opts = {} ) {
 		}
 		const id = makeOpId();
 		const promise = new Promise( ( resolve, reject ) => {
-			view.pending.set( id, { resolve, reject } );
+			view.replies.add( id, resolve, reject );
 		} );
 		interpreter.fill( buildCommand( verb, args, id ) );
 		return promise;

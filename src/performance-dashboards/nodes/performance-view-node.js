@@ -6,6 +6,7 @@ import {
 	TM_ERROR,
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
+import { errorMessage } from '@newspack-nodes/shared/pendingReplies';
 
 /**
  * `performance:view` — owns the Performance Dashboard view model.
@@ -113,7 +114,7 @@ export class PerformanceViewNode extends Node {
 
 		if ( entry.resolveOnly ) {
 			if ( isError ) {
-				entry.reject( new Error( _errorMessage( payload ) ) );
+				entry.reject( new Error( errorMessage( payload ) ) );
 				return;
 			}
 			const data = entry.transform ? entry.transform( payload ) : payload;
@@ -126,7 +127,7 @@ export class PerformanceViewNode extends Node {
 			this.model[ entry.slice ] = {
 				...this.model[ entry.slice ],
 				loading: false,
-				error: _errorMessage( payload ),
+				error: errorMessage( payload ),
 			};
 			this._publish();
 			return;
@@ -259,21 +260,4 @@ export class PerformanceViewNode extends Node {
 			has_target: false,
 		};
 	}
-}
-
-// Coerce a TM_ERROR payload (string / { message } / anything else) to a
-// human-readable string for the error / view-model error field.
-function _errorMessage( payload ) {
-	if ( 'string' === typeof payload && payload.length > 0 ) {
-		return payload;
-	}
-	if (
-		payload &&
-		'object' === typeof payload &&
-		'string' === typeof payload.message &&
-		payload.message.length > 0
-	) {
-		return payload.message;
-	}
-	return 'Operation failed';
 }
