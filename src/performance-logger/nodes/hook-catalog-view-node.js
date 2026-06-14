@@ -1,4 +1,8 @@
-import { Node, ID, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
+import { Node, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
+import {
+	errorMessage,
+	PendingReplies,
+} from '@newspack-nodes/shared/pendingReplies';
 
 /**
  * `hookcatalog:view` — owns the Performance Logger hook-catalog view model.
@@ -30,7 +34,7 @@ export class HookCatalogViewNode extends Node {
 		};
 		// Hook-stamped ID → { resolve, reject }; resolved/rejected when the
 		// matching reply lands here. Cleared on resolution.
-		this.pending = new Map();
+		this.replies = new PendingReplies();
 		this._publish();
 	}
 
@@ -39,7 +43,6 @@ export class HookCatalogViewNode extends Node {
 		if ( ! value || 'object' !== typeof value ) {
 			return;
 		}
-		const id = message[ ID ];
 		const type = message[ TYPE ] || 0;
 		const isError = 0 !== ( type & TM_ERROR );
 		const name = value.name;
@@ -49,17 +52,7 @@ export class HookCatalogViewNode extends Node {
 		// Track whether we handled the message via the pending pivot — if so,
 		// the caller is the error surface and we must NOT also paint a
 		// view-level error banner (mirrors servers:view).
-		let pendingMatched = false;
-		if ( id && this.pending.has( id ) ) {
-			const { resolve, reject } = this.pending.get( id );
-			this.pending.delete( id );
-			pendingMatched = true;
-			if ( isError ) {
-				reject( new Error( _errorMessage( payload ) ) );
-			} else {
-				resolve( payload );
-			}
-		}
+		const pendingMatched = this.replies.settle( message );
 
 		// View-model updates: hooks_registered replies refresh the catalog;
 		// un-correlated errors (broadcasts) surface globally. Pending-matched
@@ -79,7 +72,7 @@ export class HookCatalogViewNode extends Node {
 	_applyError( payload ) {
 		this.model = {
 			...this.model,
-			error: _errorMessage( payload ),
+			error: errorMessage( payload ),
 			loading: false,
 		};
 	}
@@ -112,21 +105,4 @@ export class HookCatalogViewNode extends Node {
 			has_target: false,
 		};
 	}
-}
-
-// Coerce a TM_ERROR payload (string / { message } / anything else) to a
-// human-readable string for the Error / view-model error field.
-function _errorMessage( payload ) {
-	if ( 'string' === typeof payload && payload.length > 0 ) {
-		return payload;
-	}
-	if (
-		payload &&
-		'object' === typeof payload &&
-		'string' === typeof payload.message &&
-		payload.message.length > 0
-	) {
-		return payload.message;
-	}
-	return 'Operation failed';
 }

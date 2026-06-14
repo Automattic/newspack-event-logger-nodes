@@ -23,6 +23,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
+import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 import { ServersViewNode } from '../servers-view-node';
 
 // Naming registers in the per-process Core registry; clear it between tests.
@@ -84,10 +85,10 @@ describe( 'servers:view — initial model', () => {
 		expect( v.name ).toBe( 'servers:view' );
 	} );
 
-	test( 'has a `pending` Map for hook-side promise resolution', () => {
+	test( 'has a `replies` registry for hook-side promise resolution', () => {
 		const v = makeView( 'servers:view' );
-		expect( v.pending ).toBeInstanceOf( Map );
-		expect( v.pending.size ).toBe( 0 );
+		expect( v.replies ).toBeInstanceOf( PendingReplies );
+		expect( v.replies.size ).toBe( 0 );
 	} );
 } );
 
@@ -174,7 +175,7 @@ describe( 'servers:view — TM_ERROR replies surface the error', () => {
 		expect( v.setStateCache.view.error ).toBeNull();
 		const resolve = jest.fn();
 		const reject = jest.fn();
-		v.pending.set( 'probe-7', { resolve, reject } );
+		v.replies.add( 'probe-7', resolve, reject );
 		v.fill(
 			replyMsg( {
 				id: 'probe-7',
@@ -194,7 +195,7 @@ describe( 'servers:view — TM_ERROR replies surface the error', () => {
 		// human-readable message rather than falling back to 'Operation failed'.
 		const v = makeView( 'servers:view' );
 		const reject = jest.fn();
-		v.pending.set( 'op-9', { resolve: jest.fn(), reject } );
+		v.replies.add( 'op-9', jest.fn(), reject );
 		v.fill(
 			replyMsg( {
 				id: 'op-9',
@@ -213,21 +214,21 @@ describe( 'servers:view — pending-promise resolution', () => {
 		const v = makeView( 'servers:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
-		v.pending.set( 'op-1', { resolve, reject } );
+		v.replies.add( 'op-1', resolve, reject );
 		v.fill(
 			replyMsg( { id: 'op-1', name: 'add', payload: { id: 'spoke-01' } } )
 		);
 		expect( resolve ).toHaveBeenCalledWith( { id: 'spoke-01' } );
 		expect( reject ).not.toHaveBeenCalled();
 		// Pending entry cleared.
-		expect( v.pending.has( 'op-1' ) ).toBe( false );
+		expect( v.replies.has( 'op-1' ) ).toBe( false );
 	} );
 
 	test( 'a TM_ERROR reply rejects the pending promise and clears the entry', () => {
 		const v = makeView( 'servers:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
-		v.pending.set( 'op-2', { resolve, reject } );
+		v.replies.add( 'op-2', resolve, reject );
 		v.fill(
 			replyMsg( {
 				id: 'op-2',
@@ -242,13 +243,13 @@ describe( 'servers:view — pending-promise resolution', () => {
 			'duplicate id'
 		);
 		expect( resolve ).not.toHaveBeenCalled();
-		expect( v.pending.has( 'op-2' ) ).toBe( false );
+		expect( v.replies.has( 'op-2' ) ).toBe( false );
 	} );
 
 	test( 'a list reply still updates the render model when also resolving a pending promise', () => {
 		const v = makeView( 'servers:view' );
 		const resolve = jest.fn();
-		v.pending.set( 'op-3', { resolve, reject: jest.fn() } );
+		v.replies.add( 'op-3', resolve, jest.fn() );
 		v.fill( replyMsg( { id: 'op-3', name: 'list', payload: SAMPLE } ) );
 		expect( v.setStateCache.view.servers ).toHaveLength( 2 );
 		expect( resolve ).toHaveBeenCalledWith( SAMPLE );
@@ -301,10 +302,10 @@ describe( 'servers:view — removeNode rejects in-flight pending', () => {
 	test( 'removeNode rejects every pending promise so a reset/teardown does not strand a caller', async () => {
 		const v = makeView( 'servers:view' );
 		const p1 = new Promise( ( resolve, reject ) =>
-			v.pending.set( 'op-a', { resolve, reject } )
+			v.replies.add( 'op-a', resolve, reject )
 		);
 		const p2 = new Promise( ( resolve, reject ) =>
-			v.pending.set( 'op-b', { resolve, reject } )
+			v.replies.add( 'op-b', resolve, reject )
 		);
 		// Attach catch handlers BEFORE removeNode rejects, so the synchronous
 		// reject is already handled (no unhandled-rejection) and we can assert it.
@@ -315,7 +316,7 @@ describe( 'servers:view — removeNode rejects in-flight pending', () => {
 
 		expect( await e1 ).toBeInstanceOf( Error );
 		expect( await e2 ).toBeInstanceOf( Error );
-		expect( v.pending.size ).toBe( 0 );
+		expect( v.replies.size ).toBe( 0 );
 	} );
 } );
 

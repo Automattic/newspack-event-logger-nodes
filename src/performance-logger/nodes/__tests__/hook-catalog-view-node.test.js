@@ -25,6 +25,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
+import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 import { HookCatalogViewNode } from '../hook-catalog-view-node';
 
 beforeEach( () => Core.reset() );
@@ -71,10 +72,10 @@ describe( 'hookcatalog:view — initial model', () => {
 		expect( v.name ).toBe( 'hookcatalog:view' );
 	} );
 
-	test( 'has a `pending` Map for hook-side promise resolution', () => {
+	test( 'has a `replies` registry for hook-side promise resolution', () => {
 		const v = makeView( 'hookcatalog:view' );
-		expect( v.pending ).toBeInstanceOf( Map );
-		expect( v.pending.size ).toBe( 0 );
+		expect( v.replies ).toBeInstanceOf( PendingReplies );
+		expect( v.replies.size ).toBe( 0 );
 	} );
 } );
 
@@ -190,7 +191,7 @@ describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 		expect( v.setStateCache.view.error ).toBeNull();
 		const resolve = jest.fn();
 		const reject = jest.fn();
-		v.pending.set( 'op-7', { resolve, reject } );
+		v.replies.add( 'op-7', resolve, reject );
 		v.fill(
 			replyMsg( {
 				id: 'op-7',
@@ -206,7 +207,7 @@ describe( 'hookcatalog:view — TM_ERROR replies surface the error', () => {
 	test( 'TM_ERROR with a structured {message} payload extracts the message field', () => {
 		const v = makeView( 'hookcatalog:view' );
 		const reject = jest.fn();
-		v.pending.set( 'op-9', { resolve: jest.fn(), reject } );
+		v.replies.add( 'op-9', jest.fn(), reject );
 		v.fill(
 			replyMsg( {
 				id: 'op-9',
@@ -227,19 +228,19 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 		const v = makeView( 'hookcatalog:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
-		v.pending.set( 'op-1', { resolve, reject } );
+		v.replies.add( 'op-1', resolve, reject );
 		const payload = { hooks_by_category: SAMPLE, total_hooks: 3 };
 		v.fill( replyMsg( { id: 'op-1', name: 'hooks_registered', payload } ) );
 		expect( resolve ).toHaveBeenCalledWith( payload );
 		expect( reject ).not.toHaveBeenCalled();
-		expect( v.pending.has( 'op-1' ) ).toBe( false );
+		expect( v.replies.has( 'op-1' ) ).toBe( false );
 	} );
 
 	test( 'a TM_ERROR reply rejects the pending promise and clears the entry', () => {
 		const v = makeView( 'hookcatalog:view' );
 		const resolve = jest.fn();
 		const reject = jest.fn();
-		v.pending.set( 'op-2', { resolve, reject } );
+		v.replies.add( 'op-2', resolve, reject );
 		v.fill(
 			replyMsg( {
 				id: 'op-2',
@@ -252,13 +253,13 @@ describe( 'hookcatalog:view — pending-promise resolution', () => {
 		expect( reject.mock.calls[ 0 ][ 0 ] ).toBeInstanceOf( Error );
 		expect( reject.mock.calls[ 0 ][ 0 ].message ).toContain( 'boom' );
 		expect( resolve ).not.toHaveBeenCalled();
-		expect( v.pending.has( 'op-2' ) ).toBe( false );
+		expect( v.replies.has( 'op-2' ) ).toBe( false );
 	} );
 
 	test( 'a hooks_registered reply still updates the render model when also resolving a pending promise', () => {
 		const v = makeView( 'hookcatalog:view' );
 		const resolve = jest.fn();
-		v.pending.set( 'op-3', { resolve, reject: jest.fn() } );
+		v.replies.add( 'op-3', resolve, jest.fn() );
 		v.fill(
 			replyMsg( {
 				id: 'op-3',
