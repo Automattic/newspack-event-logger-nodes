@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard asset enqueue routes through the substrate's `Admin::enqueue_react_page()` registrar.** The `admin_enqueue_scripts` dispatcher now delegates the script + `index.css` + `NewspackNodesData` localize to the shared registrar (passing its complete localize payload — `restUrl`, `aggregatorRestUrl`, `nonce`, `restartNonce`, `tree`, `version`), keeping every per-tree extra (the `performance-logger` settings CSS, the `eventLoggerDashboards`/recommended-hooks inline scripts, and the `aggregator-admin` secondary bundle) anchored on the returned handle. As a side effect dashboards now cache-bust on the wp-scripts manifest hash (deps from `index.asset.php`) rather than `filemtime`, and `index-rtl.css` is activated when present.
+
 ## [0.17.1] - 2026-06-12
 
 ### Changed
