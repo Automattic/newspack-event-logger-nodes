@@ -759,9 +759,12 @@ class ReqgrepCommandTest extends TestCase {
 	 * reflection-only direct invocations the rest of this suite uses.
 	 */
 	private function seed_partition( string $base_dir, int $partition, array $entries ): void {
-		\mkdir( "{$base_dir}/p{$partition}", 0755, true );
+		// Flat layout: reqgrep reads `preg_replace('/\.log$/','',base_dir).".p{N}"`,
+		// so seed at that exact dir (the partition lives in the dir NAME).
+		$flat_dir = \preg_replace( '/\.log$/', '', $base_dir ) . ".p{$partition}";
+		\mkdir( $flat_dir, 0755, true );
 		$p = new \Newspack_Nodes\Partition_Node();
-		$p->arguments( "{$base_dir} {$partition}" );
+		$p->arguments( $flat_dir );
 		foreach ( $entries as $entry ) {
 			$msg                       = \Newspack_Nodes\Message::new_message();
 			$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
@@ -816,11 +819,11 @@ class ReqgrepCommandTest extends TestCase {
 		// long-running cat doesn't replay ancient history. Verify by writing
 		// across multiple segments and asserting the older one is skipped.
 		$tmp = '/tmp/reqgrep-cat-recent-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			// Segment 0 with one entry.
 			\file_put_contents(
-				"{$tmp}/p0/0.log",
+				"{$tmp}.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'old-rid', 'k' => 'process (start)', 'm' => '/old', 'ts' => 1700000000.0,
 				] ) ) . "\n"
@@ -830,13 +833,13 @@ class ReqgrepCommandTest extends TestCase {
 			// back to oldest), so we need at least 3 segments to see the
 			// "skip oldest" behavior — make that.
 			\file_put_contents(
-				"{$tmp}/p0/3.log",
+				"{$tmp}.p0/3.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'mid-rid', 'k' => 'process (start)', 'm' => '/mid', 'ts' => 1700000001.0,
 				] ) ) . "\n"
 			);
 			\file_put_contents(
-				"{$tmp}/p0/5.log",
+				"{$tmp}.p0/5.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'new-rid', 'k' => 'process (start)', 'm' => '/new', 'ts' => 1700000002.0,
 				] ) ) . "\n"
@@ -1011,7 +1014,7 @@ class ReqgrepCommandTest extends TestCase {
 
 			$partition = new \Newspack_Nodes\Partition_Node();
 
-			$partition->arguments( "{$tmp} 0" );
+			$partition->arguments( "{$tmp}/p0" );
 			$consumed  = $ref_method->invoke( $cmd, $partition, 0, 0, 0 );
 			$this->assertSame( 0, $consumed );
 
@@ -1044,7 +1047,7 @@ class ReqgrepCommandTest extends TestCase {
 
 			$partition = new \Newspack_Nodes\Partition_Node();
 
-			$partition->arguments( "{$tmp} 0" );
+			$partition->arguments( "{$tmp}/p0" );
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
 			$ref_method->setAccessible( true );
 
@@ -1066,15 +1069,15 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_seed_follow_cursors_starts_at_tail_of_newest_segment(): void {
 		$tmp = '/tmp/reqgrep-seed-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			\file_put_contents(
-				"{$tmp}/p0/3.log",
+				"{$tmp}.p0/3.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
-			$expected_size = \filesize( "{$tmp}/p0/3.log" );
+			$expected_size = \filesize( "{$tmp}.p0/3.log" );
 
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1098,7 +1101,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_seed_follow_cursors_starts_at_zero_for_empty_partition(): void {
 		$tmp = '/tmp/reqgrep-seed-empty-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1123,15 +1126,15 @@ class ReqgrepCommandTest extends TestCase {
 		// Cursor at the end of the segment → no unread bytes → tick reports
 		// "no data" so the caller can sleep instead of busy-spinning.
 		$tmp = '/tmp/reqgrep-tick-noop-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			\file_put_contents(
-				"{$tmp}/p0/0.log",
+				"{$tmp}.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
-			$size = \filesize( "{$tmp}/p0/0.log" );
+			$size = \filesize( "{$tmp}.p0/0.log" );
 
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1159,15 +1162,15 @@ class ReqgrepCommandTest extends TestCase {
 		// Cursor at offset 0 of a non-empty segment → tick reads the line,
 		// reports had_data=true, and advances the cursor to end-of-line.
 		$tmp = '/tmp/reqgrep-tick-consume-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			\file_put_contents(
-				"{$tmp}/p0/0.log",
+				"{$tmp}.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'cal-rid', 'k' => 'process (start)', 'm' => '/calendar', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
-			$size = \filesize( "{$tmp}/p0/0.log" );
+			$size = \filesize( "{$tmp}.p0/0.log" );
 
 			$cmd = $this->make_cmd( 'cal-rid' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1200,21 +1203,21 @@ class ReqgrepCommandTest extends TestCase {
 		// Cursor at end of seg 0; seg 1 has new data. Tick should jump to
 		// seg 1 and consume it.
 		$tmp = '/tmp/reqgrep-tick-advance-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			\file_put_contents(
-				"{$tmp}/p0/0.log",
+				"{$tmp}.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'old', 'k' => 'process (start)', 'm' => '/old', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
 			\file_put_contents(
-				"{$tmp}/p0/1.log",
+				"{$tmp}.p0/1.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'new', 'k' => 'process (start)', 'm' => '/new', 'ts' => 1700000001.0,
 				] ) ) . "\n"
 			);
-			$seg0_size = \filesize( "{$tmp}/p0/0.log" );
+			$seg0_size = \filesize( "{$tmp}.p0/0.log" );
 
 			$cmd = $this->make_cmd( 'new' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1245,7 +1248,7 @@ class ReqgrepCommandTest extends TestCase {
 		// Production calls follow_mode() with no arg → PHP_INT_MAX → infinite
 		// loop. Tests pass a small max so the method actually returns.
 		$tmp = '/tmp/reqgrep-follow-bounded-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1282,11 +1285,12 @@ class ReqgrepCommandTest extends TestCase {
 		// coverage for — this test is specifically about __invoke's setup
 		// + dispatch + path validation.
 		$base_dir = '/tmp/reqgrep-invoke-' . \uniqid();
-		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			// Seed one matching request line so cat_mode has something to do.
 			\file_put_contents(
-				"{$base_dir}/logs/firehose.log/p0/0.log",
+				"{$base_dir}/logs/firehose.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'invoke-rid', 'k' => 'process (start)', 'm' => '/calendar', 'ts' => 1700000000.0,
 				] ) ) . "\n"
@@ -1566,7 +1570,8 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_clamps_bucket_size_to_max(): void {
 		// bucket-size >10000 must clamp to 10000.
 		$base_dir = '/tmp/reqgrep-invoke-clamp-' . \uniqid();
-		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1605,7 +1610,8 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_clamps_bucket_size_to_min(): void {
 		// bucket-size <1 must clamp to 1.
 		$base_dir = '/tmp/reqgrep-invoke-clamp-min-' . \uniqid();
-		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1645,10 +1651,11 @@ class ReqgrepCommandTest extends TestCase {
 		// --recent must propagate to the cat_offset property which cat_mode
 		// reads.
 		$base_dir = '/tmp/reqgrep-invoke-recent-' . \uniqid();
-		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			\file_put_contents(
-				"{$base_dir}/logs/firehose.log/p0/0.log",
+				"{$base_dir}/logs/firehose.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'recent-rid', 'k' => 'process (start)', 'm' => '/r', 'ts' => 1700000000.0,
 				] ) ) . "\n"
@@ -1690,7 +1697,7 @@ class ReqgrepCommandTest extends TestCase {
 		// the loop is a no-op and only the entry log lines fire — the same
 		// emissions __invoke triggers when it dispatches to follow_mode.
 		$tmp = '/tmp/reqgrep-follow-entry-log-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$GLOBALS['_test_wp_cli_logs'] = [];
 
@@ -1721,17 +1728,17 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_seed_follow_cursors_builds_one_entry_per_partition(): void {
 		$tmp = '/tmp/reqgrep-seed-multi-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
-		\mkdir( "{$tmp}/p1", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
+		\mkdir( "{$tmp}.p1", 0755, true );
 		try {
 			\file_put_contents(
-				"{$tmp}/p0/2.log",
+				"{$tmp}.p0/2.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'r0', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
 			\file_put_contents(
-				"{$tmp}/p1/7.log",
+				"{$tmp}.p1/7.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/y', 'ts' => 1700000001.0,
 				] ) ) . "\n"
@@ -1767,17 +1774,17 @@ class ReqgrepCommandTest extends TestCase {
 		// Tick must advance cursor over the empty range without firing
 		// $had_data.
 		$tmp = '/tmp/reqgrep-tick-empty-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			\file_put_contents(
-				"{$tmp}/p0/0.log",
+				"{$tmp}.p0/0.log",
 				\Newspack_Nodes\Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'r0', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
-			$seg0_size = \filesize( "{$tmp}/p0/0.log" );
+			$seg0_size = \filesize( "{$tmp}.p0/0.log" );
 			// Empty segment 2.
-			\file_put_contents( "{$tmp}/p0/2.log", '' );
+			\file_put_contents( "{$tmp}.p0/2.log", '' );
 
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1806,7 +1813,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_follow_tick_skips_partition_with_no_segments(): void {
 		$tmp = '/tmp/reqgrep-tick-empty-part-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1834,7 +1841,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_cat_mode_skips_partition_with_no_segments(): void {
 		$tmp = '/tmp/reqgrep-cat-nosegs-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -1886,7 +1893,8 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_invoke_propagates_raw_flag(): void {
 		$base_dir = '/tmp/reqgrep-invoke-raw-' . \uniqid();
-		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1920,7 +1928,8 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_invoke_propagates_incomplete_flag(): void {
 		$base_dir = '/tmp/reqgrep-invoke-incomplete-' . \uniqid();
-		\mkdir( "{$base_dir}/logs/firehose.log/p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
+		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );

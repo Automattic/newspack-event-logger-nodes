@@ -50,7 +50,7 @@ class StreamMergerTest extends TestCase {
 		$this->tmp_dir = $this->make_temp_dir( 'stream-merger-' );
 		// Redirect the substrate's base_directory to our tmp dir so
 		// StreamMerger::ensure_offsetlog() writes its offsetlog at
-		// `{tmp}/offsets/aggregator.p{N}/p0/{seg}.log`. Previously the test
+		// `{tmp}/offsets/aggregator.p{N}/{seg}.log`. Previously the test
 		// helper called `set_logs_dir($tmp)` to inject the path directly;
 		// that method was deleted in favor of going through Config. Reset
 		// the Config cache so the value takes effect this test run.
@@ -464,7 +464,7 @@ class StreamMergerTest extends TestCase {
 		}
 		$offsetlog = new Partition_Node();
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
-		$offsetlog->arguments( "{$dir} 0" );
+		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -510,7 +510,7 @@ class StreamMergerTest extends TestCase {
 		// an array on Message::VALUE (TM_STRUCT), already JSON-encoded by
 		// Message::packed.
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
-		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/0.log" );
 		$line    = trim( $content );
 		$msg     = Message::unpacked( $line );
 		$decoded = $msg[ Message::VALUE ];
@@ -1511,7 +1511,7 @@ class StreamMergerTest extends TestCase {
 
 		// Second tick at +2s — under COMMIT_INTERVAL_S=5, no second commit.
 		Core::$now = 1002.0;
-		$offsetlog_seg = \Newspack_Nodes\Config::get_offsets_directory() . '/aggregator.p0/p0/0.log';
+		$offsetlog_seg = \Newspack_Nodes\Config::get_offsets_directory() . '/aggregator.p0/0.log';
 		$sizes_before  = \filesize( $offsetlog_seg );
 		$sm->fire();
 		\clearstatcache();
@@ -1532,7 +1532,7 @@ class StreamMergerTest extends TestCase {
 		$sm->commit_all();
 
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
-		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/0.log" );
 		$line        = trim( $content );
 		$msg         = Message::unpacked( $line );
 		$decoded     = $msg[ Message::VALUE ];
@@ -1547,7 +1547,7 @@ class StreamMergerTest extends TestCase {
 		$sm->commit_all();
 		// No aggregator.p0 offsetlog directory created.
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
-		$this->assertDirectoryDoesNotExist( "{$offsets_dir}/aggregator.p0/p0" );
+		$this->assertDirectoryDoesNotExist( "{$offsets_dir}/aggregator.p0" );
 	}
 
 	// =========================================================================
@@ -1571,7 +1571,7 @@ class StreamMergerTest extends TestCase {
 		@\mkdir( $dir, 0755, true );
 		$offsetlog = new Partition_Node();
 		$offsetlog->name( 'streammerger-bad-offsetlog-' . uniqid() );
-		$offsetlog->arguments( "{$dir} 0" );
+		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -1600,7 +1600,7 @@ class StreamMergerTest extends TestCase {
 		@\mkdir( $dir, 0755, true );
 		$offsetlog = new Partition_Node();
 		$offsetlog->name( 'streammerger-mixed-offsetlog-' . uniqid() );
-		$offsetlog->arguments( "{$dir} 0" );
+		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
 		$msg                       = Message::new_message();
 		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -1680,7 +1680,7 @@ class StreamMergerTest extends TestCase {
 		$sm->fire();
 		// First tick committed; verify offsetlog file exists.
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
-		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/0.log" );
 		$this->assertCount( 1, $capture->captured );
 	}
 
@@ -2013,7 +2013,7 @@ class StreamMergerTest extends TestCase {
 
 		// Offsetlog file exists — proves fire() ran maybe_commit().
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
-		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$this->assertFileExists( "{$offsets_dir}/aggregator.p0/0.log" );
 		$this->assertCount( 1, $capture->captured );
 	}
 
@@ -2436,7 +2436,7 @@ class StreamMergerTest extends TestCase {
 
 		// The segment file was NOT written — the entry-empty guard fired before fill().
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
-		$this->assertFileDoesNotExist( "{$offsets_dir}/aggregator.p0/p0/0.log" );
+		$this->assertFileDoesNotExist( "{$offsets_dir}/aggregator.p0/0.log" );
 	}
 
 	public function test_constructor_clamps_negative_partition_to_zero(): void {
@@ -2656,7 +2656,7 @@ class StreamMergerTest extends TestCase {
 		}
 		$offsetlog = new Partition_Node();
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
-		$offsetlog->arguments( "{$dir} 0" );
+		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
 		$msg                   = Message::new_message();
 		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
@@ -2671,7 +2671,7 @@ class StreamMergerTest extends TestCase {
 		// Corrupt the entry in place. Same byte length keeps the segment size
 		// unchanged (the per-file filesize stat cache would otherwise mask the
 		// edit from the production-side reader).
-		$path    = "{$dir}/p0/0.log";
+		$path    = "{$dir}/0.log";
 		$content = (string) file_get_contents( $path );
 		$nl      = strpos( $content, "\n" );
 		file_put_contents( $path, str_repeat( 'x', (int) $nl ) . substr( $content, (int) $nl ) );

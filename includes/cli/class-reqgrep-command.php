@@ -772,7 +772,8 @@ class Reqgrep_Command {
 			if ( null === $p->sink() && null !== $ci ) {
 				$p->sink( $ci );
 			}
-			$p->arguments( "{$this->base_dir} {$partition}" );
+			$flat_dir = \preg_replace( '/\.log$/', '', $this->base_dir );
+			$p->arguments( "{$flat_dir}.p{$partition}" );
 			$this->partition_cache[ $partition ] = $p;
 		}
 		return $this->partition_cache[ $partition ];

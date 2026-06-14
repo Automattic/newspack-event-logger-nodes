@@ -190,7 +190,7 @@ class Job_Intake {
 		if ( isset( $this->partitions[ $partition ] ) ) {
 			return $this->partitions[ $partition ];
 		}
-		$log_base = $this->base_dir . '/logs/jobintake.log';
+		$log_base = $this->base_dir . '/logs/jobintake';
 		// Suffix names with a process+object-id token so a second JobIntake
 		// instantiated mid-process (e.g. during tests, or after a close) doesn't
 		// clash with stale Core registrations from the previous instance.
@@ -204,7 +204,7 @@ class Job_Intake {
 		if ( null === $p->sink() && null !== $ci ) {
 			$p->sink( $ci );
 		}
-		$p->arguments( "{$log_base} {$partition}" );
+		$p->arguments( "{$log_base}.p{$partition}" );
 		$p->allow_large_writes();
 		$this->partitions[ $partition ] = $p;
 		return $p;

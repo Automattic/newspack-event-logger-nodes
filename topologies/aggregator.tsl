@@ -18,7 +18,7 @@
 # from TSL.
 
 make_node Stream_Merger stream-merger firehose <partition>
-make_node Topic firehose:topic <config:logs_dir>/firehose.log <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
+make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd stream-merger:config set_require_https <eln:aggregator_require_https>
 cmd stream-merger:config set_verify_ssl <eln:aggregator_verify_ssl>
 connect_node stream-merger firehose:topic

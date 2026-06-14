@@ -48,7 +48,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 
 	public function test_topic_to_consumer_to_request_builder_assembles_request(): void {
 		$topic = new Topic_Node();
-		$topic->arguments( "{$this->tmp}/firehose.log {1}" );
+		$topic->arguments( "{$this->tmp}/firehose.p{partition} {1}" );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
@@ -58,7 +58,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$rb->sink( $capture );
 
 		$consumer = new Consumer_Node();
-		$consumer->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/rb/p0" );
+		$consumer->arguments( "{$this->tmp}/firehose.p0 {$this->tmp}/offsets/rb/p0" );
 		$consumer->sink( $rb );
 		$this->pump_consumer( $consumer );
 
@@ -79,7 +79,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		// cache, the post-respawn `process (complete)` finds no r1, and the request
 		// vanishes (absent from requests.log, unclickable) — the original bug.
 		$topic = new Topic_Node();
-		$topic->arguments( "{$this->tmp}/firehose.log {1}" );
+		$topic->arguments( "{$this->tmp}/firehose.p{partition} {1}" );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 
@@ -88,7 +88,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$rb1->name( 'request-builder' );
 		$rb1->sink( new Capture_Sink_Node() );
 		$c1 = new Consumer_Node();
-		$c1->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/rb/p0" );
+		$c1->arguments( "{$this->tmp}/firehose.p0 {$this->tmp}/offsets/rb/p0" );
 		$c1->name( 'firehose:consumer' );
 		$c1->sink( $rb1 );
 		$c1->set_snapshot_node( 'request-builder' );
@@ -104,7 +104,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$rb2->name( 'request-builder' );
 		$rb2->sink( $capture2 );
 		$c2 = new Consumer_Node();
-		$c2->arguments( "{$this->tmp}/firehose.log 0 {$this->tmp}/offsets/rb/p0" ); // stashes the cache + resumes the cursor
+		$c2->arguments( "{$this->tmp}/firehose.p0 {$this->tmp}/offsets/rb/p0" ); // stashes the cache + resumes the cursor
 		$c2->name( 'firehose:consumer' );
 		$c2->sink( $rb2 );
 		$c2->set_snapshot_node( 'request-builder' ); // records the name; restore is deferred to the first poll.

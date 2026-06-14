@@ -30,17 +30,17 @@ class JobIntakeTest extends TestCase {
 
 	private function read_all_jobintake_lines(): array {
 		$lines    = [];
-		$base_log = "{$this->tmp}/logs/jobintake.log";
-		if ( ! is_dir( $base_log ) ) {
+		$logs_dir = "{$this->tmp}/logs";
+		if ( ! is_dir( $logs_dir ) ) {
 			return $lines;
 		}
-		// Walk every partition dir + every segment. Each line on disk is a
-		// packed Tachikoma Message carrying the job-envelope array in VALUE.
-		foreach ( scandir( $base_log ) as $entry ) {
-			if ( '.' === $entry || '..' === $entry ) {
+		// Walk every flat jobintake.p* partition dir + every segment. Each line
+		// on disk is a packed Tachikoma Message carrying the envelope in VALUE.
+		foreach ( scandir( $logs_dir ) as $entry ) {
+			if ( ! preg_match( '/^jobintake\.p\d+$/', $entry ) ) {
 				continue;
 			}
-			$pdir = "{$base_log}/{$entry}";
+			$pdir = "{$logs_dir}/{$entry}";
 			if ( ! is_dir( $pdir ) ) {
 				continue;
 			}
@@ -119,11 +119,11 @@ class JobIntakeTest extends TestCase {
 		$this->assertTrue( $intake->write_job( 'a', [] ) );
 		$intake->close();
 
-		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p2" ) );
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.p2" ) );
 		// Other partitions should not have segments materialized.
-		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0" ) );
-		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p1" ) );
-		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p3" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.p0" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.p1" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.p3" ) );
 	}
 
 	public function test_keyed_routing_uses_hash_to_partition(): void {
@@ -134,7 +134,7 @@ class JobIntakeTest extends TestCase {
 		$this->assertTrue( $intake->write_job( 'sync', [ 'eid' => 42 ], 'event_42' ) );
 		$intake->close();
 
-		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p{$expected}" ) );
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.p{$expected}" ) );
 	}
 
 	public function test_round_robin_distribution(): void {
@@ -148,8 +148,8 @@ class JobIntakeTest extends TestCase {
 		// At least two distinct partition dirs must exist (round-robin actually
 		// distributed). With 8 writes over 4 partitions every dir should appear.
 		$pdirs = array_filter(
-			scandir( "{$this->tmp}/logs/jobintake.log" ),
-			static fn ( $f ) => preg_match( '/^p\d+$/', $f )
+			scandir( "{$this->tmp}/logs" ),
+			static fn ( $f ) => preg_match( '/^jobintake\.p\d+$/', $f )
 		);
 		$this->assertGreaterThanOrEqual( 2, count( $pdirs ) );
 	}
@@ -205,12 +205,12 @@ class JobIntakeTest extends TestCase {
 		// Writing materializes the Partition + its per-partition write lock.
 		$intake = new Job_Intake( $this->tmp, num_partitions: 1 );
 		$this->assertTrue( $intake->write_job( 'a', [] ) );
-		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.p0/write.lock.d" ) );
 		// No host-wide intake lock created.
 		$this->assertFalse( is_dir( "{$this->tmp}/locks/jobintake.lock.d" ) );
 		$intake->close();
 		// close() removes the Partition node which releases the lock dir.
-		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.p0/write.lock.d" ) );
 	}
 
 	public function test_destruct_releases_partition_lock(): void {
@@ -218,9 +218,9 @@ class JobIntakeTest extends TestCase {
 		// if the caller forgets to call close() explicitly.
 		$intake = new Job_Intake( $this->tmp, num_partitions: 1 );
 		$intake->write_job( 'a', [] );
-		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.p0/write.lock.d" ) );
 		unset( $intake );
-		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.p0/write.lock.d" ) );
 	}
 
 	public function test_writes_to_different_partitions_do_not_contend(): void {
@@ -250,14 +250,14 @@ class JobIntakeTest extends TestCase {
 	public function test_static_queue_with_key_routes_consistently(): void {
 		$expected = Partition_Node::hash_to_partition( 'k', 4 );
 		$this->assertTrue( Job_Intake::queue( 'a', [], 'k', $this->tmp, 4 ) );
-		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.log/p{$expected}" ) );
+		$this->assertTrue( is_dir( "{$this->tmp}/logs/jobintake.p{$expected}" ) );
 	}
 
 	public function test_static_queue_releases_lock_after_call(): void {
 		// Single-shot calls must release the per-Partition lock so another
 		// caller can immediately queue another job.
 		Job_Intake::queue( 'a', [], null, $this->tmp, 1 );
-		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.log/p0/write.lock.d" ) );
+		$this->assertFalse( is_dir( "{$this->tmp}/logs/jobintake.p0/write.lock.d" ) );
 
 		// Second call succeeds without contention.
 		$this->assertTrue( Job_Intake::queue( 'b', [], null, $this->tmp, 1 ) );

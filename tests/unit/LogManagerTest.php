@@ -548,7 +548,7 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		// Read the firehose output to find process (complete) entry.
-		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files, 'Firehose should have written data' );
@@ -582,7 +582,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'test', [ 'm' => 'https://example.com?client_secret=SECRET&id=123' ] );
 		$lm->finish();
 
-		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files );
@@ -609,7 +609,7 @@ class LogManagerTest extends TestCase {
 	 * @return array[] Decoded JSON entries.
 	 */
 	private function read_firehose_entries(): array {
-		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files, 'Firehose should have written data' );
@@ -962,7 +962,7 @@ class LogManagerTest extends TestCase {
 		$lm->flush();
 
 		// After flush, contents should be visible on disk for any future read.
-		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files, 'flush() must drain the buffered batch to disk' );
@@ -1481,7 +1481,7 @@ class LogManagerTest extends TestCase {
 
 		// Without finish() AND without explicit $lm->flush(), the entry must
 		// already be on disk because flush_every_line forced a drain.
-		$log_dir = self::TEST_DIR . '/logs/firehose.log/p0';
+		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files, 'flush_every_line=true must drain on every message' );
@@ -1579,7 +1579,7 @@ class LogManagerTest extends TestCase {
 		$lm->flush();
 
 		// Snapshot segment count.
-		$log_dir   = self::TEST_DIR . '/logs/firehose.log/p0';
+		$log_dir   = self::TEST_DIR . '/logs/firehose.p0';
 		$before    = \glob( $log_dir . '/*.log' );
 		$before_n  = \count( $before );
 
