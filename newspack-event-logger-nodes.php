@@ -488,39 +488,11 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		}
 		$tree = $page_to_tree[ $page ];
 
-		$asset_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.js";
-		$asset_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}/index.js";
-		if ( ! \file_exists( $asset_path ) ) {
+		// The substrate is a hard dependency (loaded by admin_enqueue_scripts time);
+		// route the script + index.css + NewspackNodesData localize through its
+		// shared registrar, keeping the per-tree extras below.
+		if ( ! \class_exists( '\Newspack_Nodes\Admin\Admin' ) ) {
 			return;
-		}
-
-		$handle  = "newspack-nodes-{$tree}";
-		$version = (string) ( \filemtime( $asset_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
-		$deps    = [ 'wp-element', 'wp-components', 'wp-api-fetch', 'wp-i18n' ];
-		\wp_enqueue_script( $handle, $asset_url, $deps, $version, true );
-
-		// Enqueue the matching stylesheet (wp-scripts emits index.css alongside
-		// index.js when SCSS is imported). Without this, dashboards render
-		// unstyled.
-		$css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.css";
-		$css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}/index.css";
-		if ( \file_exists( $css_path ) ) {
-			$css_version = (string) ( \filemtime( $css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
-			\wp_enqueue_style( $handle, $css_url, [ 'wp-components' ], $css_version );
-		}
-
-		// Settings page also gets the aggregator-settings.css — legacy plugin
-		// enqueued it separately to style `.event-logger-settings-wrap` form
-		// elements. The performance-logger CSS already covers most of this,
-		// but loading the dedicated settings CSS preserves byte-for-byte parity
-		// with the legacy markup.
-		if ( 'performance-logger' === $tree ) {
-			$settings_css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/event-aggregator-settings/settings.css';
-			$settings_css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/event-aggregator-settings/settings.css';
-			if ( \file_exists( $settings_css_path ) ) {
-				$settings_css_version = (string) ( \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
-				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [], $settings_css_version );
-			}
 		}
 
 		// Inject REST namespace + nonce so the React tree can call apiFetch
@@ -538,7 +510,9 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		// `wp_verify_nonce( $nonce, 'newspack_nodes_restart_worker' )`.
 		$restart_nonce       = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
 		$localized           = [
-			'restUrl'           => $rest_url,
+			// Escaped to match the substrate registrar's restUrl contract; this
+			// array is reused for the aggregator-admin bundle's direct localize too.
+			'restUrl'           => \esc_url_raw( $rest_url ),
 			'aggregatorRestUrl' => $aggregator_rest_url,
 			'nonce'             => $nonce,
 			'restartNonce'      => $restart_nonce,
@@ -546,7 +520,34 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			// Runtime version — feeds the shared newspack-nodes Header/overlay (the runtime), not this plugin; no fallback (ELN loads after nodes on plugins_loaded pri 11).
 			'version'           => \NEWSPACK_NODES_VERSION,
 		];
-		\wp_localize_script( $handle, 'NewspackNodesData', $localized );
+
+		$handle = \Newspack_Nodes\Admin\Admin::enqueue_react_page(
+			[
+				'handle'           => "newspack-nodes-{$tree}",
+				'page'             => $page,
+				'dir'              => NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}",
+				'url'              => NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}",
+				'version_fallback' => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+				'localize'         => $localized,
+			]
+		);
+		if ( null === $handle ) {
+			return;
+		}
+
+		// Settings page also gets the aggregator-settings.css — legacy plugin
+		// enqueued it separately to style `.event-logger-settings-wrap` form
+		// elements. The performance-logger CSS already covers most of this,
+		// but loading the dedicated settings CSS preserves byte-for-byte parity
+		// with the legacy markup.
+		if ( 'performance-logger' === $tree ) {
+			$settings_css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/event-aggregator-settings/settings.css';
+			$settings_css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/event-aggregator-settings/settings.css';
+			if ( \file_exists( $settings_css_path ) ) {
+				$settings_css_version = (string) ( \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
+				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [], $settings_css_version );
+			}
+		}
 
 		// Legacy globals the React trees still reference. The dashboards expect
 		// these specific names — `eventLoggerDashboards` for REST root + retention,
