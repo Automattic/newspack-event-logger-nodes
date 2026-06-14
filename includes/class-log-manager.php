@@ -387,7 +387,7 @@ class Log_Manager {
 			$_SERVER['UNIQUE_ID'] = $this->request_id;
 		}
 
-		$base_dir            = Config::get_logs_directory() . '/firehose.log';
+		$dir_template        = Config::get_logs_directory() . '/firehose.p{partition}';
 		$num_partitions      = self::to_int( $config['num_partitions'] ?? 1 );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
@@ -400,7 +400,7 @@ class Log_Manager {
 		} else {
 			$this->topic = new Topic_Node();
 			$this->topic->name( 'firehose:topic' );
-			$this->topic->arguments( "{$base_dir} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
+			$this->topic->arguments( "{$dir_template} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
 			$this->topic->patron( $this->topic );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 			if ( null !== $ci ) {

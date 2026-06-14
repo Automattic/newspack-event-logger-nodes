@@ -930,7 +930,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$partition = new Partition_Node();
 			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( "{$log_base}/requests.log {$p}" );
+			$partition->arguments( "{$log_base}/requests.p{$p}" );
 			$partition->with_index(
 				static function ( string $line, array $position, &$data = null ): ?string {
 					/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
@@ -995,7 +995,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$result   = null;
 		$requests = new Partition_Node();
 		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( "{$log_base}/requests.log {$partition}" );
+		$requests->arguments( "{$log_base}/requests.p{$partition}" );
 		$requests->with_index(
 			static function ( string $line, array $position, &$data = null ): ?string {
 				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
@@ -1037,7 +1037,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$entries_count = 0;
 		$requests = new Partition_Node();
 		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( "{$log_base}/requests.log {$partition}" );
+		$requests->arguments( "{$log_base}/requests.p{$partition}" );
 		$requests->with_index(
 			static function ( string $line, array $position, &$data = null ): ?string {
 				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
@@ -1107,7 +1107,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
 			$partition = new Partition_Node();
 			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( "{$log_base}/requests.log {$p}" );
+			$partition->arguments( "{$log_base}/requests.p{$p}" );
 			$partition->with_index(
 				static function ( string $line, array $position, &$data = null ): ?string {
 				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
@@ -1168,7 +1168,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		for ( $p = 0; $p < $num_partitions && null === $result; $p++ ) {
 			$partition = new Partition_Node();
 			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( "{$log_base}/requests.log {$p}" );
+			$partition->arguments( "{$log_base}/requests.p{$p}" );
 			$partition->with_index(
 				static function ( string $line, array $position, &$data = null ): ?string {
 				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
@@ -1221,7 +1221,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$flames = new Partition_Node();
 			self::name_scratch_partition( $flames, 'flames', $p );
-			$flames->arguments( "{$log_base}/flames.log {$p}" );
+			$flames->arguments( "{$log_base}/flames.p{$p}" );
 			$flames->with_index(
 				static function ( string $line, array $position, ?array &$data = null ): ?string {
 					/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */

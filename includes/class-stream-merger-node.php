@@ -250,10 +250,9 @@ class Stream_Merger_Node extends Timer_Node {
 			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.directory_mkdir
 			@\mkdir( $dir, 0755, true );
 		}
-		// Offsetlog is a single-partition Partition: the merger's spoke
-		// partition is encoded in the dir name (`aggregator.p{N}`), so the
-		// inner Partition's own partition axis is always 0. Matches the
-		// pattern Consumer uses for its offsetlog.
+		// Offsetlog is a flat segmented-log dir ({dir}/{seg}.log): the merger's
+		// spoke partition is encoded in the dir name (`aggregator.p{N}`).
+		// Matches Consumer's flat offsetlog and Partition::read_latest_value_at.
 		$this->offsetlog = new Partition_Node();
 		// Named, patron-linked plumbing sibling (Tachikoma make_node parity):
 		// `{merger}:offsetlog`, falling back to the stable partition-dir basename
@@ -265,7 +264,7 @@ class Stream_Merger_Node extends Timer_Node {
 		if ( null === $this->offsetlog->sink() && null !== $ci ) {
 			$this->offsetlog->sink( $ci );
 		}
-		$this->offsetlog->arguments( "{$dir} 0" );
+		$this->offsetlog->arguments( $dir );
 		return $this->offsetlog;
 	}
 

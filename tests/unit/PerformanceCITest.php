@@ -101,8 +101,7 @@ class PerformanceCITest extends TestCase {
 
 	private function write_request( array $body, int $partition = 0 ): string {
 		$rid          = $body['rid'];
-		$logs_base    = $this->tmp . '/logs/requests.log';
-		$segment_dir  = "{$logs_base}/p{$partition}";
+		$segment_dir  = $this->tmp . "/logs/requests.p{$partition}";
 		if ( ! \is_dir( $segment_dir ) ) {
 			\mkdir( $segment_dir, 0755, true );
 		}
@@ -132,8 +131,7 @@ class PerformanceCITest extends TestCase {
 
 	private function write_flame( array $body, int $partition = 0 ): string {
 		$rid          = $body['rid'];
-		$logs_base    = $this->tmp . '/logs/flames.log';
-		$segment_dir  = "{$logs_base}/p{$partition}";
+		$segment_dir  = $this->tmp . "/logs/flames.p{$partition}";
 		if ( ! \is_dir( $segment_dir ) ) {
 			\mkdir( $segment_dir, 0755, true );
 		}

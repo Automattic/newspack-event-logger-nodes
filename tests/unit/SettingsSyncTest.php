@@ -25,7 +25,7 @@ class SettingsSyncTest extends TestCase {
 	}
 
 	/**
-	 * Walk a tmp base_dir's `jobintake.log/p*` partitions and return every
+	 * Walk a tmp base_dir's flat `jobintake.p*` partition dirs and return every
 	 * queued job-envelope array in the order it was written. Each line on disk
 	 * is a packed Tachikoma Message; the envelope lives in VALUE and has shape
 	 * `{ k: 'job', handler: <string>, parameters: <array>, ts: <float> }`.
@@ -37,15 +37,15 @@ class SettingsSyncTest extends TestCase {
 	 */
 	private function read_jobintake_envelopes( string $base_dir ): array {
 		$envelopes = [];
-		$base_log  = "{$base_dir}/logs/jobintake.log";
-		if ( ! \is_dir( $base_log ) ) {
+		$logs_dir  = "{$base_dir}/logs";
+		if ( ! \is_dir( $logs_dir ) ) {
 			return $envelopes;
 		}
-		foreach ( \scandir( $base_log ) as $entry ) {
-			if ( '.' === $entry || '..' === $entry ) {
+		foreach ( \scandir( $logs_dir ) as $entry ) {
+			if ( ! \preg_match( '/^jobintake\.p\d+$/', $entry ) ) {
 				continue;
 			}
-			$pdir = "{$base_log}/{$entry}";
+			$pdir = "{$logs_dir}/{$entry}";
 			if ( ! \is_dir( $pdir ) ) {
 				continue;
 			}
