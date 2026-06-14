@@ -1,8 +1,8 @@
 # Job_Router topology
 #
-#   Tail (firehose.log)  ──┐
-#                          ├─→ Job_Router ─→ Partition (jobs:partition)
-#   Tail (jobintake.log) ──┘
+#   Tail (firehose.log)  ──→ Job_Router ──┐
+#                                         ├─→ Partition (jobs:partition)
+#   Tail (jobintake.log) ─────────────────┘
 
 make_node Consumer firehose:consumer <config:logs_dir>/firehose.log <partition> <config:offsets_dir>/firehose.job-router.p<partition>
 make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.log <partition> <config:offsets_dir>/jobintake.p<partition>
@@ -11,4 +11,4 @@ make_node Partition jobs:partition <config:logs_dir>/jobs.log <partition> <confi
 cmd jobs:partition:config void_warranty
 connect_node firehose:consumer job-router
 connect_node job-router jobs:partition
-connect_node jobintake:consumer job-router
+connect_node jobintake:consumer jobs:partition
