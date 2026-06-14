@@ -221,12 +221,12 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 }
 
 /**
- * Always-expected basenames written by app runtime code (not by any
- * topology Partition node). These exist whenever the plugin is loaded:
+ * Producer basenames written by app runtime code (not by any topology
+ * Partition node). These exist whenever the plugin is loaded:
  *
- *   firehose.log   — LogManager writes via Partition::fill() from regular
- *                    request code. No topology declares it; it just appears.
- *   jobintake.log  — JobIntake::queue() writes large jobs the same way.
+ *   firehose   — LogManager writes via Partition::fill() from regular request
+ *                code. No topology declares it; it just appears.
+ *   jobintake  — JobIntake::queue() writes large jobs the same way.
  *
  * Topology-declared outputs come from `Topology_Registry::basenames_for()`
  * which parses each TSL's `make_node Partition` lines.
@@ -235,29 +235,25 @@ const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' 
 
 /**
  * Named function (not a closure) so tests that wipe `$GLOBALS['_wp_actions']`
- * for isolation can re-attach the same callback by name. Builds the union of
- * (app runtime basenames) + (every active topology's Partition basenames) +
- * (every active worker's topology basenames). The substrate's `Log_Cleaner`
- * orphans every `{base}/logs/*.log/` directory NOT in the result.
+ * for isolation can re-attach the same callback by name. Appends the app's
+ * request-scope producers to the registered-producer set the substrate's
+ * `Log_Cleaner` expands (× config num_partitions) into protected
+ * `{base}/logs/{producer}.p{N}/` dirs.
  *
- * @param array<int, string> $basenames Topology-derived basenames from the substrate.
+ * @param array<int, string> $producers Producers registered by prior contributors.
  * @return array<int, string>
  */
-function newspack_event_logger_nodes_expected_log_basenames( array $basenames ): array {
-	// Substrate's `Log_Cleaner::expected_basenames()` seeds $basenames with
-	// the topology-derived set (every active topology's Partition basenames
-	// + every still-running worker's topology's basenames). The app's only
-	// job here is appending the runtime-pinned basenames it manages outside
-	// the topology graph — `firehose` (LogManager) and `jobintake`
-	// (JobIntake) are written from request scope, not by a Partition node,
-	// so no topology TSL declares them.
+function newspack_event_logger_nodes_register_log_producers( array $producers ): array {
+	// firehose (LogManager) and jobintake (JobIntake) are written from request
+	// scope, not by a Partition node, so no topology TSL declares them. Without
+	// this registration the substrate's log GC would orphan them.
 	return \array_values( \array_unique(
-		\array_merge( $basenames, NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES )
+		\array_merge( $producers, NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES )
 	) );
 }
 \add_filter(
-	'newspack_nodes/expected_log_basenames',
-	'newspack_event_logger_nodes_expected_log_basenames'
+	'newspack_nodes/registered_log_producers',
+	'newspack_event_logger_nodes_register_log_producers'
 );
 
 /**
