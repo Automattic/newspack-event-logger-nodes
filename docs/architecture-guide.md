@@ -34,7 +34,7 @@ This plugin replaces the legacy 10-plugin `newspack-event-logger-plugins` monore
 |   Log_Manager  --produce()-->  Topic(firehose.log)                       |
 |                                  |                                       |
 |                                  v                                       |
-|                         Partition.write()  =>  /logs/firehose.log/pN/    |
+|                         Partition.write()  =>  /logs/firehose.pN/        |
 |                         (4KB PIPE_BUF atomic)                            |
 |                                                                          |
 |   Job_Intake::queue()  --produce()-->  Topic(jobintake.log)              |
@@ -668,7 +668,7 @@ Two write paths into the job queue:
 +--------+-----------------+         +-------------+-------------+
          |                                         |
          v                                         v
-  /logs/firehose.log/pN/             /logs/jobintake.log/pN/
+  /logs/firehose.pN/                 /logs/jobintake.pN/
   (atomic append, PIPE_BUF)          (auto-locked >4KB writes)
          |                                         |
          +--------+--------------------------------+
