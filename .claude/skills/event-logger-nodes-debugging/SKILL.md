@@ -171,30 +171,31 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 ## Inspecting on disk
 
 ```bash
-# Application uses {base_dir}/logs/firehose.log/ for the LogManager firehose.
+# Application uses {base_dir}/logs/firehose.p0/ for the LogManager firehose
+# (flat partition-in-name layout: one dir per partition, e.g. firehose.p0, firehose.p1).
 # Lines are 7-element positional Message envelopes; VALUE (index 6) is the entry hash.
-head -c 800 {base_dir}/logs/firehose.log/p0/0.log
+head -c 800 {base_dir}/logs/firehose.p0/0.log
 
 # Job-intake (large jobs).
-ls -la {base_dir}/logs/jobintake.log/p0/
+ls -la {base_dir}/logs/jobintake.p0/
 
-# RequestBuilder writes assembled requests to requests.log; the drilldown index
+# RequestBuilder writes assembled requests to requests.p{N}; the drilldown index
 # is a sibling `<segment_id>.idx` next to each `<segment_id>.log` (with_index request-index).
-ls -la {base_dir}/logs/requests.log/p0/
+ls -la {base_dir}/logs/requests.p0/
 
 # Flames partition (Flame_Builder output; backs the flame-graph drilldown) —
 # also indexed with a sibling `<segment_id>.idx` (with_index flame-index).
-ls -la {base_dir}/logs/flames.log/p0/
+ls -la {base_dir}/logs/flames.p0/
 
 # Compact per-request summaries (drives the Request Log + Gyroscope dashboards).
-ls -la {base_dir}/logs/completed.log/p0/
-ls -la {base_dir}/logs/gyroscope.log/p0/
+ls -la {base_dir}/logs/completed.p0/
+ls -la {base_dir}/logs/gyroscope.p0/
 
 # Errors partition (RequestBuilder forwards error/warning keywords here).
-ls -la {base_dir}/logs/errors.log/p0/
+ls -la {base_dir}/logs/errors.p0/
 
 # Jobs partition (job-router output).
-ls -la {base_dir}/logs/jobs.log/p0/
+ls -la {base_dir}/logs/jobs.p0/
 ```
 
 `{base_dir}` resolves from the `newspack_nodes/config` filter (`base_directory` key). Default is `/tmp/newspack-nodes`.
