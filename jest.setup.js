@@ -1,37 +1,58 @@
 /* eslint-env jest */
-// Jest setup — FAIL any test that emits an unexpected console.warn or
-// console.error (mirrors the sibling newspack-nodes setup).
+// Jest setup — FAIL any test that emits an UNEXPECTED console.warn/error, and
+// fail any test that DECLARED an expected console message that never fired.
+// Mirrors the sibling newspack-nodes setup.
 //
 // The substrate's `Core.stderr()` / `printLessOften()` / `printLeastOften()`
 // (newspack-nodes/src/runtime/core.js) route node faults, rate-limited logs, and
 // dropped-message notices through console.warn (never console.error, to skip
 // devtools' error counter), each line stamped `YYYY-MM-DD HH:MM:SS UTC <argv0>: `.
-// Those are expected spam on any test exercising a fault path, so warn lines
-// matching that signature are dropped. EVERY other console.warn and EVERY
-// console.error (React `act(...)` warnings, third-party deprecations like
-// @wordpress/components' 36px notice, genuine errors) is recorded and re-thrown
-// in afterEach, failing the test. Throwing in afterEach — not inside the mock —
-// keeps React's render/commit from swallowing the throw or cascading into
-// confusing secondary failures, and the captured Error preserves the call site.
+// A test that legitimately exercises a fault path must DECLARE the message it
+// expects:
 //
-// Tests that legitimately assert on console.warn/error install their own
-// `jest.spyOn( console, … )`; that shadows the recorder for that test and the
-// afterEach restore unwinds both.
+//     expectConsoleWarn( 'Job_Worker: ...' );
+//
+// The declared text is matched against the warn line with the substrate `stderr`
+// prefix stripped, by START-OF-STRING — so a test asserts the stable part of the
+// message and ignores only the trailing dynamic data. Anything not declared —
+// every other console.warn, EVERY console.error (React `act(...)` warnings,
+// third-party deprecations like @wordpress/components' 36px notice, genuine
+// errors) — is recorded and re-thrown in afterEach, failing the test. Throwing in
+// afterEach (not inside the mock) keeps React's render/commit from swallowing the
+// throw, and the captured Error preserves the call site.
+//
+// Tests that prefer their own `jest.spyOn( console, … )` still can; that shadows
+// the recorder and the afterEach restore unwinds both.
 
 // The Core.stderr() line prefix: ISO-ish date + " UTC <argv0>: ".
 const SUBSTRATE_STDERR = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC \S+: /;
 
 let violations = [];
+let expectedWarns = [];
+
+// Declare a console.warn a test legitimately produces. The actual warn line, with
+// the substrate `stderr` timestamp prefix stripped, must START WITH the declared
+// text. Suppresses exactly the declared warnings and fails afterEach if a declared
+// message never fires.
+global.expectConsoleWarn = ( message ) => {
+	expectedWarns.push( { message: String( message ).trim(), matched: false } );
+};
+
+const bareLine = ( arg ) =>
+	'string' === typeof arg ? arg.replace( SUBSTRATE_STDERR, '' ).trim() : '';
 
 const record =
 	( channel ) =>
 	( ...args ) => {
-		if (
-			'warn' === channel &&
-			'string' === typeof args[ 0 ] &&
-			SUBSTRATE_STDERR.test( args[ 0 ] )
-		) {
-			return;
+		if ( 'warn' === channel ) {
+			const bare = bareLine( args[ 0 ] );
+			const exp = expectedWarns.find(
+				( e ) => ! e.matched && bare.startsWith( e.message )
+			);
+			if ( exp ) {
+				exp.matched = true;
+				return;
+			}
 		}
 		violations.push(
 			new Error(
@@ -44,13 +65,16 @@ const record =
 
 beforeEach( () => {
 	violations = [];
+	expectedWarns = [];
 	jest.spyOn( console, 'warn' ).mockImplementation( record( 'warn' ) );
 	jest.spyOn( console, 'error' ).mockImplementation( record( 'error' ) );
 } );
 
 afterEach( () => {
 	const captured = violations;
+	const unmet = expectedWarns.filter( ( e ) => ! e.matched );
 	violations = [];
+	expectedWarns = [];
 	if ( jest.isMockFunction( console.warn ) ) {
 		console.warn.mockRestore();
 	}
@@ -59,5 +83,10 @@ afterEach( () => {
 	}
 	if ( captured.length ) {
 		throw captured[ 0 ];
+	}
+	if ( unmet.length ) {
+		throw new Error(
+			`Declared console.warn never emitted: ${ unmet[ 0 ].message }`
+		);
 	}
 } );
