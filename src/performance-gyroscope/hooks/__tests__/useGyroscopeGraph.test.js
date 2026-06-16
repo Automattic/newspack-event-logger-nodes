@@ -24,6 +24,7 @@ import {
 	KEY,
 	TYPE,
 	TM_INFO,
+	TM_STRUCT,
 	Core,
 	useNodeState,
 } from '@newspack-nodes/runtime';
@@ -85,6 +86,7 @@ function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
 // A gyroscope inflight-snapshot envelope as the wire delivers it.
 function inflightEnvelope( requests ) {
 	const m = newMessage();
+	m[ TYPE ] = TM_STRUCT;
 	m[ KEY ] = 'inflight';
 	m[ VALUE ] = requests;
 	return m;
@@ -216,6 +218,7 @@ describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () =>
 				pack(
 					( () => {
 						const m = newMessage();
+						m[ TYPE ] = TM_STRUCT;
 						m[ KEY ] = 'rid-done';
 						m[ VALUE ] = {
 							rid: 'rid-done',

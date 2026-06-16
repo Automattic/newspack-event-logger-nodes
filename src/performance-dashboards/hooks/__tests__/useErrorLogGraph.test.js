@@ -25,6 +25,7 @@ import {
 	KEY,
 	TYPE,
 	TM_INFO,
+	TM_STRUCT,
 	Core,
 	useNodeState,
 } from '@newspack-nodes/runtime';
@@ -88,6 +89,7 @@ function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
 // An error envelope as the wire delivers it (KEY=rid, VALUE=row).
 function errorEnvelope( rid, value ) {
 	const m = newMessage();
+	m[ TYPE ] = TM_STRUCT;
 	m[ KEY ] = rid;
 	m[ VALUE ] = value;
 	return m;

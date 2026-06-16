@@ -22,6 +22,7 @@ import {
 	KEY,
 	TYPE,
 	TM_INFO,
+	TM_STRUCT,
 	Core,
 	useNodeState,
 } from '@newspack-nodes/runtime';
@@ -86,6 +87,7 @@ function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
 // a request row in VALUE).
 function completedEnvelope( req ) {
 	const m = newMessage();
+	m[ TYPE ] = TM_STRUCT;
 	m[ VALUE ] = req;
 	return m;
 }
