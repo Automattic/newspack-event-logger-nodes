@@ -152,10 +152,10 @@ class RequestFlightTest extends TestCase {
 	public function test_fire_emits_batch_to_target_when_all_wired(): void {
 		// Asserts the wire-level message shape RequestFlight emits
 		$rb = new Request_Builder_Node();
-        $batch = [
-            'r-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
-            'r-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ]
-        ];
+		$batch = [
+			'r-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
+			'r-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ]
+		];
 		$rb->cache->set( 'r-1', (object) $batch['r-1'] );
 		$rb->cache->set( 'r-2', (object) $batch['r-2'] );
 

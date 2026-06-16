@@ -128,14 +128,10 @@ class Remote_Source_Node extends Node {
 		if ( null === $args ) {
 			return parent::arguments();
 		}
-		$result = parent::arguments( $args );
-		if ( '' === $args ) {
-			return $result;
-		}
 		$this->parse_schema_args( $args );
 		$this->url       = \rtrim( $this->url, '/' );
 		$this->partition = \max( 0, $this->partition );
-		return $result;
+		return $args;
 	}
 
 	/**

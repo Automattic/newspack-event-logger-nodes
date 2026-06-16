@@ -124,13 +124,10 @@ class Request_Builder_Node extends Timer_Node {
 		if ( null === $args ) {
 			return parent::arguments();
 		}
-		$result = parent::arguments( $args );
-		if ( '' !== $args ) {
-			$this->parse_schema_args( $args );
-			$this->cache = $this->build_cache();
-		}
+		$this->parse_schema_args( $args );
+		$this->cache = $this->build_cache();
 		$this->set_timer();
-		return $result;
+		return $args;
 	}
 
 	/**

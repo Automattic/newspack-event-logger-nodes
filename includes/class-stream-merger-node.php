@@ -113,14 +113,10 @@ class Stream_Merger_Node extends Timer_Node {
 		if ( null === $args ) {
 			return parent::arguments();
 		}
-		$result = parent::arguments( $args );
-		if ( '' === $args ) {
-			return $result;
-		}
 		$this->parse_schema_args( $args );
 		$this->partition = \max( 0, $this->partition );
 		$this->start_periodic_tick();
-		return $result;
+		return $args;
 	}
 
 	// =========================================================================
