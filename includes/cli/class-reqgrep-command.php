@@ -395,12 +395,12 @@ class Reqgrep_Command {
 		}
 
 		// Build the message body. Arrays pretty-print as JSON; strings stay verbatim.
-		$msg = '';
+		$message = '';
 		if ( isset( $entry['m'] ) ) {
 			if ( \is_array( $entry['m'] ) ) {
-				$msg = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ?: '';
+				$message = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ?: '';
 			} else {
-				$msg = self::to_str( $entry['m'] );
+				$message = self::to_str( $entry['m'] );
 			}
 		}
 
@@ -422,16 +422,16 @@ class Reqgrep_Command {
 
 		// Multi-line `m` — pad continuation lines so they align with the start
 		// of the message column.
-		if ( false !== \strpos( $msg, "\n" ) ) {
+		if ( false !== \strpos( $message, "\n" ) ) {
 			$pad   = \str_repeat( ' ', \strlen( $prefix ) );
-			$lines = \explode( "\n", $msg );
-			$msg   = $lines[0];
+			$lines = \explode( "\n", $message );
+			$message   = $lines[0];
 			for ( $i = 1, $c = \count( $lines ); $i < $c; $i++ ) {
-				$msg .= "\n" . $pad . $lines[ $i ];
+				$message .= "\n" . $pad . $lines[ $i ];
 			}
 		}
 
-		$output .= $prefix . $msg . $suffix;
+		$output .= $prefix . $message . $suffix;
 
 		// Increase indent AFTER printing the (start) line so the next entry is
 		// rendered one column deeper.

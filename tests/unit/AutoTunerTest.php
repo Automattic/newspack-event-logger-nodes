@@ -30,11 +30,11 @@ class AutoTunerTest extends TestCase {
 	 * result.
 	 */
 	private function autotune_message( string $key, array $items, array $context = [] ): array {
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = $key;
-		$msg[ Message::VALUE ] = [ 'items' => $items, 'context' => $context ];
-		return $msg;
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::KEY ]   = $key;
+		$message[ Message::VALUE ] = [ 'items' => $items, 'context' => $context ];
+		return $message;
 	}
 
 	private function worker_context(): void {
@@ -43,8 +43,8 @@ class AutoTunerTest extends TestCase {
 	}
 
 	private function dispatch( Auto_Tuner_Node $tuner, string $key, array $items, array $context = [] ): void {
-		$msg = $this->autotune_message( $key, $items, $context );
-		$tuner->fill( $msg );
+		$message = $this->autotune_message( $key, $items, $context );
+		$tuner->fill( $message );
 	}
 
 	// --- Type / shape gates ---------------------------------------------------
@@ -54,11 +54,11 @@ class AutoTunerTest extends TestCase {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
 
 		$tuner                 = new Auto_Tuner_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::KEY ]   = 'disable_hooks';
-		$msg[ Message::VALUE ] = 'not-an-array';
-		$tuner->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::KEY ]   = 'disable_hooks';
+		$message[ Message::VALUE ] = 'not-an-array';
+		$tuner->fill( $message );
 
 		$this->assertSame(
 			[ 'init', 'noisy' ],
@@ -69,11 +69,11 @@ class AutoTunerTest extends TestCase {
 	public function test_non_array_value_ignored(): void {
 		$this->worker_context();
 		$tuner                 = new Auto_Tuner_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'disable_hooks';
-		$msg[ Message::VALUE ] = 'string-value';
-		$tuner->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::KEY ]   = 'disable_hooks';
+		$message[ Message::VALUE ] = 'string-value';
+		$tuner->fill( $message );
 		$this->assertEmpty( $GLOBALS['_wp_options'] );
 	}
 

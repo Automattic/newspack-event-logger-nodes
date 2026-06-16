@@ -56,8 +56,8 @@ class JobIntakeTest extends TestCase {
 					if ( '' === $line ) {
 						continue;
 					}
-					$msg     = Message::unpacked( $line );
-					$decoded = $msg[ Message::VALUE ];
+					$message     = Message::unpacked( $line );
+					$decoded = $message[ Message::VALUE ];
 					if ( \is_array( $decoded ) ) {
 						$lines[] = $decoded;
 					}

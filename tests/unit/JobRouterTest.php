@@ -69,8 +69,8 @@ class JobRouterTest extends TestCase {
 		// Job_Worker dispatches on and Job_Intake writes — so a firehose job
 		// round-trips to the handler with zero field renaming anywhere.
 		$entry = $this->firehose_entry( 'job', 'sync_user', [ 'id' => 42 ] );
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame(
@@ -86,8 +86,8 @@ class JobRouterTest extends TestCase {
 
 	public function test_firehose_job_forwards_normalized(): void {
 		$entry = $this->firehose_entry( 'job', 'sync_user', [ 'id' => 42 ] );
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$out = $this->sink->captured[0];
@@ -104,8 +104,8 @@ class JobRouterTest extends TestCase {
 
 	public function test_firehose_remote_job_forwards_with_k_remote_job(): void {
 		$entry = $this->firehose_entry( 'remote_job', 'hub_op', [ 'k' => 'v' ] );
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame( 'remote_job', $this->sink->captured[0][ Message::VALUE ]['k'] );
@@ -114,8 +114,8 @@ class JobRouterTest extends TestCase {
 
 	public function test_jobintake_job_forwards_normalized(): void {
 		$entry = $this->jobintake_entry( 'job', 'process_image', [ 'url' => '/x.jpg' ] );
-		$msg = $this->msg( 'jobintake:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'jobintake:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame(
@@ -134,8 +134,8 @@ class JobRouterTest extends TestCase {
 		// to jobintake.log MUST NOT be allowed to escalate to remote dispatch
 		// (that would let spokes inject hub-only operations).
 		$entry = $this->jobintake_entry( 'remote_job', 'priv_op', [] );
-		$msg = $this->msg( 'jobintake:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'jobintake:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame( 'job', $this->sink->captured[0][ Message::VALUE ]['k'] );
@@ -144,33 +144,33 @@ class JobRouterTest extends TestCase {
 	public function test_unknown_source_dropped_silently(): void {
 		// FROM not stamped by a known Consumer → drop.
 		$entry = $this->firehose_entry( 'job', 'work', [] );
-		$msg = $this->msg( '', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( '', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 
-		$msg = $this->msg( 'random-node-name', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'random-node-name', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
 	public function test_non_job_entry_dropped(): void {
 		$entry = [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => 'just a message', 'ts' => 1 ];
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
 	public function test_firehose_entry_without_m_dropped(): void {
 		$entry = [ 'n' => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1 ];
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
 	public function test_invalid_handler_name_dropped(): void {
 		$entry = $this->firehose_entry( 'job', '1bad-leading-digit', [] );
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
@@ -179,15 +179,15 @@ class JobRouterTest extends TestCase {
 			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1,
 			'm'   => [ 'type' => 'job', 'handler' => 'work', 'parameters' => 'not an array' ],
 		];
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
 	public function test_oversized_entry_dropped(): void {
 		$entry = $this->firehose_entry( 'job', 'big_job', [ 'data' => str_repeat( 'x', 11 * 1024 * 1024 ) ] );
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
@@ -214,8 +214,8 @@ class JobRouterTest extends TestCase {
 			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => 1,
 			'm'   => [ 'type' => 'job', 'handler' => 'work' ], // no parameters key
 		];
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame( [], $this->sink->captured[0][ Message::VALUE ]['parameters'] );
@@ -227,8 +227,8 @@ class JobRouterTest extends TestCase {
 			'm'   => [ 'type' => 'job', 'handler' => 'work', 'parameters' => [] ],
 			// inner body has no `ts` — JobRouter should fall back to entry.ts
 		];
-		$msg = $this->msg( 'firehose:consumer', $entry );
-		$this->jr->fill( $msg );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
 
 		$this->assertCount( 1, $this->sink->captured );
 		$this->assertSame( 1700000123.0, $this->sink->captured[0][ Message::VALUE ]['ts'] );

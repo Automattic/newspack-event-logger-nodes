@@ -106,11 +106,11 @@ class PerformanceCITest extends TestCase {
 			\mkdir( $segment_dir, 0755, true );
 		}
 
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
-		$msg[ Message::VALUE ]     = $body;
-		$packed                    = Message::packed( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
+		$message[ Message::VALUE ]     = $body;
+		$packed                    = Message::packed( $message );
 
 		$seg_path = "{$segment_dir}/0.log";
 		$existing = \file_exists( $seg_path ) ? \file_get_contents( $seg_path ) : '';
@@ -136,11 +136,11 @@ class PerformanceCITest extends TestCase {
 			\mkdir( $segment_dir, 0755, true );
 		}
 
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
-		$msg[ Message::VALUE ]     = $body;
-		$packed                    = Message::packed( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
+		$message[ Message::VALUE ]     = $body;
+		$packed                    = Message::packed( $message );
 
 		$seg_path = "{$segment_dir}/0.log";
 		$existing = \file_exists( $seg_path ) ? \file_get_contents( $seg_path ) : '';

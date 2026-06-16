@@ -55,18 +55,18 @@ class RequestBuilderTest extends TestCase {
 			$extra
 		);
 
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		// Producer convention: rid lives in Message::KEY (LogManager since v0.2.17).
 		// Tests must stamp it here too — RequestBuilder reads rid from KEY only.
-		$msg[ Message::KEY ]       = $rid;
-		$msg[ Message::VALUE ]     = $entry;
-		return $msg;
+		$message[ Message::KEY ]       = $rid;
+		$message[ Message::VALUE ]     = $entry;
+		return $message;
 	}
 
 	private function fill( Request_Builder_Node $rb, int $n, string $rid, string $k, array $extra = [] ): void {
-		$msg = $this->firehose_msg( $n, $rid, $k, $extra );
-		$rb->fill( $msg );
+		$message = $this->firehose_msg( $n, $rid, $k, $extra );
+		$rb->fill( $message );
 	}
 
 	private function captured_request( Capture_Sink_Node $capture, int $i = 0 ): array {
@@ -82,11 +82,11 @@ class RequestBuilderTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_REQUEST;
-		$msg[ Message::FROM ]  = 'test-probe';
-		$msg[ Message::VALUE ] = 'GET_CACHE';
-		$rb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_REQUEST;
+		$message[ Message::FROM ]  = 'test-probe';
+		$message[ Message::VALUE ] = 'GET_CACHE';
+		$rb->fill( $message );
 
 		$rb->sink( $prev );
 
@@ -156,19 +156,19 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_non_array_value_silently_dropped(): void {
 		$rb                    = new Request_Builder_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = 'not-an-array';
-		$rb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = 'not-an-array';
+		$rb->fill( $message );
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
 	public function test_missing_rid_silently_dropped(): void {
 		$rb                    = new Request_Builder_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'k' => 'process (start)', 'ts' => 1 ];
-		$rb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'k' => 'process (start)', 'ts' => 1 ];
+		$rb->fill( $message );
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
@@ -753,10 +753,10 @@ class RequestBuilderTest extends TestCase {
 			'error_status'   => '-',
 		];
 		// $line is the packed Message wire format (positional JSON); VALUE at index 6.
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = $req;
-		$line     = Message::packed( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = $req;
+		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
 
 		$entry = Request_Builder_Node::format_index_entry( $line, $position );
@@ -776,10 +776,10 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_returns_null_for_missing_url(): void {
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = [ 'rid' => 'x' ];
-		$line     = Message::packed( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = [ 'rid' => 'x' ];
+		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( Request_Builder_Node::format_index_entry( $line, $position ) );
 	}
@@ -1035,13 +1035,13 @@ class RequestBuilderTest extends TestCase {
 	// --- handle_request (TM_REQUEST) --------------------------------------
 
 	private function request_msg( string $verb, string $from = 'asker', string $id = 'req-1' ): array {
-		$msg                      = Message::new_message();
-		$msg[ Message::TYPE ]     = Message::TM_REQUEST;
-		$msg[ Message::FROM ]     = $from;
-		$msg[ Message::ID ]       = $id;
-		$msg[ Message::KEY ]      = '';
-		$msg[ Message::VALUE ]    = $verb;
-		return $msg;
+		$message                      = Message::new_message();
+		$message[ Message::TYPE ]     = Message::TM_REQUEST;
+		$message[ Message::FROM ]     = $from;
+		$message[ Message::ID ]       = $id;
+		$message[ Message::KEY ]      = '';
+		$message[ Message::VALUE ]    = $verb;
+		return $message;
 	}
 
 	public function test_handle_request_get_cache_returns_empty_payload_on_empty_cache(): void {
@@ -1050,8 +1050,8 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
-		$msg = $this->request_msg( 'GET_CACHE' );
-		$rb->fill( $msg );
+		$message = $this->request_msg( 'GET_CACHE' );
+		$rb->fill( $message );
 
 		$this->assertCount( 1, $capture->captured );
 		$reply = $capture->captured[0];
@@ -1081,8 +1081,8 @@ class RequestBuilderTest extends TestCase {
 			$this->fill( $rb, $i, "rid-$i", 'process (start)' );
 		}
 
-		$msg = $this->request_msg( 'GET_CACHE' );
-		$rb->fill( $msg );
+		$message = $this->request_msg( 'GET_CACHE' );
+		$rb->fill( $message );
 
 		// Discard early captured emits (this test doesn't emit any since no
 		// `process (complete)`). The GET_CACHE reply is the only message.
@@ -1115,8 +1115,8 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
-		$msg = $this->request_msg( 'GET_CACHE' );
-		$rb->fill( $msg );
+		$message = $this->request_msg( 'GET_CACHE' );
+		$rb->fill( $message );
 
 		// The TM_REQUEST response is the last captured message (after the
 		// `process (complete)` emission).
@@ -1134,12 +1134,12 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
-		$msg                      = Message::new_message();
-		$msg[ Message::TYPE ]     = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$msg[ Message::FROM ]     = 'asker';
-		$msg[ Message::ID ]       = 'req-1';
-		$msg[ Message::VALUE ]    = 'GET_CACHE';
-		$rb->fill( $msg );
+		$message                      = Message::new_message();
+		$message[ Message::TYPE ]     = Message::TM_STRUCT | Message::TM_RESPONSE;
+		$message[ Message::FROM ]     = 'asker';
+		$message[ Message::ID ]       = 'req-1';
+		$message[ Message::VALUE ]    = 'GET_CACHE';
+		$rb->fill( $message );
 
 		// Neither dispatched as a request nor as a TM_STRUCT entry (no flag).
 		$this->assertCount( 0, $capture->captured );
@@ -1151,8 +1151,8 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
-		$msg = $this->request_msg( 'WHATEVER_NOT_REAL' );
-		$rb->fill( $msg );
+		$message = $this->request_msg( 'WHATEVER_NOT_REAL' );
+		$rb->fill( $message );
 
 		$this->assertCount( 1, $capture->captured );
 		$payload = $capture->captured[0][ Message::VALUE ];
@@ -1170,8 +1170,8 @@ class RequestBuilderTest extends TestCase {
 		$rb->name( 'rb' );
 
 		// Lowercased verb still routes to GET_CACHE via strtoupper.
-		$msg = $this->request_msg( 'get_cache' );
-		$rb->fill( $msg );
+		$message = $this->request_msg( 'get_cache' );
+		$rb->fill( $message );
 
 		$payload = $capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 'GET_CACHE', $payload['verb'] );
@@ -1184,11 +1184,11 @@ class RequestBuilderTest extends TestCase {
 		// Pure TM_BYTESTREAM (no TM_STRUCT flag) is ignored: VALUE is presumed
 		// to be a string, not an array.
 		$rb                    = new Request_Builder_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::KEY ]   = 'r1';
-		$msg[ Message::VALUE ] = 'raw line';
-		$rb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::KEY ]   = 'r1';
+		$message[ Message::VALUE ] = 'raw line';
+		$rb->fill( $message );
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
@@ -1196,11 +1196,11 @@ class RequestBuilderTest extends TestCase {
 		// Entry has a non-string `k` field (corrupt firehose line). Must drop
 		// before push/pop/state callbacks, not crash.
 		$rb                    = new Request_Builder_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::KEY ]   = 'r1';
-		$msg[ Message::VALUE ] = [ 'n' => 1, 'rid' => 'r1', 'k' => [ 'not', 'a', 'string' ] ];
-		$rb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::KEY ]   = 'r1';
+		$message[ Message::VALUE ] = [ 'n' => 1, 'rid' => 'r1', 'k' => [ 'not', 'a', 'string' ] ];
+		$rb->fill( $message );
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
@@ -1363,10 +1363,10 @@ class RequestBuilderTest extends TestCase {
 	// --- format_index_entry: size bounds + method codes -------------------
 
 	private function format_index_for( array $value, array $position ): ?string {
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = $value;
-		$line                  = Message::packed( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = $value;
+		$line                  = Message::packed( $message );
 		return Request_Builder_Node::format_index_entry( $line, $position );
 	}
 
@@ -1399,10 +1399,10 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_format_index_entry_returns_null_when_value_is_not_array(): void {
 		// A packed message where VALUE is a string (TM_BYTESTREAM-shaped wire).
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = 'raw';
-		$line                  = Message::packed( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::VALUE ] = 'raw';
+		$line                  = Message::packed( $message );
 		$this->assertNull(
 			Request_Builder_Node::format_index_entry(
 				$line,

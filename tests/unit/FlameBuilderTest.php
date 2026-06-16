@@ -61,10 +61,10 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	private function fill_request( Flame_Builder_Node $fb, array $request ): void {
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = $request;
-		$fb->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = $request;
+		$fb->fill( $message );
 	}
 
 	/**
@@ -76,11 +76,11 @@ class FlameBuilderTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$fb->sink( $capture );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_REQUEST;
-		$msg[ Message::FROM ]  = 'test-probe';
-		$msg[ Message::VALUE ] = 'GET_STATS';
-		$fb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_REQUEST;
+		$message[ Message::FROM ]  = 'test-probe';
+		$message[ Message::VALUE ] = 'GET_STATS';
+		$fb->fill( $message );
 
 		$fb->sink( $prev );
 
@@ -186,19 +186,19 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_non_array_value_skipped(): void {
 		$fb                    = new Flame_Builder_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = 'not-an-array';
-		$fb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = 'not-an-array';
+		$fb->fill( $message );
 		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	public function test_non_bytestream_message_skipped(): void {
 		$fb                    = new Flame_Builder_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_INFO;
-		$msg[ Message::VALUE ] = $this->completed_request();
-		$fb->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_INFO;
+		$message[ Message::VALUE ] = $this->completed_request();
+		$fb->fill( $message );
 		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
@@ -695,10 +695,10 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_format_and_parse_flame_index_round_trip(): void {
 		// $line is the packed Message wire format (positional JSON); VALUE at index 6.
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
-		$line     = Message::packed( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
+		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
 		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
 		$this->assertNotNull( $entry );
@@ -713,10 +713,10 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_returns_null_when_rid_missing(): void {
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
-		$line     = Message::packed( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
+		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( Flame_Builder_Node::format_index_entry( $line, $position ) );
 	}
@@ -735,10 +735,10 @@ class FlameBuilderTest extends TestCase {
 		$flame['rid']      = 'deep-rid';
 		$flame['url_hash'] = 'deadbeef0001';
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = $flame;
-		$line                  = Message::packed( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = $flame;
+		$line                  = Message::packed( $message );
 
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => \strlen( $line ) ];
 		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
@@ -999,13 +999,13 @@ class FlameBuilderTest extends TestCase {
 			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
 		] ) );
 
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_REQUEST;
-		$msg[ Message::FROM ]      = 'caller';
-		$msg[ Message::ID ]        = 'req-1';
-		$msg[ Message::KEY ]       = 'k-1';
-		$msg[ Message::VALUE ]     = 'GET_STATS';
-		$fb->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_REQUEST;
+		$message[ Message::FROM ]      = 'caller';
+		$message[ Message::ID ]        = 'req-1';
+		$message[ Message::KEY ]       = 'k-1';
+		$message[ Message::VALUE ]     = 'GET_STATS';
+		$fb->fill( $message );
 
 		$reply = null;
 		foreach ( $capture->captured as $captured ) {
@@ -1031,14 +1031,14 @@ class FlameBuilderTest extends TestCase {
 	public function test_handle_request_unknown_verb_returns_error(): void {
 		$fb                    = new Flame_Builder_Node();
 		$capture               = new Capture_Sink_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_REQUEST;
-		$msg[ Message::FROM ]  = 'caller';
-		$msg[ Message::ID ]    = 'req-2';
-		$msg[ Message::VALUE ] = 'NONSENSE_VERB';
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_REQUEST;
+		$message[ Message::FROM ]  = 'caller';
+		$message[ Message::ID ]    = 'req-2';
+		$message[ Message::VALUE ] = 'NONSENSE_VERB';
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
-		$fb->fill( $msg );
+		$fb->fill( $message );
 		$reply = $capture->captured[0];
 		$this->assertStringContainsString( 'unknown request verb', $reply[ Message::VALUE ]['data']['error'] );
 		$this->assertSame( 'NONSENSE_VERB', $reply[ Message::VALUE ]['verb'] );
@@ -1048,11 +1048,11 @@ class FlameBuilderTest extends TestCase {
 		// TM_REQUEST | TM_RESPONSE should skip handle_request (it's a reply, not a request).
 		$fb                    = new Flame_Builder_Node();
 		$capture               = new Capture_Sink_Node();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
-		$msg[ Message::VALUE ] = 'GET_STATS';
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
+		$message[ Message::VALUE ] = 'GET_STATS';
 		$fb->sink( $capture );
-		$fb->fill( $msg );
+		$fb->fill( $message );
 		$this->assertSame( 0, $this->stats_count( $fb ), 'response not processed as request' );
 		$this->assertCount( 1, $capture->captured );
 	}
@@ -1655,10 +1655,10 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_format_index_entry_handles_pre_decoded_data(): void {
 		// The signature accepts pre-decoded $data ref; even if null is passed, function works.
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'rid' => 'predec', 'url_hash' => 'hashpredec01' ];
-		$line                  = Message::packed( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'rid' => 'predec', 'url_hash' => 'hashpredec01' ];
+		$line                  = Message::packed( $message );
 		$position              = [ 'segment_id' => 1, 'offset' => 0, 'length' => 50 ];
 		$pre                   = null;
 		$entry                 = Flame_Builder_Node::format_index_entry( $line, $position, $pre );
@@ -1668,13 +1668,13 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_format_index_entry_truncates_long_rid_and_hash(): void {
 		// Long rid + hash should be truncated to 32 and 12 bytes respectively.
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [
 			'rid'      => \str_repeat( 'a', 50 ),
 			'url_hash' => \str_repeat( 'b', 30 ),
 		];
-		$line     = Message::packed( $msg );
+		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
 		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
 		$this->assertNotNull( $entry );
@@ -1684,10 +1684,10 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_rejects_non_array_value(): void {
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = 'just-a-string';
-		$line                  = Message::packed( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::VALUE ] = 'just-a-string';
+		$line                  = Message::packed( $message );
 		$position              = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( Flame_Builder_Node::format_index_entry( $line, $position ) );
 	}
@@ -1715,11 +1715,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotEmpty( $state['hooks'] );
 		$this->assertNotEmpty( $state['new_significant'] );
 
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_REQUEST;
-		$msg[ Message::FROM ]      = 'caller';
-		$msg[ Message::VALUE ]     = 'GET_STATS';
-		$fb->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_REQUEST;
+		$message[ Message::FROM ]      = 'caller';
+		$message[ Message::VALUE ]     = 'GET_STATS';
+		$fb->fill( $message );
 
 		// Find the reply.
 		$reply = null;

@@ -635,12 +635,12 @@ class LogManagerTest extends TestCase {
 		$content = (string) \file_get_contents( $file );
 		$out     = [];
 		foreach ( \array_filter( \explode( "\n", $content ) ) as $packed_line ) {
-			$msg   = Message::unpacked( $packed_line );
-			$value = $msg[ Message::VALUE ] ?? null;
+			$message   = Message::unpacked( $packed_line );
+			$value = $message[ Message::VALUE ] ?? null;
 			if ( \is_array( $value ) ) {
 				// Mirror production consumers — rid lives in Message::KEY on the
 				// wire; back-fill so test assertions on `$entry['rid']` work.
-				$value['rid'] = (string) ( $msg[ Message::KEY ] ?? '' );
+				$value['rid'] = (string) ( $message[ Message::KEY ] ?? '' );
 				$out[]        = $value;
 			}
 		}

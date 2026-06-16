@@ -352,14 +352,14 @@ class Request_Builder_Node extends Timer_Node {
 		if ( '' === $this->errors_target || null === $this->sink ) {
 			return;
 		}
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->errors_target;
-		$msg[ Message::KEY ]       = $rid;
-		$msg[ Message::VALUE ]     = $entry;
-		$this->sink->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = $this->errors_target;
+		$message[ Message::KEY ]       = $rid;
+		$message[ Message::VALUE ]     = $entry;
+		$this->sink->fill( $message );
 	}
 
 	/**
@@ -554,16 +554,16 @@ class Request_Builder_Node extends Timer_Node {
 		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
 			$request->url = $url . '?' . $worker_type;
 		}
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
 		// Dynamic \stdClass property is mixed by design; the string cast is intentional.
 		/** @var int|float|string $rid_raw */
 		$rid_raw                   = $request->rid ?? '';
-		$msg[ Message::KEY ]       = (string) $rid_raw;
-		$msg[ Message::VALUE ]     = (array) $request;
-		parent::fill( $msg );
+		$message[ Message::KEY ]       = (string) $rid_raw;
+		$message[ Message::VALUE ]     = (array) $request;
+		parent::fill( $message );
 		$this->emit_compact_summary( $request );
 	}
 
@@ -578,14 +578,14 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 		$summary                   = $this->build_compact_summary( $request );
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->completed_target;
-		$msg[ Message::KEY ]       = $summary['rid'];
-		$msg[ Message::VALUE ]     = $summary;
-		$this->sink->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = $this->completed_target;
+		$message[ Message::KEY ]       = $summary['rid'];
+		$message[ Message::VALUE ]     = $summary;
+		$this->sink->fill( $message );
 	}
 
 	/**

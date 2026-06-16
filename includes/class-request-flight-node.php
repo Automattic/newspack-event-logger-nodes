@@ -43,14 +43,14 @@ class Request_Flight_Node extends Timer_Node {
 		if ( null === $this->sink ) {
 			return;
 		}
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->target;
-		$msg[ Message::KEY ]       = 'inflight';
-		$msg[ Message::VALUE ]     = $batch;
-		$this->sink->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = $this->target;
+		$message[ Message::KEY ]       = 'inflight';
+		$message[ Message::VALUE ]     = $batch;
+		$this->sink->fill( $message );
 	}
 
 	/**

@@ -61,9 +61,9 @@ class SettingsSyncTest extends TestCase {
 					if ( '' === $line ) {
 						continue;
 					}
-					$msg = Message::unpacked( $line );
-					if ( \is_array( $msg[ Message::VALUE ] ?? null ) ) {
-						$envelopes[] = $msg[ Message::VALUE ];
+					$message = Message::unpacked( $line );
+					if ( \is_array( $message[ Message::VALUE ] ?? null ) ) {
+						$envelopes[] = $message[ Message::VALUE ];
 					}
 				}
 			}

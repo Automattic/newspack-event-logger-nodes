@@ -45,15 +45,15 @@ class RemoteManagerTest extends TestCase {
 	 * string. Mirrors `CommandInterpreter::interpret()`'s response shape.
 	 */
 	private static function wrap_discovery_response( array $payload ): string {
-		$msg                                   = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND | \Newspack_Nodes\Message::TM_RESPONSE;
-		$msg[ \Newspack_Nodes\Message::FROM ]  = 'discovery';
-		$msg[ \Newspack_Nodes\Message::TO ]    = '_http';
-		$msg[ \Newspack_Nodes\Message::VALUE ] = [
+		$message                                   = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND | \Newspack_Nodes\Message::TM_RESPONSE;
+		$message[ \Newspack_Nodes\Message::FROM ]  = 'discovery';
+		$message[ \Newspack_Nodes\Message::TO ]    = '_http';
+		$message[ \Newspack_Nodes\Message::VALUE ] = [
 			'name'    => 'get',
 			'payload' => $payload,
 		];
-		return \Newspack_Nodes\Message::packed( $msg );
+		return \Newspack_Nodes\Message::packed( $message );
 	}
 
 	/**

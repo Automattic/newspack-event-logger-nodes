@@ -336,12 +336,12 @@ class Log_Manager {
 		unset( $data['rid'] );
 
 		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
-		$msg                                       = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
-		$msg[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
-		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		$this->topic->fill( $msg );
+		$message                                       = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
+		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
+		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		$this->topic->fill( $message );
 		++$this->line_number;
 
 		if ( $this->flush_every_line ) {

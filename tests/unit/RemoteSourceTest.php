@@ -170,9 +170,9 @@ class RemoteSourceTest extends TestCase {
 	public function test_fill_is_no_op_and_increments_counter(): void {
 		// RemoteSource is a *source*; fill() ignores input but increments counter.
 		$remote = $this->make_remote();
-		$msg    = Message::new_message();
+		$message    = Message::new_message();
 		$before = $remote->counter();
-		$remote->fill( $msg );
+		$remote->fill( $message );
 		$this->assertSame( $before + 1, $remote->counter() );
 	}
 
@@ -208,8 +208,8 @@ class RemoteSourceTest extends TestCase {
 	public function test_set_require_https_warns_on_disable(): void {
 		// Capture stderr to confirm the warning is emitted.
 		$captured = [];
-		Core::set_stderr_handler( static function ( string $msg ) use ( &$captured ): void {
-			$captured[] = $msg;
+		Core::set_stderr_handler( static function ( string $message ) use ( &$captured ): void {
+			$captured[] = $message;
 		} );
 
 		$remote = new Remote_Source_Node();
@@ -224,8 +224,8 @@ class RemoteSourceTest extends TestCase {
 	public function test_set_require_https_re_disabling_does_not_re_warn(): void {
 		// Disable twice — only the first call should print the warning.
 		$captured = [];
-		Core::set_stderr_handler( static function ( string $msg ) use ( &$captured ): void {
-			$captured[] = $msg;
+		Core::set_stderr_handler( static function ( string $message ) use ( &$captured ): void {
+			$captured[] = $message;
 		} );
 
 		$remote = new Remote_Source_Node();
@@ -725,10 +725,10 @@ class RemoteSourceTest extends TestCase {
 		$remote->process_sse_chunk( "event: msg\ndata: " . \json_encode( $envelope ) . "\n\n" );
 
 		$this->assertCount( 1, $capture->captured );
-		$msg = $capture->captured[0];
-		$this->assertSame( 'rid-1', $msg[ Message::KEY ], 'KEY preserved from envelope verbatim' );
-		$this->assertSame( 'payload', $msg[ Message::VALUE ]['arbitrary'] );
-		$this->assertSame( 'siteA', $msg[ Message::VALUE ]['_source'], 'hub-side attribution stamped onto dict VALUE' );
+		$message = $capture->captured[0];
+		$this->assertSame( 'rid-1', $message[ Message::KEY ], 'KEY preserved from envelope verbatim' );
+		$this->assertSame( 'payload', $message[ Message::VALUE ]['arbitrary'] );
+		$this->assertSame( 'siteA', $message[ Message::VALUE ]['_source'], 'hub-side attribution stamped onto dict VALUE' );
 	}
 
 	public function test_forward_entry_drops_oversized_line(): void {

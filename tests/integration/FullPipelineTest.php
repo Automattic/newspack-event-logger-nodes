@@ -44,12 +44,12 @@ class FullPipelineTest extends TestCase {
 	 * key anymore.
 	 */
 	private function topic_write( Topic_Node $topic, string $url, array $entry ): void {
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::KEY ]       = (string) ( $entry['rid'] ?? $url );
-		$msg[ Message::VALUE ]     = $entry;
-		$topic->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::KEY ]       = (string) ( $entry['rid'] ?? $url );
+		$message[ Message::VALUE ]     = $entry;
+		$topic->fill( $message );
 		$topic->flush();
 	}
 
