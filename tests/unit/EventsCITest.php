@@ -32,6 +32,9 @@ class EventsCITest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// Service CI verbs are gate-by-default (manage_options) in the substrate;
+		// these happy-path verbs run as an authorized admin (deny-path is its own test).
+		$GLOBALS['_current_user_can'] = true;
 		// /tmp directly to dodge symlink-resolved sys_get_temp_dir on macOS,
 		// matching SettingsCITest / StatusCITest.
 		$this->tmp  = '/tmp/events-ci-test-' . \uniqid();
