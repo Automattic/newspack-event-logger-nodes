@@ -325,19 +325,19 @@ class ServersCITest extends TestCase {
 	 * `/command` instead of the legacy `/discovery` route.
 	 */
 	private static function wrap_discovery_response( array $payload ): string {
-		$msg                                   = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND | \Newspack_Nodes\Message::TM_RESPONSE;
-		$msg[ \Newspack_Nodes\Message::FROM ]  = 'discovery';
-		$msg[ \Newspack_Nodes\Message::TO ]    = '_http';
+		$message                                   = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND | \Newspack_Nodes\Message::TM_RESPONSE;
+		$message[ \Newspack_Nodes\Message::FROM ]  = 'discovery';
+		$message[ \Newspack_Nodes\Message::TO ]    = '_http';
 		// VALUE is the structured `{name, payload}` LIVE array; `payload` is
 		// the verb's structured return — NOT a nested JSON string. The
 		// whole-Message JSON is the only serialization boundary. Mirrors
 		// CommandInterpreter::interpret()'s response shape.
-		$msg[ \Newspack_Nodes\Message::VALUE ] = [
+		$message[ \Newspack_Nodes\Message::VALUE ] = [
 			'name'    => 'get',
 			'payload' => $payload,
 		];
-		return \Newspack_Nodes\Message::packed( $msg );
+		return \Newspack_Nodes\Message::packed( $message );
 	}
 
 	public function test_test_verb_returns_connected_on_200_discovery_response(): void {

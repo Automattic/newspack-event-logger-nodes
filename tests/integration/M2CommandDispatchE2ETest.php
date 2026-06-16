@@ -63,33 +63,33 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$body = (string) \ob_get_clean();
 
 		$this->assertNotEmpty( $body, "verb '{$verb}' on '{$to}' produced no response" );
-		$msg            = self::response_for( $body, $verb );
+		$message            = self::response_for( $body, $verb );
 		$response_flags = Message::TM_COMMAND | Message::TM_RESPONSE;
 		$this->assertSame(
 			"e2e-{$verb}",
-			$msg[ Message::ID ],
+			$message[ Message::ID ],
 			"verb '{$verb}' returned wrong correlation id"
 		);
 		$this->assertSame(
 			$response_flags,
-			$msg[ Message::TYPE ] & ( $response_flags | Message::TM_ERROR ),
-			"verb '{$verb}' returned TM_ERROR or wrong type. VALUE was: " . (string) \wp_json_encode( $msg[ Message::VALUE ] )
+			$message[ Message::TYPE ] & ( $response_flags | Message::TM_ERROR ),
+			"verb '{$verb}' returned TM_ERROR or wrong type. VALUE was: " . (string) \wp_json_encode( $message[ Message::VALUE ] )
 		);
 		// Per the command protocol the response VALUE is a live PHP array
 		// `['name'=>'<verb>','payload'=><structure>]` — it rode through
 		// packed()/unpacked() as a nested object, never a re-encoded string.
 		$this->assertIsArray(
-			$msg[ Message::VALUE ],
+			$message[ Message::VALUE ],
 			"verb '{$verb}' response VALUE should be a structured array, not an encoded string"
 		);
 		$this->assertSame(
 			$verb,
-			$msg[ Message::VALUE ]['name'] ?? null,
+			$message[ Message::VALUE ]['name'] ?? null,
 			"verb '{$verb}' response VALUE.name mismatch"
 		);
 		$this->assertArrayHasKey(
 			'payload',
-			$msg[ Message::VALUE ],
+			$message[ Message::VALUE ],
 			"verb '{$verb}' response VALUE missing payload"
 		);
 	}
@@ -109,8 +109,8 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$ctrl->dispatch( $this->build_request( 'performance', 'timing', '{}' ) );
 		$body = (string) \ob_get_clean();
 
-		$msg     = self::response_for( $body, 'timing' );
-		$payload = $msg[ Message::VALUE ]['payload'] ?? null;
+		$message     = self::response_for( $body, 'timing' );
+		$payload = $message[ Message::VALUE ]['payload'] ?? null;
 		$this->assertIsArray( $payload, 'performance.timing must return a structured payload' );
 	}
 
@@ -137,9 +137,9 @@ class M2CommandDispatchE2ETest extends TestCase {
 			if ( '' === $line ) {
 				continue;
 			}
-			$msg = Message::unpacked( $line );
-			if ( "e2e-{$verb}" === ( $msg[ Message::ID ] ?? '' ) ) {
-				return $msg;
+			$message = Message::unpacked( $line );
+			if ( "e2e-{$verb}" === ( $message[ Message::ID ] ?? '' ) ) {
+				return $message;
 			}
 		}
 		throw new \RuntimeException( "no response with id e2e-{$verb} in JSONL body: {$body}" );
@@ -161,14 +161,14 @@ class M2CommandDispatchE2ETest extends TestCase {
 		// JSON-string from the provider; decode it into the array the verbs
 		// expect (they do `is_array($payload) ? $payload : []`, so a raw
 		// string collapses to `[]` and the verb loses its parameters).
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
-		$msg[ Message::FROM ]  = '_http';
-		$msg[ Message::TO ]    = $to;
-		$msg[ Message::ID ]    = "e2e-{$verb}";
-		$msg[ Message::VALUE ] = [ 'name' => $verb, 'arguments' => '', 'payload' => \json_decode( $args, true ) ];
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_COMMAND;
+		$message[ Message::FROM ]  = '_http';
+		$message[ Message::TO ]    = $to;
+		$message[ Message::ID ]    = "e2e-{$verb}";
+		$message[ Message::VALUE ] = [ 'name' => $verb, 'arguments' => '', 'payload' => \json_decode( $args, true ) ];
 
-		$req->set_body( Message::packed( $msg ) );
+		$req->set_body( Message::packed( $message ) );
 		// text/plain matches the JSONL/text-plain wire contract (the controller
 		// ignores the header, but real callers post JSONL as text/plain).
 		$req->set_header( 'content-type', 'text/plain; charset=UTF-8' );

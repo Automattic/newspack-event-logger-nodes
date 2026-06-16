@@ -72,8 +72,8 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 */
 	public function test_migrated_ci_emits_no_handlerless_warning( callable $factory ): void {
 		$buf = '';
-		Core::set_stderr_handler( function ( $msg ) use ( &$buf ) {
-			$buf .= $msg;
+		Core::set_stderr_handler( function ( $message ) use ( &$buf ) {
+			$buf .= $message;
 		} );
 
 		$factory();

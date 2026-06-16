@@ -300,11 +300,11 @@ class ReqgrepCommandTest extends TestCase {
 
 		// Pump ~10KB lines until we'd exceed the 10MB cap. Exiting via cap is
 		// silent — append_to_state returns false but doesn't print.
-		$msg = \str_repeat( 'X', 10000 );
+		$message = \str_repeat( 'X', 10000 );
 		for ( $i = 0; $i < 2000; $i++ ) {
 			$this->process_line->invoke(
 				$cmd,
-				\json_encode( [ 'n' => 2 + $i, 'rid' => $rid, 'k' => 'init', 'm' => $msg, 'ts' => 1700000000 + $i * 0.001 ] ) . "\n"
+				\json_encode( [ 'n' => 2 + $i, 'rid' => $rid, 'k' => 'init', 'm' => $message, 'ts' => 1700000000 + $i * 0.001 ] ) . "\n"
 			);
 		}
 
@@ -766,12 +766,12 @@ class ReqgrepCommandTest extends TestCase {
 		$p = new \Newspack_Nodes\Partition_Node();
 		$p->arguments( $flat_dir );
 		foreach ( $entries as $entry ) {
-			$msg                       = \Newspack_Nodes\Message::new_message();
-			$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-			$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
-			$msg[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
-			$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-			$p->fill( $msg );
+			$message                       = \Newspack_Nodes\Message::new_message();
+			$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+			$message[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
+			$message[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
+			$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+			$p->fill( $message );
 		}
 		$p->flush();
 	}
@@ -1396,15 +1396,15 @@ class ReqgrepCommandTest extends TestCase {
 	 * that need to write packed Messages directly.
 	 */
 	private function packed_struct( array $entry ): array {
-		$msg                                       = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
+		$message                                       = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
 		// Producer convention: rid is stamped in Message::KEY (LogManager since
 		// v0.2.17). Tests mirror that here — reqgrep's ingest_line reads rid
 		// from KEY only.
-		$msg[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
-		$msg[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		return $msg;
+		$message[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
+		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		return $message;
 	}
 
 	// -------------------------------------------------------------------------

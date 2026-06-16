@@ -406,14 +406,14 @@ class Flame_Builder_Node extends Node {
 		if ( '' === $this->target || null === $this->sink ) {
 			return true; // Aggregation still happens; just no on-disk flame.
 		}
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->target;
-		$msg[ Message::KEY ]       = $flame_data['rid'];
-		$msg[ Message::VALUE ]     = $flame_data;
-		$this->sink->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = $this->target;
+		$message[ Message::KEY ]       = $flame_data['rid'];
+		$message[ Message::VALUE ]     = $flame_data;
+		$this->sink->fill( $message );
 		return true;
 	}
 
@@ -1706,17 +1706,17 @@ class Flame_Builder_Node extends Node {
 			'AUTO_TUNE_FIRED',
 			[ 'key' => $key, 'count' => \count( $items ) ]
 		);
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = $this->name . ':auto-tuner';
-		$msg[ Message::KEY ]       = $key;
-		$msg[ Message::VALUE ]     = [
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = $this->name . ':auto-tuner';
+		$message[ Message::KEY ]       = $key;
+		$message[ Message::VALUE ]     = [
 			'items'   => $items,
 			'context' => [ 'significant_events' => $this->significant_events ],
 		];
-		$sink->fill( $msg );
+		$sink->fill( $message );
 	}
 
 	/**

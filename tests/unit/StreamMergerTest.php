@@ -466,11 +466,11 @@ class StreamMergerTest extends TestCase {
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = 1.0;
-		$msg[ Message::VALUE ]     = [ 'siteE' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ];
-		$offsetlog->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = 1.0;
+		$message[ Message::VALUE ]     = [ 'siteE' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ];
+		$offsetlog->fill( $message );
 		// Force the batch to disk before the production-side StreamMerger
 		// constructs its own offsetlog Partition and tries to read.
 		$offsetlog->flush();
@@ -512,8 +512,8 @@ class StreamMergerTest extends TestCase {
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
 		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/0.log" );
 		$line    = trim( $content );
-		$msg     = Message::unpacked( $line );
-		$decoded = $msg[ Message::VALUE ];
+		$message     = Message::unpacked( $line );
+		$decoded = $message[ Message::VALUE ];
 		$this->assertIsArray( $decoded );
 		$this->assertArrayHasKey( 'siteF', $decoded );
 		$this->assertSame( 7, $decoded['siteF']['seg'] );
@@ -770,8 +770,8 @@ class StreamMergerTest extends TestCase {
 		// require_https=false should emit a one-time stern warning on the print
 		// table. Record stderr to confirm the warning surfaces.
 		$captured = [];
-		\Newspack_Nodes\Core::set_stderr_handler( function ( string $msg ) use ( &$captured ): void {
-			$captured[] = $msg;
+		\Newspack_Nodes\Core::set_stderr_handler( function ( string $message ) use ( &$captured ): void {
+			$captured[] = $message;
 		} );
 
 		$sm = new Stream_Merger_Node();
@@ -1417,10 +1417,10 @@ class StreamMergerTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = 'pass-through';
-		$sm->fill( $msg );
+		$message = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::VALUE ] = 'pass-through';
+		$sm->fill( $message );
 
 		// Counter incremented, message forwarded to sink.
 		$this->assertCount( 0, $capture->captured );
@@ -1429,12 +1429,12 @@ class StreamMergerTest extends TestCase {
 	public function test_fill_without_sink_must_throw(): void {
 		// Without a sink, fill() must throw on the null pass-through.
 		$sm  = $this->make_merger();
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$msg[ Message::VALUE ] = 'sinkless';
+		$message = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::VALUE ] = 'sinkless';
 		$error = false;
 		try {
-			$sm->fill( $msg );
+			$sm->fill( $message );
 		} catch ( \Throwable $e ) {
 			$error = true;
 		}
@@ -1534,8 +1534,8 @@ class StreamMergerTest extends TestCase {
 		$offsets_dir = \Newspack_Nodes\Config::get_offsets_directory();
 		$content     = (string) file_get_contents( "{$offsets_dir}/aggregator.p0/0.log" );
 		$line        = trim( $content );
-		$msg         = Message::unpacked( $line );
-		$decoded     = $msg[ Message::VALUE ];
+		$message         = Message::unpacked( $line );
+		$decoded     = $message[ Message::VALUE ];
 		$this->assertIsArray( $decoded );
 		$this->assertArrayHasKey( 'siteReal', $decoded );
 		$this->assertArrayNotHasKey( '__test__', $decoded );
@@ -1573,10 +1573,10 @@ class StreamMergerTest extends TestCase {
 		$offsetlog->name( 'streammerger-bad-offsetlog-' . uniqid() );
 		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = 'plain string, not an array';
-		$offsetlog->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = 'plain string, not an array';
+		$offsetlog->fill( $message );
 		$offsetlog->flush();
 		$base = $offsetlog->name();
 		\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
@@ -1602,10 +1602,10 @@ class StreamMergerTest extends TestCase {
 		$offsetlog->name( 'streammerger-mixed-offsetlog-' . uniqid() );
 		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::VALUE ]     = [ 'siteOther' => [ 'seg' => 9, 'off' => 800 ], '_ts' => 1 ];
-		$offsetlog->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = [ 'siteOther' => [ 'seg' => 9, 'off' => 800 ], '_ts' => 1 ];
+		$offsetlog->fill( $message );
 		$offsetlog->flush();
 		$base = $offsetlog->name();
 		\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
@@ -1987,10 +1987,10 @@ class StreamMergerTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$msg[ Message::VALUE ] = 'a-response-not-a-request';
-		$sm->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
+		$message[ Message::VALUE ] = 'a-response-not-a-request';
+		$sm->fill( $message );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -2024,11 +2024,11 @@ class StreamMergerTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$sm->sink( $capture );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_INFO;
-		$msg[ Message::KEY ]   = 'NOT_TIMER';
-		$msg[ Message::VALUE ] = 'other-info';
-		$sm->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_INFO;
+		$message[ Message::KEY ]   = 'NOT_TIMER';
+		$message[ Message::VALUE ] = 'other-info';
+		$sm->fill( $message );
 
 		$this->assertCount( 0, $capture->captured );
 	}
@@ -2493,7 +2493,7 @@ class StreamMergerTest extends TestCase {
 		// Second call → require_https already false → the warn-branch guard fails.
 		// Whatever handler is attached must NOT receive a new warning.
 		$second_count = 0;
-		\Newspack_Nodes\Core::set_stderr_handler( function ( string $msg ) use ( &$second_count ): void {
+		\Newspack_Nodes\Core::set_stderr_handler( function ( string $message ) use ( &$second_count ): void {
 			++$second_count;
 		} );
 		$sm->set_require_https( false );
@@ -2507,8 +2507,8 @@ class StreamMergerTest extends TestCase {
 		$sm->arguments( 'firehose 0' );
 
 		$captured = [];
-		\Newspack_Nodes\Core::set_stderr_handler( function ( string $msg ) use ( &$captured ): void {
-			$captured[] = $msg;
+		\Newspack_Nodes\Core::set_stderr_handler( function ( string $message ) use ( &$captured ): void {
+			$captured[] = $message;
 		} );
 		$sm->set_require_https( true );
 
@@ -2658,10 +2658,10 @@ class StreamMergerTest extends TestCase {
 		$offsetlog->name( 'streammerger-test-offsetlog-' . uniqid() );
 		$offsetlog->arguments( $dir );
 		$offsetlog->allow_large_writes();
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'siteG' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ];
-		$offsetlog->fill( $msg );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'siteG' => [ 'seg' => 4, 'off' => 200 ], '_ts' => 1 ];
+		$offsetlog->fill( $message );
 		$offsetlog->flush();
 		$base = $offsetlog->name();
 		\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );

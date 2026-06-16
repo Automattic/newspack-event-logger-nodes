@@ -60,24 +60,24 @@ class VerbHarness {
 		$http_in = new HTTP_In_Node( static fn ( int $c ) => null );
 		$http_in->name( Node_Names::HTTP );
 
-		$msg = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
-		$msg[ Message::FROM ]  = Node_Names::HTTP;
-		$msg[ Message::TO ]    = '';  // empty TO triggers dispatch in Command_Interpreter_Node::fill
-		$msg[ Message::ID ]    = 'test-' . \bin2hex( \random_bytes( 4 ) );
-		$msg[ Message::KEY ]   = $key;
+		$message = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_COMMAND;
+		$message[ Message::FROM ]  = Node_Names::HTTP;
+		$message[ Message::TO ]    = '';  // empty TO triggers dispatch in Command_Interpreter_Node::fill
+		$message[ Message::ID ]    = 'test-' . \bin2hex( \random_bytes( 4 ) );
+		$message[ Message::KEY ]   = $key;
 		// VALUE is the command struct as a live PHP array — never separately
 		// json-encoded; only the envelope/wire (HTTP_In's packed Message) is JSON.
-		$msg[ Message::VALUE ] = [
+		$message[ Message::VALUE ] = [
 			'name'      => $verb,
 			'arguments' => $args,
 		];
 		// Exercises verb LOGIC, not authorization. Mark the command as in-process
 		// so the substrate's client-tier authorize gate (Message::LOCAL) passes.
-		$msg[ Message::LOCAL ] = true;
+		$message[ Message::LOCAL ] = true;
 
 		\ob_start();
-		$interpreter->fill( $msg );
+		$interpreter->fill( $message );
 		$body = \ob_get_clean();
 
 		if ( '' === $body ) {

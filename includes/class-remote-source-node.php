@@ -731,15 +731,15 @@ class Remote_Source_Node extends Node {
 			}
 		}
 
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = $envelope[ Message::TYPE ];
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
-		$msg[ Message::KEY ]       = \is_scalar( $key_raw ) ? (string) $key_raw : '';
-		$msg[ Message::VALUE ]     = $value;
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = $envelope[ Message::TYPE ];
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = \is_string( $this->target ) ? $this->target : '';
+		$message[ Message::KEY ]       = \is_scalar( $key_raw ) ? (string) $key_raw : '';
+		$message[ Message::VALUE ]     = $value;
 		++$this->counter;
-		$this->sink->fill( $msg );
+		$this->sink->fill( $message );
 	}
 
 	// =========================================================================
@@ -810,17 +810,17 @@ class Remote_Source_Node extends Node {
 		// uses for its own slot keep-alive.
 		$headers['Content-Type'] = Remote_Manager::COMMAND_CONTENT_TYPE;
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_COMMAND;
-		$msg[ Message::FROM ]  = Node_Names::HTTP;
-		$msg[ Message::TO ]    = 'workers';
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_COMMAND;
+		$message[ Message::FROM ]  = Node_Names::HTTP;
+		$message[ Message::TO ]    = 'workers';
 		// Workers.heartbeat parses positional `<slot> <ttl> <partition>`.
 		// ttl must outlive HEARTBEAT_INTERVAL — only the client refreshes the slot now.
-		$msg[ Message::VALUE ] = [
+		$message[ Message::VALUE ] = [
 			'name'      => 'heartbeat',
 			'arguments' => $this->slot . ' ' . ( self::HEARTBEAT_INTERVAL * 4 ) . ' ' . $this->partition,
 		];
-		$body = Message::packed( $msg );
+		$body = Message::packed( $message );
 
 		$start    = \microtime( true );
 		$response = @\wp_remote_post(

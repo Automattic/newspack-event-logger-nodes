@@ -89,13 +89,13 @@ class NodeLifecycleTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$node->sink( $capture );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_ERROR;
-		$msg[ Message::FROM ]  = 'upstream';
-		$msg[ Message::TO ]    = 'downstream';
-		$msg[ Message::VALUE ] = "NOT_AVAILABLE\n";
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_ERROR;
+		$message[ Message::FROM ]  = 'upstream';
+		$message[ Message::TO ]    = 'downstream';
+		$message[ Message::VALUE ] = "NOT_AVAILABLE\n";
 
-		$node->fill( $msg );
+		$node->fill( $message );
 
 		if ( ! empty( $capture->captured ) ) {
 			$out = $capture->captured[0];
@@ -120,13 +120,13 @@ class NodeLifecycleTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$node->sink( $capture );
 
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_EOF;
-		$msg[ Message::FROM ]  = 'upstream';
-		$msg[ Message::TO ]    = 'downstream';
-		$msg[ Message::VALUE ] = '';
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_EOF;
+		$message[ Message::FROM ]  = 'upstream';
+		$message[ Message::TO ]    = 'downstream';
+		$message[ Message::VALUE ] = '';
 
-		$node->fill( $msg );
+		$node->fill( $message );
 
 		if ( ! empty( $capture->captured ) ) {
 			$out = $capture->captured[0];

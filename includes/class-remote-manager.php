@@ -488,15 +488,15 @@ class Remote_Manager {
 	 * @return string Packed Message JSONL line.
 	 */
 	public static function command_message_body( string $to, string $verb, string $args = '' ): string {
-		$msg                                   = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND;
-		$msg[ \Newspack_Nodes\Message::FROM ]  = \Newspack_Nodes\Node_Names::HTTP;
-		$msg[ \Newspack_Nodes\Message::TO ]    = $to;
-		$msg[ \Newspack_Nodes\Message::VALUE ] = [
+		$message                                   = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND;
+		$message[ \Newspack_Nodes\Message::FROM ]  = \Newspack_Nodes\Node_Names::HTTP;
+		$message[ \Newspack_Nodes\Message::TO ]    = $to;
+		$message[ \Newspack_Nodes\Message::VALUE ] = [
 			'name'      => $verb,
 			'arguments' => $args,
 		];
-		return \Newspack_Nodes\Message::packed( $msg );
+		return \Newspack_Nodes\Message::packed( $message );
 	}
 
 	/**

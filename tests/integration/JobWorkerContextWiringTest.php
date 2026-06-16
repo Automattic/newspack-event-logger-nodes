@@ -21,10 +21,10 @@ class JobWorkerContextWiringTest extends TestCase {
 	}
 
 	private function job_message( string $handler ): array {
-		$msg                   = Message::new_message();
-		$msg[ Message::TYPE ]  = Message::TM_STRUCT;
-		$msg[ Message::VALUE ] = [ 'k' => 'job', 'handler' => $handler, 'parameters' => [] ];
-		return $msg;
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'k' => 'job', 'handler' => $handler, 'parameters' => [] ];
+		return $message;
 	}
 
 	public function test_handler_sees_job_scoped_server_and_it_is_restored(): void {
@@ -34,8 +34,8 @@ class JobWorkerContextWiringTest extends TestCase {
 		$seen = null;
 		$jw->register_handler( 'h', function () use ( &$seen ) { $seen = $_SERVER['REQUEST_URI']; } );
 
-		$msg = $this->job_message( 'h' );
-		$jw->fill( $msg );
+		$message = $this->job_message( 'h' );
+		$jw->fill( $message );
 
 		$this->assertSame( '/jobs/h', $seen, 'handler runs in job-scoped request context' );
 		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'], '$_SERVER restored after the job' );
@@ -47,8 +47,8 @@ class JobWorkerContextWiringTest extends TestCase {
 		$jw = new Job_Worker_Node();
 		$jw->register_handler( 'boom', function () { throw new \RuntimeException( 'x' ); } );
 
-		$msg = $this->job_message( 'boom' );
-		$jw->fill( $msg ); // swallowed
+		$message = $this->job_message( 'boom' );
+		$jw->fill( $message ); // swallowed
 
 		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'] );
 	}

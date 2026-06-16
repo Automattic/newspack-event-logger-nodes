@@ -229,11 +229,11 @@ class Stream_Merger_Node extends Timer_Node {
 			return;
 		}
 		$entry['_ts'] = (int) Core::$now;
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::VALUE ]     = $entry;
-		$offsetlog->fill( $msg );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::VALUE ]     = $entry;
+		$offsetlog->fill( $message );
 		$offsetlog->flush();
 	}
 
@@ -688,14 +688,14 @@ class Stream_Merger_Node extends Timer_Node {
 		}
 		$lines = \explode( "\n", \rtrim( $content, "\n" ) );
 		try {
-			$msg = Message::unpacked( \end( $lines ) );
+			$message = Message::unpacked( \end( $lines ) );
 		} catch ( \InvalidArgumentException $e ) {
 			// Unparseable offsetlog entry: skip restoring the remote's position
 			// rather than aborting the merge.
 			Core::print_less_often( "StreamMerger: ignoring unparseable offsetlog entry while restoring position: {$e->getMessage()}" );
 			return;
 		}
-		$latest = $msg[ Message::VALUE ];
+		$latest = $message[ Message::VALUE ];
 		if ( ! \is_array( $latest ) || ! isset( $latest[ $server_id ] ) || ! \is_array( $latest[ $server_id ] ) ) {
 			return;
 		}

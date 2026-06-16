@@ -173,11 +173,11 @@ class Job_Intake {
 
 		// Wrap as a TM_STRUCT Message ($job is a structured array) so
 		// Partition::fill packs and appends.
-		$msg                                       = \Newspack_Nodes\Message::new_message();
-		$msg[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$msg[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
-		$msg[ \Newspack_Nodes\Message::VALUE ]     = $job;
-		$this->partition_handle( $partition )->fill( $msg );
+		$message                                       = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
+		$message[ \Newspack_Nodes\Message::VALUE ]     = $job;
+		$this->partition_handle( $partition )->fill( $message );
 		return true;
 	}
 
