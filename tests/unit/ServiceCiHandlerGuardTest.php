@@ -100,6 +100,8 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 * vacuously green — mirrors the substrate ClassesCITest guard.
 	 */
 	public function test_migrated_cis_appear_in_substrate_class_catalog_as_service(): void {
+		// `classes list` is gate-by-default (manage_options) in the substrate.
+		$GLOBALS['_current_user_can'] = true;
 		$result = VerbHarness::fire( new Classes_CI_Node(), 'classes', 'list' );
 
 		$this->assertIsArray( $result );
