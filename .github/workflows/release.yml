@@ -51,7 +51,7 @@ jobs:
         if: steps.validate.outputs.is_release == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build release archive
         if: steps.validate.outputs.is_release == 'true'
@@ -60,6 +60,7 @@ jobs:
           NEWSPACK_NODES_RUNTIME: ${{ github.workspace }}/.newspack-nodes/src/runtime/index.js
           NEWSPACK_NODES_DEBUG_OVERLAY: ${{ github.workspace }}/.newspack-nodes/src/debug-overlay/DebugOverlay.js
           NEWSPACK_NODES_SHARED: ${{ github.workspace }}/.newspack-nodes/src/shared
+          NEWSPACK_NODES_BUILD_KIT: ${{ github.workspace }}/.newspack-nodes/src/build-kit/index.mjs
         run: |
           npm ci --prefer-offline --no-audit --no-fund
           npm run release:archive
