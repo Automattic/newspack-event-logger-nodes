@@ -52,7 +52,7 @@ class TopologyRegisterPluginTest extends TestCase {
 	/** @return array<string,mixed> */
 	private function snapshot_registry(): array {
 		$out = [];
-		foreach ( [ 'stock_dirs', 'user_dir', 'basename_cache', 'segment_size_overrides_cache', 'registered_plugins' ] as $prop ) {
+		foreach ( [ 'stock_dirs', 'user_dir', 'segment_size_overrides_cache', 'registered_plugins' ] as $prop ) {
 			$ref = new \ReflectionProperty( Topology_Registry::class, $prop );
 			$ref->setAccessible( true );
 			$out[ $prop ] = $ref->getValue();
