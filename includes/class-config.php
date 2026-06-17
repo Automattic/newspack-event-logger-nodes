@@ -307,16 +307,6 @@ class Config {
 	}
 
 	/**
-	 * Force-restart any worker locks whose names start with one of the given
-	 * group prefixes. Delegates to the substrate Config.
-	 *
-	 * @param string[] $groups Group-name prefixes to match against lock-dir basenames.
-	 */
-	public static function kill_readers( array $groups ): void {
-		RuntimeConfig::kill_readers( $groups );
-	}
-
-	/**
 	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
 	 * derivation. Used both by the plugin's `register_config_namespace`
 	 * call and by `tests/bootstrap.php` so both paths resolve identically.
