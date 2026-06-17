@@ -39,7 +39,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	public function test_set_completed_target_verb_persists_value(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_completed_target', $verbs );
 		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, 'completed:tee' ) );
@@ -49,7 +49,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	public function test_set_completed_target_empty_args_clears_target(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty target.
 		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, 'completed:tee' ) );
@@ -62,7 +62,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	public function test_set_inflight_target_verb_writes_to_flight(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_inflight_target', $verbs );
 		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' ) );
@@ -72,7 +72,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	public function test_set_inflight_target_empty_args_clears_flight_target(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty flight target.
 		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' ) );
@@ -85,7 +85,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 	public function test_set_errors_target_empty_args_clears_target(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty errors target.
 		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, 'errors:partition' ) );
@@ -93,12 +93,5 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		// Empty arg clears the errors target.
 		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, '' ) );
 		$this->assertSame( '', $this->read_private( $rb, 'errors_target' ) );
-	}
-
-	private function read_private( object $obj, string $name ) {
-		$r = new \ReflectionObject( $obj );
-		$p = $r->getProperty( $name );
-		$p->setAccessible( true );
-		return $p->getValue( $obj );
 	}
 }
