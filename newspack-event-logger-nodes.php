@@ -228,8 +228,8 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
  *                code. No topology declares it; it just appears.
  *   jobintake  — JobIntake::queue() writes large jobs the same way.
  *
- * Topology-declared outputs come from `Topology_Registry::basenames_for()`
- * which parses each TSL's `make_node Partition` lines.
+ * Topology-declared outputs come from `Topology_Registry::resolved_resource_dirs()`
+ * which expands each TSL's `Partition`/`Topic` path templates across partitions.
  */
 const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
 
