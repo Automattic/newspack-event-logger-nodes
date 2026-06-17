@@ -1704,7 +1704,7 @@ class Flame_Builder_Node extends Node {
 		// debug_state on flame-builder surfaces every fire.
 		$this->set_state(
 			'AUTO_TUNE_FIRED',
-			[ 'key' => $key, 'count' => \count( $items ) ]
+			\implode( ' ', [ 'KEY', $key, 'COUNT', \count( $items ) ] )
 		);
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;

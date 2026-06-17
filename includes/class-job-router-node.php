@@ -107,14 +107,14 @@ class Job_Router_Node extends Node {
 		$handler     = (string) $raw_handler;
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
 			Core::print_less_often( "JobRouter: invalid handler name: $handler" );
-			$this->set_state( 'DROPPED', [ 'reason' => 'invalid_handler', 'handler' => $handler ] );
+			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'invalid_handler', 'HANDLER', $handler ] ) );
 			return;
 		}
 
 		$parameters = $body['parameters'] ?? [];
 		if ( ! \is_array( $parameters ) ) {
 			Core::print_less_often( "JobRouter: $handler has non-array parameters; dropping" );
-			$this->set_state( 'DROPPED', [ 'reason' => 'non_array_params', 'handler' => $handler ] );
+			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'non_array_params', 'HANDLER', $handler ] ) );
 			return;
 		}
 
@@ -132,7 +132,7 @@ class Job_Router_Node extends Node {
 			Core::print_less_often( "JobRouter: $handler entry exceeds MAX_JOB_SIZE; dropping" );
 			$this->set_state(
 				'DROPPED',
-				[ 'reason' => 'oversize', 'handler' => $handler, 'size' => \strlen( $encoded ) ]
+				\implode( ' ', [ 'REASON', 'OVERSIZE', 'HANDLER', $handler, 'SIZE', \strlen( $encoded ) ] )
 			);
 			return;
 		}
