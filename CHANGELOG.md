@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-06-17
+
 ### Changed
 
+- **Clarified the in-line state-logging format in `Flame_Builder_Node`, `Job_Router_Node`, and `Remote_Source_Node`** for readability; no behavior change.
 - **`Remote_Source`, `Request_Builder`, and `Stream_Merger` `arguments()` now delegate to the substrate's centralized `parse_schema_args()`** (no per-node empty-string short-circuit), following the newspack-nodes ADR-11 revision where a missing token takes the arg's schema `default` or throws if `required`. Behavior is unchanged for these nodes — they construct with their declared tokens (`Remote_Source`'s `server_id`/`url` stay `required`).
 
 - **Register the firehose/jobintake producers via the substrate's new `newspack_nodes/registered_log_producers` filter.** Replaces the removed `newspack_nodes/expected_log_basenames` filter: ELN now contributes its request-scope producer basenames (`firehose`, `jobintake`) to the producer set the rewritten log GC expands (× config `num_partitions`) into protected `logs/{producer}.p{N}/` dirs, keeping those request-scope logs (declared in no `.tsl`) safe from garbage collection. Requires newspack-nodes with the segmented-I/O P3 log-GC rewrite.
