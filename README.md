@@ -1,6 +1,6 @@
 # Newspack Event Logger Nodes
 
-Application built on the [`newspack-nodes`](https://github.com/Automattic/newspack-nodes) runtime. Replaces the 10-plugin `newspack-event-logger-plugins` monorepo: high-throughput WordPress request lifecycle logging, real-time SSE streaming, flame graph generation, and hub/spoke aggregation across multiple sites.
+Application built on the [`newspack-nodes`](https://github.com/Automattic/newspack-nodes) runtime. It replaced the legacy `newspack-event-logger-plugins` monorepo: high-throughput WordPress request lifecycle logging, real-time SSE streaming, flame graph generation, and hub/spoke aggregation across multiple sites.
 
 ## Relation to newspack-nodes
 
@@ -62,11 +62,11 @@ Every dashboard sends TM_COMMAND envelopes to a service CI via the substrate's s
 | **Aggregator Admin (hub-only)** | `aggregator.{status, health, servers}`, `servers.{list, get, add, update, delete, test}` | — | `Server_Registry` + `Stream_Merger_Node` per-remote state |
 | **Status probe** | `status.get` | — | Version, partitions, active topologies, cache reachability |
 
-For the full per-CI verb tables and TM_COMMAND envelope shape, see [API.md](API.md).
+For the full per-CI verb tables and TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
 
 ## Topologies
 
-Per-partition node graphs ship as declarative `.tsl` files in `topologies/`: `aggregator.tsl`, `request-builder.tsl`, `job-router.tsl`, `flame-builder.tsl`, `combined.tsl`, and `performance.tsl` (plus the substrate's runtime-only `firehose` / `jobintake` basenames). Which topologies are active is the substrate's `topologies` config key. Hub vs spoke is the `enable_aggregator` switch: a spoke runs the request/job/flame graphs locally, while a hub additionally runs `aggregator.tsl` (the `Stream_Merger_Node` pull-side). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full per-topology breakdown and hub/spoke flow.
+Per-partition node graphs ship as declarative `.tsl` files in `topologies/`: `aggregator.tsl`, `request-builder.tsl`, `job-router.tsl`, `flame-builder.tsl`, `combined.tsl`, and `performance.tsl` (plus the substrate's runtime-only `firehose` / `jobintake` basenames). Which topologies are active is the substrate's `topologies` config key. Hub vs spoke is the `enable_aggregator` switch: a spoke runs the request/job/flame graphs locally, while a hub additionally runs `aggregator.tsl` (the `Stream_Merger_Node` pull-side). See [docs/architecture-guide.md](docs/architecture-guide.md) for the full per-topology breakdown and hub/spoke flow.
 
 ## Cache Warmer (moved)
 
@@ -78,7 +78,7 @@ As of 0.13.0 the settings layer is built on the substrate's shared Config System
 
 ## Migration from Newspack Event Logger Plugins
 
-The 10-plugin monorepo (`newspack-event-logger-plugins`) is being replaced wholesale — no shadow mode or dual emission. The two stacks can coexist on the same site during cutover: legacy writes to `/volumes/pyrobase/tmp/event-logger`, this plugin defaults to `/tmp/newspack-nodes`, and the WP-CLI verbs are distinct (`wp eventlog reqgrep` vs `wp nodes reqgrep`).
+The legacy `newspack-event-logger-plugins` monorepo was replaced wholesale by this plugin (application) plus `newspack-nodes` (substrate). That monorepo has since been removed from the tree ("the museum") — there is no live coexisting stack. This plugin defaults its storage to `/tmp/newspack-nodes` and exposes `wp nodes reqgrep` for firehose searching.
 
 ## License
 
@@ -86,4 +86,4 @@ GPL-2.0-or-later
 
 ## Status
 
-v0.13.x. The dashboard consolidation (per-dashboard SSE controllers → single substrate `/messages/stream`) and the controller→CI migration are complete; all dashboards ride the substrate's `_http` / `_sse` / `_heartbeat` spine with a canonical view contract (pending-Map gate, TM_ERROR isolation, `_errorMessage()` helper). Post-0.8 work includes the refresh-ahead cache warmer (0.11.0; extracted to the standalone `newspack-cache-cozy` plugin in 0.15.0), the `Job_Worker_Node` executor moving to the substrate (0.12.0), and the migration onto the substrate's shared Config System (0.13.0). The `status.get` verb reports both the application `version` and the substrate `runtime_version`. See `CHANGELOG.md` for the version-by-version history.
+v0.18.x. The dashboard consolidation (per-dashboard SSE controllers → single substrate `/messages/stream`) and the controller→CI migration are complete; all dashboards ride the substrate's `_http` / `_sse` / `_heartbeat` spine with a canonical view contract (pending-Map gate, TM_ERROR isolation, `_errorMessage()` helper). Post-0.8 milestones: `Job_Worker_Node` executor moving to the substrate (0.12.0), migration onto the substrate's shared Config System (0.13.0), the refresh-ahead cache warmer extracted to the standalone `newspack-cache-cozy` plugin (0.15.0), `Request_Builder_Node` becoming a `Timer_Node` plus `void_warranty` lock-free output partitions (0.16.0), the jobs-log kind field normalized to `k` end-to-end (0.16.1), per-worker-URL stats rows fully excluded from global aggregates (0.17.0), and adoption of the substrate's flat partition-in-name layout plus `parse_schema_args` delegation (0.18.0). The `status.get` verb reports both the application `version` and the substrate `runtime_version`. See `CHANGELOG.md` for the version-by-version history.

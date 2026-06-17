@@ -1,6 +1,6 @@
 # AGENTS.md — Newspack Event Logger Nodes
 
-WordPress plugin: the application layer of the new event-logger. Replaces the legacy 10-plugin `newspack-event-logger-plugins` monorepo with two plugins — this one (application) and `newspack-nodes` (runtime substrate). High-throughput request-lifecycle logging, real-time SSE streaming, flame-graph generation, hub/spoke aggregation — expressed as Nodes.
+WordPress plugin: the application layer of the new event-logger. It replaced the legacy `newspack-event-logger-plugins` monorepo with two plugins — this one (application) and `newspack-nodes` (runtime substrate). High-throughput request-lifecycle logging, real-time SSE streaming, flame-graph generation, hub/spoke aggregation — expressed as Nodes.
 
 This plugin owns: `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Job_Intake`, `Stream_Merger_Node`, `Remote_Source_Node`, `Stats_Store`, `Server_Registry`, `Settings_Sync`, `Remote_Manager`, the `App\*_CI_Node` service CIs, React dashboards, topology files. (`Job_Worker_Node` moved to the `newspack-nodes` substrate; this plugin keeps only the job request-context glue — `Log_Manager::begin/end_job_context`, hooked onto the substrate's `newspack_nodes/job_worker/{before,after}_job` actions.) (Node subclasses carry a `_Node` suffix; helpers like `Log_Manager` / `Stats_Store` / `Server_Registry` don't.) Depends on `newspack-nodes` for everything substrate-level. Caching is the single shared `\Newspack_Nodes\Core::$memd` handle (a raw `\Memcached` built once by the substrate's `\Newspack_Nodes\Bootstrap::init_memcached()` from `memcache_servers`); this plugin only reads it — there is no plugin-local cache class.
 
@@ -120,7 +120,7 @@ These are intentional. Don't "fix" them.
 
 | Path | What |
 |------|------|
-| `newspack-event-logger-nodes.php` | Plugin entry; deferred loader (`class_exists` substrate-presence-gated); `register_namespace` for node-class resolution; service-CI mount on `request_graph_ready`; stock-topology dir registration |
+| `newspack-event-logger-nodes.php` | Plugin entry; deferred loader (`class_exists` substrate-presence-gated); `Topology_Registry::register_plugin()` registers the top-level `Newspack_Event_Logger_Nodes\` prefix for node-class resolution + the stock-topology dir; `register_namespace` registers only the `App\` service-CI sub-namespace; service-CI mount on `request_graph_ready` |
 | `includes/class-settings-schema.php` | `Settings_Schema` — the single declarative Field/Schema source (one `Field` per setting) from which Config overlay keys, the admin register/render loop, and worker-restart classification all derive (replaced three parallel hand-maintained arrays in v0.13.0) |
 | `newspack-event-logger-nodes-config.php` | Application config (log filters, hooks to instrument, hub/spoke settings). The active `.tsl` topology list moved to the substrate's `topologies` key in v0.5.0 |
 | `includes/class-config.php` | Application config loader (substrate keys live in `newspack-nodes`) |
@@ -147,7 +147,6 @@ These are mistakes that have actually happened. Pay attention.
 
 - **`enable_workers` was retired.** The aggregator-mode gate is `enable_aggregator` (typed bool via Config sanitization, default OFF). Settings_Sync itself is ungated — without an aggregator topology + remotes, the queued `remote_manager` job is a silent no-op.
 - **PIPE_BUF (4096 bytes) for firehose writes.** `Log_Manager::message()` enforces `MAX_DATA_SIZE = 3840` on the JSON-encoded data: oversize payloads get an `error_log` notice, `" (truncated)"` appended to the category, and the data replaced with a 1000-char excerpt (`['m' => substr(...) . '...']`) — the payload is lost, not chunked. Anything that might exceed (job payloads with serialized option blobs, image-handler args, full `Settings_Sync` sweeps) MUST use `Job_Intake::queue()` (locked, `MAX_JOB_SIZE` 10MB).
-- **`outputs` (plural), not `output`.** Log reader registration uses `outputs` array. Singular is silent failure.
 - **Hub vs spoke routing.** Nodes only ever write `k:"job"`. Every node's `Job_Worker_Node` dispatches its own `job` entries against `newspack_nodes/job_handlers`. On the hub, `Stream_Merger_Node`'s `newspack_nodes/aggregator_ingest_line` filter rewrites incoming spoke lines to `k:"remote_job"`; the hub's `Job_Worker_Node` dispatches those against `newspack_nodes/remote_job_handlers`. The two filters are independent — a job type registers under whichever side(s) should handle it (local on every node, hub-aggregated, or both).
 - **One shared `Core::$memd` handle — read it, don't build your own.** Caching is the single `\Newspack_Nodes\Core::$memd` (`\Memcached`), built once at boot by the substrate's `\Newspack_Nodes\Bootstrap::init_memcached()` from its `memcache_servers` config (defaults to `127.0.0.1:11211`). Consumers (`Stats_Store`, the service CIs) read `Core::$memd` directly with null-safe `Core::$memd?->...`; don't hardcode server lists or new up a second connection.
 - **Tests set `Core::$memd` to an in-memory `\Memcached` double.** There is no `Cache_Interface` / `Memcached_Cache` to inject — the substrate ships an in-memory `\Memcached` double (`tests/Helpers/InMemoryMemcached.php`) that tests assign to `Core::$memd` in setUp. New cache call-sites read `Core::$memd`; nothing should type-hint a cache interface.
@@ -170,8 +169,8 @@ These are mistakes that have actually happened. Pay attention.
 
 ## References
 
-- **Architecture**: `ARCHITECTURE.md` (application design, topologies, hub/spoke flow, memcache schema)
-- **API**: `API.md` (REST endpoint reference)
-- **Migration**: cutover from the legacy `newspack-event-logger-plugins` monorepo is summarized in `README.md`; the legacy stack writes to `/volumes/pyrobase/tmp/event-logger`, this plugin defaults to `/tmp/newspack-nodes`, and the WP-CLI verbs are distinct (`wp eventlog reqgrep` vs `wp nodes reqgrep`), so the two coexist by isolating their storage.
+- **Architecture**: `docs/architecture-guide.md` (application design, topologies, hub/spoke flow, memcache schema)
+- **API**: `docs/API.md` (REST endpoint reference)
+- **Migration**: this plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesale (summarized in `README.md`). That monorepo has since been removed from the tree ("the museum") — there is no live coexisting stack; this plugin is the sole event-logger application and defaults its storage to `/tmp/newspack-nodes`.
 - **Runtime**: `../newspack-nodes/` — substrate this plugin depends on
 - **Config System** (v0.13.0 migration): the settings layer now builds on the substrate's `Newspack_Nodes\Config_System\{Field, Schema, Settings_Renderer, Options_Overlay, Reset_Gate}` classes — `Settings_Schema` declares the Fields; the renderer + overlay + reset-gate are substrate-owned. The former local `src/admin-field-reset/` JS module and its `sync-shared.sh` copy were removed in favor of the substrate's `@newspack-nodes/shared` build aliases (resolved in `scripts/build.mjs`).
