@@ -32,7 +32,7 @@ class JobWorkerContextWiringTest extends TestCase {
 
 		$jw   = new Job_Worker_Node();
 		$seen = null;
-		$jw->register_handler( 'h', function () use ( &$seen ) { $seen = $_SERVER['REQUEST_URI']; } );
+		$this->register_job_handler( $jw, 'h', function () use ( &$seen ) { $seen = $_SERVER['REQUEST_URI']; } );
 
 		$message = $this->job_message( 'h' );
 		$jw->fill( $message );
@@ -45,7 +45,7 @@ class JobWorkerContextWiringTest extends TestCase {
 		$_SERVER['REQUEST_URI'] = '/outer';
 
 		$jw = new Job_Worker_Node();
-		$jw->register_handler( 'boom', function () { throw new \RuntimeException( 'x' ); } );
+		$this->register_job_handler( $jw, 'boom', function () { throw new \RuntimeException( 'x' ); } );
 
 		$message = $this->job_message( 'boom' );
 		$jw->fill( $message ); // swallowed
