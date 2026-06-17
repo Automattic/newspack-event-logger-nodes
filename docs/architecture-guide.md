@@ -408,7 +408,7 @@ Validation:
 
 Unknown handlers, oversized lines, and invalid handler names log via `Core::print_less_often` (rate-limited).
 
-Job_Worker_Node (downstream) reads `jobs.log` and looks up the handler in `newspack_nodes/job_handlers` (kind=job) or `newspack_nodes/remote_job_handlers` (kind=remote_job) via `load_handlers_from_filters()` at topology bootstrap. Handlers can also be registered programmatically with `Job_Worker_Node::set_local_handler()` / `set_remote_handler()`.
+Job_Worker_Node (downstream) reads `jobs.log` and looks up the handler in `newspack_nodes/job_handlers` (kind=job) or `newspack_nodes/remote_job_handlers` (kind=remote_job) via `load_handlers_from_filters()`, which the worker calls in its constructor at topology bootstrap. Registration is filter-only; there are no programmatic setter methods.
 
 ### Job_Worker_Node
 
