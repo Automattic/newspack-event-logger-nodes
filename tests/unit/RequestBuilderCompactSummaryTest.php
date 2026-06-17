@@ -152,7 +152,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$rb->sink( $this->capture_sink( $captured ) );
 
 		// Invoke set_completed_target via the interpreter verb (not the direct setter).
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
 
@@ -179,7 +179,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
 
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
 		$verbs['set_completed_target']( $interpreter, '' );  // clear
@@ -204,7 +204,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 	public function test_dump_config_round_trips_configured_state(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
-		$interpreter    = $rb->interpreter();
+		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
 		$verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' );

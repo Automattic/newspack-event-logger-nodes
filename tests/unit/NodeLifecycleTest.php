@@ -60,19 +60,17 @@ class NodeLifecycleTest extends TestCase {
 		$node = $factory();
 		$weak = \WeakReference::create( $node );
 
-		// remove_node cascades sibling-interpreter cleanup + close_handle + (for
-		// Timer-bearing subclasses) stop_timer deferred onto Core's
-		// closing queue. run_closing drains the queue → EventFramework
-		// $timers drops its back-ref. unset releases the last local
-		// ref → refcount=0 → __destruct fires synchronously.
+		// remove_node cascades sibling-interpreter cleanup + close_handle +
+		// (for Timer-bearing subclasses) synchronous stop_timer, so the
+		// EventFramework $timers back-ref drops immediately. unset releases
+		// the last local ref → refcount=0 → __destruct fires synchronously.
 		$node->remove_node();
-		Core::run_closing();
 		$node = null;
 		\gc_collect_cycles();
 
 		$this->assertNull(
 			$weak->get(),
-			'Node must reach refcount=0 after remove_node() + Core::run_closing() + unset()'
+			'Node must reach refcount=0 after remove_node() + unset()'
 		);
 	}
 

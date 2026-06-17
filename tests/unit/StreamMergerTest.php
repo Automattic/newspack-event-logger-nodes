@@ -1863,15 +1863,15 @@ class StreamMergerTest extends TestCase {
 		$sm = new Stream_Merger_Node();
 		$sm->name( 'sm' );
 		$sm->arguments( 'firehose' );
-		$this->assertNotNull( $sm->interpreter() );
-		$this->assertSame( 'sm:config', $sm->interpreter()->name() );
+		$this->assertNotNull( $this->read_private( $sm, 'interpreter' ) );
+		$this->assertSame( 'sm:config', $this->read_private( $sm, 'interpreter' )->name() );
 	}
 
 	public function test_stream_merger_set_verify_ssl_verb_round_trips(): void {
 		$sm = new Stream_Merger_Node();
 		$sm->name( 'sm' );
 		$sm->arguments( 'firehose' );
-		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_verify_ssl', 'false' ) );
+		$this->assertSame( 'ok', $this->read_private( $sm, 'interpreter' )->dispatch( 'set_verify_ssl', 'false' ) );
 		$dump = $sm->dump_config();
 		$this->assertStringContainsString( 'cmd sm:config set_verify_ssl false', $dump );
 	}
@@ -1881,7 +1881,7 @@ class StreamMergerTest extends TestCase {
 		$sm->name( 'sm' );
 		$sm->arguments( 'firehose' );
 		// Default is true; dump_config emits only the non-default (false) value.
-		$this->assertSame( 'ok', $sm->interpreter()->dispatch( 'set_require_https', 'false' ) );
+		$this->assertSame( 'ok', $this->read_private( $sm, 'interpreter' )->dispatch( 'set_require_https', 'false' ) );
 		$dump = $sm->dump_config();
 		$this->assertStringContainsString( 'cmd sm:config set_require_https false', $dump );
 	}
@@ -2556,7 +2556,7 @@ class StreamMergerTest extends TestCase {
 
 	public function test_set_verify_ssl_verb_closure_dispatches_to_patron(): void {
 		$sm = $this->make_merger();
-		$interpreter = $sm->interpreter();
+		$interpreter = $this->read_private( $sm, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
 
@@ -2579,7 +2579,7 @@ class StreamMergerTest extends TestCase {
 		$sm = new Stream_Merger_Node();
 		$sm->name( 'sm-require-https' );
 		$sm->arguments( 'firehose 0' );
-		$interpreter = $sm->interpreter();
+		$interpreter = $this->read_private( $sm, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_require_https', $verbs );
 
@@ -2638,7 +2638,7 @@ class StreamMergerTest extends TestCase {
 		$sm = new Stream_Merger_Node();
 		$sm->name( 'sm-verb-table' );
 		$sm->arguments( 'firehose 0' );
-		$verbs = $sm->interpreter()->commands();
+		$verbs = $this->read_private( $sm, 'interpreter' )->commands();
 		$this->assertArrayHasKey( 'set_verify_ssl', $verbs );
 		$this->assertArrayHasKey( 'set_require_https', $verbs );
 		$this->assertArrayNotHasKey( 'load_remotes_from_registry', $verbs );

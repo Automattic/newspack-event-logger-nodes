@@ -70,7 +70,7 @@ class HealthCheckTickTest extends TestCase {
 		// sibling :config interpreter.
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
-		$this->assertNull( $h->interpreter() );
+		$this->assertNull( $this->read_private( $h, 'interpreter' ) );
 	}
 
 	public function test_health_check_tick_starts_periodic_tick_from_lifecycle(): void {
