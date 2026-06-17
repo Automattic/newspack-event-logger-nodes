@@ -127,7 +127,7 @@ tests/run-coverage.sh
 
 ### Phase 4: Reload running workers
 
-Workers cache loaded classes for the duration of their process lifetime (~595s default). After deploying new code, restart the relevant worker groups so the new bytecode lands:
+Workers cache loaded classes for the duration of their process lifetime (~10 min, substrate-controlled). After deploying new code, restart the relevant worker groups so the new bytecode lands:
 
 ```bash
 # Restart all worker types in one shot.
@@ -167,7 +167,6 @@ For job handler changes: queue a job (via the legitimate caller), wait, check `w
 ## Patterns That Trip People Up
 
 - **Hub vs spoke**: `enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Typed bool in the Config schema, persisted by `register_setting` as `0`/`1`, default OFF — fresh installs are spokes/standalone; hubs opt in explicitly by checking the box in Event Logger Settings → Remote Servers. Read with a truthy check (`! empty( $cfg['enable_aggregator'] )`). Push-side fanout (`Settings_Sync`, `Auto_Tuner_Node`) is ungated; missing consumers are the structural gate. The legacy `enable_workers` toggle was retired in v0.5.0.
-- **`outputs` (plural) for log reader registration**, not `output` (singular). Easy typo, silent failure.
 - **Memcache is required** for the application — Stats_Store (driven by Flame_Builder_Node), SSE slot rate limiting, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards); the SSE slot pool fails closed (429).
 - **Salt rotation orphans keys but doesn't flush them** — workers keep writing to the OLD salt until they respawn. After `Stats_Store::flush_all()`, restart workers to take effect immediately.
 - **Application nodes resolve by namespace prefix** (no registry): `make_node Flame_Builder` (in a `.tsl` topology) → `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` via the registered `Newspack_Event_Logger_Nodes\` prefix. The `.tsl` shell-name is the class minus `_Node` (`make_node Flame_Builder`, `Job_Router`, `Request_Builder`, …).

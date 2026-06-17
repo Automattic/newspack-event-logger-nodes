@@ -164,8 +164,6 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **SettingsSync silently doing nothing.** SettingsSync ITSELF is ungated and always queues a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check whether the hub side actually has an aggregator topology live (`enable_aggregator` truthy in the merged Config, default OFF) and remotes registered. The legacy `enable_workers` toggle was retired in v0.5.0.
 
-**`outputs` log-reader filter array.** Plural, not singular. Singular is silent failure.
-
 **Cache warmer.** The refresh-ahead cache warmer was extracted to its own plugin, `newspack-cache-cozy` (v0.15.0). It no longer lives here — debug it from that plugin's repo.
 
 ## Inspecting on disk

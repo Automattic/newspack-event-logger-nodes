@@ -37,7 +37,7 @@ Content-Type: application/json
 - `KEY` is the verb name on that CI.
 - `VALUE` is the verb arguments (JSON object). The substrate validates each argument against the CI's `node_schema()['commands'][*]['args']` declaration before dispatching.
 
-The reply is a TM_COMMAND-shaped envelope routed back via `TO=FROM` pivot, with the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see ARCHITECTURE.md → "Canonical view contract").
+The reply is a TM_COMMAND-shaped envelope routed back via `TO=FROM` pivot, with the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see architecture-guide.md → "Canonical view contract").
 
 ## Service CIs
 
