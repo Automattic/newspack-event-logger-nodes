@@ -26,6 +26,9 @@ class FullPipelineTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// Job handlers now register through the WP filter; clear filter state so
+		// nothing leaks in from another test class sharing this process.
+		$GLOBALS['_wp_actions'] = [];
 		$this->tmp = $this->make_temp_dir();
 	}
 
@@ -104,7 +107,7 @@ class FullPipelineTest extends TestCase {
 		$job_executions = [];
 		$jw             = new Job_Worker_Node();
 		$jw->name( 'job-worker' );
-		$jw->set_local_handler( 'echo_job', function ( $params ) use ( &$job_executions ) {
+		$this->register_job_handler( $jw, 'echo_job', function ( $params ) use ( &$job_executions ) {
 			$job_executions[] = $params;
 		} );
 
