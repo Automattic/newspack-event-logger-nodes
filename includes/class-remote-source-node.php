@@ -494,7 +494,7 @@ class Remote_Source_Node extends Node {
 		}
 		$this->set_state(
 			'DISCONNECTED',
-			[ 'server' => $this->server_id, 'error' => $this->last_error, 'http' => $http_code ]
+			\implode( ' ', [ 'SERVER', $this->server_id, 'ERROR', $this->last_error, 'HTTP', $http_code ] )
 		);
 
 		$this->detach_handle();
@@ -709,7 +709,7 @@ class Remote_Source_Node extends Node {
 				Core::print_less_often( "RemoteSource[{$this->server_id}]: dropping entry > " . self::MAX_LINE_BYTES . ' bytes' );
 				$this->set_state(
 					'DROPPED',
-					[ 'server' => $this->server_id, 'reason' => 'oversize', 'size' => \strlen( $line ) ]
+					\implode( ' ', [ 'SERVER', $this->server_id, 'REASON', 'OVERSIZE', 'SIZE', \strlen( $line ) ] )
 				);
 				return;
 			}
