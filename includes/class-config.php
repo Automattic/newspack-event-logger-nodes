@@ -256,33 +256,9 @@ class Config {
 	}
 
 	/**
-	 * Ensure a directory path exists and is canonical.
-	 *
-	 * Delegates to the substrate Config so realpath/symlink validation lives
-	 * in one place.
-	 *
-	 * @param string $path Directory path to ensure.
-	 * @return string Validated canonical path.
-	 * @throws \RuntimeException If path cannot be created or is not canonical.
-	 */
-	public static function ensure_path( string $path ): string {
-		return RuntimeConfig::ensure_path( $path );
-	}
-
-	/**
-	 * Get the validated base directory path.
-	 *
-	 * Delegates to the substrate Config — `base_directory` is a substrate key.
-	 *
-	 * @return string Validated absolute path to base directory.
-	 */
-	public static function get_base_directory(): string {
-		return RuntimeConfig::get_base_directory();
-	}
-
-	/**
 	 * Get the logs directory path ({base}/logs).
 	 *
+	 * @api
 	 * @return string Validated absolute path to logs directory.
 	 */
 	public static function get_logs_directory(): string {
@@ -290,7 +266,7 @@ class Config {
 	}
 
 	/**
-	 * Get the locks directory path ({base}/locks).
+	 * @api Get the locks directory path ({base}/locks).
 	 *
 	 * @return string Validated absolute path to locks directory.
 	 */
@@ -299,7 +275,7 @@ class Config {
 	}
 
 	/**
-	 * Get the offsets directory path ({base}/offsets).
+	 * @api Get the offsets directory path ({base}/offsets).
 	 *
 	 * @return string Validated absolute path to offsets directory.
 	 */

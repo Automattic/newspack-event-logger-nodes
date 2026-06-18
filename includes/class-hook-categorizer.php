@@ -313,6 +313,8 @@ class Hook_Categorizer {
 	}
 
 	/**
+	 * @api Used by tests.
+	 *
 	 * Clear cached configuration.
 	 */
 	public static function clear_cache(): void {

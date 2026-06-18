@@ -270,19 +270,4 @@ class AutoTunerTest extends TestCase {
 			$GLOBALS['_wp_options']['newspack_event_logger_nodes_significant_events']
 		);
 	}
-
-	// --- SettingsSync suppression ---------------------------------------------
-
-	public function test_suppresses_settings_sync_during_write(): void {
-		$this->worker_context();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init', 'noisy' ];
-
-		$tuner = new Auto_Tuner_Node();
-		$this->dispatch( $tuner, 'disable_hooks', [ 'noisy' ] );
-
-		$this->assertFalse(
-			Settings_Sync::is_sync_suppressed(),
-			'suppress_sync must be cleared in the finally block after the local update'
-		);
-	}
 }

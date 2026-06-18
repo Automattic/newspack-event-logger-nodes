@@ -41,7 +41,7 @@ use Newspack_Event_Logger_Nodes\Settings_Schema;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\CLI;
-use Newspack_Nodes\Config as Substrate_Config;
+use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Config_System\Settings_Renderer;
@@ -261,23 +261,6 @@ class Admin {
 			'flush_every_line',
 			\__( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' )
 		);
-	}
-
-	/**
-	 * Render the settings page: form + Reset-to-Defaults secondary form.
-	 *
-	 * The reset is in a separate hidden form so cancelling the confirm()
-	 * dialog leaves the main form's pending edits intact. Confirm uses esc_js()
-	 * because `onclick=` runs in JS context.
-	 */
-	/**
-	 * Static shim so the main plugin file can wire `add_submenu_page()` without
-	 * holding an Admin instance reference. Render is stateless — no $this used —
-	 * so a fresh instance is fine. (`new Admin()` is also constructed elsewhere
-	 * for hook registration; the two coexist harmlessly.)
-	 */
-	public static function render_settings_page_static(): void {
-		( new self() )->render_settings_page();
 	}
 
 	public function render_settings_page(): void {
@@ -852,7 +835,7 @@ class Admin {
 		$restarted = 0;
 		try {
 			$workers   = Bootstrap::expand_workers();
-			$base_dir  = Substrate_Config::get_base_directory();
+			$base_dir  = RuntimeConfig::get_base_directory();
 			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
 		} catch ( \Throwable $e ) {
 			// Best-effort: the next supervisor pass picks up the new salt

@@ -63,7 +63,6 @@ class Remote_Source_Node extends Node {
 
 	public const MAX_BUFFER_SIZE = 10485760; // 10MB
 	public const MAX_EVENT_SIZE  = 10485760; // 10MB
-	public const MAX_QUEUE_SIZE  = 10000;
 	public const MAX_LINE_BYTES  = 3900;
 
 	/** Memcache TTL for aggregator status keys (seconds). */
@@ -110,6 +109,8 @@ class Remote_Source_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Store the raw string, parse positional tokens via parse_schema_args()
 	 * (server_id / url / auth_username / auth_password / auth_token / remote_topic /
 	 * partition), then rtrim the URL and clamp partition to >= 0.
@@ -186,16 +187,12 @@ class Remote_Source_Node extends Node {
 		] );
 	}
 
-	// dump_node() secret redaction is handled by the base Node (auth_password / auth_token match its patterns).
-
-	// =========================================================================
-	// Configuration / DI
-	// =========================================================================
-
+	/** @api Used by tests. */
 	public function server_id(): string {
 		return $this->server_id;
 	}
 
+	/** @api Used by tests. */
 	public function url(): string {
 		return $this->url;
 	}
@@ -458,6 +455,8 @@ class Remote_Source_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Called by EventFramework::drain_curl_multi() when curl_multi_info_read
 	 * returns CURLMSG_DONE for this RemoteSource's multi.
 	 * @param array{msg?:int, handle?:\CurlHandle, result?:int} $info
@@ -975,30 +974,37 @@ class Remote_Source_Node extends Node {
 		);
 	}
 
+	/** @api Used by tests. */
 	public function test_get_handle(): ?\CurlHandle {
 		return $this->handle;
 	}
 
+	/** @api Used by tests. */
 	public function get_last_http_code(): ?int {
 		return $this->last_http_code;
 	}
 
+	/** @api Used by tests. */
 	public function get_last_error(): ?string {
 		return $this->last_error;
 	}
 
+	/** @api Used by tests. */
 	public function get_backoff(): int {
 		return $this->current_backoff;
 	}
 
+	/** @api Used by tests. */
 	public function get_slot(): ?int {
 		return $this->slot;
 	}
 
+	/** @api Used by tests. */
 	public function is_connected(): bool {
 		return $this->connected;
 	}
 
+	/** @api Used by substrate. */
 	public function remove_node(): void {
 		$this->disconnect();
 		$multi = $this->multi;

@@ -25,7 +25,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Flame_Builder_Node extends Node {
 	use \Newspack_Nodes\Schema_Reflection;
 
-	const EMA_SAMPLE_LIMIT   = 1000;
 	const FLUSH_INTERVAL_SEC = 5;
 
 	/** Security limits for recursion and unbounded growth. */
@@ -135,6 +134,7 @@ class Flame_Builder_Node extends Node {
 	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
 	private ?Auto_Tuner_Node $auto_tuner = null;
 
+	/** @api Used by substrate */
 	public function __construct() {
 		$this->stats_cache     = new LRU_Cache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
 		$this->last_flush_time = \microtime( true );
@@ -1720,6 +1720,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
 	 * alongside the base's own-name + `:config` checks. Chains parent::.
 	 */
@@ -1731,6 +1733,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Track the owned auto-tuner sibling as `{name}:auto-tuner`. Only called from
 	 * name() with a non-empty $name; sibling teardown lives in remove_node().
 	 * Chains parent::.
@@ -1741,6 +1745,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Cascade-remove the owned auto-tuner sibling alongside the patron. Full
 	 * remove_node (not a bare unregister) so the auto-tuner's own `:config`
 	 * interpreter sibling unregisters too and a same-name respawn doesn't collide.
@@ -1754,6 +1760,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Propagate the make_node auto-sink down to the owned auto-tuner sibling so
 	 * it's sunk into _command_interpreter like any other sibling (Rule 2c).
 	 */
@@ -1780,6 +1788,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by tests.
+	 *
 	 * Inject the custom-event-names set.
 	 *
 	 * @param array<int, string> $names
@@ -1815,6 +1825,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by tests.
+	 *
 	 * Replace the clock used for bucket-key derivation (testing seam).
 	 *
 	 * @param (callable(): int)|null $fn
@@ -1824,6 +1836,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by tests.
+	 *
 	 * Accessor for the auto-tune state.
 	 *
 	 * @return array<string, list<string>>
@@ -1837,6 +1851,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Save state for persistence.
 	 *
 	 * @return array<string, mixed>
@@ -1849,6 +1865,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Restore state from save_state().
 	 *
 	 * @param array<string, mixed> $saved
@@ -1865,6 +1883,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
@@ -1885,17 +1905,6 @@ class Flame_Builder_Node extends Node {
 			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
 		}
 		return $out;
-	}
-
-	/**
-	 * Maintenance hook — drives periodic flush even with no inbound traffic.
-	 */
-	public function maintenance(): void {
-		$now = \microtime( true );
-		if ( $now - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
-			$this->flush();
-			$this->last_flush_time = $now;
-		}
 	}
 
 	/**

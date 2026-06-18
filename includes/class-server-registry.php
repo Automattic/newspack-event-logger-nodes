@@ -61,15 +61,6 @@ class Server_Registry {
 	}
 
 	/**
-	 * Get all servers (synonym of get_all() for backwards-compat).
-	 *
-	 * @return array<array-key, array<string, mixed>> Associative array of server_id => config.
-	 */
-	public function get_servers(): array {
-		return $this->get_all();
-	}
-
-	/**
 	 * Get all servers.
 	 *
 	 * Merges config file defaults with WordPress option values.
@@ -178,20 +169,6 @@ class Server_Registry {
 	 */
 	private static function encryption_key(): string {
 		return \sodium_crypto_generichash( \wp_salt( 'auth' ), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
-	}
-
-	/**
-	 * Numeric-keyed list view of get_all().
-	 *
-	 * @return array<int, mixed> Sequential array of server configs (id keyed in field).
-	 */
-	public function list_servers(): array {
-		$out = [];
-		foreach ( $this->get_all() as $id => $cfg ) {
-			$cfg['id'] = $id;
-			$out[]     = $cfg;
-		}
-		return $out;
 	}
 
 	/**
@@ -447,42 +424,6 @@ class Server_Registry {
 				$fieldstr
 			)
 		);
-	}
-
-	/**
-	 * Register a server (full overwrite — same key path as `add()` but allows
-	 * overwriting an existing entry). Mirrors the prototype's `register()`
-	 * verb. Used by callers that don't distinguish add-vs-update at their level.
-	 *
-	 * @param string $id     Server ID.
-	 * @param array<string, mixed>  $config Full server configuration.
-	 */
-	public function register( string $id, array $config ): bool {
-		if ( ! self::is_valid_id( $id ) ) {
-			return false;
-		}
-		$all = $this->get_all();
-		if ( ! isset( $all[ $id ] ) && \count( $all ) >= self::MAX_SERVERS ) {
-			return false;
-		}
-		$validated = $this->validate_config( $config );
-		if ( null === $validated ) {
-			return false;
-		}
-
-		$wp_servers        = $this->get_wp_servers();
-		$wp_servers[ $id ] = $validated;
-
-		self::write_option( $wp_servers );
-		$this->servers = null;
-
-		$verify = $this->get_wp_servers();
-		if ( ! isset( $verify[ $id ] ) ) {
-			return false;
-		}
-
-		$this->audit( 'registered', $id, \array_keys( $validated ) );
-		return true;
 	}
 
 	/**

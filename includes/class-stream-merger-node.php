@@ -39,21 +39,6 @@ class Stream_Merger_Node extends Timer_Node {
 	/** Offsetlog commit cadence. */
 	public const COMMIT_INTERVAL_S = 5;
 
-	// ---- Back-compat constants ---------------------------------------------
-	// Per-remote constants now live on RemoteSource (each child enforces its
-	// own limits). These aliases keep old call sites (tests, callers) working
-	// without rewriting; new code should reference RemoteSource directly.
-	public const INITIAL_BACKOFF    = Remote_Source_Node::INITIAL_BACKOFF;
-	public const MAX_BACKOFF        = Remote_Source_Node::MAX_BACKOFF;
-	public const CONNECT_TIMEOUT    = Remote_Source_Node::CONNECT_TIMEOUT;
-	public const HEARTBEAT_TIMEOUT  = Remote_Source_Node::HEARTBEAT_TIMEOUT;
-	public const HEARTBEAT_INTERVAL = Remote_Source_Node::HEARTBEAT_INTERVAL;
-	public const MAX_BUFFER_SIZE    = Remote_Source_Node::MAX_BUFFER_SIZE;
-	public const MAX_EVENT_SIZE     = Remote_Source_Node::MAX_EVENT_SIZE;
-	public const MAX_QUEUE_SIZE     = Remote_Source_Node::MAX_QUEUE_SIZE;
-	public const MAX_LINE_BYTES     = Remote_Source_Node::MAX_LINE_BYTES;
-	public const STATUS_TTL         = Remote_Source_Node::STATUS_TTL;
-
 	/** @var array<string,Remote_Source_Node> Refs to child RemoteSource nodes, keyed by server_id. */
 	private array $remote_nodes = [];
 
@@ -82,6 +67,8 @@ class Stream_Merger_Node extends Timer_Node {
 	private bool $remotes_loaded = false;
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
 	 * whose override clamps partition to >= 0.
 	 *
@@ -103,6 +90,8 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Store the raw string, parse positional tokens via parse_schema_args()
 	 * (remote_topic and partition), then clamp partition to >= 0.
 	 *
@@ -119,10 +108,6 @@ class Stream_Merger_Node extends Timer_Node {
 		return $args;
 	}
 
-	// =========================================================================
-	// Node interface
-	// =========================================================================
-
 	public function fill( array &$message ): void {
 		if ( null === $this->sink ) {
 			throw new \RuntimeException( 'Stream_Merger::fill requires a wired sink' );
@@ -136,12 +121,7 @@ class Stream_Merger_Node extends Timer_Node {
 		}
 	}
 
-	// =========================================================================
-	// Periodic tick: walk children + commit offsetlog.
-	// =========================================================================
-
-	// fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
-	// each TIMER tick. Drives every remote's poll + the debounced offsetlog commit.
+	/** @api Used by substrate to trigger periodic ticks. */
 	public function fire(): void {
 		foreach ( $this->remote_nodes as $server_id => $remote ) {
 			if ( '__test__' === $server_id ) {
@@ -265,6 +245,8 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Pre-check the `{name}:health-check` sibling name for collisions before the base
 	 * commits a rename. HealthCheck is application-specific; the parent handles the
 	 * :config interpreter sibling.
@@ -277,6 +259,8 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Override set_sibling_names() so the owned HealthCheckTick sibling tracks
 	 * `{patron_name}:health-check` whenever the patron is named or
 	 * renamed (mirrors FlameBuilder::name()'s AutoTuner cascade)
@@ -287,6 +271,8 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate to remove the node and all its children.
+	 *
 	 * Tear down children imperatively (no patron link, so no auto-cascade).
 	 * RemoteSource children get full remove_node so their cURL multi handles
 	 * unregister from the EventFramework.
@@ -345,10 +331,6 @@ class Stream_Merger_Node extends Timer_Node {
 		);
 	}
 
-	// =========================================================================
-	// Configuration / DI
-	// =========================================================================
-
 	public function set_require_https( bool $require ): void {
 		if ( ! $require && $this->require_https ) {
 			Core::print_less_often( 'StreamMerger: aggregator_require_https=false — SSE traffic permitted on plain HTTP. Credentials WILL travel in cleartext on insecure links.' );
@@ -384,6 +366,8 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Lifecycle hook: once the target is wired (the topology's
 	 * `connect_node stream-merger firehose:topic` line), load the registry
 	 * remotes once. Guarded so a later re-connect doesn't re-load.
@@ -397,7 +381,7 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * @api Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default (both default true), for dump_config introspection (REPL/GUI).
 	 */
@@ -431,58 +415,43 @@ class Stream_Merger_Node extends Timer_Node {
 		}
 	}
 
-	// =========================================================================
-	// RemoteSource lifecycle
-	// =========================================================================
-
 	/**
 	 * Add a remote SSE source.
 	 *
-	 * Two-arg shape (back-compat with prototype tests):
-	 *   add_remote( $server_id, $url, $token = '' )
-	 *
-	 * Single-arg shape (production, registry-driven):
 	 *   add_remote( $server_id ) -> reads { url, auth_username, auth_password, enabled }
 	 *   from ServerRegistry. Skips if entry missing or disabled.
 	 *
-	 * Either way, instantiates a RemoteSource child, restores its position
+	 * Instantiates a RemoteSource child, restores its position
 	 * from the shared offsetlog, registers it in Core::$nodes_by_name so it
 	 * appears in the topology console, and asks it to connect.
 	 *
 	 * @param string $server_id    Identifier — also the offsetlog key + memcache key fragment.
-	 * @param string $url          Base URL (no trailing slash). Empty -> registry lookup.
-	 * @param string $auth_token   Bearer fallback for compat. Ignored when Basic creds are set.
 	 */
-	public function add_remote( string $server_id, string $url = '', string $auth_token = '' ): void {
-		$auth_username = '';
-		$auth_password = '';
-
+	public function add_remote( string $server_id ): void {
+		$registry = new Server_Registry();
+		$entry    = $registry->get( $server_id );
+		if ( null === $entry ) {
+			Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
+			return;
+		}
+		if ( isset( $entry['enabled'] ) && false === $entry['enabled'] ) {
+			return;
+		}
+		/** @var int|float|string|bool|null $raw_url */
+		$raw_url = $entry['url'] ?? '';
+		/** @var int|float|string|bool|null $raw_username */
+		$raw_username = $entry['auth_username'] ?? '';
+		/** @var int|float|string|bool|null $raw_password */
+		$raw_password = $entry['auth_password'] ?? '';
+		/** @var int|float|string|bool|null $raw_token */
+		$raw_token     = $entry['token'] ?? '';
+		$url           = (string) $raw_url;
+		$auth_username = (string) $raw_username;
+		$auth_password = (string) $raw_password;
+		$auth_token    = (string) $raw_token;
 		if ( '' === $url ) {
-			$registry = new Server_Registry();
-			$entry    = $registry->get( $server_id );
-			if ( null === $entry ) {
-				Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
-				return;
-			}
-			if ( isset( $entry['enabled'] ) && false === $entry['enabled'] ) {
-				return;
-			}
-			/** @var int|float|string|bool|null $raw_url */
-			$raw_url = $entry['url'] ?? '';
-			/** @var int|float|string|bool|null $raw_username */
-			$raw_username = $entry['auth_username'] ?? '';
-			/** @var int|float|string|bool|null $raw_password */
-			$raw_password = $entry['auth_password'] ?? '';
-			/** @var int|float|string|bool|null $raw_token */
-			$raw_token     = $entry['token'] ?? $auth_token;
-			$url           = (string) $raw_url;
-			$auth_username = (string) $raw_username;
-			$auth_password = (string) $raw_password;
-			$auth_token    = (string) $raw_token;
-			if ( '' === $url ) {
-				Core::print_less_often( "StreamMerger::add_remote: missing URL for {$server_id}" );
-				return;
-			}
+			Core::print_less_often( "StreamMerger::add_remote: missing URL for {$server_id}" );
+			return;
 		}
 
 		// HTTPS guard before construction so a bad entry never produces a node.
@@ -528,31 +497,10 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * Remove a remote — closes its handle, unregisters it from Core, drops the ref.
+	 * @api Used by tests.
+	 *
+	 * @return array<string, Remote_Source_Node> Child remote-source nodes, keyed by remote id.
 	 */
-	public function remove_remote( string $server_id ): void {
-		if ( ! isset( $this->remote_nodes[ $server_id ] ) ) {
-			return;
-		}
-		$this->remote_nodes[ $server_id ]->remove_node();
-		unset( $this->remote_nodes[ $server_id ] );
-	}
-
-	public function remote_count(): int {
-		return \count( $this->remote_nodes );
-	}
-
-	public function active_count(): int {
-		$n = 0;
-		foreach ( $this->remote_nodes as $remote ) {
-			if ( $remote->is_connected() ) {
-				++$n;
-			}
-		}
-		return $n;
-	}
-
-	/** @return array<string, Remote_Source_Node> Child remote-source nodes, keyed by remote id. */
 	public function remote_nodes(): array {
 		return $this->remote_nodes;
 	}
@@ -562,34 +510,35 @@ class Stream_Merger_Node extends Timer_Node {
 		return $prefix . ':remote:' . $server_id;
 	}
 
-	// =========================================================================
-	// Test inspectors (delegate to child RemoteSource)
-	// =========================================================================
-
+	/** @api Used by tests. */
 	public function test_get_handle( string $server_id ): ?\CurlHandle {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->test_get_handle()
 			: null;
 	}
 
+	/** @api Used by tests. */
 	public function get_last_http_code( string $server_id ): ?int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_last_http_code()
 			: null;
 	}
 
+	/** @api Used by tests. */
 	public function get_last_error( string $server_id ): ?string {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_last_error()
 			: null;
 	}
 
+	/** @api Used by tests. */
 	public function get_backoff( string $server_id ): int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_backoff()
 			: Remote_Source_Node::INITIAL_BACKOFF;
 	}
 
+	/** @api Used by tests. */
 	public function get_slot( string $server_id ): ?int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_slot()
@@ -597,67 +546,14 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by tests.
+	 *
 	 * @return array<string, mixed>
 	 */
 	public function get_position( string $server_id ): array {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->position()
 			: [ 'segment_id' => 0, 'offset' => 0 ];
-	}
-
-	/**
-	 * Back-compat: tests look up a RemoteSource by its cURL handle and drive
-	 * its WRITEFUNCTION-equivalent here. Production no longer routes through
-	 * StreamMerger — EventFramework dispatches cURL completions directly to
-	 * each RemoteSource's owned multi handle.
-	 */
-	public function on_curl_data( \CurlHandle $handle, string $bytes ): int {
-		foreach ( $this->remote_nodes as $remote ) {
-			if ( $remote->test_get_handle() === $handle ) {
-				return $remote->on_curl_data( $handle, $bytes );
-			}
-		}
-		return \strlen( $bytes );
-	}
-
-	/**
-	 * Back-compat: same lookup-by-handle pattern as on_curl_data.
-	 * @param array{msg?: int, handle?: \CurlHandle, result?: int} $info
-	 */
-	public function on_curl_message( array $info ): void {
-		$handle = $info['handle'] ?? null;
-		if ( ! ( $handle instanceof \CurlHandle ) ) {
-			return;
-		}
-		foreach ( $this->remote_nodes as $remote ) {
-			if ( $remote->test_get_handle() === $handle ) {
-				$remote->on_curl_message( $info );
-				return;
-			}
-		}
-	}
-
-	/**
-	 * Legacy test wrapper: drives an SSE chunk into a synthetic `__test__`
-	 * RemoteSource so prototype-era fixtures keep working without setting up
-	 * a real spoke. Production never calls this path (RemoteSource's own
-	 * on_curl_data is the production entry).
-	 */
-	public function process_sse_chunk( string $chunk ): void {
-		if ( ! isset( $this->remote_nodes['__test__'] ) ) {
-			$remote = new Remote_Source_Node();
-			$remote->configure( '__test__', 'https://__test__/', '', '', '', $this->remote_topic, $this->partition );
-			$remote->set_verify_ssl( $this->verify_ssl );
-			$remote->set_require_https( $this->require_https );
-			if ( null !== $this->sink ) {
-				$remote->sink( $this->sink );
-			}
-			$child_name = $this->namespaced_remote_name( '__test__' );
-			$remote->name( $child_name );
-			\Newspack_Nodes\Core::register_node( $child_name, $remote );
-			$this->remote_nodes['__test__'] = $remote;
-		}
-		$this->remote_nodes['__test__']->process_sse_chunk( $chunk );
 	}
 
 	/**
@@ -706,7 +602,7 @@ class Stream_Merger_Node extends Timer_Node {
 		);
 	}
 
-	/** @api Used by the substrate to provide UI etc. */
+	/** @api Used by substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',

@@ -470,24 +470,21 @@ Stream_Merger_Node does NOT perform the `k:"job"` -> `k:"remote_job"` rewrite it
 
 There is no longer a separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed in the M6 consolidation; `Flame_Builder_Node` is the single stats producer, owning flame generation AND the 9-namespace memcache fan-out via its injected `Stats_Store`. The `flame-builder` (and `performance` / `combined`) topologies wire the store with `cmd flame-builder:config configure_stats <partition>`.
 
-Each completed request bumps the schema across the same dimension set the reader paths whitelist:
+Each completed request is folded into Flame_Builder_Node's in-memory pending stats across the same dimension set the reader paths whitelist:
 
 ```php
-// Inside Flame_Builder_Node, per completed-request flush:
+// Inside Flame_Builder_Node, per completed-request accumulation:
 private const DIM_FIELDS = [
     'status' => 'status_category', 'method' => 'request_method',
     'server' => 'server_name',     'country' => 'country_code',
     'from'   => 'http_from',       'ua'     => 'user_agent',
     'ja4'    => 'ja4_hash',
 ];
-
-$this->store?->bump_url(         $url, $req_time );
-$this->store?->bump_leaderboard( $req_time, $entry['categories'] ?? [] );
-$this->store?->bump_hourly(      $req_time, $entry['peak_mb'] ?? 0 );
-// server, dimensions, url_hash...
 ```
 
-When no `Stats_Store` is configured (`configure_stats` never called — e.g. in unit tests), the `?->` null-safe calls no-op, so the builder still emits flame data without touching memcache.
+On flush, Flame_Builder_Node reads the existing Stats_Store buckets, merges the pending request data into those maps, applies the caps/pruning rules, and writes the whole updated bucket/map back through the explicit `set_*` methods (`set_hourly`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional`, etc.). Stats_Store is storage-only; it does not own per-request aggregation logic.
+
+When no `Stats_Store` is configured (`configure_stats` never called — e.g. in unit tests), the builder still emits flame data without touching memcache.
 
 ## Memcache Schema (9 Namespaces)
 

@@ -226,7 +226,7 @@ class RemoteManagerTest extends TestCase {
 		// Register 3 servers (well under MAX_SERVERS=100, but enough to assert
 		// iteration walks them).
 		for ( $i = 0; $i < 3; $i++ ) {
-			$reg->register(
+			$reg->add(
 				"site-{$i}",
 				[ 'url' => "https://example{$i}.test", 'token' => "t{$i}" ]
 			);
@@ -244,8 +244,8 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sync_setting_with_explicit_server_filter(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'token' => 'x' ] );
-		$reg->register( 'b', [ 'url' => 'https://b.test', 'token' => 'y' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'token' => 'x' ] );
+		$reg->add( 'b', [ 'url' => 'https://b.test', 'token' => 'y' ] );
 
 		// Filtered to one server — wp_remote_* may not exist in tests so this
 		// just asserts the method handles a string array filter.
@@ -258,69 +258,11 @@ class RemoteManagerTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
-	public function test_calculate_lag_returns_zero_for_empty_inputs(): void {
-		$this->assertSame( 0, Remote_Manager::calculate_lag( [], [] ) );
-	}
-
-	public function test_calculate_lag_sums_unread_segment_bytes(): void {
-		// Partition 0 has 3 segments. Cursor sits in segment 1 at offset 50.
-		// Lag = (size_seg1 - 50) + size_seg2.
-		$segments = [
-			0 => [
-				[ 'id' => 'seg0', 'size' => 100 ],
-				[ 'id' => 'seg1', 'size' => 200 ],
-				[ 'id' => 'seg2', 'size' => 300 ],
-			],
-		];
-		$cursor = [
-			0 => [ 'segment_id' => 'seg1', 'offset' => 50 ],
-		];
-		// (200 - 50) + 300 = 450
-		$this->assertSame( 450, Remote_Manager::calculate_lag( $segments, $cursor ) );
-	}
-
-	public function test_calculate_lag_handles_multiple_partitions(): void {
-		$segments = [
-			0 => [ [ 'id' => 'a', 'size' => 100 ] ],
-			1 => [ [ 'id' => 'a', 'size' => 200 ] ],
-		];
-		$cursor = [
-			0 => [ 'segment_id' => 'a', 'offset' => 0 ],
-			1 => [ 'segment_id' => 'a', 'offset' => 50 ],
-		];
-		// 100 + (200-50) = 250
-		$this->assertSame( 250, Remote_Manager::calculate_lag( $segments, $cursor ) );
-	}
-
-	public function test_calculate_lag_treats_unknown_cursor_as_full_lag(): void {
-		// Cursor segment doesn't match any present segment, and cursor is empty
-		// — every segment is "ahead" of the consumer.
-		$segments = [
-			0 => [ [ 'id' => 'a', 'size' => 100 ], [ 'id' => 'b', 'size' => 200 ] ],
-		];
-		$cursor = [
-			0 => [ 'segment_id' => '', 'offset' => 0 ],
-		];
-		$this->assertSame( 300, Remote_Manager::calculate_lag( $segments, $cursor ) );
-	}
-
 	public function test_post_to_server_rejects_disallowed_endpoint(): void {
 		$result = Remote_Manager::post_to_server(
 			[ 'url' => 'https://example.test', 'token' => 'x' ],
 			'/wp-json/wp/v2/posts',
 			[ 'foo' => 'bar' ]
-		);
-		$this->assertTrue(
-			( \is_array( $result ) && isset( $result['error'] ) )
-			|| ( $result instanceof \WP_Error ),
-			'disallowed endpoint must surface as error'
-		);
-	}
-
-	public function test_get_from_server_rejects_disallowed_endpoint(): void {
-		$result = Remote_Manager::get_from_server(
-			[ 'url' => 'https://example.test', 'token' => 'x' ],
-			'/wp-admin/admin-ajax.php'
 		);
 		$this->assertTrue(
 			( \is_array( $result ) && isset( $result['error'] ) )
@@ -343,52 +285,7 @@ class RemoteManagerTest extends TestCase {
 		$this->assertSame( [], $received, 'discovery action fires with empty array when no servers' );
 	}
 
-	public function test_sync_all_settings_caps_at_max_settings(): void {
-		// Filter that returns a huge synced_settings list — sync_all_settings()
-		// must cap at MAX_SETTINGS (50). We verify the iteration cap by counting
-		// invocations from the filter side: we know sync_setting will skip
-		// each entry because the config_key won't exist; but the loop must
-		// still terminate.
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				$out = [];
-				for ( $i = 0; $i < 200; $i++ ) {
-					$out[] = [
-						'local_option'  => "newspack_event_logger_nodes_synthetic_{$i}",
-						'remote_option' => "newspack_event_logger_nodes_synthetic_{$i}",
-						'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
-					];
-				}
-				return $out;
-			}
-		);
-		// Doesn't crash on 200 entries.
-		Remote_Manager::sync_all_settings();
-		$this->assertTrue( true );
-	}
-
-	public function test_sync_all_settings_drops_disallowed_endpoint(): void {
-		// A filter that smuggles a non-allowlisted endpoint must have those
-		// entries dropped during sync_all_settings.
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					[
-						'local_option'  => 'newspack_event_logger_nodes_log_events',
-						'remote_option' => 'newspack_event_logger_nodes_log_events',
-						'endpoint'      => '/wp-json/wp/v2/options',  // disallowed
-					],
-				];
-			}
-		);
-		// Must not throw, must not POST anywhere.
-		Remote_Manager::sync_all_settings();
-		$this->assertTrue( true );
-	}
-
-	// --- post_to_server / get_from_server with allowed endpoint -------------
+	// --- post_to_server with allowed endpoint -------------
 
 	public function test_post_to_server_with_allowed_endpoint_uses_wp_remote_post(): void {
 		// M5.2: POST always lands on /command; body wraps in a TM_COMMAND
@@ -464,26 +361,6 @@ class RemoteManagerTest extends TestCase {
 		$this->assertArrayNotHasKey( 'Authorization', $last['args']['headers'] ?? [] );
 	}
 
-	public function test_get_from_server_uses_wp_remote_get(): void {
-		// Stub returns wp_error by default; just verify the request was
-		// dispatched to the allowed endpoint.
-		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://example.test/wp-json/newspack-nodes/v1/discovery' => [
-				'response' => [ 'code' => 200 ],
-				'body'     => '{}',
-			],
-		];
-
-		$response = Remote_Manager::get_from_server(
-			[ 'url' => 'https://example.test', 'auth_username' => 'a', 'auth_password' => 'b' ],
-			'/wp-json/newspack-nodes/v1/discovery'
-		);
-
-		// Real wp_remote_get is stubbed — returned mocked response.
-		$this->assertIsArray( $response );
-		$this->assertSame( 200, $response['response']['code'] );
-	}
-
 	// --- health_check with mocked spokes ------------------------------------
 
 	public function test_health_check_processes_enabled_servers(): void {
@@ -491,7 +368,7 @@ class RemoteManagerTest extends TestCase {
 		// a valid payload, and verify the discovery action fires with the
 		// validated payload.
 		$reg = new Server_Registry();
-		$reg->register( 'spoke-a', [
+		$reg->add( 'spoke-a', [
 			'url'           => 'https://spoke-a.test',
 			'auth_username' => 'admin',
 			'auth_password' => 'pw',
@@ -535,7 +412,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_health_check_skips_disabled_servers(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'enabled-spoke', [
+		$reg->add( 'enabled-spoke', [
 			'url'           => 'https://enabled.test',
 			'auth_username' => 'a',
 			'auth_password' => 'b',
@@ -558,7 +435,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_health_check_logs_error_on_non_200(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'spoke-err', [
+		$reg->add( 'spoke-err', [
 			'url'           => 'https://spoke-err.test',
 			'auth_username' => 'a',
 			'auth_password' => 'b',
@@ -587,7 +464,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_health_check_handles_invalid_json_response(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'spoke-junk', [
+		$reg->add( 'spoke-junk', [
 			'url'           => 'https://spoke-junk.test',
 			'auth_username' => 'a',
 			'auth_password' => 'b',
@@ -616,7 +493,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_health_check_handles_wp_error_response(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'spoke-network-fail', [
+		$reg->add( 'spoke-network-fail', [
 			'url'           => 'https://spoke-network-fail.test',
 			'auth_username' => 'a',
 			'auth_password' => 'b',
@@ -642,8 +519,8 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sync_setting_dispatches_to_each_enabled_server(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
-		$reg->register( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// Mock both endpoints to return 200.
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -665,8 +542,8 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sync_setting_skips_disabled_server(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'enabled', [ 'url' => 'https://en.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
-		$reg->register( 'disabled', [ 'url' => 'https://dis.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'enabled', [ 'url' => 'https://en.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'disabled', [ 'url' => 'https://dis.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->update( 'disabled', [ 'enabled' => false ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -687,7 +564,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sync_setting_logs_status_on_non_200(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'spoke', [ 'url' => 'https://spoke.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'spoke', [ 'url' => 'https://spoke.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 500 ] ];
 
@@ -705,7 +582,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sync_setting_logs_on_wp_error(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'spoke-fail', [ 'url' => 'https://spoke-fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'spoke-fail', [ 'url' => 'https://spoke-fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// No mock entry — wp_remote_post returns the configured response,
 		// but if we set it to a WP_Error, the wp_error branch is exercised.
@@ -726,7 +603,7 @@ class RemoteManagerTest extends TestCase {
 		// $servers parameter filters; if a filter ID is not in registry it's
 		// skipped without error.
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -750,8 +627,8 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_with_explicit_servers(): void {
 		// Targeted server list: sync_setting sends only to those listed.
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
-		$reg->register( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -776,7 +653,7 @@ class RemoteManagerTest extends TestCase {
 		// If the endpoint param is disallowed, handle_job falls back to
 		// SettingsSync::ENDPOINT (allowed).
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -799,7 +676,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_drops_when_option_empty(): void {
 		// Empty option name → silent return (no fan-out).
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_posts'] = [];
 
@@ -854,7 +731,7 @@ class RemoteManagerTest extends TestCase {
 		// servers param that's a non-array (string, int, bool) is normalized
 		// to null (= all enabled).
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -876,7 +753,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_with_empty_servers_array(): void {
 		// An empty servers array also normalizes to null (= all enabled).
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -898,7 +775,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_filters_non_string_server_ids(): void {
 		// Servers list with mixed types — non-strings are filtered out.
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -988,71 +865,6 @@ class RemoteManagerTest extends TestCase {
 		$this->assertSame( 0, $result );
 	}
 
-	// --- calculate_lag edge cases ------------------------------------------
-
-	public function test_calculate_lag_handles_non_array_segments_per_partition(): void {
-		// Map with a non-array entry must be skipped without crashing.
-		$result = Remote_Manager::calculate_lag(
-			[
-				0 => 'invalid-non-array',
-				1 => [ [ 'id' => 'a', 'size' => 100 ] ],
-			],
-			[
-				1 => [ 'segment_id' => 'a', 'offset' => 0 ],
-			]
-		);
-		$this->assertSame( 100, $result );
-	}
-
-	public function test_calculate_lag_handles_non_array_segment(): void {
-		// Individual non-array segment entries must be skipped.
-		$result = Remote_Manager::calculate_lag(
-			[
-				0 => [
-					'invalid-string',
-					[ 'id' => 'a', 'size' => 50 ],
-				],
-			],
-			[
-				0 => [ 'segment_id' => '', 'offset' => 0 ],
-			]
-		);
-		// Cursor is empty → all segments are ahead → sum the valid one.
-		$this->assertSame( 50, $result );
-	}
-
-	public function test_calculate_lag_with_offset_at_segment_end(): void {
-		// Cursor sits at the very end of segment 0 → 0 lag for that segment,
-		// plus the entire size of segment 1.
-		$result = Remote_Manager::calculate_lag(
-			[
-				0 => [
-					[ 'id' => 'seg0', 'size' => 100 ],
-					[ 'id' => 'seg1', 'size' => 50 ],
-				],
-			],
-			[
-				0 => [ 'segment_id' => 'seg0', 'offset' => 100 ],
-			]
-		);
-		$this->assertSame( 50, $result );
-	}
-
-	public function test_calculate_lag_with_offset_past_segment(): void {
-		// Cursor offset past the segment end → max(0, ...) clamps to 0.
-		$result = Remote_Manager::calculate_lag(
-			[
-				0 => [
-					[ 'id' => 'seg0', 'size' => 100 ],
-				],
-			],
-			[
-				0 => [ 'segment_id' => 'seg0', 'offset' => 999 ],
-			]
-		);
-		$this->assertSame( 0, $result );
-	}
-
 	// --- register_handler with non-array ------------------------------------
 
 	public function test_register_handler_with_string_returns_array(): void {
@@ -1093,102 +905,6 @@ class RemoteManagerTest extends TestCase {
 			'action' => "control\x00chars\nmixed",
 		] );
 		// No crash; default branch logs and returns.
-		$this->assertTrue( true );
-	}
-
-	// --- sync_all_settings dispatching to spokes ----------------------------
-
-	public function test_sync_all_settings_sends_each_present_config_value(): void {
-		// Register a spoke and configure a synced_settings entry with a
-		// resolvable config_key. The full path: sync_all_settings → loops
-		// settings → resolves config_key → sync_setting → POSTs to the spoke.
-		$reg = new Server_Registry();
-		$reg->register( 'spoke', [
-			'url'           => 'https://spoke.test',
-			'auth_username' => 'u',
-			'auth_password' => 'p',
-		] );
-
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] = [ '/foo' ];
-		Config::reset();
-
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					[
-						'local_option'  => 'newspack_event_logger_nodes_log_urls',
-						'remote_option' => 'newspack_event_logger_nodes_log_urls',
-						// log_urls is a perf-tuning option; the matching endpoint
-						// tag routes through Performance_CI.settings_update.
-						'endpoint'      => '/wp-json/newspack-nodes/v1/performance/settings',
-					],
-				];
-			}
-		);
-
-		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
-		$GLOBALS['_wp_test_remote_posts']         = [];
-
-		Remote_Manager::sync_all_settings();
-
-		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertContains( 'https://spoke.test/wp-json/newspack-nodes/v1/command', $urls );
-
-		// Body is a packed Message; the verb arguments carry the resolved
-		// {option, value} pair (perf-tuning key → Performance_CI.settings_update)
-		// as `--option=<opt> --value=<v>` (list values comma-join).
-		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'performance' );
-		$this->assertSame( '--option=newspack_event_logger_nodes_log_urls --value=/foo', $value['arguments'] );
-
-		unset( $GLOBALS['_wp_test_remote_post_response'] );
-	}
-
-	public function test_sync_all_settings_handles_non_array_filter_return(): void {
-		// Filter that returns a non-array → method returns early without crash.
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return 'oops';
-			}
-		);
-
-		Remote_Manager::sync_all_settings();
-		$this->assertTrue( true );
-	}
-
-	public function test_sync_all_settings_skips_non_array_setting_entry(): void {
-		// Mixed entries — non-array entries silently skipped.
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					'string-not-array',
-					[
-						'local_option'  => 'newspack_event_logger_nodes_log_urls',
-						'remote_option' => 'newspack_event_logger_nodes_log_urls',
-						'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
-					],
-				];
-			}
-		);
-
-		// No crash; valid entry is processed.
-		Remote_Manager::sync_all_settings();
-		$this->assertTrue( true );
-	}
-
-	public function test_sync_all_settings_skips_setting_with_empty_local_option(): void {
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					[ 'local_option' => '' ], // empty
-				];
-			}
-		);
-
-		Remote_Manager::sync_all_settings();
 		$this->assertTrue( true );
 	}
 
@@ -1405,7 +1121,7 @@ class RemoteManagerTest extends TestCase {
 		// cap and not POST to all of them.
 		$reg = new Server_Registry();
 		for ( $i = 0; $i < 105; $i++ ) {
-			$reg->register(
+			$reg->add(
 				"site-{$i}",
 				[ 'url' => "https://site{$i}.test", 'auth_username' => 'u', 'auth_password' => 'p' ]
 			);
@@ -1437,7 +1153,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_health_check_caps_at_max_servers(): void {
 		$reg = new Server_Registry();
 		for ( $i = 0; $i < 105; $i++ ) {
-			$reg->register(
+			$reg->add(
 				"hsite-{$i}",
 				[ 'url' => "https://hsite{$i}.test", 'auth_username' => 'u', 'auth_password' => 'p' ]
 			);
@@ -1478,7 +1194,7 @@ class RemoteManagerTest extends TestCase {
 		// envelope's VALUE; check_server must unwrap and validate the same
 		// keys it always did.
 		$reg = new Server_Registry();
-		$reg->register( 'cmd-spoke', [
+		$reg->add( 'cmd-spoke', [
 			'url'           => 'https://cmd-spoke.test',
 			'auth_username' => 'u',
 			'auth_password' => 'p',
@@ -1536,7 +1252,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_check_server_caps_registered_hooks_and_custom_events_at_500(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'fat-spoke', [
+		$reg->add( 'fat-spoke', [
 			'url'           => 'https://fat-spoke.test',
 			'auth_username' => 'u',
 			'auth_password' => 'p',
@@ -1584,7 +1300,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_sync_setting_skips_non_string_server_ids_in_filter(): void {
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -1605,91 +1321,6 @@ class RemoteManagerTest extends TestCase {
 		);
 
 		unset( $GLOBALS['_wp_test_remote_post_response'] );
-	}
-
-	// -------------------------------------------------------------------------
-	// sync_all_settings — name-remapped option from SettingsSync::SYNCED_OPTIONS.
-	// -------------------------------------------------------------------------
-
-	public function test_sync_all_settings_handles_remote_prefix_remap(): void {
-		// `newspack_event_logger_nodes_remote_num_segments` (local) →
-		// `num_segments` (config_key after stripping prefixes) → POST to
-		// remote_option `newspack_nodes_num_segments`. Mirrors what
-		// SettingsSync::register_synced_settings emits.
-		$reg = new Server_Registry();
-		$reg->register( 'spoke', [
-			'url'           => 'https://spoke-remap.test',
-			'auth_username' => 'u',
-			'auth_password' => 'p',
-		] );
-
-		// Configure the local config to have num_segments set.
-		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 42;
-		Config::reset();
-
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					[
-						'local_option'  => 'newspack_event_logger_nodes_remote_num_segments',
-						'remote_option' => 'newspack_nodes_num_segments',
-						'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
-					],
-				];
-			}
-		);
-
-		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
-		$GLOBALS['_wp_test_remote_posts']         = [];
-
-		Remote_Manager::sync_all_settings();
-
-		// At least one POST happened. The substrate-key endpoint maps to
-		// Settings_CI.update, which expects short-name args (no `newspack_nodes_`
-		// prefix). The remap from remote_num_segments → num_segments is the
-		// key assertion here — both the prefix-strip + the local→remote
-		// option name remap have to land for the spoke to apply the change.
-		$this->assertNotEmpty( $GLOBALS['_wp_test_remote_posts'] );
-		$value = self::assert_command_envelope( $GLOBALS['_wp_test_remote_posts'][0]['args']['body'], 'settings' );
-		$this->assertSame( 'update', $value['name'] );
-		// The arguments carry the short-name key `--num_segments=<value>`.
-		// The value is whatever Config::load_config() resolves for num_segments.
-		// (The app config file default wins over the substrate option via the
-		// load_config() array_merge layering, so read it from Config rather than
-		// hard-coding the option value — the remap from remote_num_segments →
-		// num_segments is the key assertion here.)
-		$this->assertSame(
-			'--num_segments=' . Config::load_config()['num_segments'],
-			$value['arguments']
-		);
-
-		unset( $GLOBALS['_wp_test_remote_post_response'] );
-	}
-
-	// -------------------------------------------------------------------------
-	// sync_all_settings — skips entry where config_key resolves to missing.
-	// -------------------------------------------------------------------------
-
-	public function test_sync_all_settings_skips_entry_with_unknown_config_key(): void {
-		// local_option doesn't map to any known config key → silently skipped.
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					[
-						'local_option'  => 'newspack_event_logger_nodes_does_not_exist_xyz',
-						'remote_option' => 'newspack_event_logger_nodes_does_not_exist_xyz',
-						'endpoint'      => '/wp-json/newspack-nodes/v1/settings',
-					],
-				];
-			}
-		);
-
-		$GLOBALS['_wp_test_remote_posts'] = [];
-		Remote_Manager::sync_all_settings();
-		// Nothing posted.
-		$this->assertEmpty( $GLOBALS['_wp_test_remote_posts'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -1803,30 +1434,6 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// get_from_server — verifies the rtrim + URL composition path.
-	// -------------------------------------------------------------------------
-
-	public function test_get_from_server_composes_url_correctly(): void {
-		$GLOBALS['_wp_test_remote_gets'] = [];
-		$GLOBALS['_wp_test_remote_responses'] = [
-			'https://y.test/wp-json/newspack-nodes/v1/discovery' => [
-				'response' => [ 'code' => 200 ],
-				'body'     => '{}',
-			],
-		];
-
-		$response = Remote_Manager::get_from_server(
-			[ 'url' => 'https://y.test/', 'auth_username' => 'u', 'auth_password' => 'p' ],
-			'/wp-json/newspack-nodes/v1/discovery'
-		);
-
-		$this->assertSame( 200, $response['response']['code'] );
-		// Verify the URL passed to wp_remote_get is composed correctly.
-		$urls = \array_column( $GLOBALS['_wp_test_remote_gets'] ?? [], 'url' );
-		$this->assertContains( 'https://y.test/wp-json/newspack-nodes/v1/discovery', $urls );
-	}
-
-	// -------------------------------------------------------------------------
 	// handle_job — sync_setting without queued_at field (skips stale check).
 	// -------------------------------------------------------------------------
 
@@ -1835,7 +1442,7 @@ class RemoteManagerTest extends TestCase {
 		// (queued_at > 0 && now-queued_at > STALE_THRESHOLD) short-circuits.
 		// Sync proceeds normally.
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -1931,8 +1538,8 @@ class RemoteManagerTest extends TestCase {
 		// `false === (bool) $server['enabled']` check skips it. Mirrors what
 		// happens when a fan-out targets a now-disabled spoke.
 		$reg = new Server_Registry();
-		$reg->register( 'enabled-x', [ 'url' => 'https://enabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
-		$reg->register( 'disabled-x', [ 'url' => 'https://disabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'enabled-x', [ 'url' => 'https://enabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'disabled-x', [ 'url' => 'https://disabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->update( 'disabled-x', [ 'enabled' => false ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -1990,7 +1597,7 @@ class RemoteManagerTest extends TestCase {
 		// (no registered_hooks, no custom_events). The validated payload should
 		// contain only `lag`.
 		$reg = new Server_Registry();
-		$reg->register( 'lag-only', [
+		$reg->add( 'lag-only', [
 			'url'           => 'https://lag-only.test',
 			'auth_username' => 'u',
 			'auth_password' => 'p',
@@ -2126,41 +1733,6 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// calculate_lag — cursor missing for a partition with segments.
-	// -------------------------------------------------------------------------
-
-	public function test_calculate_lag_with_missing_cursor_entry_for_partition(): void {
-		// Partition 0 has segments but $cursor doesn't include partition 0 —
-		// `$cur_seg = ''` and `$found_current` stays false; the "all segments
-		// ahead" trailing loop fires.
-		$segments = [
-			0 => [
-				[ 'id' => 'seg0', 'size' => 100 ],
-				[ 'id' => 'seg1', 'size' => 200 ],
-			],
-		];
-		$cursor = []; // no cursor entries at all
-		$this->assertSame( 300, Remote_Manager::calculate_lag( $segments, $cursor ) );
-	}
-
-	public function test_calculate_lag_with_cursor_pointing_to_missing_segment(): void {
-		// Cursor refers to a segment_id that's NOT in the segments list — the
-		// `! $found_current` AND `'' !== $cur_seg` branch is the "consumer is
-		// already past every known segment" case → returns 0 for that partition
-		// (the trailing loop's guard).
-		$segments = [
-			0 => [
-				[ 'id' => 'seg-a', 'size' => 50 ],
-				[ 'id' => 'seg-b', 'size' => 60 ],
-			],
-		];
-		$cursor = [
-			0 => [ 'segment_id' => 'seg-not-here', 'offset' => 0 ],
-		];
-		$this->assertSame( 0, Remote_Manager::calculate_lag( $segments, $cursor ) );
-	}
-
-	// -------------------------------------------------------------------------
 	// sync_setting — non-string entry in $server_ids array param is skipped silently.
 	// -------------------------------------------------------------------------
 
@@ -2168,7 +1740,7 @@ class RemoteManagerTest extends TestCase {
 		// Mixed-type IDs: the inner `is_string($server_id)` guard skips
 		// non-strings without errors. Only the string 'real' makes the cut.
 		$reg = new Server_Registry();
-		$reg->register( 'real', [ 'url' => 'https://real.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'real', [ 'url' => 'https://real.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -2195,7 +1767,7 @@ class RemoteManagerTest extends TestCase {
 		// `servers: [42, true, null]` → array_filter('is_string') yields empty
 		// → normalized to null → falls through to "all enabled".
 		$reg = new Server_Registry();
-		$reg->register( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
@@ -2223,7 +1795,7 @@ class RemoteManagerTest extends TestCase {
 		// post_to_server returns a WP_Error; the wp_error_or_array() branch
 		// flows through log_status('sync_error', $message).
 		$reg = new Server_Registry();
-		$reg->register( 'fail', [ 'url' => 'https://fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
+		$reg->add( 'fail', [ 'url' => 'https://fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// Configure wp_remote_post to return WP_Error.
 		$GLOBALS['_wp_test_remote_post_response'] = new \WP_Error( 'http_failed', 'host unreachable' );
@@ -2340,49 +1912,6 @@ class RemoteManagerTest extends TestCase {
 		);
 		$this->assertArrayNotHasKey( 'endpoint', $result );
 		$this->assertSame( 'preserved', $result['other'] );
-	}
-
-	// -------------------------------------------------------------------------
-	// sync_all_settings — entry whose endpoint key is missing falls back to default.
-	// -------------------------------------------------------------------------
-
-	public function test_sync_all_settings_uses_default_endpoint_when_missing(): void {
-		// Missing `endpoint` key → defaults to SettingsSync::ENDPOINT.
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] = [ '/v' ];
-		Config::reset();
-
-		\add_filter(
-			'newspack_event_logger_nodes/synced_settings',
-			static function () {
-				return [
-					[
-						'local_option'  => 'newspack_event_logger_nodes_log_urls',
-						'remote_option' => 'newspack_event_logger_nodes_log_urls',
-						// no `endpoint` key — should fall back to SettingsSync::ENDPOINT
-					],
-				];
-			}
-		);
-
-		$reg = new Server_Registry();
-		$reg->register( 'spoke-def', [
-			'url'           => 'https://spoke-def.test',
-			'auth_username' => 'u',
-			'auth_password' => 'p',
-		] );
-
-		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
-		$GLOBALS['_wp_test_remote_posts']         = [];
-
-		Remote_Manager::sync_all_settings();
-
-		// At least one POST hit the default endpoint.
-		$urls = \array_column( $GLOBALS['_wp_test_remote_posts'], 'url' );
-		$this->assertNotEmpty( $urls );
-		// The default endpoint is SettingsSync::ENDPOINT.
-		$this->assertContains( 'https://spoke-def.test/wp-json/newspack-nodes/v1/command', $urls );
-
-		unset( $GLOBALS['_wp_test_remote_post_response'] );
 	}
 
 	// -------------------------------------------------------------------------

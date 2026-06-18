@@ -23,6 +23,8 @@ use Newspack_Nodes\Timer_Node;
 class Request_Flight_Node extends Timer_Node {
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Router-TIMER tick (Timer_Node::fire_cb guards the null-sink case and calls
 	 * this). Snapshot the patron's in-flight map and emit one compact batch to the
 	 * configured gyroscope target.

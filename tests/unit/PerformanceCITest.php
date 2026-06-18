@@ -91,12 +91,19 @@ class PerformanceCITest extends TestCase {
 		$now = \time();
 		$out = [];
 		for ( $i = 0; $i < 288; $i++ ) {
-			$ts         = $now - ( $i * 300 );
-			$min        = (int) \gmdate( 'i', $ts );
-			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
-			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
+			$out[] = $this->bucket_key_for( $now - ( $i * 300 ) );
 		}
 		return \array_values( \array_unique( $out ) );
+	}
+
+	private function current_url_bucket(): string {
+		return $this->bucket_key_for( \time() );
+	}
+
+	private function bucket_key_for( int $timestamp ): string {
+		$min        = (int) \gmdate( 'i', $timestamp );
+		$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
+		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
 	}
 
 	private function write_request( array $body, int $partition = 0 ): string {
@@ -201,7 +208,7 @@ class PerformanceCITest extends TestCase {
 		// is whatever Stats_Store::current_url_bucket returns "now" so the
 		// recent-bucket scan finds it.
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
 				'url'       => '/articles/123',
@@ -434,7 +441,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_urls_verb_paginates_and_sorts(): void {
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000002 ],
@@ -458,7 +465,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_urls_verb_filters_by_search_term(): void {
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/articles/123', 'count' => 1, 'sum_ms' => 50.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/home', 'count' => 2, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
@@ -481,7 +488,7 @@ class PerformanceCITest extends TestCase {
 		// PHP_INT_MAX sentinel as min_ms (worker / timed-out requests). The
 		// display must never surface the sentinel — it heals to 0.
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'aaaaaaaaaaaa' => [
 				'url'         => '/worker-only',
@@ -510,8 +517,8 @@ class PerformanceCITest extends TestCase {
 		// min_ms 42). The read merge must fold only the timed bucket so the
 		// real minimum survives — an untimed-only sibling must not clamp it to 0.
 		$store    = new Stats_Store( 0, 86400 );
-		$bucket_b = $store->current_url_bucket();
-		$bucket_a = $store->bucket_key_for( \time() - 600 );
+		$bucket_b = $this->current_url_bucket();
+		$bucket_a = $this->bucket_key_for( \time() - 600 );
 
 		$store->set_url_index_hourly( $bucket_a, [
 			'bbbbbbbbbbbb' => [
@@ -588,7 +595,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_detail_verb_returns_stats_and_default_flame(): void {
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
 				'url'       => '/articles/777',
@@ -622,7 +629,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_detail_verb_includes_aggregate_flame_when_seeded(): void {
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'cafebabe1234' => [
 				'url'       => '/x',
@@ -669,7 +676,7 @@ class PerformanceCITest extends TestCase {
 		// Legacy PerfUrlsController::find_url_stats L228 calls `build_url_time_series`
 		// which walks the recent buckets keyed by hash. The interpreter verb must too.
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
@@ -696,7 +703,7 @@ class PerformanceCITest extends TestCase {
 		// `?breakdown=method` on /urls/{hash} emits `breakdown_time_series`
 		// (legacy L195, L177-181). Consumed by fetchUrlBreakdown L213.
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
@@ -728,7 +735,7 @@ class PerformanceCITest extends TestCase {
 		// (legacy L196, L184-186). Consumed by UrlDetailView L282-295 +
 		// fetchUrlCategories L237.
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
@@ -757,7 +764,7 @@ class PerformanceCITest extends TestCase {
 		// Unknown dim → no breakdown_time_series (matches legacy L179's
 		// `in_array(...,DIMENSIONS,true)` guard).
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
 		] );
@@ -1063,7 +1070,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dashboard_verb_includes_seeded_urls(): void {
 		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $store->current_url_bucket();
+		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [
 			'dashboardhash' => [
 				'url'       => '/dashboard-url',

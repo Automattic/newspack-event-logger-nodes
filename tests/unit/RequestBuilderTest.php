@@ -815,10 +815,11 @@ class RequestBuilderTest extends TestCase {
 
 	// --- Maintenance ------------------------------------------------------
 
-	public function test_maintenance_drives_cache_rotation(): void {
+	public function test_timer_tick_drives_cache_rotation(): void {
 		$rb = new Request_Builder_Node();
+		$rb->sink( new Capture_Sink_Node() );
 		// No throw — just exercise the path.
-		$rb->maintenance();
+		$rb->fire_cb();
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
