@@ -110,6 +110,13 @@ class Settings_Sync {
 	private static bool $static_syncing = false;
 
 	/**
+	 * Init registration guard.
+	 *
+	 * @var bool
+	 */
+	private static bool $registered = false;
+
+	/**
 	 * WP `update_option` listener (3-arg signature: option, old, new).
 	 *
 	 * @param string $option    Option name.
@@ -197,7 +204,7 @@ class Settings_Sync {
 	 * to the local JobIntake (preferred) or, if the runtime ever exposes a
 	 * shared JobIntake under \Newspack_Nodes, falls back to that.
 	 *
-	 * Signature mirrors the dndocker JobIntake (which takes a leading
+	 * Signature mirrors the local JobIntake (which takes a leading
 	 * `$base_dir`); the upstream legacy plugin used a 2-arg static helper.
 	 *
 	 * @param string      $handler Job handler name.
@@ -227,11 +234,10 @@ class Settings_Sync {
 	 * activation paths don't double-register).
 	 */
 	public static function init(): void {
-		static $registered = false;
-		if ( $registered ) {
+		if ( self::$registered ) {
 			return;
 		}
-		$registered = true;
+		self::$registered = true;
 
 		if ( \function_exists( 'add_action' ) ) {
 			\add_action( 'update_option', [ self::class, 'on_static_option_update' ], 10, 3 );

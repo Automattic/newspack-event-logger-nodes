@@ -314,9 +314,60 @@ describe( 'ErrorLog', () => {
 		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
 	} );
 
+	it( 'clears smooth-scroll offset while reading history and handles returning to top', () => {
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		node.entries = [
+			entry( { seq: 2, rid: 'r-2' } ),
+			entry( { seq: 1, rid: 'r-1' } ),
+		];
+		tickFrame();
+		const content = container.querySelector(
+			'.event-logger-error-log-content'
+		);
+		const list = container.querySelector( '.event-logger-error-log-list' );
+		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+		act( () => {
+			list.scrollTop = 100;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		expect( content.style.transform ).toBe( '' );
+		act( () => {
+			list.scrollTop = 0;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		expect( content.style.transform ).toBe( '' );
+	} );
+
+	it( 'keeps scroll position stable when a new row arrives below the top', () => {
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		const list = container.querySelector( '.event-logger-error-log-list' );
+		act( () => {
+			list.scrollTop = 100;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		node.entries = [
+			entry( { seq: 2, rid: 'r-2' } ),
+			entry( { seq: 1, rid: 'r-1' } ),
+		];
+		tickFrame();
+		expect( list.scrollTop ).toBe( 133 );
+		act( () => {
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		expect( list.scrollTop ).toBe( 133 );
+	} );
+
 	it( 'sources the staleness display from the _sse connector lastEventTime', () => {
 		// Staleness now reflects CONNECTION liveness, owned by the shared _sse
-		// connector — the rAF reads its lastEventTime, not the view node's.
+		// connector - the rAF reads its lastEventTime, not the view node's.
 		registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1', k: 'error', m: 'boom' } ) ],
 		} );

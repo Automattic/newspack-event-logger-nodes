@@ -157,6 +157,31 @@ describe( 'ResponseTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'wires dot hover and click handlers to the rendered request data', () => {
+		const onClick = jest.fn();
+		const { unmount } = renderComponent(
+			React.createElement( ResponseTimeChart, {
+				requests: REQUESTS,
+				onRequestClick: onClick,
+			} )
+		);
+		const calls = d3Mock.on.mock.calls;
+		const mouseover = calls.find(
+			( call ) => call[ 0 ] === 'mouseover'
+		)[ 1 ];
+		const mouseout = calls.find(
+			( call ) => call[ 0 ] === 'mouseout'
+		)[ 1 ];
+		const click = calls.find( ( call ) => call[ 0 ] === 'click' )[ 1 ];
+		expect( () => mouseover.call( {} ) ).not.toThrow();
+		expect( () => mouseout.call( {} ) ).not.toThrow();
+		click( null, { rid: 'r2' } );
+		click( null, { rid: '' } );
+		expect( onClick ).toHaveBeenCalledWith( 'r2' );
+		expect( onClick ).toHaveBeenCalledTimes( 1 );
+		unmount();
+	} );
+
 	it( 'handles single-request data (trend-line branch falsy)', () => {
 		// Only 1 valid request → chartData.length === 1 → skip trend-line.
 		const { unmount } = renderComponent(

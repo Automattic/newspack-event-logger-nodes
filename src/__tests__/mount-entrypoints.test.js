@@ -135,6 +135,16 @@ describe( 'dashboard mount-entry points', () => {
 		} ).not.toThrow();
 	} );
 
+	it( 'performance-logger/index.js falls back to empty arrays for malformed dataset JSON', () => {
+		const div = mountContainer( 'event-logger-skip_urls' );
+		div.dataset.values = '{bad-json';
+		div.dataset.default = '{"not":"an-array"}';
+		expect( () => {
+			require( '../performance-logger' );
+			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		} ).not.toThrow();
+	} );
+
 	it( 'performance-logger no longer wires legacy reset buttons (per-field reset is the toggle module)', () => {
 		// The old in-page reset-to-baked-default mechanism was replaced by the
 		// shared admin-field-reset toggle module. performance-logger no longer

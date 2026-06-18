@@ -71,6 +71,12 @@ class SettingsSyncTest extends TestCase {
 		return $envelopes;
 	}
 
+	private function reset_init_registration_guard(): void {
+		$registered = new \ReflectionProperty( Settings_Sync::class, 'registered' );
+		$registered->setAccessible( true );
+		$registered->setValue( null, false );
+	}
+
 	// --- Static mode (init() + WP listeners + JobIntake fan-out) ------------
 
 	public function test_static_init_registers_action_listeners(): void {
@@ -101,6 +107,26 @@ class SettingsSyncTest extends TestCase {
 		Settings_Sync::init();
 		Settings_Sync::init();
 		$this->assertTrue( true, 'init() must be idempotent' );
+	}
+
+	public function test_init_registers_static_hooks_from_clean_state(): void {
+		$this->reset_init_registration_guard();
+		$GLOBALS['_wp_actions'] = [];
+
+		Settings_Sync::init();
+
+		$this->assertContains(
+			[ Settings_Sync::class, 'on_static_option_update' ],
+			$GLOBALS['_wp_actions']['update_option'] ?? []
+		);
+		$this->assertContains(
+			[ Settings_Sync::class, 'on_static_option_add' ],
+			$GLOBALS['_wp_actions']['add_option'] ?? []
+		);
+		$this->assertContains(
+			[ Settings_Sync::class, 'register_synced_settings' ],
+			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/synced_settings'] ?? []
+		);
 	}
 
 	public function test_register_synced_settings_includes_remap_and_perf_options(): void {

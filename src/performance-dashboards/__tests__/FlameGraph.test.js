@@ -47,10 +47,12 @@ const flamegraphState = {
 	options: {},
 	onClick: null,
 	tooltip: null,
+	chart: null,
 };
 jest.mock( 'd3-flame-graph', () => ( {
 	flamegraph: () => {
 		const chart = {};
+		flamegraphState.chart = chart;
 		const fluent = [
 			'width',
 			'cellHeight',
@@ -114,12 +116,23 @@ describe( 'FlameGraph', () => {
 		flamegraphState.options = {};
 		flamegraphState.onClick = null;
 		flamegraphState.tooltip = null;
+		flamegraphState.chart = null;
 		Object.keys( d3Mock ).forEach( ( k ) => {
 			const v = d3Mock[ k ];
 			if ( v && typeof v.mockClear === 'function' ) {
 				v.mockClear();
 			}
 		} );
+		d3Mock.datum.mockImplementation( () => d3Mock );
+		d3Mock.node.mockImplementation( () => ( {
+			offsetWidth: 100,
+			offsetHeight: 20,
+		} ) );
+		try {
+			delete window.event;
+		} catch {
+			// Ignore jsdom/browser descriptor differences.
+		}
 	} );
 
 	it( 'renders an empty state when data is missing', () => {
@@ -253,6 +266,47 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
+	it( 'tooltip.show handles parent-vs-total percentages and viewport clamps', () => {
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		Object.defineProperty( window, 'event', {
+			configurable: true,
+			writable: true,
+			value: { pageX: 100, pageY: 90 },
+		} );
+		Object.defineProperty( window, 'innerWidth', {
+			configurable: true,
+			value: 120,
+		} );
+		Object.defineProperty( window, 'innerHeight', {
+			configurable: true,
+			value: 100,
+		} );
+		d3Mock.node.mockReturnValueOnce( {
+			offsetWidth: 200,
+			offsetHeight: 50,
+		} );
+		const grandchild = {
+			data: { name: 'query', value: 300 },
+			parent: {
+				data: { name: 'db', value: 600 },
+				parent: {
+					data: { name: 'process', value: 1000 },
+					parent: null,
+				},
+			},
+		};
+		expect( () =>
+			flamegraphState.tooltip.show( grandchild )
+		).not.toThrow();
+		delete window.event;
+		unmount();
+	} );
+
 	it( 'tooltip.show on root node uses single-pct format', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
@@ -265,6 +319,29 @@ describe( 'FlameGraph', () => {
 			parent: null,
 		};
 		expect( () => flamegraphState.tooltip.show( root ) ).not.toThrow();
+		unmount();
+	} );
+
+	it( 'exposes the configured name and color mapper functions', () => {
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		expect(
+			flamegraphState.options.getName( {
+				data: { detail: 'db: SELECT', name: 'db' },
+			} )
+		).toBe( 'db: SELECT' );
+		expect(
+			flamegraphState.options.getName( { data: { name: 'render' } } )
+		).toBe( 'render' );
+		expect(
+			flamegraphState.options.setColorMapper( {
+				data: { name: 'process' },
+			} )
+		).toEqual( expect.any( String ) );
 		unmount();
 	} );
 
@@ -301,6 +378,43 @@ describe( 'FlameGraph', () => {
 				} )
 			)
 		).not.toThrow();
+		unmount();
+	} );
+
+	it( 'restores zoom and tooltip state when refreshed data changes', () => {
+		const { rerender, unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		const child = {
+			data: { name: 'db', value: 600 },
+			parent: {
+				data: { name: 'process', value: 1000 },
+				parent: null,
+			},
+		};
+		flamegraphState.onClick( child );
+		flamegraphState.tooltip.show( child );
+		d3Mock.datum.mockImplementation( ( arg ) =>
+			arg === undefined
+				? {
+						data: { name: 'process' },
+						children: [ { data: { name: 'db' } } ],
+				  }
+				: d3Mock
+		);
+		rerender(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 2,
+			} )
+		);
+		expect( flamegraphState.chart.zoomTo ).toHaveBeenCalledWith(
+			expect.objectContaining( { data: { name: 'db' } } )
+		);
+		expect( flamegraphState.tooltip.hasState() ).toBe( true );
 		unmount();
 	} );
 
@@ -355,12 +469,41 @@ describe( 'FlameGraph', () => {
 			} )
 		);
 		const container = document.querySelector( '.event-logger-flame-graph' );
+		flamegraphState.tooltip.show( {
+			data: { name: 'process', value: 1000 },
+			parent: null,
+		} );
+		expect( flamegraphState.tooltip.hasState() ).toBe( true );
 		// React-controlled mouse handler — dispatch native event.
 		expect( () =>
 			container.dispatchEvent(
-				new Event( 'mouseleave', { bubbles: true } )
+				new MouseEvent( 'mouseout', {
+					bubbles: true,
+					relatedTarget: document.body,
+				} )
 			)
 		).not.toThrow();
+		expect( flamegraphState.tooltip.hasState() ).toBe( false );
+		unmount();
+	} );
+
+	it( 'mouseDown enables chart transitions before the flamegraph click handler runs', () => {
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		const container = document.querySelector( '.event-logger-flame-graph' );
+		const { act } = require( '../../test-helpers/renderHook' );
+		act( () => {
+			container.dispatchEvent(
+				new MouseEvent( 'mousedown', { bubbles: true } )
+			);
+		} );
+		expect( flamegraphState.chart.transitionDuration ).toHaveBeenCalledWith(
+			300
+		);
 		unmount();
 	} );
 } );

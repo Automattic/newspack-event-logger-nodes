@@ -196,6 +196,26 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'fires onSelect when a row is keyboard-activated', () => {
+		const onSelect = jest.fn();
+		const { container, unmount } = mount( { onSelect } );
+		const row = Array.from(
+			container.querySelectorAll( '.event-logger-table__row' )
+		).find( ( r ) => r.textContent.includes( '/bar' ) );
+		act( () => {
+			row.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: 'Enter',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( onSelect ).toHaveBeenCalledWith(
+			expect.objectContaining( { url: '/bar' } )
+		);
+		unmount();
+	} );
+
 	it( 'reports params via onParamsChange on mount', () => {
 		const onParamsChange = jest.fn();
 		const { unmount } = mount( { onParamsChange } );
@@ -212,6 +232,19 @@ describe( 'UrlTable', () => {
 		const { container, unmount } = mount( { totalUrls: 3 } );
 		expect( container.textContent ).toContain( '3 URLs' );
 		expect( container.textContent ).not.toContain( 'Prev' );
+		unmount();
+	} );
+
+	it( 'shows the unfiltered empty state when there are no URLs', () => {
+		const { container, unmount } = mount( {
+			urls: [],
+			totalUrls: 0,
+		} );
+		expect( container.textContent ).toContain( 'No URLs to display' );
+		expect(
+			container.querySelector( '.event-logger-table__pagination-info' )
+				.textContent
+		).toBe( '' );
 		unmount();
 	} );
 
@@ -243,6 +276,30 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'returns to page 1 when Prev is clicked from page 2', () => {
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( {
+			totalUrls: 250,
+			onParamsChange,
+		} );
+		const next = Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Next' )
+		);
+		act( () => {
+			next.click();
+		} );
+		const prev = Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Prev' )
+		);
+		act( () => {
+			prev.click();
+		} );
+		expect(
+			onParamsChange.mock.calls.some( ( call ) => call[ 0 ].offset === 0 )
+		).toBe( true );
+		unmount();
+	} );
+
 	it( '/ keyboard focuses the search input', () => {
 		const { container, unmount } = mount();
 		const input = container.querySelector( 'input[type="text"]' );
@@ -253,6 +310,26 @@ describe( 'UrlTable', () => {
 			);
 		} );
 		expect( focusSpy ).toHaveBeenCalled();
+		focusSpy.mockRestore();
+		unmount();
+	} );
+
+	it( '/ keyboard shortcut does not steal focus from active text inputs', () => {
+		const { container, unmount } = mount();
+		const searchInput = container.querySelector( 'input[type="text"]' );
+		const focusSpy = jest.spyOn( searchInput, 'focus' );
+		const otherInput = document.createElement( 'input' );
+		document.body.appendChild( otherInput );
+		act( () => {
+			const event = new KeyboardEvent( 'keydown', {
+				key: '/',
+				bubbles: true,
+			} );
+			Object.defineProperty( event, 'target', { value: otherInput } );
+			document.dispatchEvent( event );
+		} );
+		expect( focusSpy ).not.toHaveBeenCalled();
+		otherInput.remove();
 		focusSpy.mockRestore();
 		unmount();
 	} );
