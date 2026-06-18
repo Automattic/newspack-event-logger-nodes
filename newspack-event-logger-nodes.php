@@ -142,24 +142,56 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
 } )();
 
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
-	$registry = \Newspack_Event_Logger_Nodes\Server_Registry::get_instance();
-
 	$base_interpreter->make_node( 'Discovery_CI',   'discovery' );
 	$base_interpreter->make_node( 'Status_CI',      'status' );
 	$base_interpreter->make_node( 'Settings_CI',    'settings' );
 	$base_interpreter->make_node( 'Logger_CI',      'logger' );
 	$base_interpreter->make_node( 'Events_CI',      'events' );
-	$servers_ci = $base_interpreter->make_node( 'Servers_CI', 'servers' );
-	if ( $servers_ci instanceof \Newspack_Event_Logger_Nodes\App\Servers_CI_Node ) {
-		$servers_ci->registry = $registry;
-	}
-	$aggregator_ci = $base_interpreter->make_node( 'Aggregator_CI', 'aggregator' );
-	if ( $aggregator_ci instanceof \Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node ) {
-		$aggregator_ci->registry = $registry;
-	}
+	$base_interpreter->make_node( 'Aggregator_CI',  'aggregator' );
 	$base_interpreter->make_node( 'Performance_CI', 'performance' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
+
+/**
+ * React to a substrate Vault mutation with the aggregator-specific
+ * side-effects that used to live inside the (now-decoupled) Servers_CI: a
+ * targeted settings-sync fan-out when a server is added enabled or flips
+ * disabled → enabled, plus a supervisor-restart flag so the new/changed
+ * server is picked up without waiting for the worker's ~10-minute respawn.
+ * Both side-effects are best-effort (legacy parity — the mutation never
+ * failed on them).
+ *
+ * @param string $id          Server id that changed.
+ * @param string $action      added | updated | removed.
+ * @param bool   $was_enabled Enabled state before the change.
+ * @param bool   $now_enabled Enabled state after the change.
+ */
+function newspack_event_logger_nodes_on_vault_changed( string $id, string $action, bool $was_enabled, bool $now_enabled ): void {
+	$enable_flip = ( 'added' === $action && $now_enabled )
+		|| ( 'updated' === $action && ! $was_enabled && $now_enabled );
+	if ( $enable_flip ) {
+		try {
+			$sync = \Newspack_Event_Logger_Nodes\Remote_Manager::$sync_all_dispatch;
+			if ( null === $sync ) {
+				\Newspack_Event_Logger_Nodes\Remote_Manager::queue_sync_all_settings( [ $id ] );
+			} else {
+				$sync( [ $id ] );
+			}
+		} catch ( \Throwable $e ) {
+			// Best-effort (legacy parity).
+		}
+	}
+	try {
+		$base_dir = \Newspack_Nodes\Config::get_base_directory();
+		$lock_dir = $base_dir . '/locks/supervisor.lock.d';
+		if ( \is_dir( $lock_dir ) ) {
+			\Newspack_Nodes\Lock_Node::request_restart_at( $lock_dir );
+		}
+	} catch ( \Throwable $e ) {
+		// Best-effort.
+	}
+}
+\add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 4 );
 
 \add_action(
 	'admin_menu',

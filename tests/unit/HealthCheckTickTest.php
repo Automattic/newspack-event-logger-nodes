@@ -3,10 +3,10 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
-use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Router_Node;
+use Newspack_Nodes\Vault;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Health_Check_Tick_Node::class )]
@@ -21,11 +21,9 @@ class HealthCheckTickTest extends TestCase {
 		$GLOBALS['_wp_options'] = [];
 		$GLOBALS['_wp_actions'] = [];
 
-		// Reset the ServerRegistry singleton so each test starts with a clean
+		// Reset the substrate Vault cache so each test starts with a clean
 		// view of $GLOBALS['_wp_options']. Mirrors RemoteManagerTest::setUp().
-		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, null );
+		Vault::get_instance()->reset_cache();
 
 		// Wipe LogManager singleton + suspend stack so begin/end_job_context
 		// round-trips don't leak from a prior test. LogManager::reset() only
@@ -39,11 +37,9 @@ class HealthCheckTickTest extends TestCase {
 		$this->clear_log_manager_stack();
 		$_SERVER = $this->orig_server;
 
-		// Reset registry again so the next test's setUp sees a clean slate
-		// even if a test mutated $GLOBALS['_wp_options'] mid-flight.
-		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, null );
+		// Reset the Vault cache again so the next test's setUp sees a clean
+		// slate even if a test mutated $GLOBALS['_wp_options'] mid-flight.
+		Vault::get_instance()->reset_cache();
 
 		parent::tearDown();
 	}
@@ -162,19 +158,19 @@ class HealthCheckTickTest extends TestCase {
 		// First TIMER tick with enabled remotes sets last_check=now. A second
 		// tick within DEBOUNCE_SECONDS (300s) must early-return BEFORE the
 		// registry read and the $_SERVER dance.
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+		$GLOBALS['_wp_options'][ Vault::OPTION_KEY ] = [
 			'spoke1' => [
 				'url'           => 'https://spoke1.example.test',
 				'auth_username' => 'admin',
 				'auth_password' => 'pw',
 				'enabled'       => true,
-				'logs'          => [ 'firehose.log' ],
 			],
 		];
 
-		// Trigger sodium key init by reading via ServerRegistry first. wp_salt()
+		// Trigger sodium key init by reading via the Vault first. wp_salt()
 		// is stubbed in bootstrap so encryption round-trips work.
-		$this->assertNotEmpty( Server_Registry::get_instance()->get_enabled() );
+		Vault::get_instance()->reset_cache();
+		$this->assertNotEmpty( Vault::get_instance()->get_enabled() );
 
 		$h = new Health_Check_Tick_Node();
 		$h->name( 'h' );
@@ -205,15 +201,15 @@ class HealthCheckTickTest extends TestCase {
 		// Even when the enqueue path runs end-to-end, $_SERVER must be fully
 		// restored. The finally block in maybe_enqueue() pairs begin/end —
 		// asserting key restoration covers the finally-runs invariant.
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+		$GLOBALS['_wp_options'][ Vault::OPTION_KEY ] = [
 			'spoke1' => [
 				'url'           => 'https://spoke1.example.test',
 				'auth_username' => 'admin',
 				'auth_password' => 'pw',
 				'enabled'       => true,
-				'logs'          => [ 'firehose.log' ],
 			],
 		];
+		Vault::get_instance()->reset_cache();
 
 		$_SERVER['REQUEST_URI']    = '/test/page';
 		$_SERVER['REQUEST_METHOD'] = 'GET';
@@ -230,24 +226,24 @@ class HealthCheckTickTest extends TestCase {
 	}
 
 	public function test_maybe_enqueue_resets_registry_cache_before_read(): void {
-		// ServerRegistry caches its merged view at first read; a long-running
+		// The Vault caches its merged view at first read; a long-running
 		// aggregator worker that came up BEFORE an operator enabled a spoke
 		// would never see the change otherwise. maybe_enqueue() must call
 		// reset_cache() before get_enabled() so the next read sees fresh option
 		// state.
 		// Set up: pre-populate cache with empty view, then add a server.
 		$GLOBALS['_wp_options'] = [];
-		$reg                    = Server_Registry::get_instance();
+		$reg                    = Vault::get_instance();
+		$reg->reset_cache();
 		$this->assertSame( [], $reg->get_enabled() ); // cache now has empty view.
 
 		// Operator-equivalent: enable a remote after the cache was built.
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
+		$GLOBALS['_wp_options'][ Vault::OPTION_KEY ] = [
 			'spoke1' => [
 				'url'           => 'https://spoke1.example.test',
 				'auth_username' => 'admin',
 				'auth_password' => 'pw',
 				'enabled'       => true,
-				'logs'          => [ 'firehose.log' ],
 			],
 		];
 

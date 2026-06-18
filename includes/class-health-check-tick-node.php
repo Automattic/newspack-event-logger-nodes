@@ -82,7 +82,7 @@ class Health_Check_Tick_Node extends Timer_Node {
 		// read and never reloads, so an operator enabling a spoke
 		// AFTER this worker spawned would otherwise be invisible
 		// until the worker's ~595s respawn. Reset before re-reading.
-		$registry = Server_Registry::get_instance();
+		$registry = \Newspack_Nodes\Vault::get_instance();
 		$registry->reset_cache();
 
 		if ( empty( $registry->get_enabled() ) ) {

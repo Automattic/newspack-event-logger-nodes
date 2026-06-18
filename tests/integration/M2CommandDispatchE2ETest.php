@@ -191,7 +191,6 @@ class M2CommandDispatchE2ETest extends TestCase {
 			'settings.get'       => [ 'settings',    'get',    '{}' ],
 			'logger.config'      => [ 'logger',      'config', '{}' ],
 			'events.stats'       => [ 'events',      'stats',  '{}' ],
-			'servers.list'       => [ 'servers',     'list',   '{}' ],
 			'aggregator.health'  => [ 'aggregator',  'health', '{}' ],
 			'performance.timing' => [ 'performance', 'timing', '{}' ],
 		];

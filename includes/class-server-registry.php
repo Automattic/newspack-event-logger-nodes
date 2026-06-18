@@ -63,6 +63,8 @@ class Server_Registry {
 	/**
 	 * Get only enabled servers.
 	 *
+	 * @api Retained for the still-present Servers_CI; consumers were rewired to
+	 *      the substrate Vault and this class is removed in the next task.
 	 * @return array<array-key, array<string, mixed>> Keys are array-key (not string): PHP coerces numeric server-id keys to int.
 	 */
 	public function get_enabled(): array {
@@ -532,6 +534,9 @@ class Server_Registry {
 
 	/**
 	 * Singleton accessor.
+	 *
+	 * @api Retained for the still-present Servers_CI; consumers were rewired to
+	 *      the substrate Vault and this class is removed in the next task.
 	 */
 	public static function get_instance(): Server_Registry {
 		if ( null === self::$instance ) {

@@ -360,7 +360,7 @@ class Stream_Merger_Node extends Timer_Node {
 	 * target), so children inherit the merger's downstream wiring.
 	 */
 	public function load_remotes_from_registry(): void {
-		$registry = new Server_Registry();
+		$registry = \Newspack_Nodes\Vault::get_instance();
 		foreach ( $registry->get_enabled() as $server_id => $entry ) {
 			$this->add_remote( $server_id );
 		}
@@ -432,7 +432,7 @@ class Stream_Merger_Node extends Timer_Node {
 	 * @param string $server_id    Identifier — also the offsetlog key + memcache key fragment.
 	 */
 	public function add_remote( string $server_id ): void {
-		$registry = new Server_Registry();
+		$registry = \Newspack_Nodes\Vault::get_instance();
 		$entry    = $registry->get( $server_id );
 		if ( null === $entry ) {
 			Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
