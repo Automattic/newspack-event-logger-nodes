@@ -27,6 +27,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Configuration management class.
  */
 class Config {
+
 	/**
 	 * Cached config (file defaults + WordPress options + substrate values).
 	 *

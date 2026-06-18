@@ -975,10 +975,6 @@ class Remote_Source_Node extends Node {
 		);
 	}
 
-	// =========================================================================
-	// Test introspection
-	// =========================================================================
-
 	public function test_get_handle(): ?\CurlHandle {
 		return $this->handle;
 	}
@@ -1003,10 +999,6 @@ class Remote_Source_Node extends Node {
 		return $this->connected;
 	}
 
-	// =========================================================================
-	// Lifecycle
-	// =========================================================================
-
 	public function remove_node(): void {
 		$this->disconnect();
 		$multi = $this->multi;
@@ -1018,10 +1010,7 @@ class Remote_Source_Node extends Node {
 		parent::remove_node();
 	}
 
-	// =========================================================================
-	// Schema
-	// =========================================================================
-
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',

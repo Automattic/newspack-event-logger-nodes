@@ -37,7 +37,7 @@ use Newspack_Nodes\Service_CI_Node;
 class Events_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
+	 * @api Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
 	 * its `handler`. The inherited Service_CI_Node ctor builds the commands
 	 * table from this schema, so no per-class ctor is needed.
 	 *

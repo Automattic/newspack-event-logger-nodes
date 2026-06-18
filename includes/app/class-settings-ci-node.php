@@ -109,7 +109,7 @@ class Settings_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
+	 * @api Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
 	 * its `handler`. The inherited Service_CI_Node ctor builds the commands
 	 * table from this schema. Configuration-only verbs; no service dependencies.
 	 */

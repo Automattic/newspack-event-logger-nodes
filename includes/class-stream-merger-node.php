@@ -706,10 +706,7 @@ class Stream_Merger_Node extends Timer_Node {
 		);
 	}
 
-	// =========================================================================
-	// Verb table + node_schema
-	// =========================================================================
-
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',

@@ -18,6 +18,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Remote Manager class.
  */
 class Remote_Manager {
+
 	/**
 	 * Maximum number of servers to process in a single job. Prevents unbounded
 	 * loops when a tampered registry returns thousands of entries.

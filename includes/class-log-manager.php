@@ -26,6 +26,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * External plugins (Pyrobase, etc.) use this to log custom events.
  */
 class Log_Manager {
+
 	/** @var bool */
 	public $enabled          = false;
 	/** @var bool|null */

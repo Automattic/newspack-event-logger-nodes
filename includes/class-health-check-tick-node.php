@@ -40,6 +40,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 class Health_Check_Tick_Node extends Timer_Node {
+
 	/**
 	 * Minimum seconds between consecutive sweeps. Matches legacy
 	 * newspack-event-aggregator's 5-minute debounce. Router TIMER fires
@@ -128,10 +129,7 @@ class Health_Check_Tick_Node extends Timer_Node {
 		$this->set_timer();
 	}
 
-	// -------------------------------------------------------------------------
-	// Sibling-interpreter verb table + node_schema (A3).
-	// -------------------------------------------------------------------------
-
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		// Hidden: HealthCheckTick is instantiated as an owned sibling
 		// of StreamMerger (patron-linked in StreamMerger's constructor),

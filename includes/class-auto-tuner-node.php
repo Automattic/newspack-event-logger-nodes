@@ -32,6 +32,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 class Auto_Tuner_Node extends Node {
+
 	public function fill( array &$message ): void {
 		/** @var int $type_flags */
 		$type_flags = $message[ Message::TYPE ];
@@ -196,6 +197,7 @@ class Auto_Tuner_Node extends Node {
 		$this->persist( 'newspack_event_logger_nodes_significant_events', $merged );
 	}
 
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		// Hidden: AutoTuner is instantiated as a sibling/patron of
 		// FlameBuilder (handled via $interpreter->patron()), not built directly

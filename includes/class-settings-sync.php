@@ -20,6 +20,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Settings Sync class.
  */
 class Settings_Sync {
+
 	/**
 	 * Substrate-tuning options that sync to remote servers with name remap.
 	 * Maps local option name → remote option name.

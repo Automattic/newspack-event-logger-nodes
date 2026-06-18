@@ -1176,10 +1176,7 @@ class Request_Builder_Node extends Timer_Node {
 		return null;
 	}
 
-	/**
-	 * Manifest for the topology console's palette + form rendering.
-	 * See Node::node_schema() for the shape contract.
-	 */
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
