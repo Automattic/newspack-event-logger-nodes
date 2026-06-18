@@ -23,11 +23,11 @@ use Newspack_Nodes\Timer_Node;
 class Request_Flight_Node extends Timer_Node {
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Router-TIMER tick (Timer_Node::fire_cb guards the null-sink case and calls
 	 * this). Snapshot the patron's in-flight map and emit one compact batch to the
 	 * configured gyroscope target.
+	 *
+	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
 		$batch = $this->inflight_snapshot();
@@ -140,11 +140,13 @@ class Request_Flight_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Hidden from the palette: this is a patron-linked sibling Request_Builder
+	 * Hidden from the palette: this is a patron-linked sibling Request_Builder
 	 * mounts at runtime, not a node you'd drag onto a topology. The patron
 	 * filter in dump_metadata hides it from the LIVE canvas; this hides it
 	 * from the palette (whose source is the static class catalog, not the
 	 * live registry).
+	 * 
+	 * @api Used by substrate.
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

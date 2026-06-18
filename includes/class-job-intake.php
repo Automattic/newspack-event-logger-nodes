@@ -100,10 +100,9 @@ class Job_Intake {
 	}
 
 	/**
-	 * @api Used by external plugins.
-	 *
 	 * Write multiple jobs in a batch.
 	 *
+	 * @api Used by external plugins.
 	 * @param array<int, array<string, mixed>> $jobs Zero-indexed list of ['handler' => string, 'parameters' => array].
 	 * @param string|null                      $key  Optional partition key for all jobs.
 	 * @return int Number of jobs successfully written.
@@ -282,10 +281,9 @@ class Job_Intake {
 	}
 
 	/**
-	 * @api Used by tests.
-	 *
 	 * Pin all writes to a specific partition.
 	 *
+	 * @api Used by tests.
 	 * @param int $partition Partition index.
 	 * @return self For chaining.
 	 */

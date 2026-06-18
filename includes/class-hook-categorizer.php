@@ -313,9 +313,9 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * @api Used by tests.
-	 *
 	 * Clear cached configuration.
+	 *
+	 * @api Used by tests.
 	 */
 	public static function clear_cache(): void {
 		self::$base_config   = null;

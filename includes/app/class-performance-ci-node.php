@@ -1269,11 +1269,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * @api Schema-driven dispatch: each of the 17 verbs is declared once in
+	 * Schema-driven dispatch: each of the 17 verbs is declared once in
 	 * `verbs[]` carrying its `handler`. The inherited Service_CI_Node ctor
 	 * builds the commands table from this schema. Stats-reading verbs build
 	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
 	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
+	 * 
+	 * @api Used by substrate.
 	 */
 	public static function node_schema(): array {
 		return [

@@ -77,14 +77,14 @@ class Request_Builder_Node extends Timer_Node {
 	private $line_counter = 0;
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
 	 * whose override rebuilds the LRU_Cache with the parsed dimensions.
 	 *
 	 * The Flight sibling and state_callbacks DO NOT depend on the positional
 	 * args, so they're set up here in the no-arg ctor — present on every
 	 * Request_Builder instance, regardless of whether arguments() is ever called.
+	 *
+	 * @api Used by substrate.
 	 */
 	public function __construct() {
 		// Initial cache uses schema defaults so the no-arg ctor produces a
@@ -115,12 +115,11 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Store the raw string, parse positional tokens via parse_schema_args()
 	 * (bucket_size / num_buckets), then rebuild the LRU_Cache with the new
 	 * dimensions (here — not the ctor — because it depends on the positional args).
 	 *
+	 * @api Used by substrate.
 	 * @param string|null $args
 	 * @return string
 	 */
@@ -281,11 +280,11 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
 	 * request times out (error_status='T') and is emitted to both requests.log and
 	 * the completed target even on a partition with no inbound firehose traffic.
+	 *
+	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
 		$this->cache->rotate_if_due();
@@ -546,6 +545,8 @@ class Request_Builder_Node extends Timer_Node {
 	 * Also fires the secondary compact-summary emit (no-op when
 	 * completed_target is unset) so a topology that wires both the full
 	 * doc and the one-line summary gets both with one source call.
+	 * 
+	 * @param \stdClass $request Completed request envelope.
 	 */
 	public function emit_request( \stdClass $request ): void {
 		// Workers get their own URL row (?worker_type) so warm/supervisor/job hits
@@ -574,9 +575,9 @@ class Request_Builder_Node extends Timer_Node {
 	 * Fire the secondary compact-summary emit. Silent no-op when the
 	 * topology hasn't wired completed_target or a sink isn't attached.
 	 *
-	 * @param \stdClass|array<string, mixed> $request Completed request envelope.
+	 * @param \stdClass $request Completed request envelope.
 	 */
-	private function emit_compact_summary( $request ): void {
+	private function emit_compact_summary( \stdClass $request ): void {
 		if ( '' === $this->completed_target || null === $this->sink ) {
 			return;
 		}
@@ -597,10 +598,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * requests-stream-controller::transform_line so the schema-parity
 	 * audit passes. URL clipped to 2000 chars + "..." suffix; UA to 500.
 	 *
-	 * @param \stdClass|array<string, mixed> $request Completed request envelope.
+	 * @param \stdClass $request Completed request envelope.
 	 * @return array<string,mixed>
 	 */
-	public function build_compact_summary( $request ): array {
+	public function build_compact_summary( \stdClass $request ): array {
 		// Decoded request envelope: string-keyed map with mixed-by-design values.
 		/** @var array<string, mixed> $r */
 		$r = (array) $request;
@@ -645,6 +646,8 @@ class Request_Builder_Node extends Timer_Node {
 	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
 	 * wired with the eviction callback. Shared between the ctor (defaults)
 	 * and arguments() (post-schema-walk).
+	 * 
+	 * @return LRU_Cache The constructed cache instance.
 	 */
 	private function build_cache(): LRU_Cache {
 		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
@@ -664,11 +667,12 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Pre-check the `{name}:flight` sibling name for collisions before the base
 	 * commits a rename. Flight is application-specific; the parent handles the
 	 * :config interpreter sibling.
+	 *
+	 * @api Used by substrate.
+	 * @param string $name Proposed new name for this node.
 	 */
 	protected function check_name_availability( string $name ): void {
 		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
@@ -678,11 +682,12 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
 	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
 	 * Mirrors Node::set_sibling_names for the :config interpreter.
+	 *
+	 * @api Used by substrate.
+	 * @param string|null $name New name for this node, or null to skip renaming
 	 */
 	protected function set_sibling_names( ?string $name = null ): void {
 		$this->flight?->name( "{$name}:flight" );
@@ -690,9 +695,9 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan.
+	 *
+	 * @api Used by substrate.
 	 */
 	public function remove_node(): void {
 		if ( null !== $this->flight ) {
@@ -702,12 +707,13 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Override Node::sink() so the auto-sink wiring make_node performs on
 	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
 	 * Flight's $this->sink stays null and its in-flight emits drop on the
 	 * floor.
+	 *
+	 * @api Used by substrate.
+	 * @param Node|null $node New sink node or null to get current sink.
 	 */
 	public function sink( ?Node $node = null ): ?Node {
 		if ( \func_num_args() > 0 ) {
@@ -721,6 +727,8 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Set the named target for compact-summary completed-request lines.
+	 *
+	 * @param string $target Target node name for completed-request lines.
 	 */
 	public function set_completed_target( string $target ): void {
 		$this->completed_target = $target;
@@ -728,17 +736,19 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Set the named target for error/warning forwarding.
+	 * 
+	 * @param string $target Target node name for error/warning forwarding.
 	 */
 	public function set_errors_target( string $target ): void {
 		$this->errors_target = $target;
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 *
+	 * @api Used by substrate.
 	 */
 	public function dump_config(): string {
 		$out = parent::dump_config();
@@ -756,8 +766,6 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Expose every named destination this node actually writes to so
 	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
 	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
@@ -770,6 +778,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * flight sibling's target would orphan on the topology console (nodes
 	 * with `0` count, no inbound edges) even though RequestBuilder /
 	 * RequestFlight writes to them.
+	 *
+	 * @api Used by substrate.
+	 * @param array<int, string>|string|null $value New primary target or null to get current target.
+	 * @return array<int, string>|string
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
@@ -804,14 +816,13 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Save state for persistence.
 	 *
 	 * Persists the full request cache (including entries and profiles)
 	 * so in-flight requests retain trace data across worker restarts.
 	 * Orphan eviction is handled by LRU bucket rotation.
 	 *
+	 * @api Used by substrate.
 	 * @return array<string, mixed> State to persist.
 	 */
 	public function save_state(): array {
@@ -834,10 +845,9 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
 	 *
+	 * @api Used by substrate.
 	 * @param array<string, mixed> $saved Saved state from save_state().
 	 */
 	public function restore_state( array $saved ): void {

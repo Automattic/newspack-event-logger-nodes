@@ -59,8 +59,6 @@ class Health_Check_Tick_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
 	 * each TIMER tick. Enqueues a `remote_manager` health_check job if the debounce
 	 * window has elapsed and there's at least one enabled remote. Silently no-ops:
@@ -71,6 +69,8 @@ class Health_Check_Tick_Node extends Timer_Node {
 	 * aggregator topology, which only spawns when `enable_aggregator` is
 	 * on. The structural gate is upstream; this method just checks the
 	 * remote registry (architecture decision #4 in AGENTS.md).
+	 *
+	 * @api Used by substrate.
 	 */
 	public function fire(): void {
 		$now = \time();

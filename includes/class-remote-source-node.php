@@ -109,8 +109,6 @@ class Remote_Source_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Store the raw string, parse positional tokens via parse_schema_args()
 	 * (server_id / url / auth_username / auth_password / auth_token / remote_topic /
 	 * partition), then rtrim the URL and clamp partition to >= 0.
@@ -122,6 +120,7 @@ class Remote_Source_Node extends Node {
 	 * `dump_config()`. This setter is exercised primarily by tests and any
 	 * fully-populated TSL-style line.
 	 *
+	 * @api Used by substrate.
 	 * @param string|null $args
 	 * @return string
 	 */
@@ -455,10 +454,10 @@ class Remote_Source_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Called by EventFramework::drain_curl_multi() when curl_multi_info_read
 	 * returns CURLMSG_DONE for this RemoteSource's multi.
+	 *
+	 * @api Used by substrate.
 	 * @param array{msg?:int, handle?:\CurlHandle, result?:int} $info
 	 */
 	public function on_curl_message( array $info ): void {

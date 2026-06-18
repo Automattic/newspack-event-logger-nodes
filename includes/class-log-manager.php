@@ -620,12 +620,12 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by tests.
-	 *
 	 * Reset the singleton instance.
 	 *
 	 * Call before changing REQUEST_URI to log a different request context.
 	 * Only used by unit tests.
+	 *
+	 * @api Used by tests.
 	 */
 	public static function reset(): void {
 		if ( null !== self::$instance ) {
@@ -635,10 +635,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins.
-	 * 
 	 * Log an error message.
 	 *
+	 * @api Used by external plugins.
 	 * @param string $message Error message.
 	 * @return bool True on success.
 	 */
@@ -647,10 +646,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins.
-	 *
 	 * Log a warning message.
 	 *
+	 * @api Used by external plugins.
 	 * @param string $message Warning message.
 	 * @return bool True on success.
 	 */
@@ -659,10 +657,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins.
-	 *
 	 * Log an info message.
 	 *
+	 * @api Used by external plugins.
 	 * @param string $message Info message.
 	 * @return bool True on success.
 	 */
@@ -770,10 +767,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins.
-	 *
 	 * Get the request ID for the current request.
 	 *
+	 * @api Used by external plugins.
 	 * @return string
 	 */
 	public function get_request_id(): string {
@@ -781,12 +777,12 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins.
-	 *
 	 * Refresh firehose segment state from disk.
 	 *
 	 * Call after a subprocess that may have written to or rotated the firehose,
 	 * so subsequent writes go to the current segment.
+	 *
+	 * @api Used by external plugins.
 	 */
 	public function refresh_firehose(): void {
 		if ( null === $this->topic ) {

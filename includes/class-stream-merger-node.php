@@ -67,14 +67,14 @@ class Stream_Merger_Node extends Timer_Node {
 	private bool $remotes_loaded = false;
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
 	 * whose override clamps partition to >= 0.
 	 *
 	 * The owned HealthCheckTick sibling is mounted here because its construction
 	 * doesn't depend on the positional args — it's a structural part of every
 	 * StreamMerger regardless of remote_topic/partition.
+	 *
+	 * @api Used by substrate.
 	 */
 	public function __construct() {
 		// Owned HealthCheckTick sibling — TIMER-driven, hub-only, never
@@ -90,11 +90,10 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Store the raw string, parse positional tokens via parse_schema_args()
 	 * (remote_topic and partition), then clamp partition to >= 0.
 	 *
+	 * @api Used by substrate.
 	 * @param string|null $args
 	 * @return string
 	 */
@@ -245,11 +244,12 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Pre-check the `{name}:health-check` sibling name for collisions before the base
 	 * commits a rename. HealthCheck is application-specific; the parent handles the
 	 * :config interpreter sibling.
+	 *
+	 * @api Used by substrate.
+	 * @param string $name
 	 */
 	protected function check_name_availability( string $name ): void {
 		if ( null !== $this->health_check && null !== Core::node( "{$name}:health-check" ) ) {
@@ -259,11 +259,12 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Override set_sibling_names() so the owned HealthCheckTick sibling tracks
 	 * `{patron_name}:health-check` whenever the patron is named or
 	 * renamed (mirrors FlameBuilder::name()'s AutoTuner cascade)
+	 *
+	 * @api Used by substrate.
+	 * @param string|null $name
 	 */
 	protected function set_sibling_names( ?string $name = null ): void {
 		$this->health_check?->name( $name . ':health-check' );
@@ -271,11 +272,11 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate to remove the node and all its children.
-	 *
 	 * Tear down children imperatively (no patron link, so no auto-cascade).
 	 * RemoteSource children get full remove_node so their cURL multi handles
 	 * unregister from the EventFramework.
+	 *
+	 * @api Used by substrate to remove the node and all its children.
 	 */
 	public function remove_node(): void {
 		foreach ( $this->remote_nodes as $server_id => $remote ) {
@@ -366,11 +367,12 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Lifecycle hook: once the target is wired (the topology's
 	 * `connect_node stream-merger firehose:topic` line), load the registry
 	 * remotes once. Guarded so a later re-connect doesn't re-load.
+	 *
+	 * @api Used by substrate.
+	 * @param string $target
 	 */
 	public function connect_node( string $target ): void {
 		parent::connect_node( $target );
@@ -381,9 +383,11 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * @api Emit the base config plus this node's verb-config, from STATE — one
+	 * Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default (both default true), for dump_config introspection (REPL/GUI).
+	 * 
+	 * @api Used by substrate.
 	 */
 	public function dump_config(): string {
 		$out = parent::dump_config();
@@ -498,47 +502,72 @@ class Stream_Merger_Node extends Timer_Node {
 
 	/**
 	 * @api Used by tests.
-	 *
 	 * @return array<string, Remote_Source_Node> Child remote-source nodes, keyed by remote id.
 	 */
 	public function remote_nodes(): array {
 		return $this->remote_nodes;
 	}
 
+	/**
+	 * Namespaced child name to avoid collisions in Core and the topology console.
+	 *
+	 * @param string $server_id
+	 * @return string
+	 */
 	private function namespaced_remote_name( string $server_id ): string {
 		$prefix = '' !== $this->name ? $this->name : 'stream-merger';
 		return $prefix . ':remote:' . $server_id;
 	}
 
-	/** @api Used by tests. */
+	/**
+	 * @api Used by tests.
+	 * @param string $server_id
+	 * @return \CurlHandle|null
+	 */
 	public function test_get_handle( string $server_id ): ?\CurlHandle {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->test_get_handle()
 			: null;
 	}
 
-	/** @api Used by tests. */
+	/**
+	 * @api Used by tests.
+	 * @param string $server_id
+	 * @return int|null
+	 */
 	public function get_last_http_code( string $server_id ): ?int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_last_http_code()
 			: null;
 	}
 
-	/** @api Used by tests. */
+	/**
+	 * @api Used by tests.
+	 * @param string $server_id
+	 * @return string|null
+	 */
 	public function get_last_error( string $server_id ): ?string {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_last_error()
 			: null;
 	}
 
-	/** @api Used by tests. */
+	/** 
+	 * @api Used by tests.
+	 * @param string $server_id
+	 * @return int
+	 */
 	public function get_backoff( string $server_id ): int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_backoff()
 			: Remote_Source_Node::INITIAL_BACKOFF;
 	}
 
-	/** @api Used by tests. */
+	/** 
+	 * @api Used by tests.
+	 * @param string $server_id
+	 * @return int|null
+	 */
 	public function get_slot( string $server_id ): ?int {
 		return isset( $this->remote_nodes[ $server_id ] )
 			? $this->remote_nodes[ $server_id ]->get_slot()
@@ -547,7 +576,7 @@ class Stream_Merger_Node extends Timer_Node {
 
 	/**
 	 * @api Used by tests.
-	 *
+	 * @param string $server_id
 	 * @return array<string, mixed>
 	 */
 	public function get_position( string $server_id ): array {
