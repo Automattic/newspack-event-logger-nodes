@@ -29,6 +29,7 @@ use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -63,6 +64,8 @@ class PerformanceCITest extends TestCase {
 
 	protected function tearDown(): void {
 		VerbHarness::reset();
+		Settings_Event_Writer::$append_seam = null;
+		Settings_Event_Writer::suppress( false );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
 		Hook_Categorizer::clear_cache();
@@ -1830,6 +1833,100 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
 		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_memory', $GLOBALS['_wp_options'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// set verb (Slice A1 normalized positional receiver) — same nine-option
+	// whitelist + type-coerced sanitization as settings_update, but positional
+	// `set <option> <value>` and suppress-wrapped so a synced apply doesn't
+	// bounce back out as a fresh settings event.
+	// -------------------------------------------------------------------------
+
+	public function test_set_verb_writes_array_option_csv_split(): void {
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_log_urls "a.com,b.com"'
+		);
+
+		$this->assertSame(
+			[ 'a.com', 'b.com' ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls']
+		);
+	}
+
+	public function test_set_verb_writes_float_option(): void {
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_protect_time_threshold 1.5'
+		);
+
+		$this->assertEqualsWithDelta(
+			1.5,
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'],
+			0.001
+		);
+	}
+
+	public function test_set_verb_rejects_unknown_option(): void {
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'arbitrary_option x'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'unknown', \strtolower( $result ) );
+		$this->assertArrayNotHasKey( 'arbitrary_option', $GLOBALS['_wp_options'] );
+	}
+
+	public function test_set_verb_suppresses_settings_event_during_apply(): void {
+		// Applying a synced setting must NOT re-fire the spoke's own settings
+		// event and bounce the change back out. The handler wraps its
+		// option-write + Config::reset() in Settings_Event_Writer::suppress(true)
+		// / finally suppress(false). We drive a real emit attempt INSIDE that
+		// window by hanging a watched-option emit on the substrate config-reset
+		// action (which AppConfig::reset() fires during apply); a recorder seam
+		// then proves nothing reached the append path while suppression held.
+		$captured                           = [];
+		Settings_Event_Writer::$append_seam = static function ( array $message ) use ( &$captured ): void {
+			$captured[] = $message;
+		};
+		\add_action(
+			\Newspack_Nodes\Config::RESET_ACTION,
+			static fn () => Settings_Event_Writer::on_update( 'newspack_probe', 'old', 'new' )
+		);
+
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_protect_time_threshold 1.5'
+		);
+
+		$this->assertSame( [], $captured, 'set must suppress settings emission while applying' );
+	}
+
+	public function test_set_verb_emit_outside_suppression_window_records(): void {
+		// Control for the suppression test: the same emit path records when the
+		// handler is NOT holding the suppress flag, proving the assertion above
+		// is not a trivial false-green.
+		$captured                           = [];
+		Settings_Event_Writer::$append_seam = static function ( array $message ) use ( &$captured ): void {
+			$captured[] = $message;
+		};
+
+		Settings_Event_Writer::on_update( 'newspack_probe', 'old', 'new' );
+
+		$this->assertCount( 1, $captured );
 	}
 
 	// -------------------------------------------------------------------------

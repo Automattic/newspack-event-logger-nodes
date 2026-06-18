@@ -33,6 +33,7 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
+use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
@@ -164,6 +165,45 @@ class Settings_CI_Node extends Service_CI_Node {
 						// Config::reset(), so the snapshot rebuild reads the fresh
 						// option values rather than the cached pre-update view.
 						AppConfig::reset();
+
+						return self::snapshot();
+					},
+				],
+				[
+					'name'        => 'set',
+					'description' => 'Set a single substrate-owned integer setting by its full option name, then return the post-set snapshot.',
+					'args'        => [
+						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'value', 'type' => 'int', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+						self::require_manage_options();
+						// Normalized positional receiver: `set <option> <value>`, one setting
+						// per command — the grammar Settings_Sync_Node emits to fan a synced
+						// setting out to spokes. `<option>` is the FULL `newspack_nodes_*` key.
+						[ $option, $value ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
+
+						$short = \is_string( $option ) && \str_starts_with( $option, 'newspack_nodes_' )
+							? \substr( $option, \strlen( 'newspack_nodes_' ) )
+							: $option;
+						if ( ! \is_string( $short ) || ! isset( self::ALLOWED_KEYS[ $short ] ) ) {
+							throw new \RuntimeException( \esc_html( 'unknown setting: ' . (string) $option ) );
+						}
+						$sanitized = self::sanitize_int( $value, self::ALLOWED_KEYS[ $short ], self::MAX_INT_VALUE );
+						if ( null === $sanitized ) {
+							throw new \RuntimeException( \esc_html( "invalid value for setting: {$short}" ) );
+						}
+
+						// Suppress the spoke's own settings-event emission while applying a
+						// synced setting; otherwise the update_option hook would bounce this
+						// change straight back out as a fresh settings event.
+						try {
+							Settings_Event_Writer::suppress( true );
+							\update_option( "newspack_nodes_{$short}", $sanitized, true );
+							AppConfig::reset();
+						} finally {
+							Settings_Event_Writer::suppress( false );
+						}
 
 						return self::snapshot();
 					},
