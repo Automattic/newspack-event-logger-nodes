@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
-- **Opt-in dead-code audit** (`npm run lint:deadcode`) mirroring the substrate: `shipmonk/dead-code-detector` layered via `phpstan-deadcode.neon`, kept OUT of the commit/push lint gate. Same substrate caveat — most findings on an application built atop the runtime are WP/CLI entrypoints, hooks, or wire constants, not genuinely dead; verify call paths before deleting.
+- **PHPStan now includes the ShipMonk dead-code detector.** `npm run lint:phpstan` runs through `phpstan-deadcode.neon`, so dead-code findings stay in the normal PHPStan/lint-staged/pre-push gate instead of being an opt-in sweep. `npm run lint:deadcode` remains as an alias for the same gate. Same substrate caveat — most findings on an application built atop the runtime are WP/CLI entrypoints, hooks, or wire constants, not genuinely dead; verify call paths before deleting.
 
 ## [0.18.0] - 2026-06-17
 

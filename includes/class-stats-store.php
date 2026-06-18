@@ -63,16 +63,25 @@ class Stats_Store {
 		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
 	}
 
+	/**
+	 * Alias of `get_url_bucket` matching upstream naming.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function get_url_index_hourly( string $bucket ): array {
+		return $this->get_url_bucket( $bucket );
+	}
+
 	// -------------------------------------------------------------------------
-	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} }
-	// Single key per partition holds the rolling map.
+	// URL index: { bucket => { url => {count, sum_req_time, samples} } }
+	// Plus an explicit bucket-keyed setter for FlameBuilder's full-bucket merge.
 	// -------------------------------------------------------------------------
 
 	/**
 	 * @return array<string, mixed>
 	 */
-	public function get_hourly(): array {
-		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
+	public function get_url_bucket( string $bucket ): array {
+		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -101,30 +110,17 @@ class Stats_Store {
 		return $out;
 	}
 
-	public function ttl(): int {
-		return $this->max_lifespan;
-	}
-
 	// -------------------------------------------------------------------------
-	// URL index: { bucket => { url => {count, sum_req_time, samples} } }
-	// Plus an explicit bucket-keyed setter for FlameBuilder's full-bucket merge.
+	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} }
+	// Single key per partition holds the rolling map.
 	// -------------------------------------------------------------------------
 
 	/**
 	 * @return array<string, mixed>
 	 */
-	public function get_url_bucket( string $bucket ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
+	public function get_hourly(): array {
+		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
 		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Alias of `get_url_bucket` matching upstream naming.
-	 *
-	 * @return array<string, mixed>
-	 */
-	public function get_url_index_hourly( string $bucket ): array {
-		return $this->get_url_bucket( $bucket );
 	}
 
 	// -------------------------------------------------------------------------
@@ -226,6 +222,10 @@ class Stats_Store {
 	 */
 	public function set_hourly( array $data ): bool {
 		return (bool) Core::$memd?->set( $this->key( self::NS_HOURLY ), $data, $this->ttl() );
+	}
+
+	public function ttl(): int {
+		return $this->max_lifespan;
 	}
 
 	/**

@@ -61,6 +61,20 @@ class Server_Registry {
 	}
 
 	/**
+	 * Get only enabled servers.
+	 *
+	 * @return array<array-key, array<string, mixed>> Keys are array-key (not string): PHP coerces numeric server-id keys to int.
+	 */
+	public function get_enabled(): array {
+		return \array_filter(
+			$this->get_all(),
+			static function ( $config ) {
+				return ! empty( $config['enabled'] );
+			}
+		);
+	}
+
+	/**
 	 * Get all servers.
 	 *
 	 * Merges config file defaults with WordPress option values.
@@ -169,20 +183,6 @@ class Server_Registry {
 	 */
 	private static function encryption_key(): string {
 		return \sodium_crypto_generichash( \wp_salt( 'auth' ), '', SODIUM_CRYPTO_SECRETBOX_KEYBYTES );
-	}
-
-	/**
-	 * Get only enabled servers.
-	 *
-	 * @return array<array-key, array<string, mixed>> Keys are array-key (not string): PHP coerces numeric server-id keys to int.
-	 */
-	public function get_enabled(): array {
-		return \array_filter(
-			$this->get_all(),
-			static function ( $config ) {
-				return ! empty( $config['enabled'] );
-			}
-		);
 	}
 
 	/**
