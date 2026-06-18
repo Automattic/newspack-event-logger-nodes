@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Remote-spoke credentials now live in the substrate Vault.** `Stream_Merger_Node`, `Remote_Manager`, `Health_Check_Tick_Node`, and `Aggregator_CI_Node` read `\Newspack_Nodes\Vault::get_instance()` instead of the local server registry. The aggregator side-effects that used to live in the servers CI's verbs (full settings-sync fan-out + supervisor restart) now run from a listener on the substrate's `newspack_nodes/vault/changed` action.
+
 ### Fixed
 
 - Performance Dashboard: the page title now uses the standard WordPress admin heading size (23px / 400) instead of the unstyled browser default (~2em bold), so it matches the rest of wp-admin.
+- **Select Hooks button restored** on the Event Logger Settings page. It had vanished because the page hosted two exospine React graphs (the hook-catalog selector and the aggregator-admin Configured Servers app) that collided registering the reserved `_http` node; moving the server UI to the Nodes hub Vault tab leaves a single graph and clears the collision.
 
 ### Removed
 
+- **Server registry + aggregator-admin UI** — `Server_Registry`, the `servers` CI, the Configured Servers settings field, and the `aggregator-admin` React app are gone; remote-server credentials are owned by the substrate `\Newspack_Nodes\Vault` and managed from the Nodes hub **Vault** tab.
 - **`Config::kill_readers()` delegate** — `kill_readers` moved to the substrate `Supervisor`; call `\Newspack_Nodes\Bootstrap::supervisor()->kill_readers( $groups )` (or the topology-activate REST path that wraps it). The `ConfigTest` cases that exercised the substrate's `kill_readers` and `Config_Utils::sanitize_option()` through the now-removed delegates were dropped — that coverage is substrate-owned (nodes' `SupervisorTest` / config-system tests).
 
 ### Internal
