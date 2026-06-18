@@ -52,6 +52,7 @@ class Discovery_CI_Node extends Service_CI_Node {
 		return \array_values( \array_unique( $out ) );
 	}
 
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Service',

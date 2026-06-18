@@ -40,6 +40,7 @@ use Newspack_Nodes\Service_CI_Node;
 
 class Logger_CI_Node extends Service_CI_Node {
 
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Service',

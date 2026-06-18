@@ -138,7 +138,7 @@ class Request_Flight_Node extends Timer_Node {
 	}
 
 	/**
-	 * Hidden from the palette: this is a patron-linked sibling Request_Builder
+	 * @api Hidden from the palette: this is a patron-linked sibling Request_Builder
 	 * mounts at runtime, not a node you'd drag onto a topology. The patron
 	 * filter in dump_metadata hides it from the LIVE canvas; this hides it
 	 * from the palette (whose source is the static class catalog, not the

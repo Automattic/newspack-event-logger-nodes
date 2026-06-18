@@ -1943,6 +1943,7 @@ class Flame_Builder_Node extends Node {
 		];
 	}
 
+	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
