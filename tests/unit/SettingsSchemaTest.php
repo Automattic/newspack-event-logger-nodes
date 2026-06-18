@@ -77,11 +77,6 @@ class SettingsSchemaTest extends TestCase {
 		$this->assertSameSet( self::OVERLAY_KEYS, Settings_Schema::get()->overlay_keys() );
 	}
 
-	public function test_overlay_keys_exclude_aggregator_servers(): void {
-		// aggregator_servers is the carve-out: a WP option, but never overlaid.
-		$this->assertNotContains( 'aggregator_servers', Settings_Schema::get()->overlay_keys() );
-	}
-
 	public function test_setting_option_names_match_legacy_option_names(): void {
 		$this->assertSameSet( self::OPTION_NAMES, Settings_Schema::get()->setting_option_names() );
 	}

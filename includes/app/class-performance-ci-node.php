@@ -150,8 +150,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Resolve a Command_Args boolean flag. A bare `--flag` parses to `true`;
 	 * A bare `--flag` and `--flag=1` / `--flag=true` are truthy; `--flag=0` /
-	 * `--flag=false` and an absent key are false. (The matching false-set is the
-	 * same one Servers_CI::option_bool uses, since those are the only tokens
+	 * `--flag=false` and an absent key are false. (These are the only tokens
 	 * formatCommandArgs / the forwarder ever emit for a boolean.)
 	 *
 	 * @param array<string,string|true> $options Parsed options.

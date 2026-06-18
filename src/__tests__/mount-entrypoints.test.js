@@ -25,13 +25,6 @@ jest.mock( '../performance-dashboards/ErrorLog', () => ( {
 	__esModule: true,
 	default: () => 'ERROR_LOG',
 } ) );
-// aggregator-admin/index.js mounts ServersAdmin (the table + add form
-// React view over the servers:* graph). Stub it to a plain marker so the
-// mount path runs without spinning up the full graph.
-jest.mock( '../aggregator-admin/ServersAdmin', () => ( {
-	__esModule: true,
-	default: () => 'SERVERS_ADMIN',
-} ) );
 
 describe( 'dashboard mount-entry points', () => {
 	beforeEach( () => {
@@ -57,19 +50,6 @@ describe( 'dashboard mount-entry points', () => {
 
 	it( 'event-aggregator/index.js is a no-op without the container', () => {
 		expect( () => require( '../event-aggregator' ) ).not.toThrow();
-	} );
-
-	it( 'aggregator-admin/index.js mounts when #event-aggregator-servers exists', () => {
-		const el = mountContainer( 'event-aggregator-servers' );
-		require( '../aggregator-admin' );
-		// The mount target stays in the document (React mounted into it).
-		expect( el.parentNode ).toBe( document.body );
-	} );
-
-	it( 'aggregator-admin/index.js is a no-op without the container', () => {
-		expect( () => require( '../aggregator-admin' ) ).not.toThrow();
-		// With no container, nothing should have been appended to body.
-		expect( document.body.firstChild ).toBeNull();
 	} );
 
 	it( 'performance-gyroscope/index.js mounts when #event-logger-gyroscope exists', () => {

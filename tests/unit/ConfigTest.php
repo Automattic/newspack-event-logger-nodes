@@ -120,20 +120,6 @@ class ConfigTest extends TestCase {
 		$this->assertSame( [], $GLOBALS['_wp_set_option_autoload'] );
 	}
 
-	public function test_load_config_does_not_overlay_aggregator_servers_wp_option(): void {
-		// aggregator_servers is admin/hub-only and read lazily by
-		// ServerRegistry — it must NOT ride the per-request load_config()
-		// schema (that's a get_option + sanitize of an encrypted credential
-		// blob on every frontend request, never consumed via load_config).
-		// Setting the WP option must therefore leave load_config's value at
-		// the file default ([]); only ServerRegistry reflects the option.
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_aggregator_servers'] = [
-			's1' => [ 'url' => 'https://spoke.example', 'auth_username' => 'u', 'auth_password' => 'p', 'enabled' => true ],
-		];
-		Config::reset();
-		$this->assertSame( [], Config::load_config()['aggregator_servers'] ?? [] );
-	}
-
 	public function test_reset_clears_cache(): void {
 		$config1 = Config::load_config();
 		Config::reset();

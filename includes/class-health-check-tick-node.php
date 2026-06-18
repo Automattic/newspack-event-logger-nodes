@@ -78,7 +78,7 @@ class Health_Check_Tick_Node extends Timer_Node {
 			return;
 		}
 
-		// Long-running worker: ServerRegistry caches its view at first
+		// Long-running worker: the Vault caches its view at first
 		// read and never reloads, so an operator enabling a spoke
 		// AFTER this worker spawned would otherwise be invisible
 		// until the worker's ~595s respawn. Reset before re-reading.

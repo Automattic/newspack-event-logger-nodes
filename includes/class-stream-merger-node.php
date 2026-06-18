@@ -3,7 +3,7 @@
  * Stream Merger
  *
  * Orchestrator for hub-side aggregator. Instantiates one RemoteSource node
- * per ServerRegistry-enabled entry, holds a reference to each, drives their
+ * per enabled spoke in the substrate Vault, holds a reference to each, drives their
  * periodic ticks, and owns the shared offsetlog Partition that persists
  * every remote's `{segment_id, offset}` cursor across worker restarts.
  *
@@ -350,11 +350,11 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * Instantiate a RemoteSource child for every enabled spoke in ServerRegistry.
+	 * Instantiate a RemoteSource child for every enabled spoke in the Vault.
 	 *
 	 * One-shot action (formerly the `load_remotes_from_registry` verb). Fired
 	 * from the connect_node() lifecycle hook once the target is wired, so a
-	 * worker restart re-loads remotes from current registry state without a TSL
+	 * worker restart re-loads remotes from current Vault state without a TSL
 	 * verb line. add_remote() reads $this->sink / $this->target, both set by the
 	 * time connect_node() runs (make_node sets the interpreter sink; connect_node sets the
 	 * target), so children inherit the merger's downstream wiring.
@@ -423,7 +423,7 @@ class Stream_Merger_Node extends Timer_Node {
 	 * Add a remote SSE source.
 	 *
 	 *   add_remote( $server_id ) -> reads { url, auth_username, auth_password, enabled }
-	 *   from ServerRegistry. Skips if entry missing or disabled.
+	 *   from the Vault. Skips if entry missing or disabled.
 	 *
 	 * Instantiates a RemoteSource child, restores its position
 	 * from the shared offsetlog, registers it in Core::$nodes_by_name so it
@@ -635,7 +635,7 @@ class Stream_Merger_Node extends Timer_Node {
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',
-			'description'  => 'Owns and supervises RemoteSource children — one per enabled spoke in ServerRegistry.',
+			'description'  => 'Owns and supervises RemoteSource children — one per enabled spoke in the Vault.',
 			'arguments'         => [
 				[ 'name' => 'remote_topic', 'type' => 'string', 'default' => '' ],
 				[ 'name' => 'partition', 'type' => 'int', 'default' => 0 ],

@@ -16,7 +16,6 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -30,14 +29,12 @@ class ElnConfigTokenTest extends TestCase {
 		$this->saved_resolvers  = Core::$config_resolvers;
 		$GLOBALS['_wp_options'] = [];
 		Config::reset();
-		Server_Registry::get_instance()->reset_cache();
 	}
 
 	protected function tearDown(): void {
 		Core::$config_resolvers = $this->saved_resolvers;
 		$GLOBALS['_wp_options'] = [];
 		Config::reset();
-		Server_Registry::get_instance()->reset_cache();
 		parent::tearDown();
 	}
 
@@ -61,7 +58,6 @@ class ElnConfigTokenTest extends TestCase {
 		// enable_aggregator off → not a hub even if remotes are registered.
 		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '' );
 		Config::reset();
-		Server_Registry::get_instance()->reset_cache();
 		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
@@ -69,7 +65,6 @@ class ElnConfigTokenTest extends TestCase {
 		// enable_aggregator on → is a hub (the operator switch IS hub-mode).
 		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '1' );
 		Config::reset();
-		Server_Registry::get_instance()->reset_cache();
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 

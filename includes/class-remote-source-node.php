@@ -11,7 +11,7 @@
  * receive messages); it generates Messages from the SSE feed it parses and
  * forwards them to its sink (typically a Topic node on a hub).
  *
- * StreamMerger instantiates one of these per `ServerRegistry::get_enabled()`
+ * StreamMerger instantiates one of these per `Vault::get_enabled()`
  * entry and keeps a reference to each. The shared offsetlog (one file for
  * the whole hub) lives on StreamMerger, which periodically walks its
  * RemoteSource children, calls `position()` on each, and writes a combined
@@ -101,8 +101,8 @@ class Remote_Source_Node extends Node {
 
 	/**
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments().
-	 * Credentials and URL come from the ServerRegistry entry that StreamMerger
-	 * looked up — RemoteSource doesn't read the registry itself.
+	 * Credentials and URL come from the Vault entry that StreamMerger
+	 * looked up — RemoteSource doesn't read the Vault itself.
 	 */
 	public function __construct() {
 		parent::__construct();
@@ -1019,7 +1019,7 @@ class Remote_Source_Node extends Node {
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',
-			'description'  => 'One SSE-pulled spoke topic. Instantiated by StreamMerger from ServerRegistry.',
+			'description'  => 'One SSE-pulled spoke topic. Instantiated by StreamMerger from the Vault.',
 			'arguments'         => [
 				[ 'name' => 'server_id',     'type' => 'string', 'required' => true ],
 				[ 'name' => 'url',           'type' => 'string', 'required' => true ],

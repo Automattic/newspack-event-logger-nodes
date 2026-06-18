@@ -3,8 +3,8 @@
  * Event Logger Configuration
  *
  * Owns application-level keys (logging toggles, URL filters, hook lists, etc.).
- * Substrate keys (base_directory, partitioning, memcache_servers,
- * enable_workers, aggregator_servers) live on `\Newspack_Nodes\Config`.
+ * Substrate keys (base_directory, partitioning, memcache_servers)
+ * live on `\Newspack_Nodes\Config`.
  *
  * `load_config()` merges substrate values into the returned array so existing
  * callers reading e.g. `$config['base_directory']` continue to work without
@@ -134,8 +134,8 @@ class Config {
 		// Presence-based overlay: a stored option (even '' / [] / false / 0) wins
 		// over the file default; only an absent option falls back. Shared rule —
 		// see Config_System\Options_Overlay. The overlay key-set comes from the
-		// single Settings_Schema (aggregator_servers + the remote_* direct-read
-		// options stay OUT of it — see Settings_Schema).
+		// single Settings_Schema (the remote_* direct-read options stay OUT
+		// of it — see Settings_Schema).
 		$schema = Settings_Schema::get();
 		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
 			$defaults,
