@@ -33,9 +33,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Events_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
-use Newspack_Event_Logger_Nodes\App\Servers_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Settings_CI_Node;
-use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -54,7 +52,6 @@ class ServiceCiHandlerGuardTest extends TestCase {
 		'Settings_CI',
 		'Performance_CI',
 		'Aggregator_CI',
-		'Servers_CI',
 	];
 
 	protected function tearDown(): void {
@@ -183,13 +180,6 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			'Settings_CI'    => [ static fn () => new Settings_CI_Node() ],
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
 			'Aggregator_CI'  => [ static fn () => new Aggregator_CI_Node() ],
-			'Servers_CI'     => [
-				static function (): Servers_CI_Node {
-					$interpreter           = new Servers_CI_Node();
-					$interpreter->registry = new Server_Registry();
-					return $interpreter;
-				},
-			],
 		];
 	}
 }

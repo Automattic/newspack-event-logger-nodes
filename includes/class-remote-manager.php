@@ -62,8 +62,8 @@ class Remote_Manager {
 	 * browser CommandClient (src/runtime/command_client.js).
 	 *
 	 * Public so the other same-plugin `/command` senders
-	 * (Servers_CI::probe_remote, RemoteSource::maybe_send_heartbeat) reference
-	 * this one definition instead of re-hardcoding the literal.
+	 * (RemoteSource::maybe_send_heartbeat) reference this one definition
+	 * instead of re-hardcoding the literal.
 	 *
 	 * @var string
 	 */
@@ -250,7 +250,7 @@ class Remote_Manager {
 				continue;
 			}
 			// Honour the registry-stored enabled flag where available;
-			// older registries (legacy ServerRegistry) lack it, so default
+			// older registry entries lack it, so default
 			// "no flag = enabled" — list_servers() already filtered them.
 			if ( isset( $server['enabled'] ) && false === (bool) $server['enabled'] ) {
 				continue;
@@ -283,8 +283,8 @@ class Remote_Manager {
 	 * a long-lived JobWorker (~595s) sees admin option changes on its
 	 * next dispatch instead of waiting for respawn. Three layers:
 	 * WP's `alloptions` snapshot, the application `Config` static cache
-	 * (which transitively resets the substrate), and the `ServerRegistry`
-	 * singleton's in-memory copy of `aggregator_servers`.
+	 * (which transitively resets the substrate), and the substrate `Vault`
+	 * singleton's in-memory copy of the spoke list.
 	 */
 	private static function reset_config_snapshots(): void {
 		\Newspack_Nodes\Config::invalidate_options_cache();
@@ -321,7 +321,7 @@ class Remote_Manager {
 	 * path and is preserved unchanged.
 	 *
 	 * Accepts both Application-Password Basic Auth (preferred) and a legacy
-	 * `token` field for compatibility with the simpler ServerRegistry that
+	 * `token` field for compatibility with the simpler legacy registry that
 	 * stored `{url, token}` pairs.
 	 *
 	 * @param array<string, mixed>  $server   Server config.
@@ -490,9 +490,9 @@ class Remote_Manager {
 	 * `wp_json_encode`'d string. Matches the browser CommandClient wire shape
 	 * (src/runtime/command_client.js) and what HTTP_In decodes.
 	 *
-	 * Public so the admin Test button (Servers_CI::probe_remote) builds its
-	 * `discovery.get` body through this one builder — keeps the manual-probe
-	 * wire in lock-step with the periodic health-check probe.
+	 * Shared one-builder for the `discovery.get` body so the manual-probe
+	 * wire (discover_from_server) stays in lock-step with the periodic
+	 * health-check probe.
 	 *
 	 * @param string $to   Target node path (the command's TO field).
 	 * @param string $verb Command verb name.
@@ -667,9 +667,8 @@ class Remote_Manager {
 	 * response). Logs an error status with `log_status()` so the dashboard's
 	 * test-button surface can surface the failure to the operator.
 	 *
-	 * Exposed as `public` so `Servers_CI::probe_remote` (admin "test"
-	 * button) reuses the same dispatch + parse logic the periodic health
-	 * check uses — keeps the two surfaces in lock-step.
+	 * Reuses the same dispatch + parse logic the periodic health check
+	 * uses, so any manual-probe surface stays in lock-step with it.
 	 *
 	 * @param array<string, mixed>  $server    Server config (url, auth_username, auth_password).
 	 * @param string $server_id Server ID, used only for log_status calls.

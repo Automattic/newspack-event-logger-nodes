@@ -962,17 +962,6 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'Configure remote', $out );
 	}
 
-	public function test_configured_servers_callback_renders_react_mount(): void {
-		// M5.2 follow-up moved the whole view to React: the callback now emits
-		// ONLY the mount node. The server list/form + empty state are rendered
-		// and tested in JS (src/aggregator-admin/), not server-side.
-		$admin = new Admin();
-		\ob_start();
-		$admin->configured_servers_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '<div id="event-aggregator-servers"></div>', $out );
-	}
-
 	// ---- Field callback: Auto-Tune (combined number inputs) --------------
 
 	public function test_auto_tune_callback_renders_both_threshold_inputs(): void {
@@ -1822,44 +1811,6 @@ class AdminTest extends TestCase {
 		$this->addToAssertionCount( 1 );
 	}
 
-	// ---- configured_servers_callback: seeded servers ----------------------
-
-	public function test_configured_servers_callback_emits_mount_regardless_of_seeded_servers(): void {
-		// Even with configured servers in the WP option, the callback no longer
-		// renders rows server-side — React (<ServersAdmin>) lists them via the
-		// `servers` node graph. So seeded servers must NOT leak into the markup;
-		// the callback still emits only the mount node. Row rendering is covered
-		// in JS, not here.
-		\update_option(
-			\Newspack_Event_Logger_Nodes\Server_Registry::OPTION_KEY,
-			[
-				'spoke-a' => [
-					'url'           => 'https://a.example',
-					'auth_username' => '',
-					'auth_password' => '',
-					'enabled'       => true,
-				],
-				'spoke-b' => [
-					'url'           => 'https://b.example',
-					'auth_username' => '',
-					'auth_password' => '',
-					'enabled'       => false,
-				],
-			]
-		);
-		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Server_Registry::class, 'instance' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, null );
-
-		$admin = new Admin();
-		\ob_start();
-		$admin->configured_servers_callback();
-		$out = \ob_get_clean();
-
-		// Whole-output match, not "not-contains": a not-contains check on a constant literal can never fail; exact-match catches ANY server-side row/table/form leak regardless of markup.
-		$this->assertSame( '<div id="event-aggregator-servers"></div>', \trim( $out ) );
-	}
-
 	// ---- additional edge cases for higher coverage --------------------------
 
 	public function test_skip_default_writes_returns_value_when_key_strips_to_empty(): void {
@@ -2183,7 +2134,7 @@ class AdminTest extends TestCase {
 			'newspack_event_logger_nodes_aggregator_section',
 			$GLOBALS['_registered_sections']
 		);
-		$this->assertArrayHasKey( 'configured_servers', $GLOBALS['_registered_fields'] );
+		$this->assertArrayHasKey( 'enable_aggregator', $GLOBALS['_registered_fields'] );
 	}
 
 	public function test_register_settings_registers_debugging_fields(): void {

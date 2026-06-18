@@ -154,12 +154,12 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 
 /**
  * React to a substrate Vault mutation with the aggregator-specific
- * side-effects that used to live inside the (now-decoupled) Servers_CI: a
- * targeted settings-sync fan-out when a server is added enabled or flips
- * disabled → enabled, plus a supervisor-restart flag so the new/changed
- * server is picked up without waiting for the worker's ~10-minute respawn.
- * Both side-effects are best-effort (legacy parity — the mutation never
- * failed on them).
+ * side-effects: a targeted settings-sync fan-out when a server is added
+ * enabled or flips disabled → enabled, plus a supervisor-restart flag so the
+ * new/changed server is picked up without waiting for the worker's ~10-minute
+ * respawn. Decoupled from the Vault via the `newspack_nodes/vault/changed`
+ * action. Both side-effects are best-effort (legacy parity — the mutation
+ * never failed on them).
  *
  * @param string $id          Server id that changed.
  * @param string $action      added | updated | removed.
@@ -342,36 +342,6 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 				. 'window.newspackNodesCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
 				'before'
 			);
-
-			$aggregator_js_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/aggregator-admin/index.js';
-			$aggregator_js_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/aggregator-admin/index.js';
-			$aggregator_asset_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/aggregator-admin/index.asset.php';
-			if ( \file_exists( $aggregator_js_path ) ) {
-				$agg_handle = 'newspack-event-logger-nodes-aggregator-admin';
-				$asset_meta = \file_exists( $aggregator_asset_path )
-					? include $aggregator_asset_path
-					: [ 'dependencies' => [], 'version' => NEWSPACK_EVENT_LOGGER_NODES_VERSION ];
-				if ( ! \is_array( $asset_meta ) ) {
-					$asset_meta = [ 'dependencies' => [], 'version' => NEWSPACK_EVENT_LOGGER_NODES_VERSION ];
-				}
-				/** @var array<string> $detected_deps */
-				$detected_deps = \is_array( $asset_meta['dependencies'] ?? null ) ? $asset_meta['dependencies'] : [];
-				$deps          = \array_values( \array_unique( \array_merge(
-					[ 'jquery' ],
-					$detected_deps
-				) ) );
-				$asset_version = $asset_meta['version'] ?? null;
-				$asset_version = \is_scalar( $asset_version ) ? $asset_version : null;
-				$version       = (string) ( $asset_version ?? ( \filemtime( $aggregator_js_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION ) );
-				\wp_enqueue_script(
-					$agg_handle,
-					$aggregator_js_url,
-					$deps,
-					$version,
-					true
-				);
-				\wp_localize_script( $agg_handle, 'NewspackNodesData', $localized );
-			}
 		}
 	}
 );

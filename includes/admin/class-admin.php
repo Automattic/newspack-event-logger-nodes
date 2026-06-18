@@ -15,7 +15,7 @@
  * enable_workers) live on `\Newspack_Nodes\Admin\Admin` under the
  * `newspack_nodes_*` prefix. This class may READ substrate values via
  * `\Newspack_Nodes\Config` but must NOT WRITE them. The aggregator spoke
- * list (`aggregator_servers`) is application-owned and lives here.
+ * list is owned by the substrate `\Newspack_Nodes\Vault`, not here.
  *
  * Settings group / option-prefix:
  *   - Settings group:     `newspack_event_logger_nodes_options_group`
@@ -101,9 +101,9 @@ class Admin {
 	 * Substrate-level options (base_directory, num_partitions, num_segments,
 	 * segment_size, max_lifespan, memcache_servers, enable_workers) live on
 	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. Application
-	 * admin only owns the keys below. (The aggregator spoke list
-	 * `aggregator_servers` is NOT here — it's managed by the ServerRegistry REST
-	 * CRUD, not the settings form, so the settings reset doesn't touch it.)
+	 * admin only owns the keys below. (The aggregator spoke list is NOT here —
+	 * it's owned by the substrate `\Newspack_Nodes\Vault` and managed by its
+	 * `vault` REST CRUD, not the settings form, so the reset doesn't touch it.)
 	 *
 	 * Derived from the single Settings_Schema in `register_settings()` (the
 	 * `setting_option_names()` set). Kept as a property of this exact name because
@@ -111,8 +111,9 @@ class Admin {
 	 * the base reset list (extendable via the `…_reset_options` filter). EVERY
 	 * settings-form option (booleans + multi-selects included) appears here so a
 	 * reset clears them all and the shared `Reset_Gate` attaches its gate to each.
-	 * (aggregator_servers is excluded — managed by the ServerRegistry REST CRUD,
-	 * not a settings-form field.)
+	 * (The aggregator spoke list is excluded — owned by the substrate
+	 * `\Newspack_Nodes\Vault` and managed by its `vault` REST CRUD, not a
+	 * settings-form field.)
 	 *
 	 * @var array<int, string>
 	 */
@@ -1008,26 +1009,6 @@ class Admin {
 			'Storage geometry pushed to remote spokes (may differ from hub settings). Blank fields use the config-file default.',
 			'newspack-event-logger-nodes'
 		) . '</p>';
-	}
-
-	/**
-	 * Configured Servers field — React mount point.
-	 *
-	 * The server table + inline "Add New Server" form are rendered entirely by
-	 * the React <ServersAdmin> app (`src/aggregator-admin/index.js`, built to
-	 * `build/aggregator-admin/`), which mounts into the `#event-aggregator-servers`
-	 * div below and is driven by the `servers/*` node graph. CRUD dispatches the
-	 * four `servers` verbs through the shared CommandClient against the `servers`
-	 * service CI on the unified `/command` endpoint. This callback used to render
-	 * the table server-side from Server_Registry::get_all() + a jQuery glue
-	 * script; M5.2 follow-up moved the whole view to React, so this now emits ONLY
-	 * the mount node (React owns the rows + form, re-listing after each mutation
-	 * instead of reloading the page).
-	 */
-	public static function configured_servers_callback(): void {
-		?>
-		<div id="event-aggregator-servers"></div>
-		<?php
 	}
 
 	/**

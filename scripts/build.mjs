@@ -72,10 +72,6 @@ const ENTRIES = [
 		entry: 'src/event-aggregator/settings.js',
 		outDir: path.resolve( ROOT, 'build/event-aggregator-settings' ),
 	},
-	{
-		entry: 'src/aggregator-admin/index.js',
-		outDir: path.resolve( ROOT, 'build/aggregator-admin' ),
-	},
 ];
 
 buildDashboards( {

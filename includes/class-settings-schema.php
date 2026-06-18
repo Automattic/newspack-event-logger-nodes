@@ -13,10 +13,9 @@
  * via the `array_merge(RuntimeConfig::load_config(), …)` layering in
  * Config::load_config — they are NEVER declared here.
  *
- * `aggregator_servers` is the one carve-out: it has a WP option name and a file
- * default, but is NEITHER an overlay key NOR a settings-form field (it holds
- * encrypted spoke credentials read lazily by Server_Registry). It is absent from
- * this Field set entirely.
+ * The `remote_*` direct-read options are registered + resettable but NOT
+ * overlay keys (`overlay: false`): they are read via get_option / Settings_Sync,
+ * never overlaid into load_config().
  *
  * Labels + section titles are lazy `fn(): string` thunks so building the Schema
  * for overlay_keys() (which a frontend request does via Config) never calls a
@@ -167,13 +166,6 @@ class Settings_Schema {
 					sanitize: [ Admin::class, 'sanitize_bool_int' ],
 					render: [ Admin::class, 'enable_aggregator_callback' ],
 					register_args: [ 'type' => 'boolean', 'default' => 0, 'autoload' => true ],
-				),
-				// Display-only React mount — no option, no register_setting.
-				new Field(
-					id: 'configured_servers',
-					label: static fn(): string => \__( 'Configured Servers', 'newspack-event-logger-nodes' ),
-					section: $aggregator,
-					render: [ Admin::class, 'configured_servers_callback' ],
 				),
 
 				// -- Remote Server Settings ---------------------------------
