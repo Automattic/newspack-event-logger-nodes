@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Performance Dashboard: the page title now uses the standard WordPress admin heading size (23px / 400) instead of the unstyled browser default (~2em bold), so it matches the rest of wp-admin.
+
 ### Removed
 
 - **`Config::kill_readers()` delegate** — `kill_readers` moved to the substrate `Supervisor`; call `\Newspack_Nodes\Bootstrap::supervisor()->kill_readers( $groups )` (or the topology-activate REST path that wraps it). The `ConfigTest` cases that exercised the substrate's `kill_readers` and `Config_Utils::sanitize_option()` through the now-removed delegates were dropped — that coverage is substrate-owned (nodes' `SupervisorTest` / config-system tests).
