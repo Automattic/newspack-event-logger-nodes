@@ -158,6 +158,53 @@ describe( 'Inflight', () => {
 		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
 	} );
 
+	it( 'renders persisted non-default columns from the sampled row model', () => {
+		window.localStorage.setItem( 'event-logger-inflight-refresh', '1' );
+		window.localStorage.setItem(
+			'event-logger-columns',
+			JSON.stringify( [
+				'rid',
+				'url',
+				'status_code',
+				'state',
+				'what',
+				'remote_addr',
+				'user_agent',
+				'est',
+				'time',
+				'age',
+				'lag',
+			] )
+		);
+		registerViewFixture( {
+			rows: [
+				{
+					rid: 'r-columns',
+					url: '/columns?debug=1',
+					method: 'POST',
+					status_code: 503,
+					state: 'include template',
+					what: 'Templates/Home.html',
+					remote_addr: '203.0.113.10',
+					user_agent: 'Jest Browser',
+					est_ms: 250,
+					time_ms: 125,
+					last_log_ts: Date.now() / 1000 - 6,
+					lag_ms: 1200,
+				},
+			],
+		} );
+		const { container } = mount();
+		tickRefresh();
+		expect(
+			container.querySelector( '.event-logger-refresh-select' ).value
+		).toBe( '1' );
+		expect( container.textContent ).toContain( 'r-columns' );
+		expect( container.textContent ).toContain( 'template' );
+		expect( container.textContent ).toContain( '203.0.113.10' );
+		expect( container.textContent ).toContain( 'Jest Browser' );
+	} );
+
 	it( 'sources "Xs ago" staleness from the _sse connector, not row arrivals', () => {
 		// The connector owns stream liveness (it sees data rows AND heartbeats), so
 		// an idle-but-healthy stream — view node with no row arrivals — still shows a

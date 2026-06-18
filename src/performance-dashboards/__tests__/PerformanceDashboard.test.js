@@ -48,7 +48,10 @@ const mockNavState = {
 };
 jest.mock( '../hooks/useUrlNavigation', () => ( {
 	__esModule: true,
-	default: () => mockNavState,
+	default: ( _urls, resolveRequestId ) => {
+		globalThis.__resolveRequestId = resolveRequestId;
+		return mockNavState;
+	},
 } ) );
 
 jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
@@ -134,14 +137,25 @@ jest.mock( '@wordpress/components', () => ( {
 		const React = require( 'react' );
 		return React.createElement( 'div', null, children );
 	},
-	Modal: ( { children, title, headerActions } ) => {
+	Modal: ( {
+		children,
+		title,
+		headerActions,
+		onRequestClose,
+		className,
+	} ) => {
 		const React = require( 'react' );
+		globalThis.__modalOnRequestClose = onRequestClose;
 		return React.createElement(
 			'div',
-			{ 'data-testid': 'modal' },
+			{ 'data-testid': 'modal', className },
 			React.createElement( 'h2', null, title ),
-			headerActions,
-			children
+			React.createElement(
+				'div',
+				{ className: 'components-modal__content' },
+				headerActions,
+				children
+			)
 		);
 	},
 } ) );
@@ -195,6 +209,7 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.fetchUrlBreakdown.mockClear();
 		mockNavState.selectedUrl = null;
 		mockNavState.selectedRequest = null;
+		mockNavState.initialSearchQuery = '';
 		mockNavState.selectUrl.mockClear();
 		mockNavState.selectRequest.mockClear();
 		mockNavState.updateBrowserUrl.mockClear();
@@ -589,6 +604,60 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'resolveRequestId from URL navigation selects the resolved URL and request', async () => {
+		mockGraph.resolveRequest.mockResolvedValue( {
+			url_hash: 'h-known',
+			partition: 2,
+			url: '/known',
+		} );
+		mockView = loadedView( {
+			urls: {
+				data: [ { hash: 'h-known', url: '/known' } ],
+				total: 1,
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__resolveRequestId( 'rid-deep' );
+		} );
+		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith( 'rid-deep' );
+		expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
+			expect.objectContaining( { hash: 'h-known' } )
+		);
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'rid-deep' );
+		unmount();
+	} );
+
+	it( 'runs and clears the initial search query from URL navigation', async () => {
+		mockNavState.initialSearchQuery = 'rid-initial';
+		mockGraph.resolveRequest.mockResolvedValue( {
+			url_hash: 'missing-hash',
+			partition: 0,
+			url: '/from-search',
+		} );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith(
+			'rid-initial'
+		);
+		expect( mockNavState.setInitialSearchQuery ).toHaveBeenCalledWith(
+			null
+		);
+		unmount();
+	} );
+
 	it( 'searchRequest with an unresolved request does not throw', async () => {
 		mockGraph.resolveRequest.mockResolvedValue( null );
 		mockView = loadedView();
@@ -668,6 +737,74 @@ describe( 'PerformanceDashboard', () => {
 		expect( globalThis.__urlDetailProps.fetchUrlBreakdown ).toBe(
 			mockGraph.fetchUrlBreakdown
 		);
+		unmount();
+	} );
+
+	it( 'modal close clears both selected URL and selected request', async () => {
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = 'r1';
+		mockView = loadedView( {
+			urlDetail: {
+				data: {
+					last_modified: 1,
+					stats: { avg_ms: 50, time_series: {} },
+					requests: [],
+				},
+				loading: false,
+				error: null,
+			},
+			requestDetail: {
+				data: { rid: 'r1', entries: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		act( () => {
+			globalThis.__modalOnRequestClose();
+		} );
+		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( null );
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
+		unmount();
+	} );
+
+	it( 'request-detail back button returns to URL detail without closing the URL modal', async () => {
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = 'r1';
+		mockView = loadedView( {
+			urlDetail: {
+				data: {
+					last_modified: 1,
+					stats: { avg_ms: 50, time_series: {} },
+					requests: [],
+				},
+				loading: false,
+				error: null,
+			},
+			requestDetail: {
+				data: { rid: 'r1', entries: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { container, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		act( () => {
+			container
+				.querySelector( '.event-logger-modal-back-button' )
+				.click();
+		} );
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
+		expect( mockNavState.selectUrl ).not.toHaveBeenCalledWith( null );
 		unmount();
 	} );
 } );

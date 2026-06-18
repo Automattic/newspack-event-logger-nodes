@@ -496,6 +496,36 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'renders same-tenth merged rows as 10ms dot markers', () => {
+		const entries = [
+			{
+				n: 1,
+				ts: 1700000000,
+				k: 'db (start)',
+				m: 'SELECT',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				ts: 1700000000.03,
+				k: 'db (complete)',
+				m: '-',
+				duration_ms: 30,
+				pairId: 1,
+				indent: 0,
+				originalIdx: 1,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		expect( container.textContent ).toContain( '•••' );
+		expect( container.textContent ).toContain( '30.000ms' );
+		unmount();
+	} );
+
 	it( 'placeholder entries render an empty keyword / message', () => {
 		// A placeholder is `{ isPlaceholder: true, indent: ..., originalIdx: ... }`.
 		// Compose entries with a placeholder injected.

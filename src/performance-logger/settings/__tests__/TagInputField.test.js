@@ -155,6 +155,24 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
+	it( 'removes a clicked tag by index', () => {
+		const hidden = setUpHiddenInput( 'urls' );
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'urls',
+				initialValues: [ '/foo', '/bar' ],
+			} )
+		);
+		const removeButtons = container.querySelectorAll(
+			'.event-logger-tag-remove'
+		);
+		act( () => {
+			removeButtons[ 0 ].click();
+		} );
+		expect( hidden.value ).toBe( '["/bar"]' );
+		unmount();
+	} );
+
 	it( 'ignores legacy event-logger-reset DOM events (per-field reset is now the toggle module)', () => {
 		// The old PHP reset button dispatched `event-logger-reset` to reset the
 		// field to baked-in defaults. That mechanism was replaced by the shared
@@ -210,6 +228,24 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
+	it( 'opens the hook selector modal from selector mode', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'hooks',
+				initialValues: [],
+				showHookSelector: true,
+			} )
+		);
+		const button = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Select Hooks' );
+		act( () => {
+			button.click();
+		} );
+		expect( container.textContent ).toContain( 'HOOK_MODAL_OPEN' );
+		unmount();
+	} );
+
 	it( 'renders custom-event-selector mode', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
@@ -220,6 +256,24 @@ describe( 'TagInputField', () => {
 		);
 		expect( container.textContent ).toContain( '0 events selected' );
 		expect( container.textContent ).toContain( 'CUSTOM_MODAL_CLOSED' );
+		unmount();
+	} );
+
+	it( 'opens the custom event selector modal from selector mode', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'events',
+				initialValues: [],
+				showCustomSelector: true,
+			} )
+		);
+		const button = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Select Events' );
+		act( () => {
+			button.click();
+		} );
+		expect( container.textContent ).toContain( 'CUSTOM_MODAL_OPEN' );
 		unmount();
 	} );
 

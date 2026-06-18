@@ -65,6 +65,14 @@ class SettingsSchemaTest extends TestCase {
 		'newspack_event_logger_nodes_remote_max_lifespan',
 	];
 
+	protected function setUp(): void {
+		parent::setUp();
+
+		$schema = new \ReflectionProperty( Settings_Schema::class, 'schema' );
+		$schema->setAccessible( true );
+		$schema->setValue( null, null );
+	}
+
 	public function test_overlay_keys_match_legacy_option_schema(): void {
 		$this->assertSameSet( self::OVERLAY_KEYS, Settings_Schema::get()->overlay_keys() );
 	}

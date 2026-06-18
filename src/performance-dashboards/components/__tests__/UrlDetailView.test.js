@@ -1,3 +1,4 @@
+/* global KeyboardEvent */
 /**
  * Tests for UrlDetailView — heavy child components mocked at the
  * module boundary. We exercise:
@@ -160,6 +161,41 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'fires onSelectRequest from keyboard activation on a request row', () => {
+		const onSelectRequest = jest.fn();
+		const { container, unmount } = mount( { onSelectRequest } );
+		const r1Row = Array.from(
+			container.querySelectorAll( '.event-logger-table__row' )
+		).find( ( r ) => r.textContent.includes( 'r1' ) );
+		act( () => {
+			r1Row.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: 'Enter',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1' );
+		unmount();
+	} );
+
+	it( 'renders timed-out request status rows', () => {
+		const { container, unmount } = mount( {
+			sortedRequests: [
+				{
+					rid: 'r-timeout',
+					timestamp: 1748960003,
+					duration_ms: 0,
+					peak_mb: 0,
+					error_status: 'T',
+				},
+			],
+		} );
+		expect( container.textContent ).toContain( 'r-timeout' );
+		expect( container.textContent ).toContain( 'T' );
+		unmount();
+	} );
+
 	it( 'mounts AggregateTimeChart when stats.time_series is populated', () => {
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
@@ -226,6 +262,32 @@ describe( 'UrlDetailView', () => {
 			'deadbeef',
 			'status'
 		);
+		unmount();
+	} );
+
+	it( 're-fetches the selected breakdown on the five-minute interval', () => {
+		jest.useFakeTimers();
+		const fetchUrlBreakdown = jest.fn().mockResolvedValue( null );
+		const { unmount } = mount( { fetchUrlBreakdown } );
+		act( () => {
+			jest.advanceTimersByTime( 300000 );
+		} );
+		expect( fetchUrlBreakdown ).toHaveBeenCalledTimes( 2 );
+		expect( fetchUrlBreakdown ).toHaveBeenLastCalledWith(
+			'deadbeef',
+			'status'
+		);
+		unmount();
+		jest.useRealTimers();
+	} );
+
+	it( 'clears breakdown data when no breakdown fetcher is available', () => {
+		const { container, unmount } = mount( {
+			fetchUrlBreakdown: null,
+			urlHash: null,
+			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
+		} );
+		expect( container.textContent ).toContain( 'AGGREGATE' );
 		unmount();
 	} );
 

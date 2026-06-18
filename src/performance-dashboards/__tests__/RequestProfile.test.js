@@ -1,3 +1,4 @@
+/* global KeyboardEvent */
 /**
  * Tests for RequestProfile — pure render component, no hooks or
  * network. Sorts profiles by time desc, hides zero-time entries,
@@ -163,6 +164,36 @@ describe( 'RequestProfile', () => {
 		} );
 		expect( container.textContent ).toContain( 'my_callback' );
 		expect( container.textContent ).toContain( 'another' );
+		unmount();
+	} );
+
+	it( 'expands a category from summary-bar keyboard activation', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: {
+					hooks: {
+						count: 1,
+						time: 80,
+						entries: {
+							my_callback: [ 80, 1 ],
+						},
+					},
+				},
+				totalMs: 100,
+			} )
+		);
+		const barSegment = container.querySelector(
+			'.event-logger-profile-bar [role="button"]'
+		);
+		act( () => {
+			barSegment.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: 'Enter',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( container.textContent ).toContain( 'my_callback' );
 		unmount();
 	} );
 } );

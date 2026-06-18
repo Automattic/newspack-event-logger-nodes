@@ -1,3 +1,4 @@
+/* global KeyboardEvent */
 /**
  * Tests for OverviewSection — render-side branches.
  *
@@ -34,7 +35,7 @@ jest.mock( '../../RequestProfile', () => ( {
 
 import * as React from 'react';
 import OverviewSection from '../OverviewSection';
-import { renderComponent } from '../../../test-helpers/renderHook';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 const baseStats = {
 	totalUrls: 7,
@@ -139,6 +140,36 @@ describe( 'OverviewSection', () => {
 			}
 		);
 		expect( setChartBreakdown ).toHaveBeenCalledWith( 'status' );
+		unmount();
+	} );
+
+	it( 'submits the request search from Enter and the Find button', () => {
+		const onSearch = jest.fn();
+		const { container, unmount } = mount(
+			{},
+			{
+				searchQuery: 'rid-123',
+				onSearch,
+			}
+		);
+		const input = container.querySelector( 'input[type="text"]' );
+		const findButton = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Find' );
+		act( () => {
+			input.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: 'Enter',
+					bubbles: true,
+				} )
+			);
+		} );
+		act( () => {
+			findButton.click();
+		} );
+		expect( onSearch ).toHaveBeenCalledTimes( 2 );
+		expect( onSearch ).toHaveBeenNthCalledWith( 1, 'rid-123' );
+		expect( onSearch ).toHaveBeenNthCalledWith( 2, 'rid-123' );
 		unmount();
 	} );
 } );

@@ -1,3 +1,4 @@
+/* global KeyboardEvent */
 /**
  * Tests for HookSelectorModal — renders a category-grouped checkbox tree from
  * the render model published by useHookCatalogGraph. Post-migration the modal
@@ -276,6 +277,86 @@ describe( 'HookSelectorModal', () => {
 			apply.click();
 		} );
 		expect( onSelect ).toHaveBeenCalledWith( [] );
+	} );
+
+	it( 'category checkbox selects and clears every hook in that category', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: {
+				...HOOKS,
+				Broken: null,
+			},
+			loading: false,
+		};
+		const onSelect = jest.fn();
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect,
+		} );
+		const lifecycleHeader = Array.from(
+			document.querySelectorAll( '.hook-selector-category-header' )
+		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
+		const categoryCheckbox = lifecycleHeader.querySelector(
+			'input[type="checkbox"]'
+		);
+		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Apply' )
+		);
+		const { act } = require( '../../../test-helpers/renderHook' );
+		act( () => {
+			categoryCheckbox.click();
+		} );
+		act( () => {
+			apply.click();
+		} );
+		expect( onSelect ).toHaveBeenLastCalledWith(
+			expect.arrayContaining( [ 'init', 'shutdown', 'wp_loaded' ] )
+		);
+
+		onSelect.mockClear();
+		act( () => {
+			categoryCheckbox.click();
+		} );
+		act( () => {
+			apply.click();
+		} );
+		expect( onSelect ).toHaveBeenLastCalledWith( [] );
+	} );
+
+	it( 'expands and collapses a category from keyboard activation', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect: jest.fn(),
+		} );
+		const header = Array.from(
+			document.querySelectorAll( '.hook-selector-category-header' )
+		).find( ( el ) => el.textContent.includes( 'Lifecycle' ) );
+		const { act } = require( '../../../test-helpers/renderHook' );
+		act( () => {
+			header.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: 'Enter',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( document.querySelector( '#hook-init' ) ).toBeTruthy();
+		act( () => {
+			header.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: ' ',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( document.querySelector( '#hook-init' ) ).toBeNull();
 	} );
 
 	it( 'collapses an expanded category when its header is clicked twice', () => {

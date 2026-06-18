@@ -179,6 +179,28 @@ describe( 'performance:command — TM_COMMAND build', () => {
 		expect( cmd[ VALUE ].payload ).toBeUndefined();
 	} );
 
+	test( 'fetchUrls forwards sort, order, server, search, and offset when present', () => {
+		const { outbox, command } = mount();
+		command.fetchUrls( {
+			sort: 'avg_ms',
+			order: 'asc',
+			offset: 100,
+			search: 'foo',
+			server: 'edge-01',
+		} );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [], {
+				sort: 'avg_ms',
+				order: 'asc',
+				limit: 100,
+				offset: 100,
+				search: 'foo',
+				server: 'edge-01',
+			} )
+		);
+	} );
+
 	test( 'fetchUrlDetail builds a url_detail TM_COMMAND with {hash, categories?, breakdown?}', () => {
 		const { outbox, command } = mount();
 		command.fetchUrlDetail( 'abc123', { categories: true, initial: true } );
@@ -200,6 +222,15 @@ describe( 'performance:command — TM_COMMAND build', () => {
 			formatCommandArgs( [ 'ok-rid' ], {} )
 		);
 		expect( cmd[ VALUE ].payload ).toBeUndefined();
+	} );
+
+	test( 'fetchRequestDetail includes non-zero partition in command args', () => {
+		const { outbox, command } = mount();
+		command.fetchRequestDetail( 'ok-rid', 3 );
+		const cmd = outbox.find( ( m ) => m[ TYPE ] === TM_COMMAND );
+		expect( cmd[ VALUE ].arguments ).toBe(
+			formatCommandArgs( [ 'ok-rid' ], { partition: 3 } )
+		);
 	} );
 } );
 
@@ -232,6 +263,23 @@ describe( 'performance:command — pending registration on the view', () => {
 			slice: 'urlDetail',
 			initial: false,
 		} );
+	} );
+
+	test( 'fetchUrlDetail skips sending when the view pending map is unavailable', () => {
+		const outbox = [];
+		const sink = { fill: ( m ) => outbox.push( m ) };
+		const command = makeCommand( 'performance:command', {
+			viewName: 'missing:view',
+		} );
+		command.sink = sink;
+		command.target = 'missing:view';
+		command.fetchUrlDetail( 'abc123', { initial: true } );
+		expect(
+			outbox.filter( ( m ) => m[ TYPE ] === TM_COMMAND )
+		).toHaveLength( 0 );
+		expect(
+			outbox.filter( ( m ) => m[ TYPE ] === TM_STRUCT )
+		).toHaveLength( 1 );
 	} );
 } );
 
@@ -331,6 +379,31 @@ describe( 'performance:command — resolveRequest & fetchUrlBreakdown via pendin
 		).toEqual( { a: 1 } );
 		expect( entry.transform( {} ) ).toBeNull();
 	} );
+
+	test( 'resolveRequest and fetchUrlBreakdown resolve null when no view can register pending work', async () => {
+		const outbox = [];
+		const command = makeCommand( 'performance:command', {
+			viewName: 'missing:view',
+		} );
+		command.sink = { fill: ( m ) => outbox.push( m ) };
+		await expect( command.resolveRequest( 'rid-9' ) ).resolves.toBeNull();
+		await expect(
+			command.fetchUrlBreakdown( 'abc123', 'method' )
+		).resolves.toBeNull();
+		expect( outbox ).toHaveLength( 0 );
+	} );
+
+	test( 'fetchUrlBreakdown reports transform-promise rejection through onError', async () => {
+		const errs = [];
+		const { view, command } = mount( {
+			onError: ( e ) => errs.push( e ),
+		} );
+		const promise = command.fetchUrlBreakdown( 'abc123', 'method' );
+		const [ entry ] = view.pending.values();
+		entry.reject( new Error( 'network failed' ) );
+		await expect( promise ).resolves.toBeNull();
+		expect( errs[ 0 ].message ).toBe( 'network failed' );
+	} );
 } );
 
 describe( 'performance:command — close() guard', () => {
@@ -340,6 +413,24 @@ describe( 'performance:command — close() guard', () => {
 		command.fetchOverview();
 		expect( outbox ).toHaveLength( 0 );
 		expect( view.pending.size ).toBe( 0 );
+	} );
+
+	test( 'closed promise-returning commands resolve null without sending', async () => {
+		const { outbox, view, command } = mount();
+		command.close();
+		await expect( command.resolveRequest( 'rid-9' ) ).resolves.toBeNull();
+		await expect(
+			command.fetchUrlBreakdown( 'abc123', 'method' )
+		).resolves.toBeNull();
+		expect( outbox ).toHaveLength( 0 );
+		expect( view.pending.size ).toBe( 0 );
+	} );
+
+	test( 'commands without a sink do not emit controls or network commands', () => {
+		const command = makeCommand( 'performance:command' );
+		command.target = 'performance:view';
+		expect( () => command.fetchOverview() ).not.toThrow();
+		expect( () => command.fetchRequestDetail( 'ok-rid', 0 ) ).not.toThrow();
 	} );
 } );
 

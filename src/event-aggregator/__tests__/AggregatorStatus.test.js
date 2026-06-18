@@ -224,6 +224,53 @@ describe( 'AggregatorStatus', () => {
 		expect( container.textContent ).toContain( '42.0ms' );
 	} );
 
+	it( 'formats sub-ms, warning, and error RTT partitions', () => {
+		registerViewFixture( {
+			servers: [
+				{
+					id: 'srv-rtt',
+					url: 'https://rtt.example.test',
+					enabled: true,
+					partitions: {
+						0: {
+							last_connection_status: 'connected',
+							last_heartbeat_response_status: 'success',
+							last_heartbeat_rtt: 0.5,
+							last_connection_attempt: 9880,
+							last_sse_heartbeat: 5000,
+							last_heartbeat_response: 9999,
+						},
+						1: {
+							last_connection_status: 'connected',
+							last_heartbeat_response_status: 'success',
+							last_heartbeat_rtt: 250,
+						},
+						2: {
+							last_connection_status: 'connected',
+							last_heartbeat_response_status: 'success',
+							last_heartbeat_rtt: 600,
+						},
+					},
+				},
+			],
+			serverNow: 10000,
+			connectedCount: 1,
+			totalCount: 1,
+			loading: false,
+		} );
+		const { container } = mount();
+		expect( container.textContent ).toContain( '0.50ms' );
+		expect( container.textContent ).toContain( '250ms' );
+		expect( container.textContent ).toContain( '600ms' );
+		expect( container.textContent ).toContain( '2m ago' );
+		expect(
+			container.querySelector( '.aggregator-heartbeat-rtt.warning' )
+		).toBeTruthy();
+		expect(
+			container.querySelector( '.aggregator-heartbeat-rtt.error' )
+		).toBeTruthy();
+	} );
+
 	it( 'computes "ago" from the model serverNow, not the browser clock', () => {
 		registerViewFixture( {
 			servers: [
