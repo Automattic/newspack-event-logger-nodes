@@ -266,8 +266,9 @@ class Config {
 	}
 
 	/**
-	 * @api Get the locks directory path ({base}/locks).
+	 * Get the locks directory path ({base}/locks).
 	 *
+	 * @api
 	 * @return string Validated absolute path to locks directory.
 	 */
 	public static function get_locks_directory(): string {
@@ -275,8 +276,9 @@ class Config {
 	}
 
 	/**
-	 * @api Get the offsets directory path ({base}/offsets).
+	 * Get the offsets directory path ({base}/offsets).
 	 *
+	 * @api
 	 * @return string Validated absolute path to offsets directory.
 	 */
 	public static function get_offsets_directory(): string {

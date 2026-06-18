@@ -37,12 +37,14 @@ use Newspack_Nodes\Service_CI_Node;
 class Events_CI_Node extends Service_CI_Node {
 
 	/**
-	 * @api Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
+	 * Schema-driven dispatch: each verb is declared once in `verbs[]` carrying
 	 * its `handler`. The inherited Service_CI_Node ctor builds the commands
 	 * table from this schema, so no per-class ctor is needed.
 	 *
 	 * The `stats` verb reads per-partition Stats_Store off the shared
 	 * `Core::$memd` handle; a null handle yields an empty time_series.
+	 * 
+	 * @api Used by substrate.
 	 */
 	public static function node_schema(): array {
 		return [

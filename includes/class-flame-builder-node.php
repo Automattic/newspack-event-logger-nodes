@@ -1720,10 +1720,11 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
 	 * alongside the base's own-name + `:config` checks. Chains parent::.
+	 * 
+	 * @api Used by substrate.
+	 * @param string $name
 	 */
 	protected function check_name_availability( string $name ): void {
 		if ( null !== $this->auto_tuner && null !== \Newspack_Nodes\Core::node( "{$name}:auto-tuner" ) ) {
@@ -1733,11 +1734,12 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Track the owned auto-tuner sibling as `{name}:auto-tuner`. Only called from
 	 * name() with a non-empty $name; sibling teardown lives in remove_node().
 	 * Chains parent::.
+	 * 
+	 * @api Used by substrate.
+	 * @param string|null $name
 	 */
 	protected function set_sibling_names( ?string $name = null ): void {
 		$this->auto_tuner?->name( "{$name}:auto-tuner" );
@@ -1745,11 +1747,11 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Cascade-remove the owned auto-tuner sibling alongside the patron. Full
 	 * remove_node (not a bare unregister) so the auto-tuner's own `:config`
 	 * interpreter sibling unregisters too and a same-name respawn doesn't collide.
+	 *
+	 * @api Used by substrate.
 	 */
 	public function remove_node(): void {
 		if ( null !== $this->auto_tuner ) {
@@ -1760,10 +1762,12 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Propagate the make_node auto-sink down to the owned auto-tuner sibling so
 	 * it's sunk into _command_interpreter like any other sibling (Rule 2c).
+	 * 
+	 * @api Used by substrate.
+	 * @param Node|null $node
+	 * @return Node|null
 	 */
 	public function sink( ?Node $node = null ): ?Node {
 		if ( \func_num_args() > 0 ) {
@@ -1788,10 +1792,9 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by tests.
-	 *
 	 * Inject the custom-event-names set.
 	 *
+	 * @api Used by tests.
 	 * @param array<int, string> $names
 	 */
 	public function set_custom_event_names( array $names ): void {
@@ -1825,10 +1828,9 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by tests.
-	 *
 	 * Replace the clock used for bucket-key derivation (testing seam).
 	 *
+	 * @api Used by tests.
 	 * @param (callable(): int)|null $fn
 	 */
 	public function set_clock( ?callable $fn ): void {
@@ -1836,10 +1838,9 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by tests.
-	 *
 	 * Accessor for the auto-tune state.
 	 *
+	 * @api Used by tests.
 	 * @return array<string, list<string>>
 	 */
 	public function get_auto_tune_state(): array {
@@ -1851,10 +1852,9 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Save state for persistence.
 	 *
+	 * @api Used by substrate.
 	 * @return array<string, mixed>
 	 */
 	public function save_state(): array {
@@ -1865,10 +1865,9 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Restore state from save_state().
 	 *
+	 * @api Used by substrate.
 	 * @param array<string, mixed> $saved
 	 */
 	public function restore_state( array $saved ): void {
@@ -1883,11 +1882,11 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * @api Used by substrate.
-	 *
 	 * Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 * 
+	 * @api Used by substrate.
 	 */
 	public function dump_config(): string {
 		$out = parent::dump_config();
