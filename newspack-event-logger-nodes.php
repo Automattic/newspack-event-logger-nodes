@@ -69,6 +69,17 @@ $_newspack_event_logger_nodes_load = static function (): void {
 
 	\Newspack_Event_Logger_Nodes\Settings_Sync::init();
 
+	// Slice A1 node-graph settings-sync path (runs in parallel with the legacy
+	// Settings_Sync/Remote_Manager push until Phase 6): the option-change writer
+	// + the value-resolver filter Settings_Sync_Node consults at consume time.
+	\Newspack_Event_Logger_Nodes\Settings_Event_Writer::init();
+	\add_filter(
+		'newspack_nodes/settings_sync/value',
+		'newspack_event_logger_nodes_resolve_settings_sync_value',
+		10,
+		2
+	);
+
 	new \Newspack_Event_Logger_Nodes\App\Core();
 
 	if ( \function_exists( 'is_admin' ) && \is_admin() ) {
@@ -119,6 +130,40 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
 	'newspack_nodes/registered_log_producers',
 	'newspack_event_logger_nodes_register_log_producers'
 );
+
+/**
+ * Resolve a synced option's value for Settings_Sync_Node at consume time.
+ *
+ * Ported from the legacy Settings_Sync::maybe_queue_static_sync empty→default
+ * logic: a blank ('') or absent (false) value for a synced option resolves to
+ * its file-backed default — so blanking a field syncs the *default* rather than
+ * '' (which would fail a spoke's typed sanitization). The canonical default key
+ * is the option name with the `newspack_event_logger_nodes_` / `newspack_nodes_`
+ * prefix stripped, then the optional `remote_` segment dropped. Non-blank values
+ * and non-synced options pass through unchanged.
+ *
+ * @api Hooked to `newspack_nodes/settings_sync/value` by the deferred bootstrap.
+ * @param mixed  $value  The raw option value Settings_Sync_Node read (default get_option).
+ * @param string $option The local WP-option name.
+ * @return mixed The resolved value.
+ */
+function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string $option ) {
+	if ( '' !== $value && false !== $value ) {
+		return $value;
+	}
+
+	$config_key = $option;
+	foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
+		if ( 0 === \strpos( $config_key, $prefix ) ) {
+			$config_key = \substr( $config_key, \strlen( $prefix ) );
+			break;
+		}
+	}
+	$config_key = (string) \preg_replace( '/^remote_/', '', $config_key );
+
+	$defaults = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
+	return $defaults[ $config_key ] ?? $value;
+}
 
 ( static function (): void {
 	$entered = false;

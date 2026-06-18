@@ -71,6 +71,11 @@ class SettingsEventWriterTest extends TestCase {
 
 	public function test_init_wires_update_and_add_option_hooks(): void {
 		$GLOBALS['_wp_actions'] = [];
+		// init() is idempotent and the suite bootstrap already ran it, so reset
+		// the guard to exercise the real hook-wiring here.
+		$initialized = new \ReflectionProperty( Settings_Event_Writer::class, 'initialized' );
+		$initialized->setAccessible( true );
+		$initialized->setValue( null, false );
 		Settings_Event_Writer::init();
 
 		\do_action( 'update_option', 'newspack_via_hook', 'old', 'new' );
