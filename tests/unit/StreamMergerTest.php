@@ -212,12 +212,11 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( $remote, Core::node( 'stream-merger:remote:site-a' ) );
 	}
 
-	public function test_add_remote_skips_missing_disabled_missing_url_and_non_https_entries(): void {
+	public function test_add_remote_skips_missing_empty_url_and_non_https_entries(): void {
 		$this->seed_registry(
 			[
-				'disabled' => $this->make_server( 'https://disabled.test', false ),
-				'empty'    => [ 'url' => '', 'enabled' => true ],
-				'plain'    => $this->make_server( 'http://plain.test' ),
+				'empty' => [ 'url' => '' ],
+				'plain' => $this->make_server( 'http://plain.test' ),
 			]
 		);
 
@@ -226,11 +225,21 @@ class StreamMergerTest extends TestCase {
 		$merger->arguments( 'firehose 0' );
 
 		$merger->add_remote( 'missing' );
-		$merger->add_remote( 'disabled' );
 		$merger->add_remote( 'empty' );
 		$merger->add_remote( 'plain' );
 
 		$this->assertSame( [], $this->remotes( $merger ) );
+	}
+
+	public function test_add_remote_loads_present_entry_with_stale_disabled_flag(): void {
+		// `enabled => false` is a stale key from before the flag was removed;
+		// presence in the Vault now means enabled, so the remote still loads.
+		$this->seed_registry( [ 'stale' => $this->make_server( 'https://stale.test', false ) ] );
+
+		$merger = $this->make_merger();
+		$merger->add_remote( 'stale' );
+
+		$this->assertSame( [ 'stale' ], \array_keys( $this->remotes( $merger ) ) );
 	}
 
 	public function test_add_remote_replaces_existing_child_for_same_server(): void {
@@ -249,19 +258,21 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( $second, Core::node( 'test-stream-merger:remote:site-a' ) );
 	}
 
-	public function test_load_remotes_from_registry_only_loads_enabled_servers(): void {
+	public function test_load_remotes_from_registry_loads_every_present_server(): void {
+		// Presence in the Vault = enabled; a stale `enabled => false` key no
+		// longer excludes a server from the pull-side fan-in.
 		$this->seed_registry(
 			[
-				'site-a'   => $this->make_server( 'https://site-a.test' ),
-				'disabled' => $this->make_server( 'https://disabled.test', false ),
-				'site-b'   => $this->make_server( 'https://site-b.test' ),
+				'site-a' => $this->make_server( 'https://site-a.test' ),
+				'stale'  => $this->make_server( 'https://stale.test', false ),
+				'site-b' => $this->make_server( 'https://site-b.test' ),
 			]
 		);
 
 		$merger = $this->make_merger();
 		$merger->load_remotes_from_registry();
 
-		$this->assertSame( [ 'site-a', 'site-b' ], \array_keys( $this->remotes( $merger ) ) );
+		$this->assertSame( [ 'site-a', 'stale', 'site-b' ], \array_keys( $this->remotes( $merger ) ) );
 	}
 
 	public function test_connect_node_loads_registry_once(): void {

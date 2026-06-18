@@ -3,7 +3,7 @@
  * Stream Merger
  *
  * Orchestrator for hub-side aggregator. Instantiates one RemoteSource node
- * per enabled spoke in the substrate Vault, holds a reference to each, drives their
+ * per spoke present in the substrate Vault, holds a reference to each, drives their
  * periodic ticks, and owns the shared offsetlog Partition that persists
  * every remote's `{segment_id, offset}` cursor across worker restarts.
  *
@@ -301,7 +301,7 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * Instantiate a RemoteSource child for every enabled spoke in the Vault.
+	 * Instantiate a RemoteSource child for every spoke present in the Vault.
 	 *
 	 * One-shot action (formerly the `load_remotes_from_registry` verb). Fired
 	 * from the connect_node() lifecycle hook once the target is wired, so a
@@ -370,8 +370,8 @@ class Stream_Merger_Node extends Timer_Node {
 	/**
 	 * Add a remote SSE source.
 	 *
-	 *   add_remote( $server_id ) -> reads { url, auth_username, auth_password, enabled }
-	 *   from the Vault. Skips if entry missing or disabled.
+	 *   add_remote( $server_id ) -> reads { url, auth_username, auth_password }
+	 *   from the Vault. Skips if entry missing.
 	 *
 	 * Instantiates a RemoteSource child, restores its position
 	 * from the shared offsetlog, registers it in Core::$nodes_by_name so it
@@ -384,9 +384,6 @@ class Stream_Merger_Node extends Timer_Node {
 		$entry    = $registry->get( $server_id );
 		if ( null === $entry ) {
 			Core::print_less_often( "StreamMerger::add_remote: no registry entry for {$server_id}" );
-			return;
-		}
-		if ( isset( $entry['enabled'] ) && false === $entry['enabled'] ) {
 			return;
 		}
 		/** @var int|float|string|bool|null $raw_url */
@@ -583,7 +580,7 @@ class Stream_Merger_Node extends Timer_Node {
 	public static function node_schema(): array {
 		return [
 			'category'     => 'I/O',
-			'description'  => 'Owns and supervises RemoteSource children — one per enabled spoke in the Vault.',
+			'description'  => 'Owns and supervises RemoteSource children — one per spoke present in the Vault.',
 			'arguments'         => [
 				[ 'name' => 'remote_topic', 'type' => 'string', 'default' => '' ],
 				[ 'name' => 'partition', 'type' => 'int', 'default' => 0 ],

@@ -83,8 +83,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_status_verb_returns_per_server_partition_blocks(): void {
 		$this->seed_vault( 'spoke1', [
-			'url'     => 'https://spoke.example/',
-			'enabled' => true,
+			'url' => 'https://spoke.example/',
 		] );
 
 		Core::$memd->set( 'aggregator_status:spoke1:p0', [ 'state' => 'connected', 'lag' => 1234 ], 60 );
@@ -96,7 +95,7 @@ class AggregatorCITest extends TestCase {
 		$this->assertArrayHasKey( 'spoke1', $result );
 		$this->assertSame( 'spoke1', $result['spoke1']['id'] );
 		$this->assertStringStartsWith( 'https://spoke.example', $result['spoke1']['url'] );
-		$this->assertTrue( $result['spoke1']['enabled'] );
+		$this->assertArrayNotHasKey( 'enabled', $result['spoke1'] );
 		$this->assertArrayHasKey( 'partitions', $result['spoke1'] );
 		$this->assertArrayHasKey( 0, $result['spoke1']['partitions'] );
 		$this->assertSame( 'connected', $result['spoke1']['partitions'][0]['state'] );
@@ -105,8 +104,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_status_verb_uses_empty_block_on_cache_miss(): void {
 		$this->seed_vault( 'spoke2', [
-			'url'     => 'https://other.example/',
-			'enabled' => false,
+			'url' => 'https://other.example/',
 		] );
 
 		$interpreter = new Aggregator_CI_Node();
@@ -114,12 +112,12 @@ class AggregatorCITest extends TestCase {
 
 		$this->assertArrayHasKey( 'spoke2', $result );
 		$this->assertSame( [], $result['spoke2']['partitions'][0] );
-		$this->assertFalse( $result['spoke2']['enabled'] );
+		$this->assertArrayNotHasKey( 'enabled', $result['spoke2'] );
 	}
 
 	public function test_status_verb_clamps_num_partitions_to_max_16(): void {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 64 ] );
-		$this->seed_vault( 'spoke3', [ 'url' => 'https://x.example/', 'enabled' => true ] );
+		$this->seed_vault( 'spoke3', [ 'url' => 'https://x.example/' ] );
 
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
@@ -130,7 +128,7 @@ class AggregatorCITest extends TestCase {
 
 	public function test_status_verb_clamps_num_partitions_min_1(): void {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 0 ] );
-		$this->seed_vault( 'sp', [ 'url' => 'https://x.example/', 'enabled' => true ] );
+		$this->seed_vault( 'sp', [ 'url' => 'https://x.example/' ] );
 
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
@@ -195,8 +193,8 @@ class AggregatorCITest extends TestCase {
 		$this->assertCount( 1, $result );
 		$this->assertSame( 'site-a', $result[0]['id'] );
 		$this->assertSame( 'https://a.example.com', $result[0]['url'] );
-		$this->assertTrue( $result[0]['enabled'] );
-		// `logs` is dropped — mirrors the substrate Vault_CI public shape.
+		// `enabled` and `logs` are dropped — mirrors the substrate Vault_CI public shape.
+		$this->assertArrayNotHasKey( 'enabled', $result[0] );
 		$this->assertArrayNotHasKey( 'logs', $result[0] );
 		$this->assertTrue( $result[0]['has_credentials'] );
 		// Credentials are NOT leaked into the response.
