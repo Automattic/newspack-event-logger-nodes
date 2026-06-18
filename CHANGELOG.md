@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`Config::kill_readers()` delegate** — `kill_readers` moved to the substrate `Supervisor`; call `\Newspack_Nodes\Bootstrap::supervisor()->kill_readers( $groups )` (or the topology-activate REST path that wraps it). The `ConfigTest` cases that exercised the substrate's `kill_readers` and `Config_Utils::sanitize_option()` through the now-removed delegates were dropped — that coverage is substrate-owned (nodes' `SupervisorTest` / config-system tests).
+
+### Internal
+
+- **Opt-in dead-code audit** (`npm run lint:deadcode`) mirroring the substrate: `shipmonk/dead-code-detector` layered via `phpstan-deadcode.neon`, kept OUT of the commit/push lint gate. Same substrate caveat — most findings on an application built atop the runtime are WP/CLI entrypoints, hooks, or wire constants, not genuinely dead; verify call paths before deleting.
+
 ## [0.18.0] - 2026-06-17
 
 ### Changed

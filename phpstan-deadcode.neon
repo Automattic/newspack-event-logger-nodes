@@ -1,0 +1,25 @@
+# Opt-in dead-code audit — NOT part of the commit/push lint gate.
+#
+# shipmonk/dead-code-detector is excluded from the auto-loaded extension set
+# (see composer.json extra.phpstan/extension-installer.ignore) so the normal
+# `phpstan analyse` gate stays fast and free of its findings. This config layers
+# the detector on top of the main config for an on-demand sweep:
+#
+#     npm run lint:deadcode
+#
+# Caveat: this is an APPLICATION on top of the newspack-nodes substrate. tests/
+# are excluded (inherited from the main config) so test-only methods surface,
+# and the detector can't see the substrate's dynamic dispatch, WP hooks, WP-CLI
+# entrypoints, REST routes, or JS↔PHP wire constants — so most findings are
+# live-by-reflection/hook, NOT genuinely dead. Verify each finding against ALL
+# call paths (hooks, reflection, the .tsl topologies, and JS) before deleting.
+includes:
+    - phpstan.neon.dist
+    - vendor/shipmonk/dead-code-detector/rules.neon
+parameters:
+    # Real-load the substrate's Newspack_Nodes\* base classes during analysis —
+    # the dead-code-detector's reflection providers invoke the actual autoloader
+    # (scanDirectories alone isn't enough). Merged with phpstan.neon.dist's
+    # bootstrapFiles. See the bootstrap for the full rationale.
+    bootstrapFiles:
+        - .phpstan/load-substrate.php

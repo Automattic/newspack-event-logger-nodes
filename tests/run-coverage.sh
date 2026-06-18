@@ -6,11 +6,16 @@
 #   ./run-coverage.sh              # Run all tests with coverage
 #   ./run-coverage.sh --filter X   # Run specific test
 #
-# Coverage report is written to /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/
+# Coverage report is written to ${TEST_TMP} or ${TMPDIR} or /tmp:
+#     newspack-event-logger-nodes-coverage/
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+
+OUT=/tmp
+[ -n "$TMPDIR"   ] && OUT="$TMPDIR"
+[ -n "$TEST_TMP" ] && OUT="$TEST_TMP"
 
 # Log_Manager refuses to run as root (permission problems for www-data
 # workers). Tests instantiate Log_Manager, so the suite fails with
@@ -44,13 +49,13 @@ rm -rf /tmp/newspack-event-logger-nodes-test 2>/dev/null
 
 # Run PHPUnit with coverage
 "$PHPUNIT" --configuration phpunit.xml \
-    --coverage-clover /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/clover.xml \
-    --coverage-html /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage \
+    --coverage-clover ${OUT}/newspack-event-logger-nodes-coverage/clover.xml \
+    --coverage-html ${OUT}/newspack-event-logger-nodes-coverage \
 	--enforce-time-limit \
     "$@"
 
 echo ""
-echo "Coverage report: /volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/index.html"
+echo "Coverage report: ${OUT}/newspack-event-logger-nodes-coverage/index.html"
 
 rm -rf /tmp/event-logger-nodes-test                   \
        /tmp/newspack-event-logger-nodes-test-*        \
