@@ -3,10 +3,10 @@
  * Guard test: retired Config keys must not reappear in test fixtures.
  *
  * `enable_workers` was retired in v0.5.0 — the aggregator-mode gate is
- * `enable_aggregator` (typed bool, default OFF). Settings_Sync's push side
- * is intentionally ungated; without an aggregator topology + remotes,
- * queued remote_manager jobs are silent no-ops. Leaving `enable_workers`
- * in test fixtures suggests it still gates something — which it does not.
+ * `enable_aggregator` (typed bool, default OFF). The hub-side settings-sync
+ * node graph is structurally inert without an aggregator topology + remotes.
+ * Leaving `enable_workers` in test fixtures suggests it still gates something
+ * — which it does not.
  *
  * @package Newspack_Event_Logger_Nodes
  */

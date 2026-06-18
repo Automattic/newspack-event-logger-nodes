@@ -226,6 +226,7 @@ class Job_Intake {
 	 * should normally just pass `(handler, parameters[, key])`. The trailing
 	 * overrides are for tests targeting an isolated tmp dir.
 	 *
+	 * @api Used by external plugins (pyrobase Log runtime large-write path).
 	 * @param string      $handler        Handler name.
 	 * @param array<string, mixed>       $parameters     Job parameters.
 	 * @param string|null $key            Optional partition key (e.g., event ID).

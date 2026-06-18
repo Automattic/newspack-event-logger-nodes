@@ -68,6 +68,14 @@ class Remote_Source_Node extends Node {
 	/** Memcache TTL for aggregator status keys (seconds). */
 	public const STATUS_TTL = 300;
 
+	/**
+	 * Content-Type for `/command` POSTs. text/plain because WP REST 400s a JSONL
+	 * body sent as application/json (it pre-parses the body as a single JSON
+	 * document and rejects the newlines). Matches the browser CommandClient
+	 * (src/runtime/command_client.js).
+	 */
+	public const COMMAND_CONTENT_TYPE = 'text/plain; charset=UTF-8';
+
 	protected string $server_id     = '';
 	protected string $url           = '';
 	protected string $auth_username = '';
@@ -802,7 +810,7 @@ class Remote_Source_Node extends Node {
 		// application/json. Matches the browser CommandClient
 		// (src/runtime/command_client.js) — the same wire the dashboard JS
 		// uses for its own slot keep-alive.
-		$headers['Content-Type'] = Remote_Manager::COMMAND_CONTENT_TYPE;
+		$headers['Content-Type'] = self::COMMAND_CONTENT_TYPE;
 
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_COMMAND;

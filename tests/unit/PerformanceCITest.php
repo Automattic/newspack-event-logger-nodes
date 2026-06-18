@@ -1609,236 +1609,9 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// settings_update verb — replaces PerfSettingsController::update_setting.
-	// Distinct from Settings_CI's `update`: that handles the four substrate
-	// integer settings (newspack_nodes_*); this handles the nine perf-tuning
-	// options (newspack_event_logger_nodes_*), with the array/int/float/bool
-	// type-coerced sanitization regime + suppress_sync guard inherited from
-	// the legacy PerfSettingsController.
-	// -------------------------------------------------------------------------
-
-	public function test_settings_update_verb_writes_bool_option(): void {
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_log_memory --value=true'
-		);
-
-		$this->assertIsArray( $result );
-		$this->assertSame( 'newspack_event_logger_nodes_log_memory', $result['option'] );
-		$this->assertTrue( $result['updated'] );
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-	}
-
-	public function test_settings_update_verb_writes_int_option(): void {
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=50'
-		);
-
-		$this->assertSame( 50, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
-	}
-
-	public function test_settings_update_verb_writes_float_option(): void {
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_auto_protect_time_threshold --value=1.5'
-		);
-
-		$this->assertEqualsWithDelta(
-			1.5,
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'],
-			0.001
-		);
-	}
-
-	public function test_settings_update_verb_writes_array_option(): void {
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_log_events --value=init,shutdown'
-		);
-
-		$this->assertSame(
-			[ 'init', 'shutdown' ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']
-		);
-	}
-
-	public function test_settings_update_verb_array_sanitizes_text_values(): void {
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			// Comma-list value, double-quoted so the spaces around `trim_me`
-			// survive tokenization; the array sanitizer strips tags + trims.
-			'--option=newspack_event_logger_nodes_log_events --value="<b>init</b>,  trim_me  "'
-		);
-
-		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
-		$this->assertSame( 'init', $saved[0] );
-		$this->assertSame( 'trim_me', $saved[1] );
-	}
-
-	public function test_settings_update_verb_array_empty_value_clears_to_empty_list(): void {
-		// An empty array value (a cleared list, or the forwarder's `--value=""`
-		// for an empty list) must persist as [], not [''] — `explode(',', '')`
-		// yields one empty string that would otherwise survive into add_action('').
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_log_events --value=""'
-		);
-
-		$this->assertSame(
-			[],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']
-		);
-	}
-
-	public function test_settings_update_verb_rejects_unknown_option(): void {
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=arbitrary_option --value=x'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'unknown', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_int_overflow(): void {
-		// MAX_INT_VALUE in legacy PerfSettingsController is 1073741824 (2^30).
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=2147483648'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_negative_int(): void {
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=-5'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_non_numeric_int(): void {
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_auto_disable_threshold --value=banana'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_float_overflow(): void {
-		// Float upper bound in legacy controller is 86400 (24h in seconds).
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_auto_protect_time_threshold --value=99999.0'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_excessive_array_count(): void {
-		// MAX_EVENTS in legacy is 10000. The array-typed value arrives as a
-		// comma-list; 10001 elements overflows the array sanitizer's size cap.
-		$interpreter     = new Performance_CI_Node();
-		$csv             = \implode( ',', \array_fill( 0, 10001, 'x' ) );
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_log_events --value=' . $csv
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_requires_option_param(): void {
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--value=true'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'option', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_requires_value_param(): void {
-		// `value` is required by the grammar; an option with no `--value`
-		// surfaces 'value required' through the central error catch.
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_log_memory'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'value required', \strtolower( $result ) );
-	}
-
-	public function test_settings_update_verb_rejects_unauthorized(): void {
-		$GLOBALS['_current_user_can'] = false;
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'settings_update',
-			'--option=newspack_event_logger_nodes_log_memory --value=true'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'permission denied', $result );
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_memory', $GLOBALS['_wp_options'] );
-	}
-
-	// -------------------------------------------------------------------------
-	// set verb (Slice A1 normalized positional receiver) — same nine-option
-	// whitelist + type-coerced sanitization as settings_update, but positional
-	// `set <option> <value>` and suppress-wrapped so a synced apply doesn't
+	// set verb (normalized positional receiver) — nine-option whitelist +
+	// array/int/float/bool type-coerced sanitization. Positional
+	// `set <option> <value>`, suppress-wrapped so a synced apply doesn't
 	// bounce back out as a fresh settings event.
 	// -------------------------------------------------------------------------
 
@@ -2177,7 +1950,7 @@ class PerformanceCITest extends TestCase {
 			'overview', 'urls', 'url_detail', 'request_search', 'request_detail',
 			'timing', 'dashboard', 'hooks_registered', 'hooks_categories',
 			'hooks_available', 'hooks_configure', 'config_get', 'config_update',
-			'settings_update', 'request_log_list',
+			'set', 'request_log_list',
 			'request_log_detail',
 		];
 
@@ -2298,9 +2071,9 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
-	public function test_settings_update_verb_declares_required_option_and_value(): void {
-		// settings_update throws 'option required' / 'value required' → both required.
-		$args = self::args_by_name( 'settings_update' );
+	public function test_set_verb_declares_required_option_and_value(): void {
+		// set throws 'option required' / 'value required' → both required.
+		$args = self::args_by_name( 'set' );
 		$this->assertSame( [ 'option', 'value' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['option']['type'] );
 		$this->assertTrue( $args['option']['required'] );

@@ -14,8 +14,8 @@
  * Config::load_config — they are NEVER declared here.
  *
  * The `remote_*` direct-read options are registered + resettable but NOT
- * overlay keys (`overlay: false`): they are read via get_option / Settings_Sync,
- * never overlaid into load_config().
+ * overlay keys (`overlay: false`): they are read via get_option (by the
+ * settings-sync node graph at consume time), never overlaid into load_config().
  *
  * Labels + section titles are lazy `fn(): string` thunks so building the Schema
  * for overlay_keys() (which a frontend request does via Config) never calls a
@@ -177,7 +177,7 @@ class Settings_Schema {
 					restart: [],
 					sanitize: [ Admin::class, 'sanitize_remote_num_segments' ],
 					render: [ Admin::class, 'remote_num_segments_callback' ],
-					// Registered + resettable, but read directly via get_option / Settings_Sync — never overlaid into load_config().
+					// Registered + resettable, but read directly via get_option (settings-sync node graph) — never overlaid into load_config().
 					overlay: false,
 					register_args: [ 'type' => 'string' ],
 				),
@@ -189,7 +189,7 @@ class Settings_Schema {
 					restart: [],
 					sanitize: [ Admin::class, 'sanitize_remote_segment_size' ],
 					render: [ Admin::class, 'remote_segment_size_callback' ],
-					// Registered + resettable, but read directly via get_option / Settings_Sync — never overlaid into load_config().
+					// Registered + resettable, but read directly via get_option (settings-sync node graph) — never overlaid into load_config().
 					overlay: false,
 					register_args: [ 'type' => 'string' ],
 				),
@@ -201,7 +201,7 @@ class Settings_Schema {
 					restart: [],
 					sanitize: [ Admin::class, 'sanitize_remote_max_lifespan' ],
 					render: [ Admin::class, 'remote_max_lifespan_callback' ],
-					// Registered + resettable, but read directly via get_option / Settings_Sync — never overlaid into load_config().
+					// Registered + resettable, but read directly via get_option (settings-sync node graph) — never overlaid into load_config().
 					overlay: false,
 					register_args: [ 'type' => 'string' ],
 				),

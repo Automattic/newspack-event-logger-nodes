@@ -2,8 +2,7 @@
 /**
  * Unit tests for the `newspack_nodes/settings_sync/value` resolver callback —
  * the ELN bootstrap filter that resolves a blank/false synced option to its
- * file-backed default (ported from the old Settings_Sync::maybe_queue_static_sync
- * empty→default logic).
+ * file-backed default (the empty→default rule applied at sync-emit time).
  *
  * @package Newspack_Event_Logger_Nodes
  */

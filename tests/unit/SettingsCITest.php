@@ -79,170 +79,7 @@ class SettingsCITest extends TestCase {
 		$this->assertIsInt( $result['num_partitions'] );
 	}
 
-	public function test_update_verb_applies_partial_update_and_returns_snapshot(): void {
-		// Seed three of the four; the fourth comes back as its default.
-		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 2;
-		$GLOBALS['_wp_options']['newspack_nodes_segment_size'] = 4096;
-		$GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] = 3600;
-		\Newspack_Event_Logger_Nodes\Config::reset();
-
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--num_partitions=16'
-		);
-
-		$this->assertIsArray( $result );
-		$this->assertSame( 16, $result['num_partitions'] );
-		$this->assertSame( 2, $result['num_segments'] );
-		$this->assertSame( 4096, $result['segment_size'] );
-		$this->assertSame( 3600, $result['max_lifespan'] );
-		// Verify the write actually happened against WP options under the
-		// substrate prefix (matches legacy SettingsController target key).
-		$this->assertSame( 16, $GLOBALS['_wp_options']['newspack_nodes_num_partitions'] );
-	}
-
-	public function test_update_verb_writes_all_supplied_keys(): void {
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--num_partitions=4 --num_segments=8 --segment_size=32768 --max_lifespan=7200'
-		);
-
-		$this->assertSame( 4, $result['num_partitions'] );
-		$this->assertSame( 8, $result['num_segments'] );
-		$this->assertSame( 32768, $result['segment_size'] );
-		$this->assertSame( 7200, $result['max_lifespan'] );
-		$this->assertSame( 4, $GLOBALS['_wp_options']['newspack_nodes_num_partitions'] );
-		$this->assertSame( 8, $GLOBALS['_wp_options']['newspack_nodes_num_segments'] );
-		$this->assertSame( 32768, $GLOBALS['_wp_options']['newspack_nodes_segment_size'] );
-		$this->assertSame( 7200, $GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] );
-	}
-
-	public function test_update_verb_persists_substrate_keys_as_autoloaded(): void {
-		// num_partitions / num_segments / segment_size / max_lifespan are
-		// read on every request by the substrate Config. They MUST be
-		// autoloaded so they ride the single alloptions query instead of
-		// becoming N separate per-request get_option lookups.
-		$GLOBALS['_wp_option_autoload'] = [];
-		$interpreter                             = new Settings_CI_Node();
-		VerbHarness::fire( $interpreter, 'settings', 'update', '--num_partitions=4' );
-
-		$this->assertTrue(
-			$GLOBALS['_wp_option_autoload']['newspack_nodes_num_partitions'],
-			'substrate hot-path key must be written with autoload enabled'
-		);
-	}
-
-	public function test_update_verb_rejects_negative_int(): void {
-		// Substrate interpreter contract: verb throws RuntimeException → interpret()
-		// catches it and returns the message string as a TM_COMMAND|TM_ERROR
-		// payload. VerbHarness returns the raw string (not valid JSON).
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--num_partitions=-5'
-		);
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', $result );
-		$this->assertStringContainsString( 'num_partitions', $result );
-		// And the WP option was NOT written (write happens after sanitize).
-		$this->assertArrayNotHasKey( 'newspack_nodes_num_partitions', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_update_verb_allows_zero_for_max_lifespan(): void {
-		// Value-equivalence with legacy: max_lifespan accepts 0 (the
-		// only one of the four whose min is 0 rather than 1).
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--max_lifespan=0'
-		);
-		$this->assertSame( 0, $result['max_lifespan'] );
-		$this->assertSame( 0, $GLOBALS['_wp_options']['newspack_nodes_max_lifespan'] );
-	}
-
-	public function test_update_verb_rejects_zero_for_min_one_keys(): void {
-		// Mirror of the above: num_partitions / num_segments / segment_size
-		// all have min=1, so 0 is rejected. Value-equivalence with legacy
-		// SettingsController::sanitize_value, which uses the same per-key
-		// min override.
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--num_partitions=0'
-		);
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', $result );
-		$this->assertArrayNotHasKey( 'newspack_nodes_num_partitions', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_update_verb_rejects_unknown_key(): void {
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--not_in_allowlist=42'
-		);
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'unknown setting', $result );
-		$this->assertStringContainsString( 'not_in_allowlist', $result );
-	}
-
-	public function test_update_verb_rejects_non_numeric_value(): void {
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--num_partitions=not-an-int'
-		);
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', $result );
-	}
-
-	public function test_update_verb_rejects_unauthorized(): void {
-		$GLOBALS['_current_user_can'] = false;
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			'--num_partitions=4'
-		);
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'permission denied', $result );
-		$this->assertArrayNotHasKey( 'newspack_nodes_num_partitions', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_update_verb_no_args_returns_current_snapshot(): void {
-		// Empty update is a no-op that returns the current snapshot —
-		// useful as a poll-after-write-fan-out idempotency check.
-		$GLOBALS['_wp_options']['newspack_nodes_num_partitions'] = 2;
-		\Newspack_Event_Logger_Nodes\Config::reset();
-
-		$interpreter     = new Settings_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'update',
-			''
-		);
-		$this->assertSame( 2, $result['num_partitions'] );
-	}
-
-	// ── set verb (Slice A1 normalized positional receiver) ──────────────────
+	// ── set verb (normalized positional receiver) ──────────────────────────
 
 	public function test_set_verb_applies_single_positional_int_setting(): void {
 		$interpreter = new Settings_CI_Node();
@@ -323,9 +160,9 @@ class SettingsCITest extends TestCase {
 		}
 
 		$this->assertArrayHasKey( 'get', $verbs );
-		$this->assertArrayHasKey( 'update', $verbs );
+		$this->assertArrayHasKey( 'set', $verbs );
 		$this->assertIsCallable( $verbs['get']['handler'] );
-		$this->assertIsCallable( $verbs['update']['handler'] );
+		$this->assertIsCallable( $verbs['set']['handler'] );
 	}
 
 	public function test_get_verb_declares_no_args(): void {
@@ -334,19 +171,16 @@ class SettingsCITest extends TestCase {
 		$this->assertSame( [], $verbs['get']['args'] );
 	}
 
-	public function test_update_verb_declares_the_four_optional_int_settings(): void {
-		// `update` partial-applies any subset of the four substrate-owned
-		// integer settings — all optional. Inspector renders an int field per key.
-		$args = self::args_by_name( 'update' );
+	public function test_set_verb_declares_required_option_and_value(): void {
+		// `set` applies a single setting by full option name → both required:
+		// option (string) + value (int). Inspector renders the two fields.
+		$args = self::args_by_name( 'set' );
 
-		$this->assertSame(
-			[ 'num_partitions', 'num_segments', 'segment_size', 'max_lifespan' ],
-			\array_keys( $args )
-		);
-		foreach ( $args as $name => $arg ) {
-			$this->assertSame( 'int', $arg['type'], "{$name} must be int" );
-			$this->assertFalse( $arg['required'], "{$name} must be optional (partial update)" );
-		}
+		$this->assertSame( [ 'option', 'value' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['option']['type'] );
+		$this->assertTrue( $args['option']['required'] );
+		$this->assertSame( 'int', $args['value']['type'] );
+		$this->assertTrue( $args['value']['required'] );
 	}
 
 	/**
