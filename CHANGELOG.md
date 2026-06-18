@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Remote-spoke credentials now live in the substrate Vault.** `Stream_Merger_Node`, `Remote_Manager`, `Health_Check_Tick_Node`, and `Aggregator_CI_Node` read `\Newspack_Nodes\Vault::get_instance()` instead of the local server registry. The aggregator side-effects that used to live in the servers CI's verbs (full settings-sync fan-out + supervisor restart) now run from a listener on the substrate's `newspack_nodes/vault/changed` action.
+- **Vault `enabled` flag removed — every present spoke is pulled.** Following the substrate's drop of the stored `enabled` boolean (presence = enabled), `newspack_event_logger_nodes_on_vault_changed` is now the 2-arg `( string $id, string $action )` signature (registered with `accepted_args` 2), `Stream_Merger_Node` no longer skips `enabled === false` entries (it pulls every spoke present in the Vault), and `Aggregator_CI_Node`'s `status`/`servers` verbs no longer emit an `enabled` field. Restart-on-any-Vault-change behavior is unchanged.
 
 ### Fixed
 

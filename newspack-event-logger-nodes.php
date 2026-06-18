@@ -202,12 +202,10 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
  * `newspack_nodes/vault/changed` action. Best-effort (the mutation never fails
  * on it).
  *
- * @param string $id          Server id that changed.
- * @param string $action      added | updated | removed.
- * @param bool   $was_enabled Enabled state before the change.
- * @param bool   $now_enabled Enabled state after the change.
+ * @param string $id     Server id that changed.
+ * @param string $action added | updated | removed.
  */
-function newspack_event_logger_nodes_on_vault_changed( string $id, string $action, bool $was_enabled, bool $now_enabled ): void {
+function newspack_event_logger_nodes_on_vault_changed( string $id, string $action ): void {
 	try {
 		$base_dir = \Newspack_Nodes\Config::get_base_directory();
 		$lock_dir = $base_dir . '/locks/supervisor.lock.d';
@@ -218,7 +216,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		// Best-effort.
 	}
 }
-\add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 4 );
+\add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 2 );
 
 \add_action(
 	'admin_menu',

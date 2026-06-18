@@ -15,15 +15,15 @@
  *
  * Verbs:
  *   status  — per-server partition snapshot keyed by server id. For each
- *             enabled spoke, looks up `aggregator_status:{id}:p{N}` from
- *             memcache (one entry per partition the StreamMerger pulls
+ *             spoke present in the Vault, looks up `aggregator_status:{id}:p{N}`
+ *             from memcache (one entry per partition the StreamMerger pulls
  *             from). Cache misses default to an empty array, not null.
  *   health  — cache reachability + wall-clock timestamp. Mirrors the
  *             legacy {healthy, cache, timestamp} shape. Cache probe is
  *             wrapped in a Throwable catch so the endpoint never fails
  *             — a cache outage reports `cache=false`, not 500.
  *   servers — sequential array of registered servers with public-safe
- *             shape (id, url, enabled, has_credentials, is_config),
+ *             shape (id, url, has_credentials, is_config),
  *             matching the substrate Vault_CI public shape, but RETURNED
  *             AS A SEQUENTIAL ARRAY rather than a map keyed by id. Legacy
  *             contract — the React aggregator tree relies on the array
@@ -87,7 +87,6 @@ class Aggregator_CI_Node extends Service_CI_Node {
 							$result[ $id ] = [
 								'id'         => $id,
 								'url'        => \is_scalar( $url_v ) ? \esc_url_raw( (string) $url_v ) : '',
-								'enabled'    => $server['enabled'] ?? true,
 								'partitions' => $partitions,
 							];
 						}
@@ -122,7 +121,6 @@ class Aggregator_CI_Node extends Service_CI_Node {
 							$out[]   = [
 								'id'              => $id,
 								'url'             => \is_scalar( $url_v ) ? (string) $url_v : '',
-								'enabled'         => (bool) ( $cfg['enabled'] ?? false ),
 								'has_credentials' => ! empty( $cfg['auth_username'] ) && ! empty( $cfg['auth_password'] ),
 								'is_config'       => $registry->is_config_server( $id ),
 							];

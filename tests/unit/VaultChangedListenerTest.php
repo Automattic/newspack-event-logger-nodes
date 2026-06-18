@@ -4,8 +4,8 @@
  * reacts to the substrate's `newspack_nodes/vault/changed` action.
  *
  * The substrate Vault_CI fires `newspack_nodes/vault/changed`
- * ( $id, $action, $was_enabled, $now_enabled ) on add / update / remove.
- * The aggregator-specific side-effect that USED to live inside Servers_CI now
+ * ( $id, $action ) on add / update / remove. The aggregator-specific
+ * side-effect that USED to live inside Servers_CI now
  * runs from a free-function listener `newspack_event_logger_nodes_on_vault_changed`:
  * it flags a supervisor restart so the hub-control worker respawns, re-loads
  * remotes from the Vault, and the settings-sync node graph (Settings_Sync_Node +
@@ -41,23 +41,23 @@ class VaultChangedListenerTest extends TestCase {
 	}
 
 	public function test_add_requests_supervisor_restart(): void {
-		\newspack_event_logger_nodes_on_vault_changed( 'spoke1', 'added', false, true );
+		\newspack_event_logger_nodes_on_vault_changed( 'spoke1', 'added' );
 		$this->assertFileExists( $this->restart_flag() );
 	}
 
 	public function test_update_requests_supervisor_restart(): void {
-		\newspack_event_logger_nodes_on_vault_changed( 'spoke2', 'updated', true, true );
+		\newspack_event_logger_nodes_on_vault_changed( 'spoke2', 'updated' );
 		$this->assertFileExists( $this->restart_flag() );
 	}
 
 	public function test_remove_requests_supervisor_restart(): void {
-		\newspack_event_logger_nodes_on_vault_changed( 'spoke5', 'removed', true, false );
+		\newspack_event_logger_nodes_on_vault_changed( 'spoke5', 'removed' );
 		$this->assertFileExists( $this->restart_flag() );
 	}
 
 	public function test_missing_lock_dir_is_best_effort_no_throw(): void {
 		$this->rmdir_recursive( $this->lock_dir );
-		\newspack_event_logger_nodes_on_vault_changed( 'spoke6', 'added', false, true );
+		\newspack_event_logger_nodes_on_vault_changed( 'spoke6', 'added' );
 		$this->assertFileDoesNotExist( $this->restart_flag() );
 	}
 
@@ -66,8 +66,8 @@ class VaultChangedListenerTest extends TestCase {
 		// run order — the bootstrap registers it at file load, but other tests
 		// reset $GLOBALS['_wp_actions'], so the count is otherwise nondeterministic.
 		$GLOBALS['_wp_actions']['newspack_nodes/vault/changed'] = [];
-		\add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 4 );
-		\do_action( 'newspack_nodes/vault/changed', 'spoke7', 'added', false, true );
+		\add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 2 );
+		\do_action( 'newspack_nodes/vault/changed', 'spoke7', 'added' );
 		$this->assertFileExists( $this->restart_flag() );
 	}
 }
