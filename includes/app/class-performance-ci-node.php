@@ -39,6 +39,7 @@ use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Command_Args;
@@ -1817,6 +1818,61 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				AppConfig::reset();
+
+				return [
+					'option'  => $option,
+					'updated' => $ok,
+				];
+					},
+				],
+				[
+					'name'        => 'set',
+					'description' => 'Normalized positional single-option perf setting write with sync guard.',
+					'args'        => [
+						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				// Normalized positional receiver: `set <option> <value>`, one setting
+				// per command — the Slice A1 grammar Settings_Sync_Node fans out to
+				// spokes. Same nine-option whitelist + array/int/float/bool sanitize
+				// as settings_update; only the parse + suppress seam differ.
+				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
+
+				$option = \is_string( $option ) ? $option : '';
+				if ( '' === $option ) {
+					throw new \RuntimeException( 'option required' );
+				}
+				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
+					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
+				}
+
+				// The value rides the wire as a string; array-typed options carry it
+				// as a comma-list the array sanitizer expects pre-split. Drop empty
+				// tokens so a cleared value yields [] not [''].
+				$type      = self::SETTINGS_OPTIONS[ $option ];
+				$raw_value = \is_string( $value_arg ) ? $value_arg : '';
+				$value     = 'array' === $type ? self::csv( [ 'v' => $raw_value ], 'v' ) : $raw_value;
+
+				$sanitized = self::sanitize_settings_value( $value, $type );
+				if ( null === $sanitized ) {
+					throw new \RuntimeException( 'invalid value for option' );
+				}
+
+				// Suppress the spoke's own settings-event emission while applying a
+				// synced setting; otherwise the update_option hook would bounce this
+				// change straight back out as a fresh settings event. try/finally so
+				// the flag is restored on update_option failure. Autoload follows the
+				// central Config::autoload_for policy.
+				try {
+					Settings_Event_Writer::suppress( true );
+					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
+					AppConfig::reset();
+				} finally {
+					Settings_Event_Writer::suppress( false );
+				}
 
 				return [
 					'option'  => $option,
