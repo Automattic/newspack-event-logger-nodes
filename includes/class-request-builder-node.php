@@ -77,6 +77,8 @@ class Request_Builder_Node extends Timer_Node {
 	private $line_counter = 0;
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
 	 * whose override rebuilds the LRU_Cache with the parsed dimensions.
 	 *
@@ -113,6 +115,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Store the raw string, parse positional tokens via parse_schema_args()
 	 * (bucket_size / num_buckets), then rebuild the LRU_Cache with the new
 	 * dimensions (here — not the ctor — because it depends on the positional args).
@@ -277,12 +281,14 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
 	 * request times out (error_status='T') and is emitted to both requests.log and
 	 * the completed target even on a partition with no inbound firehose traffic.
 	 */
 	protected function fire(): void {
-		$this->maintenance();
+		$this->cache->rotate_if_due();
 	}
 
 	/** @param array<int, mixed> $message Incoming command Message. */
@@ -636,14 +642,6 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Periodic maintenance — drives rotate_if_due even with no inbound traffic.
-	 */
-	public function maintenance(): void {
-		$this->cache->rotate_if_due();
-	}
-
-
-	/**
 	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
 	 * wired with the eviction callback. Shared between the ctor (defaults)
 	 * and arguments() (post-schema-walk).
@@ -666,6 +664,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Pre-check the `{name}:flight` sibling name for collisions before the base
 	 * commits a rename. Flight is application-specific; the parent handles the
 	 * :config interpreter sibling.
@@ -678,6 +678,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
 	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
 	 * Mirrors Node::set_sibling_names for the :config interpreter.
@@ -687,7 +689,11 @@ class Request_Builder_Node extends Timer_Node {
 		parent::set_sibling_names( $name );
 	}
 
-	/** Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan. */
+	/**
+	 * @api Used by substrate.
+	 *
+	 * Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan.
+	 */
 	public function remove_node(): void {
 		if ( null !== $this->flight ) {
 			$this->flight->remove_node();
@@ -696,6 +702,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Override Node::sink() so the auto-sink wiring make_node performs on
 	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
 	 * Flight's $this->sink stays null and its in-flight emits drop on the
@@ -726,6 +734,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Emit the base config plus this node's verb-config, from STATE — one
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
@@ -746,6 +756,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Expose every named destination this node actually writes to so
 	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
 	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
@@ -792,6 +804,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Save state for persistence.
 	 *
 	 * Persists the full request cache (including entries and profiles)
@@ -820,6 +834,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
 	 *
 	 * @param array<string, mixed> $saved Saved state from save_state().

@@ -35,8 +35,8 @@ class FlameBuilderTest extends TestCase {
 	 * production-shaped; tests override only the fields they assert on.
 	 *
 	 * Timestamp defaults to current time so the FlameBuilder's bucket-key
-	 * derivation aligns with the test's `$store->bucket_key_for(\time())`
-	 * assertion (otherwise the bucket gets pruned by the retention cutoff).
+	 * derivation aligns with the test's local bucket-key assertion
+	 * (otherwise the bucket gets pruned by the retention cutoff).
 	 */
 	private function completed_request( array $overrides = [] ): array {
 		$base = [
@@ -58,6 +58,12 @@ class FlameBuilderTest extends TestCase {
 			'profiles'       => [],
 		];
 		return \array_replace( $base, $overrides );
+	}
+
+	private function bucket_key_for( int $timestamp ): string {
+		$min        = (int) \gmdate( 'i', $timestamp );
+		$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
+		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
 	}
 
 	private function fill_request( Flame_Builder_Node $fb, array $request ): void {
@@ -326,7 +332,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w', 'duration_ms' => 0.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $store->bucket_key_for( $now );
+		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Request_Builder_Node::url_hash( '/w' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -346,7 +352,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?supervisor', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $store->bucket_key_for( $now );
+		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Request_Builder_Node::url_hash( '/w?supervisor' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -368,7 +374,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/m', 'duration_ms' => 42.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $store->bucket_key_for( $now );
+		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Request_Builder_Node::url_hash( '/m' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -392,7 +398,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/p', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $store->bucket_key_for( $now );
+		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Request_Builder_Node::url_hash( '/p' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -461,7 +467,7 @@ class FlameBuilderTest extends TestCase {
 		// Global category time series.
 		$cats = $store->get_categories();
 		$this->assertNotEmpty( $cats );
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$this->assertArrayHasKey( $bucket, $cats );
 		$this->assertArrayHasKey( 'wpdb', $cats[ $bucket ] );
 		$this->assertArrayHasKey( 'total', $cats[ $bucket ] );
@@ -529,7 +535,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$fb->flush();
 
-		$bucket   = $store->bucket_key_for( $now );
+		$bucket   = $this->bucket_key_for( $now );
 		$url_hash = Request_Builder_Node::url_hash( '/?cache-cozy' );
 
 		// Per-URL timing IS kept for the synthetic worker row.
@@ -602,7 +608,7 @@ class FlameBuilderTest extends TestCase {
 		$fb_spoke->flush();
 
 		// Spoke: per-server bucket should be empty (no per-server tracking).
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$this->assertEmpty( $store->get_server_leaderboard_bucket( 'srv-a', $bucket ) );
 
 		// Hub: per-server bucket should be populated.
@@ -868,7 +874,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$fb->flush();
 
-		$bucket = $store->bucket_key_for( $fixed );
+		$bucket = $this->bucket_key_for( $fixed );
 		$hourly = $store->get_hourly();
 		$this->assertArrayHasKey( $bucket, $hourly );
 		$this->assertSame( 1, $hourly[ $bucket ]['count'] );
@@ -877,7 +883,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( null );
 	}
 
-	public function test_maintenance_triggers_flush_when_interval_elapsed(): void {
+	public function test_fill_triggers_flush_when_interval_elapsed(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb    = new Flame_Builder_Node();
@@ -885,7 +891,7 @@ class FlameBuilderTest extends TestCase {
 
 		// Fill first, then backdate last_flush_time AFTER (fill() itself can
 		// trigger a flush if last_flush_time is already old). This way the
-		// flush we observe comes only from the maintenance() call.
+		// flush we observe comes only from the second fill() call.
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0 ] ) );
 
 		$ref = new \ReflectionProperty( Flame_Builder_Node::class, 'last_flush_time' );
@@ -895,20 +901,12 @@ class FlameBuilderTest extends TestCase {
 		// Confirm hourly is NOT yet persisted (last fill happened mid-window).
 		$hourly_before = $store->get_hourly();
 
-		$fb->maintenance();
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 13.0 ] ) );
 
-		// After maintenance: hourly persisted to store.
+		// After the interval-triggered fill: hourly persisted to store.
 		$hourly_after = $store->get_hourly();
-		$this->assertNotEquals( $hourly_before, $hourly_after, 'maintenance flushed pending bucket' );
+		$this->assertNotEquals( $hourly_before, $hourly_after, 'fill flushed pending bucket' );
 		$this->assertNotEmpty( $hourly_after );
-	}
-
-	public function test_maintenance_skipped_when_interval_not_elapsed(): void {
-		$fb = new Flame_Builder_Node();
-		// last_flush_time is "now" from the constructor.
-		// maintenance() should be a no-op — no exception, no error.
-		$fb->maintenance();
-		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
 	public function test_set_custom_event_names_dispatches_to_custom_events(): void {
@@ -1232,7 +1230,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$bucket    = $store->bucket_key_for( $now );
+		$bucket    = $this->bucket_key_for( $now );
 		$index     = $store->get_url_index_hourly( $bucket );
 		$url_hash  = Request_Builder_Node::url_hash( '/p50' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -1260,7 +1258,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$index  = $store->get_url_index_hourly( $bucket );
 		$this->assertLessThanOrEqual( 500, \count( $index ) );
 	}
@@ -1285,7 +1283,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$dim    = $store->get_dimensional( 'ua' );
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$this->assertArrayHasKey( $bucket, $dim );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_DIM_VALUES, \count( $dim[ $bucket ] ) );
 		$this->assertArrayHasKey( 'Other', $dim[ $bucket ], 'low-frequency entries roll into Other' );
@@ -1313,7 +1311,7 @@ class FlameBuilderTest extends TestCase {
 		$url_hash = Request_Builder_Node::url_hash( '/shared' );
 		$url_dim  = $store->get_url_dimensional( $url_hash );
 		$this->assertArrayHasKey( 'ua', $url_dim );
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$this->assertArrayHasKey( $bucket, $url_dim['ua'] );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $url_dim['ua'][ $bucket ] ) );
 	}
@@ -1340,7 +1338,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$cats   = $store->get_categories();
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$this->assertArrayHasKey( $bucket, $cats );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_CAT_VALUES, \count( $cats[ $bucket ] ) );
 		$this->assertArrayHasKey( 'total', $cats[ $bucket ], '"total" pseudo-category preserved' );
@@ -1398,7 +1396,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$lb_s   = $store->get_server_leaderboard_bucket( 'srv-cap', $bucket );
 		$this->assertArrayHasKey( 'wpdb', $lb_s['categories'] );
 		$this->assertLessThanOrEqual(
@@ -1425,7 +1423,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$bucket    = $store->bucket_key_for( $now );
+		$bucket    = $this->bucket_key_for( $now );
 		$srv_cats  = $store->get_server_categories( 'srv-cat' );
 		$this->assertArrayHasKey( $bucket, $srv_cats );
 		$this->assertArrayHasKey( 'wpdb', $srv_cats[ $bucket ] );
@@ -1753,7 +1751,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$bucket = $store->bucket_key_for( $now );
+		$bucket = $this->bucket_key_for( $now );
 		$this->assertEmpty( $store->get_server_leaderboard_bucket( '', $bucket ) );
 	}
 

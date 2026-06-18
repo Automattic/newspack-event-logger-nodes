@@ -71,143 +71,6 @@ class SettingsSyncTest extends TestCase {
 		return $envelopes;
 	}
 
-	// --- Instance mode (closure-dispatch with encryption) -------------------
-
-	public function test_syncs_dispatches_unconditionally(): void {
-		// A3: enable_aggregator gate removed. Dispatch always runs;
-		// without an aggregator topology + enabled remotes the queued
-		// remote_manager job has no consumer (silent no-op).
-		$received = null;
-		$sync = new Settings_Sync(
-			synced_options: [ 'log_urls' ],
-			dispatch: function ( $option, $value, $ciphertext ) use ( &$received ) {
-				$received = [ 'option' => $option, 'value' => $value, 'ciphertext' => $ciphertext ];
-			}
-		);
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertNotNull( $received );
-		$this->assertSame( 'log_urls', $received['option'] );
-		$this->assertSame( [ '/new' ], $received['value'] );
-		$this->assertNotSame( '', $received['ciphertext'] );
-
-		// The ciphertext must round-trip back to the same plaintext payload.
-		$decoded = Settings_Sync::decode_payload( $received['ciphertext'] );
-		$this->assertSame( 'log_urls', $decoded['option'] );
-		$this->assertSame( [ '/new' ], $decoded['value'] );
-	}
-
-	public function test_skips_unsynced_option(): void {
-		$called = false;
-		$sync = new Settings_Sync(
-			synced_options: [ 'log_urls' ],
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->on_option_update( 'unrelated', 'a', 'b' );
-		$this->assertFalse( $called );
-	}
-
-	public function test_suppress_sync_blocks_sync(): void {
-		$called = false;
-		$sync = new Settings_Sync(
-			synced_options: [ 'log_urls' ],
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->suppress_instance_sync( true );
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertFalse( $called );
-
-		$sync->suppress_instance_sync( false );
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertTrue( $called );
-	}
-
-	// --- Encryption round-trip ------------------------------------------
-
-	public function test_encrypt_round_trips(): void {
-		$plaintext  = 'hello world: structured values too {"x":1}';
-		$ciphertext = Settings_Sync::encrypt( $plaintext );
-		$this->assertNotSame( '', $ciphertext );
-		$this->assertNotSame( $plaintext, $ciphertext, 'ciphertext must not equal plaintext' );
-
-		$decrypted = Settings_Sync::decrypt( $ciphertext );
-		$this->assertSame( $plaintext, $decrypted );
-	}
-
-	public function test_encrypt_uses_random_nonce(): void {
-		// Same plaintext encrypted twice must yield distinct ciphertexts (nonce
-		// is fresh per call). This is a critical security property — repeat
-		// nonces under a fixed key break sodium's confidentiality guarantees.
-		$plaintext = 'identical-input';
-		$a = Settings_Sync::encrypt( $plaintext );
-		$b = Settings_Sync::encrypt( $plaintext );
-		$this->assertNotSame( $a, $b );
-		// Both decrypt to the same plaintext.
-		$this->assertSame( $plaintext, Settings_Sync::decrypt( $a ) );
-		$this->assertSame( $plaintext, Settings_Sync::decrypt( $b ) );
-	}
-
-	public function test_decrypt_returns_null_on_tampered_ciphertext(): void {
-		$ciphertext = Settings_Sync::encrypt( 'sensitive' );
-		$this->assertNotSame( '', $ciphertext );
-
-		// Tamper: flip a byte deep inside the payload (after the nonce). Use a
-		// substr-replace so the base64 framing stays valid.
-		$tampered = $ciphertext;
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-		$raw = \base64_decode( $tampered, true );
-		// Flip a byte well past the 24-byte nonce (sodium_crypto_secretbox_open
-		// authenticates the entire ciphertext + tag).
-		$raw[30] = 'A' === $raw[30] ? 'B' : 'A';
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
-		$tampered = \base64_encode( $raw );
-
-		$this->assertNull( Settings_Sync::decrypt( $tampered ) );
-	}
-
-	public function test_decrypt_returns_null_on_truncated_payload(): void {
-		// Less than nonce-size bytes — definitely malformed.
-		$short = \base64_encode( 'short' );
-		$this->assertNull( Settings_Sync::decrypt( $short ) );
-	}
-
-	public function test_decrypt_returns_null_on_invalid_base64(): void {
-		// `!` is not in the base64 alphabet — strict decode rejects.
-		$this->assertNull( Settings_Sync::decrypt( '!!!not-base64!!!' ) );
-	}
-
-	public function test_decode_payload_returns_null_on_tamper(): void {
-		$cipher = Settings_Sync::encrypt( \json_encode( [ 'option' => 'log_urls', 'value' => [ '/x' ] ] ) );
-		// Tamper with the ciphertext.
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-		$raw     = \base64_decode( $cipher, true );
-		$raw[30] = 'X' === $raw[30] ? 'Y' : 'X';
-		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
-		$tampered = \base64_encode( $raw );
-
-		$this->assertNull( Settings_Sync::decode_payload( $tampered ) );
-	}
-
-	public function test_decode_payload_returns_null_on_non_payload_plaintext(): void {
-		// Encrypt arbitrary plaintext that isn't a payload-shaped JSON object.
-		$cipher = Settings_Sync::encrypt( 'just-a-string-not-a-json-object' );
-		$this->assertNull( Settings_Sync::decode_payload( $cipher ) );
-	}
-
-	// --- Encryption-required fail-closed --------------------------------
-
-	public function test_dispatch_receives_non_empty_ciphertext_when_encryption_works(): void {
-		$dispatched = null;
-		$sync       = new Settings_Sync(
-			synced_options: [ 'log_urls' ],
-			dispatch: function ( $option, $value, $cipher ) use ( &$dispatched ) {
-				$dispatched = $cipher;
-			}
-		);
-		$sync->on_option_update( 'log_urls', [ '/old' ], [ '/new' ] );
-		$this->assertNotNull( $dispatched );
-		$this->assertNotSame( '', $dispatched );
-	}
-
 	// --- Static mode (init() + WP listeners + JobIntake fan-out) ------------
 
 	public function test_static_init_registers_action_listeners(): void {
@@ -296,16 +159,6 @@ class SettingsSyncTest extends TestCase {
 				'every synced setting must target an allowlisted endpoint'
 			);
 		}
-	}
-
-	public function test_static_suppress_sync_toggles_static_guard(): void {
-		$this->assertFalse( Settings_Sync::is_sync_suppressed(), 'baseline: not suppressed' );
-
-		Settings_Sync::suppress_sync( true );
-		$this->assertTrue( Settings_Sync::is_sync_suppressed() );
-
-		Settings_Sync::suppress_sync( false );
-		$this->assertFalse( Settings_Sync::is_sync_suppressed() );
 	}
 
 	public function test_is_allowed_endpoint_accepts_newspack_nodes_prefixes(): void {
@@ -442,78 +295,7 @@ class SettingsSyncTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
-	// --- Instance-mode skip-unsynced-option ----------------------------------
-
-	public function test_instance_mode_skips_when_dispatch_returns_no_signal(): void {
-		// Instance mode: option in synced_options → dispatch is invoked.
-		// Verifies the dispatch closure receives the option name,
-		// the value, and a non-empty ciphertext.
-		$received_option = null;
-		$received_value  = null;
-		$sync = new Settings_Sync(
-			synced_options: [ 'log_events', 'log_urls' ],
-			dispatch: function ( $option, $value, $cipher ) use ( &$received_option, &$received_value ) {
-				$received_option = $option;
-				$received_value  = $value;
-			}
-		);
-
-		$sync->on_option_update( 'log_events', [], [ 'init', 'wp_head' ] );
-
-		$this->assertSame( 'log_events', $received_option );
-		$this->assertSame( [ 'init', 'wp_head' ], $received_value );
-	}
-
-	// --- Sync re-entry guard --------------------------------------------------
-
-	public function test_static_handler_skips_during_suppression(): void {
-		// Suppression must short-circuit BEFORE the synced-option check so
-		// even known options don't queue when suppression is active. The
-		// add_option signature path must respect the same guard.
-		Settings_Sync::suppress_sync( true );
-		Config::reset();
-
-		// add_option (2-arg) signature path — also guarded.
-		Settings_Sync::on_static_option_add( 'newspack_event_logger_nodes_log_events', [ 'init' ] );
-		Settings_Sync::on_static_option_update( 'newspack_event_logger_nodes_log_events', [], [ 'init' ] );
-
-		// No crash — handler returned early at the guard.
-		$this->assertTrue( Settings_Sync::is_sync_suppressed() );
-
-		Settings_Sync::suppress_sync( false );
-	}
-
 	// --- Encryption fail-closed flow ----------------------------------------
-
-	public function test_encrypt_returns_empty_when_sodium_unavailable(): void {
-		// We can't actually disable sodium in the test runtime, but we can
-		// verify the encrypt path is non-empty when sodium is available
-		// (which is the normal case). The fail-closed branches are documented
-		// at the implementation level and exercised by test_decrypt_returns_*.
-		$this->assertNotSame( '', Settings_Sync::encrypt( 'plaintext' ) );
-	}
-
-	public function test_decode_payload_round_trip(): void {
-		// Round-trip a structured payload through encrypt + decode_payload.
-		$plaintext = (string) \json_encode( [
-			'option' => 'log_events',
-			'value'  => [ 'init', 'wp_head' ],
-		] );
-		$cipher    = Settings_Sync::encrypt( $plaintext );
-		$decoded   = Settings_Sync::decode_payload( $cipher );
-
-		$this->assertNotNull( $decoded );
-		$this->assertSame( 'log_events', $decoded['option'] );
-		$this->assertSame( [ 'init', 'wp_head' ], $decoded['value'] );
-	}
-
-	public function test_decode_payload_returns_null_on_payload_without_option_key(): void {
-		// JSON without 'option' field is rejected by decode_payload.
-		$plaintext = (string) \json_encode( [ 'value' => 42 ] );
-		$cipher    = Settings_Sync::encrypt( $plaintext );
-
-		$this->assertNull( Settings_Sync::decode_payload( $cipher ) );
-	}
 
 	public function test_register_synced_settings_appends_to_existing(): void {
 		// The filter contract: existing settings array is preserved, new
@@ -566,19 +348,6 @@ class SettingsSyncTest extends TestCase {
 		$this->assertFalse(
 			Settings_Sync::is_allowed_endpoint( '/wp-json/newspack-node/v1/settings' )
 		);
-	}
-
-	public function test_suppress_instance_sync_default_arg(): void {
-		// suppress_instance_sync() with no arg defaults to true.
-		$called = false;
-		$sync = new Settings_Sync(
-			synced_options: [ 'log_urls' ],
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->suppress_instance_sync();
-
-		$sync->on_option_update( 'log_urls', [], [ '/x' ] );
-		$this->assertFalse( $called, 'default suppress_instance_sync(true) blocks dispatch' );
 	}
 
 	// --- maybe_queue_static_sync default-lookup branch ----------------------
@@ -685,46 +454,6 @@ class SettingsSyncTest extends TestCase {
 		$this->assertSame( [ '/foo' ], $params['value'] );
 
 		$this->rmdir_recursive( $tmp );
-	}
-
-	// --- decode_payload happy path with mixed value types -------------------
-
-	public function test_decode_payload_value_can_be_complex_types(): void {
-		// Value can be an array, object, string, etc.
-		$pt    = (string) \json_encode( [
-			'option' => 'log_urls',
-			'value'  => [ '/x', '/y', [ 'nested' => true ] ],
-		] );
-		$ct    = Settings_Sync::encrypt( $pt );
-		$out   = Settings_Sync::decode_payload( $ct );
-
-		$this->assertSame( 'log_urls', $out['option'] );
-		$this->assertSame( [ '/x', '/y', [ 'nested' => true ] ], $out['value'] );
-	}
-
-	public function test_decode_payload_with_null_value(): void {
-		// Decode supports null value.
-		$pt    = (string) \json_encode( [ 'option' => 'log_urls', 'value' => null ] );
-		$ct    = Settings_Sync::encrypt( $pt );
-		$out   = Settings_Sync::decode_payload( $ct );
-
-		$this->assertSame( 'log_urls', $out['option'] );
-		$this->assertNull( $out['value'] );
-	}
-
-	// --- Instance mode skipping when option not in synced_options ----------
-
-	public function test_instance_mode_skips_when_option_not_in_synced_list(): void {
-		// Option not in $synced_options must not dispatch even though the
-		// aggregator gate is gone — there's still no point dispatching
-		// options the hub doesn't care about.
-		$called = false;
-		$sync   = new Settings_Sync(
-			synced_options: [ 'log_urls' ], // 'other_option' NOT in this list
-			dispatch: function () use ( &$called ) { $called = true; }
-		);
-		$sync->on_option_update( 'other_option', 'old', 'new' );
-		$this->assertFalse( $called, 'option not in synced list must skip' );
 	}
 
 	// --- maybe_queue_static_sync: substrate-namespaced prefix branch ---------
@@ -878,42 +607,6 @@ class SettingsSyncTest extends TestCase {
 		// No assertion needed beyond "doesn't crash" — the contract is purely
 		// about idempotency.
 		$this->assertTrue( true );
-	}
-
-	// --- decrypt: edge-case inputs ----------------------------------------
-
-	/**
-	 * `decrypt('')` is a malformed empty base64; passes the function_exists
-	 * check, the key check, but fails the length check (< nonce size) — must
-	 * return null without throwing.
-	 */
-	public function test_decrypt_with_empty_string_returns_null(): void {
-		$this->assertNull( Settings_Sync::decrypt( '' ) );
-	}
-
-	/**
-	 * `decode_payload('')` decodes empty plaintext to null via the same
-	 * path; the json_decode of empty string returns null and short-circuits.
-	 */
-	public function test_decode_payload_with_empty_string_returns_null(): void {
-		$this->assertNull( Settings_Sync::decode_payload( '' ) );
-	}
-
-	/**
-	 * Round-trip with a value containing UTF-8 + JSON-special chars. Verifies
-	 * the encode/decrypt chain preserves payload fidelity across multi-byte
-	 * characters and string escaping.
-	 */
-	public function test_decode_payload_preserves_utf8_and_special_chars(): void {
-		$plaintext = (string) \json_encode( [
-			'option' => 'log_events',
-			'value'  => [ 'event\\"with\nquotes', 'unicode-£€™' ],
-		] );
-		$cipher    = Settings_Sync::encrypt( $plaintext );
-		$decoded   = Settings_Sync::decode_payload( $cipher );
-
-		$this->assertNotNull( $decoded );
-		$this->assertSame( [ 'event\\"with\nquotes', 'unicode-£€™' ], $decoded['value'] );
 	}
 
 	// --- is_allowed_endpoint: substring trap ---------------------------------

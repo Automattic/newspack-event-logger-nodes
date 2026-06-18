@@ -59,6 +59,8 @@ class Health_Check_Tick_Node extends Timer_Node {
 	}
 
 	/**
+	 * @api Used by substrate.
+	 *
 	 * fire (Timer_Node override): Router::notify_timer() -> fire_cb() -> fire() on
 	 * each TIMER tick. Enqueues a `remote_manager` health_check job if the debounce
 	 * window has elapsed and there's at least one enabled remote. Silently no-ops:

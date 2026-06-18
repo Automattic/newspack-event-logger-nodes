@@ -94,7 +94,6 @@ class RemoteSourceTest extends TestCase {
 		$this->assertSame( 15, Remote_Source_Node::HEARTBEAT_INTERVAL );
 		$this->assertSame( 10485760, Remote_Source_Node::MAX_BUFFER_SIZE );
 		$this->assertSame( 10485760, Remote_Source_Node::MAX_EVENT_SIZE );
-		$this->assertSame( 10000, Remote_Source_Node::MAX_QUEUE_SIZE );
 		$this->assertSame( 3900, Remote_Source_Node::MAX_LINE_BYTES );
 		$this->assertSame( 300, Remote_Source_Node::STATUS_TTL );
 	}

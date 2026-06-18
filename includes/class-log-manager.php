@@ -620,6 +620,8 @@ class Log_Manager {
 	}
 
 	/**
+	 * @api Used by tests.
+	 *
 	 * Reset the singleton instance.
 	 *
 	 * Call before changing REQUEST_URI to log a different request context.
@@ -643,6 +645,8 @@ class Log_Manager {
 	}
 
 	/**
+	 * @api Used by external plugins
+	 *
 	 * Log a warning message.
 	 *
 	 * @param string $message Warning message.
@@ -653,6 +657,8 @@ class Log_Manager {
 	}
 
 	/**
+	 * @api Used by external plugins
+	 *
 	 * Log an info message.
 	 *
 	 * @param string $message Info message.
@@ -762,6 +768,8 @@ class Log_Manager {
 	}
 
 	/**
+	 * @api Used by external plugins
+	 *
 	 * Get the request ID for the current request.
 	 *
 	 * @return string
@@ -771,6 +779,8 @@ class Log_Manager {
 	}
 
 	/**
+	 * @api Used by external plugins
+	 *
 	 * Refresh firehose segment state from disk.
 	 *
 	 * Call after a subprocess that may have written to or rotated the firehose,

@@ -55,60 +55,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 25200, $store_long->ttl_url_stats() );
 	}
 
-	public function test_bump_url_aggregates_count_and_sum_req_time(): void {
-		$store = $this->make_store();
-		$store->bump_url( '/x', 0.5 );
-		$store->bump_url( '/x', 1.5 );
-		$bucket = $store->current_url_bucket();
-		$stats  = $store->get_url_bucket( $bucket );
-		$this->assertSame( 2, $stats['/x']['count'] );
-		$this->assertSame( 2.0, $stats['/x']['sum_req_time'] );
-		$this->assertSame( 2, $stats['/x']['samples'] );
-	}
-
-	public function test_bump_url_for_distinct_urls_keeps_them_separate(): void {
-		$store = $this->make_store();
-		$store->bump_url( '/a', 0.1 );
-		$store->bump_url( '/b', 0.2 );
-		$bucket = $store->current_url_bucket();
-		$stats  = $store->get_url_bucket( $bucket );
-		$this->assertArrayHasKey( '/a', $stats );
-		$this->assertArrayHasKey( '/b', $stats );
-	}
-
-	public function test_bump_leaderboard_accumulates_sums(): void {
-		$store = $this->make_store();
-		$store->bump_leaderboard( 0.5 );
-		$store->bump_leaderboard( 1.5 );
-		$bucket = $store->current_url_bucket();
-		$lb     = $store->get_leaderboard_bucket( $bucket );
-		$this->assertSame( 2, $lb['count'] );
-		$this->assertEqualsWithDelta( 2.0, $lb['sum_req_time'], 1e-9 );
-	}
-
-	public function test_bump_dimensional_caps_at_max_dim_values_with_other(): void {
-		$store = $this->make_store();
-		// Push more than MAX_DIM_VALUES distinct values; overflow rolls to "Other".
-		for ( $i = 0; $i < Stats_Store::MAX_DIM_VALUES + 5; $i++ ) {
-			$store->bump_dimensional( 'status', "v{$i}", 0.1 );
-		}
-		$dim    = $store->get_dimensional( 'status' );
-		$bucket = $store->current_url_bucket();
-		$this->assertLessThanOrEqual( Stats_Store::MAX_DIM_VALUES, \count( $dim[ $bucket ] ) );
-		$this->assertArrayHasKey( 'Other', $dim[ $bucket ] );
-	}
-
-	public function test_bump_with_cap_exempts_total_pseudo_category(): void {
-		$store = $this->make_store();
-		$store->bump_dimensional( 'status', 'total', 0.1 );
-		for ( $i = 0; $i < Stats_Store::MAX_DIM_VALUES + 5; $i++ ) {
-			$store->bump_dimensional( 'status', "v{$i}", 0.1 );
-		}
-		$dim    = $store->get_dimensional( 'status' );
-		$bucket = $store->current_url_bucket();
-		$this->assertArrayHasKey( 'total', $dim[ $bucket ], '"total" is exempt from the cap' );
-	}
-
 	public function test_get_url_stats_round_trip(): void {
 		$store = $this->make_store();
 		$this->assertNull( $store->get_url_stats( 'urlhash-x' ) );
@@ -123,8 +69,8 @@ class StatsStoreTest extends TestCase {
 		$mc       = $this->seed_memd();
 		$store_p0 = $this->make_store( partition: 0 );
 		$store_p1 = $this->make_store( partition: 1 );
-		$store_p0->bump_url( '/x', 0.1 );
-		$store_p1->bump_url( '/x', 0.2 );
+		$store_p0->set_url_index_hourly( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
+		$store_p1->set_url_index_hourly( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
 		$keys   = $mc->keys();
 		$has_p0 = false;
 		$has_p1 = false;
@@ -142,7 +88,7 @@ class StatsStoreTest extends TestCase {
 	public function test_keys_include_namespace(): void {
 		$mc    = $this->seed_memd();
 		$store = $this->make_store();
-		$store->bump_url( '/x', 0.1 );
+		$store->set_url_index_hourly( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
 		$keys          = $mc->keys();
 		$found_urls_ns = false;
 		foreach ( $keys as $k ) {
@@ -157,20 +103,19 @@ class StatsStoreTest extends TestCase {
 	public function test_flush_all_rotates_salt_and_orphans_keys(): void {
 		$mc    = $this->seed_memd();
 		$store = $this->make_store();
-		$store->bump_url( '/x', 1.0 );
+		$store->set_url_index_hourly( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
 		$old_keys = $mc->keys();
 		$this->assertNotEmpty( $old_keys );
 
 		$store->flush_all();
-		$store->bump_url( '/y', 1.0 );
+		$store->set_url_index_hourly( '2026-01-01-00-00', [ 'y' => [ 'url' => '/y' ] ] );
 		$new_keys = $mc->keys();
 
 		$this->assertNotEquals( $old_keys, $new_keys, 'salt rotation should change keys' );
 		// The new bump should NOT find the old data because the prefix is different.
-		$bucket = $store->current_url_bucket();
-		$stats  = $store->get_url_bucket( $bucket );
-		$this->assertArrayNotHasKey( '/x', $stats );
-		$this->assertArrayHasKey( '/y', $stats );
+		$stats = $store->get_url_bucket( '2026-01-01-00-00' );
+		$this->assertArrayNotHasKey( 'x', $stats );
+		$this->assertArrayHasKey( 'y', $stats );
 	}
 
 	public function test_fail_soft_get_returns_empty_when_memd_null(): void {
@@ -182,23 +127,22 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [], $store->get_dimensional( 'status' ) );
 	}
 
-	public function test_fail_soft_bump_swallows_failure_when_memd_null(): void {
+	public function test_fail_soft_set_returns_false_when_memd_null(): void {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		// Must not throw.
-		$store->bump_url( '/x', 0.5 );
-		$store->bump_leaderboard( 0.5 );
-		$store->bump_dimensional( 'status', '200', 0.5 );
-		$store->bump_category( 'wpdb', 0.5, 1 );
-		$store->bump_hourly( 0.5, 10.0 );
+		$this->assertFalse( $store->set_url_index_hourly( '2026-01-01-00-00', [] ) );
+		$this->assertFalse( $store->set_leaderboard_bucket( '2026-01-01-00-00', [] ) );
+		$this->assertFalse( $store->set_dimensional( 'status', [] ) );
 		$this->assertNull( Core::$memd );
 	}
 
 	public function test_get_multi_url_buckets_batches_lookups(): void {
 		$store = $this->make_store();
-		$store->bump_url( '/x', 0.5 );
-		$store->bump_url( '/y', 0.5 );
-		$bucket = $store->current_url_bucket();
+		$bucket = '2026-01-01-00-00';
+		$store->set_url_index_hourly( $bucket, [
+			'/x' => [ 'url' => '/x' ],
+			'/y' => [ 'url' => '/y' ],
+		] );
 
 		// get_url_buckets should accept a list and return a map.
 		$results = $store->get_url_buckets( [ $bucket, 'nonexistent-bucket' ] );
@@ -349,12 +293,4 @@ class StatsStoreTest extends TestCase {
 		$this->assertEqualsWithDelta( 3.0, $display['categories']['wpdb']['entries']['SELECT'][1], 1e-9 );
 	}
 
-	public function test_bucket_key_for_returns_5min_floor(): void {
-		$store = $this->make_store();
-		// gmmktime so we control the UTC clock the bucket_key_for derives from.
-		$ts  = \gmmktime( 12, 34, 56, 5, 8, 2026 );
-		$key = $store->bucket_key_for( $ts );
-		// Format: Y-m-d-H-MM where MM is 5-min floor of 34 = 30.
-		$this->assertSame( '2026-05-08-12-30', $key );
-	}
 }

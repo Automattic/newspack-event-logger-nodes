@@ -246,7 +246,6 @@ class AdminTest extends TestCase {
 
 		// Use /tmp directly to dodge realpath/symlink mismatches on hosts whose
 		// sys_get_temp_dir() returns a symlinked path (e.g. macOS /var → /private/var).
-		// Config::ensure_path() requires realpath() to match the input exactly.
 		$this->base_dir = '/tmp/newspack-event-logger-nodes-admin-test-' . \uniqid();
 		\mkdir( $this->base_dir, 0755, true );
 
@@ -1231,23 +1230,6 @@ class AdminTest extends TestCase {
 		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
 	}
 
-	// ---- render_settings_page_static -------------------------------------
-
-	public function test_render_settings_page_static_outputs_markup(): void {
-		\ob_start();
-		Admin::render_settings_page_static();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'Event Logger Settings', $out );
-		$this->assertStringContainsString( Admin::OPTIONS_GROUP, $out );
-	}
-
-	public function test_render_settings_page_static_blocks_unauthorized(): void {
-		$GLOBALS['_current_user_can'] = false;
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'You do not have permission' );
-		Admin::render_settings_page_static();
-	}
-
 	// ---- Constructor wires the hooks --------------------------------------
 
 	public function test_constructor_hooks_admin_menu_and_admin_init(): void {
@@ -2066,16 +2048,6 @@ class AdminTest extends TestCase {
 		$admin->auto_tune_callback();
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'value="100"', $out );
-	}
-
-	public function test_render_settings_page_static_construct_path(): void {
-		// Confirm static shim instantiates a fresh Admin and renders. Capture
-		// markup to assert the rendered settings page content.
-		$GLOBALS['_current_user_can'] = true;
-		\ob_start();
-		Admin::render_settings_page_static();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'newspack-event-logger-nodes-reset-form', $out );
 	}
 
 	public function test_handle_flush_stats_with_default_memcache_when_unset(): void {

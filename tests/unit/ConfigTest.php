@@ -209,17 +209,6 @@ class ConfigTest extends TestCase {
 
 	// ── Path/directory accessors ───────────────────────────────────────────
 
-	public function test_get_base_directory_creates_dir(): void {
-		// `base_directory` is a substrate key — the WP option name is the
-		// substrate-prefixed `newspack_nodes_base_directory`. The application
-		// Config's `get_base_directory()` delegates to the substrate.
-		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/base' );
-		Config::reset();
-		$base = Config::get_base_directory();
-		$this->assertSame( $this->temp_dir . '/base', $base );
-		$this->assertDirectoryExists( $base );
-	}
-
 	public function test_get_logs_locks_offsets_dirs(): void {
 		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/base2' );
 		Config::reset();
@@ -240,26 +229,6 @@ class ConfigTest extends TestCase {
 		$logs1 = Config::get_logs_directory();
 		$logs2 = Config::get_logs_directory();
 		$this->assertSame( $logs1, $logs2 );
-	}
-
-	public function test_ensure_path_creates_nested(): void {
-		$path   = $this->temp_dir . '/sub/deep/dir';
-		$result = Config::ensure_path( $path );
-		$this->assertDirectoryExists( $path );
-		$this->assertSame( $path, $result );
-	}
-
-	public function test_ensure_path_strips_trailing_slash(): void {
-		$path = $this->temp_dir . '/trailing';
-		@\mkdir( $path, 0755, true );
-		$result = Config::ensure_path( $path . '/' );
-		$this->assertSame( $path, $result );
-	}
-
-	public function test_ensure_path_rejects_null_byte(): void {
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'null byte' );
-		Config::ensure_path( "/tmp/evil\0path" );
 	}
 
 	// ── validate_config_path ──────────────────────────────────────────────

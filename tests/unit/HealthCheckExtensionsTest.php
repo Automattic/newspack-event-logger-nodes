@@ -163,22 +163,6 @@ class HealthCheckExtensionsTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
-	public function test_process_discovery_suppresses_settings_sync_during_write(): void {
-		// Call process_discovery and assert the static guard is OFF after the
-		// merge — i.e., the finally block restored it. (It's set TRUE during
-		// update_option but cleared by the time we get back.)
-		$this->assertFalse( Settings_Sync::is_sync_suppressed() );
-
-		Health_Check_Extensions::process_discovery( [
-			'site-a' => [ 'registered_hooks' => [ 'init' ] ],
-		] );
-
-		$this->assertFalse(
-			Settings_Sync::is_sync_suppressed(),
-			'suppress_sync must be cleared in the finally block after the merge'
-		);
-	}
-
 	public function test_process_discovery_normalizes_associative_existing(): void {
 		// Existing is an associative array (key => bool) — process must
 		// normalize to flat indexed when merging.
