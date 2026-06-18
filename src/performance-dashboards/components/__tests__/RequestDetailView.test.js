@@ -9,12 +9,10 @@
  * Each mock renders a marker element so we can assert sections appear /
  * are omitted based on the request payload shape.
  */
-/* global globalThis */
-
 jest.mock( '../../FlameGraph', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		globalThis.__requestDetailFlameProps = props;
+		global.__requestDetailFlameProps = props;
 		return 'FLAME_GRAPH';
 	},
 } ) );
@@ -25,9 +23,9 @@ jest.mock( '../../RequestProfile', () => ( {
 jest.mock( '../LogEntriesTable', () => ( {
 	__esModule: true,
 	default: ( { revealRef } ) => {
-		globalThis.__requestDetailReveal = jest.fn();
+		global.__requestDetailReveal = jest.fn();
 		if ( revealRef ) {
-			revealRef.current = globalThis.__requestDetailReveal;
+			revealRef.current = global.__requestDetailReveal;
 		}
 		return 'LOG_ENTRIES_TABLE';
 	},
@@ -142,12 +140,12 @@ describe( 'RequestDetailView', () => {
 		expect( container.textContent ).toContain( 'REQUEST_PROFILE' );
 		expect( container.textContent ).toContain( 'LOG_ENTRIES_TABLE' );
 		act( () => {
-			globalThis.__requestDetailFlameProps.onRevealEntry( [
+			global.__requestDetailFlameProps.onRevealEntry( [
 				'process',
 				'db',
 			] );
 		} );
-		expect( globalThis.__requestDetailReveal ).toHaveBeenCalledWith( [
+		expect( global.__requestDetailReveal ).toHaveBeenCalledWith( [
 			'process',
 			'db',
 		] );

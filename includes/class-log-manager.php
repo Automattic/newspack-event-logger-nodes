@@ -635,6 +635,8 @@ class Log_Manager {
 	}
 
 	/**
+	 * @api Used by external plugins.
+	 * 
 	 * Log an error message.
 	 *
 	 * @param string $message Error message.
@@ -645,7 +647,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins
+	 * @api Used by external plugins.
 	 *
 	 * Log a warning message.
 	 *
@@ -657,7 +659,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins
+	 * @api Used by external plugins.
 	 *
 	 * Log an info message.
 	 *
@@ -768,7 +770,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins
+	 * @api Used by external plugins.
 	 *
 	 * Get the request ID for the current request.
 	 *
@@ -779,7 +781,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * @api Used by external plugins
+	 * @api Used by external plugins.
 	 *
 	 * Refresh firehose segment state from disk.
 	 *
