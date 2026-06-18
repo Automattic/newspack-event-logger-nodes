@@ -263,102 +263,6 @@ class Admin {
 		);
 	}
 
-	public function render_settings_page(): void {
-		if ( ! self::current_user_allowed() ) {
-			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
-		}
-		$reset_url = \function_exists( 'admin_url' )
-			? \admin_url( 'admin-post.php' )
-			: '/wp-admin/admin-post.php';
-		?>
-		<div class="wrap event-logger-settings-wrap">
-			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
-			<?php
-			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
-			if ( isset( $_GET['flushed'] ) ) {
-				// phpcs:ignore WordPress.Security.NonceVerification.Recommended
-				$restarted = isset( $_GET['restarted'] ) && \is_numeric( $_GET['restarted'] ) ? (int) $_GET['restarted'] : 0;
-				echo '<div class="notice notice-success is-dismissible"><p>'
-					. \esc_html(
-						\sprintf(
-							/* translators: %d = number of workers restarted. */
-							\_n(
-								'Cache flushed. %d worker restart requested — fresh prefix takes effect on its next graceful exit.',
-								'Cache flushed. %d workers restart requested — fresh prefix takes effect on their next graceful exit.',
-								$restarted,
-								'newspack-event-logger-nodes'
-							),
-							$restarted
-						)
-					) . '</p></div>';
-			}
-			// phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			if ( isset( $_GET['reset'] ) ) {
-				echo '<div class="notice notice-success is-dismissible"><p>'
-					. \esc_html__( 'Settings reset to defaults.', 'newspack-event-logger-nodes' )
-					. '</p></div>';
-			}
-			?>
-			<form method="post" action="options.php">
-				<?php
-				\settings_fields( self::OPTIONS_GROUP );
-				\do_settings_sections( self::SETTINGS_PAGE );
-				?>
-				<p class="submit">
-					<?php \submit_button( \__( 'Save Settings', 'newspack-event-logger-nodes' ), 'primary', 'submit', false ); ?>
-					<span style="display:inline-block; margin-left: 10px;">
-						<input type="button" class="button button-secondary"
-							value="<?php \esc_attr_e( 'Reset to Defaults', 'newspack-event-logger-nodes' ); ?>"
-							onclick="if ( confirm( '<?php echo \esc_js( \__( 'Are you sure you want to reset all settings to defaults? This cannot be undone.', 'newspack-event-logger-nodes' ) ); ?>' ) ) { document.getElementById( 'newspack-event-logger-nodes-reset-form' ).submit(); }" />
-					</span>
-				</p>
-			</form>
-			<form id="newspack-event-logger-nodes-reset-form" method="post" action="<?php echo \esc_url( $reset_url ); ?>" style="display:none;">
-				<input type="hidden" name="action" value="<?php echo \esc_attr( self::RESET_ACTION ); ?>">
-				<?php \wp_nonce_field( self::RESET_ACTION, self::RESET_NONCE ); ?>
-			</form>
-			<?php
-			// Allow child plugins (Performance, Aggregator, etc.) to inject sections
-			// below the form. Matches the legacy plugin's
-			// `newspack_event_logger_settings_after_form` hook.
-			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
-			Field_Reset_Assets::enqueue();
-			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
-			?>
-		</div>
-		<?php
-	}
-
-	/**
-	 * Permission gate: `manage_options` baseline + optional `allowed_users`
-	 * whitelist from Config.
-	 *
-	 * Empty `allowed_users` means "all users with manage_options". When the
-	 * whitelist is populated, the current user's `user_login` must be a member.
-	 * This is intentional — manage_options is required even for whitelisted
-	 * users, so a demoted account loses access immediately without needing the
-	 * whitelist updated.
-	 *
-	 * @return bool True if user is allowed.
-	 */
-	public static function current_user_allowed(): bool {
-		if ( ! \current_user_can( 'manage_options' ) ) {
-			return false;
-		}
-
-		$config        = Config::load_config();
-		$allowed_users = $config['allowed_users'] ?? [];
-		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
-			return true;
-		}
-
-		if ( ! \function_exists( 'wp_get_current_user' ) ) {
-			return true; // CLI / no user context — don't lock out admins running CLI tools.
-		}
-		$current_user = \wp_get_current_user();
-		return \in_array( $current_user->user_login, $allowed_users, true );
-	}
-
 	public static function remote_num_segments_callback(): void {
 		self::render_number_field(
 			'remote_num_segments',
@@ -548,6 +452,102 @@ class Admin {
 			\__( 'Events/hooks that exceeded the time threshold at least once. Protected from auto-disable. Remove to allow auto-disabling.', 'newspack-event-logger-nodes' ),
 			''
 		);
+	}
+
+	public function render_settings_page(): void {
+		if ( ! self::current_user_allowed() ) {
+			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
+		}
+		$reset_url = \function_exists( 'admin_url' )
+			? \admin_url( 'admin-post.php' )
+			: '/wp-admin/admin-post.php';
+		?>
+		<div class="wrap event-logger-settings-wrap">
+			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
+			<?php
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
+			if ( isset( $_GET['flushed'] ) ) {
+				// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				$restarted = isset( $_GET['restarted'] ) && \is_numeric( $_GET['restarted'] ) ? (int) $_GET['restarted'] : 0;
+				echo '<div class="notice notice-success is-dismissible"><p>'
+					. \esc_html(
+						\sprintf(
+							/* translators: %d = number of workers restarted. */
+							\_n(
+								'Cache flushed. %d worker restart requested — fresh prefix takes effect on its next graceful exit.',
+								'Cache flushed. %d workers restart requested — fresh prefix takes effect on their next graceful exit.',
+								$restarted,
+								'newspack-event-logger-nodes'
+							),
+							$restarted
+						)
+					) . '</p></div>';
+			}
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			if ( isset( $_GET['reset'] ) ) {
+				echo '<div class="notice notice-success is-dismissible"><p>'
+					. \esc_html__( 'Settings reset to defaults.', 'newspack-event-logger-nodes' )
+					. '</p></div>';
+			}
+			?>
+			<form method="post" action="options.php">
+				<?php
+				\settings_fields( self::OPTIONS_GROUP );
+				\do_settings_sections( self::SETTINGS_PAGE );
+				?>
+				<p class="submit">
+					<?php \submit_button( \__( 'Save Settings', 'newspack-event-logger-nodes' ), 'primary', 'submit', false ); ?>
+					<span style="display:inline-block; margin-left: 10px;">
+						<input type="button" class="button button-secondary"
+							value="<?php \esc_attr_e( 'Reset to Defaults', 'newspack-event-logger-nodes' ); ?>"
+							onclick="if ( confirm( '<?php echo \esc_js( \__( 'Are you sure you want to reset all settings to defaults? This cannot be undone.', 'newspack-event-logger-nodes' ) ); ?>' ) ) { document.getElementById( 'newspack-event-logger-nodes-reset-form' ).submit(); }" />
+					</span>
+				</p>
+			</form>
+			<form id="newspack-event-logger-nodes-reset-form" method="post" action="<?php echo \esc_url( $reset_url ); ?>" style="display:none;">
+				<input type="hidden" name="action" value="<?php echo \esc_attr( self::RESET_ACTION ); ?>">
+				<?php \wp_nonce_field( self::RESET_ACTION, self::RESET_NONCE ); ?>
+			</form>
+			<?php
+			// Allow child plugins (Performance, Aggregator, etc.) to inject sections
+			// below the form. Matches the legacy plugin's
+			// `newspack_event_logger_settings_after_form` hook.
+			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
+			Field_Reset_Assets::enqueue();
+			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
+			?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Permission gate: `manage_options` baseline + optional `allowed_users`
+	 * whitelist from Config.
+	 *
+	 * Empty `allowed_users` means "all users with manage_options". When the
+	 * whitelist is populated, the current user's `user_login` must be a member.
+	 * This is intentional — manage_options is required even for whitelisted
+	 * users, so a demoted account loses access immediately without needing the
+	 * whitelist updated.
+	 *
+	 * @return bool True if user is allowed.
+	 */
+	public static function current_user_allowed(): bool {
+		if ( ! \current_user_can( 'manage_options' ) ) {
+			return false;
+		}
+
+		$config        = Config::load_config();
+		$allowed_users = $config['allowed_users'] ?? [];
+		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
+			return true;
+		}
+
+		if ( ! \function_exists( 'wp_get_current_user' ) ) {
+			return true; // CLI / no user context — don't lock out admins running CLI tools.
+		}
+		$current_user = \wp_get_current_user();
+		return \in_array( $current_user->user_login, $allowed_users, true );
 	}
 
 	/**

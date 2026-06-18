@@ -4,12 +4,16 @@
 
 	<!-- Scan plugin source -->
 	<file>./includes</file>
+	<file>./mu-plugins</file>
+	<file>./newspack-event-logger-nodes.php</file>
+	<file>./newspack-event-logger-nodes-config.php</file>
 
 	<!-- Exclude build, vendor, and dependency directories -->
 	<exclude-pattern>*/build/*</exclude-pattern>
 	<exclude-pattern>*/vendor/*</exclude-pattern>
 	<exclude-pattern>*/node_modules/*</exclude-pattern>
 	<exclude-pattern>*/tests/*</exclude-pattern>
+	<exclude-pattern>*/.phpstan/cache/*</exclude-pattern>
 
 	<!-- How to scan -->
 	<arg value="sp"/>
