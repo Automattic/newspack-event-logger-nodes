@@ -555,6 +555,8 @@ class Log_Manager {
 	 * appending. Without it, the subprocess can write between the parent's
 	 * accumulated Messages and the next size-threshold / timer flush, leaving
 	 * entries on disk out of logical order.
+	 *
+	 * @api Used by external plugins (nuclear-gyrobase + pyrobase pre-proc_open flush).
 	 */
 	public function flush(): void {
 		$this->topic?->flush();

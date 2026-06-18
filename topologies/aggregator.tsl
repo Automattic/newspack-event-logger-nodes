@@ -2,11 +2,10 @@
 #
 #   StreamMerger ─→ Topic (firehose:topic)   (multi-partition, KEY-routed)
 #
-# StreamMerger owns a HealthCheckTick sibling (patron-linked, named
-# `stream-merger:health-check`) that hitchhikes the same Router TIMER
-# heartbeat and enqueues the periodic discovery + sync sweep. Both
-# timers register automatically on first name() — no explicit
-# `start_periodic_tick` verb is needed.
+# StreamMerger's own timer registers automatically on first name() — no
+# explicit `start_periodic_tick` verb is needed. The periodic discovery +
+# settings sweep is driven by the hub-control topology (Discovery_Collector
+# + Settings_Sync), not from here.
 #
 # Registry remotes load automatically when connect_node wires the target
 # (StreamMerger::connect_node, one-shot) — no `load_remotes_from_registry`

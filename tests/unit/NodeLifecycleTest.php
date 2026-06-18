@@ -19,7 +19,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Auto_Tuner_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
-use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
 use Newspack_Event_Logger_Nodes\Remote_Source_Node;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
@@ -39,7 +38,6 @@ class NodeLifecycleTest extends TestCase {
 		return [
 			'AutoTuner'       => [ static fn () => new Auto_Tuner_Node() ],
 			'FlameBuilder'    => [ static fn () => new Flame_Builder_Node() ],
-			'HealthCheckTick' => [ static fn () => new Health_Check_Tick_Node() ],
 			'JobRouter'       => [ static fn () => new Job_Router_Node() ],
 			'RequestBuilder'  => [ static fn () => new Request_Builder_Node() ],
 			'RemoteSource'    => [ static fn () => ( static function () {
@@ -139,16 +137,14 @@ class NodeLifecycleTest extends TestCase {
 	/**
 	 * RemoteSource is a source node — its `fill()` is a no-op that just
 	 * increments the counter (production drives data IN via on_curl_data
-	 * + process_sse_chunk, not via fill). HealthCheckTick is timer-
-	 * driven: fill() only acts on TM_INFO+KEY=TIMER and ignores the
-	 * rest. AutoTuner only acts on TM_STRUCT (drops every other type by
-	 * design). Sending TM_ERROR / TM_EOF through these doesn't exercise
-	 * an error-propagation trail — skip rather than assert on a no-op.
+	 * + process_sse_chunk, not via fill). AutoTuner only acts on TM_STRUCT
+	 * (drops every other type by design). Sending TM_ERROR / TM_EOF through
+	 * these doesn't exercise an error-propagation trail — skip rather than
+	 * assert on a no-op.
 	 */
 	private function is_transit_node( object $node ): bool {
 		return ! (
 			$node instanceof Remote_Source_Node
-			|| $node instanceof Health_Check_Tick_Node
 			|| $node instanceof Auto_Tuner_Node
 		);
 	}

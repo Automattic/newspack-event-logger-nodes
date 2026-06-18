@@ -12,7 +12,6 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
 use Newspack_Event_Logger_Nodes\Remote_Source_Node;
 use Newspack_Event_Logger_Nodes\Stream_Merger_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -119,37 +118,6 @@ class StreamMergerTest extends TestCase {
 
 	private function read_bool( object $object, string $property ): bool {
 		return (bool) $this->read_private( $object, $property );
-	}
-
-	public function test_constructor_creates_health_check_sibling(): void {
-		$merger = new Stream_Merger_Node();
-		$merger->name( 'aggregator' );
-
-		$health_check = Core::node( 'aggregator:health-check' );
-		$this->assertInstanceOf( Health_Check_Tick_Node::class, $health_check );
-		$this->assertSame( $merger, $health_check->patron() );
-		$this->assertSame( $merger, Core::node( 'aggregator' ) );
-	}
-
-	public function test_rename_cascades_to_health_check_sibling(): void {
-		$merger = new Stream_Merger_Node();
-		$merger->name( 'aggregator-a' );
-		$this->assertInstanceOf( Health_Check_Tick_Node::class, Core::node( 'aggregator-a:health-check' ) );
-
-		$merger->name( 'aggregator-b' );
-		$this->assertNull( Core::node( 'aggregator-a:health-check' ) );
-		$this->assertInstanceOf( Health_Check_Tick_Node::class, Core::node( 'aggregator-b:health-check' ) );
-	}
-
-	public function test_name_collision_checks_owned_health_check_name(): void {
-		$existing = new Capture_Sink_Node();
-		$existing->name( 'aggregator:health-check' );
-
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'node name collision: aggregator:health-check already registered' );
-
-		$merger = new Stream_Merger_Node();
-		$merger->name( 'aggregator' );
 	}
 
 	public function test_arguments_parse_topic_and_clamp_partition(): void {
@@ -519,7 +487,7 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( '', \apply_filters( 'newspack_nodes/aggregator_ingest_line', '', 'site-a', 2 ) );
 	}
 
-	public function test_remove_node_tears_down_children_health_check_and_offsetlog(): void {
+	public function test_remove_node_tears_down_children_remotes_and_offsetlog(): void {
 		$this->seed_registry( [ 'site-a' => $this->make_server( 'https://site-a.test' ) ] );
 		$merger = $this->make_merger( 'aggregator' );
 		$merger->add_remote( 'site-a' );
@@ -527,7 +495,6 @@ class StreamMergerTest extends TestCase {
 		$merger->commit_all();
 
 		$this->assertNotNull( Core::node( 'aggregator' ) );
-		$this->assertNotNull( Core::node( 'aggregator:health-check' ) );
 		$this->assertNotNull( Core::node( 'aggregator:remote:site-a' ) );
 		$this->assertNotNull( Core::node( 'aggregator:offsetlog' ) );
 
@@ -535,7 +502,6 @@ class StreamMergerTest extends TestCase {
 
 		$this->assertSame( [], $this->remotes( $merger ) );
 		$this->assertNull( Core::node( 'aggregator' ) );
-		$this->assertNull( Core::node( 'aggregator:health-check' ) );
 		$this->assertNull( Core::node( 'aggregator:remote:site-a' ) );
 		$this->assertNull( Core::node( 'aggregator:offsetlog' ) );
 	}

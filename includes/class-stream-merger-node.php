@@ -60,9 +60,6 @@ class Stream_Merger_Node extends Timer_Node {
 	/** @var bool Whether to verify SSL certs (default: true). */
 	private bool $verify_ssl = true;
 
-	/** @var Health_Check_Tick_Node|null Owned sibling — drives aggregator's periodic health-check sweep. */
-	private ?Health_Check_Tick_Node $health_check = null;
-
 	/** @var bool One-shot guard so connect_node() loads registry remotes only once. */
 	private bool $remotes_loaded = false;
 
@@ -70,19 +67,9 @@ class Stream_Merger_Node extends Timer_Node {
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
 	 * whose override clamps partition to >= 0.
 	 *
-	 * The owned HealthCheckTick sibling is mounted here because its construction
-	 * doesn't depend on the positional args — it's a structural part of every
-	 * StreamMerger regardless of remote_topic/partition.
-	 *
 	 * @api Used by substrate.
 	 */
 	public function __construct() {
-		// Owned HealthCheckTick sibling — TIMER-driven, hub-only, never
-		// independently configurable. Patron-linked so dump_metadata hides it
-		// and so its name tracks the StreamMerger's automatically.
-		$this->health_check = new Health_Check_Tick_Node();
-		$this->health_check->patron( $this );
-
 		parent::__construct();
 		// Wire the sibling :config interpreter from node_schema()['commands']
 		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
@@ -244,34 +231,6 @@ class Stream_Merger_Node extends Timer_Node {
 	}
 
 	/**
-	 * Pre-check the `{name}:health-check` sibling name for collisions before the base
-	 * commits a rename. HealthCheck is application-specific; the parent handles the
-	 * :config interpreter sibling.
-	 *
-	 * @api Used by substrate.
-	 * @param string $name
-	 */
-	protected function check_name_availability( string $name ): void {
-		if ( null !== $this->health_check && null !== Core::node( "{$name}:health-check" ) ) {
-			throw new \RuntimeException( \esc_html( "node name collision: {$name}:health-check already registered" ) );
-		}
-		parent::check_name_availability( $name );
-	}
-
-	/**
-	 * Override set_sibling_names() so the owned HealthCheckTick sibling tracks
-	 * `{patron_name}:health-check` whenever the patron is named or
-	 * renamed (mirrors FlameBuilder::name()'s AutoTuner cascade)
-	 *
-	 * @api Used by substrate.
-	 * @param string|null $name
-	 */
-	protected function set_sibling_names( ?string $name = null ): void {
-		$this->health_check?->name( $name . ':health-check' );
-		parent::set_sibling_names( $name );
-	}
-
-	/**
 	 * Tear down children imperatively (no patron link, so no auto-cascade).
 	 * RemoteSource children get full remove_node so their cURL multi handles
 	 * unregister from the EventFramework.
@@ -283,14 +242,6 @@ class Stream_Merger_Node extends Timer_Node {
 			$remote->remove_node();
 		}
 		$this->remote_nodes = [];
-		// Full remove_node (not a bare unregister): Health_Check_Tick auto-wires
-		// its own :config interpreter from node_schema, and only remove_node() cascades
-		// that sibling interpreter's Core registration — a bare unregister would orphan it
-		// and collide on a same-process name-recycle.
-		if ( null !== $this->health_check && '' !== $this->health_check->name() ) {
-			$this->health_check->remove_node();
-		}
-		$this->health_check = null;
 		// Tear down the named offsetlog sibling (+ its :config) so a removed merger doesn't leak it in Core.
 		$this->offsetlog?->remove_node();
 		$this->offsetlog = null;
@@ -414,9 +365,6 @@ class Stream_Merger_Node extends Timer_Node {
 		}
 		// Router-hitchhike: notify_timer() calls fire_cb() -> fire() each tick.
 		$this->set_timer();
-		if ( null !== $this->health_check ) {
-			$this->health_check->start_periodic_tick();
-		}
 	}
 
 	/**

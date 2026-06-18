@@ -10,7 +10,7 @@
  *   - class-perf-hooks-controller.php           (hooks_registered, hooks_categories)
  *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
  *   - class-perf-config-controller.php          (config_get, config_update)
- *   - class-perf-settings-controller.php        (settings_update)
+ *   - class-perf-settings-controller.php        (set)
  *   - class-gyroscope-controller.php            (SSE method stays as REST controller)
  *   - class-request-log-controller.php          (request_log_list, request_log_detail)
  *
@@ -40,7 +40,6 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
-use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -97,10 +96,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	];
 
 	/**
-	 * `settings_update` whitelist: WP option name → sanitization type.
+	 * `set` whitelist: WP option name → sanitization type.
 	 * Mirrors PerfSettingsController::ALLOWED_OPTIONS. The same nine
 	 * perf-tuning options as CONFIG_MAP, keyed by the on-disk option name
-	 * rather than the response shape — the settings verb takes a single
+	 * rather than the response shape — the `set` verb takes a single
 	 * {option, value} pair while config_update takes the response shape.
 	 *
 	 * @var array<string,string>
@@ -118,19 +117,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	];
 
 	/**
-	 * Upper bound on settings_update integer values (2^30). Mirrors
+	 * Upper bound on `set` integer values (2^30). Mirrors
 	 * PerfSettingsController::sanitize_value `$int < 0 || $int > 1073741824`.
 	 */
 	private const SETTINGS_INT_MAX = 1073741824;
 
 	/**
-	 * Upper bound on settings_update float values (24h in seconds). Mirrors
+	 * Upper bound on `set` float values (24h in seconds). Mirrors
 	 * PerfSettingsController::sanitize_value `$f < 0 || $f > 86400`.
 	 */
 	private const SETTINGS_FLOAT_MAX = 86400;
 
 	/**
-	 * Maximum array element count + nesting depth for settings_update.
+	 * Maximum array element count + nesting depth for `set`.
 	 * Mirrors PerfSettingsController::MAX_EVENTS / sanitize_array depth cap.
 	 */
 	private const SETTINGS_ARRAY_MAX   = 10000;
@@ -243,7 +242,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	// -------------------------------------------------------------------------
-	// Config + settings value coercion — shared by config_update + settings_update.
+	// Config + settings value coercion — shared by config_update + set.
 	// Lifted from legacy PerfConfigController + PerfSettingsController.
 	// -------------------------------------------------------------------------
 
@@ -299,7 +298,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Type-coerce + bounds-check a single value for `settings_update`. Mirrors
+	 * Type-coerce + bounds-check a single value for `set`. Mirrors
 	 * PerfSettingsController::sanitize_value — returns null when rejected.
 	 *
 	 * @param mixed  $value Raw input.
@@ -338,7 +337,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Bounded-recursion array sanitizer for `settings_update`. Mirrors
+	 * Bounded-recursion array sanitizer for `set`. Mirrors
 	 * PerfSettingsController::sanitize_array — depth cap SETTINGS_ARRAY_DEPTH,
 	 * size cap SETTINGS_ARRAY_MAX, text fields run through sanitize_text_field.
 	 *
@@ -1764,68 +1763,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'settings_update',
-					'description' => 'Single-option perf setting write with sync guard.',
-					'args'        => [
-						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfSettingsController::update_setting —
-				// single-option write path with the suppress_sync guard so a
-				// remotely-synced setting applied on a spoke doesn't bounce
-				// back as a re-sync (mirrors the inbound REST polarity). This
-				// `--option=<opt> --value="<v>"` grammar is the exact shape the
-				// hub→spoke forwarder emits, so it must not drift.
-				$opts   = Command_Args::parse( $args )['options'];
-				$option = (string) ( $opts['option'] ?? '' );
-				if ( '' === $option ) {
-					throw new \RuntimeException( 'option required' );
-				}
-				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
-					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
-				}
-				if ( ! \array_key_exists( 'value', $opts ) ) {
-					throw new \RuntimeException( 'value required' );
-				}
-
-				// The value rides the wire as a string; array-typed options carry
-				// it as a comma-list that the array sanitizer expects pre-split.
-				// Drop empty tokens so a cleared/empty value (`--value=""`, or the
-				// forwarder's empty list) yields [] not [''] (which would otherwise
-				// survive into add_action('') downstream).
-				$type     = self::SETTINGS_OPTIONS[ $option ];
-				$raw_value = true === $opts['value'] ? '' : $opts['value'];
-				$value    = 'array' === $type ? self::csv( [ 'v' => $raw_value ], 'v' ) : $raw_value;
-
-				$sanitized = self::sanitize_settings_value( $value, $type );
-				if ( null === $sanitized ) {
-					throw new \RuntimeException( 'invalid value for option' );
-				}
-
-				// suppress_sync guard + try/finally so the flag is restored on
-				// update_option failure. Autoload follows the central policy
-				// (Config::autoload_for): hot-path scalars autoloaded, large
-				// list options (log_events / custom_events) kept off the
-				// per-request alloptions blob.
-				Settings_Sync::suppress_sync( true );
-				try {
-					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
-				} finally {
-					Settings_Sync::suppress_sync( false );
-				}
-
-				AppConfig::reset();
-
-				return [
-					'option'  => $option,
-					'updated' => $ok,
-				];
-					},
-				],
-				[
 					'name'        => 'set',
 					'description' => 'Normalized positional single-option perf setting write with sync guard.',
 					'args'        => [
@@ -1836,9 +1773,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				self::require_manage_options();
 
 				// Normalized positional receiver: `set <option> <value>`, one setting
-				// per command — the Slice A1 grammar Settings_Sync_Node fans out to
-				// spokes. Same nine-option whitelist + array/int/float/bool sanitize
-				// as settings_update; only the parse + suppress seam differ.
+				// per command — the grammar Settings_Sync_Node fans out to spokes.
+				// Nine-option whitelist + array/int/float/bool sanitize, suppressing
+				// Settings_Event_Writer's emission while applying the synced value.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
 
 				$option = \is_string( $option ) ? $option : '';

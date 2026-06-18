@@ -5,11 +5,10 @@
  * fire() mints a `discovery.get` TM_COMMAND to every connected spoke's
  * Discovery_CI. Each spoke's reply self-routes back (TO=FROM) into fill(),
  * which monotonically union-merges the reply's registered_hooks / custom_events
- * into the hub's local options — the SAME merge Health_Check_Extensions did,
- * but folded incrementally one reply at a time (the union is order-independent,
- * so out-of-order / partial replies converge).
+ * into the hub's local options — folded incrementally one reply at a time (the
+ * union is order-independent, so out-of-order / partial replies converge).
  *
- * Replaces Remote_Manager's poll-based discovery (Slice A1).
+ * Replaces the legacy poll-based discovery sweep (Slice A1).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -28,7 +27,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	/** Legacy discovery cadence (seconds) used when arguments() is armed without an explicit interval. */
 	private const DEFAULT_INTERVAL_SECONDS = 300;
 
-	/** Maximum discovered events to merge (ported from Health_Check_Extensions). */
+	/** Maximum discovered events to merge. */
 	private const MAX_EVENTS = 10000;
 
 	/**
@@ -97,9 +96,8 @@ class Discovery_Collector_Node extends Timer_Node {
 
 	/**
 	 * Union-merge a single reply's registered_hooks / custom_events into the
-	 * hub's options. Ported from Health_Check_Extensions::process_discovery —
-	 * remote-string sanitization, MAX_EVENTS cap, custom-event exclusion, and
-	 * option-cache invalidation before the read-modify-write.
+	 * hub's options: remote-string sanitization, MAX_EVENTS cap, custom-event
+	 * exclusion, and option-cache invalidation before the read-modify-write.
 	 *
 	 * @param array<array-key,mixed> $payload One spoke's discovery payload.
 	 */
@@ -154,11 +152,10 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Merge remote hooks into local log_events. Ported verbatim from
-	 * Health_Check_Extensions::merge_hooks; the only change is the suppress
-	 * mechanism — the watcher is now Settings_Event_Writer (it watches
-	 * log_events), so we wrap the write in Settings_Event_Writer::suppress so
-	 * the merge doesn't bounce back out as a new settings event.
+	 * Merge remote hooks into local log_events. The watcher is
+	 * Settings_Event_Writer (it watches log_events), so we wrap the write in
+	 * Settings_Event_Writer::suppress so the merge doesn't bounce back out as a
+	 * new settings event.
 	 *
 	 * @param array<int,int|string> $remote_hooks Remote hook names (array_keys output; numeric names coerce to int).
 	 */
@@ -224,8 +221,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Merge remote custom events into discovered_events. Ported verbatim from
-	 * Health_Check_Extensions::merge_events.
+	 * Merge remote custom events into discovered_events.
 	 *
 	 * @param array<int,int|string> $remote_events Remote event names (array_keys output; numeric names coerce to int).
 	 */

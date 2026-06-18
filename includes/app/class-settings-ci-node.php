@@ -6,21 +6,19 @@
  * that mounts at priority 11 alongside the rest of the M2 service CIs.
  *
  * Verbs:
- *   get    — returns the four substrate-owned integer settings as a snapshot
- *            (num_partitions, num_segments, segment_size, max_lifespan).
- *            This verb is additive; the legacy controller only exposed a
- *            POST/update path, but the matching getter is what dashboards
- *            and RemoteManager fan-out diff against.
- *   update — partial-applies any subset of those four keys, writes via
- *            `update_option()` under the `newspack_nodes_*` prefix (matching
- *            legacy ALLOWED_OPTIONS targets), then returns the post-update
- *            snapshot. Resets the application Config so the snapshot rebuild
- *            sees the new value rather than the stale cache.
+ *   get — returns the four substrate-owned integer settings as a snapshot
+ *         (num_partitions, num_segments, segment_size, max_lifespan). The
+ *         matching getter dashboards diff against.
+ *   set — applies a single setting by its full `newspack_nodes_*` option name
+ *         (the positional grammar Settings_Sync_Node fans out to spokes),
+ *         writes via `update_option()`, then returns the post-set snapshot.
+ *         Resets the application Config so the snapshot rebuild sees the new
+ *         value rather than the stale cache, and suppresses the spoke's own
+ *         settings-event emission while applying the synced value.
  *
- * Value-equivalence with the legacy controller: same allowed-keys
- * whitelist, same min/max bounds (1..2^30 for three keys, 0..2^30 for
- * max_lifespan), same `manage_options` requirement, same WP option keys.
- * Throws RuntimeException on validation / authorization failure;
+ * Allowed-keys whitelist + min/max bounds (1..2^30 for three keys, 0..2^30 for
+ * max_lifespan), `manage_options` requirement, WP option keys. Throws
+ * RuntimeException on validation / authorization failure;
  * CommandInterpreter::interpret() wraps as TM_COMMAND|TM_ERROR.
  *
  * Configuration-only verb; no service dependencies. The substrate Config
@@ -127,45 +125,6 @@ class Settings_CI_Node extends Service_CI_Node {
 					'description' => 'Return the four substrate-owned integer settings as a snapshot.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						return self::snapshot();
-					},
-				],
-				[
-					'name'        => 'update',
-					'description' => 'Partial-apply any subset of the four settings, then return the post-update snapshot.',
-					'args'        => [
-						[ 'name' => 'num_partitions', 'type' => 'int', 'required' => false ],
-						[ 'name' => 'num_segments', 'type' => 'int', 'required' => false ],
-						[ 'name' => 'segment_size', 'type' => 'int', 'required' => false ],
-						[ 'name' => 'max_lifespan', 'type' => 'int', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						self::require_manage_options();
-						// Partial update: each present `--<key>=<int>` option is applied; an
-						// absent key leaves that setting untouched. This `--<key>=<int>`
-						// grammar is also what the hub->spoke forwarder emits — don't deviate.
-						$opts = Command_Args::parse( $args )['options'];
-
-						foreach ( $opts as $key => $value ) {
-							if ( ! isset( self::ALLOWED_KEYS[ $key ] ) ) {
-								throw new \RuntimeException( \esc_html( "unknown setting: {$key}" ) );
-							}
-							$sanitized = self::sanitize_int( $value, self::ALLOWED_KEYS[ $key ], self::MAX_INT_VALUE );
-							if ( null === $sanitized ) {
-								throw new \RuntimeException( \esc_html( "invalid value for setting: {$key}" ) );
-							}
-							// autoload=true: these substrate scalars are read on
-							// every request by Newspack_Nodes\Config, so they must
-							// ride the single alloptions query rather than becoming
-							// N separate per-request get_option lookups.
-							\update_option( "newspack_nodes_{$key}", $sanitized, true );
-						}
-
-						// Application Config::reset() cascades into the substrate
-						// Config::reset(), so the snapshot rebuild reads the fresh
-						// option values rather than the cached pre-update view.
-						AppConfig::reset();
-
 						return self::snapshot();
 					},
 				],

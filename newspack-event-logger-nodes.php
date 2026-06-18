@@ -30,7 +30,6 @@ require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 $_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
 	\Newspack_Event_Logger_Nodes\Stream_Merger_Node::register_remote_job_rewrite_filter();
-	\Newspack_Event_Logger_Nodes\Remote_Manager::init();
 };
 
 $_newspack_event_logger_nodes_load = static function (): void {
@@ -67,11 +66,8 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
 	);
 
-	\Newspack_Event_Logger_Nodes\Settings_Sync::init();
-
-	// Slice A1 node-graph settings-sync path (runs in parallel with the legacy
-	// Settings_Sync/Remote_Manager push until Phase 6): the option-change writer
-	// + the value-resolver filter Settings_Sync_Node consults at consume time.
+	// Node-graph settings-sync path: the option-change writer + the value-resolver
+	// filter Settings_Sync_Node consults at consume time.
 	\Newspack_Event_Logger_Nodes\Settings_Event_Writer::init();
 	\add_filter(
 		'newspack_nodes/settings_sync/value',
@@ -198,13 +194,13 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 
 /**
- * React to a substrate Vault mutation with the aggregator-specific
- * side-effects: a targeted settings-sync fan-out when a server is added
- * enabled or flips disabled → enabled, plus a supervisor-restart flag so the
+ * React to a substrate Vault mutation by flagging a supervisor restart so a
  * new/changed server is picked up without waiting for the worker's ~10-minute
- * respawn. Decoupled from the Vault via the `newspack_nodes/vault/changed`
- * action. Both side-effects are best-effort (legacy parity — the mutation
- * never failed on them).
+ * respawn — the restarted hub-control worker re-loads remotes from the Vault
+ * and the settings-sync node graph (Settings_Sync_Node + Discovery_Collector_Node)
+ * fans the current settings to them. Decoupled from the Vault via the
+ * `newspack_nodes/vault/changed` action. Best-effort (the mutation never fails
+ * on it).
  *
  * @param string $id          Server id that changed.
  * @param string $action      added | updated | removed.
@@ -212,20 +208,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
  * @param bool   $now_enabled Enabled state after the change.
  */
 function newspack_event_logger_nodes_on_vault_changed( string $id, string $action, bool $was_enabled, bool $now_enabled ): void {
-	$enable_flip = ( 'added' === $action && $now_enabled )
-		|| ( 'updated' === $action && ! $was_enabled && $now_enabled );
-	if ( $enable_flip ) {
-		try {
-			$sync = \Newspack_Event_Logger_Nodes\Remote_Manager::$sync_all_dispatch;
-			if ( null === $sync ) {
-				\Newspack_Event_Logger_Nodes\Remote_Manager::queue_sync_all_settings( [ $id ] );
-			} else {
-				$sync( [ $id ] );
-			}
-		} catch ( \Throwable $e ) {
-			// Best-effort (legacy parity).
-		}
-	}
 	try {
 		$base_dir = \Newspack_Nodes\Config::get_base_directory();
 		$lock_dir = $base_dir . '/locks/supervisor.lock.d';
