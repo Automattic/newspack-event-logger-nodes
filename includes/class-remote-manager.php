@@ -70,6 +70,19 @@ class Remote_Manager {
 	public const COMMAND_CONTENT_TYPE = 'text/plain; charset=UTF-8';
 
 	/**
+	 * Settings-sync fan-out seam. Lazily-defaulted to a closure that wraps the
+	 * real `queue_sync_all_settings()` static at the call site. The
+	 * `newspack_nodes/vault/changed` listener resolves through this so tests
+	 * can capture the spoke-id list without driving the Job_Intake filesystem
+	 * write path — see `~/.claude/rules/test-seams.md`.
+	 *
+	 * Signature: `function ( string[] $server_ids ): int`.
+	 *
+	 * @var \Closure(array<int, string>): int|null
+	 */
+	public static ?\Closure $sync_all_dispatch = null;
+
+	/**
 	 * Job dispatcher. Routes by `action`:
 	 *   - sync_setting  → POST {option,value} to every enabled spoke.
 	 *   - health_check  → run the periodic sweep (idempotent shortcut for
@@ -276,24 +289,22 @@ class Remote_Manager {
 	private static function reset_config_snapshots(): void {
 		\Newspack_Nodes\Config::invalidate_options_cache();
 		Config::reset();
-		Server_Registry::get_instance()->reset_cache();
+		\Newspack_Nodes\Vault::get_instance()->reset_cache();
 	}
 
 	/**
-	 * Resolve the ServerRegistry instance to use. The legacy ServerRegistry in
-	 * this plugin uses constructor-based instantiation; if a future
-	 * ServerRegistry exposes a static get_instance/reset_cache pair, we'll
-	 * pick it up via the new methods automatically.
+	 * Resolve the substrate Vault instance to use, resetting its in-process
+	 * cache before reuse so long-running workers see post-admin server edits.
 	 */
-	private static function registry(): Server_Registry {
+	private static function registry(): \Newspack_Nodes\Vault {
 		static $registry = null;
-		if ( $registry instanceof Server_Registry ) {
+		if ( $registry instanceof \Newspack_Nodes\Vault ) {
 			// Reset cache before reuse — long-running workers may have
 			// cached enabled-list state.
 			$registry->reset_cache();
 			return $registry;
 		}
-		$registry = Server_Registry::get_instance();
+		$registry = \Newspack_Nodes\Vault::get_instance();
 		return $registry;
 	}
 

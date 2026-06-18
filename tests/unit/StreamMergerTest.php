@@ -14,7 +14,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Health_Check_Tick_Node;
 use Newspack_Event_Logger_Nodes\Remote_Source_Node;
-use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Stream_Merger_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -25,6 +24,7 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
+use Newspack_Nodes\Vault;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -48,8 +48,9 @@ class StreamMergerTest extends TestCase {
 	protected function tearDown(): void {
 		unset(
 			$GLOBALS['_wp_actions']['newspack_nodes/aggregator_ingest_line'],
-			$GLOBALS['_wp_options'][ Server_Registry::OPTION_KEY ]
+			$GLOBALS['_wp_options'][ Vault::OPTION_KEY ]
 		);
+		Vault::get_instance()->reset_cache();
 		Event_Framework::reset();
 		Config::reset();
 		parent::tearDown();
@@ -67,7 +68,8 @@ class StreamMergerTest extends TestCase {
 	 * @param array<string,array<string,mixed>> $servers
 	 */
 	private function seed_registry( array $servers ): void {
-		$GLOBALS['_wp_options'][ Server_Registry::OPTION_KEY ] = $servers;
+		$GLOBALS['_wp_options'][ Vault::OPTION_KEY ] = $servers;
+		Vault::get_instance()->reset_cache();
 	}
 
 	private function make_server( string $url, bool $enabled = true ): array {

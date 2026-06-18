@@ -51,7 +51,7 @@ class M2BootstrapTest extends TestCase {
 	 * `Core::node()` returns null for unknown names, so a non-null lookup
 	 * is the contract.
 	 */
-	public function test_request_graph_ready_registers_all_nine_service_cis(): void {
+	public function test_request_graph_ready_registers_all_service_cis(): void {
 		( new Router_Node() )->name( Node_Names::ROUTER );
 		$base = new Command_Interpreter_Node();
 		$base->name( Node_Names::COMMAND_INTERPRETER );
@@ -60,6 +60,8 @@ class M2BootstrapTest extends TestCase {
 
 		\do_action( 'newspack_nodes/request_graph_ready', $base );
 
+		// `servers` is no longer mounted by ELN — the substrate Vault_CI owns
+		// the server registry surface now.
 		$expected = [
 			'workers',
 			'discovery',
@@ -67,7 +69,6 @@ class M2BootstrapTest extends TestCase {
 			'settings',
 			'logger',
 			'events',
-			'servers',
 			'aggregator',
 			'performance',
 		];

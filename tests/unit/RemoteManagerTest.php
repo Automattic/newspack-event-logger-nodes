@@ -3,9 +3,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Remote_Manager;
-use Newspack_Event_Logger_Nodes\Server_Registry;
 use Newspack_Event_Logger_Nodes\Settings_Sync;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Vault;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Remote_Manager::class )]
@@ -20,14 +20,10 @@ class RemoteManagerTest extends TestCase {
 		if ( \class_exists( Config::class ) ) {
 			Config::reset();
 		}
-		// Reset the ServerRegistry singleton's in-process cache so each test
-		// starts with a clean view of $GLOBALS['_wp_options']. Without this
-		// reset, registries from a previous test leak through.
-		if ( \class_exists( Server_Registry::class ) ) {
-			$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
-			$ref->setAccessible( true );
-			$ref->setValue( null, null );
-		}
+		// Reset the substrate Vault's in-process cache so each test starts with
+		// a clean view of $GLOBALS['_wp_options']. Without this reset, server
+		// state from a previous test leaks through.
+		Vault::get_instance()->reset_cache();
 		// Also reset the static $registry cache inside RemoteManager::registry().
 		// We can't easily access the function-static, but a fresh class load
 		// keeps the singleton fresh.
@@ -222,7 +218,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_caps_at_max_servers(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		// Register 3 servers (well under MAX_SERVERS=100, but enough to assert
 		// iteration walks them).
 		for ( $i = 0; $i < 3; $i++ ) {
@@ -243,7 +239,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_with_explicit_server_filter(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'token' => 'x' ] );
 		$reg->add( 'b', [ 'url' => 'https://b.test', 'token' => 'y' ] );
 
@@ -367,7 +363,7 @@ class RemoteManagerTest extends TestCase {
 		// Register one enabled server, mock its discovery endpoint to return
 		// a valid payload, and verify the discovery action fires with the
 		// validated payload.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'spoke-a', [
 			'url'           => 'https://spoke-a.test',
 			'auth_username' => 'admin',
@@ -411,7 +407,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_health_check_skips_disabled_servers(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'enabled-spoke', [
 			'url'           => 'https://enabled.test',
 			'auth_username' => 'a',
@@ -434,7 +430,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_health_check_logs_error_on_non_200(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'spoke-err', [
 			'url'           => 'https://spoke-err.test',
 			'auth_username' => 'a',
@@ -463,7 +459,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_health_check_handles_invalid_json_response(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'spoke-junk', [
 			'url'           => 'https://spoke-junk.test',
 			'auth_username' => 'a',
@@ -492,7 +488,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_health_check_handles_wp_error_response(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'spoke-network-fail', [
 			'url'           => 'https://spoke-network-fail.test',
 			'auth_username' => 'a',
@@ -518,7 +514,7 @@ class RemoteManagerTest extends TestCase {
 	// --- sync_setting with mocked spoke ------------------------------------
 
 	public function test_sync_setting_dispatches_to_each_enabled_server(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->add( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
@@ -541,7 +537,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_skips_disabled_server(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'enabled', [ 'url' => 'https://en.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->add( 'disabled', [ 'url' => 'https://dis.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->update( 'disabled', [ 'enabled' => false ] );
@@ -563,7 +559,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_logs_status_on_non_200(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'spoke', [ 'url' => 'https://spoke.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 500 ] ];
@@ -581,7 +577,7 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	public function test_sync_setting_logs_on_wp_error(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'spoke-fail', [ 'url' => 'https://spoke-fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// No mock entry — wp_remote_post returns the configured response,
@@ -602,7 +598,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_skips_servers_filter_omitted_from_registry(): void {
 		// $servers parameter filters; if a filter ID is not in registry it's
 		// skipped without error.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -626,7 +622,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_with_explicit_servers(): void {
 		// Targeted server list: sync_setting sends only to those listed.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->add( 'b', [ 'url' => 'https://b.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
@@ -652,7 +648,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_falls_back_to_default_endpoint_when_disallowed(): void {
 		// If the endpoint param is disallowed, handle_job falls back to
 		// SettingsSync::ENDPOINT (allowed).
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -675,7 +671,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_drops_when_option_empty(): void {
 		// Empty option name → silent return (no fan-out).
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_posts'] = [];
@@ -730,7 +726,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_sync_setting_with_invalid_servers_param(): void {
 		// servers param that's a non-array (string, int, bool) is normalized
 		// to null (= all enabled).
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -752,7 +748,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_with_empty_servers_array(): void {
 		// An empty servers array also normalizes to null (= all enabled).
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -774,7 +770,7 @@ class RemoteManagerTest extends TestCase {
 
 	public function test_handle_job_sync_setting_filters_non_string_server_ids(): void {
 		// Servers list with mixed types — non-strings are filtered out.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -1067,15 +1063,15 @@ class RemoteManagerTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// registry() — resolves to a usable ServerRegistry.
+	// registry() — resolves to the substrate Vault singleton.
 	// -------------------------------------------------------------------------
 
-	public function test_registry_resolves_to_server_registry_instance(): void {
+	public function test_registry_resolves_to_vault_instance(): void {
 		$method = new \ReflectionMethod( Remote_Manager::class, 'registry' );
 		$method->setAccessible( true );
 
 		$reg = $method->invoke( null );
-		$this->assertInstanceOf( Server_Registry::class, $reg );
+		$this->assertInstanceOf( Vault::class, $reg );
 
 		// Second call returns the SAME instance (cached in the function-static).
 		$reg2 = $method->invoke( null );
@@ -1119,7 +1115,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_stops_at_max_servers_cap(): void {
 		// Build a registry with >100 servers (MAX_SERVERS=100). Iteration must
 		// cap and not POST to all of them.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		for ( $i = 0; $i < 105; $i++ ) {
 			$reg->add(
 				"site-{$i}",
@@ -1151,7 +1147,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_health_check_caps_at_max_servers(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		for ( $i = 0; $i < 105; $i++ ) {
 			$reg->add(
 				"hsite-{$i}",
@@ -1193,7 +1189,7 @@ class RemoteManagerTest extends TestCase {
 		// tick. The discovery payload now arrives wrapped in a Message
 		// envelope's VALUE; check_server must unwrap and validate the same
 		// keys it always did.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'cmd-spoke', [
 			'url'           => 'https://cmd-spoke.test',
 			'auth_username' => 'u',
@@ -1251,7 +1247,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_check_server_caps_registered_hooks_and_custom_events_at_500(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'fat-spoke', [
 			'url'           => 'https://fat-spoke.test',
 			'auth_username' => 'u',
@@ -1299,7 +1295,7 @@ class RemoteManagerTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_sync_setting_skips_non_string_server_ids_in_filter(): void {
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -1441,7 +1437,7 @@ class RemoteManagerTest extends TestCase {
 		// Missing queued_at means queued_at=0 → the stale check
 		// (queued_at > 0 && now-queued_at > STALE_THRESHOLD) short-circuits.
 		// Sync proceeds normally.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -1537,7 +1533,7 @@ class RemoteManagerTest extends TestCase {
 		// When the `servers` filter includes a disabled server, the inner
 		// `false === (bool) $server['enabled']` check skips it. Mirrors what
 		// happens when a fan-out targets a now-disabled spoke.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'enabled-x', [ 'url' => 'https://enabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->add( 'disabled-x', [ 'url' => 'https://disabled-x.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 		$reg->update( 'disabled-x', [ 'enabled' => false ] );
@@ -1596,7 +1592,7 @@ class RemoteManagerTest extends TestCase {
 		// Spoke returns 200 OK with a JSON payload that has only a lag value
 		// (no registered_hooks, no custom_events). The validated payload should
 		// contain only `lag`.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'lag-only', [
 			'url'           => 'https://lag-only.test',
 			'auth_username' => 'u',
@@ -1739,7 +1735,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_skips_non_string_server_id_silently(): void {
 		// Mixed-type IDs: the inner `is_string($server_id)` guard skips
 		// non-strings without errors. Only the string 'real' makes the cut.
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'real', [ 'url' => 'https://real.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -1766,7 +1762,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_handle_job_servers_param_with_only_non_strings_normalizes_to_null(): void {
 		// `servers: [42, true, null]` → array_filter('is_string') yields empty
 		// → normalized to null → falls through to "all enabled".
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'a', [ 'url' => 'https://a.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
@@ -1794,7 +1790,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_handles_wp_error_with_method_exists(): void {
 		// post_to_server returns a WP_Error; the wp_error_or_array() branch
 		// flows through log_status('sync_error', $message).
-		$reg = new Server_Registry();
+		$reg = Vault::get_instance();
 		$reg->add( 'fail', [ 'url' => 'https://fail.test', 'auth_username' => 'u', 'auth_password' => 'p' ] );
 
 		// Configure wp_remote_post to return WP_Error.
@@ -1846,7 +1842,7 @@ class RemoteManagerTest extends TestCase {
 		// Injecting an entry straight into the option (bypassing ServerRegistry's
 		// register API) exercises the merge path in get_all(). The health_check
 		// loop's is_string guard filters non-string keys naturally.
-		$GLOBALS['_wp_options'][ Server_Registry::OPTION_KEY ] = [
+		$GLOBALS['_wp_options'][ Vault::OPTION_KEY ] = [
 			'valid-id' => [
 				'url'           => 'https://valid.test',
 				'auth_username' => 'u',
@@ -1855,10 +1851,8 @@ class RemoteManagerTest extends TestCase {
 			],
 		];
 
-		// Reset the singleton so the option load is honored.
-		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, null );
+		// Reset the Vault cache so the option load is honored.
+		Vault::get_instance()->reset_cache();
 
 		$GLOBALS['_wp_test_remote_responses'] = [
 			'https://valid.test/wp-json/newspack-nodes/v1/command' => [
@@ -2114,7 +2108,7 @@ class RemoteManagerTest extends TestCase {
 	public function test_sync_setting_includes_legacy_server_without_enabled_key(): void {
 		// Legacy registries lack the `enabled` field; the code defaults to
 		// "no flag = enabled" so the spoke should receive the POST.
-		$GLOBALS['_wp_options'][ Server_Registry::OPTION_KEY ] = [
+		$GLOBALS['_wp_options'][ Vault::OPTION_KEY ] = [
 			'legacy' => [
 				// no 'enabled' key
 				'url'           => 'https://legacy.test',
@@ -2122,9 +2116,7 @@ class RemoteManagerTest extends TestCase {
 				'auth_password' => 'p',
 			],
 		];
-		$ref = new \ReflectionProperty( Server_Registry::class, 'instance' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, null );
+		Vault::get_instance()->reset_cache();
 
 		$GLOBALS['_wp_test_remote_post_response'] = [ 'response' => [ 'code' => 200 ] ];
 		$GLOBALS['_wp_test_remote_posts']         = [];
