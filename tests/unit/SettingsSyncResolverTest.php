@@ -85,19 +85,16 @@ class SettingsSyncResolverTest extends TestCase {
 
 	/**
 	 * A blank substrate-remap option resolves by the canonical-key rule: strip the
-	 * ELN prefix (`remote_num_segments`), drop the `^remote_` segment
-	 * (`num_segments`), and look that up in the file defaults — faithful port of
-	 * the old prefix-strip logic. When the default key is present the resolver
-	 * returns it; when absent it returns the raw blank. Either way the result must
-	 * equal `$defaults['num_segments'] ?? ''`, derived the same way the code does.
+	 * substrate prefix (`remote_num_segments`), drop the `^remote_` segment
+	 * (`num_segments`), and look that up in the SUBSTRATE's defaults. The remote
+	 * geometry options now live under the substrate `newspack_nodes_remote_*`
+	 * names, so the resolver must reach `\Newspack_Nodes\Config` for the default.
 	 */
 	public function test_blank_remap_option_resolves_by_canonical_key(): void {
-		$defaults = Config::load_config_defaults();
-		$expected = $defaults['num_segments'] ?? '';
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
 			'',
-			'newspack_event_logger_nodes_remote_num_segments'
+			'newspack_nodes_remote_num_segments'
 		);
-		$this->assertSame( $expected, $resolved );
+		$this->assertSame( \Newspack_Nodes\Config::load_config_defaults()['num_segments'], $resolved );
 	}
 }

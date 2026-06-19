@@ -8,14 +8,11 @@
  * classes used to hand-maintain in lockstep (Config::$option_schema,
  * Admin::$option_names, Admin::$delete_on_blank_options).
  *
- * Substrate keys (base_directory, partitioning, memcache_servers, topologies)
- * are owned by the nodes Settings_Schema under `newspack_nodes_*` and reach ELN
- * via the `array_merge(RuntimeConfig::load_config(), …)` layering in
- * Config::load_config — they are NEVER declared here.
- *
- * The `remote_*` direct-read options are registered + resettable but NOT
- * overlay keys (`overlay: false`): they are read via get_option (by the
- * settings-sync node graph at consume time), never overlaid into load_config().
+ * Substrate keys (base_directory, partitioning, memcache_servers, topologies,
+ * and the remote-spoke geometry `remote_*` settings) are owned by the nodes
+ * Settings_Schema under `newspack_nodes_*` and reach ELN via the
+ * `array_merge(RuntimeConfig::load_config(), …)` layering in Config::load_config
+ * — they are NEVER declared here.
  *
  * Labels + section titles are lazy `fn(): string` thunks so building the Schema
  * for overlay_keys() (which a frontend request does via Config) never calls a
@@ -46,7 +43,6 @@ class Settings_Schema {
 		$general         = 'newspack_event_logger_nodes_general_section';
 		$instrumentation = 'newspack_event_logger_nodes_instrumentation_section';
 		$workers         = 'newspack_event_logger_nodes_workers_section';
-		$remote_settings = 'newspack_event_logger_nodes_remote_settings_section';
 		$debugging       = 'newspack_event_logger_nodes_debugging_section';
 
 		// Literal prefix (matches Admin::OPTION_PREFIX) so building the schema —
@@ -153,44 +149,6 @@ class Settings_Schema {
 					register_args: [ 'autoload' => false ],
 				),
 
-				// -- Remote Server Settings ---------------------------------
-				new Field(
-					key: 'remote_num_segments',
-					type: 'int',
-					label: static fn(): string => \__( 'Remote Segment Count', 'newspack-event-logger-nodes' ),
-					section: $remote_settings,
-					restart: [],
-					sanitize: [ Admin::class, 'sanitize_remote_num_segments' ],
-					render: [ Admin::class, 'remote_num_segments_callback' ],
-					// Registered + resettable, but read directly via get_option (settings-sync node graph) — never overlaid into load_config().
-					overlay: false,
-					register_args: [ 'type' => 'string' ],
-				),
-				new Field(
-					key: 'remote_segment_size',
-					type: 'int',
-					label: static fn(): string => \__( 'Remote Segment Size', 'newspack-event-logger-nodes' ),
-					section: $remote_settings,
-					restart: [],
-					sanitize: [ Admin::class, 'sanitize_remote_segment_size' ],
-					render: [ Admin::class, 'remote_segment_size_callback' ],
-					// Registered + resettable, but read directly via get_option (settings-sync node graph) — never overlaid into load_config().
-					overlay: false,
-					register_args: [ 'type' => 'string' ],
-				),
-				new Field(
-					key: 'remote_max_lifespan',
-					type: 'int',
-					label: static fn(): string => \__( 'Remote Min Retention', 'newspack-event-logger-nodes' ),
-					section: $remote_settings,
-					restart: [],
-					sanitize: [ Admin::class, 'sanitize_remote_max_lifespan' ],
-					render: [ Admin::class, 'remote_max_lifespan_callback' ],
-					// Registered + resettable, but read directly via get_option (settings-sync node graph) — never overlaid into load_config().
-					overlay: false,
-					register_args: [ 'type' => 'string' ],
-				),
-
 				// -- Debugging ----------------------------------------------
 				new Field(
 					key: 'log_memory',
@@ -238,10 +196,6 @@ class Settings_Schema {
 				$workers         => [
 					'title'    => static fn(): string => \__( 'Performance Workers', 'newspack-event-logger-nodes' ),
 					'callback' => [ Admin::class, 'workers_section_callback' ],
-				],
-				$remote_settings => [
-					'title'    => static fn(): string => \__( 'Remote Servers', 'newspack-event-logger-nodes' ),
-					'callback' => [ Admin::class, 'remote_settings_section_callback' ],
 				],
 				$debugging       => [
 					'title'    => static fn(): string => \__( 'Debugging', 'newspack-event-logger-nodes' ),

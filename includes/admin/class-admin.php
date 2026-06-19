@@ -257,57 +257,6 @@ class Admin {
 		);
 	}
 
-	public static function remote_num_segments_callback(): void {
-		self::render_number_field(
-			'remote_num_segments',
-			self::number_default( 'remote_num_segments', 2 ),
-			2,
-			16,
-			\__( 'Number of log segments on remote servers (2-16).', 'newspack-event-logger-nodes' )
-		);
-	}
-
-	private static function render_number_field( string $field, int $default, int $min, int $max, string $description ): void {
-		$value = \get_option( self::OPTION_PREFIX . $field, '' );
-		$html  = Settings_Renderer::number(
-			$field,
-			self::OPTION_PREFIX . $field,
-			\is_scalar( $value ) ? (string) $value : '',
-			$default,
-			$min,
-			$max,
-			$description,
-			self::reset_mark_name( $field )
-		);
-		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Settings_Renderer escapes every field.
-	}
-
-	/** The int file default for a number field, or $fallback when absent/non-numeric. */
-	private static function number_default( string $field, int $fallback ): int {
-		$raw = Config::load_config_defaults()[ $field ] ?? $fallback;
-		return \is_numeric( $raw ) ? (int) $raw : 0;
-	}
-
-	public static function remote_segment_size_callback(): void {
-		self::render_number_field(
-			'remote_segment_size',
-			self::number_default( 'remote_segment_size', 10485760 ),
-			1024 * 1024,
-			256 * 1024 * 1024,
-			\__( 'Segment size on remote servers in bytes (1MB-256MB).', 'newspack-event-logger-nodes' )
-		);
-	}
-
-	public static function remote_max_lifespan_callback(): void {
-		self::render_number_field(
-			'remote_max_lifespan',
-			self::number_default( 'remote_max_lifespan', 3600 ),
-			60,
-			604800,
-			\__( 'Minimum retention on remote servers in seconds. Spokes keep data at least this long for the aggregator to pull.', 'newspack-event-logger-nodes' )
-		);
-	}
-
 	// ---- Instrumentation field callbacks ---------------------------------
 
 	public static function log_urls_callback(): void {
@@ -901,45 +850,6 @@ class Admin {
 	}
 
 	/**
-	 * Sanitize the remote num_segments setting: clamp to [2, 16], or '' when unset.
-	 *
-	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
-	 * @return int|string Clamped segment count, or '' when blank/unset.
-	 */
-	public static function sanitize_remote_num_segments( int|string|null $value ): int|string {
-		if ( '' === $value || null === $value ) {
-			return '';
-		}
-		return \max( 2, \min( 16, \absint( $value ) ) );
-	}
-
-	/**
-	 * Sanitize the remote segment_size setting: clamp to [1MB, 256MB], or '' when unset.
-	 *
-	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
-	 * @return int|string Clamped byte size, or '' when blank/unset.
-	 */
-	public static function sanitize_remote_segment_size( int|string|null $value ): int|string {
-		if ( '' === $value || null === $value ) {
-			return '';
-		}
-		return \max( 1024 * 1024, \min( 256 * 1024 * 1024, \absint( $value ) ) );
-	}
-
-	/**
-	 * Sanitize the remote max_lifespan setting: clamp to [60, 604800] seconds, or '' when unset.
-	 *
-	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
-	 * @return int|string Clamped lifespan in seconds, or '' when blank/unset.
-	 */
-	public static function sanitize_remote_max_lifespan( int|string|null $value ): int|string {
-		if ( '' === $value || null === $value ) {
-			return '';
-		}
-		return \max( 60, \min( 604800, \absint( $value ) ) );
-	}
-
-	/**
 	 * Sanitize float option, preserving empty string for "use default".
 	 *
 	 * Mirrors `sanitize_int_or_empty` but with float coercion. Used for
@@ -978,19 +888,6 @@ class Admin {
 
 	public static function debugging_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
-
-	// ---- Remote-server field callbacks -----------------------------------
-
-	public static function remote_settings_section_callback(): void {
-		echo '<p>' . \esc_html__(
-			'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.',
-			'newspack-event-logger-nodes'
-		) . '</p>';
-		echo '<p>' . \esc_html__(
-			'Storage geometry pushed to remote spokes (may differ from hub settings). Blank fields use the config-file default.',
-			'newspack-event-logger-nodes'
-		) . '</p>';
 	}
 
 	/**
