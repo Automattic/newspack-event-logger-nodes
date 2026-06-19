@@ -37,16 +37,13 @@ class SettingsSchemaTest extends TestCase {
 		'hook_start_priority',
 	];
 
-	/** The exact prefixed settings-form option names the old Admin::$option_names carried (13). */
+	/** The prefixed settings-form option names (the three remote_* moved to the substrate). */
 	private const OPTION_NAMES = [
 		'newspack_event_logger_nodes_enable_logging',
 		'newspack_event_logger_nodes_log_urls',
 		'newspack_event_logger_nodes_skip_urls',
 		'newspack_event_logger_nodes_log_events',
 		'newspack_event_logger_nodes_custom_events',
-		'newspack_event_logger_nodes_remote_num_segments',
-		'newspack_event_logger_nodes_remote_segment_size',
-		'newspack_event_logger_nodes_remote_max_lifespan',
 		'newspack_event_logger_nodes_significant_events',
 		'newspack_event_logger_nodes_auto_disable_threshold',
 		'newspack_event_logger_nodes_auto_protect_time_threshold',
@@ -54,13 +51,10 @@ class SettingsSchemaTest extends TestCase {
 		'newspack_event_logger_nodes_flush_every_line',
 	];
 
-	/** The exact prefixed delete-on-blank subset the old Admin::$delete_on_blank_options carried (5). */
+	/** The prefixed delete-on-blank subset (the three remote_* moved to the substrate). */
 	private const DELETE_ON_BLANK = [
 		'newspack_event_logger_nodes_auto_disable_threshold',
 		'newspack_event_logger_nodes_auto_protect_time_threshold',
-		'newspack_event_logger_nodes_remote_num_segments',
-		'newspack_event_logger_nodes_remote_segment_size',
-		'newspack_event_logger_nodes_remote_max_lifespan',
 	];
 
 	protected function setUp(): void {

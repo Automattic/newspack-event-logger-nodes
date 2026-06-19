@@ -912,16 +912,6 @@ class AdminTest extends TestCase {
 		$this->assertLessThan( $pos_z, $pos_a, 'sort failed' );
 	}
 
-	// ---- Field callbacks: Remote-servers section -------------------------
-
-	public function test_remote_settings_section_callback_describes_section(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_settings_section_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'Configure remote', $out );
-	}
-
 	// ---- Field callback: Auto-Tune (combined number inputs) --------------
 
 	public function test_auto_tune_callback_renders_both_threshold_inputs(): void {
@@ -1446,9 +1436,6 @@ class AdminTest extends TestCase {
 			'newspack_event_logger_nodes_skip_urls',
 			'newspack_event_logger_nodes_log_events',
 			'newspack_event_logger_nodes_custom_events',
-			'newspack_event_logger_nodes_remote_num_segments',
-			'newspack_event_logger_nodes_remote_segment_size',
-			'newspack_event_logger_nodes_remote_max_lifespan',
 			'newspack_event_logger_nodes_significant_events',
 			'newspack_event_logger_nodes_auto_disable_threshold',
 			'newspack_event_logger_nodes_auto_protect_time_threshold',
@@ -1527,115 +1514,6 @@ class AdminTest extends TestCase {
 		$html = \ob_get_clean();
 
 		$this->assertStringContainsString( Field_Reset_Assets::highlight_style(), $html );
-	}
-
-	// ---- Remote-* sanitizers ---------------------------------------------
-
-	public function test_sanitize_remote_num_segments_returns_empty_for_empty_and_null(): void {
-		$admin = new Admin();
-		$this->assertSame( '', $admin->sanitize_remote_num_segments( '' ) );
-		$this->assertSame( '', $admin->sanitize_remote_num_segments( null ) );
-	}
-
-	public function test_sanitize_remote_num_segments_clamps_to_range(): void {
-		$admin = new Admin();
-		// Below floor → 2.
-		$this->assertSame( 2, $admin->sanitize_remote_num_segments( '1' ) );
-		// Above ceiling → 16.
-		$this->assertSame( 16, $admin->sanitize_remote_num_segments( '500' ) );
-		// In-range stays put.
-		$this->assertSame( 8, $admin->sanitize_remote_num_segments( '8' ) );
-	}
-
-	public function test_sanitize_remote_segment_size_returns_empty_for_empty_and_null(): void {
-		$admin = new Admin();
-		$this->assertSame( '', $admin->sanitize_remote_segment_size( '' ) );
-		$this->assertSame( '', $admin->sanitize_remote_segment_size( null ) );
-	}
-
-	public function test_sanitize_remote_segment_size_clamps_to_range(): void {
-		$admin = new Admin();
-		// Below 1MB floor.
-		$this->assertSame( 1024 * 1024, $admin->sanitize_remote_segment_size( '100' ) );
-		// Above 256MB ceiling.
-		$this->assertSame( 256 * 1024 * 1024, $admin->sanitize_remote_segment_size( (string) ( 512 * 1024 * 1024 ) ) );
-		// In-range stays put (10MB).
-		$this->assertSame( 10 * 1024 * 1024, $admin->sanitize_remote_segment_size( (string) ( 10 * 1024 * 1024 ) ) );
-	}
-
-	public function test_sanitize_remote_max_lifespan_returns_empty_for_empty_and_null(): void {
-		$admin = new Admin();
-		$this->assertSame( '', $admin->sanitize_remote_max_lifespan( '' ) );
-		$this->assertSame( '', $admin->sanitize_remote_max_lifespan( null ) );
-	}
-
-	public function test_sanitize_remote_max_lifespan_clamps_to_range(): void {
-		$admin = new Admin();
-		// Below 60s floor.
-		$this->assertSame( 60, $admin->sanitize_remote_max_lifespan( '10' ) );
-		// Above 7-day ceiling.
-		$this->assertSame( 604800, $admin->sanitize_remote_max_lifespan( '999999999' ) );
-		// In-range stays put (1 hour).
-		$this->assertSame( 3600, $admin->sanitize_remote_max_lifespan( '3600' ) );
-	}
-
-	// ---- Remote-* section + field callbacks ------------------------------
-
-	public function test_remote_settings_section_callback_describes_geometry(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_settings_section_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '<p>', $out );
-		$this->assertStringContainsString( 'remote spokes', $out );
-	}
-
-	public function test_remote_num_segments_callback_renders_number_input(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_num_segments_callback();
-		$out = \ob_get_clean();
-		// Input element wired to the application option key.
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_remote_num_segments"', $out );
-		$this->assertStringContainsString( 'type="number"', $out );
-		// Bounds match the sanitizer (2-16).
-		$this->assertStringContainsString( 'min="2"', $out );
-		$this->assertStringContainsString( 'max="16"', $out );
-		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_remote_num_segments]"', $out );
-		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
-	}
-
-	public function test_remote_num_segments_callback_shows_value_when_overridden(): void {
-		\update_option( 'newspack_event_logger_nodes_remote_num_segments', 8 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_num_segments_callback();
-		$out = \ob_get_clean();
-		// Overridden value rendered in the input.
-		$this->assertStringContainsString( 'value="8"', $out );
-	}
-
-	public function test_remote_segment_size_callback_renders_number_input(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_segment_size_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_remote_segment_size"', $out );
-		// Bounds match the sanitizer (1MB - 256MB).
-		$this->assertStringContainsString( 'min="' . ( 1024 * 1024 ) . '"', $out );
-		$this->assertStringContainsString( 'max="' . ( 256 * 1024 * 1024 ) . '"', $out );
-		// >999 max → regular-text class.
-		$this->assertStringContainsString( 'regular-text', $out );
-	}
-
-	public function test_remote_max_lifespan_callback_renders_number_input(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_max_lifespan_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_remote_max_lifespan"', $out );
-		$this->assertStringContainsString( 'min="60"', $out );
-		$this->assertStringContainsString( 'max="604800"', $out );
 	}
 
 	// ---- render_maintenance_section --------------------------------------
@@ -1820,61 +1698,6 @@ class AdminTest extends TestCase {
 		$this->assertArrayNotHasKey( '', $result );
 	}
 
-	public function test_remote_settings_section_callback_describes_topology_topic(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_settings_section_callback();
-		$out = \ob_get_clean();
-		// The remote-servers section explains how to activate the aggregator
-		// fleet (add `aggregator` to the Topologies list).
-		$this->assertStringContainsString( 'aggregate', $out );
-		$this->assertStringContainsString( 'aggregator', $out );
-	}
-
-	public function test_remote_num_segments_callback_uses_default_when_unset(): void {
-		// No option set — `value=""` (placeholder shows through).
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_num_segments_callback();
-		$out = \ob_get_clean();
-		// Default appears as the placeholder, not as the input value.
-		$this->assertStringContainsString( 'placeholder="', $out );
-	}
-
-	public function test_remote_segment_size_callback_uses_default_when_unset(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_segment_size_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'placeholder="', $out );
-	}
-
-	public function test_remote_max_lifespan_callback_uses_default_when_unset(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_max_lifespan_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'placeholder="', $out );
-	}
-
-	public function test_remote_max_lifespan_callback_renders_stored_value(): void {
-		\update_option( 'newspack_event_logger_nodes_remote_max_lifespan', 1200 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_max_lifespan_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'value="1200"', $out );
-	}
-
-	public function test_remote_segment_size_callback_renders_stored_value(): void {
-		\update_option( 'newspack_event_logger_nodes_remote_segment_size', 5 * 1024 * 1024 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->remote_segment_size_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'value="' . ( 5 * 1024 * 1024 ) . '"', $out );
-	}
-
 	public function test_log_urls_callback_handles_assoc_input(): void {
 		// `normalize_string_list` accepts both flat lists and assoc maps;
 		// when stored as assoc, keys become the values.
@@ -2026,52 +1849,26 @@ class AdminTest extends TestCase {
 		$this->assertSame( 1, \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
 	}
 
-	public function test_register_settings_registers_remote_settings_options(): void {
-		// Remote-server-side options must be registered with their sanitizers.
+	public function test_register_settings_does_not_register_remote_settings(): void {
+		// The three remote-spoke geometry settings moved to the substrate; ELN
+		// no longer registers the options, the section, or the fields.
 		$admin = new Admin();
 		$admin->register_settings();
 
-		$expected = [
+		foreach ( [
 			'newspack_event_logger_nodes_remote_num_segments',
 			'newspack_event_logger_nodes_remote_segment_size',
 			'newspack_event_logger_nodes_remote_max_lifespan',
-		];
-		foreach ( $expected as $option ) {
-			$this->assertArrayHasKey( $option, $GLOBALS['_registered_settings'] );
-			$this->assertSame( 'string', $GLOBALS['_registered_settings'][ $option ]['args']['type'] );
+		] as $option ) {
+			$this->assertArrayNotHasKey( $option, $GLOBALS['_registered_settings'] );
 		}
-	}
-
-	public function test_register_settings_registers_remote_settings_section(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-
-		// The Remote Server Settings section + its three fields must be registered.
-		$this->assertArrayHasKey(
+		$this->assertArrayNotHasKey(
 			'newspack_event_logger_nodes_remote_settings_section',
 			$GLOBALS['_registered_sections']
 		);
 		foreach ( [ 'remote_num_segments', 'remote_segment_size', 'remote_max_lifespan' ] as $f ) {
-			$this->assertArrayHasKey( $f, $GLOBALS['_registered_fields'] );
+			$this->assertArrayNotHasKey( $f, $GLOBALS['_registered_fields'] );
 		}
-	}
-
-	public function test_register_settings_drops_empty_aggregator_section(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-
-		// The aggregator section's only field (enable_aggregator) was retired,
-		// so the now-empty section is gone; the remote-settings section carries
-		// the remote-server guidance.
-		$this->assertArrayNotHasKey(
-			'newspack_event_logger_nodes_aggregator_section',
-			$GLOBALS['_registered_sections']
-		);
-		$this->assertArrayHasKey(
-			'newspack_event_logger_nodes_remote_settings_section',
-			$GLOBALS['_registered_sections']
-		);
-		$this->assertArrayNotHasKey( 'enable_aggregator', $GLOBALS['_registered_fields'] );
 	}
 
 	public function test_register_settings_registers_debugging_fields(): void {

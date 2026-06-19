@@ -110,10 +110,11 @@ class HubControlTopologyTest extends TestCase {
 		$map = $registry->getValue( Core::node( 'settings-sync' ) );
 
 		$this->assertCount( 13, $map );
-		// Substrate-remap (TO=settings).
+		// Substrate-remap (TO=settings). The remote-spoke geometry options now
+		// live under the substrate `newspack_nodes_remote_*` names.
 		$this->assertSame(
 			[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_segments' ],
-			$map['newspack_event_logger_nodes_remote_num_segments']
+			$map['newspack_nodes_remote_num_segments']
 		);
 		$this->assertSame(
 			[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_partitions' ],
