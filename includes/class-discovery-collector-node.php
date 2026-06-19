@@ -257,7 +257,9 @@ class Discovery_Collector_Node extends Timer_Node {
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Monitor',
 			'description' => 'Periodically fans discovery.get to every spoke and union-merges replies into the hub options.',
-			'arguments'   => [],
+			'arguments'   => [
+				[ 'name' => 'interval_seconds', 'type' => 'int', 'required' => false, 'default' => (string) self::DEFAULT_INTERVAL_SECONDS ],
+			],
 			'commands'    => [],
 			'has_target'  => true,
 		] );

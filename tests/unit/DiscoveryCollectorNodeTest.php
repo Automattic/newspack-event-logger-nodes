@@ -188,7 +188,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 
 		$this->assertSame( 'Monitor', $schema['category'] );
 		$this->assertTrue( $schema['has_target'] );
-		$this->assertSame( [], $schema['arguments'] );
+		$this->assertContains( 'interval_seconds', \array_column( $schema['arguments'], 'name' ), 'editor CONSTRUCTOR panel must surface the interval arg' );
 		$this->assertSame( [], $schema['commands'] );
 	}
 }
