@@ -28,10 +28,6 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
-$_newspack_event_logger_nodes_register_worker_runtime = static function (): void {
-	\Newspack_Event_Logger_Nodes\Stream_Merger_Node::register_remote_job_rewrite_filter();
-};
-
 $_newspack_event_logger_nodes_load = static function (): void {
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
@@ -84,8 +80,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 };
 
 $_newspack_event_logger_nodes_bootstrap = static function () use (
-	$_newspack_event_logger_nodes_load,
-	$_newspack_event_logger_nodes_register_worker_runtime
+	$_newspack_event_logger_nodes_load
 ): void {
 	if ( ! \class_exists( '\Newspack_Nodes\Node' ) ) {
 		return;
@@ -94,15 +89,6 @@ $_newspack_event_logger_nodes_bootstrap = static function () use (
 	$_newspack_event_logger_nodes_load();
 
 	\add_action( 'admin_init', [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
-
-	\add_action(
-		'newspack_nodes/before_worker_spawn',
-		static function () use (
-			$_newspack_event_logger_nodes_register_worker_runtime
-		): void {
-			$_newspack_event_logger_nodes_register_worker_runtime(); // hub rewrite filter + RemoteManager init.
-		}
-	);
 };
 
 if ( \class_exists( '\Newspack_Nodes\Node' ) ) {

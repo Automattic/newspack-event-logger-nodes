@@ -248,41 +248,6 @@ class Stream_Merger_Node extends Timer_Node {
 		parent::remove_node();
 	}
 
-	/**
-	 * One-time hub-side init: register the `k:"job"` -> `k:"remote_job"` rewrite
-	 * on `newspack_nodes/aggregator_ingest_line`. Each RemoteSource invokes
-	 * this filter from its forward_entry() — the filter is registered globally
-	 * once at plugin load, fires wherever it's applied.
-	 *
-	 * Idempotent: a static guard means calling twice is a no-op. Spokes (which
-	 * never instantiate StreamMerger) never call this; their k:"job" entries
-	 * stay raw and dispatch locally — exactly the spec invariant.
-	 */
-	public static function register_remote_job_rewrite_filter(): void {
-		static $registered = false;
-		if ( $registered ) {
-			return;
-		}
-		$registered = true;
-		\add_filter(
-			'newspack_nodes/aggregator_ingest_line',
-			static function ( $line, string $server_id = '', int $partition = 0 ) {
-				if ( ! \is_string( $line ) || '' === $line ) {
-					return $line;
-				}
-				$decoded = \json_decode( $line, true, 16 );
-				if ( ! \is_array( $decoded ) ) {
-					return $line;
-				}
-				if ( ! isset( $decoded['k'] ) || 'job' !== $decoded['k'] ) {
-					return $line;
-				}
-				$decoded['k'] = 'remote_job';
-				return \wp_json_encode( $decoded );
-			}
-		);
-	}
-
 	public function set_require_https( bool $require ): void {
 		if ( ! $require && $this->require_https ) {
 			Core::print_less_often( 'StreamMerger: aggregator_require_https=false — SSE traffic permitted on plain HTTP. Credentials WILL travel in cleartext on insecure links.' );
