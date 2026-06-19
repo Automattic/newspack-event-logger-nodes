@@ -16,6 +16,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_Utils;
 
@@ -312,12 +313,9 @@ class Config {
 		$config = self::load_config();
 
 		if ( 'is_hub' === $key ) {
-			// Hub-mode is the single operator switch `enable_aggregator`
-			// (architecture decision #4 / README). `enable_aggregator` is
-			// either the file-default bool or the raw WP-option string
-			// ('1' / ''); cast to bool so the substrate's `(string)` wrap
-			// surfaces it as '1' / ''.
-			return ! empty( $config['enable_aggregator'] );
+			// A hub is a site whose active topologies include `aggregator`;
+			// the substrate's `(string)` wrap surfaces the bool as '1' / ''.
+			return \in_array( 'aggregator', \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ), true );
 		}
 
 		if ( 'significant_events_csv' === $key ) {

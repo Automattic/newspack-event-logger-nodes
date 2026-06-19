@@ -17,6 +17,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Topology_Registry;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 class ElnConfigTokenTest extends TestCase {
@@ -28,12 +29,18 @@ class ElnConfigTokenTest extends TestCase {
 		parent::setUp();
 		$this->saved_resolvers  = Core::$config_resolvers;
 		$GLOBALS['_wp_options'] = [];
+		// `is_hub` derives from active-topology membership; the active names are
+		// resolved against the stock topology dir, so register it here (other
+		// test classes reset the registry) so `aggregator` synthesizes.
+		Topology_Registry::register_stock_dir( \dirname( __DIR__, 2 ) . '/topologies' );
+		\Newspack_Nodes\Config::reset();
 		Config::reset();
 	}
 
 	protected function tearDown(): void {
 		Core::$config_resolvers = $this->saved_resolvers;
 		$GLOBALS['_wp_options'] = [];
+		\Newspack_Nodes\Config::reset();
 		Config::reset();
 		parent::tearDown();
 	}
@@ -54,16 +61,18 @@ class ElnConfigTokenTest extends TestCase {
 
 	// --- is_hub resolver ----------------------------------------------------
 
-	public function test_is_hub_false_when_aggregator_disabled(): void {
-		// enable_aggregator off → not a hub even if remotes are registered.
-		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '' );
+	public function test_is_hub_false_when_aggregator_topology_inactive(): void {
+		// A site whose active topologies DON'T include `aggregator` is a spoke.
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined' ];
+		\Newspack_Nodes\Config::reset();
 		Config::reset();
 		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
-	public function test_is_hub_true_when_aggregator_enabled(): void {
-		// enable_aggregator on → is a hub (the operator switch IS hub-mode).
-		\update_option( 'newspack_event_logger_nodes_enable_aggregator', '1' );
+	public function test_is_hub_true_when_aggregator_topology_active(): void {
+		// A hub is a site whose active topologies include `aggregator`.
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'aggregator' ];
+		\Newspack_Nodes\Config::reset();
 		Config::reset();
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}

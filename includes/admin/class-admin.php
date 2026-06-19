@@ -241,13 +241,6 @@ class Admin {
 		return Reset_Gate::mark_name( self::RESET_MARK_FIELD, self::OPTION_PREFIX . $field );
 	}
 
-	public static function enable_aggregator_callback(): void {
-		self::render_checkbox(
-			'enable_aggregator',
-			\__( 'Show the Aggregator status dashboard in the admin menu.', 'newspack-event-logger-nodes' )
-		);
-	}
-
 	// ---- Debugging field callbacks ---------------------------------------
 
 	public static function log_memory_callback(): void {
@@ -908,17 +901,6 @@ class Admin {
 	}
 
 	/**
-	 * Coerce any truthy/falsy value to int 0/1. The single 0/1 sanitizer for
-	 * `enable_aggregator` (collapses the old inline closure + 'boolean' type into
-	 * one Field): `register_args` carry type=boolean/default=0/autoload=true.
-	 *
-	 * @param mixed $value Input value.
-	 */
-	public static function sanitize_bool_int( $value ): int {
-		return empty( $value ) ? 0 : 1;
-	}
-
-	/**
 	 * Sanitize the remote num_segments setting: clamp to [2, 16], or '' when unset.
 	 *
 	 * @param int|string|null $value Raw option value (WP sanitize_callback may pass null).
@@ -998,13 +980,13 @@ class Admin {
 		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
-	// ---- Aggregator field callbacks --------------------------------------
-
-	public static function aggregator_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
+	// ---- Remote-server field callbacks -----------------------------------
 
 	public static function remote_settings_section_callback(): void {
+		echo '<p>' . \esc_html__(
+			'Configure remote Event Logger servers to aggregate logs from. Activate the aggregator fleet by adding `aggregator` to the Topologies list under Nodes Runtime settings.',
+			'newspack-event-logger-nodes'
+		) . '</p>';
 		echo '<p>' . \esc_html__(
 			'Storage geometry pushed to remote spokes (may differ from hub settings). Blank fields use the config-file default.',
 			'newspack-event-logger-nodes'
@@ -1074,24 +1056,6 @@ class Admin {
 		Config::reset();
 
 		$short = \substr( $option, \strlen( self::OPTION_PREFIX ) );
-
-		// Aggregator: single-partition topology with a fixed lock dir
-		// (`aggregator.p0.lock.d`) — a special case the per-group restart below
-		// can't express. Toggling enable_aggregator should kick any currently-
-		// running aggregator worker so it exits within the next drain tick
-		// instead of waiting out its ~595s lifetime. Disabling: the topology
-		// filter no longer registers `aggregator`, so SpawnController rejects the
-		// worker's self-respawn POST and no replacement starts. Enabling: the
-		// supervisor's check_config pass spawns one within ~15s.
-		if ( 'enable_aggregator' === $short ) {
-			try {
-				$locks_dir = Config::get_locks_directory();
-				Lock_Node::request_restart_at( "{$locks_dir}/aggregator.p0.lock.d" );
-			} catch ( \Throwable $e ) {
-				// Best-effort. Next supervisor pass will catch up.
-			}
-			return;
-		}
 
 		// The restart class derives from the single Settings_Schema declaration:
 		// 'supervisor_only' (refreshes config each loop → no worker restart), a

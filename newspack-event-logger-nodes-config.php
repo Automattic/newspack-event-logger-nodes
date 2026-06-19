@@ -26,8 +26,8 @@ return [
 	// fleets run.
 	'enable_logging'              => true,
 
-	// Aggregator spoke list (hubs only; spokes leave empty).
-	'enable_aggregator'           => false,
+	// Remote-server (hub fan-in) settings; hub-mode is derived from whether
+	// the `aggregator` topology is in the substrate `topologies` list.
 	'remote_num_segments'         => 2,
 	'remote_segment_size'         => 10 * 1024 * 1024,
 	'remote_max_lifespan'         => 3600,
