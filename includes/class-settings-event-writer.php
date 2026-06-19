@@ -46,15 +46,6 @@ class Settings_Event_Writer {
 	private static bool $initialized = false;
 
 	/**
-	 * Suppress (or re-enable) emission while a synced setting is being applied.
-	 *
-	 * @param bool $on True to suppress emission, false to re-enable.
-	 */
-	public static function suppress( bool $on ): void {
-		self::$suppressed = $on;
-	}
-
-	/**
 	 * `update_option` hook callback.
 	 *
 	 * @api Registered dynamically via add_action by init().
@@ -63,17 +54,6 @@ class Settings_Event_Writer {
 	 * @param mixed  $new    New value (unused; the event is name-only).
 	 */
 	public static function on_update( string $option, $old, $new ): void {
-		self::maybe_emit( $option );
-	}
-
-	/**
-	 * `add_option` hook callback.
-	 *
-	 * @api Registered dynamically via add_action by init().
-	 * @param string $option Option name.
-	 * @param mixed  $value  Value (unused; the event is name-only).
-	 */
-	public static function on_add( string $option, $value ): void {
 		self::maybe_emit( $option );
 	}
 
@@ -118,6 +98,26 @@ class Settings_Event_Writer {
 		} finally {
 			$writer->remove_node();
 		}
+	}
+
+	/**
+	 * `add_option` hook callback.
+	 *
+	 * @api Registered dynamically via add_action by init().
+	 * @param string $option Option name.
+	 * @param mixed  $value  Value (unused; the event is name-only).
+	 */
+	public static function on_add( string $option, $value ): void {
+		self::maybe_emit( $option );
+	}
+
+	/**
+	 * Suppress (or re-enable) emission while a synced setting is being applied.
+	 *
+	 * @param bool $on True to suppress emission, false to re-enable.
+	 */
+	public static function suppress( bool $on ): void {
+		self::$suppressed = $on;
 	}
 
 	/**
