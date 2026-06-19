@@ -4,9 +4,9 @@
  *
  * The substrate resolves `<ns:key>` tokens via per-namespace resolvers
  * (Core::register_config_namespace / resolve_config_token). This plugin
- * registers an `eln` namespace for its six app-specific tokens
+ * registers an `eln` namespace for its four app-specific tokens
  * (is_hub, auto_disable_threshold, auto_protect_time_threshold,
- * aggregator_require_https, aggregator_verify_ssl, significant_events_csv)
+ * significant_events_csv)
  * so `<eln:KEY>` resolves to the same value the old merged-config
  * `<config:KEY>` produced. Keys it does not own resolve to ''.
  *

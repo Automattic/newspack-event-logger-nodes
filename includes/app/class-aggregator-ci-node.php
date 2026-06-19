@@ -14,10 +14,15 @@
  * alongside the rest of the M2 service CIs.
  *
  * Verbs:
- *   status  — per-server partition snapshot keyed by server id. For each
- *             spoke present in the Vault, looks up `aggregator_status:{id}:p{N}`
- *             from memcache (one entry per partition the StreamMerger pulls
- *             from). Cache misses default to an empty array, not null.
+ *   status  — per-node partition snapshot keyed by the wired Remote_Source
+ *             NODE NAME. Discovers each Remote_Source wired into the active
+ *             `aggregator` topology graph (`Topology_Registry::graph_for`,
+ *             filtered on node `type === 'Remote_Source'`), then reads that
+ *             node's substrate status snapshot from memcache under
+ *             `np:remote:<node-name>:p<partition>` (the `<vault-id>`/`<partition>`
+ *             come from the make_node args). The spoke URL is resolved from the
+ *             Vault by the node's vault-id arg. Cache misses default to an empty
+ *             array, not null.
  *   health  — cache reachability + wall-clock timestamp. Mirrors the
  *             legacy {healthy, cache, timestamp} shape. Cache probe is
  *             wrapped in a Throwable catch so the endpoint never fails
@@ -45,9 +50,9 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Nodes\Command_Interpreter_Node;
-use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Service_CI_Node;
+use Newspack_Nodes\Topology_Registry;
 use Newspack_Nodes\Vault;
 
 \defined( 'ABSPATH' ) || exit;
@@ -63,31 +68,38 @@ class Aggregator_CI_Node extends Service_CI_Node {
 			'commands'       => [
 				[
 					'name'        => 'status',
-					'description' => 'Per-server partition snapshot keyed by server id.',
+					'description' => 'Per-node partition snapshot for each wired Remote_Source in the active aggregator topology.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						self::require_manage_options();
 						$registry = Vault::get_instance();
 						$registry->reset_cache();
-						$servers = $registry->get_all();
-
-						$config           = RuntimeConfig::load_config();
-						$num_partitions_v = $config['num_partitions'] ?? 1;
-						$num_partitions   = \min( 16, \max( 1, \is_scalar( $num_partitions_v ) ? (int) $num_partitions_v : 1 ) );
 
 						$result = [];
-						foreach ( $servers as $id => $server ) {
-							$partitions = [];
-							for ( $p = 0; $p < $num_partitions; $p++ ) {
-								$val              = Core::$memd?->get( "aggregator_status:{$id}:p{$p}" );
-								$partitions[ $p ] = \is_array( $val ) ? $val : [];
+						foreach ( Topology_Registry::graph_for( 'aggregator' )['nodes'] as $node ) {
+							if ( 'Remote_Source' !== ( $node['type'] ?? '' ) ) {
+								continue;
 							}
+							$name_v = $node['name'] ?? '';
+							$name   = \is_scalar( $name_v ) ? (string) $name_v : '';
+							if ( '' === $name ) {
+								continue;
+							}
+							// args: <vault-id> <remote_topic> <partition> (graph_for types it list<string>).
+							$node_args = $node['args'] ?? [];
+							$vault_id  = $node_args[0] ?? '';
+							$pt        = $node_args[2] ?? '';
+							$partition = \ctype_digit( $pt ) ? (int) $pt : 0;
 
-							$url_v         = $server['url'] ?? null;
-							$result[ $id ] = [
-								'id'         => $id,
+							$val   = Core::$memd?->get( "np:remote:{$name}:p{$partition}" );
+							$entry = '' !== $vault_id ? $registry->get( $vault_id ) : null;
+							$url_v = \is_array( $entry ) ? ( $entry['url'] ?? null ) : null;
+
+							$result[ $name ] = [
+								'id'         => $name,
+								'vault_id'   => $vault_id,
 								'url'        => \is_scalar( $url_v ) ? \esc_url_raw( (string) $url_v ) : '',
-								'partitions' => $partitions,
+								'partitions' => [ $partition => \is_array( $val ) ? $val : [] ],
 							];
 						}
 

@@ -1,23 +1,22 @@
 # Aggregator topology (hub side).
 #
-#   StreamMerger ─→ Topic (firehose:topic)   (multi-partition, KEY-routed)
+#   Remote_Source(s) ─→ Remote_Job_Rewrite ─→ Topic (firehose:topic)
 #
-# StreamMerger's own timer registers automatically on first name() — no
-# explicit `start_periodic_tick` verb is needed. The periodic discovery +
-# settings sweep is driven by the hub-control topology (Discovery_Collector
-# + Settings_Sync), not from here.
+# Remote_Job_Rewrite flips aggregated k:"job" entries to k:"remote_job" so they
+# dispatch on the hub via newspack_nodes/remote_job_handlers; non-job entries
+# pass through. The firehose Topic is the multi-partition, KEY-routed sink.
 #
-# Registry remotes load automatically when connect_node wires the target
-# (StreamMerger::connect_node, one-shot) — no `load_remotes_from_registry`
-# verb. The SSL/HTTPS setters run BEFORE connect_node so the RemoteSource
-# children created during the load inherit current policy.
+# Per-spoke Remote_Source nodes are NOT shipped in this stock topology — the
+# operator wires them on the console canvas, one per spoke/partition:
 #
-# The k:"job" -> k:"remote_job" rewrite filter is registered statically
-# at plugin load (StreamMerger::register_remote_job_rewrite_filter), not
-# from TSL.
+#   make_node Remote_Source spoke-<id> <vault-id> firehose <partition>
+#   connect_node spoke-<id> remote-job-rewrite
+#
+# Each substrate Remote_Source is self-sufficient (it patrons its own SSE_In +
+# HTTP_Out, owns its offsetlog, and publishes a status snapshot to
+# np:remote:<node-name>:p<partition>). SSL/HTTPS policy comes from the substrate
+# vault_verify_ssl / vault_require_https config — not a per-topology setter.
 
-make_node Stream_Merger stream-merger firehose <partition>
+make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
-cmd stream-merger:config set_require_https <eln:aggregator_require_https>
-cmd stream-merger:config set_verify_ssl <eln:aggregator_verify_ssl>
-connect_node stream-merger firehose:topic
+connect_node remote-job-rewrite firehose:topic
