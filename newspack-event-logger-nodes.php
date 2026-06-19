@@ -121,8 +121,10 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
  * its file-backed default — so blanking a field syncs the *default* rather than
  * '' (which would fail a spoke's typed sanitization). The canonical default key
  * is the option name with the `newspack_event_logger_nodes_` / `newspack_nodes_`
- * prefix stripped, then the optional `remote_` segment dropped. Non-blank values
- * and non-synced options pass through unchanged.
+ * prefix stripped, then the optional `remote_` segment dropped — looked up in the
+ * OWNING config's defaults (`newspack_nodes_` keys live in the substrate
+ * \Newspack_Nodes\Config, the rest in ELN's). Non-blank values and non-synced
+ * options pass through unchanged.
  *
  * @api Hooked to `newspack_nodes/settings_sync/value` by the deferred bootstrap.
  * @param mixed  $value  The raw option value Settings_Sync_Node read (default get_option).
@@ -134,16 +136,22 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 		return $value;
 	}
 
-	$config_key = $option;
-	foreach ( [ 'newspack_event_logger_nodes_', 'newspack_nodes_' ] as $prefix ) {
-		if ( 0 === \strpos( $config_key, $prefix ) ) {
-			$config_key = \substr( $config_key, \strlen( $prefix ) );
-			break;
-		}
+	// Route to the OWNING config's defaults: substrate (`newspack_nodes_`) keys
+	// live in \Newspack_Nodes\Config, not ELN's. Resolving a substrate key against
+	// ELN's defaults misses (it isn't there), ships blank, and a reset-to-default
+	// silently fails to propagate.
+	if ( 0 === \strpos( $option, 'newspack_event_logger_nodes_' ) ) {
+		$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
+		$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
+	} elseif ( 0 === \strpos( $option, 'newspack_nodes_' ) && \class_exists( '\Newspack_Nodes\Config' ) ) {
+		$config_key = \substr( $option, \strlen( 'newspack_nodes_' ) );
+		$defaults   = \Newspack_Nodes\Config::load_config_defaults();
+	} else {
+		$config_key = $option;
+		$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
 	}
 	$config_key = (string) \preg_replace( '/^remote_/', '', $config_key );
 
-	$defaults = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
 	return $defaults[ $config_key ] ?? $value;
 }
 
