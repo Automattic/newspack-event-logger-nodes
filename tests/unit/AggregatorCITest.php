@@ -25,6 +25,7 @@ use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
+use Newspack_Nodes\Topology_Registry;
 use Newspack_Nodes\Vault;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -38,20 +39,41 @@ class AggregatorCITest extends TestCase {
 		// matching ServersCITest / StatusCITest.
 		$this->tmp = '/tmp/aggregator-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
+		\mkdir( $this->tmp . '/topologies', 0755, true );
 		$this->use_base_dir( $this->tmp );
 		Core::$memd                   = new InMemoryMemcached();
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
 		Vault::get_instance()->reset_cache();
+		Topology_Registry::reset();
+		Topology_Registry::register_user_dir( $this->tmp . '/topologies' );
 	}
 
 	protected function tearDown(): void {
 		VerbHarness::reset();
+		Topology_Registry::reset();
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
 		Vault::get_instance()->reset_cache();
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
+	}
+
+	/**
+	 * Seed the active `aggregator` topology graph with operator-wired
+	 * Remote_Source nodes by writing a real .tsl into the registered user dir
+	 * (graph_for parses it). Each line is `make_node Remote_Source <name> <vault> firehose <partition>`.
+	 *
+	 * @param array<int,array{0:string,1:string,2:int}> $sources Tuples of [node-name, vault-id, partition].
+	 */
+	private function seed_aggregator_topology( array $sources ): void {
+		$lines = [ 'make_node Remote_Job_Rewrite remote-job-rewrite' ];
+		foreach ( $sources as [ $node_name, $vault_id, $partition ] ) {
+			$lines[] = "make_node Remote_Source {$node_name} {$vault_id} firehose {$partition}";
+			$lines[] = "connect_node {$node_name} remote-job-rewrite";
+		}
+		\file_put_contents( $this->tmp . '/topologies/aggregator.tsl', \implode( "\n", $lines ) . "\n" );
+		Topology_Registry::reset_basename_cache();
 	}
 
 	/**
@@ -74,66 +96,76 @@ class AggregatorCITest extends TestCase {
 	// status verb
 	// ---------------------------------------------------------------------
 
-	public function test_status_verb_returns_empty_map_when_no_servers(): void {
+	public function test_status_verb_returns_empty_map_when_no_remote_sources_wired(): void {
+		// Topology graph has the rewrite node only — no Remote_Source lines.
+		$this->seed_aggregator_topology( [] );
+
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
 
 		$this->assertSame( [], $result );
 	}
 
-	public function test_status_verb_returns_per_server_partition_blocks(): void {
-		$this->seed_vault( 'spoke1', [
-			'url' => 'https://spoke.example/',
-		] );
+	public function test_status_verb_discovers_wired_remote_sources_and_reads_np_remote_key(): void {
+		// Operator wired one Remote_Source on partition 0; its substrate status
+		// snapshot lives under np:remote:<node-name>:p<partition>.
+		$this->seed_aggregator_topology( [ [ 'spoke-a', 'austin', 0 ] ] );
+		$this->seed_vault( 'austin', [ 'url' => 'https://spoke.example/' ] );
 
-		Core::$memd->set( 'aggregator_status:spoke1:p0', [ 'state' => 'connected', 'lag' => 1234 ], 60 );
+		Core::$memd->set(
+			'np:remote:spoke-a:p0',
+			[ 'connected' => true, 'last_http_code' => 200, 'current_backoff' => 1 ],
+			60
+		);
 
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
 
 		$this->assertIsArray( $result );
-		$this->assertArrayHasKey( 'spoke1', $result );
-		$this->assertSame( 'spoke1', $result['spoke1']['id'] );
-		$this->assertStringStartsWith( 'https://spoke.example', $result['spoke1']['url'] );
-		$this->assertArrayNotHasKey( 'enabled', $result['spoke1'] );
-		$this->assertArrayHasKey( 'partitions', $result['spoke1'] );
-		$this->assertArrayHasKey( 0, $result['spoke1']['partitions'] );
-		$this->assertSame( 'connected', $result['spoke1']['partitions'][0]['state'] );
-		$this->assertSame( 1234, $result['spoke1']['partitions'][0]['lag'] );
+		// Keyed by the wired NODE NAME (not the vault id).
+		$this->assertArrayHasKey( 'spoke-a', $result );
+		$this->assertSame( 'spoke-a', $result['spoke-a']['id'] );
+		$this->assertSame( 'austin', $result['spoke-a']['vault_id'] );
+		$this->assertStringStartsWith( 'https://spoke.example', $result['spoke-a']['url'] );
+		$this->assertArrayHasKey( 'partitions', $result['spoke-a'] );
+		$this->assertArrayHasKey( 0, $result['spoke-a']['partitions'] );
+		$this->assertTrue( $result['spoke-a']['partitions'][0]['connected'] );
+		$this->assertSame( 200, $result['spoke-a']['partitions'][0]['last_http_code'] );
 	}
 
 	public function test_status_verb_uses_empty_block_on_cache_miss(): void {
-		$this->seed_vault( 'spoke2', [
-			'url' => 'https://other.example/',
-		] );
+		$this->seed_aggregator_topology( [ [ 'spoke-b', 'other', 0 ] ] );
 
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
 
-		$this->assertArrayHasKey( 'spoke2', $result );
-		$this->assertSame( [], $result['spoke2']['partitions'][0] );
-		$this->assertArrayNotHasKey( 'enabled', $result['spoke2'] );
+		$this->assertArrayHasKey( 'spoke-b', $result );
+		$this->assertSame( [], $result['spoke-b']['partitions'][0] );
 	}
 
-	public function test_status_verb_clamps_num_partitions_to_max_16(): void {
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 64 ] );
-		$this->seed_vault( 'spoke3', [ 'url' => 'https://x.example/' ] );
+	public function test_status_verb_keys_each_partition_by_the_wired_partition(): void {
+		// A Remote_Source wired on partition 3 reads np:remote:<name>:p3 — the
+		// status snapshot keys on the node's own partition, not a 0..N sweep.
+		$this->seed_aggregator_topology( [ [ 'spoke-c', 'cville', 3 ] ] );
+		Core::$memd->set( 'np:remote:spoke-c:p3', [ 'connected' => false ], 60 );
 
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
 
-		$this->assertArrayHasKey( 'spoke3', $result );
-		$this->assertCount( 16, $result['spoke3']['partitions'] );
+		$this->assertArrayHasKey( 'spoke-c', $result );
+		$this->assertArrayHasKey( 3, $result['spoke-c']['partitions'] );
+		$this->assertFalse( $result['spoke-c']['partitions'][3]['connected'] );
 	}
 
-	public function test_status_verb_clamps_num_partitions_min_1(): void {
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 0 ] );
-		$this->seed_vault( 'sp', [ 'url' => 'https://x.example/' ] );
+	public function test_status_verb_ignores_non_remote_source_nodes(): void {
+		// The rewrite node + Topic sink are in the graph too; only Remote_Source
+		// nodes become status entries.
+		$this->seed_aggregator_topology( [ [ 'spoke-d', 'denver', 0 ] ] );
 
 		$interpreter = new Aggregator_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'aggregator', 'status' );
 
-		$this->assertCount( 1, $result['sp']['partitions'] );
+		$this->assertSame( [ 'spoke-d' ], \array_keys( $result ) );
 	}
 
 	// ---------------------------------------------------------------------

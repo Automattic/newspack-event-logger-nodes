@@ -304,8 +304,6 @@ class Config {
 			'is_hub'                     => true,
 			'auto_disable_threshold'     => true,
 			'auto_protect_time_threshold' => true,
-			'aggregator_require_https'   => true,
-			'aggregator_verify_ssl'      => true,
 			'significant_events_csv'     => true,
 		];
 		if ( ! isset( $own[ $key ] ) ) {
