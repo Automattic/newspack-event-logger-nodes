@@ -119,12 +119,12 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
  * Ported from the legacy Settings_Sync::maybe_queue_static_sync empty→default
  * logic: a blank ('') or absent (false) value for a synced option resolves to
  * its file-backed default — so blanking a field syncs the *default* rather than
- * '' (which would fail a spoke's typed sanitization). The canonical default key
- * is the option name with the `newspack_event_logger_nodes_` / `newspack_nodes_`
- * prefix stripped, then the optional `remote_` segment dropped — looked up in the
- * OWNING config's defaults (`newspack_nodes_` keys live in the substrate
- * \Newspack_Nodes\Config, the rest in ELN's). Non-blank values and non-synced
- * options pass through unchanged.
+ * '' (which would fail a spoke's typed sanitization). The default key is the
+ * option name with the `newspack_event_logger_nodes_` / `newspack_nodes_` prefix
+ * stripped, looked up in the OWNING config's defaults (`newspack_nodes_` keys —
+ * including `remote_*` spoke geometry, which has its own defaults distinct from
+ * the hub's — live in the substrate \Newspack_Nodes\Config, the rest in ELN's).
+ * Non-blank values and non-synced options pass through unchanged.
  *
  * @api Hooked to `newspack_nodes/settings_sync/value` by the deferred bootstrap.
  * @param mixed  $value  The raw option value Settings_Sync_Node read (default get_option).
@@ -150,7 +150,6 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 		$config_key = $option;
 		$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
 	}
-	$config_key = (string) \preg_replace( '/^remote_/', '', $config_key );
 
 	return $defaults[ $config_key ] ?? $value;
 }

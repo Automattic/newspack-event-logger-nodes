@@ -84,17 +84,19 @@ class SettingsSyncResolverTest extends TestCase {
 	}
 
 	/**
-	 * A blank substrate-remap option resolves by the canonical-key rule: strip the
-	 * substrate prefix (`remote_num_segments`), drop the `^remote_` segment
-	 * (`num_segments`), and look that up in the SUBSTRATE's defaults. The remote
-	 * geometry options now live under the substrate `newspack_nodes_remote_*`
-	 * names, so the resolver must reach `\Newspack_Nodes\Config` for the default.
+	 * A remote_* option is a first-class substrate setting with its OWN default
+	 * (remote_max_lifespan=3600), distinct from the hub's canonical key
+	 * (max_lifespan=86400). The resolver must return the remote default — NOT strip
+	 * `^remote_` to the canonical key — so the spoke gets the remote geometry the
+	 * operator sees on the Nodes Runtime page, not the hub's retention.
 	 */
-	public function test_blank_remap_option_resolves_by_canonical_key(): void {
+	public function test_blank_remote_option_resolves_to_its_own_remote_default(): void {
+		$defaults = \Newspack_Nodes\Config::load_config_defaults();
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
-			'',
-			'newspack_nodes_remote_num_segments'
+			false,
+			'newspack_nodes_remote_max_lifespan'
 		);
-		$this->assertSame( \Newspack_Nodes\Config::load_config_defaults()['num_segments'], $resolved );
+		$this->assertSame( $defaults['remote_max_lifespan'], $resolved );
+		$this->assertNotSame( $defaults['max_lifespan'], $resolved );
 	}
 }
