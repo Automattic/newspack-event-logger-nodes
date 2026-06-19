@@ -2,11 +2,11 @@
 /**
  * Guard test: retired Config keys must not reappear in test fixtures.
  *
- * `enable_workers` was retired in v0.5.0 — the aggregator-mode gate is
- * `enable_aggregator` (typed bool, default OFF). The hub-side settings-sync
- * node graph is structurally inert without an aggregator topology + remotes.
- * Leaving `enable_workers` in test fixtures suggests it still gates something
- * — which it does not.
+ * `enable_workers` was retired in v0.5.0; `enable_aggregator` was retired in
+ * the pull-side cutover — hub-mode is now derived from active-topology
+ * membership (`aggregator` in the substrate `topologies` list), not a separate
+ * operator switch. Leaving either in test fixtures suggests it still gates
+ * something — which it does not.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,6 +20,7 @@ class RetiredConfigKeysTest extends TestCase {
 	/** Keys retired from the substrate or application schema. */
 	private const RETIRED_KEYS = [
 		'enable_workers',
+		'enable_aggregator',
 	];
 
 	public function test_baseline_test_config_does_not_reference_retired_keys(): void {

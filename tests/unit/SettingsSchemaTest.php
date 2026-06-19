@@ -21,7 +21,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Settings_Schema::class )]
 class SettingsSchemaTest extends TestCase {
 
-	/** The exact unprefixed overlay key-set the old Config::$option_schema carried (13 keys). */
+	/** The exact unprefixed overlay key-set the old Config::$option_schema carried (12 keys). */
 	private const OVERLAY_KEYS = [
 		'allowed_users',
 		'enable_logging',
@@ -35,17 +35,15 @@ class SettingsSchemaTest extends TestCase {
 		'log_memory',
 		'flush_every_line',
 		'hook_start_priority',
-		'enable_aggregator',
 	];
 
-	/** The exact prefixed settings-form option names the old Admin::$option_names carried (14). */
+	/** The exact prefixed settings-form option names the old Admin::$option_names carried (13). */
 	private const OPTION_NAMES = [
 		'newspack_event_logger_nodes_enable_logging',
 		'newspack_event_logger_nodes_log_urls',
 		'newspack_event_logger_nodes_skip_urls',
 		'newspack_event_logger_nodes_log_events',
 		'newspack_event_logger_nodes_custom_events',
-		'newspack_event_logger_nodes_enable_aggregator',
 		'newspack_event_logger_nodes_remote_num_segments',
 		'newspack_event_logger_nodes_remote_segment_size',
 		'newspack_event_logger_nodes_remote_max_lifespan',

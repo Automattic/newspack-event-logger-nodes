@@ -269,7 +269,6 @@ class AdminTest extends TestCase {
 		// live on `\Newspack_Nodes\Admin\Admin`.
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
-			'newspack_event_logger_nodes_enable_aggregator',
 			'newspack_event_logger_nodes_log_urls',
 			'newspack_event_logger_nodes_skip_urls',
 			'newspack_event_logger_nodes_log_events',
@@ -799,45 +798,6 @@ class AdminTest extends TestCase {
 		$this->assertStringNotContainsString( 'checked="checked"', $out );
 	}
 
-	public function test_enable_aggregator_callback_respects_file_default_when_option_missing(): void {
-		// Reproduces a real bug: docker-admin's config sets enable_aggregator=true.
-		// User has never saved the option, so the WP options row is absent.
-		// skip_default_writes also actively deletes the option whenever the user
-		// saves a value that matches the file default — so the option-missing
-		// state is the steady state for any site running with the default.
-		// The form callback must fall back to the file default, not the
-		// get_option() hard-coded fallback of 0 (which would render unchecked).
-		\delete_option( 'newspack_event_logger_nodes_enable_aggregator' );
-		Config::reset();
-		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
-		$ref->setAccessible( true );
-		$ref->setValue( null, [ 'enable_aggregator' => true ] );
-
-		try {
-			$admin = new Admin();
-			\ob_start();
-			$admin->enable_aggregator_callback();
-			$out = \ob_get_clean();
-			$this->assertStringContainsString( 'type="checkbox"', $out );
-			$this->assertStringContainsString(
-				'checked="checked"',
-				$out,
-				'when the WP option is missing and the file default is true, the checkbox should render checked'
-			);
-		} finally {
-			Config::reset();
-		}
-	}
-
-	public function test_enable_aggregator_callback_has_reset_toggle(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->enable_aggregator_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_enable_aggregator]"', $out );
-		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
-	}
-
 	/**
 	 * Every option exposed by the settings form must be in the bulk-reset list,
 	 * so "Reset to Defaults" clears all of them (booleans + multi-selects too).
@@ -952,12 +912,12 @@ class AdminTest extends TestCase {
 		$this->assertLessThan( $pos_z, $pos_a, 'sort failed' );
 	}
 
-	// ---- Field callbacks: Aggregator section -----------------------------
+	// ---- Field callbacks: Remote-servers section -------------------------
 
-	public function test_aggregator_section_callback_describes_section(): void {
+	public function test_remote_settings_section_callback_describes_section(): void {
 		$admin = new Admin();
 		\ob_start();
-		$admin->aggregator_section_callback();
+		$admin->remote_settings_section_callback();
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'Configure remote', $out );
 	}
@@ -1067,7 +1027,6 @@ class AdminTest extends TestCase {
 	public static function reset_default_provider(): array {
 		return [
 			'enable_logging default true'     => [ 'enable_logging_callback', [ 'enable_logging' => true ], '1' ],
-			'enable_aggregator default false' => [ 'enable_aggregator_callback', [ 'enable_aggregator' => false ], '0' ],
 			'log_memory default false'        => [ 'log_memory_callback', [ 'log_memory' => false ], '0' ],
 			'flush_every_line default false'  => [ 'flush_every_line_callback', [ 'flush_every_line' => false ], '0' ],
 		];
@@ -1487,7 +1446,6 @@ class AdminTest extends TestCase {
 			'newspack_event_logger_nodes_skip_urls',
 			'newspack_event_logger_nodes_log_events',
 			'newspack_event_logger_nodes_custom_events',
-			'newspack_event_logger_nodes_enable_aggregator',
 			'newspack_event_logger_nodes_remote_num_segments',
 			'newspack_event_logger_nodes_remote_segment_size',
 			'newspack_event_logger_nodes_remote_max_lifespan',
@@ -1770,35 +1728,6 @@ class AdminTest extends TestCase {
 		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
 	}
 
-	// ---- maybe_request_worker_restart: enable_aggregator branch -----------
-
-	public function test_maybe_request_worker_restart_enable_aggregator_touches_aggregator_lock(): void {
-		// Create the aggregator's fixed lock dir so Lock::request_restart_at can
-		// drop the flag file (the static helper no-ops when the dir is missing).
-		$dir = "{$this->base_dir}/locks/aggregator.p0.lock.d";
-		\mkdir( $dir, 0755, true );
-
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_aggregator' );
-
-		// The aggregator's restart flag was written; request- and job-workers
-		// were untouched (the enable_aggregator handler is its own branch).
-		$this->assertFileExists( $dir . '/restart' );
-	}
-
-	public function test_maybe_request_worker_restart_enable_aggregator_swallows_throwables(): void {
-		// When Config::get_locks_directory() throws (e.g. unwritable base_dir),
-		// the handler must catch and continue — `try { } catch (\Throwable $e) {}`
-		// branch coverage. We force a throw by pointing the config at a path
-		// that ensure_path() can't realpath/canonicalize.
-		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/this/cannot/be/created' ] );
-
-		$admin = new Admin();
-		// Must not throw.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_aggregator' );
-		$this->addToAssertionCount( 1 );
-	}
-
 	public function test_maybe_request_worker_restart_swallows_throwables_in_worker_groups_path(): void {
 		// Same defensive path on the regular (request-workers / job-workers)
 		// branch — Config::load_config() failing is caught and the handler
@@ -1891,12 +1820,13 @@ class AdminTest extends TestCase {
 		$this->assertArrayNotHasKey( '', $result );
 	}
 
-	public function test_aggregator_section_callback_describes_topology_topic(): void {
+	public function test_remote_settings_section_callback_describes_topology_topic(): void {
 		$admin = new Admin();
 		\ob_start();
-		$admin->aggregator_section_callback();
+		$admin->remote_settings_section_callback();
 		$out = \ob_get_clean();
-		// The aggregator section explains topology behaviour.
+		// The remote-servers section explains how to activate the aggregator
+		// fleet (add `aggregator` to the Topologies list).
 		$this->assertStringContainsString( 'aggregate', $out );
 		$this->assertStringContainsString( 'aggregator', $out );
 	}
@@ -2126,15 +2056,22 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_register_settings_registers_aggregator_section(): void {
+	public function test_register_settings_drops_empty_aggregator_section(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
-		$this->assertArrayHasKey(
+		// The aggregator section's only field (enable_aggregator) was retired,
+		// so the now-empty section is gone; the remote-settings section carries
+		// the remote-server guidance.
+		$this->assertArrayNotHasKey(
 			'newspack_event_logger_nodes_aggregator_section',
 			$GLOBALS['_registered_sections']
 		);
-		$this->assertArrayHasKey( 'enable_aggregator', $GLOBALS['_registered_fields'] );
+		$this->assertArrayHasKey(
+			'newspack_event_logger_nodes_remote_settings_section',
+			$GLOBALS['_registered_sections']
+		);
+		$this->assertArrayNotHasKey( 'enable_aggregator', $GLOBALS['_registered_fields'] );
 	}
 
 	public function test_register_settings_registers_debugging_fields(): void {

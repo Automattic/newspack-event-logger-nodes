@@ -19,5 +19,4 @@ return [
 	'memcache_servers' => [],
 	'enable_logging'   => false,
 	'enable_jobs'      => false,
-	'enable_aggregator' => false,
 ];

@@ -46,7 +46,6 @@ class Settings_Schema {
 		$general         = 'newspack_event_logger_nodes_general_section';
 		$instrumentation = 'newspack_event_logger_nodes_instrumentation_section';
 		$workers         = 'newspack_event_logger_nodes_workers_section';
-		$aggregator      = 'newspack_event_logger_nodes_aggregator_section';
 		$remote_settings = 'newspack_event_logger_nodes_remote_settings_section';
 		$debugging       = 'newspack_event_logger_nodes_debugging_section';
 
@@ -154,20 +153,6 @@ class Settings_Schema {
 					register_args: [ 'autoload' => false ],
 				),
 
-				// -- Remote Servers -----------------------------------------
-				new Field(
-					key: 'enable_aggregator',
-					type: 'bool',
-					label: static fn(): string => \__( 'Enable Aggregator', 'newspack-event-logger-nodes' ),
-					section: $aggregator,
-					delete_on_blank: false,
-					// Bespoke single-lock restart (see Admin::maybe_request_worker_restart).
-					restart: [],
-					sanitize: [ Admin::class, 'sanitize_bool_int' ],
-					render: [ Admin::class, 'enable_aggregator_callback' ],
-					register_args: [ 'type' => 'boolean', 'default' => 0, 'autoload' => true ],
-				),
-
 				// -- Remote Server Settings ---------------------------------
 				new Field(
 					key: 'remote_num_segments',
@@ -254,12 +239,8 @@ class Settings_Schema {
 					'title'    => static fn(): string => \__( 'Performance Workers', 'newspack-event-logger-nodes' ),
 					'callback' => [ Admin::class, 'workers_section_callback' ],
 				],
-				$aggregator      => [
-					'title'    => static fn(): string => \__( 'Remote Servers', 'newspack-event-logger-nodes' ),
-					'callback' => [ Admin::class, 'aggregator_section_callback' ],
-				],
 				$remote_settings => [
-					'title'    => static fn(): string => \__( 'Remote Server Settings', 'newspack-event-logger-nodes' ),
+					'title'    => static fn(): string => \__( 'Remote Servers', 'newspack-event-logger-nodes' ),
 					'callback' => [ Admin::class, 'remote_settings_section_callback' ],
 				],
 				$debugging       => [
