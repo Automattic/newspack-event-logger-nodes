@@ -50,6 +50,28 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
+	 * Reply handler: fold one spoke's discovery payload into the hub's options.
+	 *
+	 * Gates on a TM_STRUCT-or-array VALUE carrying the unwrapped discovery
+	 * payload under VALUE['payload']. The merge is monotonic + idempotent, so
+	 * out-of-order / partial replies converge to the same union.
+	 *
+	 * @param array<int,mixed> $message Message reference (a spoke's `discovery.get` reply).
+	 */
+	public function fill( array &$message ): void {
+		++$this->counter;
+		$value = $message[ Message::VALUE ];
+		if ( ! \is_array( $value ) ) {
+			return;
+		}
+		$payload = $value['payload'] ?? null;
+		if ( ! \is_array( $payload ) ) {
+			return;
+		}
+		$this->merge_discovery( $payload );
+	}
+
+	/**
 	 * Periodic fan-out: emit one `discovery.get` command toward the connected
 	 * Tee, which broadcasts it to every spoke's Discovery_CI. Drops silently
 	 * if the node has no sink.
@@ -70,28 +92,6 @@ class Discovery_Collector_Node extends Timer_Node {
 			'arguments' => '',
 		];
 		$this->sink->fill( $out );
-	}
-
-	/**
-	 * Reply handler: fold one spoke's discovery payload into the hub's options.
-	 *
-	 * Gates on a TM_STRUCT-or-array VALUE carrying the unwrapped discovery
-	 * payload under VALUE['payload']. The merge is monotonic + idempotent, so
-	 * out-of-order / partial replies converge to the same union.
-	 *
-	 * @param array<int,mixed> $message Message reference (a spoke's `discovery.get` reply).
-	 */
-	public function fill( array &$message ): void {
-		++$this->counter;
-		$value = $message[ Message::VALUE ];
-		if ( ! \is_array( $value ) ) {
-			return;
-		}
-		$payload = $value['payload'] ?? null;
-		if ( ! \is_array( $payload ) ) {
-			return;
-		}
-		$this->merge_discovery( $payload );
 	}
 
 	/**
