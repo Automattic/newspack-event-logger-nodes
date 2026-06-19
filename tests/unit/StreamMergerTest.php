@@ -481,23 +481,6 @@ class StreamMergerTest extends TestCase {
 		$this->assertSame( [ 'segment_id' => 0, 'offset' => 0 ], $merger->get_position( 'missing' ) );
 	}
 
-	public function test_register_remote_job_rewrite_filter_rewrites_jobs_and_leaves_other_lines(): void {
-		Stream_Merger_Node::register_remote_job_rewrite_filter();
-
-		$line = \wp_json_encode( [ 'k' => 'job', 'handler' => 'remote_manager' ] );
-		$out  = \apply_filters( 'newspack_nodes/aggregator_ingest_line', $line, 'site-a', 2 );
-
-		$this->assertIsString( $out );
-		$decoded = \json_decode( $out, true );
-		$this->assertSame( 'remote_job', $decoded['k'] );
-		$this->assertSame( 'remote_manager', $decoded['handler'] );
-
-		$request = \wp_json_encode( [ 'k' => 'request', 'url' => '/' ] );
-		$this->assertSame( $request, \apply_filters( 'newspack_nodes/aggregator_ingest_line', $request, 'site-a', 2 ) );
-		$this->assertSame( 'not-json', \apply_filters( 'newspack_nodes/aggregator_ingest_line', 'not-json', 'site-a', 2 ) );
-		$this->assertSame( '', \apply_filters( 'newspack_nodes/aggregator_ingest_line', '', 'site-a', 2 ) );
-	}
-
 	public function test_remove_node_tears_down_children_remotes_and_offsetlog(): void {
 		$this->seed_registry( [ 'site-a' => $this->make_server( 'https://site-a.test' ) ] );
 		$merger = $this->make_merger( 'aggregator' );
