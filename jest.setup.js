@@ -3,12 +3,11 @@
 // fail any test that DECLARED an expected console message that never fired.
 // Mirrors the sibling newspack-nodes setup.
 //
-// The substrate's `Core.stderr()` / `printLessOften()` / `printLeastOften()`
-// (newspack-nodes/src/runtime/core.js) route node faults, rate-limited logs, and
-// dropped-message notices through console.warn (never console.error, to skip
-// devtools' error counter), each line stamped `YYYY-MM-DD HH:MM:SS UTC <argv0>: `.
-// A test that legitimately exercises a fault path must DECLARE the message it
-// expects:
+// The substrate's `Core.stderr()` and `printLessOften()` (src/runtime/core.js)
+// route node faults, rate-limited logs, and dropped-message notices through
+// console.warn (never console.error, to skip devtools' error counter), each line
+// stamped `YYYY-MM-DD HH:MM:SS UTC <argv0>: `. A test that legitimately exercises
+// a fault path must DECLARE the message it expects:
 //
 //     expectConsoleWarn( 'Job_Worker: ...' );
 //
