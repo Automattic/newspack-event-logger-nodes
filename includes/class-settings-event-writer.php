@@ -112,6 +112,19 @@ class Settings_Event_Writer {
 	}
 
 	/**
+	 * `delete_option` hook callback. Resetting a setting to its default deletes
+	 * the option row (Reset_Gate short-circuits update_option), so without this
+	 * the reset-to-default never propagates to spokes — the downstream push then
+	 * reads the now-absent option and the value-resolver ships the file default.
+	 *
+	 * @api Registered dynamically via add_action by init().
+	 * @param string $option Option name.
+	 */
+	public static function on_delete( string $option ): void {
+		self::maybe_emit( $option );
+	}
+
+	/**
 	 * Suppress (or re-enable) emission while a synced setting is being applied.
 	 *
 	 * @param bool $on True to suppress emission, false to re-enable.
@@ -132,5 +145,6 @@ class Settings_Event_Writer {
 		self::$initialized = true;
 		\add_action( 'update_option', [ self::class, 'on_update' ], 10, 3 );
 		\add_action( 'add_option', [ self::class, 'on_add' ], 10, 2 );
+		\add_action( 'delete_option', [ self::class, 'on_delete' ], 10, 1 );
 	}
 }

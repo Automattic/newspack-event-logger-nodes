@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Resetting a synced setting to its default now propagates to spokes.** `Settings_Event_Writer` watched only `update_option`/`add_option`, but returning a setting to its default *deletes* the option row (`Reset_Gate` short-circuits `pre_update_option` with `delete_option`), so the reset fired `delete_option` — unwatched — and the spoke kept the old value (e.g. dropping `num_partitions` 2→1 left the remote at 2). It now also watches `delete_option`; the name-only event fires, the downstream push reads the now-absent option, and the `newspack_nodes/settings_sync/value` resolver ships the file default.
 - Performance Dashboard: the page title now uses the standard WordPress admin heading size (23px / 400) instead of the unstyled browser default (~2em bold), so it matches the rest of wp-admin.
 - **Select Hooks button restored** on the Event Logger Settings page. It had vanished because the page hosted two exospine React graphs (the hook-catalog selector and the aggregator-admin Configured Servers app) that collided registering the reserved `_http` node; moving the server UI to the Nodes hub Vault tab leaves a single graph and clears the collision.
 
