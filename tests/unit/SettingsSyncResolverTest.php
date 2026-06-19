@@ -59,6 +59,31 @@ class SettingsSyncResolverTest extends TestCase {
 	}
 
 	/**
+	 * A blank SUBSTRATE option (`newspack_nodes_*`) resolves to the SUBSTRATE's
+	 * default, not ELN's. The substrate owns `num_partitions`, so its default lives
+	 * in `\Newspack_Nodes\Config` — ELN's own defaults don't carry it, so resolving
+	 * against ELN's defaults (the bug) returns the raw `false` and the reset-to-
+	 * default never ships.
+	 */
+	public function test_blank_substrate_option_resolves_to_substrate_default(): void {
+		// Live, ELN's own defaults do NOT carry the substrate key num_partitions
+		// (the bundled test config masks this by setting it via LOCAL_NEWSPACK_NODES_CONF,
+		// which load_config_defaults merges in). Strip it so the test reproduces the
+		// live miss: the resolver must reach the SUBSTRATE config for the default.
+		$eln_defaults = Config::load_config_defaults();
+		unset( $eln_defaults['num_partitions'] );
+		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
+		$ref->setAccessible( true );
+		$ref->setValue( null, $eln_defaults );
+
+		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
+			false,
+			'newspack_nodes_num_partitions'
+		);
+		$this->assertSame( \Newspack_Nodes\Config::load_config_defaults()['num_partitions'], $resolved );
+	}
+
+	/**
 	 * A blank substrate-remap option resolves by the canonical-key rule: strip the
 	 * ELN prefix (`remote_num_segments`), drop the `^remote_` segment
 	 * (`num_segments`), and look that up in the file defaults — faithful port of
