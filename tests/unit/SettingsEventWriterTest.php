@@ -52,6 +52,15 @@ class SettingsEventWriterTest extends TestCase {
 		$this->assertSame( [ 'option' => 'newspack_added' ], $this->captured[0][ Message::VALUE ] );
 	}
 
+	public function test_watched_option_delete_emits_event(): void {
+		// Resetting a setting to its default deletes the option row (Reset_Gate),
+		// which fires delete_option — the reset must still propagate to spokes.
+		Settings_Event_Writer::on_delete( 'newspack_reset_to_default' );
+
+		$this->assertCount( 1, $this->captured );
+		$this->assertSame( [ 'option' => 'newspack_reset_to_default' ], $this->captured[0][ Message::VALUE ] );
+	}
+
 	public function test_non_watched_option_emits_nothing(): void {
 		Settings_Event_Writer::on_update( 'blogname', 'old', 'new' );
 		Settings_Event_Writer::on_add( 'siteurl', 'http://example.test' );
@@ -80,10 +89,12 @@ class SettingsEventWriterTest extends TestCase {
 
 		\do_action( 'update_option', 'newspack_via_hook', 'old', 'new' );
 		\do_action( 'add_option', 'newspack_added_via_hook', 'value' );
+		\do_action( 'delete_option', 'newspack_deleted_via_hook' );
 
-		$this->assertCount( 2, $this->captured );
+		$this->assertCount( 3, $this->captured );
 		$this->assertSame( [ 'option' => 'newspack_via_hook' ], $this->captured[0][ Message::VALUE ] );
 		$this->assertSame( [ 'option' => 'newspack_added_via_hook' ], $this->captured[1][ Message::VALUE ] );
+		$this->assertSame( [ 'option' => 'newspack_deleted_via_hook' ], $this->captured[2][ Message::VALUE ] );
 	}
 
 	/**
