@@ -71,11 +71,13 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'requestlog:link';
-const SSE = 'requestlog:link:sse-in';
-const HTTP = 'requestlog:link:http';
-const HEARTBEAT = 'requestlog:link:heartbeat';
+// RemoteLink composes an UNNAMED SseIn (held internally, not registered in Core)
+// and SHARES the reserved-name `_http` (HttpOut) + `_heartbeat` (Heartbeat)
+// singletons — the old per-link `{link}:sse-in/http/heartbeat` names are gone.
+const HTTP = '_http';
+const HEARTBEAT = '_heartbeat';
 const VIEW = 'requestlog:view';
-const COMPOSED_NAMES = [ SSE, HTTP, HEARTBEAT ];
+const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
 // Build a `connected` envelope as the SseConnector recognizes it.
 function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
@@ -96,7 +98,7 @@ function completedEnvelope( req ) {
 }
 
 describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
-	test( 'mounts the backbone + one RemoteLink (composing three children) + the view, each sinking into the interpreter', () => {
+	test( 'mounts the backbone + one RemoteLink (sharing the reserved _http/_heartbeat) + the view, each sinking into the interpreter', () => {
 		renderHook( () => useRequestLogGraph() );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
@@ -104,17 +106,23 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// RemoteLink's three composed children are registered and sink into the interpreter.
+		// RemoteLink shares the reserved _http + _heartbeat singletons, each
+		// sinking into the interpreter. (The SseIn is unnamed — proven below via
+		// the FakeEventSource URL + the end-to-end routing into the view.)
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
+		// The per-link SseIn name is no longer registered.
+		expect( Core.node( 'requestlog:link:sse-in' ) ).toBeNull();
 	} );
 
-	test( 'steers flow with targets: composed sse-in → view directly (and heartbeat → {link}:http/workers)', () => {
+	test( 'steers flow with targets: the unnamed sse-in subscribes on `completed` and routes to view (and heartbeat → _http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
-		expect( Core.node( SSE ).target ).toBe( VIEW );
+		// The unnamed SseIn opened against the `completed` subscribe topic (its
+		// target → view is proven by the end-to-end routing test below).
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
@@ -351,7 +359,8 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 		// Soft nodes are fresh instances under the same names; backbone survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).not.toBe( firstHttp );
-		expect( Core.node( SSE ).target ).toBe( VIEW );
+		// The rebuilt link reopened the unnamed SseIn on the `completed` topic.
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
