@@ -1,17 +1,19 @@
 /**
  * useRequestLogGraph tests — the Request Log dashboard graph now clips onto the
- * substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes (the same I/O
- * boundary the topology console mounts) plus a single `requestlog:view` node,
- * all on the exospine backbone (`_command_interpreter` → `_router`). The dead
- * `requestlog:route` (the substrate snoops the `connected` envelope off so the
- * controlTarget branch was unreachable) and `requestlog:transform` (defensive
- * shaping inlined into the view) intermediate nodes were removed.
+ * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)
+ * via a SINGLE `RemoteLink` node plus a single `requestlog:view` node.
+ *
+ * RemoteLink composes the three I/O children every SSE dashboard used to wire by
+ * hand — `requestlog:link:sse-in` (SseIn), `requestlog:link:http` (HttpOut) and
+ * `requestlog:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
+ * bridge to its own heartbeat. The dead `requestlog:route` / `requestlog:transform`
+ * intermediate nodes remain gone (defensive shaping inlined into the view).
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic
  * (already covered by the substrate's `sse_connector.test.js`) is unmocked here
  * — we drive a `msg` event through the fake EventSource and assert it actually
- * routes _sse → view directly. usePageVisibility is mocked to a controllable
- * value so the visibility effect is deterministic under jsdom.
+ * routes the composed sse-in → view directly. usePageVisibility is mocked to a
+ * controllable value so the visibility effect is deterministic under jsdom.
  */
 
 import { renderHook, act } from '../../../test-helpers/renderHook';
@@ -68,11 +70,12 @@ beforeEach( () => {
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
-const SSE = '_sse';
-const HTTP = '_http';
-const HEARTBEAT = '_heartbeat';
+const LINK = 'requestlog:link';
+const SSE = 'requestlog:link:sse-in';
+const HTTP = 'requestlog:link:http';
+const HEARTBEAT = 'requestlog:link:heartbeat';
 const VIEW = 'requestlog:view';
-const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
+const COMPOSED_NAMES = [ SSE, HTTP, HEARTBEAT ];
 
 // Build a `connected` envelope as the SseConnector recognizes it.
 function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
@@ -92,23 +95,27 @@ function completedEnvelope( req ) {
 	return m;
 }
 
-describe( 'useRequestLogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the four graph nodes, each sinking into the interpreter', () => {
+describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
+	test( 'mounts the backbone + one RemoteLink (composing three children) + the view, each sinking into the interpreter', () => {
 		renderHook( () => useRequestLogGraph() );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
-		for ( const name of ALL_GRAPH_NAMES ) {
+		// The view sinks into the interpreter.
+		expect( Core.node( VIEW ) ).toBeTruthy();
+		expect( Core.node( VIEW ).sink ).toBe( interpreter );
+		// RemoteLink's three composed children are registered and sink into the interpreter.
+		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → view directly (and heartbeat → _http/workers)', () => {
+	test( 'steers flow with targets: composed sse-in → view directly (and heartbeat → {link}:http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
 		expect( Core.node( SSE ).target ).toBe( VIEW );
-		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
+		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
 	test( 'does not mount the dropped route or transform intermediate nodes', () => {
@@ -131,7 +138,7 @@ describe( 'useRequestLogGraph — exospine + I/O boundary wiring', () => {
 		expect( FakeEventSource.last ).toBeNull();
 	} );
 
-	test( '_http has a CommandClient client wired (the POST boundary is constructable)', () => {
+	test( 'the composed HttpOut has a CommandClient client wired (the POST boundary is constructable)', () => {
 		renderHook( () => useRequestLogGraph() );
 		const http = Core.node( HTTP );
 		expect( http.client ).toBeTruthy();
@@ -176,7 +183,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 		jest.useFakeTimers();
 		try {
 			renderHook( () => useRequestLogGraph() );
-			// Spy on _http.client.postBatch instead of fetch().
+			// Spy on the composed HttpOut's client.postBatch instead of fetch().
 			const http = Core.node( HTTP );
 			const postBatch = jest.fn().mockResolvedValue( [] );
 			http.client = { buildMessage: () => newMessage(), postBatch };
@@ -299,11 +306,17 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 } );
 
 describe( 'useRequestLogGraph — teardown', () => {
-	test( 'unmount unregisters all graph nodes + the backbone and closes the EventSource', () => {
+	test( 'unmount tears down the RemoteLink children + the backbone and closes the EventSource', () => {
 		const { unmount } = renderHook( () => useRequestLogGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
+		for ( const name of [
+			...COMPOSED_NAMES,
+			LINK,
+			VIEW,
+			INTERPRETER,
+			ROUTER,
+		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );
@@ -376,7 +389,7 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 		// The rebuilt view's constructor defaults paused:false; the hook must
 		// re-apply the surviving pause so the button / empty-state don't show
 		// "live" while the connection effect (gating on the surviving isPaused)
-		// keeps _sse closed.
+		// keeps the stream closed.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
 	} );
 } );

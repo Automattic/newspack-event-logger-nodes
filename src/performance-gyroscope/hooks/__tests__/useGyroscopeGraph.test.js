@@ -1,19 +1,20 @@
 /**
- * useGyroscopeGraph tests — post-collapse: the Gyroscope dashboard graph now
- * clips onto the substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes
- * (the same I/O boundary the topology console and request-log mount) plus a
- * single `gyroscope:view` node, all on the exospine backbone
- * (`_command_interpreter` → `_router`). The bespoke `gyroscope:stream` Node and
- * its inlined slot-heartbeat loop were retired earlier; the `gyroscope:route`
- * and `gyroscope:transform` hops were collapsed into `gyroscope:view.fill()`
- * directly (route was dead, transform was an envelope-shape dispatcher the view
- * can do itself).
+ * useGyroscopeGraph tests — the Gyroscope dashboard graph clips onto the
+ * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)
+ * via a SINGLE `RemoteLink` node plus a single `gyroscope:view` node.
+ *
+ * RemoteLink composes the three I/O children every SSE dashboard used to wire by
+ * hand — `gyroscope:link:sse-in` (SseIn), `gyroscope:link:http` (HttpOut) and
+ * `gyroscope:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
+ * bridge to its own heartbeat. The bespoke `gyroscope:route` / `gyroscope:transform`
+ * hops were collapsed into `gyroscope:view.fill()` directly (route was dead,
+ * transform was an envelope-shape dispatcher the view can do itself).
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic
  * (already covered by the substrate's `sse_connector.test.js`) is unmocked here
  * — we drive a `msg` event through the fake EventSource and assert it actually
- * routes _sse → view. usePageVisibility is mocked to a controllable value so
- * the visibility effect is deterministic under jsdom.
+ * routes the composed sse-in → view. usePageVisibility is mocked to a
+ * controllable value so the visibility effect is deterministic under jsdom.
  */
 
 import { renderHook, act } from '../../../test-helpers/renderHook';
@@ -68,11 +69,12 @@ beforeEach( () => {
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
-const SSE = '_sse';
-const HTTP = '_http';
-const HEARTBEAT = '_heartbeat';
+const LINK = 'gyroscope:link';
+const SSE = 'gyroscope:link:sse-in';
+const HTTP = 'gyroscope:link:http';
+const HEARTBEAT = 'gyroscope:link:heartbeat';
 const VIEW = 'gyroscope:view';
-const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
+const COMPOSED_NAMES = [ SSE, HTTP, HEARTBEAT ];
 
 // A `connected` envelope as SseConnector recognizes it.
 function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
@@ -92,23 +94,27 @@ function inflightEnvelope( requests ) {
 	return m;
 }
 
-describe( 'useGyroscopeGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the four graph nodes, each sinking into the interpreter', () => {
+describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
+	test( 'mounts the backbone + one RemoteLink (composing three children) + the view', () => {
 		renderHook( () => useGyroscopeGraph() );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
-		for ( const name of ALL_GRAPH_NAMES ) {
+		// The view sinks into the interpreter.
+		expect( Core.node( VIEW ) ).toBeTruthy();
+		expect( Core.node( VIEW ).sink ).toBe( interpreter );
+		// RemoteLink's three composed children are registered and sink into the interpreter.
+		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → view directly (and heartbeat → _http/workers)', () => {
+	test( 'steers flow with targets: composed sse-in → view; heartbeat → {link}:http/workers', () => {
 		renderHook( () => useGyroscopeGraph() );
 		expect( Core.node( SSE ).target ).toBe( VIEW );
-		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
+		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
 	test( 'does not mount the retired route/transform nodes', () => {
@@ -131,7 +137,7 @@ describe( 'useGyroscopeGraph — exospine + I/O boundary wiring', () => {
 		expect( FakeEventSource.last ).toBeNull();
 	} );
 
-	test( '_http has a CommandClient client wired (the POST boundary is constructable)', () => {
+	test( 'the composed HttpOut has a CommandClient client wired (the POST boundary is constructable)', () => {
 		renderHook( () => useGyroscopeGraph() );
 		const http = Core.node( HTTP );
 		expect( http.client ).toBeTruthy();
@@ -286,11 +292,17 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 } );
 
 describe( 'useGyroscopeGraph — teardown', () => {
-	test( 'unmount unregisters all graph nodes + the backbone and closes the EventSource', () => {
+	test( 'unmount tears down the RemoteLink children + the backbone and closes the EventSource', () => {
 		const { unmount } = renderHook( () => useGyroscopeGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
+		for ( const name of [
+			...COMPOSED_NAMES,
+			LINK,
+			VIEW,
+			INTERPRETER,
+			ROUTER,
+		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );
