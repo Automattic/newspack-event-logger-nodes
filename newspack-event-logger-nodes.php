@@ -62,9 +62,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
 	);
 
-	// Node-graph settings-sync path: the option-change writer + the value-resolver
-	// filter Settings_Sync_Node consults at consume time.
-	\Newspack_Event_Logger_Nodes\Settings_Event_Writer::init();
+	// Node-graph settings-sync path: the value-resolver filter Settings_Sync_Node
+	// consults at consume time. The option-change writer (Settings_Event_Writer)
+	// now lives in and is initialized by the substrate.
 	\add_filter(
 		'newspack_nodes/settings_sync/value',
 		'newspack_event_logger_nodes_resolve_settings_sync_value',
@@ -177,8 +177,6 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
 	$base_interpreter->make_node( 'Discovery_CI',   'discovery' );
-	$base_interpreter->make_node( 'Status_CI',      'status' );
-	$base_interpreter->make_node( 'Settings_CI',    'settings' );
 	$base_interpreter->make_node( 'Logger_CI',      'logger' );
 	$base_interpreter->make_node( 'Events_CI',      'events' );
 	$base_interpreter->make_node( 'Performance_CI', 'performance' );
