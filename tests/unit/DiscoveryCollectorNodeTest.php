@@ -18,14 +18,14 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Discovery_Collector_Node::class )]
 class DiscoveryCollectorNodeTest extends TestCase {
 
-	/** @var array<int,array<int,mixed>> Settings events captured by the suppress seam. */
+	/** @var array<int,array<int,mixed>> Settings events captured by the append seam. */
 	private array $settings_events = [];
 
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_options']     = [];
+		$GLOBALS['_wp_actions']     = [];
 		$this->settings_events      = [];
-		Settings_Event_Writer::suppress( false );
 		Settings_Event_Writer::$append_seam = function ( array $m ): void {
 			$this->settings_events[] = $m;
 		};
@@ -33,8 +33,16 @@ class DiscoveryCollectorNodeTest extends TestCase {
 
 	protected function tearDown(): void {
 		Settings_Event_Writer::$append_seam = null;
-		Settings_Event_Writer::suppress( false );
+		unset( $GLOBALS['_test_fire_option_actions'] );
 		parent::tearDown();
+	}
+
+	/** Wire the production watcher onto the WP option actions, like Settings_Event_Writer::init(). */
+	private function wire_option_watcher(): void {
+		$GLOBALS['_test_fire_option_actions'] = true;
+		\add_action( 'update_option', [ Settings_Event_Writer::class, 'on_update' ], 10, 3 );
+		\add_action( 'add_option', [ Settings_Event_Writer::class, 'on_add' ], 10, 2 );
+		\add_action( 'delete_option', [ Settings_Event_Writer::class, 'on_delete' ], 10, 1 );
 	}
 
 	/** Build a named collector wired to a capturing sink and connected to a Tee target. */
@@ -159,7 +167,8 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertSame( $max_events, \count( $result ), 'cap must hold' );
 	}
 
-	public function test_fill_does_not_emit_a_settings_event(): void {
+	public function test_fill_emits_a_settings_event_for_the_merged_option(): void {
+		$this->wire_option_watcher();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
@@ -167,7 +176,13 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] );
 		$node->fill( $msg );
 
-		$this->assertCount( 0, $this->settings_events, 'merge must run under suppress(true) — no bounce' );
+		// The merge writes log_events like any other option change; the watcher
+		// fires a name-only settings event for it (no suppress guard).
+		$this->assertCount( 1, $this->settings_events, 'merge emits a settings event for the option it writes' );
+		$this->assertSame(
+			[ 'option' => 'newspack_event_logger_nodes_log_events' ],
+			$this->settings_events[0][ Message::VALUE ]
+		);
 	}
 
 	public function test_fill_ignores_non_struct_message(): void {

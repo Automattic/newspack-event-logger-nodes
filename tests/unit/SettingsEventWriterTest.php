@@ -23,7 +23,6 @@ class SettingsEventWriterTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->captured              = [];
-		Settings_Event_Writer::suppress( false );
 		Settings_Event_Writer::$append_seam = function ( array $m ): void {
 			$this->captured[] = $m;
 		};
@@ -31,7 +30,6 @@ class SettingsEventWriterTest extends TestCase {
 
 	protected function tearDown(): void {
 		Settings_Event_Writer::$append_seam = null;
-		Settings_Event_Writer::suppress( false );
 		parent::tearDown();
 	}
 
@@ -66,16 +64,6 @@ class SettingsEventWriterTest extends TestCase {
 		Settings_Event_Writer::on_add( 'siteurl', 'http://example.test' );
 
 		$this->assertCount( 0, $this->captured );
-	}
-
-	public function test_suppress_blocks_emission_and_can_re_enable(): void {
-		Settings_Event_Writer::suppress( true );
-		Settings_Event_Writer::on_update( 'newspack_blocked', 'old', 'new' );
-		$this->assertCount( 0, $this->captured );
-
-		Settings_Event_Writer::suppress( false );
-		Settings_Event_Writer::on_update( 'newspack_allowed', 'old', 'new' );
-		$this->assertCount( 1, $this->captured );
 	}
 
 	public function test_init_wires_update_and_add_option_hooks(): void {

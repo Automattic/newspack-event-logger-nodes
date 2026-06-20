@@ -203,12 +203,28 @@ if ( ! function_exists( 'get_option' ) ) {
 	// the existing flag, or defaults a new option to autoloaded).
 	$GLOBALS['_wp_option_autoload'] = [];
 	function update_option( string $key, mixed $value, $autoload = null ): bool {
+		$existed                                 = array_key_exists( $key, $GLOBALS['_wp_options'] );
+		$old                                     = $GLOBALS['_wp_options'][ $key ] ?? false;
 		$GLOBALS['_wp_options'][ $key ]          = $value;
 		$GLOBALS['_wp_option_autoload'][ $key ]  = $autoload;
+		// Opt-in seam: real WP fires add_option/update_option on a write so the
+		// Settings_Event_Writer watcher runs. Off by default (other tests rely
+		// on the silent shim); a test sets the flag to exercise the watcher path.
+		if ( ! empty( $GLOBALS['_test_fire_option_actions'] ) ) {
+			if ( $existed ) {
+				do_action( 'update_option', $key, $old, $value );
+			} else {
+				do_action( 'add_option', $key, $value );
+			}
+		}
 		return true;
 	}
 	function delete_option( string $key ): bool {
+		$existed = array_key_exists( $key, $GLOBALS['_wp_options'] );
 		unset( $GLOBALS['_wp_options'][ $key ] );
+		if ( $existed && ! empty( $GLOBALS['_test_fire_option_actions'] ) ) {
+			do_action( 'delete_option', $key );
+		}
 		return true;
 	}
 	// WP 6.6+ autoload setter — records the requested flag so the one-time

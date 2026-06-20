@@ -152,10 +152,9 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Merge remote hooks into local log_events. The watcher is
-	 * Settings_Event_Writer (it watches log_events), so we wrap the write in
-	 * Settings_Event_Writer::suppress so the merge doesn't bounce back out as a
-	 * new settings event.
+	 * Merge remote hooks into local log_events. The write emits a settings event
+	 * like any other watched option change — the merge is just another origin of
+	 * a log_events change and propagates to spokes through the settings-sync graph.
 	 *
 	 * @param array<int,int|string> $remote_hooks Remote hook names (array_keys output; numeric names coerce to int).
 	 */
@@ -209,14 +208,7 @@ class Discovery_Collector_Node extends Timer_Node {
 		}
 
 		if ( $updated ) {
-			// Suppress the settings-event emission so a discovered hook doesn't
-			// bounce back out as a synced change.
-			Settings_Event_Writer::suppress( true );
-			try {
-				\update_option( 'newspack_event_logger_nodes_log_events', $local, Config::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
-			} finally {
-				Settings_Event_Writer::suppress( false );
-			}
+			\update_option( 'newspack_event_logger_nodes_log_events', $local, Config::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
 		}
 	}
 

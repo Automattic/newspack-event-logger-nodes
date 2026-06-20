@@ -9,7 +9,7 @@
  *   - class-performance-controller.php          (timing, dashboard)
  *   - class-perf-hooks-controller.php           (hooks_registered, hooks_categories)
  *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
- *   - class-perf-config-controller.php          (config_get, config_update)
+ *   - class-perf-config-controller.php          (config_get)
  *   - class-perf-settings-controller.php        (set)
  *   - class-gyroscope-controller.php            (SSE method stays as REST controller)
  *   - class-request-log-controller.php          (request_log_list, request_log_detail)
@@ -39,7 +39,6 @@ use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
-use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -75,33 +74,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
 
 	/**
-	 * `config_get` / `config_update` map: response-key → {option, type}.
-	 * Mirrors PerfConfigController::CONFIG_MAP. Each `type` selects a
-	 * coercion branch in the `config_update` verb (array_assoc flattens
-	 * `{val:''}` into `[val]`; array_bool turns indexed lists into
-	 * `{val:true}` maps; int/float/bool hard-cast).
-	 *
-	 * @var array<string,array{option:string,type:string}>
-	 */
-	private const CONFIG_MAP = [
-		'log_events'                  => [ 'option' => 'newspack_event_logger_nodes_log_events',                  'type' => 'array_assoc' ],
-		'custom_events'               => [ 'option' => 'newspack_event_logger_nodes_custom_events',               'type' => 'array_bool' ],
-		'log_urls'                    => [ 'option' => 'newspack_event_logger_nodes_log_urls',                    'type' => 'array_assoc' ],
-		'skip_urls'                   => [ 'option' => 'newspack_event_logger_nodes_skip_urls',                   'type' => 'array_assoc' ],
-		'auto_disable_threshold'      => [ 'option' => 'newspack_event_logger_nodes_auto_disable_threshold',      'type' => 'int' ],
-		'auto_protect_time_threshold' => [ 'option' => 'newspack_event_logger_nodes_auto_protect_time_threshold', 'type' => 'float' ],
-		'significant_events'          => [ 'option' => 'newspack_event_logger_nodes_significant_events',          'type' => 'array_assoc' ],
-		'log_memory'                  => [ 'option' => 'newspack_event_logger_nodes_log_memory',                  'type' => 'bool' ],
-		'flush_every_line'            => [ 'option' => 'newspack_event_logger_nodes_flush_every_line',            'type' => 'bool' ],
-	];
-
-	/**
 	 * `set` whitelist: WP option name → sanitization type.
-	 * Mirrors PerfSettingsController::ALLOWED_OPTIONS. The same nine
-	 * perf-tuning options as CONFIG_MAP, keyed by the on-disk option name
-	 * rather than the response shape — the `set` verb takes a single
-	 * {option, value} pair while config_update takes the response shape.
-	 *
+	 * 
 	 * @var array<string,string>
 	 */
 	private const SETTINGS_OPTIONS = [
@@ -239,62 +213,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function to_string( mixed $value ): string {
 		return \is_scalar( $value ) ? (string) $value : '';
-	}
-
-	// -------------------------------------------------------------------------
-	// Config + settings value coercion — shared by config_update + set.
-	// Lifted from legacy PerfConfigController + PerfSettingsController.
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Coerce a CONFIG_MAP value to the on-disk shape. Used by `config_update`.
-	 * Branch logic mirrors PerfConfigController::update_config:
-	 *  - array_assoc: flatten `{val:''}` / indexed string list → unique value list
-	 *  - array_bool:  indexed string list → `{val:true}` map; assoc → cast bools
-	 *  - int / float / bool: hard cast
-	 *
-	 * @param mixed  $value Raw input.
-	 * @param string $type  CONFIG_MAP type tag.
-	 * @return mixed Coerced value.
-	 */
-	private static function coerce_config_value( mixed $value, string $type ): mixed {
-		switch ( $type ) {
-			case 'array_assoc':
-				if ( ! \is_array( $value ) ) {
-					return $value;
-				}
-				$flat = [];
-				foreach ( $value as $k => $v ) {
-					if ( \is_string( $v ) && '' !== $v ) {
-						$flat[] = $v;
-					} elseif ( \is_string( $k ) && '' !== $k ) {
-						$flat[] = $k;
-					}
-				}
-				return \array_values( \array_unique( $flat ) );
-
-			case 'array_bool':
-				if ( ! \is_array( $value ) ) {
-					return $value;
-				}
-				$assoc = [];
-				foreach ( $value as $k => $v ) {
-					if ( \is_int( $k ) && \is_string( $v ) ) {
-						$assoc[ $v ] = true;
-					} elseif ( \is_string( $k ) && '' !== $k ) {
-						$assoc[ $k ] = (bool) $v;
-					}
-				}
-				return $assoc;
-
-			case 'int':
-				return self::to_int( $value );
-			case 'float':
-				return self::to_float( $value );
-			case 'bool':
-				return (bool) $value;
-		}
-		return $value;
 	}
 
 	/**
@@ -1706,63 +1624,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'config_update',
-					'description' => 'Bulk-update the nine perf-tuning options.',
-					'args'        => [
-						[ 'name' => 'log_events', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'log_urls', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'skip_urls', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'auto_disable_threshold', 'type' => 'int', 'required' => false ],
-						[ 'name' => 'auto_protect_time_threshold', 'type' => 'float', 'required' => false ],
-						[ 'name' => 'significant_events', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'log_memory', 'type' => 'bool', 'required' => false ],
-						[ 'name' => 'flush_every_line', 'type' => 'bool', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfConfigController::update_config — the
-				// bulk write path for the nine perf-tuning options. Options absent
-				// from the args string are untouched (partial update). Unknown
-				// options are silently ignored to match the legacy whitelist sweep.
-				$opts    = Command_Args::parse( $args )['options'];
-				$updated = [];
-				foreach ( self::CONFIG_MAP as $param => $cfg ) {
-					// Only options actually present in the args string are applied;
-					// a missing `--param` means "leave that setting untouched".
-					if ( ! \array_key_exists( $param, $opts ) ) {
-						continue;
-					}
-					// *_events / *_urls arrive as comma-lists; bool flags resolve via
-					// flag() so `--param=0`/`--param=false` map to false; int/float
-					// hard-cast through coerce_config_value on the raw option string.
-					switch ( $cfg['type'] ) {
-						case 'array_assoc':
-						case 'array_bool':
-							$value = self::coerce_config_value( self::csv( $opts, $param ), $cfg['type'] );
-							break;
-						case 'bool':
-							$value = self::flag( $opts, $param );
-							break;
-						default:
-							$value = self::coerce_config_value( $opts[ $param ], $cfg['type'] );
-					}
-					\update_option( $cfg['option'], $value, AppConfig::autoload_for( $cfg['option'] ) );
-					$updated[] = $param;
-				}
-
-				if ( ! empty( $updated ) ) {
-					AppConfig::reset();
-				}
-
-				return [
-					'success' => true,
-					'updated' => $updated,
-				];
-					},
-				],
-				[
 					'name'        => 'set',
 					'description' => 'Normalized positional single-option perf setting write with sync guard.',
 					'args'        => [
@@ -1774,8 +1635,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				// Normalized positional receiver: `set <option> <value>`, one setting
 				// per command — the grammar Settings_Sync_Node fans out to spokes.
-				// Nine-option whitelist + array/int/float/bool sanitize, suppressing
-				// Settings_Event_Writer's emission while applying the synced value.
+				// Nine-option whitelist + array/int/float/bool sanitize.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
 
 				$option = \is_string( $option ) ? $option : '';
@@ -1798,18 +1658,10 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
 
-				// Suppress the spoke's own settings-event emission while applying a
-				// synced setting; otherwise the update_option hook would bounce this
-				// change straight back out as a fresh settings event. try/finally so
-				// the flag is restored on update_option failure. Autoload follows the
-				// central Config::autoload_for policy.
-				try {
-					Settings_Event_Writer::suppress( true );
-					$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
-					AppConfig::reset();
-				} finally {
-					Settings_Event_Writer::suppress( false );
-				}
+				// Autoload follows the central Config::autoload_for policy. The write
+				// emits a settings event like any other option change.
+				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
+				AppConfig::reset();
 
 				return [
 					'option'  => $option,

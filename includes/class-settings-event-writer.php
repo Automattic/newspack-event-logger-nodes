@@ -8,9 +8,6 @@
  * carries only the name it is always <= PIPE_BUF -> an atomic lockless append
  * (firehose discipline), so no allow_large_writes() is needed.
  *
- * Owns the suppress() flag: the spoke-side `set` verbs raise it while applying a
- * synced setting so the change doesn't bounce back out as a new event.
- *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -39,9 +36,6 @@ class Settings_Event_Writer {
 	 */
 	public static ?\Closure $append_seam = null;
 
-	/** Re-entrancy guard: the spoke `set` verbs raise this while applying a synced setting. */
-	private static bool $suppressed = false;
-
 	/** Idempotency guard for init(). */
 	private static bool $initialized = false;
 
@@ -58,12 +52,12 @@ class Settings_Event_Writer {
 	}
 
 	/**
-	 * Emit a name-only TM_STRUCT event for a watched option, unless suppressed.
+	 * Emit a name-only TM_STRUCT event for a watched option.
 	 *
 	 * @param string $option Option name.
 	 */
 	private static function maybe_emit( string $option ): void {
-		if ( self::$suppressed || 0 !== \strpos( $option, self::WATCH_PREFIX ) ) {
+		if ( 0 !== \strpos( $option, self::WATCH_PREFIX ) ) {
 			return;
 		}
 
@@ -122,15 +116,6 @@ class Settings_Event_Writer {
 	 */
 	public static function on_delete( string $option ): void {
 		self::maybe_emit( $option );
-	}
-
-	/**
-	 * Suppress (or re-enable) emission while a synced setting is being applied.
-	 *
-	 * @param bool $on True to suppress emission, false to re-enable.
-	 */
-	public static function suppress( bool $on ): void {
-		self::$suppressed = $on;
 	}
 
 	/**
