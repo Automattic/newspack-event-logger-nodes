@@ -74,11 +74,13 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'perferrors:link';
-const SSE = 'perferrors:link:sse-in';
-const HTTP = 'perferrors:link:http';
-const HEARTBEAT = 'perferrors:link:heartbeat';
+// RemoteLink composes an UNNAMED SseIn (held internally, not registered in Core)
+// and SHARES the reserved-name `_http` (HttpOut) + `_heartbeat` (Heartbeat)
+// singletons — the old per-link `{link}:sse-in/http/heartbeat` names are gone.
+const HTTP = '_http';
+const HEARTBEAT = '_heartbeat';
 const VIEW = 'perferrors:view';
-const COMPOSED_NAMES = [ SSE, HTTP, HEARTBEAT ];
+const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
 const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
 
@@ -101,7 +103,7 @@ function errorEnvelope( rid, value ) {
 }
 
 describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
-	test( 'mounts the backbone + one RemoteLink (composing three children) + the view', () => {
+	test( 'mounts the backbone + one RemoteLink (sharing the reserved _http/_heartbeat) + the view', () => {
 		renderHook( () => useErrorLogGraph() );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
@@ -109,12 +111,16 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// RemoteLink's three composed children are registered and sink into the interpreter.
+		// RemoteLink shares the reserved _http + _heartbeat singletons, each
+		// sinking into the interpreter. (The SseIn is unnamed — proven below via
+		// the FakeEventSource URL + the end-to-end routing into the view.)
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
+		// The per-link SseIn name is no longer registered.
+		expect( Core.node( 'perferrors:link:sse-in' ) ).toBeNull();
 	} );
 
 	test( 'does not mount the retired perferrors:route / perferrors:transform nodes', () => {
@@ -124,9 +130,11 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		}
 	} );
 
-	test( 'steers flow with targets: composed sse-in → view; heartbeat → {link}:http/workers', () => {
+	test( 'steers flow with targets: the unnamed sse-in subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useErrorLogGraph() );
-		expect( Core.node( SSE ).target ).toBe( VIEW );
+		// The unnamed SseIn opened against the `errors` subscribe topic (its
+		// target → view is proven by the end-to-end routing test below).
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
@@ -342,7 +350,8 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 		// Soft nodes are fresh instances under the same names; backbone survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).not.toBe( firstHttp );
-		expect( Core.node( SSE ).target ).toBe( VIEW );
+		// The rebuilt link reopened the unnamed SseIn on the `errors` topic.
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
