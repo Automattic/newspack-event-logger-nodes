@@ -9,7 +9,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Discovery_Collector_Node;
-use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
+use Newspack_Nodes\Settings_Event_Writer;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;

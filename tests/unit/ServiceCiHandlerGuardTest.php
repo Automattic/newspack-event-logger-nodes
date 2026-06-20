@@ -1,18 +1,19 @@
 <?php
 /**
- * ServiceCiHandlerGuardTest: construction-time + catalog guards for the five App
- * service CIs migrated to the schema-driven command mechanism (Events / Settings
- * / Performance / Aggregator / Servers).
+ * ServiceCiHandlerGuardTest: construction-time + catalog guards for the App
+ * service CIs migrated to the schema-driven command mechanism (Events /
+ * Performance). (Settings / Status moved to the substrate; Aggregator / Servers
+ * were removed earlier.)
  *
  * Each now extends Service_CI_Node, whose ctor builds its dispatch table from
  * `node_schema()['commands']` via `commands_from_schema()`. That helper emits a
  * rate-limited "no callable handler; skipping" warning (through
  * Core::print_less_often → the stderr handler) for any named verb that lost its
  * handler in the migration. `test_migrated_ci_emits_no_handlerless_warning`
- * captures the stderr handler and asserts NONE of the five CIs warns at
+ * captures the stderr handler and asserts NONE of the two CIs warns at
  * construction — i.e. every node_schema verb kept a callable handler.
  *
- * Two further guards protect the migration's HEADLINE contract — that these five
+ * Two further guards protect the migration's HEADLINE contract — that these two
  * CIs are now catalog-visible (Inspector-invokable) Service nodes:
  *   - test_migrated_cis_appear_in_substrate_class_catalog_as_service: fires the
  *     substrate's `Classes_CI list` and asserts every CI's shell_name is in the
@@ -32,7 +33,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Events_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
-use Newspack_Event_Logger_Nodes\App\Settings_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -42,13 +42,12 @@ use Newspack_Nodes\Rest\Classes_CI_Node;
 class ServiceCiHandlerGuardTest extends TestCase {
 
 	/**
-	 * The five migrated CIs keyed by substrate `shell_name` (class short-name
+	 * The two migrated CIs keyed by substrate `shell_name` (class short-name
 	 * minus the `_Node` suffix). Single source of truth for both the catalog
 	 * guard's expected set and the per-CI install guard's data provider.
 	 */
 	private const SHELL_NAMES = [
 		'Events_CI',
-		'Settings_CI',
 		'Performance_CI',
 	];
 
@@ -81,7 +80,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	}
 
 	/**
-	 * Headline-contract guard: the five migrated CIs are catalog-visible Service
+	 * Headline-contract guard: the two migrated CIs are catalog-visible Service
 	 * nodes. Fire the substrate's `Classes_CI list` (the same catalog the
 	 * topology-editor palette + Inspector consume) and assert each CI's
 	 * shell_name appears with `category === 'Service'`.
@@ -175,7 +174,6 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	public static function provide_migrated_cis(): array {
 		return [
 			'Events_CI'      => [ static fn () => new Events_CI_Node() ],
-			'Settings_CI'    => [ static fn () => new Settings_CI_Node() ],
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
 		];
 	}
