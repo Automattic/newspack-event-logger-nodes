@@ -30,7 +30,6 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Aggregator_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Events_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Settings_CI_Node;
@@ -51,7 +50,6 @@ class ServiceCiHandlerGuardTest extends TestCase {
 		'Events_CI',
 		'Settings_CI',
 		'Performance_CI',
-		'Aggregator_CI',
 	];
 
 	protected function tearDown(): void {
@@ -179,7 +177,6 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			'Events_CI'      => [ static fn () => new Events_CI_Node() ],
 			'Settings_CI'    => [ static fn () => new Settings_CI_Node() ],
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
-			'Aggregator_CI'  => [ static fn () => new Aggregator_CI_Node() ],
 		];
 	}
 }
