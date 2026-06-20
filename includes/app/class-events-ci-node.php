@@ -47,11 +47,11 @@ class Events_CI_Node extends Service_CI_Node {
 	 * @api Used by substrate.
 	 */
 	public static function node_schema(): array {
-		return [
+		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Hourly-stats surface for the event-dashboards tree.',
-			'arguments'        => [],
-			'commands'       => [
+			'arguments'   => [],
+			'commands'    => [
 				[
 					'name'        => 'stats',
 					'description' => 'Merge per-partition hourly buckets into one time_series.',
@@ -99,6 +99,6 @@ class Events_CI_Node extends Service_CI_Node {
 					},
 				],
 			],
-		];
+		] );
 	}
 }

@@ -115,11 +115,11 @@ class Settings_CI_Node extends Service_CI_Node {
 	 * @api Used by substrate.
 	 */
 	public static function node_schema(): array {
-		return [
+		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Substrate-level integer settings: get / update num_partitions, num_segments, segment_size, max_lifespan.',
-			'arguments'        => [],
-			'commands'       => [
+			'arguments'   => [],
+			'commands'    => [
 				[
 					'name'        => 'get',
 					'description' => 'Return the four substrate-owned integer settings as a snapshot.',
@@ -168,6 +168,6 @@ class Settings_CI_Node extends Service_CI_Node {
 					},
 				],
 			],
-		];
+		] );
 	}
 }

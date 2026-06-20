@@ -42,7 +42,7 @@ class Logger_CI_Node extends Service_CI_Node {
 
 	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
-		return [
+		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Performance-logger configuration: substrate config snapshot + categorized hook list for the settings UI.',
 			'arguments'   => [],
@@ -92,6 +92,6 @@ class Logger_CI_Node extends Service_CI_Node {
 					},
 				],
 			],
-		];
+		] );
 	}
 }

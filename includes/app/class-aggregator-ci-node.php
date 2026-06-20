@@ -61,11 +61,11 @@ class Aggregator_CI_Node extends Service_CI_Node {
 
 	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
-		return [
+		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Hub-side aggregator dashboards: per-server status, cache health, registered servers.',
-			'arguments'        => [],
-			'commands'       => [
+			'arguments'   => [],
+			'commands'    => [
 				[
 					'name'        => 'status',
 					'description' => 'Per-node partition snapshot for each wired Remote_Source in the active aggregator topology.',
@@ -143,6 +143,6 @@ class Aggregator_CI_Node extends Service_CI_Node {
 					},
 				],
 			],
-		];
+		] );
 	}
 }

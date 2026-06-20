@@ -36,7 +36,7 @@ class Status_CI_Node extends Service_CI_Node {
 
 	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
-		return [
+		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Health/version probe: plugin version, runtime version, partition count, active topologies, cache reachability, timestamp.',
 			'arguments'   => [],
@@ -63,6 +63,6 @@ class Status_CI_Node extends Service_CI_Node {
 					},
 				],
 			],
-		];
+		] );
 	}
 }

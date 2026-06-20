@@ -7,9 +7,7 @@
  * (phpstan's own reflection). That is NOT enough for `lint:deadcode`:
  * shipmonk/dead-code-detector's reflection-based usage providers call Nette
  * DI `findByType()`, which triggers the REAL composer autoloader to load each
- * ELN node class — and loading e.g. `Remote_Source_Node` needs its parent
- * `\Newspack_Nodes\Node`, which ELN's own autoloader can't find (the substrate
- * is a sibling plugin loaded at runtime by WordPress, not via composer here).
+ * ELN node class.
  *
  * Register a minimal autoloader for the substrate's OWN classes only, sourced
  * from its composer classmap. Scoped to the `Newspack_Nodes\` prefix so this
