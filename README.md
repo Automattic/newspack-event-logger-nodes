@@ -58,7 +58,7 @@ Every dashboard sends TM_COMMAND envelopes to a service CI via the substrate's s
 | **Event Aggregator (Raw Logs)** | `events.stats` | `subscribe=firehose.pN` | Direct firehose tail |
 | **Errors** | — | `subscribe=errors.pN` | Tail of `errors.log` |
 | **Workers** (substrate-owned) | `workers.{list, restart, …}` | — | Substrate's `Workers_CI` (lock-dir scan + offsetlog cursors) |
-| **Performance Logger settings** | `logger.{config, hooks}`, `performance.{config_get, config_update, settings_update, hooks_registered, hooks_categories, hooks_available, hooks_configure}` | — | WP options |
+| **Performance Logger settings** | `logger.{config, hooks}`, `performance.{config_get, settings_update, hooks_registered, hooks_categories, hooks_available, hooks_configure}` | — | WP options |
 | **Aggregator Admin (hub-only)** | `aggregator.{status, health, servers}`, `servers.{list, get, add, update, delete, test}` | — | `Server_Registry` + `Stream_Merger_Node` per-remote state |
 | **Status probe** | `status.get` | — | Version, partitions, active topologies, cache reachability |
 

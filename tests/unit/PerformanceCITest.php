@@ -65,7 +65,6 @@ class PerformanceCITest extends TestCase {
 	protected function tearDown(): void {
 		VerbHarness::reset();
 		Settings_Event_Writer::$append_seam = null;
-		Settings_Event_Writer::suppress( false );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
 		Hook_Categorizer::clear_cache();
@@ -1447,172 +1446,9 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// config_update verb — replaces PerfConfigController::update_config.
-	// -------------------------------------------------------------------------
-
-	public function test_config_update_verb_writes_supplied_keys_only(): void {
-		// Legacy contract: only keys present in the request body are updated;
-		// the rest are untouched. Response `updated` lists the keys that were
-		// applied.
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--log_events=init,shutdown --auto_disable_threshold=1500 --log_memory'
-		);
-
-		$this->assertIsArray( $result );
-		$this->assertTrue( $result['success'] );
-		$this->assertContains( 'log_events', $result['updated'] );
-		$this->assertContains( 'auto_disable_threshold', $result['updated'] );
-		$this->assertContains( 'log_memory', $result['updated'] );
-		$this->assertSame( [ 'init', 'shutdown' ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] );
-		$this->assertSame( 1500, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-		// Unspecified keys must NOT be written.
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_urls', $GLOBALS['_wp_options'] );
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_significant_events', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_config_update_persists_autoload_per_policy(): void {
-		// Hot-path small scalars must be autoloaded (ride the one alloptions
-		// query); large list options (log_events / custom_events) stay off
-		// autoload so they don't bloat every frontend request's alloptions
-		// blob. Config::autoload_for() is the single source of truth; every
-		// write path must honor it.
-		$GLOBALS['_wp_option_autoload'] = [];
-		$interpreter                             = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--log_memory --log_events=init'   // scalar autoloaded; list not
-		);
-
-		$this->assertTrue(
-			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_log_memory'],
-			'small hot-path scalar must be autoloaded'
-		);
-		$this->assertFalse(
-			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_log_events'],
-			'large list option must stay off autoload'
-		);
-	}
-
-	public function test_hooks_configure_keeps_log_events_off_autoload(): void {
-		// hooks_configure is a second writer of log_events / custom_events;
-		// it must honor the same autoload policy as config_update — the
-		// large lists stay off the per-request alloptions blob.
-		$GLOBALS['_wp_option_autoload'] = [];
-		$interpreter                             = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'hooks_configure',
-			'--hooks=init,shutdown --custom_events=my_event'
-		);
-
-		$this->assertFalse(
-			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_log_events']
-		);
-		$this->assertFalse(
-			$GLOBALS['_wp_option_autoload']['newspack_event_logger_nodes_custom_events']
-		);
-	}
-
-	public function test_config_update_verb_flattens_array_assoc_shape(): void {
-		// The `array_assoc` coercion branch dedupes the comma-list value into a
-		// unique indexed array (`array_values( array_unique( ... ) )`). A repeated
-		// element in the list must collapse to a single entry.
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--log_urls=/articles,/home,/home'
-		);
-
-		$saved = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'];
-		$this->assertContains( '/articles', $saved );
-		$this->assertContains( '/home', $saved );
-		// Duplicates collapsed via array_unique.
-		$this->assertSame( \count( $saved ), \count( \array_unique( $saved ) ) );
-	}
-
-	public function test_config_update_verb_converts_array_bool_indexed_list(): void {
-		// Legacy `array_bool` branch: indexed list of strings becomes
-		// `{name: true}` map for the custom_events option.
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--custom_events=event_one,event_two'
-		);
-
-		$this->assertSame(
-			[ 'event_one' => true, 'event_two' => true ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
-		);
-	}
-
-	public function test_config_update_verb_coerces_int_float_bool_types(): void {
-		// Each scalar key gets a hard cast to int/float/bool — legacy
-		// PerfConfigController::update_config does the same on the way to
-		// update_option.
-		$interpreter     = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--auto_disable_threshold=750 --auto_protect_time_threshold=1.25 --log_memory=1 --flush_every_line=0'
-		);
-
-		$this->assertSame( 750, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
-		$this->assertEqualsWithDelta( 1.25, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'], 0.001 );
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] );
-	}
-
-	public function test_config_update_verb_no_op_when_no_known_keys(): void {
-		// Unknown keys are silently ignored (legacy parity — the loop only
-		// considers keys present in CONFIG_MAP). Response should reflect zero
-		// updates and no options should be written.
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--not_a_real_setting=whatever'
-		);
-
-		$this->assertTrue( $result['success'] );
-		$this->assertSame( [], $result['updated'] );
-		$this->assertSame( [], $GLOBALS['_wp_options'] );
-	}
-
-	public function test_config_update_verb_rejects_unauthorized(): void {
-		$GLOBALS['_current_user_can'] = false;
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'config_update',
-			'--log_events=init'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'permission denied', $result );
-		// Confirm no write happened on the rejected path.
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
-	}
-
-	// -------------------------------------------------------------------------
 	// set verb (normalized positional receiver) — nine-option whitelist +
 	// array/int/float/bool type-coerced sanitization. Positional
-	// `set <option> <value>`, suppress-wrapped so a synced apply doesn't
-	// bounce back out as a fresh settings event.
+	// `set <option> <value>`.
 	// -------------------------------------------------------------------------
 
 	public function test_set_verb_writes_array_option_csv_split(): void {
@@ -1658,48 +1494,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'unknown', \strtolower( $result ) );
 		$this->assertArrayNotHasKey( 'arbitrary_option', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_set_verb_suppresses_settings_event_during_apply(): void {
-		// Applying a synced setting must NOT re-fire the spoke's own settings
-		// event and bounce the change back out. The handler wraps its
-		// option-write + Config::reset() in Settings_Event_Writer::suppress(true)
-		// / finally suppress(false). We drive a real emit attempt INSIDE that
-		// window by hanging a watched-option emit on the substrate config-reset
-		// action (which AppConfig::reset() fires during apply); a recorder seam
-		// then proves nothing reached the append path while suppression held.
-		$captured                           = [];
-		Settings_Event_Writer::$append_seam = static function ( array $message ) use ( &$captured ): void {
-			$captured[] = $message;
-		};
-		\add_action(
-			\Newspack_Nodes\Config::RESET_ACTION,
-			static fn () => Settings_Event_Writer::on_update( 'newspack_probe', 'old', 'new' )
-		);
-
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_protect_time_threshold 1.5'
-		);
-
-		$this->assertSame( [], $captured, 'set must suppress settings emission while applying' );
-	}
-
-	public function test_set_verb_emit_outside_suppression_window_records(): void {
-		// Control for the suppression test: the same emit path records when the
-		// handler is NOT holding the suppress flag, proving the assertion above
-		// is not a trivial false-green.
-		$captured                           = [];
-		Settings_Event_Writer::$append_seam = static function ( array $message ) use ( &$captured ): void {
-			$captured[] = $message;
-		};
-
-		Settings_Event_Writer::on_update( 'newspack_probe', 'old', 'new' );
-
-		$this->assertCount( 1, $captured );
 	}
 
 	// -------------------------------------------------------------------------
@@ -1949,9 +1743,8 @@ class PerformanceCITest extends TestCase {
 		$expected = [
 			'overview', 'urls', 'url_detail', 'request_search', 'request_detail',
 			'timing', 'dashboard', 'hooks_registered', 'hooks_categories',
-			'hooks_available', 'hooks_configure', 'config_get', 'config_update',
-			'set', 'request_log_list',
-			'request_log_detail',
+			'hooks_available', 'hooks_configure', 'config_get', 'set',
+			'request_log_list', 'request_log_detail',
 		];
 
 		$verbs = [];
@@ -2042,30 +1835,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'hooks', 'custom_events' ], \array_keys( $args ) );
 		$this->assertSame( 'json', $args['hooks']['type'] );
 		$this->assertSame( 'json', $args['custom_events']['type'] );
-		foreach ( $args as $arg ) {
-			$this->assertFalse( $arg['required'] );
-		}
-	}
-
-	public function test_config_update_verb_declares_the_nine_optional_options(): void {
-		// config_update sweeps CONFIG_MAP — nine optional perf-tuning keys.
-		$args = self::args_by_name( 'config_update' );
-		$this->assertSame(
-			[
-				'log_events', 'custom_events', 'log_urls', 'skip_urls',
-				'auto_disable_threshold', 'auto_protect_time_threshold',
-				'significant_events', 'log_memory', 'flush_every_line',
-			],
-			\array_keys( $args )
-		);
-		// array_assoc / array_bool config types surface as json payload fields.
-		foreach ( [ 'log_events', 'custom_events', 'log_urls', 'skip_urls', 'significant_events' ] as $name ) {
-			$this->assertSame( 'json', $args[ $name ]['type'], "{$name} must be json" );
-		}
-		$this->assertSame( 'int', $args['auto_disable_threshold']['type'] );
-		$this->assertSame( 'float', $args['auto_protect_time_threshold']['type'] );
-		$this->assertSame( 'bool', $args['log_memory']['type'] );
-		$this->assertSame( 'bool', $args['flush_every_line']['type'] );
 		foreach ( $args as $arg ) {
 			$this->assertFalse( $arg['required'] );
 		}

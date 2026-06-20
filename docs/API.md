@@ -77,7 +77,7 @@ Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings 
 | `config` | — | Full filterable **substrate** config (`Newspack_Nodes\Config::load_config()` result) — the substrate config snapshot, NOT the application `Config` superset. |
 | `hooks` | — | `{ hooks: [{name, category}], categories: {…} }` flattened via `Hook_Categorizer`. |
 
-Read-only — settings WRITES live on the `performance` CI (`config_update`, `settings_update`, `hooks_configure`).
+Read-only — settings WRITES live on the `performance` CI (`settings_update`, `hooks_configure`).
 
 ### `events` — hourly-stats surface
 
@@ -128,7 +128,6 @@ The largest CI; every Performance-tree dashboard verb lives here.
 | `hooks_available` | — | `{ hooks: [...] }` — every fired (`$wp_actions`) or registered (`$wp_filter`) hook, minus this plugin's internals and the operator's custom-events list. Requires `manage_options`. |
 | `hooks_configure` | `{ hooks?: json, custom_events?: json }` | `{ success, hooks_configured }`. Persists selected hooks / custom events; calls `AppConfig::reset()`. Requires `manage_options`. |
 | `config_get` | — | `{ config: { log_events, custom_events, log_urls, skip_urls, auto_disable_threshold, auto_protect_time_threshold, significant_events, log_memory, flush_every_line } }` — the 9 performance-tuning options. Requires `manage_options`. |
-| `config_update` | (partial 9-option payload) | `{ success, updated: [names...] }`. Writes any subset in one round-trip; absent / null keys skipped; unknown keys silently ignored. Requires `manage_options`. |
 | `settings_update` | `{ option (required), value (required) }` | `{ option, updated: bool }`. Single-option writer for the same 9-option set; **wraps the `update_option` call in `Settings_Sync::suppress_sync(true)` / try-finally** so a remotely-synced setting applied on a spoke doesn't bounce back as a re-sync. Requires `manage_options`. |
 | `request_log_list` | `{ limit?: int = 100 (1..1000) }` | `{ data: entries[], meta: { limit, scanned } }` — newest-first walk of the requests index across all partitions. Each entry summary carries `rid`, `url_hash`, `timestamp`, `duration_ms`, `status_code`, `peak_mb`, `method`, `error_status`, `partition`. Requires `manage_options`. |
 | `request_log_detail` | `{ id (required) }` | `{ data: { request_id, entries: [...] }, meta: { scanned } }` for known rids. Empty id throws TM_ERROR (`id required`); a non-empty id that doesn't resolve returns the same envelope with an empty `entries` array (legacy stub-compatible — the React tree polls these and "expected to exist soon" is a normal state). Requires `manage_options`. |

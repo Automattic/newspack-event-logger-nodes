@@ -3,7 +3,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Auto_Tuner_Node;
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -17,7 +16,6 @@ class AutoTunerTest extends TestCase {
 		$GLOBALS['_current_user_can']  = false;
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
-		Settings_Event_Writer::suppress( false );
 		if ( \class_exists( Config::class ) ) {
 			Config::reset();
 		}

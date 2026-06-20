@@ -270,7 +270,7 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_perf_config_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\PerfConfigController' ),
-			'Legacy PerfConfigController must be deleted; Performance_CI.config_get + .config_update replace it (M2 Task 11). No JS callers, no server-to-server callers.'
+			'Legacy PerfConfigController must be deleted; Performance_CI.config_get replaces it (M2 Task 11). No JS callers, no server-to-server callers.'
 		);
 	}
 

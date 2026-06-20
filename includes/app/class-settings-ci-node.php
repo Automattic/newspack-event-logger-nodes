@@ -13,8 +13,7 @@
  *         (the positional grammar Settings_Sync_Node fans out to spokes),
  *         writes via `update_option()`, then returns the post-set snapshot.
  *         Resets the application Config so the snapshot rebuild sees the new
- *         value rather than the stale cache, and suppresses the spoke's own
- *         settings-event emission while applying the synced value.
+ *         value rather than the stale cache.
  *
  * Allowed-keys whitelist + min/max bounds (1..2^30 for three keys, 0..2^30 for
  * max_lifespan), `manage_options` requirement, WP option keys. Throws
@@ -31,7 +30,6 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
-use Newspack_Event_Logger_Nodes\Settings_Event_Writer;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
@@ -153,16 +151,8 @@ class Settings_CI_Node extends Service_CI_Node {
 							throw new \RuntimeException( \esc_html( "invalid value for setting: {$short}" ) );
 						}
 
-						// Suppress the spoke's own settings-event emission while applying a
-						// synced setting; otherwise the update_option hook would bounce this
-						// change straight back out as a fresh settings event.
-						try {
-							Settings_Event_Writer::suppress( true );
-							\update_option( "newspack_nodes_{$short}", $sanitized, true );
-							AppConfig::reset();
-						} finally {
-							Settings_Event_Writer::suppress( false );
-						}
+						\update_option( "newspack_nodes_{$short}", $sanitized, true );
+						AppConfig::reset();
 
 						return self::snapshot();
 					},

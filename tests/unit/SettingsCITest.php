@@ -38,7 +38,6 @@ class SettingsCITest extends TestCase {
 	protected function tearDown(): void {
 		VerbHarness::reset();
 		Settings_Event_Writer::$append_seam = null;
-		Settings_Event_Writer::suppress( false );
 		unset( $GLOBALS['_wp_actions'][ \Newspack_Nodes\Config::RESET_ACTION ] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
@@ -107,48 +106,6 @@ class SettingsCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'unknown setting', $result );
 		$this->assertArrayNotHasKey( 'newspack_nodes_not_in_allowlist', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_set_verb_suppresses_settings_event_during_apply(): void {
-		// Applying a synced setting must NOT re-fire the spoke's own settings
-		// event and bounce the change back out. The handler wraps its
-		// option-write + Config::reset() in Settings_Event_Writer::suppress(true)
-		// / finally suppress(false). We drive a real emit attempt INSIDE that
-		// window by hanging a watched-option emit on the substrate config-reset
-		// action (which AppConfig::reset() fires during apply); a recorder seam
-		// then proves nothing reached the append path while suppression held.
-		$captured = [];
-		Settings_Event_Writer::$append_seam = static function ( array $message ) use ( &$captured ): void {
-			$captured[] = $message;
-		};
-		\add_action(
-			\Newspack_Nodes\Config::RESET_ACTION,
-			static fn () => Settings_Event_Writer::on_update( 'newspack_probe', 'old', 'new' )
-		);
-
-		$interpreter = new Settings_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'settings',
-			'set',
-			'newspack_nodes_num_segments 8'
-		);
-
-		$this->assertSame( [], $captured, 'set must suppress settings emission while applying' );
-	}
-
-	public function test_emit_outside_suppression_window_records(): void {
-		// Control for the suppression test: the same emit path records when the
-		// handler is NOT holding the suppress flag, proving the assertion above
-		// is not a trivial false-green.
-		$captured = [];
-		Settings_Event_Writer::$append_seam = static function ( array $message ) use ( &$captured ): void {
-			$captured[] = $message;
-		};
-
-		Settings_Event_Writer::on_update( 'newspack_probe', 'old', 'new' );
-
-		$this->assertCount( 1, $captured );
 	}
 
 	// ── schema-driven dispatch ──────────────────────────────────────────────

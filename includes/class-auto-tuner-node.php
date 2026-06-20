@@ -3,10 +3,9 @@
  * Auto Tuner Node
  *
  * Receives FlameBuilder's auto-tune decisions as messages and applies them by
- * updating the local option. The write is NOT suppressed: it fires
- * Settings_Event_Writer's option-change listener so the tuned value propagates
- * to spokes through the settings-sync node graph (Settings_Sync_Node), exactly
- * as an admin edit would.
+ * updating the local option. The write fires Settings_Event_Writer's
+ * option-change listener so the tuned value propagates to spokes through the
+ * settings-sync node graph (Settings_Sync_Node), exactly as an admin edit would.
  *
  * Replaces the legacy AutoTuneHandlers static action listeners. FlameBuilder
  * used to fire three `do_action()` calls and AutoTuneHandlers wired six
@@ -121,14 +120,11 @@ class Auto_Tuner_Node extends Node {
 	// --- Persist + fan-out -----------------------------------------------------
 
 	/**
-	 * Local update_option. Auto-tuning is an ORIGINATING setting change, so it is
-	 * NOT suppressed: the write fires Settings_Event_Writer's option-change
-	 * listener, which propagates the tuned value to spokes immediately through the
-	 * settings-sync node graph (Settings_Sync_Node) — exactly as an admin edit
-	 * would; the periodic Settings_Sync_Node tick is the backstop. (The old
-	 * suppress paired with a now-deleted explicit remote_manager queue to avoid
-	 * double-firing; keeping it would silently exempt auto-tuned changes from
-	 * immediate propagation.)
+	 * Local update_option. Auto-tuning is an ORIGINATING setting change: the
+	 * write fires Settings_Event_Writer's option-change listener, which
+	 * propagates the tuned value to spokes immediately through the settings-sync
+	 * node graph (Settings_Sync_Node) — exactly as an admin edit would; the
+	 * periodic Settings_Sync_Node tick is the backstop.
 	 *
 	 * @param mixed $value New option value to persist.
 	 */
