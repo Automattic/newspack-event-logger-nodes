@@ -65,10 +65,6 @@ const ENTRIES = [
 		outDir: path.resolve( ROOT, 'build/performance-request-log' ),
 	},
 	{
-		entry: 'src/event-aggregator/index.js',
-		outDir: path.resolve( ROOT, 'build/event-aggregator' ),
-	},
-	{
 		entry: 'src/event-aggregator/settings.js',
 		outDir: path.resolve( ROOT, 'build/event-aggregator-settings' ),
 	},
