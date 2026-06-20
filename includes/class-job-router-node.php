@@ -107,14 +107,14 @@ class Job_Router_Node extends Node {
 		$raw_handler = $body['handler'] ?? '';
 		$handler     = (string) $raw_handler;
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
-			Core::print_less_often( "JobRouter: invalid handler name: $handler" );
+			$this->print_less_often( "invalid handler name: $handler" );
 			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'invalid_handler', 'HANDLER', $handler ] ) );
 			return;
 		}
 
 		$parameters = $body['parameters'] ?? [];
 		if ( ! \is_array( $parameters ) ) {
-			Core::print_less_often( "JobRouter: $handler has non-array parameters; dropping" );
+			$this->print_less_often( "$handler has non-array parameters; dropping" );
 			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'non_array_params', 'HANDLER', $handler ] ) );
 			return;
 		}
@@ -130,7 +130,7 @@ class Job_Router_Node extends Node {
 		// at write time too, but failing earlier produces a clearer error.
 		$encoded = \wp_json_encode( $normalized );
 		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
-			Core::print_less_often( "JobRouter: $handler entry exceeds MAX_JOB_SIZE; dropping" );
+			$this->print_less_often( "$handler entry exceeds MAX_JOB_SIZE; dropping" );
 			$this->set_state(
 				'DROPPED',
 				\implode( ' ', [ 'REASON', 'OVERSIZE', 'HANDLER', $handler, 'SIZE', \strlen( $encoded ) ] )

@@ -1277,11 +1277,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @api Used by substrate.
 	 */
 	public static function node_schema(): array {
-		return [
+		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Performance-dashboard surface: overview, URLs, requests, hooks, config, settings.',
-			'arguments'        => [],
-			'commands'       => [
+			'arguments'   => [],
+			'commands'    => [
 				[
 					'name'        => 'overview',
 					'description' => 'High-level performance stats across all partitions.',
@@ -1894,6 +1894,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 			],
-		];
+		] );
 	}
 }
