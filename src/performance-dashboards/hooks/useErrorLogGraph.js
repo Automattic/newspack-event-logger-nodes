@@ -1,17 +1,20 @@
 /**
  * useErrorLogGraph — mounts the Error Log dashboard node graph onto the
- * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
- * substrate's I/O boundary nodes — the same ones useRequestLogGraph mounts:
+ * canonical rule-#2 backbone (`_command_interpreter → _router`) using a SINGLE
+ * substrate `RemoteLink` node instead of hand-wiring three I/O boundary nodes:
  *
- *   _sse        (SseInNode — EventSource ingress, args `'errors {restUrl} {nonce}'`)
- *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
- *   _heartbeat  (HeartbeatNode — slot keep-alive; target = `_http/workers`)
+ *   perferrors:link  (RemoteLink — composes + registers three children:
+ *                     `perferrors:link:sse-in` (SseIn — EventSource ingress),
+ *                     `perferrors:link:http` (HttpOut — POST /command boundary),
+ *                     `perferrors:link:heartbeat` (Heartbeat — slot keep-alive),
+ *                     and wires the `connected → slot` bridge to its own
+ *                     heartbeat. `.client` is the injected CommandClient.)
  *
  * Plus the single dashboard node — the view-model:
  *
  *   perferrors:view  (the view-model node the React view reads)
  *
- * The chain collapsed in v0.x: `_sse` targets the view directly. The old
+ * The chain collapsed in v0.x: the link targets the view directly. The old
  * `perferrors:route` classifier was dead (its `controlTarget` was never
  * reached — the substrate emits `KEY='connected'` AND snoops it off before it
  * reaches subscribers), and `perferrors:transform` was a one-line dispatch
@@ -19,11 +22,9 @@
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * graph build is handed to `mountExospine( build )`, which snapshots Core so the
- * soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The slot
- * bridge mirrors useRequestLogGraph (and useConsoleGraph): a `connected`-event
- * subscriber on `_sse` reads `payload.slot` / `.partition` and pushes them into
- * `_heartbeat`. The page-visibility / pause effect drives `sse.start()` /
- * `sse.close()` (and `heartbeat.clearSlot()` on close).
+ * soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The
+ * `connected → slot` bridge and slot keep-alive now live inside RemoteLink. The
+ * page-visibility / pause effect drives `link.connect()` / `link.close()`.
  *
  * Returns the thin control callbacks the view calls — `setPaused` and
  * `clear`. These are dispatched HOOK-DIRECT to the view node
@@ -43,11 +44,8 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 
-// I/O boundary nodes mounted from the substrate runtime.
-const SSE = '_sse';
-const HTTP = '_http';
-const HEARTBEAT = '_heartbeat';
-// Dashboard view-model.
+// The single RemoteLink node and the dashboard view-model node.
+const LINK = 'perferrors:link';
 const VIEW = 'perferrors:view';
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
@@ -70,8 +68,7 @@ export function useErrorLogGraph( opts = {} ) {
 	optsRef.current = opts;
 
 	// Live node handles for the connection effect + control callbacks.
-	const sseRef = useRef( null );
-	const heartbeatRef = useRef( null );
+	const linkRef = useRef( null );
 	const viewRef = useRef( null );
 
 	// Paused state drives BOTH the view control (published for the button /
@@ -86,7 +83,7 @@ export function useErrorLogGraph( opts = {} ) {
 	isPausedRef.current = isPaused;
 
 	// Bumped on every (re)build so the connection effect re-runs against the
-	// fresh _sse and a consumer's useNodeState re-subscribes to the freshly-
+	// fresh link and a consumer's useNodeState re-subscribes to the freshly-
 	// registered view node. A monotonic counter, not a boolean latch — reinit()'s
 	// second build must still force a render.
 	const [ buildCount, bumpBuild ] = useState( 0 );
@@ -101,26 +98,19 @@ export function useErrorLogGraph( opts = {} ) {
 				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
 				{};
 
-			// I/O boundary nodes — the same ones useRequestLogGraph mounts.
-			// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
-			const sse = interpreter.makeNode(
-				'SseIn',
-				SSE,
-				`errors ${ data.restUrl || '/wp-json/' } ${ data.nonce || '' }`
+			const baseUrl = data.restUrl || '/wp-json/';
+			const nonce = data.nonce || '';
+
+			// ONE RemoteLink composes the SseIn + HttpOut + Heartbeat children and
+			// the `connected → slot` bridge. SseConnector's three-token positional
+			// config: `subscribe baseUrl nonce`.
+			const link = interpreter.makeNode(
+				'RemoteLink',
+				LINK,
+				`errors ${ baseUrl } ${ nonce }`
 			);
-			sse.target = VIEW;
-
-			const http = interpreter.makeNode( 'HttpOut', HTTP );
-			http.client = new CommandClient( {
-				baseUrl: data.restUrl || '/wp-json/',
-				nonce: data.nonce || '',
-			} );
-
-			const heartbeat = interpreter.makeNode( 'Heartbeat', HEARTBEAT );
-			// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
-			// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
-			// discarded by HeartbeatNode.fill anyway, so broadcast routing is fine.
-			heartbeat.target = `${ HTTP }/workers`;
+			link.target = VIEW;
+			link.client = new CommandClient( { baseUrl, nonce } );
 
 			// The view-model — shapes raw envelopes into rows inline.
 			const view = interpreter.makeNode( 'PerfErrorsView', VIEW );
@@ -128,31 +118,7 @@ export function useErrorLogGraph( opts = {} ) {
 				view.maxEntries = maxEntries;
 			}
 
-			// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
-			// slot into `_heartbeat`. Mirrors useRequestLogGraph.js.
-			sse.register( 'connected', 'useErrorLogGraph', ( payload ) => {
-				const slot =
-					payload && Number.isInteger( payload.slot )
-						? payload.slot
-						: null;
-				const partition =
-					payload && Number.isInteger( payload.partition )
-						? payload.partition
-						: -1;
-				if ( null !== slot && slot >= 0 ) {
-					heartbeat.setSlot( slot, partition );
-				} else {
-					heartbeat.clearSlot();
-				}
-				return true;
-			} );
-
-			// HeartbeatNode hitchhikes the backbone's TIMER (set_timer() with no args):
-			// the _router's notify_timer calls heartbeat.fireCb -> fire each tick.
-			heartbeat.setTimer();
-
-			sseRef.current = sse;
-			heartbeatRef.current = heartbeat;
+			linkRef.current = link;
 			viewRef.current = view;
 
 			// On a reinit-while-paused, re-publish the surviving pause to the fresh
@@ -166,13 +132,11 @@ export function useErrorLogGraph( opts = {} ) {
 			// useNodeState re-subscribes to the freshly-mounted view node.
 			bumpBuild( ( n ) => n + 1 );
 
-			// Non-node side effects undone before the nodes are removed.
+			// Tear down the RemoteLink (closes its stream + removes all three
+			// children) before the exospine removes the rest.
 			return () => {
-				heartbeat.clearSlot();
-				sse.unregister( 'connected', 'useErrorLogGraph' );
-				sse.close();
-				sseRef.current = null;
-				heartbeatRef.current = null;
+				link.removeNode();
+				linkRef.current = null;
 				viewRef.current = null;
 			};
 		};
@@ -182,19 +146,17 @@ export function useErrorLogGraph( opts = {} ) {
 	}, [] );
 
 	// Own the live SSE connection: open while visible AND not paused, else close.
-	// On close, clear the heartbeat slot so timer firings (if any subscriber is
-	// driving them) become no-ops. Re-runs on every (re)build via buildCount.
+	// link.close() also clears the heartbeat slot. Re-runs on every (re)build via
+	// buildCount.
 	useEffect( () => {
-		const sse = sseRef.current;
-		const heartbeat = heartbeatRef.current;
-		if ( ! buildCount || ! sse ) {
+		const link = linkRef.current;
+		if ( ! buildCount || ! link ) {
 			return undefined;
 		}
 		if ( isPageVisible && ! isPaused ) {
-			sse.start();
+			link.connect();
 		} else {
-			sse.close();
-			heartbeat?.clearSlot();
+			link.close();
 		}
 		return undefined;
 	}, [ buildCount, isPageVisible, isPaused ] );

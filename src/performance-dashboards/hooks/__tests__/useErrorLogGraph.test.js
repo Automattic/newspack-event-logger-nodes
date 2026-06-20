@@ -1,16 +1,20 @@
 /**
  * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
- * substrate's `_sse` / `_http` / `_heartbeat` I/O boundary nodes (same boundary
- * useRequestLogGraph uses). The chain collapsed to `_sse → perferrors:view`
- * directly; the dead `perferrors:route` classifier and the
+ * substrate's canonical rule-#2 backbone (`_command_interpreter → _router`) via
+ * a SINGLE `RemoteLink` node plus the single `perferrors:view` view-model node.
+ *
+ * RemoteLink composes the three I/O children every SSE dashboard used to wire by
+ * hand — `perferrors:link:sse-in` (SseIn), `perferrors:link:http` (HttpOut) and
+ * `perferrors:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
+ * bridge to its own heartbeat. The dead `perferrors:route` classifier and the
  * `perferrors:transform` Callback are gone — the view's `fill()` shapes raw
  * envelopes inline.
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic is
  * unmocked here — we drive a `msg` event through the fake EventSource and
- * assert it actually routes _sse → view. The slot keep-alive bridge mirrors
- * useRequestLogGraph exactly: a `connected` envelope populates
- * `_heartbeat.{slot,partition}`, and the Router TIMER drives
+ * assert it actually routes the composed sse-in → view. The slot keep-alive
+ * bridge mirrors useRequestLogGraph exactly: a `connected` envelope populates
+ * the composed heartbeat's `{slot,partition}`, and the Router TIMER drives
  * `heartbeat.fire` (via notify_timer) so the slot keep-alive actually fires.
  *
  * usePageVisibility is mocked to a controllable value so the visibility effect
@@ -69,11 +73,12 @@ beforeEach( () => {
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
-const SSE = '_sse';
-const HTTP = '_http';
-const HEARTBEAT = '_heartbeat';
+const LINK = 'perferrors:link';
+const SSE = 'perferrors:link:sse-in';
+const HTTP = 'perferrors:link:http';
+const HEARTBEAT = 'perferrors:link:heartbeat';
 const VIEW = 'perferrors:view';
-const ALL_GRAPH_NAMES = [ SSE, HTTP, HEARTBEAT, VIEW ];
+const COMPOSED_NAMES = [ SSE, HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
 const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
 
@@ -95,13 +100,17 @@ function errorEnvelope( rid, value ) {
 	return m;
 }
 
-describe( 'useErrorLogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + the four graph nodes, each sinking into the interpreter', () => {
+describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
+	test( 'mounts the backbone + one RemoteLink (composing three children) + the view', () => {
 		renderHook( () => useErrorLogGraph() );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
-		for ( const name of ALL_GRAPH_NAMES ) {
+		// The view sinks into the interpreter.
+		expect( Core.node( VIEW ) ).toBeTruthy();
+		expect( Core.node( VIEW ).sink ).toBe( interpreter );
+		// RemoteLink's three composed children are registered and sink into the interpreter.
+		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
@@ -115,10 +124,10 @@ describe( 'useErrorLogGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
-	test( 'steers flow with targets: _sse → view directly (and heartbeat → _http/workers)', () => {
+	test( 'steers flow with targets: composed sse-in → view; heartbeat → {link}:http/workers', () => {
 		renderHook( () => useErrorLogGraph() );
 		expect( Core.node( SSE ).target ).toBe( VIEW );
-		expect( Core.node( HEARTBEAT ).target ).toBe( '_http/workers' );
+		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=errors when visible', () => {
@@ -135,7 +144,7 @@ describe( 'useErrorLogGraph — exospine + I/O boundary wiring', () => {
 		expect( FakeEventSource.last ).toBeNull();
 	} );
 
-	test( '_http has a CommandClient client wired (the POST boundary is constructable)', () => {
+	test( 'the composed HttpOut has a CommandClient client wired (the POST boundary is constructable)', () => {
 		renderHook( () => useErrorLogGraph() );
 		const http = Core.node( HTTP );
 		expect( http.client ).toBeTruthy();
@@ -288,11 +297,17 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 } );
 
 describe( 'useErrorLogGraph — teardown', () => {
-	test( 'unmount unregisters all graph nodes + the backbone and closes the EventSource', () => {
+	test( 'unmount tears down the RemoteLink children + the backbone and closes the EventSource', () => {
 		const { unmount } = renderHook( () => useErrorLogGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
+		for ( const name of [
+			...COMPOSED_NAMES,
+			LINK,
+			VIEW,
+			INTERPRETER,
+			ROUTER,
+		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );

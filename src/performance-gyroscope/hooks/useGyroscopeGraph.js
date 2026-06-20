@@ -1,12 +1,14 @@
 /**
  * useGyroscopeGraph — mounts the Gyroscope dashboard node graph onto the
- * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
- * substrate's I/O boundary nodes — the same ones request-log + topology console
- * use:
+ * canonical rule-#2 backbone (`_command_interpreter → _router`) using a SINGLE
+ * substrate `RemoteLink` node instead of hand-wiring three I/O boundary nodes:
  *
- *   _sse        (SseInNode — EventSource ingress, args `'gyroscope {restUrl} {nonce}'`)
- *   _http       (HttpOutNode — POST /command boundary; .client = CommandClient)
- *   _heartbeat  (HeartbeatNode — slot keep-alive; target = `_http/workers`)
+ *   gyroscope:link        (RemoteLink — composes + registers three children:
+ *                          `gyroscope:link:sse-in` (SseIn — EventSource ingress),
+ *                          `gyroscope:link:http` (HttpOut — POST /command boundary),
+ *                          `gyroscope:link:heartbeat` (Heartbeat — slot keep-alive),
+ *                          and wires the `connected → slot` bridge to its own
+ *                          heartbeat. `.client` is the injected CommandClient.)
  *
  * Plus the single dashboard node:
  *
@@ -14,8 +16,6 @@
  *                          wire envelopes directly — KEY/VALUE dispatch inlined)
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`. The
- * bespoke `gyroscope:stream` Node and its inlined slot-heartbeat loop are
- * gone — `_sse` owns the EventSource, `_heartbeat` owns the slot poke. The
  * `gyroscope:route` + `gyroscope:transform` hops were collapsed into
  * `gyroscope:view.fill()` directly: route was dead (KEY='connection' check,
  * substrate uses 'connected' AND snoops it off before routing) and transform
@@ -23,11 +23,10 @@
  *
  * The graph build is handed to `mountExospine( build )`, which snapshots Core so
  * the soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The
- * slot bridge mirrors useRequestLogGraph: a `connected`-event subscriber on
- * `_sse` reads `payload.slot` / `.partition` and pushes them into `_heartbeat`.
- * The page-visibility effect drives `sse.start()` / `sse.close()` (and
- * `heartbeat.clearSlot()` on close). On each (re)connect the view map is reset
- * (mirrors the legacy Inflight `onBeforeConnect` reset).
+ * `connected → slot` bridge lives inside RemoteLink now. The page-visibility
+ * effect drives `link.connect()` / `link.close()` (close clears the slot too).
+ * On each (re)connect the view map is reset (mirrors the legacy Inflight
+ * `onBeforeConnect` reset).
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
@@ -42,11 +41,8 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 
-// The I/O boundary nodes mounted from the substrate runtime.
-const SSE = '_sse';
-const HTTP = '_http';
-const HEARTBEAT = '_heartbeat';
-// The dashboard node.
+// The single RemoteLink node and the dashboard view-model node.
+const LINK = 'gyroscope:link';
 const VIEW = 'gyroscope:view';
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
@@ -64,8 +60,7 @@ const controlMsg = ( value ) => {
  */
 export function useGyroscopeGraph() {
 	// Live node handles for the connection effect.
-	const sseRef = useRef( null );
-	const heartbeatRef = useRef( null );
+	const linkRef = useRef( null );
 	const viewRef = useRef( null );
 
 	const isPageVisible = usePageVisibility();
@@ -84,71 +79,36 @@ export function useGyroscopeGraph() {
 			const data =
 				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
 				{};
+			const baseUrl = data.restUrl || '/wp-json/';
+			const nonce = data.nonce || '';
 
-			// I/O boundary nodes — the same ones useRequestLogGraph + useConsoleGraph mount.
-			// SseConnector's three-token positional config: `subscribe baseUrl nonce`.
-			const sse = interpreter.makeNode(
-				'SseIn',
-				SSE,
-				`gyroscope ${ data.restUrl || '/wp-json/' } ${
-					data.nonce || ''
-				}`
+			// ONE RemoteLink composes the SseIn + HttpOut + Heartbeat children and
+			// the `connected → slot` bridge. The positional `arguments` carry the
+			// `gyroscope` subscribe plus baseUrl/nonce; the children build lazily on
+			// the first connect(), so `.target` / `.client` are assigned first.
+			const link = interpreter.makeNode(
+				'RemoteLink',
+				LINK,
+				`gyroscope ${ baseUrl } ${ nonce }`
 			);
-			sse.target = VIEW;
-
-			const http = interpreter.makeNode( 'HttpOut', HTTP );
-			http.client = new CommandClient( {
-				baseUrl: data.restUrl || '/wp-json/',
-				nonce: data.nonce || '',
-			} );
-
-			const heartbeat = interpreter.makeNode( 'Heartbeat', HEARTBEAT );
-			// `_http/workers` — the SSE_Slot_Pool's `heartbeat` verb lives on the
-			// request-scope `workers` CI. Bypass the _sse pid-pivot: the reply is
-			// discarded by HeartbeatNode.fill anyway, so broadcast routing is fine.
-			heartbeat.target = `${ HTTP }/workers`;
+			link.target = VIEW;
+			link.client = new CommandClient( { baseUrl, nonce } );
 
 			// Dashboard view — consumes wire envelopes directly.
 			const view = interpreter.makeNode( 'GyroscopeView', VIEW );
 
-			// Slot bridge: a `connected`-event subscriber on `_sse` pushes the live
-			// slot into `_heartbeat`. Mirrors useRequestLogGraph.js / useConsoleGraph.js.
-			sse.register( 'connected', 'useGyroscopeGraph', ( payload ) => {
-				const slot =
-					payload && Number.isInteger( payload.slot )
-						? payload.slot
-						: null;
-				const partition =
-					payload && Number.isInteger( payload.partition )
-						? payload.partition
-						: -1;
-				if ( null !== slot && slot >= 0 ) {
-					heartbeat.setSlot( slot, partition );
-				} else {
-					heartbeat.clearSlot();
-				}
-				return true;
-			} );
-
-			// HeartbeatNode hitchhikes the backbone's TIMER (set_timer() with no args):
-			// the _router's notify_timer calls heartbeat.fireCb -> fire each tick.
-			heartbeat.setTimer();
-
-			sseRef.current = sse;
-			heartbeatRef.current = heartbeat;
+			linkRef.current = link;
 			viewRef.current = view;
 
-			// Re-render so the connection effect re-runs against the fresh _sse and
+			// Re-render so the connection effect re-runs against the fresh link and
 			// useNodeState re-subscribes to the freshly-mounted view node.
 			bumpBuild( ( n ) => n + 1 );
 
-			// Non-node side effects undone before the nodes are removed.
+			// Tear down the RemoteLink (closes its stream + removes all three
+			// children) before the exospine removes the rest.
 			return () => {
-				heartbeat.clearSlot();
-				sse.unregister( 'connected', 'useGyroscopeGraph' );
-				sse.close();
-				sseRef.current = null;
-				heartbeatRef.current = null;
+				link.removeNode();
+				linkRef.current = null;
 				viewRef.current = null;
 			};
 		};
@@ -158,23 +118,21 @@ export function useGyroscopeGraph() {
 	}, [] );
 
 	// Own the live SSE connection: open while visible, else close. On (re)connect
-	// clear the view map first (mirrors Inflight's onBeforeConnect reset). On
-	// close, clear the heartbeat slot so timer firings become no-ops. Re-runs on
-	// every (re)build via buildCount.
+	// clear the view map first (mirrors Inflight's onBeforeConnect reset). The
+	// link's close() clears its heartbeat slot too. Re-runs on every (re)build
+	// via buildCount.
 	useEffect( () => {
-		const sse = sseRef.current;
-		const heartbeat = heartbeatRef.current;
-		if ( ! buildCount || ! sse ) {
+		const link = linkRef.current;
+		if ( ! buildCount || ! link ) {
 			return undefined;
 		}
 		if ( isPageVisible ) {
 			if ( viewRef.current ) {
 				viewRef.current.fill( controlMsg( { action: 'clear' } ) );
 			}
-			sse.start();
+			link.connect();
 		} else {
-			sse.close();
-			heartbeat?.clearSlot();
+			link.close();
 		}
 		return undefined;
 	}, [ buildCount, isPageVisible ] );
