@@ -236,7 +236,6 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			'newspack-nodes-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
 			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
 			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
-			'newspack-nodes-aggregator'  => [ 'Aggregator', 'Aggregator', '<div id="event-aggregator-status"></div>' ],
 		];
 		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {
 			\add_submenu_page(
@@ -265,7 +264,6 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			'newspack-nodes-errors'                  => 'performance-dashboards',
 			'newspack-nodes-gyroscope'               => 'performance-gyroscope',
 			'newspack-nodes-stream'                  => 'performance-request-log',
-			'newspack-nodes-aggregator'              => 'event-aggregator',
 			'newspack-event-logger-nodes'            => 'performance-logger',
 		];
 		if ( ! \array_key_exists( $page, $page_to_tree ) ) {

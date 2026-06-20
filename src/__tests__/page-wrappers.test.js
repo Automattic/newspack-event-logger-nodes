@@ -1,17 +1,14 @@
 /**
- * Tests for the three dashboard "Page" wrappers — AggregatorStatusPage,
- * GyroscopePage, RequestStreamPage. They're identical thin shells:
- * fixed-position dark div + the heavy dashboard child, with
- * useAdminMenuWidth controlling the left offset.
+ * Tests for the dashboard "Page" wrappers — GyroscopePage, RequestStreamPage.
+ * They're identical thin shells: fixed-position dark div + the heavy dashboard
+ * child, with useAdminMenuWidth controlling the left offset.
  *
  * Each child is mocked so we don't pay the SSE / d3 / canvas tax just
- * to assert the wrapper renders.
+ * to assert the wrapper renders. (The Aggregator Status dashboard moved to the
+ * newspack-nodes substrate as a DevTools hub tab; the hub supplies its page
+ * chrome there, so there is no longer an ELN page wrapper for it.)
  */
 
-jest.mock( '../event-aggregator/AggregatorStatus', () => ( {
-	__esModule: true,
-	default: () => 'AGGREGATOR_STATUS',
-} ) );
 jest.mock( '../performance-gyroscope/Inflight', () => ( {
 	__esModule: true,
 	default: ( { maxRows } ) => `INFLIGHT[${ maxRows }]`,
@@ -22,23 +19,11 @@ jest.mock( '../performance-request-log/RequestStream', () => ( {
 } ) );
 
 import * as React from 'react';
-import AggregatorStatusPage from '../event-aggregator/AggregatorStatusPage';
 import GyroscopePage from '../performance-gyroscope/GyroscopePage';
 import RequestStreamPage from '../performance-request-log/RequestStreamPage';
 import { renderComponent } from '../test-helpers/renderHook';
 
 describe( 'page wrappers', () => {
-	it( 'AggregatorStatusPage mounts <AggregatorStatus>', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( AggregatorStatusPage )
-		);
-		expect( container.textContent ).toContain( 'AGGREGATOR_STATUS' );
-		const root = container.firstChild;
-		expect( root.style.position ).toBe( 'fixed' );
-		expect( root.style.zIndex ).toBe( '99' );
-		unmount();
-	} );
-
 	it( 'GyroscopePage mounts <Inflight maxRows={100}>', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( GyroscopePage )
