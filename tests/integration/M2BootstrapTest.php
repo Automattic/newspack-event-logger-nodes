@@ -44,9 +44,11 @@ class M2BootstrapTest extends TestCase {
 	 * Build the request-scope graph (`_router` / `_command_interpreter` /
 	 * `_http`) the way `HTTP_In::dispatch` does in production,
 	 * then fire `newspack_nodes/request_graph_ready` and confirm each
-	 * service CI was registered under its canonical short name. The
-	 * Workers fleet is a substrate concern (mounted under 'workers' by
-	 * substrate); the rest are app CIs.
+	 * service CI was registered under its canonical short name. This is the
+	 * INTEGRATED graph: `workers`/`aggregator`/`settings`/`status` are
+	 * substrate-mounted (`newspack_nodes_mount_substrate_cis`); `discovery`/
+	 * `logger`/`events`/`performance` are this plugin's app CIs. The assertion
+	 * is that an ELN-installed environment yields the full set.
 	 *
 	 * `Core::node()` returns null for unknown names, so a non-null lookup
 	 * is the contract.
@@ -63,13 +65,15 @@ class M2BootstrapTest extends TestCase {
 		// `servers` is no longer mounted by ELN — the substrate Vault_CI owns
 		// the server registry surface now.
 		$expected = [
+			// Substrate-mounted (newspack_nodes_mount_substrate_cis):
 			'workers',
-			'discovery',
-			'status',
+			'aggregator',
 			'settings',
+			'status',
+			// ELN app CIs (newspack_event_logger_nodes_mount_service_cis):
+			'discovery',
 			'logger',
 			'events',
-			'aggregator',
 			'performance',
 		];
 		foreach ( $expected as $name ) {
