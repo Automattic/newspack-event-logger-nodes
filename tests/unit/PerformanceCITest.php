@@ -1466,6 +1466,28 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
+	public function test_set_verb_preserves_associative_array_via_json(): void {
+		// custom_events is an associative map (event_name => true). Settings_Sync_Node
+		// now ships array options as JSON (built through Command_Args::format, so the
+		// quotes are escaped on the wire); the receiver must json_decode it and keep
+		// the keys — the old csv-split flattened it to a meaningless list of "1"s.
+		$args = \Newspack_Nodes\Command_Args::format(
+			[
+				'newspack_event_logger_nodes_custom_events',
+				(string) \json_encode( [ 'advancedemail' => true, 'amazons3' => true ] ),
+			],
+			[]
+		);
+
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
+
+		$this->assertSame(
+			[ 'advancedemail' => true, 'amazons3' => true ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
+		);
+	}
+
 	public function test_set_verb_writes_float_option(): void {
 		$interpreter = new Performance_CI_Node();
 		VerbHarness::fire(

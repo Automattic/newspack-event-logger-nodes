@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `performance` `set` receiver no longer corrupts associative-array options synced from the hub.** `custom_events` is stored as `{event_name => true}`; the substrate settings-sync now ships array options as JSON (it previously comma-flattened them, dropping the keys → a meaningless `1,1,1,…`). `Performance_CI_Node`'s `set` verb decodes array-typed options through the new `decode_array_value()` — `json_decode` first (preserving the map's keys + values), falling back to the existing comma-split for legacy/CSV senders — instead of always csv-splitting, which mangled the synced value into a junk list (`['1','1',…]`, all custom-event enable state lost). Pairs with the substrate `Settings_Sync_Node` JSON change.
+
 ### Added
 
 - **`Remote_Job_Rewrite_Node`** — hub-side `k:"job"` → `k:"remote_job"` rewrite as a graph node, relocating the rewrite off the deleted `Stream_Merger`'s `newspack_nodes/aggregator_ingest_line` filter so the substrate `Remote_Source`/`SSE_In` stay application-agnostic. `fill()` flips the kind on the aggregated firehose entry's array `VALUE` in place (`($value['k'] ?? null) === 'job'`), guards the post-rewrite packed size against the `Partition_Node::MAX_LINE_SIZE` PIPE_BUF cap (oversize → drop + `Core::print_less_often`), and otherwise forwards via the base `Node::fill` (stamps `TO=target`). Non-`job` entries and non-array VALUEs pass through unchanged. `node_schema` category `Transform`, `has_target` true.

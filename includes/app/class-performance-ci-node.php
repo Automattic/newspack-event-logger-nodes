@@ -165,6 +165,23 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Decode a synced array-option value: JSON first (what Settings_Sync_Node now
+	 * ships — lossless for assoc maps like custom_events), falling back to a
+	 * comma-list for legacy senders. Only a decoded ARRAY is trusted; a bare
+	 * scalar / JSON-null falls back to the csv split.
+	 *
+	 * @param string $raw The raw positional value off the wire.
+	 * @return array<array-key,mixed>
+	 */
+	private static function decode_array_value( string $raw ): array {
+		$decoded = \json_decode( $raw, true );
+		if ( \is_array( $decoded ) ) {
+			return $decoded;
+		}
+		return self::csv( [ 'v' => $raw ], 'v' );
+	}
+
+	/**
 	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
 	 * a transient scratch Partition. Callers remove_node() it after use.
 	 *
@@ -1647,11 +1664,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				// The value rides the wire as a string; array-typed options carry it
-				// as a comma-list the array sanitizer expects pre-split. Drop empty
-				// tokens so a cleared value yields [] not [''].
+				// as JSON (lossless for assoc maps like custom_events), decoded here.
 				$type      = self::SETTINGS_OPTIONS[ $option ];
 				$raw_value = \is_string( $value_arg ) ? $value_arg : '';
-				$value     = 'array' === $type ? self::csv( [ 'v' => $raw_value ], 'v' ) : $raw_value;
+				$value     = 'array' === $type ? self::decode_array_value( $raw_value ) : $raw_value;
 
 				$sanitized = self::sanitize_settings_value( $value, $type );
 				if ( null === $sanitized ) {
