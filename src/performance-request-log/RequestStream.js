@@ -539,9 +539,9 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			aria-label="Request log"
 		>
 			<div className="event-logger-request-stream-header">
-				<h3 className="newspack-dashboard-title">
+				<h1 className="newspack-dashboard-title">
 					{ __( 'Request Log', 'newspack-event-logger-nodes' ) }
-				</h3>
+				</h1>
 				<div className="event-logger-request-stream-controls">
 					<input
 						type="text"
@@ -566,11 +566,9 @@ export default function RequestStream( { maxEntries = 500 } ) {
 								filteredEntries.length
 							) }
 						</span>
-						{ requestsPerSecond > 0 && (
-							<span className="event-logger-request-stream-rps">
-								{ requestsPerSecond.toFixed( 1 ) } req/s
-							</span>
-						) }
+						<span className="event-logger-request-stream-rps">
+							{ requestsPerSecond.toFixed( 1 ) } req/s
+						</span>
 						{ staleSec !== null && (
 							<span
 								style={ {

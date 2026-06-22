@@ -435,9 +435,9 @@ export default function ErrorLog() {
 			aria-label="Error log"
 		>
 			<div className="event-logger-error-log-header">
-				<h3 className="newspack-dashboard-title">
+				<h1 className="newspack-dashboard-title">
 					{ __( 'Error Log', 'newspack-event-logger-nodes' ) }
-				</h3>
+				</h1>
 				<div className="event-logger-error-log-controls">
 					<input
 						type="text"
