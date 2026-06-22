@@ -494,12 +494,12 @@ export default function Inflight( { maxRows = 20 } ) {
 			aria-label="In-flight requests"
 		>
 			<div className="event-logger-inflight-header">
-				<h3 className="newspack-dashboard-title">
+				<h1 className="newspack-dashboard-title">
 					{ __(
 						'In-Flight Requests',
 						'newspack-event-logger-nodes'
 					) }
-				</h3>
+				</h1>
 				<div className="event-logger-inflight-legend">
 					{ [
 						'Lifecycle',
@@ -548,18 +548,13 @@ export default function Inflight( { maxRows = 20 } ) {
 								totalCount
 							) }
 						</span>
-						{ requestsPerSecond > 0 && (
-							<span className="event-logger-inflight-rps">
-								{ sprintf(
-									// translators: %s: requests-per-second rate, formatted to one decimal place.
-									__(
-										'%s req/s',
-										'newspack-event-logger-nodes'
-									),
-									requestsPerSecond.toFixed( 1 )
-								) }
-							</span>
-						) }
+						<span className="event-logger-inflight-rps">
+							{ sprintf(
+								// translators: %s: requests-per-second rate, formatted to one decimal place.
+								__( '%s req/s', 'newspack-event-logger-nodes' ),
+								requestsPerSecond.toFixed( 1 )
+							) }
+						</span>
 						{ staleSec !== null && (
 							<span
 								style={ {

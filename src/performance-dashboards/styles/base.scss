@@ -403,11 +403,8 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 
 // Admin wrapper
 .event-logger-admin-wrap {
+	padding: 16px 0;
 	max-width: 95vw;
-	// Match the WP `.wrap` top gap (the page sat too tight under the admin bar).
-	// The title itself uses the shared `.newspack-dashboard-title` class (the WP
-	// page-heading look ships once in the newspack-nodes-theme handle).
-	padding-top: 10px;
 }
 
 .event-logger-admin-app {

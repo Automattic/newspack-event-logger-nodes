@@ -19,26 +19,19 @@
 }
 
 .event-logger-inflight-header {
-	flex-wrap: wrap;
 	gap: 8px;
-
-	h3 {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-shrink: 0;
-	}
 }
 
 .event-logger-inflight-meta {
 	display: flex;
 	gap: 8px 16px;
 	align-items: center;
-	flex-wrap: wrap;
 }
 
 .event-logger-inflight-stats {
 	@include base.dark-stats;
+	flex-direction: row;
+	gap: 8px 16px;
 }
 
 .event-logger-inflight-count {
@@ -113,17 +106,5 @@
 		display: flex;
 		align-items: center;
 		gap: 4px;
-	}
-}
-
-// Gyroscope page - styles handled via inline JS for menu collapse detection
-// Just style the inner inflight component
-#event-logger-gyroscope {
-	.event-logger-inflight {
-		height: 100%;
-		border-radius: 0;
-		padding: 20px 16px 16px;
-		box-sizing: border-box;
-		overflow-y: auto;
 	}
 }
