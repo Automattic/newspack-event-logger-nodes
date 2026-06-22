@@ -153,7 +153,7 @@ input.event-logger-request-stream-search {
 	// Use class-based alternating instead of nth-child to prevent
 	// color flipping during smooth scroll animation. Dark-pane rows.
 	&.row-odd {
-		background: base.$term-bg;
+		background: base.$term-bg-alt;
 
 		&:hover {
 			background: #30363d;
@@ -161,7 +161,7 @@ input.event-logger-request-stream-search {
 	}
 
 	&.row-even {
-		background: base.$term-bg-alt;
+		background: base.$term-bg;
 
 		&:hover {
 			background: #30363d;
