@@ -140,10 +140,6 @@ export class PerformanceViewNode extends Node {
 		} );
 	}
 
-	_publish() {
-		this.setState( 'view', { ...this.model } );
-	}
-
 	// Store a slice result. urlDetail goes through the incremental merge (which
 	// may skip republishing); every other slice stamps lastRefresh + publishes.
 	_applyResult( v ) {
@@ -170,6 +166,10 @@ export class PerformanceViewNode extends Node {
 		}
 		this.model.lastRefresh = Date.now();
 		this._publish();
+	}
+
+	_publish() {
+		this.setState( 'view', { ...this.model } );
 	}
 
 	// Merge new requests incrementally (moved verbatim from mergeUrlDetail).

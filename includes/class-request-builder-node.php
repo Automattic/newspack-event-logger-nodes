@@ -536,113 +536,6 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Emit a completed request as a TM_STRUCT message to the main sink.
-	 *
-	 * KEY = rid so downstream readers / aggregator forwarders can identify
-	 * the request without decoding VALUE. RequestBuilder still stamps
-	 * `rid` into the request struct itself; KEY is the wire-level breadcrumb.
-	 *
-	 * Also fires the secondary compact-summary emit (no-op when
-	 * completed_target is unset) so a topology that wires both the full
-	 * doc and the one-line summary gets both with one source call.
-	 * 
-	 * @param \stdClass $request Completed request envelope.
-	 */
-	public function emit_request( \stdClass $request ): void {
-		// Workers get their own URL row (?worker_type) so warm/supervisor/job hits
-		// don't merge onto the real URL. One mutation here -> index line, compact
-		// summary, and stats all read the same effective URL. Real query is already
-		// stripped upstream, so the '?' guard only blocks a double-append.
-		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
-		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
-		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
-			$request->url = $url . '?' . $worker_type;
-		}
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
-		$message[ Message::FROM ]      = $this->name;
-		// Dynamic \stdClass property is mixed by design; the string cast is intentional.
-		/** @var int|float|string $rid_raw */
-		$rid_raw                   = $request->rid ?? '';
-		$message[ Message::KEY ]       = (string) $rid_raw;
-		$message[ Message::VALUE ]     = (array) $request;
-		parent::fill( $message );
-		$this->emit_compact_summary( $request );
-	}
-
-	/**
-	 * Fire the secondary compact-summary emit. Silent no-op when the
-	 * topology hasn't wired completed_target or a sink isn't attached.
-	 *
-	 * @param \stdClass $request Completed request envelope.
-	 */
-	private function emit_compact_summary( \stdClass $request ): void {
-		if ( '' === $this->completed_target || null === $this->sink ) {
-			return;
-		}
-		$summary                   = $this->build_compact_summary( $request );
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
-		$message[ Message::FROM ]      = $this->name;
-		$message[ Message::TO ]        = $this->completed_target;
-		$message[ Message::KEY ]       = $summary['rid'];
-		$message[ Message::VALUE ]     = $summary;
-		$this->sink->fill( $message );
-	}
-
-	/**
-	 * Build an HTTP-access-log-style compact summary from a completed
-	 * request envelope. Schema mirrors legacy
-	 * requests-stream-controller::transform_line so the schema-parity
-	 * audit passes. URL clipped to 2000 chars + "..." suffix; UA to 500.
-	 *
-	 * @param \stdClass $request Completed request envelope.
-	 * @return array<string,mixed>
-	 */
-	public function build_compact_summary( \stdClass $request ): array {
-		// Decoded request envelope: string-keyed map with mixed-by-design values.
-		/** @var array<string, mixed> $r */
-		$r = (array) $request;
-		// Mixed-by-design (array)/stdClass reads; the string casts are intentional.
-		/** @var int|float|string|bool|null $url_raw */
-		$url_raw = $r['url'] ?? '';
-		$url     = (string) $url_raw;
-		/** @var int|float|string|bool|null $ua_raw */
-		$ua_raw = $r['user_agent'] ?? '';
-		$ua     = (string) $ua_raw;
-		/** @var int|float|string|bool|null $rid_raw */
-		$rid_raw = $r['rid'] ?? '';
-		/** @var int|float|string|bool|null $method_raw */
-		$method_raw = $r['request_method'] ?? 'GET';
-		/** @var int|float|string|bool|null $remote_addr_raw */
-		$remote_addr_raw = $r['remote_addr'] ?? '';
-		// Preserve native numeric type for ts and dur so the wire format is
-		// byte-for-byte equivalent to legacy transform_line (which never
-		// cast). json_encode strips trailing `.0`, so an int-valued float
-		// round-trips as int through the wire — the SchemaParityAudit asserts
-		// that on the unpacked side.
-		/** @var int|float $ts */
-		$ts = $r['timestamp'] ?? 0;
-		/** @var int|float $dur */
-		$dur = $r['duration_ms'] ?? 0;
-		return [
-			'rid'          => (string) $rid_raw,
-			'method'       => (string) $method_raw,
-			'url'          => \strlen( $url ) > 2000 ? \substr( $url, 0, 2000 ) . '...' : $url,
-			'start_time'   => $ts,
-			'end_time'     => $ts + ( $dur / 1000 ),
-			'duration_ms'  => $dur,
-			'status_code'  => $r['status_code'] ?? 0,
-			'state'        => 'complete',
-			'error_status' => $r['error_status'] ?? '-',
-			'remote_addr'  => (string) $remote_addr_raw,
-			'user_agent'   => \strlen( $ua ) > 500 ? \substr( $ua, 0, 500 ) . '...' : $ua,
-		];
-	}
-
-	/**
 	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
 	 * wired with the eviction callback. Shared between the ctor (defaults)
 	 * and arguments() (post-schema-walk).
@@ -657,90 +550,6 @@ class Request_Builder_Node extends Timer_Node {
 					$this->evict_request( $rid, $request );
 				}
 			);
-	}
-
-	public function flight(): Request_Flight_Node {
-		if ( null === $this->flight ) {
-			throw new \RuntimeException( 'flight sibling not constructed' );
-		}
-		return $this->flight;
-	}
-
-	/**
-	 * Pre-check the `{name}:flight` sibling name for collisions before the base
-	 * commits a rename. Flight is application-specific; the parent handles the
-	 * :config interpreter sibling.
-	 *
-	 * @api Used by substrate.
-	 * @param string $name Proposed new name for this node.
-	 */
-	protected function check_name_availability( string $name ): void {
-		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
-			throw new \RuntimeException( \esc_html( "node name collision: {$name}:flight already registered" ) );
-		}
-		parent::check_name_availability( $name );
-	}
-
-	/**
-	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
-	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
-	 * Mirrors Node::set_sibling_names for the :config interpreter.
-	 *
-	 * @api Used by substrate.
-	 * @param string|null $name New name for this node, or null to skip renaming
-	 */
-	protected function set_sibling_names( ?string $name = null ): void {
-		$this->flight?->name( "{$name}:flight" );
-		parent::set_sibling_names( $name );
-	}
-
-	/**
-	 * Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan.
-	 *
-	 * @api Used by substrate.
-	 */
-	public function remove_node(): void {
-		if ( null !== $this->flight ) {
-			$this->flight->remove_node();
-		}
-		parent::remove_node();
-	}
-
-	/**
-	 * Override Node::sink() so the auto-sink wiring make_node performs on
-	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
-	 * Flight's $this->sink stays null and its in-flight emits drop on the
-	 * floor.
-	 *
-	 * @api Used by substrate.
-	 * @param Node|null $node New sink node or null to get current sink.
-	 */
-	public function sink( ?Node $node = null ): ?Node {
-		if ( \func_num_args() > 0 ) {
-			if ( null !== $this->flight ) {
-				$this->flight->sink( $node );
-			}
-			return parent::sink( $node );
-		}
-		return parent::sink();
-	}
-
-	/**
-	 * Set the named target for compact-summary completed-request lines.
-	 *
-	 * @param string $target Target node name for completed-request lines.
-	 */
-	public function set_completed_target( string $target ): void {
-		$this->completed_target = $target;
-	}
-
-	/**
-	 * Set the named target for error/warning forwarding.
-	 * 
-	 * @param string $target Target node name for error/warning forwarding.
-	 */
-	public function set_errors_target( string $target ): void {
-		$this->errors_target = $target;
 	}
 
 	/**
@@ -765,115 +574,11 @@ class Request_Builder_Node extends Timer_Node {
 		return $out;
 	}
 
-	/**
-	 * Expose every named destination this node actually writes to so
-	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
-	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
-	 * (which Node::target stores in $this->target) plus the
-	 * conditional errors_target / completed_target the topology may have
-	 * wired, plus the flight sibling's own target (the periodic in-flight
-	 * snapshot stream, typically wired to `gyroscope:partition`).
-	 *
-	 * Without this override `errors:partition`, `completed:tee`, and the
-	 * flight sibling's target would orphan on the topology console (nodes
-	 * with `0` count, no inbound edges) even though RequestBuilder /
-	 * RequestFlight writes to them.
-	 *
-	 * @api Used by substrate.
-	 * @param array<int, string>|string|null $value New primary target or null to get current target.
-	 * @return array<int, string>|string
-	 */
-	public function target( $value = null ) {
-		if ( null !== $value ) {
-			return parent::target( $value );
+	public function flight(): Request_Flight_Node {
+		if ( null === $this->flight ) {
+			throw new \RuntimeException( 'flight sibling not constructed' );
 		}
-		$primary = parent::target();
-		$extras  = [];
-		if ( '' !== $this->errors_target ) {
-			$extras[] = $this->errors_target;
-		}
-		if ( '' !== $this->completed_target ) {
-			$extras[] = $this->completed_target;
-		}
-		if ( null !== $this->flight ) {
-			$flight_target = $this->flight->target();
-			if ( \is_string( $flight_target ) && '' !== $flight_target ) {
-				$extras[] = $flight_target;
-			}
-		}
-		if ( ! $extras ) {
-			return $primary;
-		}
-		$all = \is_array( $primary )
-			? $primary
-			: ( '' !== $primary ? [ $primary ] : [] );
-		foreach ( $extras as $e ) {
-			if ( ! \in_array( $e, $all, true ) ) {
-				$all[] = $e;
-			}
-		}
-		return $all;
-	}
-
-	/**
-	 * Save state for persistence.
-	 *
-	 * Persists the full request cache (including entries and profiles)
-	 * so in-flight requests retain trace data across worker restarts.
-	 * Orphan eviction is handled by LRU bucket rotation.
-	 *
-	 * @api Used by substrate.
-	 * @return array<string, mixed> State to persist.
-	 */
-	public function save_state(): array {
-		// Convert objects to arrays for serialization.
-		$state = $this->cache->get_state();
-		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
-			foreach ( $state['buckets'] as &$bucket ) {
-				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as $key => &$val ) {
-						if ( $val instanceof \stdClass ) {
-							$val = (array) $val;
-						}
-					}
-					unset( $val );
-				}
-			}
-			unset( $bucket );
-		}
-		return [ 'request_cache' => $state ];
-	}
-
-	/**
-	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string, mixed> $saved Saved state from save_state().
-	 */
-	public function restore_state( array $saved ): void {
-		if ( ! isset( $saved['request_cache'] ) ) {
-			return;
-		}
-		$cache_state = $saved['request_cache'];
-		if ( ! \is_array( $cache_state ) ) {
-			return;
-		}
-		// Persisted cache snapshot: string-keyed by design (LRU_Cache::get_state()).
-		/** @var array<string, mixed> $cache_state */
-		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
-			foreach ( $cache_state['buckets'] as &$bucket ) {
-				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as $key => &$val ) {
-						if ( \is_array( $val ) ) {
-							$val = (object) $val;
-						}
-					}
-					unset( $val );
-				}
-			}
-			unset( $bucket );
-		}
-		$this->cache->restore_state( $cache_state );
+		return $this->flight;
 	}
 	/**
 	 * Build the state-callback table.
@@ -998,6 +703,113 @@ class Request_Builder_Node extends Timer_Node {
 		$this->emit_request( $request );
 	}
 
+	/**
+	 * Emit a completed request as a TM_STRUCT message to the main sink.
+	 *
+	 * KEY = rid so downstream readers / aggregator forwarders can identify
+	 * the request without decoding VALUE. RequestBuilder still stamps
+	 * `rid` into the request struct itself; KEY is the wire-level breadcrumb.
+	 *
+	 * Also fires the secondary compact-summary emit (no-op when
+	 * completed_target is unset) so a topology that wires both the full
+	 * doc and the one-line summary gets both with one source call.
+	 * 
+	 * @param \stdClass $request Completed request envelope.
+	 */
+	public function emit_request( \stdClass $request ): void {
+		// Workers get their own URL row (?worker_type) so warm/supervisor/job hits
+		// don't merge onto the real URL. One mutation here -> index line, compact
+		// summary, and stats all read the same effective URL. Real query is already
+		// stripped upstream, so the '?' guard only blocks a double-append.
+		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
+		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
+		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
+			$request->url = $url . '?' . $worker_type;
+		}
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		// Dynamic \stdClass property is mixed by design; the string cast is intentional.
+		/** @var int|float|string $rid_raw */
+		$rid_raw                   = $request->rid ?? '';
+		$message[ Message::KEY ]       = (string) $rid_raw;
+		$message[ Message::VALUE ]     = (array) $request;
+		parent::fill( $message );
+		$this->emit_compact_summary( $request );
+	}
+
+	/**
+	 * Fire the secondary compact-summary emit. Silent no-op when the
+	 * topology hasn't wired completed_target or a sink isn't attached.
+	 *
+	 * @param \stdClass $request Completed request envelope.
+	 */
+	private function emit_compact_summary( \stdClass $request ): void {
+		if ( '' === $this->completed_target || null === $this->sink ) {
+			return;
+		}
+		$summary                   = $this->build_compact_summary( $request );
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ] = Core::$now;
+		$message[ Message::FROM ]      = $this->name;
+		$message[ Message::TO ]        = $this->completed_target;
+		$message[ Message::KEY ]       = $summary['rid'];
+		$message[ Message::VALUE ]     = $summary;
+		$this->sink->fill( $message );
+	}
+
+	/**
+	 * Build an HTTP-access-log-style compact summary from a completed
+	 * request envelope. Schema mirrors legacy
+	 * requests-stream-controller::transform_line so the schema-parity
+	 * audit passes. URL clipped to 2000 chars + "..." suffix; UA to 500.
+	 *
+	 * @param \stdClass $request Completed request envelope.
+	 * @return array<string,mixed>
+	 */
+	public function build_compact_summary( \stdClass $request ): array {
+		// Decoded request envelope: string-keyed map with mixed-by-design values.
+		/** @var array<string, mixed> $r */
+		$r = (array) $request;
+		// Mixed-by-design (array)/stdClass reads; the string casts are intentional.
+		/** @var int|float|string|bool|null $url_raw */
+		$url_raw = $r['url'] ?? '';
+		$url     = (string) $url_raw;
+		/** @var int|float|string|bool|null $ua_raw */
+		$ua_raw = $r['user_agent'] ?? '';
+		$ua     = (string) $ua_raw;
+		/** @var int|float|string|bool|null $rid_raw */
+		$rid_raw = $r['rid'] ?? '';
+		/** @var int|float|string|bool|null $method_raw */
+		$method_raw = $r['request_method'] ?? 'GET';
+		/** @var int|float|string|bool|null $remote_addr_raw */
+		$remote_addr_raw = $r['remote_addr'] ?? '';
+		// Preserve native numeric type for ts and dur so the wire format is
+		// byte-for-byte equivalent to legacy transform_line (which never
+		// cast). json_encode strips trailing `.0`, so an int-valued float
+		// round-trips as int through the wire — the SchemaParityAudit asserts
+		// that on the unpacked side.
+		/** @var int|float $ts */
+		$ts = $r['timestamp'] ?? 0;
+		/** @var int|float $dur */
+		$dur = $r['duration_ms'] ?? 0;
+		return [
+			'rid'          => (string) $rid_raw,
+			'method'       => (string) $method_raw,
+			'url'          => \strlen( $url ) > 2000 ? \substr( $url, 0, 2000 ) . '...' : $url,
+			'start_time'   => $ts,
+			'end_time'     => $ts + ( $dur / 1000 ),
+			'duration_ms'  => $dur,
+			'status_code'  => $r['status_code'] ?? 0,
+			'state'        => 'complete',
+			'error_status' => $r['error_status'] ?? '-',
+			'remote_addr'  => (string) $remote_addr_raw,
+			'user_agent'   => \strlen( $ua ) > 500 ? \substr( $ua, 0, 500 ) . '...' : $ua,
+		];
+	}
+
 	/** @param array<string, mixed> $request Completed request record. */
 	public static function extract_what( array $request ): string {
 		return self::extract_stack_top_slot( $request, 1, 'what', '' );
@@ -1114,6 +926,21 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * URL hash - 12-char FNV-1a hash.
+	 *
+	 * @param string $url URL to hash.
+	 * @return string 12-character hex hash.
+	 */
+	public static function url_hash( string $url ): string {
+		// Hash the full string: callers already strip the real query string upstream,
+		// so the only '?' that survives here is the intentional ?worker_type marker --
+		// stripping it would re-collide the synthetic row onto the real URL.
+		$hash1 = self::fnv1a32( $url );
+		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
+		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
+	}
+
+	/**
 	 * FNV-1a 32-bit hash.
 	 *
 	 * @param string $str  Input string.
@@ -1131,18 +958,191 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * URL hash - 12-char FNV-1a hash.
+	 * Pre-check the `{name}:flight` sibling name for collisions before the base
+	 * commits a rename. Flight is application-specific; the parent handles the
+	 * :config interpreter sibling.
 	 *
-	 * @param string $url URL to hash.
-	 * @return string 12-character hex hash.
+	 * @api Used by substrate.
+	 * @param string $name Proposed new name for this node.
 	 */
-	public static function url_hash( string $url ): string {
-		// Hash the full string: callers already strip the real query string upstream,
-		// so the only '?' that survives here is the intentional ?worker_type marker --
-		// stripping it would re-collide the synthetic row onto the real URL.
-		$hash1 = self::fnv1a32( $url );
-		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
-		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
+	protected function check_name_availability( string $name ): void {
+		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
+			throw new \RuntimeException( \esc_html( "node name collision: {$name}:flight already registered" ) );
+		}
+		parent::check_name_availability( $name );
+	}
+
+	/**
+	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
+	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
+	 * Mirrors Node::set_sibling_names for the :config interpreter.
+	 *
+	 * @api Used by substrate.
+	 * @param string|null $name New name for this node, or null to skip renaming
+	 */
+	protected function set_sibling_names( ?string $name = null ): void {
+		$this->flight?->name( "{$name}:flight" );
+		parent::set_sibling_names( $name );
+	}
+
+	/**
+	 * Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan.
+	 *
+	 * @api Used by substrate.
+	 */
+	public function remove_node(): void {
+		if ( null !== $this->flight ) {
+			$this->flight->remove_node();
+		}
+		parent::remove_node();
+	}
+
+	/**
+	 * Override Node::sink() so the auto-sink wiring make_node performs on
+	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
+	 * Flight's $this->sink stays null and its in-flight emits drop on the
+	 * floor.
+	 *
+	 * @api Used by substrate.
+	 * @param Node|null $node New sink node or null to get current sink.
+	 */
+	public function sink( ?Node $node = null ): ?Node {
+		if ( \func_num_args() > 0 ) {
+			if ( null !== $this->flight ) {
+				$this->flight->sink( $node );
+			}
+			return parent::sink( $node );
+		}
+		return parent::sink();
+	}
+
+	/**
+	 * Set the named target for compact-summary completed-request lines.
+	 *
+	 * @param string $target Target node name for completed-request lines.
+	 */
+	public function set_completed_target( string $target ): void {
+		$this->completed_target = $target;
+	}
+
+	/**
+	 * Set the named target for error/warning forwarding.
+	 * 
+	 * @param string $target Target node name for error/warning forwarding.
+	 */
+	public function set_errors_target( string $target ): void {
+		$this->errors_target = $target;
+	}
+
+	/**
+	 * Expose every named destination this node actually writes to so
+	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
+	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
+	 * (which Node::target stores in $this->target) plus the
+	 * conditional errors_target / completed_target the topology may have
+	 * wired, plus the flight sibling's own target (the periodic in-flight
+	 * snapshot stream, typically wired to `gyroscope:partition`).
+	 *
+	 * Without this override `errors:partition`, `completed:tee`, and the
+	 * flight sibling's target would orphan on the topology console (nodes
+	 * with `0` count, no inbound edges) even though RequestBuilder /
+	 * RequestFlight writes to them.
+	 *
+	 * @api Used by substrate.
+	 * @param array<int, string>|string|null $value New primary target or null to get current target.
+	 * @return array<int, string>|string
+	 */
+	public function target( $value = null ) {
+		if ( null !== $value ) {
+			return parent::target( $value );
+		}
+		$primary = parent::target();
+		$extras  = [];
+		if ( '' !== $this->errors_target ) {
+			$extras[] = $this->errors_target;
+		}
+		if ( '' !== $this->completed_target ) {
+			$extras[] = $this->completed_target;
+		}
+		if ( null !== $this->flight ) {
+			$flight_target = $this->flight->target();
+			if ( \is_string( $flight_target ) && '' !== $flight_target ) {
+				$extras[] = $flight_target;
+			}
+		}
+		if ( ! $extras ) {
+			return $primary;
+		}
+		$all = \is_array( $primary )
+			? $primary
+			: ( '' !== $primary ? [ $primary ] : [] );
+		foreach ( $extras as $e ) {
+			if ( ! \in_array( $e, $all, true ) ) {
+				$all[] = $e;
+			}
+		}
+		return $all;
+	}
+
+	/**
+	 * Save state for persistence.
+	 *
+	 * Persists the full request cache (including entries and profiles)
+	 * so in-flight requests retain trace data across worker restarts.
+	 * Orphan eviction is handled by LRU bucket rotation.
+	 *
+	 * @api Used by substrate.
+	 * @return array<string, mixed> State to persist.
+	 */
+	public function save_state(): array {
+		// Convert objects to arrays for serialization.
+		$state = $this->cache->get_state();
+		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
+			foreach ( $state['buckets'] as &$bucket ) {
+				if ( \is_array( $bucket ) ) {
+					foreach ( $bucket as $key => &$val ) {
+						if ( $val instanceof \stdClass ) {
+							$val = (array) $val;
+						}
+					}
+					unset( $val );
+				}
+			}
+			unset( $bucket );
+		}
+		return [ 'request_cache' => $state ];
+	}
+
+	/**
+	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
+	 *
+	 * @api Used by substrate.
+	 * @param array<string, mixed> $saved Saved state from save_state().
+	 */
+	public function restore_state( array $saved ): void {
+		if ( ! isset( $saved['request_cache'] ) ) {
+			return;
+		}
+		$cache_state = $saved['request_cache'];
+		if ( ! \is_array( $cache_state ) ) {
+			return;
+		}
+		// Persisted cache snapshot: string-keyed by design (LRU_Cache::get_state()).
+		/** @var array<string, mixed> $cache_state */
+		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
+			foreach ( $cache_state['buckets'] as &$bucket ) {
+				if ( \is_array( $bucket ) ) {
+					foreach ( $bucket as $key => &$val ) {
+						if ( \is_array( $val ) ) {
+							$val = (object) $val;
+						}
+					}
+					unset( $val );
+				}
+			}
+			unset( $bucket );
+		}
+		$this->cache->restore_state( $cache_state );
 	}
 
 	/**

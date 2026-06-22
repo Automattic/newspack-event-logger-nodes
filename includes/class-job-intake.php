@@ -212,6 +212,30 @@ class Job_Intake {
 	}
 
 	/**
+	 * Destructor — release any per-Partition write locks still held.
+	 */
+	public function __destruct() {
+		$this->close();
+	}
+
+	/**
+	 * Close all open Partitions. `Partition::remove_node()` flushes the batch
+	 * and releases the per-Partition write lock.
+	 */
+	public function close(): void {
+		foreach ( $this->partitions as $partition ) {
+			$partition->flush();
+			$base = $partition->name();
+			if ( '' !== $base ) {
+				\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
+				\Newspack_Nodes\Core::unregister_node( "{$base}:heartbeat" );
+			}
+			$partition->remove_node();
+		}
+		$this->partitions = [];
+	}
+
+	/**
 	 * Static helper to write a single job.
 	 *
 	 * If a key is provided, jobs with the same key always go to the same partition.
@@ -255,30 +279,6 @@ class Job_Intake {
 			$intake->close();
 		}
 		return $result;
-	}
-
-	/**
-	 * Close all open Partitions. `Partition::remove_node()` flushes the batch
-	 * and releases the per-Partition write lock.
-	 */
-	public function close(): void {
-		foreach ( $this->partitions as $partition ) {
-			$partition->flush();
-			$base = $partition->name();
-			if ( '' !== $base ) {
-				\Newspack_Nodes\Core::unregister_node( "{$base}:lock" );
-				\Newspack_Nodes\Core::unregister_node( "{$base}:heartbeat" );
-			}
-			$partition->remove_node();
-		}
-		$this->partitions = [];
-	}
-
-	/**
-	 * Destructor — release any per-Partition write locks still held.
-	 */
-	public function __destruct() {
-		$this->close();
 	}
 
 	/**

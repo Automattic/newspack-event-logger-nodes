@@ -122,23 +122,20 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const REQUEST_LIST_MAX_LIMIT = 1000;
 
 	/**
-	 * Resolve a Command_Args boolean flag. A bare `--flag` parses to `true`;
-	 * A bare `--flag` and `--flag=1` / `--flag=true` are truthy; `--flag=0` /
-	 * `--flag=false` and an absent key are false. (These are the only tokens
-	 * formatCommandArgs / the forwarder ever emit for a boolean.)
+	 * Decode a synced array-option value: JSON first (what Settings_Sync_Node now
+	 * ships — lossless for assoc maps like custom_events), falling back to a
+	 * comma-list for legacy senders. Only a decoded ARRAY is trusted; a bare
+	 * scalar / JSON-null falls back to the csv split.
 	 *
-	 * @param array<string,string|true> $options Parsed options.
-	 * @param string                    $key     Flag name.
+	 * @param string $raw The raw positional value off the wire.
+	 * @return array<array-key,mixed>
 	 */
-	private static function flag( array $options, string $key ): bool {
-		if ( ! \array_key_exists( $key, $options ) ) {
-			return false;
+	private static function decode_array_value( string $raw ): array {
+		$decoded = \json_decode( $raw, true );
+		if ( \is_array( $decoded ) ) {
+			return $decoded;
 		}
-		$value = $options[ $key ];
-		if ( true === $value ) {
-			return true;
-		}
-		return ! \in_array( \strtolower( $value ), [ '0', 'false' ], true );
+		return self::csv( [ 'v' => $raw ], 'v' );
 	}
 
 	/**
@@ -162,74 +159,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return $out;
-	}
-
-	/**
-	 * Decode a synced array-option value: JSON first (what Settings_Sync_Node now
-	 * ships — lossless for assoc maps like custom_events), falling back to a
-	 * comma-list for legacy senders. Only a decoded ARRAY is trusted; a bare
-	 * scalar / JSON-null falls back to the csv split.
-	 *
-	 * @param string $raw The raw positional value off the wire.
-	 * @return array<array-key,mixed>
-	 */
-	private static function decode_array_value( string $raw ): array {
-		$decoded = \json_decode( $raw, true );
-		if ( \is_array( $decoded ) ) {
-			return $decoded;
-		}
-		return self::csv( [ 'v' => $raw ], 'v' );
-	}
-
-	/**
-	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
-	 * a transient scratch Partition. Callers remove_node() it after use.
-	 *
-	 * @param Partition_Node $partition Freshly-constructed scratch Partition.
-	 * @param string         $log       Log basename ('requests' | 'flames').
-	 * @param int            $index     Partition index.
-	 */
-	private static function name_scratch_partition( Partition_Node $partition, string $log, int $index ): void {
-		$token = \getmypid() . '-' . \spl_object_id( $partition );
-		$partition->name( "{$log}.{$token}.p{$index}" );
-		$partition->patron( $partition );
-		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-		if ( null === $partition->sink() && null !== $ci ) {
-			$partition->sink( $ci );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// Scalar coercion — decoded JSON / memcache blobs carry `mixed` leaf values;
-	// these reproduce PHP's int/float/string cast for the scalar+null domain those
-	// blobs actually hold, narrowing without changing any reachable value.
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Coerce a mixed leaf to int, reproducing `(int)` for scalar/null inputs.
-	 *
-	 * @param mixed $value Raw leaf value.
-	 */
-	private static function to_int( mixed $value ): int {
-		return \is_scalar( $value ) ? (int) $value : 0;
-	}
-
-	/**
-	 * Coerce a mixed leaf to float, reproducing `(float)` for scalar/null inputs.
-	 *
-	 * @param mixed $value Raw leaf value.
-	 */
-	private static function to_float( mixed $value ): float {
-		return \is_scalar( $value ) ? (float) $value : 0.0;
-	}
-
-	/**
-	 * Coerce a mixed leaf to string, reproducing `(string)` for scalar/null inputs.
-	 *
-	 * @param mixed $value Raw leaf value.
-	 */
-	private static function to_string( mixed $value ): string {
-		return \is_scalar( $value ) ? (string) $value : '';
 	}
 
 	/**
@@ -374,48 +303,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		return \array_values( $hooks );
 	}
 
-	// -------------------------------------------------------------------------
-	// Stats_Store helpers — fan out across partitions and merge.
-	// -------------------------------------------------------------------------
-
-	/**
-	 * One Stats_Store per partition over the shared `Core::$memd` handle.
-	 *
-	 * @return array<int,Stats_Store>
-	 */
-	private static function stats_stores(): array {
-		if ( null === Core::$memd ) {
-			return [];
-		}
-		$config         = RuntimeConfig::load_config();
-		$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
-		$max_lifespan   = self::to_int( $config['max_lifespan'] ?? 86400 );
-		$stores         = [];
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$stores[] = new Stats_Store( $p, $max_lifespan );
-		}
-		return $stores;
-	}
-
-	/**
-	 * Build a list of recent 5-min bucket keys spanning the retention window.
-	 * Capped at 288 (24h × 12 buckets/h) so memcache get_multi stays bounded.
-	 * Matches PerfOverviewController::recent_url_buckets.
-	 *
-	 * @return array<int,string>
-	 */
-	private static function recent_url_buckets(): array {
-		$now = \time();
-		$out = [];
-		for ( $i = 0; $i < 288; $i++ ) {
-			$ts         = $now - ( $i * 300 );
-			$min        = (int) \gmdate( 'i', $ts );
-			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
-			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
-		}
-		return \array_unique( $out );
-	}
-
 	/**
 	 * Merged URL index across all partitions, shaped for dashboard display.
 	 * Mirrors PerfOverviewController::load_index — same field set, same
@@ -535,32 +422,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Sum-merge per-partition hourly buckets into one sorted time_series.
-	 * Same contract as Events_CI's stats verb.
-	 *
-	 * @return array<int, mixed>
-	 */
-	private static function merge_hourly_across_partitions(): array {
-		$merged = [];
-		foreach ( self::stats_stores() as $store ) {
-			foreach ( $store->get_hourly() as $hour => $row ) {
-				$row_arr = \is_array( $row ) ? $row : [];
-				$merged[ $hour ] ??= [
-					'hour'        => $hour,
-					'count'       => 0,
-					'sum_ms'      => 0.0,
-					'sum_peak_mb' => 0.0,
-				];
-				$merged[ $hour ]['count']       += self::to_int( $row_arr['count'] ?? 0 );
-				$merged[ $hour ]['sum_ms']      += self::to_float( $row_arr['sum_ms'] ?? 0 );
-				$merged[ $hour ]['sum_peak_mb'] += self::to_float( $row_arr['sum_peak_mb'] ?? 0 );
-			}
-		}
-		\ksort( $merged );
-		return \array_values( $merged );
-	}
-
-	/**
 	 * Walk every recent URL bucket for the given hash and emit a per-bucket
 	 * `{count, sum_ms, sum_peak_mb}` time series. Mirrors
 	 * PerfUrlsController::build_url_time_series.
@@ -645,6 +506,25 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
+	}
+
+	/**
+	 * Build a list of recent 5-min bucket keys spanning the retention window.
+	 * Capped at 288 (24h × 12 buckets/h) so memcache get_multi stays bounded.
+	 * Matches PerfOverviewController::recent_url_buckets.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function recent_url_buckets(): array {
+		$now = \time();
+		$out = [];
+		for ( $i = 0; $i < 288; $i++ ) {
+			$ts         = $now - ( $i * 300 );
+			$min        = (int) \gmdate( 'i', $ts );
+			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
+			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
+		}
+		return \array_unique( $out );
 	}
 
 	/**
@@ -827,6 +707,41 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Sum-merge per-partition hourly buckets into one sorted time_series.
+	 * Same contract as Events_CI's stats verb.
+	 *
+	 * @return array<int, mixed>
+	 */
+	private static function merge_hourly_across_partitions(): array {
+		$merged = [];
+		foreach ( self::stats_stores() as $store ) {
+			foreach ( $store->get_hourly() as $hour => $row ) {
+				$row_arr = \is_array( $row ) ? $row : [];
+				$merged[ $hour ] ??= [
+					'hour'        => $hour,
+					'count'       => 0,
+					'sum_ms'      => 0.0,
+					'sum_peak_mb' => 0.0,
+				];
+				$merged[ $hour ]['count']       += self::to_int( $row_arr['count'] ?? 0 );
+				$merged[ $hour ]['sum_ms']      += self::to_float( $row_arr['sum_ms'] ?? 0 );
+				$merged[ $hour ]['sum_peak_mb'] += self::to_float( $row_arr['sum_peak_mb'] ?? 0 );
+			}
+		}
+		\ksort( $merged );
+		return \array_values( $merged );
+	}
+
+	/**
+	 * Coerce a mixed leaf to float, reproducing `(float)` for scalar/null inputs.
+	 *
+	 * @param mixed $value Raw leaf value.
+	 */
+	private static function to_float( mixed $value ): float {
+		return \is_scalar( $value ) ? (float) $value : 0.0;
+	}
+
+	/**
 	 * Pull the per-URL aggregate stats blob (flame, profiles, last_modified).
 	 * First partition with a matching blob wins — matches legacy
 	 * PerfUrlsController::find_url_aggregate.
@@ -840,6 +755,29 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return null;
+	}
+
+	// -------------------------------------------------------------------------
+	// Stats_Store helpers — fan out across partitions and merge.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * One Stats_Store per partition over the shared `Core::$memd` handle.
+	 *
+	 * @return array<int,Stats_Store>
+	 */
+	private static function stats_stores(): array {
+		if ( null === Core::$memd ) {
+			return [];
+		}
+		$config         = RuntimeConfig::load_config();
+		$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
+		$max_lifespan   = self::to_int( $config['max_lifespan'] ?? 86400 );
+		$stores         = [];
+		for ( $p = 0; $p < $num_partitions; $p++ ) {
+			$stores[] = new Stats_Store( $p, $max_lifespan );
+		}
+		return $stores;
 	}
 
 	// -------------------------------------------------------------------------
@@ -1144,6 +1082,30 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [ $result, $scanned ];
 	}
 
+	// -------------------------------------------------------------------------
+	// Scalar coercion — decoded JSON / memcache blobs carry `mixed` leaf values;
+	// these reproduce PHP's int/float/string cast for the scalar+null domain those
+	// blobs actually hold, narrowing without changing any reachable value.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Coerce a mixed leaf to int, reproducing `(int)` for scalar/null inputs.
+	 *
+	 * @param mixed $value Raw leaf value.
+	 */
+	private static function to_int( mixed $value ): int {
+		return \is_scalar( $value ) ? (int) $value : 0;
+	}
+
+	/**
+	 * Coerce a mixed leaf to string, reproducing `(string)` for scalar/null inputs.
+	 *
+	 * @param mixed $value Raw leaf value.
+	 */
+	private static function to_string( mixed $value ): string {
+		return \is_scalar( $value ) ? (string) $value : '';
+	}
+
 	/**
 	 * Search every flame partition for a flame entry matching the rid; the
 	 * first hit wins. FlameBuilder writes to whatever partition it's wired
@@ -1200,6 +1162,44 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
+	 * a transient scratch Partition. Callers remove_node() it after use.
+	 *
+	 * @param Partition_Node $partition Freshly-constructed scratch Partition.
+	 * @param string         $log       Log basename ('requests' | 'flames').
+	 * @param int            $index     Partition index.
+	 */
+	private static function name_scratch_partition( Partition_Node $partition, string $log, int $index ): void {
+		$token = \getmypid() . '-' . \spl_object_id( $partition );
+		$partition->name( "{$log}.{$token}.p{$index}" );
+		$partition->patron( $partition );
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $partition->sink() && null !== $ci ) {
+			$partition->sink( $ci );
+		}
+	}
+
+	/**
+	 * Resolve a Command_Args boolean flag. A bare `--flag` parses to `true`;
+	 * A bare `--flag` and `--flag=1` / `--flag=true` are truthy; `--flag=0` /
+	 * `--flag=false` and an absent key are false. (These are the only tokens
+	 * formatCommandArgs / the forwarder ever emit for a boolean.)
+	 *
+	 * @param array<string,string|true> $options Parsed options.
+	 * @param string                    $key     Flag name.
+	 */
+	private static function flag( array $options, string $key ): bool {
+		if ( ! \array_key_exists( $key, $options ) ) {
+			return false;
+		}
+		$value = $options[ $key ];
+		if ( true === $value ) {
+			return true;
+		}
+		return ! \in_array( \strtolower( $value ), [ '0', 'false' ], true );
 	}
 
 	/**
