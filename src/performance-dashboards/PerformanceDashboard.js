@@ -503,7 +503,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 						selectUrl( null );
 						selectRequest( null );
 					} }
-					className="event-logger-performance-modal"
+					className="event-logger-performance-modal newspack-nodes-theme"
 					headerActions={
 						! selectedRequest && (
 							<div className="event-logger-header-stats">

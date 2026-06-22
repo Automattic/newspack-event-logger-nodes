@@ -97,7 +97,7 @@
 	padding: 8px 0;
 	margin-top: 4px;
 	font-size: 13px;
-	color: #666;
+	color: base.$light-text-secondary;
 }
 
 .event-logger-table__pagination-controls {
@@ -108,12 +108,12 @@
 
 .event-logger-table__pagination-btn {
 	padding: 4px 10px;
-	border: 1px solid #ddd;
+	border: 1px solid base.$light-border;
 	border-radius: 3px;
-	background: #fff;
+	background: var(--np-surface);
 	cursor: pointer;
 	font-size: 13px;
-	color: #333;
+	color: base.$light-text;
 
 	&:disabled {
 		opacity: 0.4;
@@ -121,8 +121,8 @@
 	}
 
 	&:hover:not(:disabled) {
-		background: #f0f0f0;
-		border-color: #999;
+		background: var(--np-surface-muted);
+		border-color: var(--np-border-strong);
 	}
 }
 
@@ -176,19 +176,19 @@
 
 		&__count {
 			font-size: 12px;
-			color: #666;
+			color: base.$light-text-secondary;
 			min-width: 50px;
 			text-align: center;
 		}
 
 		&__nav {
 			background: none;
-			border: 1px solid #8c8f94;
+			border: 1px solid base.$light-border;
 			border-radius: 3px;
 			cursor: pointer;
 			font-size: 10px;
 			padding: 2px 5px;
-			color: #50575e;
+			color: base.$light-text-secondary;
 			line-height: 1;
 
 			&:disabled {
@@ -197,7 +197,7 @@
 			}
 
 			&:hover:not(:disabled) {
-				background: #f0f0f1;
+				background: var(--np-surface-muted);
 			}
 		}
 	}

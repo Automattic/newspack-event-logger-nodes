@@ -18,6 +18,7 @@ export default function RequestStreamPage() {
 
 	return (
 		<div
+			className="newspack-nodes-theme"
 			style={ {
 				position: 'fixed',
 				top: '32px',

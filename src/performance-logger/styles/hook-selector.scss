@@ -117,7 +117,9 @@
 	}
 
 	.hook-selector-category-desc {
-		color: base.$dark-text-placeholder;
+		// Light-chrome muted text — was a $dark-* token before the value flip,
+		// which would read as a near-black term ink on this white modal.
+		color: base.$light-text-muted;
 		font-size: 12px;
 		flex: 1;
 		margin-left: 8px;
@@ -152,7 +154,8 @@
 	.hook-selector-hook-name {
 		font-family: base.$mono-font;
 		font-size: 11px;
-		color: base.$dark-bg-tertiary;
+		// Mono hook name body text on the light modal (was a $dark-bg-* token).
+		color: base.$light-text;
 		word-break: break-all;
 	}
 
