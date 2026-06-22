@@ -140,7 +140,7 @@ input.event-logger-error-log-search {
 
 	// Dark-pane rows.
 	&.row-odd {
-		background: base.$term-bg;
+		background: base.$term-bg-alt;
 
 		&:hover {
 			background: #30363d;
@@ -148,7 +148,7 @@ input.event-logger-error-log-search {
 	}
 
 	&.row-even {
-		background: base.$term-bg-alt;
+		background: base.$term-bg;
 
 		&:hover {
 			background: #30363d;
