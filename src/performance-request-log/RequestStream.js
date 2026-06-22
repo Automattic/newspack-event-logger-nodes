@@ -539,7 +539,9 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			aria-label="Request log"
 		>
 			<div className="event-logger-request-stream-header">
-				<h3>{ __( 'Request Log', 'newspack-event-logger-nodes' ) }</h3>
+				<h3 className="newspack-dashboard-title">
+					{ __( 'Request Log', 'newspack-event-logger-nodes' ) }
+				</h3>
 				<div className="event-logger-request-stream-controls">
 					<input
 						type="text"

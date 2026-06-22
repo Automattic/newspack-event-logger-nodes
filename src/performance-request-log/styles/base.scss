@@ -535,13 +535,6 @@ select.event-logger-refresh-select {
 	padding-bottom: 12px;
 	border-bottom: 1px solid $dark-header-border;
 
-	h2,
-	h3 {
-		margin: 0;
-		font-size: 14px;
-		font-weight: 600;
-		color: $dark-text;
-	}
 }
 
 // Shared entry cell styles (used by Request Log and Gyroscope) — these ride the

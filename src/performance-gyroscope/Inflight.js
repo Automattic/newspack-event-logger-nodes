@@ -494,7 +494,7 @@ export default function Inflight( { maxRows = 20 } ) {
 			aria-label="In-flight requests"
 		>
 			<div className="event-logger-inflight-header">
-				<h3>
+				<h3 className="newspack-dashboard-title">
 					{ __(
 						'In-Flight Requests',
 						'newspack-event-logger-nodes'
