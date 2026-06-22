@@ -5,14 +5,16 @@
  */
 
 // =============================================================================
-// Design Tokens — Newspack (dark log surface + light chrome)
+// Design Tokens — Newspack (light chrome + dark data/log surfaces)
 // =============================================================================
-// The Request Log view is a live LOG STREAM and stays a DARK terminal surface,
-// exactly as the Topology Console's Newspack skin keeps a dark REPL. The
-// `$dark-*` tokens back that pane and map onto the dark `$term-*` set; the
-// `$light-*` tokens (any chrome that rides this tree) map onto the canonical
-// --np-* product tokens. The Material-blue accent (#64b5f6) is gone — Cobalt
-// leads, lightened to read on the dark pane; status is functional.
+// Matches the substrate's Raw Logs skin: the CHROME (root, header, controls,
+// stats, buttons, column-header labels) is the light Cobalt-on-white product
+// look on the canonical --np-* tokens; only the live LOG STREAM pane stays a
+// DARK terminal surface, exactly as the Topology Console keeps a dark REPL. The
+// historical `$dark-*` names are RETAINED (only the VALUES flipped to light) to
+// bound the reskin churn — they now back the light chrome. The genuine log pane
+// (the request list + its rows) uses the `$term-*` set. Cobalt leads; status is
+// functional, lightened where it rides the dark rows.
 
 // Terminal / log surfaces (the live stream stays dark, like the console REPL).
 $term-bg: #1e1e1e;
@@ -24,34 +26,34 @@ $term-border: #3a3a3a;
 $term-accent: color-mix(in srgb, var(--np-primary) 58%, white);
 $term-accent-hover: color-mix(in srgb, var(--np-primary) 78%, white);
 
-// Dark log-pane surfaces — `$dark-bg*` carry the $term-* terminal neutrals.
-$dark-bg: $term-bg;
-$dark-bg-secondary: #232323;
-$dark-bg-tertiary: #2e2e2e;
-$dark-bg-hover: #3a3a3a;
-$dark-bg-active: #454545;
-$dark-bg-row-even: $term-bg-alt;
-$dark-bg-row-hover: #30363d;
-$dark-bg-deep: #1c1c1c;
-$dark-bg-deepest: #181818;
-$dark-header-border: $term-border;
+// Chrome surfaces (light) — `$dark-bg*` now carry the light Newspack neutrals.
+$dark-bg: var(--np-surface); // #fff
+$dark-bg-secondary: var(--np-surface); // card surface
+$dark-bg-tertiary: var(--np-surface-subtle); // control surface
+$dark-bg-hover: var(--np-surface-muted); // control hover
+$dark-bg-active: var(--np-primary-subtle); // active/selected control
+$dark-bg-row-even: var(--np-surface-subtle);
+$dark-bg-row-hover: var(--np-surface-muted);
+$dark-bg-deep: var(--np-surface-subtle);
+$dark-bg-deepest: var(--np-surface-muted);
+$dark-header-border: var(--np-border);
 
-// Dark log-pane text.
-$dark-text: $term-text;
-$dark-text-muted: $term-text-dim;
-$dark-text-time: $term-text-dim;
-$dark-text-placeholder: $term-text-dim;
-$dark-text-dim: #6e6e6e;
+// Chrome text (dark ink on light).
+$dark-text: var(--np-text); // #1e1e1e
+$dark-text-muted: var(--np-text-secondary); // #6c6c6c
+$dark-text-time: var(--np-text-secondary);
+$dark-text-placeholder: var(--np-text-secondary);
+$dark-text-dim: var(--np-text-secondary);
 
-// Dark log-pane borders.
-$dark-border: $term-border;
-$dark-border-light: #4a4a4a;
+// Chrome borders.
+$dark-border: var(--np-border); // #ddd
+$dark-border-light: var(--np-border); // hairline divider
 
-// Accents on the dark pane — Cobalt, lightened to read on dark.
-$dark-accent: $term-accent;
-$dark-accent-hover: $term-accent-hover;
-$dark-success: color-mix(in srgb, var(--np-success) 62%, white);
-$dark-info: color-mix(in srgb, var(--np-primary) 58%, white);
+// Accents — Cobalt leads (light chrome).
+$dark-accent: var(--np-primary); // #003da5
+$dark-accent-hover: var(--np-primary-hover); // #00296e
+$dark-success: var(--np-success);
+$dark-info: var(--np-primary);
 
 // Light chrome — text + surfaces.
 $light-text: var(--np-text);
@@ -146,12 +148,13 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 
 	&:hover {
 		background: $dark-bg-hover;
-		color: $white;
+		color: $dark-text;
 	}
 
 	&.active {
 		background: $dark-bg-active;
-		color: $white;
+		color: $dark-accent;
+		border-color: $dark-accent;
 	}
 }
 
@@ -176,7 +179,7 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 		cursor: pointer;
 
 		&:hover {
-			color: $white;
+			color: $dark-text;
 		}
 	}
 
@@ -520,7 +523,7 @@ select.event-logger-refresh-select {
 	}
 }
 
-// Shared header styles (dark theme)
+// Shared header styles (light chrome — title + controls above the dark pane)
 .event-logger-inflight-header,
 .event-logger-request-stream-header,
 .worker-status-full .worker-status-header {
@@ -537,13 +540,14 @@ select.event-logger-refresh-select {
 		margin: 0;
 		font-size: 14px;
 		font-weight: 600;
-		color: $white;
+		color: $dark-text;
 	}
 }
 
-// Shared entry cell styles (used by Request Log and Gyroscope)
+// Shared entry cell styles (used by Request Log and Gyroscope) — these ride the
+// DARK log rows, so they read against $term-* (light-on-dark), not the chrome.
 .entry-time {
-	color: $dark-text-time;
+	color: $term-text-dim;
 	font-size: 11px;
 }
 
@@ -553,7 +557,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-method {
-	color: $dark-accent;
+	color: $term-accent;
 	font-weight: 500;
 	text-transform: uppercase;
 	font-size: 11px;
@@ -581,7 +585,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-url {
-	color: $dark-text;
+	color: $term-text;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -592,17 +596,17 @@ select.event-logger-refresh-select {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: $dark-accent;
+	color: $term-accent;
 	text-decoration: none;
 
 	&:hover {
-		color: $dark-accent-hover;
+		color: $term-accent-hover;
 		text-decoration: underline;
 	}
 }
 
 .entry-url-link {
-	color: $dark-text;
+	color: $term-text;
 	text-decoration: none;
 
 	&:hover {
@@ -612,12 +616,12 @@ select.event-logger-refresh-select {
 }
 
 .entry-ip {
-	color: $dark-text-muted;
+	color: $term-text-dim;
 	font-size: 11px;
 }
 
 .entry-ua {
-	color: $dark-text-time;
+	color: $term-text-dim;
 	font-size: 10px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -625,13 +629,13 @@ select.event-logger-refresh-select {
 }
 
 .entry-partition {
-	color: $dark-text-dim;
+	color: $term-text-dim;
 	font-size: 10px;
 	text-align: center;
 }
 
 .entry-default {
-	color: $dark-text-dim;
+	color: $term-text-dim;
 }
 
 // Shared search input (dark theme)
