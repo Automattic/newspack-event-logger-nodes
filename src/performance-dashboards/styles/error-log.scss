@@ -52,12 +52,16 @@ input.event-logger-error-log-search {
 	}
 }
 
+// The DARK log pane — the scrolling error list. Light chrome sits above it;
+// this is the terminal-surface equivalent of Raw Logs' canvas-container.
 .event-logger-error-log-list {
 	flex: 1;
 	overflow-y: scroll;
 	overflow-x: hidden;
-	background: transparent;
-	border-radius: 0;
+	background: base.$term-bg;
+	border: 1px solid base.$term-border;
+	border-top: none;
+	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
 	padding: 0;
 	-webkit-overflow-scrolling: touch;
 	display: flex;
@@ -68,30 +72,34 @@ input.event-logger-error-log-search {
 	}
 
 	&::-webkit-scrollbar-track {
-		background: base.$dark-bg;
+		background: base.$term-bg;
 		border-radius: 4px;
 	}
 
 	&::-webkit-scrollbar-thumb {
-		background: base.$dark-border;
+		background: base.$term-border;
 		border-radius: 4px;
 
 		&:hover {
-			background: base.$dark-bg-active;
+			background: base.$term-text-dim;
 		}
 	}
 }
 
+// Column-header row caps the dark pane — light-on-dark labels.
 .event-logger-error-log-header-row {
 	display: grid;
 	gap: 12px;
 	padding: 6px 8px;
-	background: base.$dark-bg-secondary;
+	background: base.$term-bg-alt;
+	border: 1px solid base.$term-border;
+	border-bottom: none;
+	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
 	flex-shrink: 0;
 }
 
 .event-logger-error-log-th {
-	color: base.$dark-text-muted;
+	color: base.$term-text-dim;
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
@@ -110,7 +118,7 @@ input.event-logger-error-log-search {
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	color: base.$dark-text-dim;
+	color: base.$term-text-dim;
 	font-size: 14px;
 	font-style: italic;
 }
@@ -128,19 +136,20 @@ input.event-logger-error-log-search {
 	font-family: base.$mono-font;
 	font-size: 12px;
 
+	// Dark-pane rows.
 	&.row-odd {
-		background: base.$dark-bg-secondary;
+		background: base.$term-bg;
 
 		&:hover {
-			background: base.$dark-bg-row-hover;
+			background: #30363d;
 		}
 	}
 
 	&.row-even {
-		background: base.$dark-bg-row-even;
+		background: base.$term-bg-alt;
 
 		&:hover {
-			background: base.$dark-bg-row-hover;
+			background: #30363d;
 		}
 	}
 }
@@ -157,11 +166,14 @@ input.event-logger-error-log-search {
 	}
 
 	&--info {
-		color: base.$dark-text-muted;
+		color: base.$term-text-dim;
 	}
 }
 
 .entry-message {
+	// Explicit light ink — this cell sits on the dark pane and otherwise
+	// inherits the chrome's dark $dark-text (invisible dark-on-dark).
+	color: base.$term-text;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;

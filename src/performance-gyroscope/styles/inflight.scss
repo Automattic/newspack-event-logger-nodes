@@ -63,7 +63,7 @@
 	border: 1px solid base.$dark-border;
 	color: base.$dark-text-muted;
 	padding: 6px 12px;
-	border-radius: 4px;
+	border-radius: var(--np-radius-md);
 	font-size: 12px;
 	cursor: pointer;
 	min-width: 60px;
@@ -71,7 +71,7 @@
 
 	&:hover {
 		background: base.$dark-bg-hover;
-		color: base.$white;
+		color: base.$dark-text;
 	}
 
 	&:focus {

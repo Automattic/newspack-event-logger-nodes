@@ -63,12 +63,16 @@ input.event-logger-request-stream-search {
 	@include base.dark-error-banner;
 }
 
+// The DARK log pane — the scrolling request list. Light chrome sits above it;
+// this is the terminal-surface equivalent of Raw Logs' canvas-container.
 .event-logger-request-stream-list {
 	flex: 1;
 	overflow-y: scroll;
 	overflow-x: hidden;
-	background: transparent;
-	border-radius: 0;
+	background: base.$term-bg;
+	border: 1px solid base.$term-border;
+	border-top: none;
+	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
 	padding: 0;
 	-webkit-overflow-scrolling: touch;
 	display: flex;
@@ -80,30 +84,34 @@ input.event-logger-request-stream-search {
 	}
 
 	&::-webkit-scrollbar-track {
-		background: base.$dark-bg;
+		background: base.$term-bg;
 		border-radius: 4px;
 	}
 
 	&::-webkit-scrollbar-thumb {
-		background: base.$dark-border;
+		background: base.$term-border;
 		border-radius: 4px;
 
 		&:hover {
-			background: base.$dark-bg-active;
+			background: base.$term-text-dim;
 		}
 	}
 }
 
+// Column-header row caps the dark pane — light-on-dark labels.
 .event-logger-request-stream-header-row {
 	display: grid;
 	gap: 12px;
 	padding: 6px 8px;
-	background: base.$dark-bg-secondary;
+	background: base.$term-bg-alt;
+	border: 1px solid base.$term-border;
+	border-bottom: none;
+	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
 	flex-shrink: 0;
 }
 
 .event-logger-request-stream-th {
-	color: base.$dark-text-muted;
+	color: base.$term-text-dim;
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
@@ -122,7 +130,7 @@ input.event-logger-request-stream-search {
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	color: base.$dark-text-dim;
+	color: base.$term-text-dim;
 	font-size: 14px;
 	font-style: italic;
 }
@@ -141,20 +149,20 @@ input.event-logger-request-stream-search {
 	font-size: 12px;
 
 	// Use class-based alternating instead of nth-child to prevent
-	// color flipping during smooth scroll animation.
+	// color flipping during smooth scroll animation. Dark-pane rows.
 	&.row-odd {
-		background: base.$dark-bg-secondary;
+		background: base.$term-bg;
 
 		&:hover {
-			background: base.$dark-bg-row-hover;
+			background: #30363d;
 		}
 	}
 
 	&.row-even {
-		background: base.$dark-bg-row-even;
+		background: base.$term-bg-alt;
 
 		&:hover {
-			background: base.$dark-bg-row-hover;
+			background: #30363d;
 		}
 	}
 }
@@ -185,9 +193,11 @@ input.event-logger-request-stream-search {
 // Duration color classes (matches formatUtils getDurationColor thresholds)
 // =============================================================================
 
+// Duration / status / timing inks ride the DARK pane rows — keep them tuned to
+// read on $term-bg (lightened status + $term-* dims), not the light chrome.
 .entry-duration {
 	&--fast {
-		color: base.$dark-success; // < 1000ms
+		color: base.$status-2xx; // < 1000ms
 	}
 
 	&--slow {
@@ -209,7 +219,7 @@ input.event-logger-request-stream-search {
 	}
 
 	&--3xx {
-		color: base.$dark-info;
+		color: base.$status-3xx;
 	}
 
 	&--4xx {
@@ -221,7 +231,7 @@ input.event-logger-request-stream-search {
 	}
 
 	&--unknown {
-		color: base.$dark-text-muted;
+		color: base.$term-text-dim;
 	}
 }
 
@@ -231,7 +241,7 @@ input.event-logger-request-stream-search {
 
 .entry-timing {
 	&--normal {
-		color: base.$dark-text-muted;
+		color: base.$term-text-dim;
 	}
 
 	&--warning {
