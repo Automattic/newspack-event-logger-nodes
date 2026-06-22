@@ -753,7 +753,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				<>
 					<span
 						style={ {
-							color: '#1976d2',
+							color: 'var(--np-primary)',
 							fontSize: '10px',
 							marginRight: '4px',
 						} }
@@ -773,7 +773,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				<>
 					<span
 						style={ {
-							color: '#1976d2',
+							color: 'var(--np-primary)',
 							fontSize: '10px',
 							marginRight: '4px',
 						} }
@@ -933,7 +933,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						style={ {
 							background: 'none',
 							border: 'none',
-							color: '#1976d2',
+							color: 'var(--np-primary)',
 							cursor: 'pointer',
 							fontSize: '13px',
 							marginRight: '12px',
@@ -949,7 +949,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						style={ {
 							background: 'none',
 							border: 'none',
-							color: '#1976d2',
+							color: 'var(--np-primary)',
 							cursor: 'pointer',
 							fontSize: '13px',
 							padding: 0,

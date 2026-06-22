@@ -332,7 +332,7 @@ export default function HookSelectorModal( {
 					: __( 'Select Hooks to Log', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onClose }
-			className="event-logger-hook-selector-modal"
+			className="event-logger-hook-selector-modal newspack-nodes-theme"
 			style={ { width: '800px', maxWidth: '90vw' } }
 		>
 			<div className="hook-selector-header">

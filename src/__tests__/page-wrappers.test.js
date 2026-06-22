@@ -39,4 +39,27 @@ describe( 'page wrappers', () => {
 		expect( container.textContent ).toContain( 'REQUEST_STREAM[1000]' );
 		unmount();
 	} );
+
+	// The dashboards reference var(--np-*) tokens defined on the
+	// `.newspack-nodes-theme` root class (the shared newspack-nodes-theme
+	// stylesheet). Each full-page wrapper must carry it so those resolve.
+	it( 'GyroscopePage root carries .newspack-nodes-theme', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( GyroscopePage )
+		);
+		expect(
+			container.querySelector( '.newspack-nodes-theme' )
+		).not.toBeNull();
+		unmount();
+	} );
+
+	it( 'RequestStreamPage root carries .newspack-nodes-theme', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestStreamPage )
+		);
+		expect(
+			container.querySelector( '.newspack-nodes-theme' )
+		).not.toBeNull();
+		unmount();
+	} );
 } );

@@ -202,7 +202,9 @@
 
 	// Focus state
 	&:focus-visible + .custom-event-swatch::before {
-		box-shadow: 0 0 0 2px rgba(base.$focus-color, 0.25);
+		// Cobalt focus glow. Literal rgba — $focus-color is now a CSS custom
+		// property, which Sass's rgba() can't consume at compile time.
+		box-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 	}
 }
 

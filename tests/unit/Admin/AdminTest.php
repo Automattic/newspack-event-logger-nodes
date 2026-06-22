@@ -581,6 +581,23 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( '.is-marked [data-nn-reset-toggle]', $html );
 	}
 
+	public function test_render_settings_page_wrap_carries_newspack_theme_class(): void {
+		// The settings chrome references var(--np-*) tokens (Newspack reskin), so
+		// the page wrap must carry the .newspack-nodes-theme class that defines
+		// them; without it every token falls back to its CSS default.
+		$admin = new Admin();
+		$admin->register_settings();
+
+		\ob_start();
+		$admin->render_settings_page();
+		$html = \ob_get_clean();
+
+		$this->assertStringContainsString(
+			'wrap event-logger-settings-wrap newspack-nodes-theme',
+			$html
+		);
+	}
+
 	public function test_render_settings_page_fires_settings_after_form_action(): void {
 		$called = 0;
 		\add_action(

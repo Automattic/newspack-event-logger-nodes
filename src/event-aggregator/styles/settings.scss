@@ -56,7 +56,7 @@
 
 			&:focus {
 				border-color: base.$focus-color;
-				box-shadow: 0 0 0 2px rgba(34, 113, 177, 0.15);
+				box-shadow: 0 0 0 2px rgba(0, 61, 165, 0.2);
 				outline: none;
 			}
 		}
@@ -71,7 +71,7 @@
 
 		&:hover {
 			transform: translateY(-1px);
-			box-shadow: 0 4px 8px rgba(34, 113, 177, 0.3);
+			box-shadow: 0 4px 8px rgba(0, 61, 165, 0.3);
 		}
 	}
 }

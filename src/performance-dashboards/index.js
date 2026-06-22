@@ -70,7 +70,7 @@ export function AdminApp() {
 	}, [ error ] );
 
 	return (
-		<div className="event-logger-admin-wrap">
+		<div className="event-logger-admin-wrap newspack-nodes-theme">
 			<h1>
 				{ __(
 					'Event Logger - Performance Dashboard',
@@ -121,6 +121,7 @@ export function ErrorLogPage() {
 
 	return (
 		<div
+			className="newspack-nodes-theme"
 			style={ {
 				position: 'fixed',
 				top: '32px',

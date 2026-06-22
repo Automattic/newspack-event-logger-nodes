@@ -105,7 +105,7 @@ export default function CustomEventSelectorModal( {
 				'newspack-event-logger-nodes'
 			) }
 			onRequestClose={ onClose }
-			className="event-logger-custom-event-modal"
+			className="event-logger-custom-event-modal newspack-nodes-theme"
 		>
 			<div className="custom-event-header">
 				<SearchControl

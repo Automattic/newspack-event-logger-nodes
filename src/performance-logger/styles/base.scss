@@ -5,86 +5,95 @@
  */
 
 // =============================================================================
-// Design Tokens
+// Design Tokens — Newspack (light settings chrome + shared dark log tokens)
 // =============================================================================
+// This is the Event Logger SETTINGS page — light Cobalt-on-white Newspack
+// chrome. The `$light-*` tokens map onto the canonical --np-* product tokens;
+// the `$dark-*` tokens (shared with the log-stream dashboards) map onto the
+// dark `$term-*` set so the few dark-pane mixins they back stay legible. The
+// Material-blue accent (#64b5f6) is gone — Cobalt leads.
 
-// Dark theme - backgrounds
-$dark-bg: #1e1e1e;
-$dark-bg-secondary: #2a2a2a;
-$dark-bg-tertiary: #333;
-$dark-bg-hover: #444;
-$dark-bg-active: #555;
-$dark-bg-row-even: #262626;
-$dark-bg-row-hover: #3a3a3a;
-$dark-bg-deep: #222;
-$dark-bg-deepest: #1a1a1a;
-$dark-header-border: #333;
+// Terminal / log surfaces (kept dark for any shared log-pane mixin).
+$term-bg: #1e1e1e;
+$term-bg-alt: #262626;
+$term-text: #e6e6e6;
+$term-text-dim: #949494;
+$term-border: #3a3a3a;
+$term-accent: color-mix(in srgb, var(--np-primary) 58%, white);
+$term-accent-hover: color-mix(in srgb, var(--np-primary) 78%, white);
 
-// Dark theme - text
-$dark-text: #e0e0e0;
-$dark-text-muted: #90a4ae;
-$dark-text-time: #78909c;
-$dark-text-placeholder: #888;
-$dark-text-dim: #666;
+// Dark log-pane surfaces — `$dark-bg*` carry the $term-* terminal neutrals.
+$dark-bg: $term-bg;
+$dark-bg-secondary: #232323;
+$dark-bg-tertiary: #2e2e2e;
+$dark-bg-hover: #3a3a3a;
+$dark-bg-active: #454545;
+$dark-bg-row-even: $term-bg-alt;
+$dark-bg-row-hover: #30363d;
+$dark-bg-deep: #1c1c1c;
+$dark-bg-deepest: #181818;
+$dark-header-border: $term-border;
 
-// Dark theme - borders
-$dark-border: #444;
-$dark-border-light: #555;
+// Dark log-pane text.
+$dark-text: $term-text;
+$dark-text-muted: $term-text-dim;
+$dark-text-time: $term-text-dim;
+$dark-text-placeholder: $term-text-dim;
+$dark-text-dim: #6e6e6e;
 
-// Dark theme - accent colors
-$dark-accent: #64b5f6;
-$dark-accent-hover: #90caf9;
-$dark-success: #66bb6a;
-$dark-info: #4fc3f7;
+// Dark log-pane borders.
+$dark-border: $term-border;
+$dark-border-light: #4a4a4a;
 
-// Light theme - text
-$light-text: #1e1e1e;
-$light-text-secondary: #757575;
-$light-text-muted: #666;
+// Accents on the dark pane — Cobalt, lightened to read on dark.
+$dark-accent: $term-accent;
+$dark-accent-hover: $term-accent-hover;
+$dark-success: color-mix(in srgb, var(--np-success) 62%, white);
+$dark-info: color-mix(in srgb, var(--np-primary) 58%, white);
 
-// Light theme - surfaces
-$light-surface: #f6f7f7;
-$light-surface-alt: #f9f9f9;
-$light-surface-hover: #fafafa;
-$light-selected: #f0f6fc;
+// Light chrome — text + surfaces (the settings page).
+$light-text: var(--np-text);
+$light-text-secondary: var(--np-text-secondary);
+$light-text-muted: var(--np-text-secondary);
+$light-surface: var(--np-surface-subtle);
+$light-surface-alt: var(--np-surface-subtle);
+$light-surface-hover: var(--np-surface-muted);
+$light-selected: var(--np-primary-subtle);
+$light-border: var(--np-border-strong);
+$light-border-light: var(--np-border);
+$light-border-muted: var(--np-border);
+$light-border-faint: var(--np-surface-muted);
 
-// Light theme - borders
-$light-border: #c3c4c7;
-$light-border-light: #f0f0f1;
-$light-border-muted: #ddd;
-$light-border-faint: #eee;
+// Status colors (HTTP) — functional, lightened where they ride dark log rows.
+$status-2xx: color-mix(in srgb, var(--np-success) 62%, white);
+$status-3xx: var(--np-warning);
+$status-4xx: color-mix(in srgb, var(--np-error) 72%, white);
+$status-5xx: var(--np-error);
 
-// Status colors (HTTP)
-$status-2xx: #4caf50;
-$status-3xx: #ff9800;
-$status-4xx: #f44336;
-$status-5xx: #e91e63;
+// Semantic colors.
+$error-bg: var(--np-error);
+$error-text: color-mix(in srgb, var(--np-error) 72%, white);
+$error-surface: var(--np-error-subtle);
+$success-bg: var(--np-success);
+$success-border: var(--np-success);
+$dead-bg: var(--np-error);
+$idle-bg: var(--np-text-secondary);
+$warning-color: var(--np-warning);
+$recommended-color: var(--np-warning);
+$discovered-bg: var(--np-warning-subtle);
+$discovered-hover: var(--np-warning-subtle);
+$discovered-hooks: var(--np-surface-subtle);
 
-// Semantic colors
-$error-bg: #b71c1c;
-$error-text: #d63638;
-$error-surface: #fcf0f1;
-$success-bg: #2e7d32;
-$success-border: #388e3c;
-$dead-bg: #c62828;
-$idle-bg: #546e7a;
-$warning-color: #f9a825;
-$recommended-color: #f0b849;
-$discovered-bg: #fff8e5;
-$discovered-hover: #fff3d6;
-$discovered-hooks: #fffcf5;
-
-// Focus/interactive
-$focus-color: #007cba;
-$wp-link: #2271b1;
+// Focus/interactive — Cobalt.
+$focus-color: var(--np-primary);
+$wp-link: var(--np-primary);
 
 // Pure colors
 $white: #fff;
 
-// Typography
-$system-font: -apple-system, blinkmacsystemfont, "Segoe UI", roboto, oxygen,
-	ubuntu, sans-serif;
-$mono-font: "SF Mono", monaco, inconsolata, "Roboto Mono", monospace;
+// Typography — Inter in product; mono for log/terminal surfaces.
+$system-font: var(--np-font);
+$mono-font: var(--np-font-mono);
 
 // Sizing
 $control-height: 28px;
@@ -99,8 +108,8 @@ $space-md: 12px;
 $space-lg: 16px;
 $space-xl: 24px;
 
-// Focus
-$focus-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
+// Focus — Cobalt glow.
+$focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 
 // =============================================================================
 // Shared Mixins - Dark Theme

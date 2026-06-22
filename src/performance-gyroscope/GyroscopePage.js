@@ -19,6 +19,7 @@ export default function GyroscopePage() {
 
 	return (
 		<div
+			className="newspack-nodes-theme"
 			style={ {
 				position: 'fixed',
 				top: '32px',

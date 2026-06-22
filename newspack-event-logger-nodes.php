@@ -307,7 +307,10 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			$settings_css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/event-aggregator-settings/settings.css';
 			if ( \file_exists( $settings_css_path ) ) {
 				$settings_css_version = (string) ( \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
-				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [], $settings_css_version );
+				// Depend on the Newspack token sheet so the settings chrome's
+				// var(--np-*) references resolve (the page wrap carries the
+				// `.newspack-nodes-theme` class that scopes those tokens).
+				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [ 'newspack-nodes-theme' ], $settings_css_version );
 			}
 		}
 
