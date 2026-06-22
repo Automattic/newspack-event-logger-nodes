@@ -71,7 +71,7 @@ export function AdminApp() {
 
 	return (
 		<div className="event-logger-admin-wrap newspack-nodes-theme">
-			<h1>
+			<h1 className="newspack-dashboard-title">
 				{ __(
 					'Event Logger - Performance Dashboard',
 					'newspack-event-logger-nodes'
