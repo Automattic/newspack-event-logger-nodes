@@ -117,24 +117,6 @@ class Auto_Tuner_Node extends Node {
 		$this->persist( 'newspack_event_logger_nodes_log_events', $updated );
 	}
 
-	// --- Persist + fan-out -----------------------------------------------------
-
-	/**
-	 * Local update_option. Auto-tuning is an ORIGINATING setting change: the
-	 * write fires Settings_Event_Writer's option-change listener, which
-	 * propagates the tuned value to spokes immediately through the settings-sync
-	 * node graph (Settings_Sync_Node) — exactly as an admin edit would; the
-	 * periodic Settings_Sync_Node tick is the backstop.
-	 *
-	 * @param mixed $value New option value to persist.
-	 */
-	private function persist( string $option, $value ): void {
-		if ( ! \function_exists( 'update_option' ) ) {
-			return;
-		}
-		\update_option( $option, $value, Config::autoload_for( $option ) );
-	}
-
 	/**
 	 * @param array<string, mixed> $context
 	 * @param array<string, mixed> $events
@@ -175,6 +157,24 @@ class Auto_Tuner_Node extends Node {
 		$merged   = \array_values( \array_unique( $combined ) );
 
 		$this->persist( 'newspack_event_logger_nodes_significant_events', $merged );
+	}
+
+	// --- Persist + fan-out -----------------------------------------------------
+
+	/**
+	 * Local update_option. Auto-tuning is an ORIGINATING setting change: the
+	 * write fires Settings_Event_Writer's option-change listener, which
+	 * propagates the tuned value to spokes immediately through the settings-sync
+	 * node graph (Settings_Sync_Node) — exactly as an admin edit would; the
+	 * periodic Settings_Sync_Node tick is the backstop.
+	 *
+	 * @param mixed $value New option value to persist.
+	 */
+	private function persist( string $option, $value ): void {
+		if ( ! \function_exists( 'update_option' ) ) {
+			return;
+		}
+		\update_option( $option, $value, Config::autoload_for( $option ) );
 	}
 
 	/** @api Used by the substrate to provide UI etc. */

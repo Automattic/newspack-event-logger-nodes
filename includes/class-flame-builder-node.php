@@ -339,10 +339,6 @@ class Flame_Builder_Node extends Node {
 		return $result;
 	}
 
-	private function now_ts(): int {
-		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
-	}
-
 	/**
 	 * Recursively number duplicate sibling names with hidden suffix.
 	 *
@@ -1018,17 +1014,59 @@ class Flame_Builder_Node extends Node {
 		return \array_values( $indexed );
 	}
 
-	// -------------------------------------------------------------------------
-	// Bucket-key helper.
-	// -------------------------------------------------------------------------
-
 	/**
-	 * 5-min bucket key from a Unix timestamp.
+	 * Flush every accumulator to memcache (or to in-memory if no store) and
+	 * reset pending. Called every FLUSH_INTERVAL_SEC plus at shutdown.
 	 */
-	private function bucket_key( int $timestamp ): string {
-		$min        = (int) \gmdate( 'i', $timestamp );
-		$bucket_min = \str_pad( (string) ( (int) \floor( $min / self::BUCKET_MINUTES ) * self::BUCKET_MINUTES ), 2, '0', STR_PAD_LEFT );
-		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
+	public function flush(): void {
+		// Promote pending bucket into flush arrays on every flush cycle so
+		// dashboards see data within 30s, not after the 5-minute bucket rotation.
+		// The merge in persist_aggregate_stats is additive, so flushing partial
+		// 30s chunks produces the same result as one batch at rotation time.
+		if ( '' !== $this->pending_bucket ) {
+			$this->promote_pending_bucket();
+		}
+
+		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
+		$stats_store = $this->stats_store;
+		if ( null !== $stats_store ) {
+			$now = $this->now_ts();
+			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
+				if ( ! \is_array( $aggregate ) || ( ! \is_string( $url_hash ) && ! \is_int( $url_hash ) ) ) {
+					continue;
+				}
+				$url_hash = (string) $url_hash;
+				/** @var array<string, mixed> $aggregate */
+				// Create finalized flame for display (scale values, strip suffixes, normalize).
+				// Keep raw flame_raw for future merging (unscaled, with seen_count).
+				$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
+				$count_raw              = $flame['count'] ?? 0;
+				$total_count            = \is_numeric( $count_raw ) ? (int) $count_raw : 0;
+				$aggregate['flame_raw'] = $flame;
+				self::finalize_flame_node( $flame, $total_count );
+				$aggregate['flame']         = $flame;
+				$aggregate['last_modified'] = $now;
+				$stats_store->set_url_stats( $url_hash, $aggregate );
+			}
+		}
+
+		// Flush combined hourly, leaderboard, and URL stats to memcache.
+		$this->persist_aggregate_stats();
+
+		// Apply auto-disable.
+		$this->apply_auto_tune();
+
+		$this->stats_cache->flush();
+		$this->url_stats                   = [];
+		$this->hourly_stats                = [];
+		$this->leaderboard_stats           = [];
+		$this->leaderboard_by_server_stats = [];
+		$this->dim_stats                   = [];
+		$this->dim_stats_by_server         = [];
+		$this->url_dim_stats               = [];
+		$this->cat_stats                   = [];
+		$this->cat_stats_by_server         = [];
+		$this->url_cat_stats               = [];
 	}
 
 	// -------------------------------------------------------------------------
@@ -1162,61 +1200,6 @@ class Flame_Builder_Node extends Node {
 			'leaderboard'           => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
 			'leaderboard_by_server' => [],
 		];
-	}
-
-	/**
-	 * Flush every accumulator to memcache (or to in-memory if no store) and
-	 * reset pending. Called every FLUSH_INTERVAL_SEC plus at shutdown.
-	 */
-	public function flush(): void {
-		// Promote pending bucket into flush arrays on every flush cycle so
-		// dashboards see data within 30s, not after the 5-minute bucket rotation.
-		// The merge in persist_aggregate_stats is additive, so flushing partial
-		// 30s chunks produces the same result as one batch at rotation time.
-		if ( '' !== $this->pending_bucket ) {
-			$this->promote_pending_bucket();
-		}
-
-		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
-		$stats_store = $this->stats_store;
-		if ( null !== $stats_store ) {
-			$now = $this->now_ts();
-			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
-				if ( ! \is_array( $aggregate ) || ( ! \is_string( $url_hash ) && ! \is_int( $url_hash ) ) ) {
-					continue;
-				}
-				$url_hash = (string) $url_hash;
-				/** @var array<string, mixed> $aggregate */
-				// Create finalized flame for display (scale values, strip suffixes, normalize).
-				// Keep raw flame_raw for future merging (unscaled, with seen_count).
-				$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
-				$count_raw              = $flame['count'] ?? 0;
-				$total_count            = \is_numeric( $count_raw ) ? (int) $count_raw : 0;
-				$aggregate['flame_raw'] = $flame;
-				self::finalize_flame_node( $flame, $total_count );
-				$aggregate['flame']         = $flame;
-				$aggregate['last_modified'] = $now;
-				$stats_store->set_url_stats( $url_hash, $aggregate );
-			}
-		}
-
-		// Flush combined hourly, leaderboard, and URL stats to memcache.
-		$this->persist_aggregate_stats();
-
-		// Apply auto-disable.
-		$this->apply_auto_tune();
-
-		$this->stats_cache->flush();
-		$this->url_stats                   = [];
-		$this->hourly_stats                = [];
-		$this->leaderboard_stats           = [];
-		$this->leaderboard_by_server_stats = [];
-		$this->dim_stats                   = [];
-		$this->dim_stats_by_server         = [];
-		$this->url_dim_stats               = [];
-		$this->cat_stats                   = [];
-		$this->cat_stats_by_server         = [];
-		$this->url_cat_stats               = [];
 	}
 
 	/**
@@ -1480,6 +1463,23 @@ class Flame_Builder_Node extends Node {
 			$this->merge_and_cap_categories( $existing_url_cats, $buckets, $cutoff );
 			$stats_store->set_url_categories( $url_hash, $existing_url_cats );
 		}
+	}
+
+	private function now_ts(): int {
+		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
+	}
+
+	// -------------------------------------------------------------------------
+	// Bucket-key helper.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * 5-min bucket key from a Unix timestamp.
+	 */
+	private function bucket_key( int $timestamp ): string {
+		$min        = (int) \gmdate( 'i', $timestamp );
+		$bucket_min = \str_pad( (string) ( (int) \floor( $min / self::BUCKET_MINUTES ) * self::BUCKET_MINUTES ), 2, '0', STR_PAD_LEFT );
+		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
 	}
 
 	/**

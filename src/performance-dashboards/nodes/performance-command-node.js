@@ -79,21 +79,6 @@ export class PerformanceCommandNode extends Node {
 		this._closed = false;
 	}
 
-	// The hook sets `viewName` BEFORE wiring the target so it's already populated
-	// when the first fetch fires. Also accept it as a setter for symmetry with
-	// other programmatic-deps Nodes.
-	set viewName( name ) {
-		this._viewName = name;
-	}
-	get viewName() {
-		return this._viewName;
-	}
-
-	// Programmatic-dep setter — the hook assigns the error-toast seam after make_node.
-	set onError( fn ) {
-		this._onError = fn;
-	}
-
 	// Overview (always with category time series); optional server + breakdowns.
 	fetchOverview( server = '', dims = [] ) {
 		if ( this._closed ) {
@@ -277,12 +262,6 @@ export class PerformanceCommandNode extends Node {
 		} );
 	}
 
-	// Tear down: a fetch after this drops every emission so a post-unmount call
-	// neither emits nor leaks a pending entry on a stale view.
-	close() {
-		this._closed = true;
-	}
-
 	// Send a verb + register slice-tagged pending in one step.
 	_sendVerb( verb, args, pendingEntry ) {
 		const opId = makeOpId();
@@ -338,6 +317,27 @@ export class PerformanceCommandNode extends Node {
 		out[ TO ] = this.target;
 		out[ VALUE ] = value;
 		this.sink.fill( out );
+	}
+
+	// The hook sets `viewName` BEFORE wiring the target so it's already populated
+	// when the first fetch fires. Also accept it as a setter for symmetry with
+	// other programmatic-deps Nodes.
+	set viewName( name ) {
+		this._viewName = name;
+	}
+	get viewName() {
+		return this._viewName;
+	}
+
+	// Programmatic-dep setter — the hook assigns the error-toast seam after make_node.
+	set onError( fn ) {
+		this._onError = fn;
+	}
+
+	// Tear down: a fetch after this drops every emission so a post-unmount call
+	// neither emits nor leaks a pending entry on a stale view.
+	close() {
+		this._closed = true;
 	}
 	// Command-builder source: its fetch* methods are called directly by the hook
 	// to mint control messages; it has no fill() entry — no input port.

@@ -225,39 +225,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Leave a background-job request context: resume the parent LogManager and
-	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
-	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
-	 * so a throwing/unpaired begin can't fatal here.
-	 */
-	public static function end_job_context(): void {
-		self::resume();
-		if ( ! empty( self::$job_server_stack ) ) {
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
-			$_SERVER = \array_pop( self::$job_server_stack );
-		}
-	}
-
-	/**
-	 * Finish the current LogManager and restore the parent from the stack.
-	 *
-	 * The current context gets finish() called (logging process complete),
-	 * then the parent context is restored as the active instance.
-	 */
-	public static function resume(): void {
-		if ( null !== self::$instance ) {
-			self::$instance->finish();
-		}
-		self::$instance = ! empty( self::$context_stack )
-			? \array_pop( self::$context_stack )
-			: null;
-		// Restore UNIQUE_ID from parent context.
-		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
-			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
-		}
-	}
-
-	/**
 	 * Log final summary including memory usage and resources.
 	 */
 	public function finish(): void {
@@ -546,23 +513,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Drain every materialized Partition's in-memory batch to disk.
-	 *
-	 * Equivalent of the legacy `flush_buffer()`. Callers that hand off to a
-	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
-	 * pyrobase's template execution) call this BEFORE `proc_open` so the
-	 * parent's buffered Messages land in segment order before the child starts
-	 * appending. Without it, the subprocess can write between the parent's
-	 * accumulated Messages and the next size-threshold / timer flush, leaving
-	 * entries on disk out of logical order.
-	 *
-	 * @api Used by external plugins (nuclear-gyrobase + pyrobase pre-proc_open flush).
-	 */
-	public function flush(): void {
-		$this->topic?->flush();
-	}
-
-	/**
 	 * Extract plugin slug from a file path.
 	 *
 	 * @param string $file File path from error_get_last().
@@ -622,21 +572,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Reset the singleton instance.
-	 *
-	 * Call before changing REQUEST_URI to log a different request context.
-	 * Only used by unit tests.
-	 *
-	 * @api Used by tests.
-	 */
-	public static function reset(): void {
-		if ( null !== self::$instance ) {
-			self::$instance->finish();
-		}
-		self::$instance = null;
-	}
-
-	/**
 	 * Log an error message.
 	 *
 	 * @api Used by external plugins.
@@ -690,6 +625,39 @@ class Log_Manager {
 			$entry['m'] = $data['m'];
 		}
 		$this->times[] = $entry;
+	}
+
+	/**
+	 * Leave a background-job request context: resume the parent LogManager and
+	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
+	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
+	 * so a throwing/unpaired begin can't fatal here.
+	 */
+	public static function end_job_context(): void {
+		self::resume();
+		if ( ! empty( self::$job_server_stack ) ) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
+			$_SERVER = \array_pop( self::$job_server_stack );
+		}
+	}
+
+	/**
+	 * Finish the current LogManager and restore the parent from the stack.
+	 *
+	 * The current context gets finish() called (logging process complete),
+	 * then the parent context is restored as the active instance.
+	 */
+	public static function resume(): void {
+		if ( null !== self::$instance ) {
+			self::$instance->finish();
+		}
+		self::$instance = ! empty( self::$context_stack )
+			? \array_pop( self::$context_stack )
+			: null;
+		// Restore UNIQUE_ID from parent context.
+		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
+			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
+		}
 	}
 
 	/**
@@ -757,6 +725,38 @@ class Log_Manager {
 			self::$context_stack[]           = self::$instance;
 			self::$instance                  = null;
 		}
+	}
+
+	/**
+	 * Drain every materialized Partition's in-memory batch to disk.
+	 *
+	 * Equivalent of the legacy `flush_buffer()`. Callers that hand off to a
+	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
+	 * pyrobase's template execution) call this BEFORE `proc_open` so the
+	 * parent's buffered Messages land in segment order before the child starts
+	 * appending. Without it, the subprocess can write between the parent's
+	 * accumulated Messages and the next size-threshold / timer flush, leaving
+	 * entries on disk out of logical order.
+	 *
+	 * @api Used by external plugins (nuclear-gyrobase + pyrobase pre-proc_open flush).
+	 */
+	public function flush(): void {
+		$this->topic?->flush();
+	}
+
+	/**
+	 * Reset the singleton instance.
+	 *
+	 * Call before changing REQUEST_URI to log a different request context.
+	 * Only used by unit tests.
+	 *
+	 * @api Used by tests.
+	 */
+	public static function reset(): void {
+		if ( null !== self::$instance ) {
+			self::$instance->finish();
+		}
+		self::$instance = null;
 	}
 
 	/**

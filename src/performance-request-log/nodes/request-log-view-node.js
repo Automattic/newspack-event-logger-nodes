@@ -164,13 +164,6 @@ export class RequestLogViewNode extends Node {
 		this._updateRequestsPerSecond( 1 );
 	}
 
-	// Write one entry into the ring at the head and advance, capping at maxEntries.
-	_writeEntry( entry ) {
-		this._ring[ this._head ] = entry;
-		this._head = ( this._head + 1 ) % this.maxEntries;
-		this._count = Math.min( this._count + 1, this.maxEntries );
-	}
-
 	// Requests per second over a 10s window. Counts are aggregated into
 	// per-second buckets with a running total, so each request is O(1) (one
 	// bucket bump + bounded expiry) — not an O(n) scan of the window.
@@ -197,22 +190,6 @@ export class RequestLogViewNode extends Node {
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
-	// Number of live entries in the ring (O(1)).
-	get entriesCount() {
-		return this._count;
-	}
-
-	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
-	// The virtual list reads only its on-screen window through this — never the
-	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
-	entryAt( i ) {
-		if ( i < 0 || i >= this._count ) {
-			return undefined;
-		}
-		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
-		return this._ring[ idx ];
-	}
-
 	// The whole buffer materialized newest-first — O(n), for the filter path and
 	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
 	// graph clear) reseeds the ring from the given newest-first array.
@@ -234,6 +211,29 @@ export class RequestLogViewNode extends Node {
 				this._writeEntry( value[ i ] );
 			}
 		}
+	}
+
+	// Write one entry into the ring at the head and advance, capping at maxEntries.
+	_writeEntry( entry ) {
+		this._ring[ this._head ] = entry;
+		this._head = ( this._head + 1 ) % this.maxEntries;
+		this._count = Math.min( this._count + 1, this.maxEntries );
+	}
+
+	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
+	// The virtual list reads only its on-screen window through this — never the
+	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
+	entryAt( i ) {
+		if ( i < 0 || i >= this._count ) {
+			return undefined;
+		}
+		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
+		return this._ring[ idx ];
+	}
+
+	// Number of live entries in the ring (O(1)).
+	get entriesCount() {
+		return this._count;
 	}
 	// Consume-and-publish view-model terminal: fill() mutates state + publishes
 	// via setState, never forwards — no output port.
