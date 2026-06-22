@@ -546,14 +546,8 @@ select.event-logger-refresh-select {
 	margin-bottom: 12px;
 	padding-bottom: 12px;
 	border-bottom: 1px solid $dark-header-border;
-
-	h2,
-	h3 {
-		margin: 0;
-		font-size: 14px;
-		font-weight: 600;
-		color: $dark-text;
-	}
+	// Titles use the shared `.newspack-dashboard-title` class (WP page heading);
+	// no per-header h2/h3 size here (it would override the class).
 }
 
 // Shared entry cell styles — these ride the DARK log rows, so they read against
