@@ -25,7 +25,7 @@
 	// Card-style form tables
 	.form-table {
 		background: base.$white;
-		border: 1px solid base.$light-border;
+		border: 2px solid base.$light-border;
 		border-radius: base.$border-radius-lg;
 		padding: 8px;
 		margin-top: 16px;
@@ -48,7 +48,7 @@
 		input[type="password"],
 		select {
 			border-radius: base.$border-radius;
-			border: 1px solid #8c8f94;
+			border: 2px solid #8c8f94;
 			padding: 8px 12px;
 			transition:
 				border-color 0.15s ease,
@@ -102,7 +102,7 @@
 		font-size: 18px;
 		color: base.$light-text-secondary;
 		background: base.$light-surface;
-		border: 1px solid base.$light-border;
+		border: 2px solid base.$light-border;
 		border-radius: base.$border-radius;
 		cursor: pointer;
 		transition: all 0.15s ease;
@@ -158,14 +158,14 @@
 	// Default values - subtle gray
 	&.is-default {
 		background: base.$light-border-light;
-		border: 1px solid base.$light-border;
+		border: 2px solid base.$light-border;
 		color: base.$light-text;
 	}
 
 	// Custom/user-added values — Cobalt highlight.
 	&.is-custom {
 		background: var(--np-primary-subtle);
-		border: 1px solid var(--np-primary);
+		border: 2px solid var(--np-primary);
 		color: base.$light-text;
 	}
 }

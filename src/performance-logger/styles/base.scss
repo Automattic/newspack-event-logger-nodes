@@ -128,7 +128,7 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 // Dark theme button
 @mixin dark-button {
 	background: $dark-bg-tertiary;
-	border: 1px solid $dark-border;
+	border: 2px solid $dark-border;
 	color: $dark-text;
 	padding: 0 $space-sm;
 	border-radius: $border-radius;
@@ -155,7 +155,7 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 // Dark theme column picker
 @mixin dark-column-picker {
 	background: $dark-bg-secondary;
-	border: 1px solid $dark-border;
+	border: 2px solid $dark-border;
 	border-radius: $border-radius;
 	padding: $space-sm $space-md;
 	margin-bottom: $space-md;
@@ -209,7 +209,7 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 	-moz-appearance: none;
 	appearance: none;
 	background: $dark-bg-secondary !important;
-	border: 1px solid $dark-border !important;
+	border: 2px solid $dark-border !important;
 	color: $dark-text !important;
 	padding: 0 $space-md !important;
 	border-radius: $border-radius !important;
@@ -262,6 +262,7 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 #event-logger-significant_events *::after {
 	box-sizing: border-box;
 }
+
 /* stylelint-enable selector-id-pattern */
 
 // Loading container
@@ -427,14 +428,14 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 	gap: 8px;
 	padding: 8px 12px;
 	background: $light-surface;
-	border: 1px solid $light-border;
+	border: 2px solid $light-border;
 	border-bottom: none;
 	font-weight: 600;
 	font-size: 13px;
 }
 
 @mixin table-list {
-	border: 1px solid $light-border;
+	border: 2px solid $light-border;
 }
 
 @mixin table-row {
@@ -507,7 +508,7 @@ select.event-logger-refresh-select {
 	-moz-appearance: none;
 	appearance: none;
 	background: $dark-bg-tertiary !important;
-	border: 1px solid $dark-border !important;
+	border: 2px solid $dark-border !important;
 	color: $dark-text !important;
 	padding: 0 8px !important;
 	border-radius: 4px !important;

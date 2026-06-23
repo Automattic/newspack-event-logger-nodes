@@ -72,7 +72,7 @@ input.event-logger-request-stream-search {
 	overflow-y: scroll;
 	overflow-x: hidden;
 	background: base.$term-bg;
-	border: 1px solid base.$term-border;
+	border: 2px solid base.$term-border;
 	border-top: none;
 	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
 	padding: 0;
@@ -106,7 +106,7 @@ input.event-logger-request-stream-search {
 	gap: 12px;
 	padding: 6px 8px;
 	background: base.$term-bg-alt;
-	border: 1px solid base.$term-border;
+	border: 2px solid base.$term-border;
 	border-bottom: none;
 	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
 	flex-shrink: 0;
