@@ -4,7 +4,7 @@
 #                                            └→ Stats_Store (memcache, hidden via configure_stats)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
 
-make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.flame-builder.p<partition>
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd requests:consumer:config set_snapshot_node flame-builder
