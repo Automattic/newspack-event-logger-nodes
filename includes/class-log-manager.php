@@ -692,15 +692,11 @@ class Log_Manager {
 		$raw_server_name = $_SERVER['SERVER_NAME'] ?? 'localhost'; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
 		$server_name     = (string) $raw_server_name;
 
-		$_SERVER['UNIQUE_ID']       = self::generate_request_id();
-		$_SERVER['REQUEST_URI']     = '/jobs/' . \ltrim( $handler, '/' );
-		$_SERVER['REQUEST_METHOD']  = 'POST';
-		$_SERVER['PATH_INFO']       = $path_info;
-		$_SERVER['SCRIPT_NAME']     = $path_info;
-		$_SERVER['SCRIPT_URL']      = $path_info;
-		$_SERVER['SCRIPT_URI']      = 'https://' . $server_name . $path_info;
+		$_SERVER['UNIQUE_ID']      = self::generate_request_id();
+		$_SERVER['REQUEST_URI']    = '/jobs/' . \ltrim( $handler, '/' );
+		$_SERVER['REQUEST_METHOD'] = 'POST';
+		$_SERVER['PATH_INFO']      = '';
 		$foundation_base = \defined( 'NEWSPACK_FOUNDATION_BASE' ) ? \NEWSPACK_FOUNDATION_BASE : '';
-		$_SERVER['SCRIPT_FILENAME'] = ( \is_string( $foundation_base ) ? $foundation_base : '' ) . '/template';
 		$_SERVER['QUERY_STRING']    = '';
 		unset(
 			$_SERVER['CONTENT_TYPE'],
