@@ -47,7 +47,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Job_Router_Node extends Node {
 
 	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
-	public const MAX_JOB_SIZE         = 10485760;
+	public const MAX_JOB_SIZE         = 33554432;
 
 	public const KIND_JOB        = 'job';
 	public const KIND_REMOTE_JOB = 'remote_job';
