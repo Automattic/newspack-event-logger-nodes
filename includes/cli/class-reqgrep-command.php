@@ -138,6 +138,13 @@ class Reqgrep_Command {
 	private array $partition_cache = [];
 
 	/**
+	 * When true (production default), __invoke drains all plugin-installed
+	 * output buffers before streaming begins. Tests set this to false to
+	 * preserve PHPUnit's own ob layer.
+	 */
+	private bool $drain_buffers_on_invoke = true;
+
+	/**
 	 * Filter firehose JSONL logs by request id or pattern.
 	 *
 	 * Collects every entry sharing a request id once any line for that rid
@@ -189,19 +196,8 @@ class Reqgrep_Command {
 	 *
 	 * @when after_wp_load
 	 *
-	 * @param array $args       Positional arguments.
-	 * @param array $assoc_args Associative arguments.
-	 */
-	/**
-	 * When true (production default), __invoke drains all plugin-installed
-	 * output buffers before streaming begins. Tests set this to false to
-	 * preserve PHPUnit's own ob layer.
-	 */
-	private bool $drain_buffers_on_invoke = true;
-
-	/**
-	 * @param array<int, string>   $args
-	 * @param array<string, mixed> $assoc_args
+	 * @param array<int, string>   $args       Positional arguments.
+	 * @param array<string, mixed> $assoc_args Associative arguments.
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
 		// Drain any plugin-installed output buffers so streamed echoes don't get
