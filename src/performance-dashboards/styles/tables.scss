@@ -79,10 +79,9 @@
 .event-logger-table--urls {
 	.event-logger-table__header,
 	.event-logger-table__row {
-		grid-template-columns: 60px minmax(0, 1fr) repeat(4, 50px) repeat(
-				4,
-				55px
-			) 60px;
+		grid-template-columns:
+			60px minmax(0, 1fr) repeat(4, 50px) repeat(4, 55px)
+			60px;
 		min-width: 800px;
 	}
 }
