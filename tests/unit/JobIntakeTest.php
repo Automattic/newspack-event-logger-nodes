@@ -155,9 +155,9 @@ class JobIntakeTest extends TestCase {
 	}
 
 	public function test_oversized_payload_rejected(): void {
-		// 11MB JSON > MAX_JOB_SIZE 10MB.
+		// 33MB JSON > MAX_JOB_SIZE 32MB.
 		$intake = new Job_Intake( $this->tmp );
-		$big    = str_repeat( 'x', 11 * 1024 * 1024 );
+		$big    = str_repeat( 'x', 33 * 1024 * 1024 );
 		$this->assertFalse( $intake->write_job( 'big', [ 'data' => $big ] ) );
 		$intake->close();
 	}
