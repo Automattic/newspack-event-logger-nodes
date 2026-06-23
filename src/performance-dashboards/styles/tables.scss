@@ -79,9 +79,10 @@
 .event-logger-table--urls {
 	.event-logger-table__header,
 	.event-logger-table__row {
-		grid-template-columns:
-			60px minmax(0, 1fr) repeat(4, 50px) repeat(4, 55px)
-			60px;
+		grid-template-columns: 60px minmax(0, 1fr) repeat(4, 50px) repeat(
+				4,
+				55px
+			) 60px;
 		min-width: 800px;
 	}
 }
@@ -108,7 +109,7 @@
 
 .event-logger-table__pagination-btn {
 	padding: 4px 10px;
-	border: 1px solid base.$light-border;
+	border: 2px solid base.$light-border;
 	border-radius: 3px;
 	background: var(--np-surface);
 	cursor: pointer;
@@ -183,7 +184,7 @@
 
 		&__nav {
 			background: none;
-			border: 1px solid base.$light-border;
+			border: 2px solid base.$light-border;
 			border-radius: 3px;
 			cursor: pointer;
 			font-size: 10px;
