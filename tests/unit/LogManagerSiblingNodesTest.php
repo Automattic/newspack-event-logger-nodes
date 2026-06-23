@@ -89,8 +89,8 @@ class LogManagerSiblingNodesTest extends TestCase {
 
 		$topic = $this->topic( $lm );
 		$this->assertInstanceOf( Topic_Node::class, $topic );
-		$this->assertSame( 'firehose:topic', $topic->name(), 'firehose Topic uses the canonical bare name' );
-		$this->assertSame( $topic, Core::node( 'firehose:topic' ) );
+		$this->assertSame( '_firehose:topic', $topic->name(), 'firehose Topic uses the canonical bare name' );
+		$this->assertSame( $topic, Core::node( '_firehose:topic' ) );
 	}
 
 	/**
@@ -103,7 +103,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 
 		// Pre-register a configured Topic under the canonical name (stands in for the topology's).
 		$preexisting = new Topic_Node();
-		$preexisting->name( 'firehose:topic' );
+		$preexisting->name( '_firehose:topic' );
 		$preexisting->arguments( self::TEST_DIR . '/logs/firehose.p{partition} 1' );
 
 		$lm = Log_Manager::instance();
