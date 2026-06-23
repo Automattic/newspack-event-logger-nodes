@@ -404,7 +404,7 @@ Multi-input routing. Reads firehose AND jobintake; disambiguates source via Mess
 Validation:
 
 - Handler name pattern `/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/`
-- `MAX_JOB_SIZE = 10485760` (10MB)
+- `MAX_JOB_SIZE = 33554432` (32MB)
 
 Unknown handlers, oversized lines, and invalid handler names log via `Core::print_less_often` (rate-limited).
 
@@ -744,7 +744,7 @@ $config = \Newspack_Event_Logger_Nodes\Config::load_config_defaults(); // file-o
 | `aggregator_verify_ssl` | bool | file-only | `true` | Hub-side cURL `CURLOPT_SSL_VERIFYPEER` for the SSE pull. File-only — no WP-option overlay, no admin form |
 | `aggregator_require_https` | bool | file-only | `true` | Hub-side scheme enforcement on registered spoke URLs. File-only |
 | `remote_num_segments` | int | file-only | `2` | Hub-side default segment count for remote-pull partitions |
-| `remote_segment_size` | int | file-only | `10485760` (10MB) | Hub-side default segment size for remote-pull partitions |
+| `remote_segment_size` | int | file-only | `33554432` (32MB) | Hub-side default segment size for remote-pull partitions |
 | `remote_max_lifespan` | int | file-only | `3600` | Minimum spoke-side retention the hub expects to be able to seek into |
 
 ### Substrate option keys (read but not owned here)

@@ -37,7 +37,7 @@ class Job_Intake {
 	/**
 	 * Maximum job size in bytes.
 	 */
-	private const MAX_JOB_SIZE = 10485760;
+	private const MAX_JOB_SIZE = 33554432;
 
 	/**
 	 * Round-robin counter for partition distribution.
