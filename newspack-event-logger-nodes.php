@@ -76,6 +76,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 
 	if ( \function_exists( 'is_admin' ) && \is_admin() ) {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();
+		\Newspack_Event_Logger_Nodes\Current_Request_Overlay::init();
 	}
 };
 

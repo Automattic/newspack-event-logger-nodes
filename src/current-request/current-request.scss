@@ -1,0 +1,31 @@
+// Current-Request overlay tab. Reuses the shared `.nodes-cards` / `.nodes-card`
+// look; only the surrounding chrome + the URL line + trace button are local.
+.eln-current-request {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 16px;
+
+	&__url {
+		font-family: monospace;
+		font-size: 12px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		opacity: 0.85;
+	}
+
+	&__trace {
+		align-self: flex-start;
+	}
+
+	&--empty,
+	&--loading,
+	&--processing {
+		opacity: 0.85;
+	}
+
+	.nodes-card--error .nodes-card__value {
+		color: var( --np-error, #c00 );
+	}
+}
