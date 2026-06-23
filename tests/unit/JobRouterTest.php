@@ -185,7 +185,8 @@ class JobRouterTest extends TestCase {
 	}
 
 	public function test_oversized_entry_dropped(): void {
-		$entry = $this->firehose_entry( 'job', 'big_job', [ 'data' => str_repeat( 'x', 11 * 1024 * 1024 ) ] );
+		// 33MB entry > MAX_JOB_SIZE 32MB.
+		$entry = $this->firehose_entry( 'job', 'big_job', [ 'data' => str_repeat( 'x', 33 * 1024 * 1024 ) ] );
 		$message = $this->msg( 'firehose:consumer', $entry );
 		$this->jr->fill( $message );
 		$this->assertCount( 0, $this->sink->captured );
