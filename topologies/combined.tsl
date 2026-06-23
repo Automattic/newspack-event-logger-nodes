@@ -1,9 +1,9 @@
 #
 # Combined Request_Builder + Flame_Builder + Job_Router topology.
 #
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.p<partition>
-make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.p<partition>
-make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.request-builder.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.flame-builder.p<partition>
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.jobs.p<partition>
 make_node Request_Builder request-builder 100 3
 make_node Flame_Builder flame-builder
 make_node Job_Router job-router

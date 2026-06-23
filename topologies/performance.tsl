@@ -1,8 +1,8 @@
 #
 # Request_Builder + Flame_Builder topology.
 #
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.p<partition>
-make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.request-builder.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.flame-builder.p<partition>
 make_node Request_Builder request-builder 100 3
 make_node Flame_Builder flame-builder
 make_node Partition completed:partition <config:logs_dir>/completed.p<partition> 1048576 <config:num_segments> 0
