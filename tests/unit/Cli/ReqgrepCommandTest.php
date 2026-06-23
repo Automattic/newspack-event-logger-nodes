@@ -1960,4 +1960,18 @@ class ReqgrepCommandTest extends TestCase {
 			$this->rmdir_recursive( $base_dir );
 		}
 	}
+
+	public function test_invoke_docblock_carries_wp_cli_synopsis(): void {
+		// WP-CLI builds `wp nodes reqgrep --help` from the doc comment
+		// IMMEDIATELY preceding __invoke, so the synopsis must live there — not
+		// on a docblock orphaned by an intervening property declaration.
+		$doc = ( new \ReflectionMethod( Reqgrep_Command::class, '__invoke' ) )->getDocComment();
+
+		$this->assertIsString( $doc );
+		$this->assertStringContainsString( '## OPTIONS', $doc );
+		$this->assertStringContainsString( '[<pattern>]', $doc );
+		$this->assertStringContainsString( '[--follow]', $doc );
+		$this->assertStringContainsString( '## EXAMPLES', $doc );
+		$this->assertStringContainsString( 'wp nodes reqgrep --follow', $doc );
+	}
 }
