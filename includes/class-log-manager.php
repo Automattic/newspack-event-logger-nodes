@@ -362,12 +362,12 @@ class Log_Manager {
 		$segment_size = self::to_int( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
 		$num_segments = self::to_int( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
 		$max_lifespan = self::to_int( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
-		$existing = Core::node( 'firehose:topic' );
+		$existing = Core::node( '_firehose:topic' );
 		if ( $existing instanceof Topic_Node ) {
 			$this->topic = $existing;
 		} else {
 			$this->topic = new Topic_Node();
-			$this->topic->name( 'firehose:topic' );
+			$this->topic->name( '_firehose:topic' );
 			$this->topic->arguments( "{$dir_template} {$num_partitions} {$segment_size} {$num_segments} {$max_lifespan}" );
 			$this->topic->patron( $this->topic );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
