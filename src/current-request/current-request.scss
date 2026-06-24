@@ -8,6 +8,18 @@
 	padding: 16px;
 	font-family: -apple-system, blinkmacsystemfont, "Segoe UI", roboto,
 		oxygen-sans, ubuntu, cantarell, "Helvetica Neue", sans-serif;
+	// Reset the console's 13px/1.45 mono typography too, so the reused dashboard
+	// pieces size like the dashboard (only the family was overridden before).
+	font-size: 13px;
+	line-height: 1.5;
+
+	// The "Request: <rid>" heading — mirrors the dashboard modal's title.
+	&__title {
+		margin: 0;
+		font-size: 20px;
+		font-weight: 600;
+		word-break: break-all;
+	}
 
 	// Request-detail header: the URL/Time/Duration/Memory/Status block on the
 	// left, the "View full trace" button pinned to the upper-right.

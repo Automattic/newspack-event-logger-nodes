@@ -161,7 +161,10 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 	const hasProfiles = !! request.profiles;
 
 	return (
-		<div className="eln-current-request">
+		<div className="eln-current-request newspack-nodes-theme">
+			<h2 className="eln-current-request__title">
+				{ __( 'Request:', 'newspack-event-logger-nodes' ) } { rid }
+			</h2>
 			<div className="eln-current-request__head">
 				<div className="eln-current-request__info">
 					<p>
