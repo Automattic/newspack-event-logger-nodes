@@ -61,7 +61,9 @@ class Settings_Schema {
 					section: $general,
 					// An unchecked box is a real "off" override, not a reset.
 					delete_on_blank: false,
-					restart: 'supervisor_only',
+					// Cached in the Log_Manager per-process singleton, which every
+					// long-lived worker holds → restart every live topology.
+					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'enable_logging_callback' ],
 					register_args: [],
@@ -95,7 +97,8 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Log Events', 'newspack-event-logger-nodes' ),
 					section: $instrumentation,
 					delete_on_blank: false,
-					restart: [ 'job-workers' ],
+					// App\Core in every worker binds these hooks via add_filter at construction — frozen per-process.
+					restart: 'all',
 					sanitize: [ Admin::class, 'sanitize_array_strings' ],
 					render: [ Admin::class, 'log_events_callback' ],
 					register_args: [ 'autoload' => false ],
@@ -106,7 +109,8 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Custom Events', 'newspack-event-logger-nodes' ),
 					section: $instrumentation,
 					delete_on_blank: false,
-					restart: [ 'job-workers' ],
+					// Folded into App\Core's instrumented hook set at construction in every worker.
+					restart: 'all',
 					sanitize: [ Admin::class, 'sanitize_custom_events' ],
 					render: [ Admin::class, 'custom_events_callback' ],
 					register_args: [ 'autoload' => false ],
@@ -121,7 +125,8 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Auto-Tune', 'newspack-event-logger-nodes' ),
 					section: $workers,
 					id: 'auto_tune',
-					restart: [ 'request-workers' ],
+					// Consumed by Flame_Builder via `cmd flame-builder:config set_auto_tune`.
+					restart: [ 'Flame_Builder' ],
 					sanitize: [ Admin::class, 'sanitize_int_or_empty' ],
 					render: [ Admin::class, 'auto_tune_callback' ],
 					register_args: [ 'autoload' => false ],
@@ -132,7 +137,8 @@ class Settings_Schema {
 					key: 'auto_protect_time_threshold',
 					type: 'float',
 					section: $workers,
-					restart: [ 'request-workers' ],
+					// Consumed by Flame_Builder via `cmd flame-builder:config set_auto_tune`.
+					restart: [ 'Flame_Builder' ],
 					sanitize: [ Admin::class, 'sanitize_float_or_empty' ],
 					render: null,
 					register_args: [ 'autoload' => false ],
@@ -143,7 +149,8 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Significant Events', 'newspack-event-logger-nodes' ),
 					section: $workers,
 					delete_on_blank: false,
-					restart: [ 'request-workers' ],
+					// Cached by App\Core (every worker) AND Flame_Builder — 'all' is the honest superset.
+					restart: 'all',
 					sanitize: [ Admin::class, 'sanitize_array_strings' ],
 					render: [ Admin::class, 'significant_events_callback' ],
 					register_args: [ 'autoload' => false ],
@@ -156,7 +163,8 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Log Memory', 'newspack-event-logger-nodes' ),
 					section: $debugging,
 					delete_on_blank: false,
-					restart: [ 'job-workers' ],
+					// Cached in the Log_Manager per-process singleton (every worker).
+					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'log_memory_callback' ],
 				),
@@ -166,7 +174,8 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Flush Every Line', 'newspack-event-logger-nodes' ),
 					section: $debugging,
 					delete_on_blank: false,
-					restart: [ 'job-workers' ],
+					// Cached in the Log_Manager per-process singleton (every worker).
+					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'flush_every_line_callback' ],
 				),

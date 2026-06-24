@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Application-setting saves now restart the right workers.** `Admin::maybe_request_worker_restart()` touched dead worker-group lock dirs (`request-workers`/`job-workers`.p{N}.lock.d) that match no live topology — so every settings save silently restarted nothing. It now classifies each setting by its **consumer node type** (`Settings_Schema` `restart:` keys) and resolves that to the live topologies whose graphs instantiate that node via the substrate `\Newspack_Nodes\Config_System\Restart_Planner`, touching each real topology's per-partition lock dir. Reclassified: `enable_logging` / `log_memory` / `flush_every_line` → `all` (cached in the per-process `Log_Manager` singleton every worker holds); `log_events` / `custom_events` / `significant_events` → `all` (`App\Core`, constructed in EVERY worker, binds the instrumented hook set from these three lists via `add_filter` at construction, so the set is frozen per-process and a change needs a worker restart — `App\Core` is not a Node and can't be targeted by node type); `auto_disable_threshold` / `auto_protect_time_threshold` → `Flame_Builder`; `stats_salt` (flush handler) → `Flame_Builder`; `log_urls` / `skip_urls` stay `[]` (read per-request in the web process).
+
 ## [0.20.0] - 2026-06-24
 
 ### Changed
