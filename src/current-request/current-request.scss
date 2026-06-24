@@ -13,6 +13,12 @@
 	font-size: 13px;
 	line-height: 1.5;
 
+	// WP-admin's fixed #1d2327 heading color vanishes on dark hub themes; follow the theme ink (fallback = WP heading color).
+	h2,
+	h3 {
+		color: var(--ink, #1d2327);
+	}
+
 	// Top row: the "Request: <rid>" heading on the left, "View full trace"
 	// pinned to the upper-right corner on the same row.
 	&__head {
