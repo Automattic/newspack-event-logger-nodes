@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`hub-control` now seeds each spoke's own `remote_*` settings so they propagate down a chain.** Each `remote_*` geometry setting (`remote_num_segments` / `remote_segment_size` / `remote_max_lifespan`) is added to `settings-sync` twice — once mapping to the spoke's stripped option (its actual config) and once to the spoke's own `remote_*` copy — so a spoke acting as a hub forwards the value onward to ITS spokes. Relies on the substrate's repeatable `add_setting`.
+
 ### Added
 
 - **Current-Request overlay tab** — a Debugbar/Telescope-style "Request" tab in the debug overlay that summarizes the page's own request (URL, duration, status, result, peak memory, timestamp), renders its **flame graph + profile breakdown** (reusing the performance dashboard's `FlameGraph` / `RequestProfile`), and deep-links to its full performance trace. ELN owns it (it owns the request lifecycle): a `current-request` bundle registers an `overlay`-scope devtools tab via the substrate's `newspack_nodes/devtools_tab_bundles` filter, and `Current_Request_Overlay` injects the request id + partition into a distinct `window.NewspackEventLoggerNodes` global (not the shared, clobber-prone `NewspackNodesData`). The tab fetches the summary from the `performance` CI's `request_detail` verb by `{rid, partition}` (both from `Log_Manager`, which gains a `get_partition()` getter), with a "still processing" retry state for the request-builder's async lag. The bundle loads on the hub (via the filter) AND on the ELN performance pages that embed the overlay (performance / errors / gyroscope / stream), so the tab appears wherever the overlay mounts.
