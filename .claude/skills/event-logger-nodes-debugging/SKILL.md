@@ -47,7 +47,7 @@ Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the 
 wp nodes cli combined.p0
 ```
 
-Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes ls`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (`job-workers` / `request-workers` are NOT topologies — they're worker-restart labels declared in `Settings_Schema`'s `restart:` keys.)
+Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes ls`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (Worker-restart classification is unrelated to topology names: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — e.g. `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
 
 From the prompt:
 
