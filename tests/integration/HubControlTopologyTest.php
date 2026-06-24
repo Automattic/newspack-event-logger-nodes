@@ -110,23 +110,28 @@ class HubControlTopologyTest extends TestCase {
 		$map = $registry->getValue( Core::node( 'settings-sync' ) );
 
 		$this->assertCount( 13, $map );
-		// Substrate-remap (TO=settings). The remote-spoke geometry options now
-		// live under the substrate `newspack_nodes_remote_*` names.
+		// Substrate-remap (TO=settings). The remote-spoke geometry options live
+		// under `newspack_nodes_remote_*` and each maps TWICE: to the spoke's
+		// stripped option AND to its own remote_* copy, so a spoke propagates the
+		// value onward to ITS spokes. Registry is a LIST of {to,remote} per local.
 		$this->assertSame(
-			[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_segments' ],
+			[
+				[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_segments' ],
+				[ 'to' => 'settings', 'remote' => 'newspack_nodes_remote_num_segments' ],
+			],
 			$map['newspack_nodes_remote_num_segments']
 		);
 		$this->assertSame(
-			[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_partitions' ],
+			[ [ 'to' => 'settings', 'remote' => 'newspack_nodes_num_partitions' ] ],
 			$map['newspack_nodes_num_partitions']
 		);
 		// Perf (TO=performance, remote = same full option name).
 		$this->assertSame(
-			[ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_log_urls' ],
+			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_log_urls' ] ],
 			$map['newspack_event_logger_nodes_log_urls']
 		);
 		$this->assertSame(
-			[ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_flush_every_line' ],
+			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_flush_every_line' ] ],
 			$map['newspack_event_logger_nodes_flush_every_line']
 		);
 	}
