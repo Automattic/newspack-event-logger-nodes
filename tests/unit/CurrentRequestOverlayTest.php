@@ -62,6 +62,16 @@ class CurrentRequestOverlayTest extends TestCase {
 		$this->assertStringNotContainsString( 'NewspackNodesData', $js );
 	}
 
+	public function test_is_overlay_page_matches_the_overlay_embedding_perf_pages(): void {
+		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-stream' ) );
+		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-performance' ) );
+		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-gyroscope' ) );
+		// Hub is the substrate filter's job, not ours; unrelated pages never match.
+		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-hub' ) );
+		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'edit.php' ) );
+		$this->assertFalse( Current_Request_Overlay::is_overlay_page( '' ) );
+	}
+
 	public function test_inline_data_js_with_no_rid_still_emits_a_safe_global(): void {
 		$js = Current_Request_Overlay::inline_data_js( '', 0, '' );
 
