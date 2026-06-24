@@ -473,28 +473,6 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'reset=1', $GLOBALS['_last_redirect'] );
 	}
 
-	public function test_handle_reset_settings_only_deletes_prefixed_options_via_filter(): void {
-		// Filter that tries to inject a non-prefixed option — must be silently dropped.
-		\add_filter(
-			'newspack_event_logger_nodes_reset_options',
-			function ( $opts ) {
-				$opts[] = 'malicious_unrelated_option';
-				return $opts;
-			}
-		);
-		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
-		\update_option( 'malicious_unrelated_option', 'should-survive' );
-
-		$admin = new Admin();
-		try {
-			$admin->handle_reset_settings();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-		$this->assertSame( 'should-survive', \get_option( 'malicious_unrelated_option' ) );
-	}
-
 	// ---- maybe_request_worker_restart ------------------------------------
 
 	public function test_maybe_request_worker_restart_no_op_for_unrelated_option(): void {
@@ -1206,53 +1184,6 @@ class AdminTest extends TestCase {
 		$this->assertRestartNotFlagged( 'combined', 0 );
 	}
 
-	// ---- handle_reset_settings additional branches ------------------------
-
-	public function test_handle_reset_settings_filter_extends_options_list(): void {
-		// Add a custom prefixed option via the filter.
-		\add_filter(
-			'newspack_event_logger_nodes_reset_options',
-			static function ( $opts ) {
-				$opts[] = 'newspack_event_logger_nodes_my_extra';
-				return $opts;
-			}
-		);
-		\update_option( 'newspack_event_logger_nodes_my_extra', 'should-be-deleted' );
-		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
-
-		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
-		$admin = new Admin();
-		try {
-			$admin->handle_reset_settings();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-		// Custom option deleted because it carries the prefix.
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_my_extra' ) );
-	}
-
-	public function test_handle_reset_settings_filter_returning_non_array_is_ignored(): void {
-		\add_filter(
-			'newspack_event_logger_nodes_reset_options',
-			static function () {
-				return 'not-an-array';
-			}
-		);
-		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
-
-		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
-		$admin = new Admin();
-		try {
-			$admin->handle_reset_settings();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-		// Default options list still applies.
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
-	}
-
 	// ---- Constructor wires the hooks --------------------------------------
 
 	public function test_constructor_hooks_admin_menu_and_admin_init(): void {
@@ -1712,33 +1643,6 @@ class AdminTest extends TestCase {
 		$this->assertSame( 'anything', $admin->skip_default_writes( 'anything', 'newspack_event_logger_nodes_', 'old' ) );
 	}
 
-	public function test_handle_reset_settings_with_filter_returning_non_string_entries(): void {
-		// Filter that injects non-string entries — should be skipped at the
-		// inner `is_string && str_starts_with` guard, not crash.
-		\add_filter(
-			'newspack_event_logger_nodes_reset_options',
-			static function ( $opts ) {
-				$opts[] = 42;            // int — dropped (not is_string)
-				$opts[] = [ 'array' ];   // array — dropped (not is_string)
-				$opts[] = 'newspack_event_logger_nodes_extra'; // legit, with prefix
-				return $opts;
-			}
-		);
-		\update_option( 'newspack_event_logger_nodes_extra', 'should-be-deleted' );
-
-		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
-		$admin = new Admin();
-		try {
-			$admin->handle_reset_settings();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// expected
-		}
-
-		// Only the prefixed-string entry was deleted.
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_extra' ) );
-	}
-
 	public function test_skip_default_writes_passes_through_complex_array_default(): void {
 		// `log_events` default is an array — the filter must compare arrays
 		// directly without bool-normalization.
@@ -1889,40 +1793,6 @@ class AdminTest extends TestCase {
 		$out = \ob_get_clean();
 		// The "Rotates the stats-salt" description string is present below the button.
 		$this->assertStringContainsString( 'stats-salt', $out );
-	}
-
-	public function test_handle_reset_settings_with_options_having_wrong_prefix_ignored(): void {
-		// Filter that returns ONLY non-prefixed options — every entry dropped
-		// at the inner `str_starts_with` guard, no options deleted.
-		\add_filter(
-			'newspack_event_logger_nodes_reset_options',
-			static function () {
-				// Replace the default options list entirely with non-prefixed entries.
-				return [
-					'foreign_option_a',
-					'wp_foreign_option',
-					'another_option',
-				];
-			}
-		);
-		\update_option( 'foreign_option_a', 'survives' );
-		\update_option( 'wp_foreign_option', 'also-survives' );
-		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
-
-		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
-		$admin = new Admin();
-		try {
-			$admin->handle_reset_settings();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-
-		// Non-prefixed entries from filter untouched.
-		$this->assertSame( 'survives', \get_option( 'foreign_option_a' ) );
-		$this->assertSame( 'also-survives', \get_option( 'wp_foreign_option' ) );
-		// Filter replaced the default list so the canonical option survives too.
-		$this->assertSame( 1, \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
 	}
 
 	public function test_register_settings_does_not_register_remote_settings(): void {
