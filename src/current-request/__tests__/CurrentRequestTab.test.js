@@ -1,8 +1,9 @@
 /**
  * Current-Request overlay tab — summarizes THIS page's request (the one the
- * overlay is riding) and deep-links to the full performance trace. Data comes
- * from the `performance` CI's `request_search` verb, addressed by the rid the
- * page localizes into `window.NewspackEventLoggerNodes.currentRequest`.
+ * overlay is riding), renders its flame graph + profile breakdown, and
+ * deep-links to the full performance trace. Data comes from the `performance`
+ * CI's `request_detail` verb, addressed by the rid + partition the page
+ * localizes into `window.NewspackEventLoggerNodes.currentRequest`.
  */
 
 import {
@@ -15,6 +16,24 @@ import {
 } from '@newspack-nodes/runtime';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import CurrentRequestTab from '../CurrentRequestTab';
+
+// The flame graph (d3-heavy, lazy) + profiles breakdown are reused from the
+// performance dashboard; mock them to sentinels so the tab's wiring is the unit
+// under test, not d3.
+jest.mock( '../../performance-dashboards/FlameGraph', () => ( {
+	__esModule: true,
+	default: ( { data } ) => (
+		<div data-testid="flame">{ data && data.name }</div>
+	),
+} ) );
+jest.mock( '../../performance-dashboards/RequestProfile', () => ( {
+	__esModule: true,
+	default: ( { profiles } ) => (
+		<div data-testid="profiles">
+			{ profiles && Object.keys( profiles ).join( ',' ) }
+		</div>
+	),
+} ) );
 
 // A one-shot CommandClient seam (matches getCommandClient().send): resolves the
 // next reply Message. `error: true` returns a TM_ERROR reply (verb threw, e.g.
@@ -52,6 +71,13 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 		status_code: 200,
 		error_status: '-',
 		peak_mb: 64,
+		timestamp: 1700000000,
+		flame_data: {
+			name: 'request',
+			value: 432,
+			children: [ { name: 'x' } ],
+		},
+		profiles: { db: 10, hooks: 20 },
 	} );
 
 	let view;
@@ -60,6 +86,8 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 			<CurrentRequestTab commandClient={ client } />
 		);
 	} );
+	// Flush the lazy FlameGraph import (Suspense) after the request_detail fetch.
+	await act( async () => {} );
 
 	expect( client.send ).toHaveBeenCalledWith( {
 		to: 'performance',
@@ -70,8 +98,16 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect( text ).toContain( '432' ); // duration ms
 	expect( text ).toContain( '200' ); // status code
 	expect( text ).toContain( '/wp-admin/index.php' ); // url
+	expect( text ).toContain( 'Time' ); // the timestamp card label
 	const link = view.container.querySelector( 'a[href*="request=abc123"]' );
 	expect( link ).not.toBeNull();
+	// Flame graph + profiles wired from the verb's flame_data / profiles.
+	expect(
+		view.container.querySelector( '[data-testid="flame"]' )
+	).not.toBeNull();
+	expect(
+		view.container.querySelector( '[data-testid="profiles"]' )
+	).not.toBeNull();
 } );
 
 test( 'shows a still-processing state (with retry) when the request is not in the log yet', async () => {
