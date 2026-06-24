@@ -44,8 +44,8 @@ use Newspack_Nodes\CLI;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
+use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Config_System\Settings_Renderer;
-use Newspack_Nodes\Lock_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -923,23 +923,14 @@ class Admin {
 	 * partitioning, memcache_servers, etc.) are handled by
 	 * `\Newspack_Nodes\Admin\Admin::maybe_request_worker_restart()`.
 	 *
-	 * Workers pick up restart requests on their next graceful exit point
-	 * (segment-close in WorkerBase). Categories:
-	 *
-	 *  no_impact_options:        runtime-only; checked per-request, no restart needed.
-	 *  supervisor_only_options:  the supervisor refreshes config each loop;
-	 *                            no worker restart.
-	 *  request_workers_options:  auto-disable / significant-events / stats
-	 *                            salt — request-side workers (RequestBuilder,
-	 *                            FlameBuilder consumer chain) re-read these.
-	 *  job_workers_options:      log_events / custom_events / log_memory /
-	 *                            flush_every_line — JobRouter / JobWorker
-	 *                            handler registration depends on these.
-	 *
-	 * Worker groups in this plugin:
-	 *  - `request-workers` (RequestBuilder + FlameBuilder)
-	 *  - `job-workers`     (JobRouter + JobWorker)
-	 *  Lock dirs: `{base_dir}/locks/{group}.p{N}.lock.d` per partition.
+	 * The save's restart classification is by CONSUMER NODE TYPE (the Field's
+	 * `restart:` key — 'supervisor_only', [], 'all', or node-type tokens like
+	 * `Flame_Builder` / `Discovery_Collector`), which `Restart_Planner` resolves
+	 * to the set of live topologies whose graphs instantiate that node and touches
+	 * each one's per-partition lock dir. Workers pick the flag up at their next
+	 * graceful exit point (segment-close in Worker_Base). `stats_salt` is rotated
+	 * by the flush handler (not a settings Field), so it's classified here — its
+	 * stats producer is `Stats_Store`, which runs inside `Flame_Builder`.
 	 *
 	 * @param string $option Option name (full WP option key).
 	 */
@@ -952,45 +943,18 @@ class Admin {
 		// later in the same request.
 		Config::reset();
 
-		$short = \substr( $option, \strlen( self::OPTION_PREFIX ) );
-
-		// The restart class derives from the single Settings_Schema declaration:
-		// 'supervisor_only' (refreshes config each loop → no worker restart), a
-		// worker-group array, or [] (no impact / unknown key). `stats_salt` is
-		// rotated by the flush handler, not a settings Field, so it's classified
-		// here (request-side stats producers).
+		$short   = \substr( $option, \strlen( self::OPTION_PREFIX ) );
 		$restart = 'stats_salt' === $short
-			? [ 'request-workers' ]
+			? [ 'Flame_Builder' ]
 			: Settings_Schema::get()->restart_for( $short );
-		if ( 'supervisor_only' === $restart ) {
-			return;
-		}
-		$worker_groups = \is_array( $restart ) ? $restart : [];
 
-		if ( empty( $worker_groups ) ) {
-			return;
-		}
-
+		// Wrap the whole resolve+touch: the planner re-enters Config::load_config() via Bootstrap.
 		try {
-			$config             = Config::load_config();
-			$locks_dir          = Config::get_locks_directory();
-			$num_partitions_cfg = $config['num_partitions'] ?? 1;
-			$num_partitions     = \is_numeric( $num_partitions_cfg ) ? (int) $num_partitions_cfg : 0;
+			$locks_dir = Config::get_locks_directory();
+			Restart_Planner::request_restarts( $restart, $locks_dir );
 		} catch ( \Throwable $e ) {
-			// Locks dir not creatable, base dir misconfigured, etc. Best-effort:
-			// the next supervisor pass will pick up the new config.
+			// Best-effort: the next supervisor pass picks up the new config.
 			return;
-		}
-
-		// Touch the restart flag file inside each affected lock dir. The lock
-		// holder polls should_restart() from its drain loop and exits cleanly
-		// at the next tick. No-op if the dir doesn't exist (worker was never
-		// started, or dir was cleaned up after a deploy).
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			foreach ( $worker_groups as $group ) {
-				$lock_dir = "{$locks_dir}/{$group}.p{$p}.lock.d";
-				Lock_Node::request_restart_at( $lock_dir );
-			}
 		}
 	}
 }
