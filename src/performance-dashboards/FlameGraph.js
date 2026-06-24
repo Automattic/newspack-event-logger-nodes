@@ -498,20 +498,38 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		};
 	}, [] );
 
-	// Handle resize.
+	// Re-fit the chart when its CONTAINER resizes — an overlay panel resize, a
+	// layout change, etc. A `window` resize listener only catches the browser
+	// window resizing, NOT the panel the flame graph lives in, so the chart stayed
+	// at its old width after a panel resize. Debounced so it re-fits once the
+	// resize settles rather than every frame of a drag.
 	useEffect( () => {
-		const handleResize = () => {
-			if ( chartRef.current && containerRef.current && prunedData ) {
-				const width = containerRef.current.clientWidth || 800;
-				chartRef.current.width( width );
-				d3.select( containerRef.current )
-					.datum( prunedData )
-					.call( chartRef.current );
+		const container = containerRef.current;
+		if ( ! container || typeof window.ResizeObserver === 'undefined' ) {
+			return undefined;
+		}
+		let timer = null;
+		const ro = new window.ResizeObserver( () => {
+			if ( timer ) {
+				clearTimeout( timer );
 			}
+			timer = setTimeout( () => {
+				if ( chartRef.current && containerRef.current && prunedData ) {
+					const width = containerRef.current.clientWidth || 800;
+					chartRef.current.width( width );
+					d3.select( containerRef.current )
+						.datum( prunedData )
+						.call( chartRef.current );
+				}
+			}, 150 );
+		} );
+		ro.observe( container );
+		return () => {
+			if ( timer ) {
+				clearTimeout( timer );
+			}
+			ro.disconnect();
 		};
-
-		window.addEventListener( 'resize', handleResize );
-		return () => window.removeEventListener( 'resize', handleResize );
 	}, [ prunedData ] );
 
 	// Gate the empty state on the original data — pruning is a render
