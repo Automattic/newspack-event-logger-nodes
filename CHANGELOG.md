@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The settings page uses stock WP buttons.** Dropped the custom `.submit .button-primary` re-skin (custom radius, hover-lift transform, box-shadow) from the Event Aggregator and Performance Logger `settings.scss`, so the standalone `add_options_page` settings form's submit button renders as a plain WP core-ui primary button.
+
 ### Removed
 
 - **The unused `newspack_event_logger_nodes_reset_options` filter.** It let plugins extend the reset-to-defaults option list, but had no consumers in any plugin (YAGNI). `handle_reset_settings()` now resets exactly the schema's `setting_option_names()`. Also drops a now-redundant `is_string()` guard (the list is already `array<int,string>`).
