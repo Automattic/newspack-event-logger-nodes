@@ -134,9 +134,8 @@ class Config {
 
 		// Presence-based overlay: a stored option (even '' / [] / false / 0) wins
 		// over the file default; only an absent option falls back. Shared rule —
-		// see Config_System\Options_Overlay. The overlay key-set comes from the
-		// single Settings_Schema (the remote_* direct-read options stay OUT
-		// of it — see Settings_Schema).
+		// see Config_System\Options_Overlay. The overlay key-set is every
+		// non-empty-key field in the single Settings_Schema.
 		$schema = Settings_Schema::get();
 		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
 			$defaults,

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The unused `newspack_event_logger_nodes_reset_options` filter.** It let plugins extend the reset-to-defaults option list, but had no consumers in any plugin (YAGNI). `handle_reset_settings()` now resets exactly the schema's `setting_option_names()`. Also drops a now-redundant `is_string()` guard (the list is already `array<int,string>`).
+
 ### Added
 
 - **Read-only "Effective Configuration" panel on the Event Logger settings page.** Below the settings form, a `widefat` table now reports, per application setting: the stored option value (or "— (file default)" when unset), the value the next worker will load (overlay-resolved `Config::load_config()`), any active overlay override, and the live restart impact — e.g. `significant_events` (classified `all`) shows "Restarts: <every active topology>" (or "(no active consumer)" when none are active). It delegates to the shared substrate `\Newspack_Nodes\Config_System\Settings_Renderer::render_effective_config_section()` (passing ELN's own `Settings_Schema`, option prefix, and `Config::load_config()`), so the panel is the same one implementation `newspack-nodes` uses — no duplicated logic to drift. Hooked to ELN's existing `newspack_event_logger_nodes/settings_after_form` action.

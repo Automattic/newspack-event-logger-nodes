@@ -696,9 +696,7 @@ class Admin {
 	/**
 	 * Reset-to-defaults handler — admin-post target.
 	 *
-	 * Nonce + permission checks before deleting any options. Allows child
-	 * plugins to extend the reset list via the
-	 * `newspack_event_logger_nodes_reset_options` filter.
+	 * Nonce + permission checks before deleting any options.
 	 */
 	public function handle_reset_settings(): void {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
@@ -713,14 +711,9 @@ class Admin {
 		// Derive the base reset list from the Schema so this handler works even
 		// when invoked before `register_settings()` populated the cached property.
 		$options = Settings_Schema::get()->setting_option_names();
-		if ( \function_exists( 'apply_filters' ) ) {
-			$filtered = \apply_filters( 'newspack_event_logger_nodes_reset_options', $options );
-			if ( \is_array( $filtered ) ) {
-				$options = $filtered;
-			}
-		}
+
 		foreach ( $options as $option ) {
-			if ( \is_string( $option ) && \str_starts_with( $option, self::OPTION_PREFIX ) ) {
+			if ( \str_starts_with( $option, self::OPTION_PREFIX ) ) {
 				\delete_option( $option );
 			}
 		}
