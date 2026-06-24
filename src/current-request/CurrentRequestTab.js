@@ -162,65 +162,56 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 
 	return (
 		<div className="eln-current-request newspack-nodes-theme">
-			<h2 className="eln-current-request__title">
-				{ __( 'Request:', 'newspack-event-logger-nodes' ) } { rid }
-			</h2>
 			<div className="eln-current-request__head">
-				<div className="eln-current-request__info">
-					<p>
-						<strong>
-							{ __( 'URL:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ request.request_method || request.method || '' }{ ' ' }
-						{ request.url }
-					</p>
-					<p>
-						<strong>
-							{ __( 'Time:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ timestamp
-							? new Date( timestamp * 1000 ).toLocaleString()
-							: '—' }
-					</p>
-					<p>
-						<strong>
-							{ __( 'Duration:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ ( Number( request.duration_ms ) || 0 ).toFixed( 2 ) }{ ' ' }
-						ms
-					</p>
-					{ Number( request.peak_mb ) > 0 && (
-						<p>
-							<strong>
-								{ __(
-									'Memory:',
-									'newspack-event-logger-nodes'
-								) }
-							</strong>{ ' ' }
-							{ Number( request.peak_mb ) } MB
-						</p>
-					) }
-					{ Number( request.status_code ) > 0 && (
-						<p>
-							<strong>
-								{ __(
-									'Status:',
-									'newspack-event-logger-nodes'
-								) }
-							</strong>{ ' ' }
-							{ Number( request.status_code ) }
-							{ isError
-								? ` — ${ statusLabel( errorStatus ) }`
-								: '' }
-						</p>
-					) }
-				</div>
+				<h2 className="eln-current-request__title">
+					{ __( 'Request:', 'newspack-event-logger-nodes' ) } { rid }
+				</h2>
 				<a
 					className="button button-secondary eln-current-request__trace"
 					href={ traceUrl }
 				>
 					{ __( 'View full trace', 'newspack-event-logger-nodes' ) }
 				</a>
+			</div>
+			<div className="eln-current-request__info">
+				<p>
+					<strong>
+						{ __( 'URL:', 'newspack-event-logger-nodes' ) }
+					</strong>{ ' ' }
+					{ request.request_method || request.method || '' }{ ' ' }
+					{ request.url }
+				</p>
+				<p>
+					<strong>
+						{ __( 'Time:', 'newspack-event-logger-nodes' ) }
+					</strong>{ ' ' }
+					{ timestamp
+						? new Date( timestamp * 1000 ).toLocaleString()
+						: '—' }
+				</p>
+				<p>
+					<strong>
+						{ __( 'Duration:', 'newspack-event-logger-nodes' ) }
+					</strong>{ ' ' }
+					{ ( Number( request.duration_ms ) || 0 ).toFixed( 2 ) } ms
+				</p>
+				{ Number( request.peak_mb ) > 0 && (
+					<p>
+						<strong>
+							{ __( 'Memory:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ Number( request.peak_mb ) } MB
+					</p>
+				) }
+				{ Number( request.status_code ) > 0 && (
+					<p>
+						<strong>
+							{ __( 'Status:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ Number( request.status_code ) }
+						{ isError ? ` — ${ statusLabel( errorStatus ) }` : '' }
+					</p>
+				) }
 			</div>
 			{ hasFlame && (
 				<div className="eln-current-request__flame">

@@ -13,27 +13,26 @@
 	font-size: 13px;
 	line-height: 1.5;
 
+	// Top row: the "Request: <rid>" heading on the left, "View full trace"
+	// pinned to the upper-right corner on the same row.
+	&__head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
 	// The "Request: <rid>" heading — mirrors the dashboard modal's title.
 	&__title {
 		margin: 0;
+		min-width: 0;
 		font-size: 20px;
 		font-weight: 600;
 		word-break: break-all;
 	}
 
-	// Request-detail header: the URL/Time/Duration/Memory/Status block on the
-	// left, the "View full trace" button pinned to the upper-right.
-	&__head {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 16px;
-	}
-
+	// URL/Time/Duration/Memory/Status block, full-width below the head row.
 	&__info {
-		flex: 1 1 auto;
-		min-width: 0;
-
 		p {
 			margin: 4px 0;
 		}
