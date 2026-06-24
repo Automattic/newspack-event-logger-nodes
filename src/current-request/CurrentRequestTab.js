@@ -20,7 +20,7 @@ import {
 	lazy,
 	Suspense,
 } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
+import { __ } from '@wordpress/i18n';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 // Reuse the performance dashboard's flame graph + profile breakdown so the tab
@@ -162,45 +162,63 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 
 	return (
 		<div className="eln-current-request">
-			<div className="eln-current-request__url" title={ request.url }>
-				{ request.url }
-			</div>
-			<div className="nodes-cards">
-				<Card label={ __( 'Duration', 'newspack-event-logger-nodes' ) }>
-					{ sprintf(
-						// translators: %d: request duration in milliseconds.
-						__( '%d ms', 'newspack-event-logger-nodes' ),
-						Number( request.duration_ms ) || 0
+			<div className="eln-current-request__head">
+				<div className="eln-current-request__info">
+					<p>
+						<strong>
+							{ __( 'URL:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ request.request_method || request.method || '' }{ ' ' }
+						{ request.url }
+					</p>
+					<p>
+						<strong>
+							{ __( 'Time:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ timestamp
+							? new Date( timestamp * 1000 ).toLocaleString()
+							: '—' }
+					</p>
+					<p>
+						<strong>
+							{ __( 'Duration:', 'newspack-event-logger-nodes' ) }
+						</strong>{ ' ' }
+						{ ( Number( request.duration_ms ) || 0 ).toFixed( 2 ) }{ ' ' }
+						ms
+					</p>
+					{ Number( request.peak_mb ) > 0 && (
+						<p>
+							<strong>
+								{ __(
+									'Memory:',
+									'newspack-event-logger-nodes'
+								) }
+							</strong>{ ' ' }
+							{ Number( request.peak_mb ) } MB
+						</p>
 					) }
-				</Card>
-				<Card label={ __( 'Status', 'newspack-event-logger-nodes' ) }>
-					{ Number( request.status_code ) || 0 }
-				</Card>
-				<Card
-					label={ __( 'Result', 'newspack-event-logger-nodes' ) }
-					tone={ isError ? 'error' : 'ok' }
+					{ Number( request.status_code ) > 0 && (
+						<p>
+							<strong>
+								{ __(
+									'Status:',
+									'newspack-event-logger-nodes'
+								) }
+							</strong>{ ' ' }
+							{ Number( request.status_code ) }
+							{ isError
+								? ` — ${ statusLabel( errorStatus ) }`
+								: '' }
+						</p>
+					) }
+				</div>
+				<a
+					className="button button-secondary eln-current-request__trace"
+					href={ traceUrl }
 				>
-					{ statusLabel( errorStatus ) }
-				</Card>
-				<Card label={ __( 'Peak mem', 'newspack-event-logger-nodes' ) }>
-					{ sprintf(
-						// translators: %s: peak memory in megabytes.
-						__( '%s MB', 'newspack-event-logger-nodes' ),
-						Number( request.peak_mb ) || 0
-					) }
-				</Card>
-				<Card label={ __( 'Time', 'newspack-event-logger-nodes' ) }>
-					{ timestamp
-						? new Date( timestamp * 1000 ).toLocaleTimeString()
-						: '—' }
-				</Card>
+					{ __( 'View full trace', 'newspack-event-logger-nodes' ) }
+				</a>
 			</div>
-			<a
-				className="button button-secondary eln-current-request__trace"
-				href={ traceUrl }
-			>
-				{ __( 'View full trace', 'newspack-event-logger-nodes' ) }
-			</a>
 			{ hasFlame && (
 				<div className="eln-current-request__flame">
 					<h3>
@@ -228,17 +246,6 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 					/>
 				</div>
 			) }
-		</div>
-	);
-}
-
-function Card( { label, tone, children } ) {
-	return (
-		<div
-			className={ `nodes-card${ tone ? ` nodes-card--${ tone }` : '' }` }
-		>
-			<div className="nodes-card__label">{ label }</div>
-			<div className="nodes-card__value">{ children }</div>
 		</div>
 	);
 }

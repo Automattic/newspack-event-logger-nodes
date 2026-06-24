@@ -1,31 +1,39 @@
-// Current-Request overlay tab. Reuses the shared `.nodes-cards` / `.nodes-card`
-// look; only the surrounding chrome + the URL line + trace button are local.
+// Current-Request overlay tab. The overlay's `.topology-app` sets a monospace
+// `--font-mono` that bleeds into the reused dashboard pieces (RequestProfile,
+// flame labels); reset to the WP-admin sans so this reads like the dashboard.
 .eln-current-request {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 16px;
 	padding: 16px;
+	font-family: -apple-system, blinkmacsystemfont, "Segoe UI", roboto,
+		oxygen-sans, ubuntu, cantarell, "Helvetica Neue", sans-serif;
 
-	&__url {
-		font-family: monospace;
-		font-size: 12px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		opacity: 0.85;
+	// Request-detail header: the URL/Time/Duration/Memory/Status block on the
+	// left, the "View full trace" button pinned to the upper-right.
+	&__head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
+	&__info {
+		flex: 1 1 auto;
+		min-width: 0;
+
+		p {
+			margin: 4px 0;
+		}
 	}
 
 	&__trace {
-		align-self: flex-start;
+		flex: 0 0 auto;
 	}
 
 	&--empty,
 	&--loading,
 	&--processing {
 		opacity: 0.85;
-	}
-
-	.nodes-card--error .nodes-card__value {
-		color: var( --np-error, #c00 );
 	}
 }
