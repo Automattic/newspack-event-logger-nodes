@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-06-24
+
 ### Changed
 
 - **`hub-control` now seeds each spoke's own `remote_*` settings so they propagate down a chain.** Each `remote_*` geometry setting (`remote_num_segments` / `remote_segment_size` / `remote_max_lifespan`) is added to `settings-sync` twice — once mapping to the spoke's stripped option (its actual config) and once to the spoke's own `remote_*` copy — so a spoke acting as a hub forwards the value onward to ITS spokes. Relies on the substrate's repeatable `add_setting`.
