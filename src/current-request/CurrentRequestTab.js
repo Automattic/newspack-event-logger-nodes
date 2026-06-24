@@ -4,18 +4,32 @@
  * memory — and a deep link to the full performance trace. It does NOT duplicate
  * the dashboard; it summarizes in-page and links out for history.
  *
- * The page localizes `{ rid, perfUrl }` into
- * `window.NewspackEventLoggerNodes.currentRequest`; the summary is fetched from
- * the `performance` CI's `request_search` verb (locates a request by rid across
- * partitions). The request-builder processes the firehose asynchronously, so a
- * just-loaded page won't be in the log for a beat — that's the "still
- * processing" state, with a Refresh to re-poll.
+ * The page localizes `{ rid, partition, perfUrl }` into
+ * `window.NewspackEventLoggerNodes.currentRequest`; the summary, flame graph,
+ * and profile breakdown are fetched from the `performance` CI's `request_detail`
+ * verb (by rid + partition). The request-builder processes the firehose
+ * asynchronously, so a just-loaded page won't be in the log for a beat — that's
+ * the "still processing" state, with a Refresh to re-poll.
  */
 
-import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
+import {
+	useState,
+	useEffect,
+	useCallback,
+	useRef,
+	lazy,
+	Suspense,
+} from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
+// Reuse the performance dashboard's flame graph + profile breakdown so the tab
+// shows the same trace, not a reimplementation. FlameGraph is d3-heavy → lazy.
+import RequestProfile from '../performance-dashboards/RequestProfile';
+
+const FlameGraph = lazy( () =>
+	import( '../performance-dashboards/FlameGraph' )
+);
 
 // The page-injected summary anchor: the rid of the request that rendered this
 // page + the perf-dashboard base URL for the deep link.
@@ -141,6 +155,10 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 	const errorStatus = request.error_status ?? '-';
 	const isError = '-' !== errorStatus && '' !== errorStatus;
 	const traceUrl = `${ perfUrl }&request=${ encodeURIComponent( rid ) }`;
+	const timestamp = Number( request.timestamp ) || 0;
+	const flameData = request.flame_data;
+	const hasFlame = !! ( flameData && flameData.children?.length > 0 );
+	const hasProfiles = !! request.profiles;
 
 	return (
 		<div className="eln-current-request">
@@ -171,6 +189,11 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 						Number( request.peak_mb ) || 0
 					) }
 				</Card>
+				<Card label={ __( 'Time', 'newspack-event-logger-nodes' ) }>
+					{ timestamp
+						? new Date( timestamp * 1000 ).toLocaleTimeString()
+						: '—' }
+				</Card>
 			</div>
 			<a
 				className="button button-secondary eln-current-request__trace"
@@ -178,6 +201,33 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 			>
 				{ __( 'View full trace', 'newspack-event-logger-nodes' ) }
 			</a>
+			{ hasFlame && (
+				<div className="eln-current-request__flame">
+					<h3>
+						{ __( 'Request Trace', 'newspack-event-logger-nodes' ) }
+					</h3>
+					<Suspense
+						fallback={
+							<p>
+								{ __(
+									'Loading chart…',
+									'newspack-event-logger-nodes'
+								) }
+							</p>
+						}
+					>
+						<FlameGraph data={ flameData } />
+					</Suspense>
+				</div>
+			) }
+			{ hasProfiles && (
+				<div className="eln-current-request__profiles">
+					<RequestProfile
+						profiles={ request.profiles }
+						totalMs={ Number( request.duration_ms ) || 0 }
+					/>
+				</div>
+			) }
 		</div>
 	);
 }
