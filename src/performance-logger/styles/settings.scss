@@ -62,19 +62,6 @@
 		}
 	}
 
-	// Submit button styling
-	.submit .button-primary {
-		border-radius: base.$border-radius;
-		padding: 8px 20px;
-		font-weight: 500;
-		transition: all 0.15s ease;
-
-		&:hover {
-			transform: translateY(-1px);
-			box-shadow: 0 4px 8px rgba(0, 61, 165, 0.3);
-		}
-	}
-
 	// Field rows with reset buttons
 	.event-logger-field-row {
 		display: flex;
