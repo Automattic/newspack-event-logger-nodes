@@ -95,6 +95,8 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 		args: 'abc123 --partition=2',
 	} );
 	const text = view.container.textContent;
+	expect( text ).toContain( 'Request:' ); // the rid heading
+	expect( text ).toContain( 'abc123' ); // the rid itself
 	expect( text ).toContain( '432' ); // duration ms
 	expect( text ).toContain( '200' ); // status code
 	expect( text ).toContain( '/wp-admin/index.php' ); // url
