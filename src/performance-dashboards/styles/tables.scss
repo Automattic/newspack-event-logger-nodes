@@ -110,7 +110,7 @@
 	padding: 4px 10px;
 	border: 2px solid base.$light-border;
 	border-radius: 3px;
-	background: var(--np-surface);
+	background: var(--paper);
 	cursor: pointer;
 	font-size: 13px;
 	color: base.$light-text;
@@ -121,8 +121,8 @@
 	}
 
 	&:hover:not(:disabled) {
-		background: var(--np-surface-muted);
-		border-color: var(--np-border-strong);
+		background: var(--paper-3);
+		border-color: var(--ink-3);
 	}
 }
 
@@ -153,6 +153,8 @@
 // =============================================================================
 
 .event-logger-log-entries {
+	@include base.widefat-themed;
+
 	table {
 		font-size: 12px;
 
@@ -197,7 +199,7 @@
 			}
 
 			&:hover:not(:disabled) {
-				background: var(--np-surface-muted);
+				background: var(--paper-3);
 			}
 		}
 	}
