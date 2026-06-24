@@ -98,6 +98,17 @@ import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 
+// jsdom has no ResizeObserver. Capture the latest observer's callback so a test
+// can fire a synthetic container resize.
+let resizeObserverCb = null;
+global.ResizeObserver = class {
+	constructor( cb ) {
+		resizeObserverCb = cb;
+	}
+	observe() {}
+	disconnect() {}
+};
+
 const SAMPLE_DATA = {
 	name: 'process',
 	value: 1000,
@@ -151,6 +162,28 @@ describe( 'FlameGraph', () => {
 		);
 		expect( container.textContent ).toContain( 'No flame graph data' );
 		unmount();
+	} );
+
+	it( 're-fits the chart to the container when it resizes (debounced)', () => {
+		const { act } = require( '../../test-helpers/renderHook' );
+		jest.useFakeTimers();
+		resizeObserverCb = null;
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
+		);
+		// The container resize must be observed (window `resize` only fires for
+		// the browser window, not an overlay panel resize).
+		expect( resizeObserverCb ).toEqual( expect.any( Function ) );
+		// Clear the width recorded by the initial create, then fire a resize.
+		flamegraphState.options.width = undefined;
+		act( () => {
+			resizeObserverCb();
+			jest.advanceTimersByTime( 300 );
+		} );
+		// Debounced re-fit ran: the chart width was set again.
+		expect( flamegraphState.options.width ).toBeDefined();
+		unmount();
+		jest.useRealTimers();
 	} );
 
 	it( 'creates the flamegraph chart on first render', () => {
