@@ -196,4 +196,65 @@ describe( 'RequestProfile', () => {
 		expect( container.textContent ).toContain( 'my_callback' );
 		unmount();
 	} );
+
+	it( 'themes inline surfaces via universal tokens with light fallbacks', () => {
+		const many = {};
+		for ( let i = 0; i < 15; i++ ) {
+			many[ `cat${ i }` ] = { count: 1, time: 100 - i };
+		}
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: many,
+				totalMs: 1500,
+			} )
+		);
+		// Summary bar background reads from --paper-3 with a light fallback.
+		const bar = container.querySelector( '.event-logger-profile-bar' );
+		expect( bar.style.background ).toBe( 'var(--paper-3, #ecf0f1)' );
+		// The "Show N more" button-link accent reads from --cyan with a fallback.
+		const more = Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'more' )
+		);
+		expect( more.style.color ).toBe( 'var(--cyan, #0073aa)' );
+		// The Total Profiled footer row background reads from --paper-2.
+		const totalRow = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( tr ) => tr.textContent.includes( 'Total Profiled' )
+		);
+		expect( totalRow.style.background ).toBe( 'var(--paper-2, #f5f5f5)' );
+		unmount();
+	} );
+
+	it( 'themes the expand caret and callback sub-row via universal tokens', () => {
+		const entries = {};
+		for ( let i = 0; i < 12; i++ ) {
+			entries[ `cb${ i }` ] = [ 12 - i, 1 ];
+		}
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: { the_content: { count: 1, time: 50, entries } },
+				totalMs: 100,
+			} )
+		);
+		// The expand caret accent reads from --ink-3 with a light fallback.
+		const caret = Array.from( container.querySelectorAll( 'span' ) ).find(
+			( s ) => s.textContent === '▶' || s.textContent === '▼'
+		);
+		expect( caret.style.color ).toBe( 'var(--ink-3, #999)' );
+		// Expand the row to reveal the callback breakdown sub-row.
+		const row = Array.from( container.querySelectorAll( 'tbody tr' ) ).find(
+			( r ) => r.textContent.trim().startsWith( 'the_content' )
+		);
+		act( () => {
+			row.click();
+		} );
+		// The callback sub-row cell background reads from --paper-2.
+		const subCell = container.querySelector( 'td[colspan="4"]' );
+		expect( subCell.style.background ).toBe( 'var(--paper-2, #f9f9f9)' );
+		// The "… and N more" cell accent reads from --ink-3 (12 entries > 10 shown).
+		const moreCell = Array.from(
+			container.querySelectorAll( 'td[colspan="3"]' )
+		).find( ( td ) => td.textContent.includes( 'more' ) );
+		expect( moreCell.style.color ).toBe( 'var(--ink-3, #999)' );
+		unmount();
+	} );
 } );

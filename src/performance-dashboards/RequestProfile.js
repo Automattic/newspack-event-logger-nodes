@@ -12,6 +12,8 @@ import {
 	formatDuration,
 } from '@newspack-nodes/shared/utils/formatUtils';
 
+import './styles/request-profile.scss';
+
 /**
  * Default number of categories to show before collapsing.
  */
@@ -108,7 +110,7 @@ export default function RequestProfile( {
 					borderRadius: '4px',
 					overflow: 'hidden',
 					marginBottom: '16px',
-					background: '#ecf0f1',
+					background: 'var(--paper-3, #ecf0f1)',
 				} }
 			>
 				{ sortedProfiles.map( ( { state, time } ) => {
@@ -206,7 +208,7 @@ export default function RequestProfile( {
 												<span
 													style={ {
 														marginLeft: '6px',
-														color: '#999',
+														color: 'var(--ink-3, #999)',
 													} }
 												>
 													{ isExpanded ? '▼' : '▶' }
@@ -244,7 +246,8 @@ export default function RequestProfile( {
 												colSpan={ 4 }
 												style={ {
 													padding: '0 0 0 30px',
-													background: '#f9f9f9',
+													background:
+														'var(--paper-2, #f9f9f9)',
 												} }
 											>
 												<table
@@ -341,7 +344,7 @@ export default function RequestProfile( {
 																		3
 																	}
 																	style={ {
-																		color: '#999',
+																		color: 'var(--ink-3, #999)',
 																		fontStyle:
 																			'italic',
 																		padding:
@@ -380,7 +383,7 @@ export default function RequestProfile( {
 									className="button-link"
 									onClick={ () => setShowAll( ! showAll ) }
 									style={ {
-										color: '#0073aa',
+										color: 'var(--cyan, #0073aa)',
 										cursor: 'pointer',
 										padding: '4px 8px',
 									} }
@@ -404,7 +407,12 @@ export default function RequestProfile( {
 							</td>
 						</tr>
 					) }
-					<tr style={ { fontWeight: 'bold', background: '#f5f5f5' } }>
+					<tr
+						style={ {
+							fontWeight: 'bold',
+							background: 'var(--paper-2, #f5f5f5)',
+						} }
+					>
 						<td>
 							{ __(
 								'Total Profiled',
