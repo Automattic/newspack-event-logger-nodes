@@ -137,6 +137,7 @@ class Admin {
 		\add_action( 'admin_init', [ $this, 'register_settings' ] );
 		\add_action( 'admin_post_' . self::RESET_ACTION, [ $this, 'handle_reset_settings' ] );
 		\add_action( 'admin_post_' . self::FLUSH_STATS_ACTION, [ $this, 'handle_flush_stats' ] );
+		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_effective_config_section' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
 
 		// Per-option granular worker-restart on save. Both `added_option` (first
@@ -888,6 +889,17 @@ class Admin {
 
 	public static function debugging_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	/**
+	 * Render the read-only "Effective Configuration" table below the settings
+	 * form. Hooked to `newspack_event_logger_nodes/settings_after_form`;
+	 * delegates to the shared substrate Settings_Renderer with ELN's own schema,
+	 * option prefix, and effective config so the panel logic lives in exactly one
+	 * place across plugins.
+	 */
+	public function render_effective_config_section(): void {
+		Settings_Renderer::render_effective_config_section( Settings_Schema::get(), self::OPTION_PREFIX, Config::load_config() );
 	}
 
 	/**
