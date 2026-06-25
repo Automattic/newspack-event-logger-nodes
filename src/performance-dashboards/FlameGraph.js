@@ -10,7 +10,7 @@ import * as d3 from 'd3';
 import { flamegraph } from 'd3-flame-graph';
 import 'd3-flame-graph/dist/d3-flamegraph.css';
 import './styles/flame-graph.scss';
-import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
+import { shadeForDepth, pickLabelColor, isColorParseable } from './flameColors';
 
 /**
  * Get tooltip text for a flame graph node.
@@ -178,19 +178,58 @@ const createTooltip = () => {
 };
 
 /**
- * Create color mapper for flame graph nodes.
+ * Read the active theme's accent + background tokens off a container.
  *
- * Flame data structure from PHP build_flame_data():
- * - name: "{base_name}: {label}" or just "{base_name}"
- *   e.g. "memcached: /path/to/file.php", "include: /Templates/foo.html", "process"
- * - value: duration in ms (pre-scaled by seen_count/total_count for aggregate graphs)
- * - children: array of child nodes
+ * Falls back through the hub-overlay universal tokens, then the standalone
+ * dashboard's `--np-*` tokens, then hardcoded CRT-green defaults, so the ramp
+ * works in both contexts.
  *
- * @return {Function} Color mapper function.
+ * @param {Element} container Element whose computed style carries the tokens.
+ * @return {{accent: string, bg: string}} Resolved hex colors.
  */
-const createColorMapper = () => ( d ) => {
-	const name = d.data.name || '';
-	return getStateColor( name );
+const readThemeTokens = ( container ) => {
+	const style = window.getComputedStyle( container );
+	const read = ( name ) => style.getPropertyValue( name ).trim();
+	// First fallback that is an actual parseable color (skips absent or
+	// non-hex/rgb tokens like a named color or color-mix()).
+	const pick = ( ...candidates ) => candidates.find( isColorParseable );
+	const accent = pick( read( '--cyan' ), read( '--np-primary' ), '#41e07a' );
+	const bg = pick( read( '--paper' ), read( '--np-surface' ), '#ffffff' );
+	return { accent, bg };
+};
+
+/**
+ * Color frames by stack depth in shades of the active theme's accent.
+ *
+ * @param {string} accent Theme accent hex.
+ * @param {string} bg     Theme background hex.
+ * @return {Function} d3-flame-graph color mapper: (d) => 'rgb(...)'.
+ */
+const createColorMapper = ( accent, bg ) => ( d ) =>
+	shadeForDepth( d.depth, accent, bg );
+
+/**
+ * Set each frame's label color for contrast against its (depth-shaded) fill.
+ *
+ * d3-flame-graph renders the label as a `div.d3-flame-graph-label` inside the
+ * frame's `<foreignObject>`; the fill lives on the frame's `<rect>`. Re-run
+ * after every chart render/update since the labels are recreated.
+ *
+ * @param {Element} container Flame graph container element.
+ */
+const applyLabelContrast = ( container ) => {
+	d3.select( container )
+		.selectAll( 'g.frame' )
+		.each( function () {
+			const frame = d3.select( this );
+			const fill = frame.select( 'rect' ).attr( 'fill' );
+			if ( ! fill ) {
+				return;
+			}
+			frame
+				.select( '.d3-flame-graph-label' )
+				.style( 'color', pickLabelColor( fill ) );
+		} );
 };
 
 /**
@@ -372,9 +411,6 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	const zoomedNodeRef = useRef( null ); // Track zoomed node path for preservation across refreshes.
 	const lastChangeKeyRef = useRef( '' ); // Track change key to skip unnecessary updates.
 
-	// Memoize color mapper (stable reference since it no longer depends on data).
-	const colorMapper = useMemo( () => createColorMapper(), [] );
-
 	// Keep top frames + everything >= 0.1% of total; cap node count before rendering.
 	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
 
@@ -386,6 +422,11 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 
 		const container = containerRef.current;
 		const width = container.clientWidth || 800;
+
+		// Depth-shaded palette in the active theme's accent (re-read each render
+		// so the flame reskins when the hub theme changes).
+		const { accent, bg } = readThemeTokens( container );
+		const colorMapper = createColorMapper( accent, bg );
 
 		// Skip update if data hasn't changed (use server-side timestamp for aggregates).
 		const dataChanged = lastModified
@@ -408,6 +449,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					.setColorMapper( colorMapper )
 					.transitionDuration( 0 );
 				chartRef.current.update( prunedData );
+				applyLabelContrast( container );
 
 				// Restore zoom to previously zoomed node after update.
 				if ( zoomedNodeRef.current ) {
@@ -466,6 +508,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 
 			chartRef.current = chart;
 			d3.select( container ).datum( prunedData ).call( chart );
+			applyLabelContrast( container );
 
 			// Track Cmd/Ctrl state on mousedown (more reliable than click
 			// which Mac browsers may intercept for Cmd+Click).
@@ -473,7 +516,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				metaClickRef.current = e.metaKey || e.ctrlKey;
 			} );
 		}
-	}, [ prunedData, lastModified, colorMapper, onRevealEntry ] );
+	}, [ prunedData, lastModified, onRevealEntry ] );
 
 	// Cleanup on unmount - reset zoom state so navigation resets view.
 	useEffect( () => {
@@ -520,6 +563,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					d3.select( containerRef.current )
 						.datum( prunedData )
 						.call( chartRef.current );
+					applyLabelContrast( containerRef.current );
 				}
 			}, 150 );
 		} );
