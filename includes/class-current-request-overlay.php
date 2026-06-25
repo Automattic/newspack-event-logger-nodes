@@ -50,13 +50,27 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * Whether `$page` is an ELN page that embeds the overlay.
+	 * Whether `$page` is a page that embeds the overlay — the UNION of ELN's own
+	 * defaults and the substrate's `devtools_overlay_pages` registry (so any
+	 * plugin's overlay page, e.g. the AI Newsletter's, gets the Request tab).
 	 *
 	 * @param string $page The `?page=` admin slug.
 	 * @return bool
 	 */
 	public static function is_overlay_page( string $page ): bool {
-		return \in_array( $page, self::OVERLAY_PAGES, true );
+		return \in_array( $page, self::overlay_pages(), true );
+	}
+
+	/**
+	 * The overlay-page set: ELN's own {@see OVERLAY_PAGES} merged with the slugs
+	 * other plugins contribute via the substrate's `devtools_overlay_pages`
+	 * registry.
+	 *
+	 * @return string[]
+	 */
+	private static function overlay_pages(): array {
+		$extra = \class_exists( '\Newspack_Nodes\Admin\Admin' ) ? \Newspack_Nodes\Admin\Admin::devtools_overlay_pages() : [];
+		return \array_values( \array_unique( \array_merge( self::OVERLAY_PAGES, $extra ) ) );
 	}
 
 	/**
