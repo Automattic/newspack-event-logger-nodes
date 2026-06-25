@@ -12,6 +12,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Topic_Node;
 use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
 
@@ -373,7 +374,27 @@ class Log_Manager {
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 			if ( null !== $ci ) {
 				$this->topic->sink( $ci );
+			} else {
+				// CI not built yet (load order, e.g. the cli boot path): wire a relay
+				// that hooks the Topic to the interpreter on its first message.
+				$this->topic->sink( new Callback_Node( [ $this, 'relay_topic_to_ci' ] ) );
 			}
+		}
+	}
+
+	/**
+	 * Lazy Topic→interpreter relay (a Callback_Node sink): when the Topic was
+	 * wired before the command_interpreter node existed (load order), rewire it
+	 * to the now-built interpreter on the first message and forward — so an
+	 * early-wired Topic never fills into a missing sink.
+	 *
+	 * @param array<int, mixed> $message The positional Message array.
+	 */
+	public function relay_topic_to_ci( array &$message ): void {
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null !== $ci ) {
+			$this->topic?->sink( $ci );
+			$ci->fill( $message );
 		}
 	}
 
