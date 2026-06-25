@@ -72,6 +72,23 @@ class CurrentRequestOverlayTest extends TestCase {
 		$this->assertFalse( Current_Request_Overlay::is_overlay_page( '' ) );
 	}
 
+	public function test_is_overlay_page_includes_substrate_registry_pages(): void {
+		\add_filter(
+			'newspack_nodes/devtools_overlay_pages',
+			static fn ( array $pages ): array => \array_merge( $pages, [ 'some-consumer-page' ] )
+		);
+		// finally so a failed assertion can't leak the filter into later tests.
+		try {
+			// A page contributed via the substrate registry is now an overlay
+			// page, while ELN's own defaults still match and unrelated don't.
+			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'some-consumer-page' ) );
+			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-performance' ) );
+			$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'unrelated-page' ) );
+		} finally {
+			unset( $GLOBALS['_wp_actions']['newspack_nodes/devtools_overlay_pages'] );
+		}
+	}
+
 	public function test_inline_data_js_with_no_rid_still_emits_a_safe_global(): void {
 		$js = Current_Request_Overlay::inline_data_js( '', 0, '' );
 
