@@ -62,4 +62,30 @@ describe( 'page wrappers', () => {
 		).not.toBeNull();
 		unmount();
 	} );
+
+	// Each wrapper sits inside a ThemedRoot token-provider so a
+	// console-selected skin's universal tokens scope the dashboard.
+	it( 'GyroscopePage wraps its root in a ThemedRoot token provider', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( GyroscopePage )
+		);
+		const provider = container.querySelector(
+			'.topology-app.newspack-nodes-theme'
+		);
+		expect( provider ).not.toBeNull();
+		expect( provider.style.display ).toBe( 'contents' );
+		unmount();
+	} );
+
+	it( 'RequestStreamPage wraps its root in a ThemedRoot token provider', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestStreamPage )
+		);
+		const provider = container.querySelector(
+			'.topology-app.newspack-nodes-theme'
+		);
+		expect( provider ).not.toBeNull();
+		expect( provider.style.display ).toBe( 'contents' );
+		unmount();
+	} );
 } );

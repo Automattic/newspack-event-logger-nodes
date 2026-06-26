@@ -14,6 +14,7 @@ import {
 import { __ } from '@wordpress/i18n';
 import { Notice, Spinner } from '@wordpress/components';
 import DebugOverlay from '@newspack-nodes/debug-overlay';
+import ThemedRoot from '../components/ThemedRoot';
 import './nodes/register';
 
 // Lazy load heavy performance components for code splitting.
@@ -70,40 +71,42 @@ export function AdminApp() {
 	}, [ error ] );
 
 	return (
-		<div className="event-logger-admin-wrap newspack-nodes-theme">
-			<h1 className="newspack-dashboard-title">
-				{ __(
-					'Event Logger - Performance Dashboard',
-					'newspack-event-logger-nodes'
+		<ThemedRoot>
+			<div className="event-logger-admin-wrap newspack-nodes-theme">
+				<h1 className="newspack-dashboard-title">
+					{ __(
+						'Event Logger - Performance Dashboard',
+						'newspack-event-logger-nodes'
+					) }
+				</h1>
+
+				{ error && (
+					<Notice
+						status="error"
+						isDismissible
+						onDismiss={ () => setError( null ) }
+					>
+						{ error }
+					</Notice>
 				) }
-			</h1>
 
-			{ error && (
-				<Notice
-					status="error"
-					isDismissible
-					onDismiss={ () => setError( null ) }
-				>
-					{ error }
-				</Notice>
-			) }
-
-			<div className="event-logger-admin-app">
-				<Suspense
-					fallback={
-						<LoadingFallback
-							message={ __(
-								'Loading dashboard…',
-								'newspack-event-logger-nodes'
-							) }
-						/>
-					}
-				>
-					<PerformanceDashboard onError={ handleError } />
-				</Suspense>
+				<div className="event-logger-admin-app">
+					<Suspense
+						fallback={
+							<LoadingFallback
+								message={ __(
+									'Loading dashboard…',
+									'newspack-event-logger-nodes'
+								) }
+							/>
+						}
+					>
+						<PerformanceDashboard onError={ handleError } />
+					</Suspense>
+				</div>
+				<DebugOverlay storageKey="newspack-nodes:debug:performance" />
 			</div>
-			<DebugOverlay storageKey="newspack-nodes:debug:performance" />
-		</div>
+		</ThemedRoot>
 	);
 }
 
@@ -120,38 +123,40 @@ export function ErrorLogPage() {
 	const menuWidth = useAdminMenuWidth();
 
 	return (
-		<div
-			className="newspack-nodes-theme"
-			style={ {
-				position: 'fixed',
-				top: '32px',
-				left: `${ menuWidth }px`,
-				right: '0',
-				bottom: '0',
-				zIndex: 99,
-				background: '#1e1e1e',
-				transition: 'left 0.1s ease-in-out',
-				margin: 0,
-				padding: 0,
-				boxSizing: 'border-box',
-				overflowX: 'hidden',
-				overflowY: 'hidden',
-			} }
-		>
-			<Suspense
-				fallback={
-					<LoadingFallback
-						message={ __(
-							'Loading…',
-							'newspack-event-logger-nodes'
-						) }
-					/>
-				}
+		<ThemedRoot>
+			<div
+				className="newspack-nodes-theme"
+				style={ {
+					position: 'fixed',
+					top: '32px',
+					left: `${ menuWidth }px`,
+					right: '0',
+					bottom: '0',
+					zIndex: 99,
+					background: '#1e1e1e',
+					transition: 'left 0.1s ease-in-out',
+					margin: 0,
+					padding: 0,
+					boxSizing: 'border-box',
+					overflowX: 'hidden',
+					overflowY: 'hidden',
+				} }
 			>
-				<ErrorLog />
-			</Suspense>
-			<DebugOverlay storageKey="newspack-nodes:debug:error-log" />
-		</div>
+				<Suspense
+					fallback={
+						<LoadingFallback
+							message={ __(
+								'Loading…',
+								'newspack-event-logger-nodes'
+							) }
+						/>
+					}
+				>
+					<ErrorLog />
+				</Suspense>
+				<DebugOverlay storageKey="newspack-nodes:debug:error-log" />
+			</div>
+		</ThemedRoot>
 	);
 }
 
