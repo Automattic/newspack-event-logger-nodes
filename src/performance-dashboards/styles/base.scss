@@ -1,251 +1,44 @@
 /**
  * Base Styles
  *
- * Design tokens, loading states, stats grid, admin wrapper, shared mixins.
+ * Loading states, stats grid, admin wrapper, shared component rules.
+ * Tokens live in `_tokens.scss` (this dashboard's divergent theme values);
+ * the shared mixin bodies live in `src/styles/_dashboard-mixins.scss`.
  */
 
-// =============================================================================
-// Design Tokens — universal theme tokens (light chrome + dark log surfaces)
-// =============================================================================
-// These dashboards read the substrate's universal theme tokens (--paper/--ink/
-// --cyan/--sage/--oxide/--brass/--chart-*, redefined per theme by the hub) so
-// the chrome reskins under every decorative theme — not the fixed Newspack-only
-// --np-* tokens, which never reskin. The Performance Dashboard chrome (cards,
-// tables, modal, flame container) is the light Cobalt-on-white product look in
-// the default theme. The Error Log here — like the substrate's Raw Logs — is a
-// light toolbar/header above a DARK terminal log PANE: the chrome (root, header,
-// controls, stats, buttons) reskins; only the scrolling entry list stays DARK
-// via the intentionally-fixed `$term-*` set, exactly as the Topology Console
-// keeps a dark REPL. The historical `$dark-*` names are RETAINED (only the
-// VALUES flipped to the universal tokens) to bound the reskin churn — they now
-// back the light chrome. Cobalt leads in the default theme; status is functional
-// (lightened where it rides the dark rows), chart inks come from --chart-*.
+// Tokens: in local scope for the component rules + the mixin config below, and
+// re-exported so sibling stylesheets keep reading `base.$token`.
+@use "tokens" as *;
+@forward "tokens";
 
-// Terminal / log surfaces (the live log pane stays dark, like the console REPL).
-$term-bg: #1e1e1e;
-$term-bg-alt: #262626;
-$term-text: #e6e6e6;
-$term-text-dim: #949494;
-$term-border: #3a3a3a;
-// Cobalt lightened to read on the dark log surface (mirrors the console REPL).
-$term-accent: color-mix(in srgb, var(--cyan) 58%, white);
-$term-accent-hover: color-mix(in srgb, var(--cyan) 78%, white);
-
-// Chrome surfaces (light) — `$dark-bg*` now carry the light Newspack neutrals.
-$dark-bg: var(--paper); // #fff
-$dark-bg-secondary: var(--paper); // card surface
-$dark-bg-tertiary: var(--paper-2); // control surface
-$dark-bg-hover: var(--paper-3); // control hover
-$dark-bg-active: var(--cyan-subtle); // active/selected control
-$dark-bg-row-even: var(--paper-2);
-$dark-bg-row-hover: var(--paper-3);
-$dark-bg-deep: var(--paper-2);
-$dark-bg-deepest: var(--paper-3);
-$dark-header-border: var(--paper-shadow);
-
-// Chrome text (dark ink on light).
-$dark-text: var(--ink); // #1e1e1e
-$dark-text-muted: var(--ink-3); // #6c6c6c
-$dark-text-time: var(--ink-3);
-$dark-text-placeholder: var(--ink-3);
-$dark-text-dim: var(--ink-3);
-
-// Chrome borders.
-$dark-border: var(--paper-shadow); // #ddd
-$dark-border-light: var(--paper-shadow); // hairline divider
-
-// Accents — Cobalt leads (light chrome).
-$dark-accent: var(--cyan); // #003da5
-$dark-accent-hover: var(--cyan-dark); // #00296e
-$dark-success: var(--sage);
-$dark-info: var(--cyan);
-
-// Light chrome — text + surfaces (Performance Dashboard cards/tables/modal).
-$light-text: var(--ink);
-$light-text-secondary: var(--ink-3);
-$light-text-muted: var(--ink-3);
-$light-surface: var(--paper-2);
-$light-surface-alt: var(--paper-2);
-$light-surface-hover: var(--paper-3);
-$light-selected: var(--cyan-subtle);
-$light-border: var(--ink-3);
-$light-border-light: var(--paper-shadow);
-$light-border-muted: var(--paper-shadow);
-$light-border-faint: var(--paper-3);
-
-// Status colors (HTTP) — functional, lightened where they ride dark log rows.
-$status-2xx: color-mix(in srgb, var(--sage) 62%, white);
-$status-3xx: var(--brass);
-$status-4xx: color-mix(in srgb, var(--oxide) 72%, white);
-$status-5xx: var(--oxide);
-
-// Semantic colors. `$error-text`/`$warning-color` ride the dark log panes too,
-// so they're lightened to stay legible there while reading as Newspack status.
-$error-bg: var(--oxide);
-$error-text: color-mix(in srgb, var(--oxide) 72%, white);
-$error-surface: var(--oxide-subtle);
-$success-bg: var(--sage);
-$success-border: var(--sage);
-$dead-bg: var(--oxide);
-$idle-bg: var(--ink-3);
-$warning-color: var(--brass);
-$recommended-color: var(--brass);
-$discovered-bg: var(--brass-subtle);
-$discovered-hover: var(--brass-subtle);
-$discovered-hooks: var(--paper-2);
-
-// Focus/interactive — Cobalt (light chrome).
-$focus-color: var(--cyan);
-$wp-link: var(--cyan);
-
-// Pure colors
-$white: #fff;
-
-// Typography — Inter in product; mono for log/terminal surfaces.
-$system-font: var(--np-font);
-$mono-font: var(--np-font-mono);
-
-// Sizing
-$control-height: 28px;
-$border-radius-sm: 3px;
-$border-radius: 4px;
-$border-radius-lg: 6px;
-
-// Spacing
-$space-xs: 4px;
-$space-sm: 8px;
-$space-md: 12px;
-$space-lg: 16px;
-$space-xl: 24px;
-
-// Focus — Cobalt glow.
-$focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
-
-// =============================================================================
-// Shared Mixins - Dark Theme
-// =============================================================================
-
-// Dark theme error banner
-@mixin dark-error-banner {
-	background: $error-bg;
-	color: $white;
-	padding: $space-sm $space-md;
-	border-radius: $border-radius-sm;
-	margin-bottom: $space-md;
-	font-size: 12px;
-}
-
-// Dark theme button
-@mixin dark-button {
-	background: $dark-bg-tertiary;
-	border: 2px solid $dark-border;
-	color: $dark-text;
-	padding: 0 $space-sm;
-	border-radius: $border-radius;
-	cursor: pointer;
-	font-size: 12px;
-	height: $control-height;
-	min-height: $control-height;
-	max-height: $control-height;
-	box-sizing: border-box;
-	vertical-align: middle;
-	transition: all 0.2s;
-
-	&:hover {
-		background: $dark-bg-hover;
-		color: $dark-text;
-	}
-
-	&.active {
-		background: $dark-bg-active;
-		color: $dark-accent;
-		border-color: $dark-accent;
-	}
-}
-
-// Dark theme column picker
-@mixin dark-column-picker {
-	background: $dark-bg-secondary;
-	border: 2px solid $dark-border;
-	border-radius: $border-radius;
-	padding: $space-sm $space-md;
-	margin-bottom: $space-md;
-	display: flex;
-	flex-wrap: wrap;
-	gap: $space-sm;
-	font-size: 12px;
-	color: $dark-text;
-
-	label {
-		display: flex;
-		align-items: center;
-		gap: $space-xs;
-		color: $dark-text-muted;
-		cursor: pointer;
-
-		&:hover {
-			color: $dark-text;
-		}
-	}
-
-	input[type="checkbox"] {
-		margin: 0;
-	}
-}
-
-// Dark theme stats display (count + RPS)
-@mixin dark-stats {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-end;
-	white-space: nowrap;
-}
-
-@mixin dark-stats-count {
-	font-family: $mono-font;
-	font-size: 12px;
-	color: $dark-text-muted;
-}
-
-@mixin dark-stats-rps {
-	font-family: $mono-font;
-	font-size: 12px;
-	color: $dark-success;
-	font-weight: 700;
-}
-
-// Dark theme search input
-@mixin dark-search-input {
-	-webkit-appearance: none;
-	-moz-appearance: none;
-	appearance: none;
-	background: $dark-bg-secondary !important;
-	border: 2px solid $dark-border !important;
-	color: $dark-text !important;
-	padding: 0 $space-md !important;
-	border-radius: $border-radius !important;
-	font-size: 13px !important;
-	height: $control-height !important;
-	min-height: $control-height !important;
-	max-height: $control-height !important;
-	box-sizing: border-box !important;
-	line-height: normal !important;
-	transition:
-		border-color 0.2s,
-		box-shadow 0.2s;
-
-	&:focus {
-		outline: none;
-		border-color: $dark-accent !important;
-		background: $dark-bg-secondary !important;
-		color: $dark-text !important;
-		box-shadow: $focus-shadow;
-	}
-
-	&::placeholder {
-		color: $dark-text-placeholder !important;
-	}
-}
+// Shared mixin bodies, configured with THIS dashboard's divergent color tokens
+// so the compiled CSS is byte-identical to the old inline definitions.
+// `@forward` re-exports them so siblings keep calling `base.<mixin>`.
+@forward "../../styles/dashboard-mixins" show
+	dark-error-banner, dark-button, dark-column-picker, dark-stats,
+	dark-stats-count, dark-stats-rps, dark-search-input, table-header,
+	table-list, table-row, table-cell, table-cell-numeric, table-empty,
+	sortable-header-button, widefat-themed
+	with (
+	$dark-bg-secondary: $dark-bg-secondary,
+	$dark-bg-tertiary: $dark-bg-tertiary,
+	$dark-bg-hover: $dark-bg-hover,
+	$dark-bg-active: $dark-bg-active,
+	$dark-text: $dark-text,
+	$dark-text-muted: $dark-text-muted,
+	$dark-text-placeholder: $dark-text-placeholder,
+	$dark-border: $dark-border,
+	$dark-accent: $dark-accent,
+	$dark-success: $dark-success,
+	$error-bg: $error-bg,
+	$light-surface: $light-surface,
+	$light-selected: $light-selected,
+	$light-border: $light-border,
+	$light-border-light: $light-border-light,
+	$light-text-muted: $light-text-muted,
+	$wp-link: $wp-link
+);
+@use "../../styles/dashboard-mixins" as mix;
 
 // =============================================================================
 // Component Styles
@@ -414,114 +207,7 @@ $focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
 
 // Shared error banner style (dark theme)
 .event-logger-error-banner {
-	@include dark-error-banner;
-}
-
-// =============================================================================
-// Shared Table Mixins
-// =============================================================================
-
-@mixin table-header {
-	display: grid;
-	gap: 8px;
-	padding: 8px 12px;
-	background: $light-surface;
-	border: 2px solid $light-border;
-	border-bottom: none;
-	font-weight: 600;
-	font-size: 13px;
-}
-
-@mixin table-list {
-	border: 2px solid $light-border;
-}
-
-@mixin table-row {
-	display: grid;
-	gap: 8px;
-	padding: 0 12px;
-	align-items: center;
-	box-sizing: border-box;
-	border-bottom: 1px solid $light-border-light;
-	cursor: pointer;
-
-	&:hover {
-		background: $light-surface;
-	}
-
-	&.selected {
-		background: $light-selected;
-	}
-}
-
-@mixin table-cell {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-
-	code {
-		display: block;
-		font-size: 12px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-}
-
-@mixin table-cell-numeric {
-	text-align: right;
-}
-
-@mixin table-empty {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: $light-text-muted;
-	font-style: italic;
-}
-
-@mixin sortable-header-button {
-	background: none;
-	border: none;
-	padding: 0;
-	font: inherit;
-	font-weight: 600;
-	cursor: pointer;
-	user-select: none;
-	text-align: left;
-
-	&:hover {
-		color: $wp-link;
-	}
-}
-
-/**
- * Re-skin the color properties of a WP-core `.widefat .striped` table so it
- * follows the hub's decorative themes. WP-core hardcodes a light surface that
- * ignores the universal --paper/--ink tokens; each fallback is the exact
- * WP-core light value it shadows so the STANDALONE dashboard (tokens undefined)
- * stays byte-identical — body `td` text is #50575e, header `th` text #2c3338.
- */
-@mixin widefat-themed {
-	.widefat {
-		background: var(--paper, #fff);
-		border-color: var(--paper-shadow, #c3c4c7);
-	}
-
-	.widefat td {
-		color: var(--ink, #50575e);
-		border-color: var(--paper-shadow, #c3c4c7);
-	}
-
-	.widefat th {
-		color: var(--ink, #2c3338);
-		border-color: var(--paper-shadow, #c3c4c7);
-	}
-
-	.striped > tbody > tr:nth-child(odd) {
-		background-color: var(--paper-2, #f6f7f7);
-	}
+	@include mix.dark-error-banner;
 }
 
 // =============================================================================
@@ -672,5 +358,5 @@ select.event-logger-refresh-select {
 
 // Shared search input (dark theme)
 input.event-logger-search-input {
-	@include dark-search-input;
+	@include mix.dark-search-input;
 }

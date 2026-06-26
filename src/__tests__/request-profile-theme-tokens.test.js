@@ -31,9 +31,13 @@ describe( 'request-profile table theming', () => {
 		);
 		expect( scss ).toContain( '.event-logger-request-profile' );
 		expect( scss ).toContain( '@include base.widefat-themed;' );
-		// The mixin it pulls in re-skins .widefat through a --paper token.
+		// base.scss re-exports the mixin from the shared dashboard-mixins module
+		// (it forwards `widefat-themed`), and the mixin there re-skins .widefat
+		// through a --paper token.
 		const base = read( 'performance-dashboards/styles/base.scss' );
-		expect( base ).toMatch(
+		expect( base ).toMatch( /@forward[\s\S]*widefat-themed/ );
+		const shared = read( 'styles/_dashboard-mixins.scss' );
+		expect( shared ).toMatch(
 			/@mixin widefat-themed[\s\S]*\.widefat[\s\S]*var\(--paper/
 		);
 	} );
