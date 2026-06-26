@@ -26,6 +26,7 @@ import {
 	TM_INFO,
 	TM_STRUCT,
 	Core,
+	Node,
 	useNodeState,
 } from '@newspack-nodes/runtime';
 
@@ -77,6 +78,7 @@ const LINK = 'requestlog:link';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'requestlog:view';
+const TEE = 'requestlog:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
 // Build a `connected` envelope as the SseConnector recognizes it.
@@ -130,6 +132,37 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 		renderHook( () => useRequestLogGraph() );
 		expect( Core.node( 'requestlog:route' ) ).toBeNull();
 		expect( Core.node( 'requestlog:transform' ) ).toBeNull();
+	} );
+
+	test( 'inserts an inspectable Tee on the stream edge: link → tee → view', () => {
+		renderHook( () => useRequestLogGraph() );
+		const interpreter = Core.node( INTERPRETER );
+		const tee = Core.node( TEE );
+		expect( tee ).toBeTruthy();
+		expect( tee.constructor.name ).toBe( 'TeeNode' );
+		expect( tee.sink ).toBe( interpreter );
+		// The link re-homes received frames to the Tee, which fans to the view.
+		expect( Core.node( LINK ).sseIn.target ).toBe( TEE );
+		expect( tee.target ).toEqual( [ VIEW ] );
+	} );
+
+	test( 'fans the live stream to a debug-overlay watcher without disturbing the view', () => {
+		renderHook( () => useRequestLogGraph() );
+		const watcher = new Node();
+		watcher.name = 'watcher';
+		const seen = [];
+		watcher.fill = ( m ) => seen.push( m[ VALUE ].rid );
+		Core.node( TEE ).connectNode( 'watcher' );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack( completedEnvelope( { rid: 'r-watch', url: '/x' } ) )
+			);
+		} );
+		// The watcher saw the raw stream AND the view appended the entry.
+		expect( seen ).toContain( 'r-watch' );
+		expect( Core.node( VIEW ).entries ).toHaveLength( 1 );
+		expect( Core.node( VIEW ).entries[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=completed when visible', () => {

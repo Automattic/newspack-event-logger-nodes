@@ -27,6 +27,7 @@ import {
 	TM_INFO,
 	TM_STRUCT,
 	Core,
+	Node,
 	useNodeState,
 } from '@newspack-nodes/runtime';
 
@@ -76,6 +77,7 @@ const LINK = 'gyroscope:link';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'gyroscope:view';
+const TEE = 'gyroscope:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
 // A `connected` envelope as SseConnector recognizes it.
@@ -129,6 +131,40 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 		renderHook( () => useGyroscopeGraph() );
 		expect( Core.node( 'gyroscope:route' ) ).toBeNull();
 		expect( Core.node( 'gyroscope:transform' ) ).toBeNull();
+	} );
+
+	test( 'inserts an inspectable Tee on the stream edge: link → tee → view', () => {
+		renderHook( () => useGyroscopeGraph() );
+		const interpreter = Core.node( INTERPRETER );
+		const tee = Core.node( TEE );
+		expect( tee ).toBeTruthy();
+		expect( tee.constructor.name ).toBe( 'TeeNode' );
+		expect( tee.sink ).toBe( interpreter );
+		// The link re-homes received frames to the Tee, which fans to the view.
+		expect( Core.node( LINK ).sseIn.target ).toBe( TEE );
+		expect( tee.target ).toEqual( [ VIEW ] );
+	} );
+
+	test( 'fans the live stream to a debug-overlay watcher without disturbing the view', () => {
+		renderHook( () => useGyroscopeGraph() );
+		const watcher = new Node();
+		watcher.name = 'watcher';
+		const seen = [];
+		watcher.fill = ( m ) => seen.push( m[ KEY ] );
+		Core.node( TEE ).connectNode( 'watcher' );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					inflightEnvelope( [
+						{ rid: 'watched', url: '/x', state: 'process' },
+					] )
+				)
+			);
+		} );
+		// The watcher saw the raw stream AND the view accumulated the request.
+		expect( seen ).toContain( 'inflight' );
+		expect( Core.node( VIEW ).requests.has( 'watched' ) ).toBe( true );
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=gyroscope when visible', () => {

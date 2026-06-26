@@ -31,6 +31,7 @@ import {
 	TM_INFO,
 	TM_STRUCT,
 	Core,
+	Node,
 	useNodeState,
 } from '@newspack-nodes/runtime';
 
@@ -80,6 +81,7 @@ const LINK = 'perferrors:link';
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'perferrors:view';
+const TEE = 'perferrors:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
 const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
@@ -128,6 +130,39 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		for ( const name of REMOVED_NODE_NAMES ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
+	} );
+
+	test( 'inserts an inspectable Tee on the stream edge: link → tee → view', () => {
+		renderHook( () => useErrorLogGraph() );
+		const interpreter = Core.node( INTERPRETER );
+		const tee = Core.node( TEE );
+		expect( tee ).toBeTruthy();
+		expect( tee.constructor.name ).toBe( 'TeeNode' );
+		expect( tee.sink ).toBe( interpreter );
+		// The link re-homes received frames to the Tee, which fans to the view.
+		expect( Core.node( LINK ).sseIn.target ).toBe( TEE );
+		expect( tee.target ).toEqual( [ VIEW ] );
+	} );
+
+	test( 'fans the live stream to a debug-overlay watcher without disturbing the view', () => {
+		renderHook( () => useErrorLogGraph() );
+		const watcher = new Node();
+		watcher.name = 'watcher';
+		const seen = [];
+		watcher.fill = ( m ) => seen.push( m[ KEY ] );
+		Core.node( TEE ).connectNode( 'watcher' );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					errorEnvelope( 'r-watch', { ts: 1, k: 'error', m: 'x' } )
+				)
+			);
+		} );
+		// The watcher saw the raw stream AND the view appended the entry.
+		expect( seen ).toContain( 'r-watch' );
+		expect( Core.node( VIEW ).entries ).toHaveLength( 1 );
+		expect( Core.node( VIEW ).entries[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {

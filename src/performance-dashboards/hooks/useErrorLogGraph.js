@@ -44,8 +44,9 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 
-// The single RemoteLink node and the dashboard view-model node.
+// The single RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'perferrors:link';
+const TEE = 'perferrors:stream';
 const VIEW = 'perferrors:view';
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
@@ -109,8 +110,14 @@ export function useErrorLogGraph( opts = {} ) {
 				LINK,
 				`errors ${ baseUrl } ${ nonce }`
 			);
-			link.target = VIEW;
+			// A pure pass-through Tee on the stream edge: the link re-homes received
+			// frames to it, it copies each to the view. `connect perferrors:stream` in
+			// the debug overlay appends a second target to inspect the live stream.
+			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
+
+			const tee = interpreter.makeNode( 'Tee', TEE );
+			tee.connectNode( VIEW );
 
 			// The view-model — shapes raw envelopes into rows inline.
 			const view = interpreter.makeNode( 'PerfErrorsView', VIEW );
