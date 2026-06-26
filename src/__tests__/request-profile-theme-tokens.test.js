@@ -61,4 +61,37 @@ describe( 'request-profile table theming', () => {
 		expect( tokens ).toContain( 'var(--paper, var(--np-surface' );
 		expect( tokens ).toContain( 'var(--ink, var(--np-text' );
 	} );
+
+	// The same universal↔--np-* chaining must hold across ALL four dashboard
+	// token files so each chrome reskins on the hub and falls back to the exact
+	// --np-* SSE-page palette standalone. A fallback-less universal token
+	// (`var(--paper)`) goes unset → WP-admin gray on a standalone ELN page.
+	describe.each( [
+		[ 'overview' ],
+		[ 'gyroscope' ],
+		[ 'requests' ],
+		[ 'settings' ],
+	] )( '%s/_tokens.scss universal-token chaining', ( dashboard ) => {
+		const tokens = read( `${ dashboard }/styles/_tokens.scss` );
+
+		it( 'has no fallback-less universal chrome token', () => {
+			expect( tokens ).not.toMatch(
+				/var\(\s*--(?:paper|ink|cyan|sage|oxide|brass)[a-z0-9-]*\s*\)/
+			);
+		} );
+	} );
+
+	it.each( [ [ 'overview' ], [ 'gyroscope' ], [ 'requests' ] ] )(
+		'%s/_tokens.scss chains the SSE-page surface/text tokens to --np-*',
+		( dashboard ) => {
+			const tokens = read( `${ dashboard }/styles/_tokens.scss` );
+			expect( tokens ).toContain( 'var(--paper, var(--np-surface' );
+			expect( tokens ).toContain( 'var(--ink, var(--np-text' );
+		}
+	);
+
+	it( 'settings/_tokens.scss chains $light-text to var(--ink, var(--np-text', () => {
+		const tokens = read( 'settings/styles/_tokens.scss' );
+		expect( tokens ).toContain( '$light-text: var(--ink, var(--np-text' );
+	} );
 } );

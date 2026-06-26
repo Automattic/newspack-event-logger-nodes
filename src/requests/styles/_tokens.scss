@@ -20,72 +20,72 @@ $term-border: #3a3a3a;
 $term-accent: color-mix(in srgb, var(--cyan, #003da5) 58%, white);
 $term-accent-hover: color-mix(in srgb, var(--cyan, #003da5) 78%, white);
 
-// Chrome surfaces (light) — `$dark-bg*` now carry the light Newspack neutrals.
-$dark-bg: var(--np-surface); // #fff
-$dark-bg-secondary: var(--np-surface); // card surface
-$dark-bg-tertiary: var(--np-surface-subtle); // control surface
-$dark-bg-hover: var(--np-surface-muted); // control hover
-$dark-bg-active: var(--np-primary-subtle); // active/selected control
-$dark-bg-row-even: var(--np-surface-subtle);
-$dark-bg-row-hover: var(--np-surface-muted);
-$dark-bg-deep: var(--np-surface-subtle);
-$dark-bg-deepest: var(--np-surface-muted);
-$dark-header-border: var(--np-border);
+// Chrome surfaces (light) — universal token, --np-* fallback for standalone.
+$dark-bg: var(--paper, var(--np-surface));
+$dark-bg-secondary: var(--paper, var(--np-surface));
+$dark-bg-tertiary: var(--paper-2, var(--np-surface-subtle));
+$dark-bg-hover: var(--paper-3, var(--np-surface-muted));
+$dark-bg-active: var(--cyan-subtle, var(--np-primary-subtle));
+$dark-bg-row-even: var(--paper-2, var(--np-surface-subtle));
+$dark-bg-row-hover: var(--paper-3, var(--np-surface-muted));
+$dark-bg-deep: var(--paper-2, var(--np-surface-subtle));
+$dark-bg-deepest: var(--paper-3, var(--np-surface-muted));
+$dark-header-border: var(--paper-shadow, var(--np-border));
 
 // Chrome text (dark ink on light).
-$dark-text: var(--np-text); // #1e1e1e
-$dark-text-muted: var(--np-text-secondary); // #6c6c6c
-$dark-text-time: var(--np-text-secondary);
-$dark-text-placeholder: var(--np-text-secondary);
-$dark-text-dim: var(--np-text-secondary);
+$dark-text: var(--ink, var(--np-text));
+$dark-text-muted: var(--ink-3, var(--np-text-secondary));
+$dark-text-time: var(--ink-3, var(--np-text-secondary));
+$dark-text-placeholder: var(--ink-3, var(--np-text-secondary));
+$dark-text-dim: var(--ink-3, var(--np-text-secondary));
 
 // Chrome borders.
-$dark-border: var(--np-border); // #ddd
-$dark-border-light: var(--np-border); // hairline divider
+$dark-border: var(--paper-shadow, var(--np-border));
+$dark-border-light: var(--paper-shadow, var(--np-border));
 
 // Accents — Cobalt leads (light chrome).
-$dark-accent: var(--np-primary); // #003da5
-$dark-accent-hover: var(--np-primary-hover); // #00296e
-$dark-success: var(--np-success);
-$dark-info: var(--np-primary);
+$dark-accent: var(--cyan, var(--np-primary));
+$dark-accent-hover: var(--cyan-dark, var(--np-primary-hover));
+$dark-success: var(--sage, var(--np-success));
+$dark-info: var(--cyan, var(--np-primary));
 
 // Light chrome — text + surfaces.
-$light-text: var(--np-text);
-$light-text-secondary: var(--np-text-secondary);
-$light-text-muted: var(--np-text-secondary);
-$light-surface: var(--np-surface-subtle);
-$light-surface-alt: var(--np-surface-subtle);
-$light-surface-hover: var(--np-surface-muted);
-$light-selected: var(--np-primary-subtle);
-$light-border: var(--np-border-strong);
-$light-border-light: var(--np-border);
-$light-border-muted: var(--np-border);
-$light-border-faint: var(--np-surface-muted);
+$light-text: var(--ink, var(--np-text));
+$light-text-secondary: var(--ink-3, var(--np-text-secondary));
+$light-text-muted: var(--ink-3, var(--np-text-secondary));
+$light-surface: var(--paper-2, var(--np-surface-subtle));
+$light-surface-alt: var(--paper-2, var(--np-surface-subtle));
+$light-surface-hover: var(--paper-3, var(--np-surface-muted));
+$light-selected: var(--cyan-subtle, var(--np-primary-subtle));
+$light-border: var(--ink-3, var(--np-border-strong));
+$light-border-light: var(--paper-shadow, var(--np-border));
+$light-border-muted: var(--paper-shadow, var(--np-border));
+$light-border-faint: var(--paper-3, var(--np-surface-muted));
 
 // Status colors (HTTP) — functional, lightened where they ride dark log rows.
-$status-2xx: color-mix(in srgb, var(--np-success) 62%, white);
-$status-3xx: var(--np-warning);
-$status-4xx: color-mix(in srgb, var(--np-error) 72%, white);
-$status-5xx: var(--np-error);
+$status-2xx: color-mix(in srgb, var(--sage, var(--np-success)) 62%, white);
+$status-3xx: var(--brass, var(--np-warning));
+$status-4xx: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
+$status-5xx: var(--oxide, var(--np-error));
 
 // Semantic colors. `$error-text`/`$warning-color` ride the dark log rows, so
 // they're lightened to stay legible there while reading as Newspack status.
-$error-bg: var(--np-error);
-$error-text: color-mix(in srgb, var(--np-error) 72%, white);
-$error-surface: var(--np-error-subtle);
-$success-bg: var(--np-success);
-$success-border: var(--np-success);
-$dead-bg: var(--np-error);
-$idle-bg: var(--np-text-secondary);
-$warning-color: var(--np-warning);
-$recommended-color: var(--np-warning);
-$discovered-bg: var(--np-warning-subtle);
-$discovered-hover: var(--np-warning-subtle);
-$discovered-hooks: var(--np-surface-subtle);
+$error-bg: var(--oxide, var(--np-error));
+$error-text: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
+$error-surface: var(--oxide-subtle, var(--np-error-subtle));
+$success-bg: var(--sage, var(--np-success));
+$success-border: var(--sage, var(--np-success));
+$dead-bg: var(--oxide, var(--np-error));
+$idle-bg: var(--ink-3, var(--np-text-secondary));
+$warning-color: var(--brass, var(--np-warning));
+$recommended-color: var(--brass, var(--np-warning));
+$discovered-bg: var(--brass-subtle, var(--np-warning-subtle));
+$discovered-hover: var(--brass-subtle, var(--np-warning-subtle));
+$discovered-hooks: var(--paper-2, var(--np-surface-subtle));
 
 // Focus/interactive — Cobalt (light chrome).
-$focus-color: var(--np-primary);
-$wp-link: var(--np-primary);
+$focus-color: var(--cyan, var(--np-primary));
+$wp-link: var(--cyan, var(--np-primary));
 
 // Pure colors
 $white: #fff;

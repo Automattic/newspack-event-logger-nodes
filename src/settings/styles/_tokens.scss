@@ -13,8 +13,8 @@ $term-bg-alt: #262626;
 $term-text: #e6e6e6;
 $term-text-dim: #949494;
 $term-border: #3a3a3a;
-$term-accent: color-mix(in srgb, var(--np-primary) 58%, white);
-$term-accent-hover: color-mix(in srgb, var(--np-primary) 78%, white);
+$term-accent: color-mix(in srgb, var(--cyan, #003da5) 58%, white);
+$term-accent-hover: color-mix(in srgb, var(--cyan, #003da5) 78%, white);
 
 // Dark log-pane surfaces — `$dark-bg*` carry the $term-* terminal neutrals.
 $dark-bg: $term-bg;
@@ -42,45 +42,45 @@ $dark-border-light: #4a4a4a;
 // Accents on the dark pane — Cobalt, lightened to read on dark.
 $dark-accent: $term-accent;
 $dark-accent-hover: $term-accent-hover;
-$dark-success: color-mix(in srgb, var(--np-success) 62%, white);
-$dark-info: color-mix(in srgb, var(--np-primary) 58%, white);
+$dark-success: color-mix(in srgb, var(--sage, var(--np-success)) 62%, white);
+$dark-info: color-mix(in srgb, var(--cyan, var(--np-primary)) 58%, white);
 
 // Light chrome — text + surfaces (the settings page).
-$light-text: var(--np-text);
-$light-text-secondary: var(--np-text-secondary);
-$light-text-muted: var(--np-text-secondary);
-$light-surface: var(--np-surface-subtle);
-$light-surface-alt: var(--np-surface-subtle);
-$light-surface-hover: var(--np-surface-muted);
-$light-selected: var(--np-primary-subtle);
-$light-border: var(--np-border-strong);
-$light-border-light: var(--np-border);
-$light-border-muted: var(--np-border);
-$light-border-faint: var(--np-surface-muted);
+$light-text: var(--ink, var(--np-text));
+$light-text-secondary: var(--ink-3, var(--np-text-secondary));
+$light-text-muted: var(--ink-3, var(--np-text-secondary));
+$light-surface: var(--paper-2, var(--np-surface-subtle));
+$light-surface-alt: var(--paper-2, var(--np-surface-subtle));
+$light-surface-hover: var(--paper-3, var(--np-surface-muted));
+$light-selected: var(--cyan-subtle, var(--np-primary-subtle));
+$light-border: var(--ink-3, var(--np-border-strong));
+$light-border-light: var(--paper-shadow, var(--np-border));
+$light-border-muted: var(--paper-shadow, var(--np-border));
+$light-border-faint: var(--paper-3, var(--np-surface-muted));
 
 // Status colors (HTTP) — functional, lightened where they ride dark log rows.
-$status-2xx: color-mix(in srgb, var(--np-success) 62%, white);
-$status-3xx: var(--np-warning);
-$status-4xx: color-mix(in srgb, var(--np-error) 72%, white);
-$status-5xx: var(--np-error);
+$status-2xx: color-mix(in srgb, var(--sage, var(--np-success)) 62%, white);
+$status-3xx: var(--brass, var(--np-warning));
+$status-4xx: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
+$status-5xx: var(--oxide, var(--np-error));
 
 // Semantic colors.
-$error-bg: var(--np-error);
-$error-text: color-mix(in srgb, var(--np-error) 72%, white);
-$error-surface: var(--np-error-subtle);
-$success-bg: var(--np-success);
-$success-border: var(--np-success);
-$dead-bg: var(--np-error);
-$idle-bg: var(--np-text-secondary);
-$warning-color: var(--np-warning);
-$recommended-color: var(--np-warning);
-$discovered-bg: var(--np-warning-subtle);
-$discovered-hover: var(--np-warning-subtle);
-$discovered-hooks: var(--np-surface-subtle);
+$error-bg: var(--oxide, var(--np-error));
+$error-text: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
+$error-surface: var(--oxide-subtle, var(--np-error-subtle));
+$success-bg: var(--sage, var(--np-success));
+$success-border: var(--sage, var(--np-success));
+$dead-bg: var(--oxide, var(--np-error));
+$idle-bg: var(--ink-3, var(--np-text-secondary));
+$warning-color: var(--brass, var(--np-warning));
+$recommended-color: var(--brass, var(--np-warning));
+$discovered-bg: var(--brass-subtle, var(--np-warning-subtle));
+$discovered-hover: var(--brass-subtle, var(--np-warning-subtle));
+$discovered-hooks: var(--paper-2, var(--np-surface-subtle));
 
 // Focus/interactive — Cobalt.
-$focus-color: var(--np-primary);
-$wp-link: var(--np-primary);
+$focus-color: var(--cyan, var(--np-primary));
+$wp-link: var(--cyan, var(--np-primary));
 
 // Pure colors
 $white: #fff;
