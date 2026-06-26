@@ -46,4 +46,19 @@ describe( 'request-profile table theming', () => {
 		expect( src ).not.toMatch( /var\(--cyan\)/ );
 		expect( src ).toContain( 'var(--cyan, #003da5)' );
 	} );
+
+	it( 'overview/_tokens.scss chains every universal chrome token to its --np-* fallback (standalone Error Log must not go gray)', () => {
+		const tokens = read( 'overview/styles/_tokens.scss' );
+		// On a standalone ELN page (.newspack-nodes-theme) the universal
+		// --paper/--ink/--cyan/--sage/--oxide/--brass tokens are UNDEFINED — only
+		// --np-* are. A bare var(--paper) there is unset → the chrome falls back to
+		// WP-admin gray. Every such token must chain to its --np-* equivalent (the
+		// value the gyroscope/requests SSE pages render) so it reskins on the hub
+		// yet matches them standalone.
+		expect( tokens ).not.toMatch(
+			/var\(\s*--(?:paper|ink|cyan|sage|oxide|brass)[a-z0-9-]*\s*\)/
+		);
+		expect( tokens ).toContain( 'var(--paper, var(--np-surface' );
+		expect( tokens ).toContain( 'var(--ink, var(--np-text' );
+	} );
 } );

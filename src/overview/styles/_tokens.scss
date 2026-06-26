@@ -3,17 +3,17 @@
 // =============================================================================
 // These dashboards read the substrate's universal theme tokens (--paper/--ink/
 // --cyan/--sage/--oxide/--brass/--chart-*, redefined per theme by the hub) so
-// the chrome reskins under every decorative theme — not the fixed Newspack-only
-// --np-* tokens, which never reskin. The Performance Dashboard chrome (cards,
-// tables, modal, flame container) is the light Cobalt-on-white product look in
-// the default theme. The Error Log here — like the substrate's Raw Logs — is a
-// light toolbar/header above a DARK terminal log PANE: the chrome (root, header,
-// controls, stats, buttons) reskins; only the scrolling entry list stays DARK
-// via the intentionally-fixed `$term-*` set, exactly as the Topology Console
-// keeps a dark REPL. The historical `$dark-*` names are RETAINED (only the
-// VALUES flipped to the universal tokens) to bound the reskin churn — they now
-// back the light chrome. Cobalt leads in the default theme; status is functional
-// (lightened where it rides the dark rows), chart inks come from --chart-*.
+// the chrome reskins under every decorative theme. Each universal token CHAINS
+// to its canonical `--np-*` equivalent as a fallback — `var(--paper,
+// var(--np-surface))` — so on a STANDALONE ELN page (`.newspack-nodes-theme`,
+// which defines only `--np-*`, not the universal tokens) the chrome renders the
+// SAME light Newspack look the gyroscope/requests SSE pages do, instead of
+// falling back to unset/WP-admin-gray. Under the hub's `.topology-app.theme-*`
+// context the universal token wins and the chrome reskins. The Error Log here —
+// like the substrate's Raw Logs — is a light toolbar/header above a DARK
+// terminal log PANE: the chrome reskins; only the scrolling entry list stays
+// DARK via the intentionally-fixed `$term-*` set. The historical `$dark-*`/
+// `$light-*` names are RETAINED (only the VALUES changed) to bound the churn.
 
 // Terminal / log surfaces (the live log pane stays dark, like the console REPL).
 $term-bg: #1e1e1e;
@@ -25,72 +25,72 @@ $term-border: #3a3a3a;
 $term-accent: color-mix(in srgb, var(--cyan, #003da5) 58%, white);
 $term-accent-hover: color-mix(in srgb, var(--cyan, #003da5) 78%, white);
 
-// Chrome surfaces (light) — `$dark-bg*` now carry the light Newspack neutrals.
-$dark-bg: var(--paper); // #fff
-$dark-bg-secondary: var(--paper); // card surface
-$dark-bg-tertiary: var(--paper-2); // control surface
-$dark-bg-hover: var(--paper-3); // control hover
-$dark-bg-active: var(--cyan-subtle); // active/selected control
-$dark-bg-row-even: var(--paper-2);
-$dark-bg-row-hover: var(--paper-3);
-$dark-bg-deep: var(--paper-2);
-$dark-bg-deepest: var(--paper-3);
-$dark-header-border: var(--paper-shadow);
+// Chrome surfaces (light) — universal token, --np-* fallback for standalone.
+$dark-bg: var(--paper, var(--np-surface));
+$dark-bg-secondary: var(--paper, var(--np-surface));
+$dark-bg-tertiary: var(--paper-2, var(--np-surface-subtle));
+$dark-bg-hover: var(--paper-3, var(--np-surface-muted));
+$dark-bg-active: var(--cyan-subtle, var(--np-primary-subtle));
+$dark-bg-row-even: var(--paper-2, var(--np-surface-subtle));
+$dark-bg-row-hover: var(--paper-3, var(--np-surface-muted));
+$dark-bg-deep: var(--paper-2, var(--np-surface-subtle));
+$dark-bg-deepest: var(--paper-3, var(--np-surface-muted));
+$dark-header-border: var(--paper-shadow, var(--np-border));
 
 // Chrome text (dark ink on light).
-$dark-text: var(--ink); // #1e1e1e
-$dark-text-muted: var(--ink-3); // #6c6c6c
-$dark-text-time: var(--ink-3);
-$dark-text-placeholder: var(--ink-3);
-$dark-text-dim: var(--ink-3);
+$dark-text: var(--ink, var(--np-text));
+$dark-text-muted: var(--ink-3, var(--np-text-secondary));
+$dark-text-time: var(--ink-3, var(--np-text-secondary));
+$dark-text-placeholder: var(--ink-3, var(--np-text-secondary));
+$dark-text-dim: var(--ink-3, var(--np-text-secondary));
 
 // Chrome borders.
-$dark-border: var(--paper-shadow); // #ddd
-$dark-border-light: var(--paper-shadow); // hairline divider
+$dark-border: var(--paper-shadow, var(--np-border));
+$dark-border-light: var(--paper-shadow, var(--np-border));
 
 // Accents — Cobalt leads (light chrome).
-$dark-accent: var(--cyan); // #003da5
-$dark-accent-hover: var(--cyan-dark); // #00296e
-$dark-success: var(--sage);
-$dark-info: var(--cyan);
+$dark-accent: var(--cyan, var(--np-primary));
+$dark-accent-hover: var(--cyan-dark, var(--np-primary-hover));
+$dark-success: var(--sage, var(--np-success));
+$dark-info: var(--cyan, var(--np-primary));
 
 // Light chrome — text + surfaces (Performance Dashboard cards/tables/modal).
-$light-text: var(--ink);
-$light-text-secondary: var(--ink-3);
-$light-text-muted: var(--ink-3);
-$light-surface: var(--paper-2);
-$light-surface-alt: var(--paper-2);
-$light-surface-hover: var(--paper-3);
-$light-selected: var(--cyan-subtle);
-$light-border: var(--ink-3);
-$light-border-light: var(--paper-shadow);
-$light-border-muted: var(--paper-shadow);
-$light-border-faint: var(--paper-3);
+$light-text: var(--ink, var(--np-text));
+$light-text-secondary: var(--ink-3, var(--np-text-secondary));
+$light-text-muted: var(--ink-3, var(--np-text-secondary));
+$light-surface: var(--paper-2, var(--np-surface-subtle));
+$light-surface-alt: var(--paper-2, var(--np-surface-subtle));
+$light-surface-hover: var(--paper-3, var(--np-surface-muted));
+$light-selected: var(--cyan-subtle, var(--np-primary-subtle));
+$light-border: var(--ink-3, var(--np-border-strong));
+$light-border-light: var(--paper-shadow, var(--np-border));
+$light-border-muted: var(--paper-shadow, var(--np-border));
+$light-border-faint: var(--paper-3, var(--np-surface-muted));
 
 // Status colors (HTTP) — functional, lightened where they ride dark log rows.
-$status-2xx: color-mix(in srgb, var(--sage) 62%, white);
-$status-3xx: var(--brass);
-$status-4xx: color-mix(in srgb, var(--oxide) 72%, white);
-$status-5xx: var(--oxide);
+$status-2xx: color-mix(in srgb, var(--sage, var(--np-success)) 62%, white);
+$status-3xx: var(--brass, var(--np-warning));
+$status-4xx: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
+$status-5xx: var(--oxide, var(--np-error));
 
 // Semantic colors. `$error-text`/`$warning-color` ride the dark log panes too,
 // so they're lightened to stay legible there while reading as Newspack status.
-$error-bg: var(--oxide);
-$error-text: color-mix(in srgb, var(--oxide) 72%, white);
-$error-surface: var(--oxide-subtle);
-$success-bg: var(--sage);
-$success-border: var(--sage);
-$dead-bg: var(--oxide);
-$idle-bg: var(--ink-3);
-$warning-color: var(--brass);
-$recommended-color: var(--brass);
-$discovered-bg: var(--brass-subtle);
-$discovered-hover: var(--brass-subtle);
-$discovered-hooks: var(--paper-2);
+$error-bg: var(--oxide, var(--np-error));
+$error-text: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
+$error-surface: var(--oxide-subtle, var(--np-error-subtle));
+$success-bg: var(--sage, var(--np-success));
+$success-border: var(--sage, var(--np-success));
+$dead-bg: var(--oxide, var(--np-error));
+$idle-bg: var(--ink-3, var(--np-text-secondary));
+$warning-color: var(--brass, var(--np-warning));
+$recommended-color: var(--brass, var(--np-warning));
+$discovered-bg: var(--brass-subtle, var(--np-warning-subtle));
+$discovered-hover: var(--brass-subtle, var(--np-warning-subtle));
+$discovered-hooks: var(--paper-2, var(--np-surface-subtle));
 
 // Focus/interactive — Cobalt (light chrome).
-$focus-color: var(--cyan);
-$wp-link: var(--cyan);
+$focus-color: var(--cyan, var(--np-primary));
+$wp-link: var(--cyan, var(--np-primary));
 
 // Pure colors
 $white: #fff;
