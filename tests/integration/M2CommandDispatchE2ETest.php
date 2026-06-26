@@ -96,7 +96,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 
 	/**
 	 * Fidelity guard for the data-provider's JSON-string args: the provider
-	 * passes `'{}'` for performance.timing, and build_request() must decode it
+	 * passes `'{}'` for performance.overview, and build_request() must decode it
 	 * into the array the verb consumes (verbs do
 	 * `is_array($payload) ? $payload : []`, so a raw string collapses to `[]`).
 	 * Asserting the verb returns a structured payload proves the body arrived
@@ -106,12 +106,12 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$ctrl = new HTTP_In_Node();
 		$ctrl->set_test_mode( true );
 		\ob_start();
-		$ctrl->dispatch( $this->build_request( 'performance', 'timing', '{}' ) );
+		$ctrl->dispatch( $this->build_request( 'performance', 'overview', '{}' ) );
 		$body = (string) \ob_get_clean();
 
-		$message     = self::response_for( $body, 'timing' );
+		$message     = self::response_for( $body, 'overview' );
 		$payload = $message[ Message::VALUE ]['payload'] ?? null;
-		$this->assertIsArray( $payload, 'performance.timing must return a structured payload' );
+		$this->assertIsArray( $payload, 'performance.overview must return a structured payload' );
 	}
 
 	/**
@@ -191,8 +191,8 @@ class M2CommandDispatchE2ETest extends TestCase {
 			'settings.get'       => [ 'settings',    'get',    '{}' ],
 			'logger.config'      => [ 'logger',      'config', '{}' ],
 			'events.stats'       => [ 'events',      'stats',  '{}' ],
-			'aggregator.health'  => [ 'aggregator',  'health', '{}' ],
-			'performance.timing' => [ 'performance', 'timing', '{}' ],
+			'aggregator.health'    => [ 'aggregator',  'health',   '{}' ],
+			'performance.overview' => [ 'performance', 'overview', '{}' ],
 		];
 	}
 }

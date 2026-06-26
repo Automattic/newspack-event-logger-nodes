@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Pruned 8 dead verbs from the `Performance_CI` service node** (`timing`, `dashboard`, `hooks_categories`, `hooks_available`, `hooks_configure`, `config_get`, `request_log_list`, `request_log_detail`) — none had any caller across the four sibling plugins or any topology after the performance-dashboard de-god. The live surfaces drive only `overview` / `urls` / `url_detail` / `request_search` / `request_detail` (perf dashboard + current-request tab), `hooks_registered` (hook-catalog), and `set` (the `Settings_Sync` hub→spoke receiver). Also removed the three private helpers and two consts that only those verbs used.
 - **The unused `newspack_event_logger_nodes_reset_options` filter.** It let plugins extend the reset-to-defaults option list, but had no consumers in any plugin (YAGNI). `handle_reset_settings()` now resets exactly the schema's `setting_option_names()`. Also drops a now-redundant `is_string()` guard (the list is already `array<int,string>`).
 
 ### Added
