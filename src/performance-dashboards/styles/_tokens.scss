@@ -21,9 +21,9 @@ $term-bg-alt: #262626;
 $term-text: #e6e6e6;
 $term-text-dim: #949494;
 $term-border: #3a3a3a;
-// Cobalt lightened to read on the dark log surface (mirrors the console REPL).
-$term-accent: color-mix(in srgb, var(--cyan) 58%, white);
-$term-accent-hover: color-mix(in srgb, var(--cyan) 78%, white);
+// Cobalt lightened to read on the dark log surface; floor on Cobalt so the rid never goes invalid when --cyan is undefined (standalone dashboard pages don't load the topology-console theme that defines it).
+$term-accent: color-mix(in srgb, var(--cyan, #003da5) 58%, white);
+$term-accent-hover: color-mix(in srgb, var(--cyan, #003da5) 78%, white);
 
 // Chrome surfaces (light) — `$dark-bg*` now carry the light Newspack neutrals.
 $dark-bg: var(--paper); // #fff
