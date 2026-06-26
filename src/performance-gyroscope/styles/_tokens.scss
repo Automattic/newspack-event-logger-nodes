@@ -16,9 +16,9 @@ $term-bg-alt: #262626;
 $term-text: #e6e6e6;
 $term-text-dim: #949494;
 $term-border: #3a3a3a;
-// Cobalt lightened to read on the dark log surface (mirrors the console REPL).
-$term-accent: color-mix(in srgb, var(--np-primary) 58%, white);
-$term-accent-hover: color-mix(in srgb, var(--np-primary) 78%, white);
+// Universal accent (Cobalt #003da5 floor) lightened for the dark log surface; --np-primary is undefined under decorative themes (which only define --cyan), which blanked the request-id link.
+$term-accent: color-mix(in srgb, var(--cyan, #003da5) 58%, white);
+$term-accent-hover: color-mix(in srgb, var(--cyan, #003da5) 78%, white);
 
 // Chrome surfaces (light) — `$dark-bg*` now carry the light Newspack neutrals.
 $dark-bg: var(--np-surface); // #fff
