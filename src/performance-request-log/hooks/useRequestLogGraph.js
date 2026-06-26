@@ -42,8 +42,9 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 
-// The single RemoteLink node and the view-model node the React view reads.
+// The single RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'requestlog:link';
+const TEE = 'requestlog:stream';
 const VIEW = 'requestlog:view';
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
@@ -105,8 +106,14 @@ export function useRequestLogGraph( opts = {} ) {
 				LINK,
 				`completed ${ baseUrl } ${ nonce }`
 			);
-			link.target = VIEW;
+			// A pure pass-through Tee on the stream edge: the link re-homes received
+			// frames to it, it copies each to the view. `connect requestlog:stream` in
+			// the debug overlay appends a second target to inspect the live stream.
+			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
+
+			const tee = interpreter.makeNode( 'Tee', TEE );
+			tee.connectNode( VIEW );
 
 			// The view node — the single dashboard consumer of the stream.
 			const view = interpreter.makeNode( 'RequestLogView', VIEW );

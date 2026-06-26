@@ -41,8 +41,9 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 
-// The single RemoteLink node and the dashboard view-model node.
+// The single RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'gyroscope:link';
+const TEE = 'gyroscope:stream';
 const VIEW = 'gyroscope:view';
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
@@ -91,8 +92,14 @@ export function useGyroscopeGraph() {
 				LINK,
 				`gyroscope ${ baseUrl } ${ nonce }`
 			);
-			link.target = VIEW;
+			// A pure pass-through Tee on the stream edge: the link re-homes received
+			// frames to it, it copies each to the view. `connect gyroscope:stream` in
+			// the debug overlay appends a second target to inspect the live stream.
+			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
+
+			const tee = interpreter.makeNode( 'Tee', TEE );
+			tee.connectNode( VIEW );
 
 			// Dashboard view — consumes wire envelopes directly.
 			const view = interpreter.makeNode( 'GyroscopeView', VIEW );
