@@ -106,7 +106,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$data = $this->localized_for( $handle );
 			$this->assertNotNull( $data, 'NewspackNodesData must be localized on the handle' );
 			$this->assertArrayHasKey( 'restUrl', $data );
-			$this->assertArrayHasKey( 'aggregatorRestUrl', $data );
+			// aggregatorRestUrl was a dead localize (no JS consumer) for the pre-command-path aggregator dashboard; removed with src/event-aggregator.
+			$this->assertArrayNotHasKey( 'aggregatorRestUrl', $data );
 			$this->assertArrayHasKey( 'nonce', $data );
 			$this->assertArrayHasKey( 'restartNonce', $data );
 			$this->assertSame( $tree, $data['tree'] );

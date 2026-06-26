@@ -140,8 +140,8 @@ wp option get newspack_event_logger_nodes_enable_aggregator
 
 # Aggregator status / health / servers — there is no standalone REST
 # namespace for these any more (the legacy `newspack-nodes-aggregator/v1/*`
-# routes were retired in the Service-CI cutover; only an unused
-# `aggregatorRestUrl` localized var survives). Dispatch via the unified
+# routes were retired in the Service-CI cutover, and the unused
+# `aggregatorRestUrl` localized var was dropped with them). Dispatch via the unified
 # command-protocol endpoint instead — same payload shape:
 NONCE=$(wp eval 'echo wp_create_nonce("wp_rest");' --user=<admin>)
 curl -sk -X POST "<site>/wp-json/newspack-nodes/v1/command" \
