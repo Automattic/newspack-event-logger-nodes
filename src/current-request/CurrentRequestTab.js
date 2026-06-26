@@ -25,11 +25,9 @@ import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 // Reuse the performance dashboard's flame graph + profile breakdown so the tab
 // shows the same trace, not a reimplementation. FlameGraph is d3-heavy → lazy.
-import RequestProfile from '../performance-dashboards/RequestProfile';
+import RequestProfile from '../overview/RequestProfile';
 
-const FlameGraph = lazy( () =>
-	import( '../performance-dashboards/FlameGraph' )
-);
+const FlameGraph = lazy( () => import( '../overview/FlameGraph' ) );
 
 // The page-injected summary anchor: the rid of the request that rendered this
 // page + the perf-dashboard base URL for the deep link.

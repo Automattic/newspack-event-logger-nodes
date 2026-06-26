@@ -1,6 +1,6 @@
 /**
  * Tests for the inline AdminApp + ErrorLogPage page components defined in
- * performance-dashboards/index.js. The DOMContentLoaded → createRoot mount path
+ * overview/index.js. The DOMContentLoaded → createRoot mount path
  * is covered by mount-entrypoints.test.js; here we render the components
  * DIRECTLY so we can drive AdminApp's error state machine (handleError + the 5s
  * auto-clear effect) and the Suspense LoadingFallback without the document-level
@@ -34,7 +34,7 @@ jest.mock( '../ErrorLog', () => ( {
 import { act, renderComponent } from '../../test-helpers/renderHook';
 import { AdminApp, ErrorLogPage } from '../index';
 
-describe( 'performance-dashboards — AdminApp + ErrorLogPage', () => {
+describe( 'overview — AdminApp + ErrorLogPage', () => {
 	let views;
 
 	beforeEach( () => {

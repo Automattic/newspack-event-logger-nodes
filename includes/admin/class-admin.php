@@ -301,7 +301,7 @@ class Admin {
 
 	/**
 	 * Render a tag-input field for array settings — the mount markup the
-	 * React `TagInputField` tree (built into `build/performance-logger/index.js`)
+	 * React `TagInputField` tree (built into `build/settings/index.js`)
 	 * looks for at `#event-logger-{$field}`. The hidden input named
 	 * `newspack_event_logger_nodes_{$field}` carries the JSON-encoded value
 	 * back to PHP on save.
@@ -653,7 +653,7 @@ class Admin {
 	 * options; this is purely a layout consolidation.
 	 *
 	 * Layout: .event-logger-auto-disable-row flexbox + .event-logger-auto-disable-label
-	 * spans (defined in src/performance-logger/styles/settings.scss).
+	 * spans (defined in src/settings/styles/settings.scss).
 	 */
 	public static function auto_tune_callback(): void {
 		$count_value   = \get_option( 'newspack_event_logger_nodes_auto_disable_threshold', '' );

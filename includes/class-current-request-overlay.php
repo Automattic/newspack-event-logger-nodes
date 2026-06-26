@@ -26,15 +26,15 @@ class Current_Request_Overlay {
 	 * ELN admin pages that EMBED the debug overlay (so the tab must load there
 	 * too). The hub page is handled separately by the substrate's
 	 * `devtools_tab_bundles` filter; these are ELN's own pages where the overlay
-	 * is mounted directly (RequestStreamPage / GyroscopePage / performance-dashboards).
+	 * is mounted directly (RequestStreamPage / GyroscopePage / overview).
 	 *
 	 * @var string[]
 	 */
 	private const OVERLAY_PAGES = [
-		'newspack-nodes-performance',
-		'newspack-nodes-errors',
-		'newspack-nodes-gyroscope',
-		'newspack-nodes-stream',
+		'event-logger-overview',
+		'event-logger-errors',
+		'event-logger-gyroscope',
+		'event-logger-requests',
 	];
 
 	/**
@@ -130,7 +130,7 @@ class Current_Request_Overlay {
 		}
 		$log      = Log_Manager::instance();
 		$rid      = $log->get_request_id();
-		$perf_url = \admin_url( 'admin.php?page=newspack-nodes-performance' );
+		$perf_url = \admin_url( 'admin.php?page=event-logger-overview' );
 		\wp_add_inline_script(
 			self::HANDLE,
 			self::inline_data_js( $rid, $log->get_partition(), $perf_url ),

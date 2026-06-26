@@ -21,20 +21,18 @@ const read = ( rel ) =>
 
 describe( 'request-profile table theming', () => {
 	it( 'RequestProfile.js imports its co-located request-profile.scss', () => {
-		const src = read( 'performance-dashboards/RequestProfile.js' );
+		const src = read( 'overview/RequestProfile.js' );
 		expect( src ).toContain( "import './styles/request-profile.scss';" );
 	} );
 
 	it( 'request-profile.scss themes .widefat via the --paper-backed mixin', () => {
-		const scss = read(
-			'performance-dashboards/styles/request-profile.scss'
-		);
+		const scss = read( 'overview/styles/request-profile.scss' );
 		expect( scss ).toContain( '.event-logger-request-profile' );
 		expect( scss ).toContain( '@include base.widefat-themed;' );
 		// base.scss re-exports the mixin from the shared dashboard-mixins module
 		// (it forwards `widefat-themed`), and the mixin there re-skins .widefat
 		// through a --paper token.
-		const base = read( 'performance-dashboards/styles/base.scss' );
+		const base = read( 'overview/styles/base.scss' );
 		expect( base ).toMatch( /@forward[\s\S]*widefat-themed/ );
 		const shared = read( 'styles/_dashboard-mixins.scss' );
 		expect( shared ).toMatch(
@@ -43,9 +41,7 @@ describe( 'request-profile table theming', () => {
 	} );
 
 	it( 'LogEntriesTable.js gives every inline var(--cyan) a Cobalt fallback', () => {
-		const src = read(
-			'performance-dashboards/components/LogEntriesTable.js'
-		);
+		const src = read( 'overview/components/LogEntriesTable.js' );
 		// No bare `var(--cyan)` without a fallback should remain.
 		expect( src ).not.toMatch( /var\(--cyan\)/ );
 		expect( src ).toContain( 'var(--cyan, #003da5)' );

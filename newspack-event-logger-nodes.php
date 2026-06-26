@@ -220,27 +220,27 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			'Event Logger',
 			'Event Logger',
 			'manage_options',
-			'newspack-nodes-performance',
+			'event-logger-overview',
 			$performance_callback,
 			'dashicons-chart-line',
 			80
 		);
 		\add_submenu_page(
-			'newspack-nodes-performance',
+			'event-logger-overview',
 			'Performance Dashboard',
 			'Performance',
 			'manage_options',
-			'newspack-nodes-performance',
+			'event-logger-overview',
 			$performance_callback
 		);
 		$dashboards = [
-			'newspack-nodes-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
-			'newspack-nodes-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
-			'newspack-nodes-stream'      => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
+			'event-logger-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
+			'event-logger-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
+			'event-logger-requests'    => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
 		];
 		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {
 			\add_submenu_page(
-				'newspack-nodes-performance',
+				'event-logger-overview',
 				$title,
 				$menu_title,
 				'manage_options',
@@ -261,11 +261,11 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
 		$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
 		$page_to_tree = [
-			'newspack-nodes-performance'             => 'performance-dashboards',
-			'newspack-nodes-errors'                  => 'performance-dashboards',
-			'newspack-nodes-gyroscope'               => 'performance-gyroscope',
-			'newspack-nodes-stream'                  => 'performance-request-log',
-			'newspack-event-logger-nodes'            => 'performance-logger',
+			'event-logger-overview'                  => 'overview',
+			'event-logger-errors'                    => 'overview',
+			'event-logger-gyroscope'                 => 'gyroscope',
+			'event-logger-requests'                  => 'requests',
+			'newspack-event-logger-nodes'            => 'settings',
 		];
 		if ( ! \array_key_exists( $page, $page_to_tree ) ) {
 			return;
@@ -331,7 +331,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			'before'
 		);
 
-		if ( 'performance-logger' === $tree ) {
+		if ( 'settings' === $tree ) {
 			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config();
 			$recommended         = $cfg['recommended_log_events'] ?? [];
 			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];

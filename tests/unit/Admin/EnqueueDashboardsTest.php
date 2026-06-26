@@ -85,12 +85,12 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		}
 
 		public function test_performance_page_routes_through_registrar(): void {
-			$tree  = 'performance-dashboards';
+			$tree  = 'overview';
 			$asset = \NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.js";
 			$this->assertFileExists( $asset, "ELN {$tree} build missing — run `npm run build`" );
 
-			$_GET = [ 'page' => 'newspack-nodes-performance' ];
-			$this->dispatch( 'nodes_page_newspack-nodes-performance' );
+			$_GET = [ 'page' => 'event-logger-overview' ];
+			$this->dispatch( 'nodes_page_event-logger-overview' );
 
 			$handle = "newspack-nodes-{$tree}";
 			$enq    = $this->enqueued_script_for( $handle );
@@ -115,7 +115,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		}
 
 		public function test_settings_page_keeps_per_tree_extras(): void {
-			$tree  = 'performance-logger';
+			$tree  = 'settings';
 			$asset = \NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.js";
 			$this->assertFileExists( $asset, "ELN {$tree} build missing — run `npm run build`" );
 

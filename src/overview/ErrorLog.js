@@ -1,26 +1,23 @@
-/* global requestAnimationFrame, cancelAnimationFrame, localStorage */
+/* global requestAnimationFrame, cancelAnimationFrame */
 /**
- * Request Stream Component
+ * Error Log Component
  *
- * Real-time scrolling log of completed requests.
+ * Real-time scrolling log of errors and warnings from errors.log.
  *
- * This is a THIN view over the `requestlog:*` node graph (mounted by
- * `useRequestLogGraph`). The graph owns all data: `_sse` holds the EventSource
- * and routes envelopes directly to `requestlog:view`, which defensively shapes
- * each completed-request envelope (drop missing-url, clip url + UA, default-fill)
- * and holds the buffer + view model. This component only renders.
+ * This is a THIN view over the `perferrors:view` node graph (mounted by
+ * `useErrorLogGraph`). The graph owns all data: the substrate's `_sse` holds
+ * the EventSource connection and streams envelopes directly into
+ * `perferrors:view`, which shapes them into rows and owns the buffer + view
+ * model. This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
- * - LOW frequency: `useNodeState('requestlog:view','view')` for
- *   `{ paused, connectionError }` (the pause button, empty-state label, and the
- *   reconnect banner).
- * - HIGH frequency: the rAF reads `Core.node('requestlog:view').entries`, `.rps`
- *   and `.lastEventTime` directly each frame — a busy stream never re-renders
- *   React per request; only the cheap derived state (the snapshot + rps) is pushed
- *   when it changes.
+ * - LOW frequency: `useNodeState('perferrors:view','view')` for
+ *   `{ paused, connectionError, lastEventTime }` (the pause button, the reconnect
+ *   banner, the empty-state label, and the "Xs ago" staleness).
+ * - HIGH frequency: the rAF reads `Core.node('perferrors:view').entries` directly
+ *   each frame — a busy stream never re-renders React per error.
  *
- * Click any request to view its full trace in the Performance Dashboard. Entries
- * are newest-first - user scrolls down to see history.
+ * Click any request ID to view its full trace in the Performance Dashboard.
  */
 
 import {
@@ -28,88 +25,63 @@ import {
 	useEffect,
 	useLayoutEffect,
 	useRef,
+	useCallback,
 	useMemo,
 	memo,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
-import { useRequestLogGraph } from './hooks/useRequestLogGraph';
+import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
-import {
-	formatDuration,
-	getDurationClass,
-	getStatusClass,
-} from '@newspack-nodes/shared/utils/formatUtils';
-import './styles/request-stream.scss';
+import './styles/error-log.scss';
 
-const ROW_HEIGHT = 33; // Fixed row height in pixels.
-const VIEW_NODE = 'requestlog:view';
+const ROW_HEIGHT = 33;
+const VIEW_NODE = 'perferrors:view';
 const SSE_NODE = '_sse';
-const EMPTY_VIEW = { paused: false, connectionError: false };
+const EMPTY_VIEW = {
+	paused: false,
+	connectionError: false,
+	lastEventTime: null,
+};
 
 /**
- * Column definitions for the request log.
+ * Column definitions for the error log.
  */
 const COLUMNS = {
 	time: {
 		label: __( 'Time', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'Request completion time', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Error timestamp', 'newspack-event-logger-nodes' ),
 		width: '100px',
 	},
 	rid: {
 		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
 		tooltip: __(
-			'Unique request identifier - click to view full trace',
+			'Click to view request trace',
 			'newspack-event-logger-nodes'
 		),
 		width: '240px',
 	},
-	url: {
-		label: __( 'URL', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'Request method and URL', 'newspack-event-logger-nodes' ),
+	keyword: {
+		label: __( 'Keyword', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Error/warning keyword', 'newspack-event-logger-nodes' ),
+		width: '240px',
+	},
+	message: {
+		label: __( 'Message', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Error message', 'newspack-event-logger-nodes' ),
 		width: 'auto',
-	},
-	status: {
-		label: __( 'Status', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'HTTP status code', 'newspack-event-logger-nodes' ),
-		width: '50px',
-	},
-	remote_addr: {
-		label: __( 'IP', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'Client IP address', 'newspack-event-logger-nodes' ),
-		width: '100px',
-	},
-	user_agent: {
-		label: __( 'UA', 'newspack-event-logger-nodes' ),
-		tooltip: __(
-			'Browser/client identifier',
-			'newspack-event-logger-nodes'
-		),
-		width: '200px',
-	},
-	duration: {
-		label: __( 'Duration', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'Request duration', 'newspack-event-logger-nodes' ),
-		width: '70px',
 	},
 };
 
-const DEFAULT_COLUMNS = [
-	'time',
-	'rid',
-	'url',
-	'status',
-	'remote_addr',
-	'duration',
-];
+const DEFAULT_COLUMNS = [ 'time', 'rid', 'keyword', 'message' ];
 
 /**
  * Format timestamp to HH:MM:SS.mmm
  *
  * @param {number} ts Unix timestamp (seconds with decimals).
- * @return {import('react').ReactElement} {string} Formatted time string.
+ * @return {string} Formatted time string.
  */
 const formatTime = ( ts ) => {
 	if ( ! ts ) {
@@ -124,9 +96,25 @@ const formatTime = ( ts ) => {
 };
 
 /**
- * Memoized row component - only re-renders when entry or columns change.
+ * Get keyword severity class.
+ *
+ * @param {string} keyword Log keyword.
+ * @return {string} CSS class suffix.
  */
-const StreamRow = memo( function StreamRow( {
+const getKeywordClass = ( keyword ) => {
+	if ( keyword === 'error' || keyword.endsWith( '(error)' ) ) {
+		return 'error';
+	}
+	if ( keyword === 'warning' || keyword.endsWith( '(warning)' ) ) {
+		return 'warning';
+	}
+	return 'info';
+};
+
+/**
+ * Memoized row component.
+ */
+const ErrorRow = memo( function ErrorRow( {
 	entry,
 	visibleColumns,
 	gridTemplate,
@@ -134,7 +122,7 @@ const StreamRow = memo( function StreamRow( {
 	return (
 		<div
 			role="row"
-			className={ `event-logger-request-stream-entry ${
+			className={ `event-logger-error-log-entry ${
 				entry.isEven ? 'row-even' : 'row-odd'
 			}` }
 			style={ { gridTemplateColumns: gridTemplate } }
@@ -148,49 +136,7 @@ const StreamRow = memo( function StreamRow( {
 								role="cell"
 								className="entry-time"
 							>
-								{ formatTime( entry.timestamp ) }
-							</span>
-						);
-					case 'duration':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className={ `entry-duration entry-duration--${ getDurationClass(
-									entry.duration_ms
-								) }` }
-							>
-								{ formatDuration( entry.duration_ms ) }
-							</span>
-						);
-					case 'status':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className={ `entry-status entry-status--${ getStatusClass(
-									entry.status_code
-								) }` }
-							>
-								{ entry.status_code }
-							</span>
-						);
-					case 'url':
-						return (
-							<span key={ col } role="cell" className="entry-url">
-								<span className="entry-method">
-									{ entry.method }
-								</span>{ ' ' }
-								<a
-									href={ `admin.php?page=newspack-nodes-performance&url=${ entry.urlHash }` }
-									className="entry-url-link"
-									title={ __(
-										'View URL stats',
-										'newspack-event-logger-nodes'
-									) }
-								>
-									{ entry.url }
-								</a>
+								{ formatTime( entry.ts ) }
 							</span>
 						);
 					case 'rid':
@@ -198,7 +144,7 @@ const StreamRow = memo( function StreamRow( {
 							<span key={ col } role="cell">
 								<a
 									className="entry-rid"
-									href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
+									href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
 										entry.rid
 									) }` }
 									title={ __(
@@ -210,21 +156,27 @@ const StreamRow = memo( function StreamRow( {
 								</a>
 							</span>
 						);
-					case 'remote_addr':
-						return (
-							<span key={ col } role="cell" className="entry-ip">
-								{ entry.remote_addr || '-' }
-							</span>
-						);
-					case 'user_agent':
+					case 'keyword':
 						return (
 							<span
 								key={ col }
 								role="cell"
-								className="entry-ua"
-								title={ entry.user_agent }
+								className={ `entry-keyword entry-keyword--${ getKeywordClass(
+									entry.k
+								) }` }
 							>
-								{ entry.user_agent || '-' }
+								{ entry.k }
+							</span>
+						);
+					case 'message':
+						return (
+							<span
+								key={ col }
+								role="cell"
+								className="entry-message"
+								title={ entry.m }
+							>
+								{ entry.m }
 							</span>
 						);
 					default:
@@ -236,53 +188,33 @@ const StreamRow = memo( function StreamRow( {
 } );
 
 /**
- * Request Stream Component.
+ * Error Log Component.
  *
- * @param {Object} props            Component props.
- * @param {number} props.maxEntries Maximum entries to keep in buffer.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function RequestStream( { maxEntries = 500 } ) {
+export default function ErrorLog() {
 	// Mount the node graph; it returns the thin control callbacks.
-	const { setPaused, clear } = useRequestLogGraph( { maxEntries } );
+	const { setPaused, clear } = useErrorLogGraph();
 
-	// Low-frequency view model (pause button + empty-state label + reconnect banner).
+	// Low-frequency view model (pause button + reconnect banner + empty-state).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 	const { paused: isPaused, connectionError } = view;
 
 	const [ filter, setFilter ] = useState( '' );
-	// The rendered entry buffer + RPS, both fed from the rAF at frame rate (read
-	// straight off the view node). The original re-rendered via a 100ms setInterval;
-	// per-frame for both is visually identical and keeps everything in one push.
+	// The rendered entry buffer, fed from the rAF at frame rate (read straight off
+	// the view node). The original re-rendered via a 100ms setInterval; per-frame
+	// is visually identical and keeps everything in one push.
 	const [ entries, setEntries ] = useState( [] );
-	const [ requestsPerSecond, setRequestsPerSecond ] = useState( 0 );
 
-	const [ visibleColumns, setVisibleColumns ] = useState( () => {
-		// Load from localStorage with validation.
-		const validColumns = Object.keys( COLUMNS );
-		try {
-			const saved = localStorage.getItem( 'event-logger-stream-columns' );
-			const parsed = saved ? JSON.parse( saved ) : null;
-			if (
-				Array.isArray( parsed ) &&
-				parsed.every( ( col ) => validColumns.includes( col ) )
-			) {
-				return parsed;
-			}
-		} catch {
-			// Fall through to default.
-		}
-		return DEFAULT_COLUMNS;
-	} );
-	const [ showColumnPicker, setShowColumnPicker ] = useState( false );
+	const visibleColumns = DEFAULT_COLUMNS;
 
 	const listRef = useRef( null );
 	const contentRef = useRef( null );
-	const offsetRef = useRef( 0 ); // Smooth scroll offset.
-	const savedOffsetRef = useRef( 0 ); // Saved offset for resume.
+	const offsetRef = useRef( 0 );
+	const savedOffsetRef = useRef( 0 );
 	const rafRef = useRef( null );
-	const isAdjustingScrollRef = useRef( false ); // Skip scroll events during programmatic adjustment.
-	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 ); // Rows worth of animation offset.
+	const isAdjustingScrollRef = useRef( false );
+	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 );
 
 	// Newest seq the layout effect has already smooth-scrolled for, and the
 	// filter that was active then — so it compensates once per genuinely-new row
@@ -292,12 +224,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	// Last state we pushed to React — so idle frames (nothing changed) push no
 	// new refs and don't re-render. `topSeq` catches cap rotation (length
 	// constant, newest seq climbing); `count` catches clear/filter shrink.
-	const pushedRef = useRef( {
-		topSeq: -1,
-		count: -1,
-		filter: null,
-		rps: -1,
-	} );
+	const pushedRef = useRef( { topSeq: -1, count: -1, filter: null } );
 	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
 	const filterRef = useRef( filter );
 	filterRef.current = filter;
@@ -314,16 +241,21 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		? Math.max( 0, Math.floor( ( now - lastEventTimeRef.current ) / 1000 ) )
 		: null;
 
+	// A row matches the filter on keyword, message, or request id.
+	const matchesFilter = ( e, needle ) =>
+		e.k?.toLowerCase().includes( needle ) ||
+		e.m?.toLowerCase().includes( needle ) ||
+		e.rid?.toLowerCase().includes( needle );
+
 	// Animation/read loop. Reads the high-volume buffer (node.entries) directly
 	// every frame, snapshots + filters it, decays the smooth-scroll offset, and
-	// pushes the cheap derived state (entries snapshot + RPS) to React only when
-	// changed. The new-row offset compensation lives in the layout effect below
-	// so it lands in the same commit as the row it compensates for.
+	// pushes the entries snapshot to React only when changed. The new-row offset
+	// compensation lives in the layout effect below so it lands in the same
+	// commit as the row it compensates for.
 	useEffect( () => {
 		const animate = () => {
 			const node = Core.node( VIEW_NODE );
 			const buffer = node?.entries ?? [];
-			const rps = node?.rps ?? 0;
 			const filterLower = filterRef.current.toLowerCase();
 
 			// Staleness reflects CONNECTION liveness, owned by the shared _sse
@@ -337,9 +269,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
 			// what we draw / count.
 			const snapshot = filterRef.current
-				? buffer.filter( ( e ) =>
-						e.url.toLowerCase().includes( filterLower )
-				  )
+				? buffer.filter( ( e ) => matchesFilter( e, filterLower ) )
 				: buffer.slice();
 
 			// Newest seq of the rendered (filtered) view drives change detection —
@@ -360,10 +290,10 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				Math.abs( offsetRef.current ) / ROW_HEIGHT
 			);
 
-			// Push the cheap derived state ONLY when it changed — the newest seq
+			// Push the entries snapshot ONLY when it changed — the newest seq
 			// (catches cap rotation at constant length), the count (clear / filter
-			// shrink), the filter, and RPS. Skipping unchanged frames keeps idle
-			// frames from re-rendering React.
+			// shrink), or the filter. Skipping unchanged frames keeps idle frames
+			// from re-rendering React.
 			const pushed = pushedRef.current;
 			if (
 				topSeq !== pushed.topSeq ||
@@ -374,10 +304,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				pushed.topSeq = topSeq;
 				pushed.count = snapshot.length;
 				pushed.filter = filterRef.current;
-			}
-			if ( rps !== pushed.rps ) {
-				setRequestsPerSecond( rps );
-				pushed.rps = rps;
 			}
 			setAnimOffsetRows( ( prev ) =>
 				prev === currentOffsetRows ? prev : currentOffsetRows
@@ -390,18 +316,9 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		return () => cancelAnimationFrame( rafRef.current );
 	}, [] );
 
-	// Save column selection to localStorage.
-	useEffect( () => {
-		localStorage.setItem(
-			'event-logger-stream-columns',
-			JSON.stringify( visibleColumns )
-		);
-	}, [ visibleColumns ] );
-
-	// Handle scroll for animation save/restore.
+	// Scroll handler for animation save/restore.
 	const wasAtTopRef = useRef( true );
-	const handleScroll = ( e ) => {
-		// Skip scroll events triggered by programmatic adjustment.
+	const handleScroll = useCallback( ( e ) => {
 		if ( isAdjustingScrollRef.current ) {
 			isAdjustingScrollRef.current = false;
 			return;
@@ -410,7 +327,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		const newScrollTop = e.target.scrollTop;
 		const isAtTop = newScrollTop < ROW_HEIGHT;
 
-		// Scrolling away from top - save offset and clear.
 		if ( wasAtTopRef.current && ! isAtTop ) {
 			savedOffsetRef.current = offsetRef.current;
 			offsetRef.current = 0;
@@ -420,7 +336,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			}
 		}
 
-		// Returning to top - restore saved offset.
 		if ( ! wasAtTopRef.current && isAtTop ) {
 			offsetRef.current = savedOffsetRef.current;
 			const restoredRows = Math.floor(
@@ -430,38 +345,24 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		}
 
 		wasAtTopRef.current = isAtTop;
-	};
+	}, [] );
 
-	// Toggle column visibility.
-	const toggleColumn = ( col ) => {
-		setVisibleColumns( ( prev ) => {
-			if ( prev.includes( col ) ) {
-				return prev.filter( ( c ) => c !== col );
-			}
-			// Add in original order.
-			const allCols = Object.keys( COLUMNS );
-			return allCols.filter( ( c ) => prev.includes( c ) || c === col );
-		} );
-	};
-
-	// Memoize filtered entries.
+	// Filtered entries.
 	const filterLower = filter.toLowerCase();
 	const filteredEntries = useMemo(
 		() =>
 			filter
-				? entries.filter( ( e ) =>
-						e.url.toLowerCase().includes( filterLower )
-				  )
+				? entries.filter( ( e ) => matchesFilter( e, filterLower ) )
 				: entries,
 		[ entries, filter, filterLower ]
 	);
 
-	// Smooth-scroll compensation, atomic with the row it compensates for. This
-	// runs synchronously after React commits the new rows but before paint, so
-	// the offset that holds the existing rows in place lands in the SAME paint as
-	// the prepended row — no jump-then-correct flicker. Keyed on the newest
-	// committed seq (robust to the cap, where length is constant) and re-baselines
-	// on a filter change so a filter switch doesn't read as new rows.
+	// Smooth-scroll compensation, atomic with the row it compensates for. Runs
+	// synchronously after React commits the new rows but before paint, so the
+	// offset that holds the existing rows in place lands in the SAME paint as the
+	// prepended row — no jump-then-correct flicker. Keyed on the newest committed
+	// seq (robust to the cap, where length is constant) and re-baselines on a
+	// filter change so a filter switch doesn't read as new rows.
 	useLayoutEffect( () => {
 		const topSeq = filteredEntries.length ? filteredEntries[ 0 ].seq : 0;
 		const prevSeq = lastCompensatedSeqRef.current;
@@ -498,7 +399,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		}
 	}, [ filteredEntries, filter ] );
 
-	// Memoize grid template.
+	// Grid template.
 	const gridTemplate = useMemo(
 		() =>
 			visibleColumns
@@ -507,7 +408,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		[ visibleColumns ]
 	);
 
-	// Virtualization with animation offset.
+	// Virtualization.
 	const { startIndex, endIndex, offsetTop, totalHeight } = useVirtualization(
 		listRef,
 		ROW_HEIGHT,
@@ -522,64 +423,55 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	const handleClear = () => {
 		clear();
 		lastCompensatedSeqRef.current = null; // re-baseline: first post-clear row won't slide.
-		pushedRef.current = {
-			topSeq: 0,
-			count: 0,
-			filter: filterRef.current,
-			rps: 0,
-		};
+		pushedRef.current = { topSeq: 0, count: 0, filter: filterRef.current };
 		setEntries( [] );
 		offsetRef.current = 0;
 	};
 
 	return (
 		<div
-			className="event-logger-request-stream"
+			className="event-logger-error-log"
 			role="table"
-			aria-label="Request log"
+			aria-label="Error log"
 		>
-			<div className="event-logger-request-stream-header">
+			<div className="event-logger-error-log-header">
 				<h1 className="newspack-dashboard-title">
-					{ __( 'Request Log', 'newspack-event-logger-nodes' ) }
+					{ __( 'Error Log', 'newspack-event-logger-nodes' ) }
 				</h1>
-				<div className="event-logger-request-stream-controls">
+				<div className="event-logger-error-log-controls">
 					<input
 						type="text"
-						className="event-logger-request-stream-search"
+						className="event-logger-error-log-search"
 						placeholder={ __(
-							'Filter by URL…',
+							'Filter by keyword, message, or request ID…',
 							'newspack-event-logger-nodes'
 						) }
 						value={ filter }
 						onChange={ ( e ) => setFilter( e.target.value ) }
 					/>
-					<span className="event-logger-request-stream-stats">
-						<span className="event-logger-request-stream-count">
+					<span className="event-logger-error-log-stats">
+						<span className="event-logger-error-log-count">
 							{ sprintf(
-								// translators: %d: number of requests shown in the log.
+								// translators: %d: number of error-log entries shown.
 								_n(
-									'%d request',
-									'%d requests',
+									'%d entry',
+									'%d entries',
 									filteredEntries.length,
 									'newspack-event-logger-nodes'
 								),
 								filteredEntries.length
 							) }
 						</span>
-						<span className="event-logger-request-stream-rps">
-							{ requestsPerSecond.toFixed( 1 ) } req/s
-						</span>
 						{ staleSec !== null && (
 							<span
+								className="event-logger-error-log-age"
 								style={ {
 									color:
 										staleSec > 10 ? '#dba617' : '#757575',
-									fontSize: '11px',
-									marginLeft: '8px',
 								} }
 							>
 								{ sprintf(
-									// translators: %d: seconds since the last request was received.
+									// translators: %d: seconds since the last error was received.
 									__(
 										'%ds ago',
 										'newspack-event-logger-nodes'
@@ -590,7 +482,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						) }
 					</span>
 					<button
-						className={ `event-logger-request-stream-btn ${
+						className={ `event-logger-error-log-btn ${
 							isPaused ? 'paused' : ''
 						}` }
 						onClick={ () => setPaused( ! isPaused ) }
@@ -609,7 +501,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						{ isPaused ? '▶' : '⏸' }
 					</button>
 					<button
-						className="event-logger-request-stream-btn"
+						className="event-logger-error-log-btn"
 						onClick={ handleClear }
 						title={ __(
 							'Clear all entries',
@@ -617,20 +509,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						) }
 					>
 						{ __( 'Clear', 'newspack-event-logger-nodes' ) }
-					</button>
-					<button
-						className={ `event-logger-request-stream-btn ${
-							showColumnPicker ? 'active' : ''
-						}` }
-						onClick={ () =>
-							setShowColumnPicker( ! showColumnPicker )
-						}
-						title={ __(
-							'Select columns',
-							'newspack-event-logger-nodes'
-						) }
-					>
-						{ __( 'Cols', 'newspack-event-logger-nodes' ) }
 					</button>
 				</div>
 			</div>
@@ -643,37 +521,16 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				) }
 			/>
 
-			{ showColumnPicker && (
-				<div className="event-logger-request-stream-column-picker">
-					{ Object.entries( COLUMNS ).map( ( [ key, col ] ) => (
-						<label
-							key={ key }
-							htmlFor={ `col-${ key }` }
-							style={ { cursor: 'pointer', marginRight: '12px' } }
-							title={ col.tooltip }
-						>
-							<input
-								id={ `col-${ key }` }
-								type="checkbox"
-								checked={ visibleColumns.includes( key ) }
-								onChange={ () => toggleColumn( key ) }
-							/>{ ' ' }
-							{ col.label }
-						</label>
-					) ) }
-				</div>
-			) }
-
 			<div
 				role="row"
-				className="event-logger-request-stream-header-row"
+				className="event-logger-error-log-header-row"
 				style={ { gridTemplateColumns: gridTemplate } }
 			>
 				{ visibleColumns.map( ( col ) => (
 					<span
 						key={ col }
 						role="columnheader"
-						className="event-logger-request-stream-th"
+						className="event-logger-error-log-th"
 						title={ COLUMNS[ col ]?.tooltip }
 					>
 						{ COLUMNS[ col ]?.label || col }
@@ -682,24 +539,24 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			</div>
 			<div
 				role="rowgroup"
-				className="event-logger-request-stream-list"
+				className="event-logger-error-log-list"
 				ref={ listRef }
 				onScroll={ handleScroll }
 			>
 				<div
-					className="event-logger-request-stream-content"
+					className="event-logger-error-log-content"
 					ref={ contentRef }
 					style={ { minHeight: totalHeight } }
 				>
 					{ filteredEntries.length === 0 ? (
-						<div className="event-logger-request-stream-empty">
+						<div className="event-logger-error-log-empty">
 							{ isPaused
 								? __(
 										'Paused - click play to resume',
 										'newspack-event-logger-nodes'
 								  )
 								: __(
-										'Waiting for requests…',
+										'Waiting for errors…',
 										'newspack-event-logger-nodes'
 								  ) }
 						</div>
@@ -709,8 +566,8 @@ export default function RequestStream( { maxEntries = 500 } ) {
 								style={ { height: offsetTop, flexShrink: 0 } }
 							/>
 							{ visibleEntries.map( ( entry ) => (
-								<StreamRow
-									key={ entry.seq }
+								<ErrorRow
+									key={ entry.id }
 									entry={ entry }
 									visibleColumns={ visibleColumns }
 									gridTemplate={ gridTemplate }

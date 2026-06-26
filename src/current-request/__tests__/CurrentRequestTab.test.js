@@ -20,13 +20,13 @@ import CurrentRequestTab from '../CurrentRequestTab';
 // The flame graph (d3-heavy, lazy) + profiles breakdown are reused from the
 // performance dashboard; mock them to sentinels so the tab's wiring is the unit
 // under test, not d3.
-jest.mock( '../../performance-dashboards/FlameGraph', () => ( {
+jest.mock( '../../overview/FlameGraph', () => ( {
 	__esModule: true,
 	default: ( { data } ) => (
 		<div data-testid="flame">{ data && data.name }</div>
 	),
 } ) );
-jest.mock( '../../performance-dashboards/RequestProfile', () => ( {
+jest.mock( '../../overview/RequestProfile', () => ( {
 	__esModule: true,
 	default: ( { profiles } ) => (
 		<div data-testid="profiles">
@@ -60,7 +60,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	setBlob( {
 		rid: 'abc123',
 		partition: 2,
-		perfUrl: 'admin.php?page=newspack-nodes-performance',
+		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
 	// `request_detail` returns the full request envelope ($decoded[VALUE]) — the
 	// real shape this fixture mirrors (url + duration_ms + status_code + … ).
