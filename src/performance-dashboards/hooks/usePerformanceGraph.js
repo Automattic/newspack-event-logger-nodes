@@ -217,6 +217,9 @@ export function usePerformanceGraph( opts = {} ) {
 		timerName: 'perf:timer',
 		teeName: 'perf:tee',
 		commandClient: opts.commandClient,
+		// The refresh-rate selector's value (ms string) becomes the poll cadence:
+		// > 1s hitchhikes the router TIMER and throttles to it; changing it re-arms.
+		intervalMs: parseInt( refreshInterval, 10 ) || 0,
 	} );
 
 	// Fire a TM_COMMAND through the interpreter toward the egress. FROM = the
