@@ -121,7 +121,7 @@ class PerformanceCISiblingNodesTest extends TestCase {
 	 */
 	public function test_verb_removes_scratch_partitions(): void {
 		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire( $interpreter, 'performance', 'request_log_list' );
+		VerbHarness::fire( $interpreter, 'performance', 'request_search', 'rid-anything' );
 
 		$this->assertNull( $this->find_scratch_partition( 'requests.' ), 'scratch Partitions must be removed after the verb' );
 	}

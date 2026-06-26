@@ -2,20 +2,17 @@
 /**
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
- * All 19 planned verbs. Replaces:
- *   - class-perf-overview-controller.php       (overview)
- *   - class-perf-urls-controller.php            (urls, url_detail)
- *   - class-perf-requests-controller.php        (request_search, request_detail)
- *   - class-performance-controller.php          (timing, dashboard)
- *   - class-perf-hooks-controller.php           (hooks_registered, hooks_categories)
- *   - class-perf-hooks-available-controller.php (hooks_available, hooks_configure)
- *   - class-perf-config-controller.php          (config_get)
- *   - class-perf-settings-controller.php        (set)
- *   - class-gyroscope-controller.php            (SSE method stays as REST controller)
- *   - class-request-log-controller.php          (request_log_list, request_log_detail)
+ * Verbs the live surfaces drive:
+ *   - overview / urls / url_detail / request_search / request_detail
+ *     — the de-godded performance dashboard (usePerformanceGraph) +
+ *     the current-request tab.
+ *   - hooks_registered — the Settings / hook-catalog tree.
+ *   - set — the spoke-side receiver of the substrate Settings_Sync_Node
+ *     hub→spoke fanout (hub-control.tsl maps the nine perf-tuning options
+ *     to this `performance` node).
  *
- * SSE-style stream controllers (firehose-stream, gyroscope-stream,
- * errors-stream, requests-stream) stay as REST controllers — the
+ * SSE-style stream surfaces (request-log, gyroscope, errors) consume the
+ * substrate's `/messages/stream` EventSource directly — the
  * CommandInterpreter dispatch path doesn't stream.
  *
  * Cross-cutting design choices:
@@ -159,18 +156,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
 	/**
-	 * Default page size for `request_log_list`. Mirrors the legacy
-	 * RequestLogController `limit` sanitize default.
-	 */
-	private const REQUEST_LIST_DEFAULT_LIMIT = 100;
-
-	/**
-	 * Upper bound on `request_log_list` page size. Mirrors the legacy
-	 * RequestLogController sanitize_callback `min(1000, max(1, (int)$v))`.
-	 */
-	private const REQUEST_LIST_MAX_LIMIT = 1000;
-
-	/**
 	 * Decode a synced array-option value: JSON first (what Settings_Sync_Node now
 	 * ships — lossless for assoc maps like custom_events), falling back to a
 	 * comma-list for legacy senders. Only a decoded ARRAY is trusted; a bare
@@ -281,75 +266,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return $out;
-	}
-
-	// -------------------------------------------------------------------------
-	// Hook discovery — walk $wp_actions + $wp_filter for the picker UI.
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Collect every WordPress hook known to the runtime, categorize it, and
-	 * strip out (a) Event Logger's own internal hooks and (b) anything the
-	 * operator has flagged as a custom event (so the custom-events tab owns
-	 * those). Sorted by name. Mirror of
-	 * PerfHooksAvailableController::get_available_hooks.
-	 *
-	 * @return array<int,array{name:string,category:string,count:int}>
-	 */
-	private static function collect_available_hooks(): array {
-		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
-		global $wp_actions, $wp_filter;
-
-		$hooks = [];
-
-		if ( isset( $wp_actions ) && \is_array( $wp_actions ) ) {
-			foreach ( $wp_actions as $hook_name => $count ) {
-				$name = (string) $hook_name;
-				if ( Hook_Categorizer::is_internal( $name ) ) {
-					continue;
-				}
-				$hooks[ $name ] = [
-					'name'     => $name,
-					'category' => Hook_Categorizer::categorize( $name ),
-					'count'    => self::to_int( $count ),
-				];
-			}
-		}
-
-		if ( isset( $wp_filter ) && ( \is_array( $wp_filter ) || $wp_filter instanceof \Traversable ) ) {
-			foreach ( $wp_filter as $hook_name => $callbacks ) {
-				$name = self::to_string( $hook_name );
-				if ( Hook_Categorizer::is_internal( $name ) ) {
-					continue;
-				}
-				// $wp_actions count takes precedence — only add if missing.
-				if ( ! isset( $hooks[ $name ] ) ) {
-					$hooks[ $name ] = [
-						'name'     => $name,
-						'category' => Hook_Categorizer::categorize( $name ),
-						'count'    => 0,
-					];
-				}
-			}
-		}
-
-		// Filter out custom events — they're managed via the custom-events tab.
-		$cfg           = RuntimeConfig::load_config();
-		$custom_events = $cfg['custom_events'] ?? [];
-		if ( \is_array( $custom_events ) ) {
-			foreach ( $custom_events as $key => $value ) {
-				// Indexed array form (`['event_a', 'event_b']`) puts the name
-				// in the value; associative form (`['event_a' => true]`) puts
-				// it in the key. Match both — same as the legacy controller.
-				$name = ( \is_string( $key ) && '' !== $key && ! \is_numeric( $key ) ) ? $key : $value;
-				if ( \is_string( $name ) ) {
-					unset( $hooks[ $name ] );
-				}
-			}
-		}
-
-		\ksort( $hooks );
-		return \array_values( $hooks );
 	}
 
 	/**
@@ -1008,129 +924,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		return $result;
 	}
 
-	/**
-	 * Collect index entries across all requests.log partitions up to the
-	 * supplied limit, capped at MAX_INDEX_ENTRIES per partition. Mirrors
-	 * RequestLogController::get_list.
-	 *
-	 * @param int $limit Soft cap; the caller sorts + slices after.
-	 * @return array{0:array<int,array<string,mixed>>,1:int} Tuple of entries + scanned.
-	 */
-	private static function collect_request_list( int $limit ): array {
-		$config         = RuntimeConfig::load_config();
-		$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
-		$base_dir       = RuntimeConfig::get_base_directory();
-		$log_base       = $base_dir . '/logs';
-
-		$entries = [];
-		$scanned = 0;
-
-		for ( $p = 0; $p < $num_partitions && \count( $entries ) < $limit; $p++ ) {
-			$partition = new Partition_Node();
-			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( "{$log_base}/requests.p{$p}" );
-			$partition->with_index(
-				static function ( string $line, array $position, &$data = null ): ?string {
-				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
-				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
-				return Request_Builder_Node::format_index_entry( $line, $position, $data );
-			}
-			);
-			$partition->scan_index(
-				static function ( string $line ) use ( &$entries, &$scanned, $limit, $p ): ?bool {
-					++$scanned;
-					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
-						return false;
-					}
-					if ( \count( $entries ) >= $limit ) {
-						return false;
-					}
-					$parsed = Request_Builder_Node::parse_request_index( $line );
-					if ( ! \is_array( $parsed ) ) {
-						return null;
-					}
-					$entries[] = [
-						'rid'          => \trim( self::to_string( $parsed['rid'] ?? '' ) ),
-						'url_hash'     => \trim( self::to_string( $parsed['url_hash'] ?? '' ) ),
-						'timestamp'    => $parsed['timestamp']    ?? 0,
-						'duration_ms'  => $parsed['duration_ms']  ?? 0,
-						'status_code'  => $parsed['status_code']  ?? 0,
-						'peak_mb'      => $parsed['peak_mb']      ?? 0,
-						'method'       => $parsed['method']       ?? '',
-						'error_status' => $parsed['error_status'] ?? null,
-						'partition'    => $p,
-					];
-					return null;
-				},
-				true
-			);
-			$partition->remove_node();
-		}
-
-		return [ $entries, $scanned ];
-	}
-
-	/**
-	 * Fan out across every requests.log partition looking for one rid; the
-	 * first hit wins. Returns the decoded request body (with `_partition`
-	 * stamped on it). Mirrors RequestLogController::get_detail's scan.
-	 *
-	 * @return array{0:?array<array-key,mixed>,1:int} Tuple of result + scanned (decoded body keys come from the JSON envelope).
-	 */
-	private static function find_request_envelope( string $rid ): array {
-		$config         = RuntimeConfig::load_config();
-		$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
-		$base_dir       = RuntimeConfig::get_base_directory();
-		$log_base       = $base_dir . '/logs';
-
-		$result  = null;
-		$scanned = 0;
-
-		for ( $p = 0; $p < $num_partitions && null === $result; $p++ ) {
-			$partition = new Partition_Node();
-			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( "{$log_base}/requests.p{$p}" );
-			$partition->with_index(
-				static function ( string $line, array $position, &$data = null ): ?string {
-				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
-				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
-				return Request_Builder_Node::format_index_entry( $line, $position, $data );
-			}
-			);
-			$partition->scan_index(
-				static function ( string $line ) use ( &$result, &$scanned, $partition, $rid, $p ): ?bool {
-					++$scanned;
-					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
-						return false;
-					}
-					$entry = Request_Builder_Node::parse_request_index( $line );
-					if ( ! \is_array( $entry ) || \trim( self::to_string( $entry['rid'] ) ) !== $rid ) {
-						return null;
-					}
-					$bytes = $partition->read_at(
-						self::to_int( $entry['segment_id'] ?? 0 ),
-						self::to_int( $entry['offset'] ?? 0 ),
-						self::to_int( $entry['length'] ?? 0 )
-					);
-					if ( '' === $bytes ) {
-						return false;
-					}
-					$decoded = \json_decode( \trim( $bytes ), true, 64 );
-					$req     = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
-					if ( \is_array( $req ) ) {
-						$req['_partition'] = $p;
-						$result            = $req;
-					}
-					return false;
-				},
-				true
-			);
-			$partition->remove_node();
-		}
-
-		return [ $result, $scanned ];
-	}
-
 	// -------------------------------------------------------------------------
 	// Scalar coercion — decoded JSON / memcache blobs carry `mixed` leaf values;
 	// these reproduce PHP's int/float/string cast for the scalar+null domain those
@@ -1252,8 +1045,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Schema-driven dispatch: each of the 17 verbs is declared once in
-	 * `verbs[]` carrying its `handler`. The inherited Service_CI_Node ctor
+	 * Schema-driven dispatch: each verb is declared once in
+	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
 	 * builds the commands table from this schema. Stats-reading verbs build
 	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
 	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
@@ -1523,41 +1316,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'timing',
-					'description' => 'Merged hourly timing buckets across partitions.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerformanceController::get_timing — merged
-				// hourly buckets across partitions. The legacy "data + meta"
-				// wrapper is dropped (REST artifact); the interpreter returns the inner
-				// payload directly.
-				return [
-					'time_series' => self::merge_hourly_across_partitions(),
-				];
-					},
-				],
-				[
-					'name'        => 'dashboard',
-					'description' => 'Overview payload + full URL index in one round-trip.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerformanceController::get_dashboard:
-				// nest the overview payload alongside the full URL index so
-				// the dashboard tree fans in with one round-trip. `load_index`
-				// is the heavy memcache fan-out — share it across both keys.
-				\assert( $self instanceof self );
-				$index = $self->index();
-				return [
-					'overview' => self::build_overview_payload( $index ),
-					'urls'     => $index,
-				];
-					},
-				],
-				[
 					'name'        => 'hooks_registered',
 					'description' => 'Registered hooks grouped by category.',
 					'args'        => [],
@@ -1577,119 +1335,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					'total_hooks'       => $total,
 					'categories'        => Hook_Categorizer::get_categories(),
 					'hooks_by_category' => $by_category,
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_categories',
-					'description' => 'Hook categories + merged config.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfHooksController::get_hook_categories
-				// — same shape the React tree consumes.
-				return [
-					'categories' => Hook_Categorizer::get_categories(),
-					'config'     => Hook_Categorizer::get_merged_config(),
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_available',
-					'description' => 'All runtime hooks for the picker UI.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfHooksAvailableController::get_available_hooks.
-				// Walks $wp_actions (fired hooks) and $wp_filter (registered
-				// but never-fired hooks), excludes Event Logger's own internal
-				// hooks (instrumenting them loops via Config::load_config),
-				// and removes anything the operator has marked as a custom
-				// event so the picker doesn't double-list it.
-				return [
-					'hooks' => self::collect_available_hooks(),
-				];
-					},
-				],
-				[
-					'name'        => 'hooks_configure',
-					'description' => 'Persist selected hooks / custom events.',
-					'args'        => [
-						[ 'name' => 'hooks', 'type' => 'json', 'required' => false ],
-						[ 'name' => 'custom_events', 'type' => 'json', 'required' => false ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				$opts          = Command_Args::parse( $args )['options'];
-				$hooks         = self::csv( $opts, 'hooks' );
-				$custom_events = self::csv( $opts, 'custom_events' );
-				$configured    = 0;
-
-				if ( [] !== $hooks ) {
-					$flat = [];
-					foreach ( $hooks as $h ) {
-						$h = \sanitize_text_field( $h );
-						if ( '' !== $h ) {
-							$flat[] = $h;
-						}
-					}
-					\update_option( 'newspack_event_logger_nodes_log_events', $flat, AppConfig::autoload_for( 'newspack_event_logger_nodes_log_events' ) );
-					$configured += \count( $flat );
-				}
-
-				if ( [] !== $custom_events ) {
-					$assoc = [];
-					foreach ( $custom_events as $event ) {
-						$event = \sanitize_text_field( $event );
-						if ( '' !== $event ) {
-							$assoc[ $event ] = true;
-						}
-					}
-					\update_option( 'newspack_event_logger_nodes_custom_events', $assoc, AppConfig::autoload_for( 'newspack_event_logger_nodes_custom_events' ) );
-					$configured += \count( $assoc );
-				}
-
-				// Application Config caches the merged custom_events / log_events;
-				// reset so the very next verb call (e.g. hooks_available) re-reads
-				// the freshly-written WP options.
-				AppConfig::reset();
-
-				return [
-					'success'          => true,
-					'hooks_configured' => $configured,
-				];
-					},
-				],
-				[
-					'name'        => 'config_get',
-					'description' => 'Read the nine perf-tuning options.',
-					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy PerfConfigController::get_config, with one
-				// fix: the legacy controller called `RuntimeConfig::load_config()`
-				// which reads `newspack_nodes_` options — but the perf-tuning
-				// keys live under the `newspack_event_logger_nodes_` prefix on
-				// the application Config. AppConfig::load_config() is the right
-				// source. The legacy bug was masked because the legacy test
-				// asserted on key presence only, never on the actual values.
-				$cfg = AppConfig::load_config();
-				return [
-					'config' => [
-						'log_events'                  => $cfg['log_events']    ?? [],
-						'custom_events'               => $cfg['custom_events'] ?? [],
-						'log_urls'                    => $cfg['log_urls']      ?? [],
-						'skip_urls'                   => $cfg['skip_urls']     ?? [],
-						'auto_disable_threshold'      => self::to_int( $cfg['auto_disable_threshold']      ?? 0 ),
-						'auto_protect_time_threshold' => self::to_float( $cfg['auto_protect_time_threshold'] ?? 0.0 ),
-						'significant_events'          => $cfg['significant_events'] ?? [],
-						'log_memory'                  => ! empty( $cfg['log_memory'] ),
-						'flush_every_line'            => ! empty( $cfg['flush_every_line'] ),
-					],
 				];
 					},
 				],
@@ -1735,82 +1380,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				return [
 					'option'  => $option,
 					'updated' => $ok,
-				];
-					},
-				],
-				[
-					'name'        => 'request_log_list',
-					'description' => 'Recent request list across partitions.',
-					'args'        => [
-						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 100 ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy RequestLogController::get_list.
-				// Limit clamped 1..1000 (default 100); fan out across
-				// partitions; sort by timestamp DESC; slice to limit.
-				$opts  = Command_Args::parse( $args )['options'];
-				$limit = isset( $opts['limit'] )
-					? \min( self::REQUEST_LIST_MAX_LIMIT, \max( 1, (int) $opts['limit'] ) )
-					: self::REQUEST_LIST_DEFAULT_LIMIT;
-
-				[ $entries, $scanned ] = self::collect_request_list( $limit );
-
-				\usort( $entries, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
-				$entries = \array_slice( $entries, 0, $limit );
-
-				return [
-					'data' => $entries,
-					'meta' => [
-						'limit'   => $limit,
-						'scanned' => $scanned,
-					],
-				];
-					},
-				],
-				[
-					'name'        => 'request_log_detail',
-					'description' => 'Full request envelope for one request id.',
-					'args'        => [
-						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
-				// Lifted from legacy RequestLogController::get_detail.
-				// Empty id is a real usage error → throw so the central
-				// catch surfaces TM_COMMAND|TM_ERROR. Unknown-but-non-empty
-				// id returns the legacy stub-compatible empty-entries shape
-				// (NOT 404 — the React tree polls these and `expected to
-				// exist soon` is a normal state).
-				$rid = Command_Args::parse( $args )['positional'][0] ?? '';
-				if ( '' === $rid ) {
-					throw new \RuntimeException( 'id required' );
-				}
-
-				[ $result, $scanned ] = self::find_request_envelope( $rid );
-
-				if ( null === $result ) {
-					return [
-						'data' => [
-							'request_id' => $rid,
-							'entries'    => [],
-						],
-						'meta' => [ 'scanned' => $scanned ],
-					];
-				}
-
-				// Normalize the entries shape — React tree expects `entries[]`.
-				// Body with no `events` key is wrapped as a single entry; the
-				// _partition marker lets the tree key on partition.
-				$entries = $result['events'] ?? [ $result ];
-				return [
-					'data' => [
-						'request_id' => $rid,
-						'entries'    => $entries,
-					],
-					'meta' => [ 'scanned' => $scanned ],
 				];
 					},
 				],
