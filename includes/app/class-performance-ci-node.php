@@ -61,6 +61,55 @@ class Performance_CI_Node extends Service_CI_Node {
 	public const MAX_INDEX_ENTRIES = 100000;
 
 	/**
+	 * URL-index read seam. Lazily-defaulted to the real merge-across-partitions
+	 * loader (load_index_default). Tests reassign it to COUNT index reads without
+	 * short-circuiting the production fan-out — the surrounding memo + the merge
+	 * logic still run as real code (mirrors Insights_CI_Demo_Node::$read_items).
+	 *
+	 * Resolved once per request through index(); reassign in a test bootstrap,
+	 * restore in a finally.
+	 *
+	 * Signature: `function (): array<int,array<string,mixed>>`.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $load_index = null;
+
+	/**
+	 * Per-request memo of the merged URL index; null until index() reads once.
+	 * Per-INSTANCE (one Performance_CI_Node == one request) so a long-lived
+	 * worker never serves a stale snapshot across requests.
+	 *
+	 * @var array<int,array<array-key,mixed>>|null
+	 */
+	private ?array $index_cache = null;
+
+	/**
+	 * Merged URL index for THIS request — read at most once and memoized, so the
+	 * slice handlers that each derive from it (overview, urls, url_detail's
+	 * lookup, dashboard's overview + urls) share a single memcache fan-out
+	 * instead of re-loading per slice. Resolves the `load_index` seam (the real
+	 * loader by default) on first call.
+	 *
+	 * @return array<int,array<array-key,mixed>>
+	 */
+	private function index(): array {
+		if ( null !== $this->index_cache ) {
+			return $this->index_cache;
+		}
+		$read = self::$load_index ?? static fn (): array => self::load_index_default();
+		$raw  = $read();
+		$rows = [];
+		foreach ( \is_array( $raw ) ? $raw : [] as $row ) {
+			if ( \is_array( $row ) ) {
+				$rows[] = $row;
+			}
+		}
+		$this->index_cache = $rows;
+		return $this->index_cache;
+	}
+
+	/**
 	 * Valid sort fields for the `urls` verb. Echoes the legacy
 	 * PerfUrlsController whitelist; anything outside falls back to `count`.
 	 */
@@ -311,7 +360,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private static function load_index(): array {
+	public static function load_index_default(): array {
 		$buckets = self::recent_url_buckets();
 		$result  = [];
 		foreach ( self::stats_stores() as $store ) {
@@ -677,7 +726,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Shared by the `overview` and `dashboard` verbs — `dashboard` wraps
 	 * this alongside the same `$index` to avoid a second memcache fan-out.
 	 *
-	 * @param array<int,array<string,mixed>> $index Output of self::load_index().
+	 * @param array<int,array<array-key,mixed>> $index Output of the memoized index() (load_index_default).
 	 * @return array<string, mixed>
 	 */
 	private static function build_overview_payload( array $index ): array {
@@ -1239,7 +1288,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
 				$categories = self::flag( $opts, 'categories' );
 
-				$payload                       = self::build_overview_payload( self::load_index() );
+				\assert( $self instanceof self );
+				$payload                       = self::build_overview_payload( $self->index() );
 				$payload['global_leaderboard'] = '' === $server
 					? self::build_global_leaderboard()
 					: self::build_server_leaderboard( $server );
@@ -1299,7 +1349,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					$order = 'desc';
 				}
 
-				$index = self::load_index();
+				\assert( $self instanceof self );
+				$index = $self->index();
 
 				if ( '' !== $server ) {
 					$srv   = \strtolower( $server );
@@ -1351,7 +1402,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 
-				$index = self::load_index();
+				\assert( $self instanceof self );
+				$index = $self->index();
 				$stats = null;
 				foreach ( $index as $entry ) {
 					if ( ( $entry['hash'] ?? '' ) === $hash ) {
@@ -1497,7 +1549,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				// nest the overview payload alongside the full URL index so
 				// the dashboard tree fans in with one round-trip. `load_index`
 				// is the heavy memcache fan-out — share it across both keys.
-				$index = self::load_index();
+				\assert( $self instanceof self );
+				$index = $self->index();
 				return [
 					'overview' => self::build_overview_payload( $index ),
 					'urls'     => $index,
