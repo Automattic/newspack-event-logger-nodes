@@ -276,14 +276,12 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			return;
 		}
 
-		$rest_url            = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
-		$aggregator_rest_url = \function_exists( 'rest_url' ) ? \rest_url( 'newspack-nodes-aggregator/v1/' ) : '/wp-json/newspack-nodes-aggregator/v1/';
-		$nonce               = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
+		$rest_url      = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
+		$nonce         = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
 		$restart_nonce       = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
 		$localized           = [
-			'restUrl'           => \esc_url_raw( $rest_url ),
-			'aggregatorRestUrl' => $aggregator_rest_url,
-			'nonce'             => $nonce,
+			'restUrl'      => \esc_url_raw( $rest_url ),
+			'nonce'        => $nonce,
 			'restartNonce'      => $restart_nonce,
 			'tree'              => $tree,
 			'version'           => \NEWSPACK_NODES_VERSION,
@@ -301,18 +299,6 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		);
 		if ( null === $handle ) {
 			return;
-		}
-
-		if ( 'performance-logger' === $tree ) {
-			$settings_css_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/event-aggregator-settings/settings.css';
-			$settings_css_url  = NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/event-aggregator-settings/settings.css';
-			if ( \file_exists( $settings_css_path ) ) {
-				$settings_css_version = (string) ( \filemtime( $settings_css_path ) ?: NEWSPACK_EVENT_LOGGER_NODES_VERSION );
-				// Depend on the Newspack token sheet so the settings chrome's
-				// var(--np-*) references resolve (the page wrap carries the
-				// `.newspack-nodes-theme` class that scopes those tokens).
-				\wp_enqueue_style( 'newspack-nodes-aggregator-settings', $settings_css_url, [ 'newspack-nodes-theme' ], $settings_css_version );
-			}
 		}
 
 		$retention_seconds = 86400;
