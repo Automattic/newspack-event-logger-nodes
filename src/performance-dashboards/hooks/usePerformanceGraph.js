@@ -1,66 +1,88 @@
 /**
- * usePerformanceGraph — mounts the Performance Dashboard's data graph onto the
- * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
- * substrate's HTTP I/O boundary node, plus the application's
- * `performance:command` (slice-tagging command-builder) and `performance:view`
- * (render model + pending-Promise registry):
+ * usePerformanceGraph — the Performance Dashboard data graph as a GENUINE node
+ * graph on the substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher),
+ * D1b de-god. Replaces the single `performance:command` god command-builder + the
+ * 4-slice `performance:view` god view with independent per-slice graph paths:
  *
- *   _http              (HttpOutNode — POST /command boundary; .client = CommandClient)
- *   performance:command (slice-tagging command-builder)
- *   performance:view    (the view-model node React reads + pending Map)
+ *   perf:timer (Timer) → perf:tee (Tee) → fetch-overview, fetch-urls (Fetchers,
+ *     each given an argsFn fire-time getter reading the CURRENT React UI state) →
+ *     _shell/_http/performance
+ *   overviewIn (Tee) → overview:view (OverviewView)
+ *   urlsIn     (Tee) → urls:view     (UrlsView)
  *
- * Dashboards aren't REPLs: no transcript window, no tab-completion input, no
- * uptime display, no `cd` navigation. So `_output` / `_completion` / `_uptime` /
- * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
- * the debug-overlay's REPL when it opens on this page.
+ * overview + urls are POLLED — useBatchedPoll owns the Timer/Tee/_shell/_http +
+ * lock-flush batching + page-visibility gate, and each Fetcher's getter makes the
+ * tick emit live filter/sort/page args (so the data tracks UI state with no
+ * re-wiring). A serverFilter/breakdown change also fires an immediate poke.
  *
- * Every node sinks into the interpreter (rule #2); flow is steered by each node's
- * `target`. The hook owns the orchestration effects (initial load, refresh
- * interval, selection-driven fetches, debounced URL-params change). Each
- * fetch flows `performance:command` → interpreter → router → `_http` → POST → server
- * pivots TO=FROM → router → `performance:view`, which matches `message[ID]`
- * to its pending Map and applies the result to the registered slice.
+ * url_detail + request_detail are ON-DEMAND (modal-open → fetch), NOT on the
+ * Timer. The url_detail reply rides through the committed UrlDetailMergeNode
+ * (incremental merge + last_modified/500-cap dedup) on the receiver→view edge:
  *
- * The consumer reads the model itself via `useNodeState('performance:view',
- * 'view')` — this hook returns ONLY control callbacks
- * (`handleUrlParamsChange`, `resolveRequest`, `fetchUrlBreakdown`), exactly
- * like useErrorLogGraph returns `{ setPaused, clear }`.
+ *   urldetailIn (Tee) → urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)
+ *   requestdetailIn (Tee) → requestdetail:view (RequestDetailView)
  *
- * The command boundary is injectable: tests pass `opts.commandClient`
- * (assigned to `_http.client`) so the hook never touches the network.
- * Production lazily defaults to a freshly-constructed CommandClient.
+ * resolveRequest (request_search, navigation) + fetchUrlBreakdown (url_detail
+ * breakdown) are AWAITED Promises settled via the relevant view's PendingReplies
+ * (the useHookCatalogGraph / hook-catalog-view-node pattern): the hook stashes a
+ * resolver under message[ID], the server pivots TO=FROM=that view, and the view's
+ * PendingReplies.settle resolves/rejects without touching its data slice.
  *
- * The graph build is handed to `mountExospine( build )`, which snapshots Core so
- * the soft nodes (`_http` / command / view) can be torn down + rebuilt on
- * `reinit()` ("Reset Graph"); the orchestration effects re-fire on rebuild via
- * the `buildCount` bump. `PerformanceDashboard` and `ErrorLog` mount into
- * SEPARATE DOM containers, so each hook's exospine is isolated by React-root
- * scope; the matching teardown removes the backbone.
+ * The hook returns ONLY control callbacks (`handleUrlParamsChange`,
+ * `resolveRequest`, `fetchUrlBreakdown`); React reads each slice via its own
+ * useNodeState('<slice>:view','view'). The command boundary is injectable via
+ * `opts.commandClient`.
  */
-import { useEffect, useRef, useState, useCallback } from '@wordpress/element';
+
+import { useCallback, useEffect, useRef } from '@wordpress/element';
 import {
-	mountExospine,
-	CommandClient,
+	Core,
 	newMessage,
 	TYPE,
+	TO,
+	FROM,
+	ID,
 	VALUE,
+	TM_COMMAND,
 	TM_STRUCT,
+	formatCommandArgs,
 } from '@newspack-nodes/runtime';
-import '../nodes/register';
+import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
+import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
+import '../nodes/register';
 
-// I/O boundary node.
+// The server CI mount + the egress path the Fetchers/on-demand commands target.
+const SERVER = 'performance';
+const TARGET = `_shell/_http/${ SERVER }`;
 const HTTP = '_http';
-// Application nodes. Names use a colon, not a slash: the router peels TO on
-// '/', so a '/' in a node name would misroute.
-const COMMAND = 'performance:command';
-const VIEW = 'performance:view';
+
+// Slice view + receiver names.
+const OVERVIEW_VIEW = 'overview:view';
+const URLS_VIEW = 'urls:view';
+const URLDETAIL_VIEW = 'urldetail:view';
+const URLDETAIL_RECV = 'urldetailIn';
+const URLDETAIL_MERGE = 'urldetail:merge';
+const REQUESTDETAIL_VIEW = 'requestdetail:view';
+
+// Validation — mirror the old command-node guards.
+const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
+const isValidRequestId = ( r ) =>
+	'string' === typeof r && /^[a-zA-Z0-9_-]+$/.test( r );
+const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
+
+// Monotonic per-process op-id — correlates an awaited reply to a pending Promise.
+let nextOpId = 0;
+function makeOpId() {
+	nextOpId += 1;
+	return `performance-op-${ Date.now() }-${ nextOpId }`;
+}
 
 // Dedup `server` (always — feeds the filter dropdown) with the active chart
-// dimension into one comma arg. < 2 dims collapses the controller's nested
-// response shape, so pad with `status`. (From the orchestrator.)
+// dimension into the overview breakdown list. < 2 dims collapses the controller's
+// nested response shape, so pad with `status`.
 const breakdownsFor = ( currentBreakdown ) => {
 	const set = new Set( [ 'server' ] );
 	if ( currentBreakdown ) {
@@ -72,6 +94,43 @@ const breakdownsFor = ( currentBreakdown ) => {
 	return Array.from( set );
 };
 
+// Build the overview args string from current UI state (server + breakdown +
+// always-on categories). The Fetcher's getter calls this each tick.
+function overviewArgs( { serverFilter, chartBreakdown } ) {
+	const options = { categories: true };
+	if ( serverFilter ) {
+		options.server = serverFilter;
+	}
+	const dims = breakdownsFor( chartBreakdown );
+	if ( dims.length > 0 ) {
+		options.breakdown = dims.join( ',' );
+	}
+	return formatCommandArgs( [], options );
+}
+
+// Build the urls args string from current UI state (sort/order/limit/offset/
+// search/server). Grammar order matches the old command node.
+function urlsArgs( { urlParams, serverFilter } ) {
+	const options = {};
+	if ( urlParams.sort ) {
+		options.sort = urlParams.sort;
+	}
+	if ( urlParams.order ) {
+		options.order = urlParams.order;
+	}
+	options.limit = 100;
+	if ( urlParams.offset ) {
+		options.offset = urlParams.offset;
+	}
+	if ( urlParams.search ) {
+		options.search = urlParams.search;
+	}
+	if ( serverFilter ) {
+		options.server = serverFilter;
+	}
+	return formatCommandArgs( [], options );
+}
+
 export function usePerformanceGraph( opts = {} ) {
 	const {
 		serverFilter = '',
@@ -81,14 +140,13 @@ export function usePerformanceGraph( opts = {} ) {
 		selectedUrl = null,
 		selectedRequest = null,
 		urlDetailData = null,
+		onError,
 	} = opts;
 
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
-	const commandRef = useRef( null );
-	const viewRef = useRef( null );
-
+	// Live UI state the Fetcher getters + on-demand fetches read at fire time.
 	const serverFilterRef = useRef( serverFilter );
 	serverFilterRef.current = serverFilter;
 	const chartBreakdownRef = useRef( chartBreakdown );
@@ -100,160 +158,200 @@ export function usePerformanceGraph( opts = {} ) {
 		offset: 0,
 	} );
 	const urlFetchTimerRef = useRef( null );
-	const lastRefreshRef = useRef( 0 );
 
-	// Bumped on every (re)build so the orchestration effects re-fire against the
-	// fresh command node and a consumer's useNodeState re-subscribes to the
-	// freshly-registered view node. A monotonic counter, not a boolean latch —
-	// reinit()'s second build must still force a render.
-	const [ buildCount, bumpBuild ] = useState( 0 );
 	const isPageVisible = usePageVisibility();
 
-	// Mount the graph once onto the exospine: I/O boundary + command + view.
-	useEffect( () => {
-		// The soft view-nodes the backbone clips onto. mountExospine snapshots
-		// Core around this so reinit() removes exactly these and rebuilds them.
-		const build = ( { interpreter } ) => {
-			const data =
-				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
-				{};
+	// The poll graph: overview + urls slices on the Timer; the on-demand
+	// url_detail/request_detail views + the urlDetail merge edge.
+	const { interpreterRef } = useBatchedPoll( {
+		build: ( { interpreter, tee } ) => {
+			addSliceFetcher( interpreter, {
+				fetcher: 'fetch-overview',
+				receiver: 'overviewIn',
+				command: 'overview',
+				view: OVERVIEW_VIEW,
+				viewClass: 'OverviewView',
+				tee,
+				target: TARGET,
+				argsFn: () =>
+					overviewArgs( {
+						serverFilter: serverFilterRef.current,
+						chartBreakdown: chartBreakdownRef.current,
+					} ),
+			} );
+			addSliceFetcher( interpreter, {
+				fetcher: 'fetch-urls',
+				receiver: 'urlsIn',
+				command: 'urls',
+				view: URLS_VIEW,
+				viewClass: 'UrlsView',
+				tee,
+				target: TARGET,
+				argsFn: () =>
+					urlsArgs( {
+						urlParams: urlParamsRef.current,
+						serverFilter: serverFilterRef.current,
+					} ),
+			} );
 
-			// I/O boundary node — HttpOutNode is the only one this dashboard needs.
-			const http = interpreter.makeNode( 'HttpOut', HTTP );
-			http.client =
-				optsRef.current.commandClient ||
-				new CommandClient( {
-					baseUrl: data.restUrl || '/wp-json/',
-					nonce: data.nonce || '',
-				} );
-
-			// The application view-model node — receiver of every reply via TO=FROM pivot.
-			const view = interpreter.makeNode( 'PerformanceView', VIEW );
-
-			// The slice-tagging command-builder. sink = interpreter (rule #2); target = view
-			// so `loading`/`error` controls route to the view via the router peeling
-			// TO. viewName = VIEW so the command can stash pending entries there.
-			const command = interpreter.makeNode(
-				'PerformanceCommand',
-				COMMAND
+			// On-demand url_detail: receiver Tee → merge transform → view. The
+			// merge node lives on the edge (incremental dedup), out of view state.
+			const urldetailIn = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
+			const merge = interpreter.makeNode(
+				'UrlDetailMerge',
+				URLDETAIL_MERGE
 			);
-			command.onError = optsRef.current.onError;
-			command.viewName = VIEW;
-			command.target = VIEW;
+			merge.connectNode( URLDETAIL_VIEW );
+			urldetailIn.connectNode( URLDETAIL_MERGE );
+			interpreter.makeNode( 'UrlDetailView', URLDETAIL_VIEW );
 
-			commandRef.current = command;
-			viewRef.current = view;
+			// On-demand request_detail: its view receives replies directly.
+			interpreter.makeNode( 'RequestDetailView', REQUESTDETAIL_VIEW );
 
-			// Re-render so the orchestration effects re-fire against the fresh
-			// command and useNodeState re-subscribes to the freshly-mounted view.
-			bumpBuild( ( n ) => n + 1 );
-
-			// Non-node side effects undone before the nodes are removed. Close the
-			// command (cancel guard) first so a late reply doesn't fire emissions
-			// against a torn-down view.
 			return () => {
 				if ( urlFetchTimerRef.current ) {
 					clearTimeout( urlFetchTimerRef.current );
 				}
-				command.close();
-				commandRef.current = null;
-				viewRef.current = null;
 			};
-		};
+		},
+		timerName: 'perf:timer',
+		teeName: 'perf:tee',
+		commandClient: opts.commandClient,
+	} );
 
-		const { teardown } = mountExospine( build );
-		return teardown;
+	// Fire a TM_COMMAND through the interpreter toward the egress. FROM = the
+	// node the reply pivots back to; the router peels TARGET, HttpOut POSTs, the
+	// server pivots TO=FROM. Batched into the next HttpOut flush.
+	const sendCommand = useCallback(
+		( verb, args, from, id ) => {
+			const interpreter = interpreterRef.current;
+			if ( ! interpreter ) {
+				return false;
+			}
+			const m = newMessage();
+			m[ TYPE ] = TM_COMMAND;
+			m[ FROM ] = from;
+			m[ TO ] = TARGET;
+			if ( id ) {
+				m[ ID ] = id;
+			}
+			m[ VALUE ] = { name: verb, arguments: args };
+			interpreter.fill( m );
+			return true;
+		},
+		[ interpreterRef ]
+	);
+
+	// Fire a TM_STRUCT control (loading/clear) directly into a view's fill.
+	const sendControl = useCallback( ( viewName, value ) => {
+		const view = Core.node( viewName );
+		if ( ! view ) {
+			return;
+		}
+		const m = newMessage();
+		m[ TYPE ] = TM_STRUCT;
+		m[ VALUE ] = value;
+		view.fill( m );
 	}, [] );
 
-	// Initial load + re-fetch on server-filter / breakdown change. Re-fires on
-	// every (re)build via buildCount.
-	useEffect( () => {
-		if ( ! buildCount ) {
+	// An immediate overview+urls poke (fill the interpreter directly so the args
+	// reflect the CURRENT state). Used on serverFilter/breakdown change so the
+	// dashboard refreshes at once instead of waiting a full poll interval.
+	const pokeOverviewUrls = useCallback( () => {
+		sendControl( OVERVIEW_VIEW, { action: 'loading' } );
+		sendControl( URLS_VIEW, { action: 'loading' } );
+		const interpreter = interpreterRef.current;
+		if ( ! interpreter ) {
 			return;
 		}
-		const dims = breakdownsFor( chartBreakdown );
-		commandRef.current.fetchOverview( serverFilter, dims );
-		commandRef.current.fetchUrls( {
-			...urlParamsRef.current,
-			server: serverFilter,
-		} );
-	}, [ buildCount, serverFilter, chartBreakdown ] );
-
-	// Auto-refresh body while the modal is closed and the page is visible.
-	useEffect( () => {
-		if ( ! buildCount || selectedUrl || ! isPageVisible ) {
-			return undefined;
+		const http = Core.node( HTTP );
+		if ( http ) {
+			http.lock();
 		}
-		const intervalMs = parseInt( refreshInterval, 10 );
-		const doRefresh = () => {
-			lastRefreshRef.current = Date.now();
-			const dims = breakdownsFor( chartBreakdownRef.current );
-			commandRef.current.fetchOverview( serverFilterRef.current, dims );
-			commandRef.current.fetchUrls( {
-				...urlParamsRef.current,
-				server: serverFilterRef.current,
-			} );
-		};
-		if ( Date.now() - lastRefreshRef.current >= intervalMs ) {
-			doRefresh();
-		}
-		const interval = setInterval( doRefresh, intervalMs );
-		return () => clearInterval( interval );
-	}, [ buildCount, refreshInterval, selectedUrl, isPageVisible ] );
-
-	// Clear a view slice (resets urlDetail / requestDetail to empty).
-	const clearSlice = useCallback( ( slice ) => {
-		if ( ! viewRef.current ) {
-			return;
-		}
-		// Fire a TM_STRUCT control directly into the view's fill — no router
-		// hop, but the canonical view fill() handles the action. This is the
-		// same pattern useErrorLogGraph uses for hook-direct view control
-		// (setPaused / clear).
-		viewRef.current.fill(
-			buildControlMessage( { action: 'clear', slice } )
+		sendCommand(
+			'overview',
+			overviewArgs( {
+				serverFilter: serverFilterRef.current,
+				chartBreakdown: chartBreakdownRef.current,
+			} ),
+			'overviewIn'
 		);
-	}, [] );
+		sendCommand(
+			'urls',
+			urlsArgs( {
+				urlParams: urlParamsRef.current,
+				serverFilter: serverFilterRef.current,
+			} ),
+			'urlsIn'
+		);
+		if ( http ) {
+			http.flush();
+		}
+	}, [ sendCommand, sendControl, interpreterRef ] );
 
-	// Selection-driven url-detail: initial fetch + silent auto-refresh.
+	// Re-poke overview+urls immediately when the server filter / breakdown changes
+	// (the Timer's getter would otherwise wait until the next tick). Skipped on the
+	// first run — useBatchedPoll's mount already fired the initial poll.
+	const firstFilterRun = useRef( true );
 	useEffect( () => {
-		if ( ! buildCount ) {
-			return undefined;
+		if ( firstFilterRun.current ) {
+			firstFilterRun.current = false;
+			return;
 		}
+		pokeOverviewUrls();
+	}, [ serverFilter, chartBreakdown, pokeOverviewUrls ] );
+
+	// Selection-driven url_detail: initial fetch on open + silent auto-refresh.
+	useEffect( () => {
 		if ( ! selectedUrl ) {
-			clearSlice( 'urlDetail' );
+			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
+			sendControl( URLDETAIL_MERGE, { action: 'clear' } );
 			return undefined;
 		}
-		commandRef.current.fetchUrlDetail( selectedUrl.hash, {
-			categories: true,
-			initial: true,
-		} );
+		if ( ! isValidHash( selectedUrl.hash ) ) {
+			sendControl( URLDETAIL_VIEW, {
+				action: 'error',
+				error: 'Invalid URL hash format',
+			} );
+			return undefined;
+		}
+		const fire = ( initial ) => {
+			if ( initial ) {
+				sendControl( URLDETAIL_VIEW, { action: 'loading' } );
+			}
+			sendCommand(
+				'url_detail',
+				formatCommandArgs( [ selectedUrl.hash ], { categories: true } ),
+				URLDETAIL_RECV
+			);
+		};
+		fire( true );
 		if ( ! selectedRequest && isPageVisible ) {
 			const intervalMs = parseInt( refreshInterval, 10 );
-			const interval = setInterval( () => {
-				commandRef.current?.fetchUrlDetail( selectedUrl.hash, {
-					categories: true,
-				} );
-			}, intervalMs );
+			const interval = setInterval( () => fire( false ), intervalMs );
 			return () => clearInterval( interval );
 		}
 		return undefined;
 	}, [
-		buildCount,
 		selectedUrl,
 		selectedRequest,
 		refreshInterval,
 		isPageVisible,
-		clearSlice,
+		sendCommand,
+		sendControl,
 	] );
 
-	// Selection-driven request-detail.
+	// Selection-driven request_detail.
 	useEffect( () => {
-		if ( ! buildCount ) {
+		if ( ! selectedRequest ) {
+			sendControl( REQUESTDETAIL_VIEW, { action: 'clear' } );
 			return;
 		}
-		if ( ! selectedRequest ) {
-			clearSlice( 'requestDetail' );
+		if ( ! isValidRequestId( selectedRequest ) ) {
+			sendControl( REQUESTDETAIL_VIEW, {
+				action: 'error',
+				error: 'Invalid request ID format',
+			} );
 			return;
 		}
 		let partition = requestPartition;
@@ -266,85 +364,158 @@ export function usePerformanceGraph( opts = {} ) {
 			);
 			partition = reqInfo?.partition;
 		}
-		if ( partition !== undefined && partition !== null ) {
-			commandRef.current.fetchRequestDetail( selectedRequest, partition );
-		}
-	}, [
-		buildCount,
-		selectedRequest,
-		requestPartition,
-		urlDetailData,
-		clearSlice,
-	] );
-
-	// Debounced URL-table params fetch (search debounced 300ms; sort/page immediate).
-	const handleUrlParamsChange = useCallback( ( params ) => {
-		const prev = urlParamsRef.current;
 		if (
-			prev.search === params.search &&
-			prev.sort === params.sort &&
-			prev.order === params.order &&
-			prev.offset === params.offset
+			partition === undefined ||
+			partition === null ||
+			! isValidPartition( partition )
 		) {
 			return;
 		}
-		const searchChanged = prev.search !== params.search;
-		urlParamsRef.current = params;
-		if ( urlFetchTimerRef.current ) {
-			clearTimeout( urlFetchTimerRef.current );
+		sendControl( REQUESTDETAIL_VIEW, { action: 'loading' } );
+		const options = {};
+		if ( partition ) {
+			options.partition = partition;
 		}
-		const doFetch = () =>
-			commandRef.current?.fetchUrls( {
-				...params,
-				server: serverFilterRef.current,
-			} );
-		if ( searchChanged ) {
-			urlFetchTimerRef.current = setTimeout( doFetch, 300 );
-		} else {
-			doFetch();
-		}
-	}, [] );
+		sendCommand(
+			'request_detail',
+			formatCommandArgs( [ selectedRequest ], options ),
+			REQUESTDETAIL_VIEW
+		);
+	}, [
+		selectedRequest,
+		requestPartition,
+		urlDetailData,
+		sendCommand,
+		sendControl,
+	] );
 
-	// resolveRequest drives deep-link navigation (`?request=` without `?url=`),
-	// which fires from useUrlNavigation's mount effect — BEFORE this hook's
-	// mount effect populates commandRef. When the node isn't mounted yet, fall
-	// back to the shared CommandClient directly: request_search is a
-	// stateless lookup with no view-model side effects, so the substrate hop is
-	// just plumbing in that pre-mount window. Once mounted, the substrate path
-	// owns it.
-	const resolveRequest = useCallback( async ( rid ) => {
-		if ( commandRef.current ) {
-			return commandRef.current.resolveRequest( rid );
-		}
-		try {
-			const client = optsRef.current.commandClient || getCommandClient();
-			return unwrapCommandResponse(
-				await client.send( {
-					to: 'performance',
-					verb: 'request_search',
-					args: rid,
-				} )
-			);
-		} catch ( err ) {
-			return null;
-		}
-	}, [] );
+	// Debounced URL-table params fetch (search debounced 300ms; sort/page immediate).
+	const handleUrlParamsChange = useCallback(
+		( params ) => {
+			const prev = urlParamsRef.current;
+			if (
+				prev.search === params.search &&
+				prev.sort === params.sort &&
+				prev.order === params.order &&
+				prev.offset === params.offset
+			) {
+				return;
+			}
+			const searchChanged = prev.search !== params.search;
+			urlParamsRef.current = params;
+			if ( urlFetchTimerRef.current ) {
+				clearTimeout( urlFetchTimerRef.current );
+			}
+			const doFetch = () => {
+				sendControl( URLS_VIEW, { action: 'loading' } );
+				const http = Core.node( HTTP );
+				if ( http ) {
+					http.lock();
+				}
+				sendCommand(
+					'urls',
+					urlsArgs( {
+						urlParams: urlParamsRef.current,
+						serverFilter: serverFilterRef.current,
+					} ),
+					'urlsIn'
+				);
+				if ( http ) {
+					http.flush();
+				}
+			};
+			if ( searchChanged ) {
+				urlFetchTimerRef.current = setTimeout( doFetch, 300 );
+			} else {
+				doFetch();
+			}
+		},
+		[ sendCommand, sendControl ]
+	);
 
+	// resolveRequest — request_search lookup for deep-link navigation. Awaited via
+	// requestdetail:view's PendingReplies. Falls back to the shared client when the
+	// graph isn't mounted yet (useUrlNavigation fires this from its mount effect,
+	// which can run before useBatchedPoll's mount populates the interpreter).
+	const resolveRequest = useCallback(
+		async ( rid ) => {
+			const view = Core.node( REQUESTDETAIL_VIEW );
+			if ( interpreterRef.current && view && view.replies ) {
+				const id = makeOpId();
+				const promise = new Promise( ( resolve, reject ) => {
+					view.replies.add( id, resolve, reject );
+				} );
+				const http = Core.node( HTTP );
+				if ( http ) {
+					http.lock();
+				}
+				sendCommand(
+					'request_search',
+					formatCommandArgs( [ rid ] ),
+					REQUESTDETAIL_VIEW,
+					id
+				);
+				if ( http ) {
+					http.flush();
+				}
+				return promise.catch( () => null );
+			}
+			try {
+				const client =
+					optsRef.current.commandClient || getCommandClient();
+				return unwrapCommandResponse(
+					await client.send( {
+						to: SERVER,
+						verb: 'request_search',
+						args: rid,
+					} )
+				);
+			} catch ( err ) {
+				return null;
+			}
+		},
+		[ sendCommand, interpreterRef ]
+	);
+
+	// fetchUrlBreakdown — per-URL dimensional series. Awaited via urldetail:view's
+	// PendingReplies; the transform extracts breakdown_time_series. Null on invalid
+	// hash / error (no command sent for an invalid hash).
 	const fetchUrlBreakdown = useCallback(
-		( hash, breakdown ) =>
-			commandRef.current?.fetchUrlBreakdown( hash, breakdown ) ??
-			Promise.resolve( null ),
-		[]
+		async ( hash, breakdown ) => {
+			if ( ! isValidHash( hash ) ) {
+				return null;
+			}
+			const view = Core.node( URLDETAIL_VIEW );
+			if ( ! interpreterRef.current || ! view || ! view.replies ) {
+				return null;
+			}
+			const id = makeOpId();
+			const promise = new Promise( ( resolve, reject ) => {
+				view.replies.add( id, resolve, reject );
+			} );
+			const http = Core.node( HTTP );
+			if ( http ) {
+				http.lock();
+			}
+			sendCommand(
+				'url_detail',
+				formatCommandArgs( [ hash ], { breakdown } ),
+				URLDETAIL_VIEW,
+				id
+			);
+			if ( http ) {
+				http.flush();
+			}
+			try {
+				const payload = await promise;
+				return ( payload && payload.breakdown_time_series ) || null;
+			} catch ( err ) {
+				onError?.( err );
+				return null;
+			}
+		},
+		[ sendCommand, onError, interpreterRef ]
 	);
 
 	return { handleUrlParamsChange, resolveRequest, fetchUrlBreakdown };
-}
-
-// Build a TM_STRUCT control message — used for the hook-direct view clear()
-// pattern. Mirrors useErrorLogGraph's controlMsg helper.
-function buildControlMessage( value ) {
-	const m = newMessage();
-	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = value;
-	return m;
 }

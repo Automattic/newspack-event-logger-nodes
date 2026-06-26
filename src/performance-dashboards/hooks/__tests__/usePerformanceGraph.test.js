@@ -1,20 +1,20 @@
 /**
- * usePerformanceGraph tests — the Performance Dashboard graph clipped onto the
- * substrate's I/O boundary node (exospine + `_http`), plus the application's
- * `performance:command` (the slice-tagging command-builder) and
- * `performance:view` (the render model + pending-Promise registry).
+ * usePerformanceGraph tests — the Performance Dashboard data graph rebuilt on the
+ * substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher), D1b.
  *
- * Post-migration: `performance:command` no longer owns the network. Each
- * fetch* dispatches a TM_COMMAND through the interpreter (FROM=`performance:view`,
- * TO=`_http/performance`, verb in VALUE.name) and stashes a slice-tagged
- * pending entry on `performance:view`; HttpOutNode POSTs; the server pivots the
- * reply TO=FROM, the router peels `performance:view`, and the view's `fill()`
- * matches `message[ID]` against `pending` and applies the result to the
- * registered slice (or resolves a resolveOnly Promise).
+ * The graph:
+ *   perf:timer (Timer) → perf:tee (Tee) → fetch-overview, fetch-urls (Fetchers,
+ *     each with an argsFn getter reading current React UI state) → _shell/_http/performance
+ *   overviewIn (Tee) → overview:view (OverviewView)
+ *   urlsIn     (Tee) → urls:view     (UrlsView)
+ *   urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)   [on-demand]
+ *   requestdetail:view (RequestDetailView)                             [on-demand]
  *
- * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
- * `target` (the router peels TO and delivers). `_http.client` is injected via
- * `opts.commandClient` so the hook never touches the network.
+ * overview + urls are POLLED (on the Timer, live args via the getters); url_detail
+ * and request_detail are ON-DEMAND (modal-open → fetch); resolveRequest /
+ * fetchUrlBreakdown are awaited Promises settled via the relevant view's
+ * PendingReplies. The hook returns ONLY control callbacks; React reads each slice
+ * via its own useNodeState.
  */
 
 import { renderHook, act } from '../../../test-helpers/renderHook';
@@ -29,7 +29,6 @@ import {
 	TM_COMMAND,
 	TM_RESPONSE,
 	TM_ERROR,
-	useNodeState,
 	parseCommandArgs,
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
@@ -37,14 +36,10 @@ import { usePerformanceGraph } from '../usePerformanceGraph';
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const COMMAND = 'performance:command';
-const VIEW = 'performance:view';
-const ALL_GRAPH_NAMES = [ HTTP, COMMAND, VIEW ];
 
 // A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
-// Messages addressed back along FROM (the server's reply pivot). The payload
-// can be looked up by verb so url_detail / overview / urls / request_detail /
-// request_search each yield the right canned shape.
+// Messages addressed back along FROM (the server's reply pivot), payload looked
+// up by verb.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
@@ -83,7 +78,6 @@ function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 
 beforeEach( () => Core.reset() );
 
-// Helpers — iterate the recorded batches for a verb-bearing message.
 function findVerb( batches, verb ) {
 	for ( const batch of batches ) {
 		for ( const m of batch ) {
@@ -107,18 +101,27 @@ function countVerbs( batches, verb ) {
 	return count;
 }
 
-describe( 'usePerformanceGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + _http + the command + view, each sinking into the interpreter', () => {
+describe( 'usePerformanceGraph — toolkit wiring', () => {
+	test( 'mounts the backbone + _http + the slice views, each sinking into the interpreter', () => {
 		const client = makeFakeClient();
 		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
-		for ( const name of ALL_GRAPH_NAMES ) {
+		expect( Core.node( HTTP ) ).toBeTruthy();
+		expect( Core.node( HTTP ).client ).toBe( client );
+		for ( const name of [
+			'overview:view',
+			'urls:view',
+			'urldetail:view',
+			'requestdetail:view',
+		] ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
+		// The urlDetail merge transform sits on the receiver→view edge.
+		expect( Core.node( 'urldetail:merge' ) ).toBeTruthy();
 	} );
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
@@ -127,31 +130,6 @@ describe( 'usePerformanceGraph — exospine + I/O boundary wiring', () => {
 		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
-	} );
-
-	test( '_http has the injected CommandClient as its client', () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
-		expect( Core.node( HTTP ).client ).toBe( client );
-	} );
-
-	test( 'performance:command targets the view (router routes loading → view)', () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
-		expect( Core.node( COMMAND ).target ).toBe( VIEW );
-	} );
-
-	test( 'fires the initial overview + urls TM_COMMANDs via _http on mount', async () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
-		await act( async () => {} );
-		const overview = findVerb( client.batches, 'overview' );
-		expect( overview ).toBeTruthy();
-		expect( overview[ TO ] ).toBe( 'performance' );
-		expect( overview[ FROM ] ).toBe( VIEW );
-		const urls = findVerb( client.batches, 'urls' );
-		expect( urls ).toBeTruthy();
-		expect( urls[ FROM ] ).toBe( VIEW );
 	} );
 
 	test( 'returns the three control callbacks', () => {
@@ -167,51 +145,27 @@ describe( 'usePerformanceGraph — exospine + I/O boundary wiring', () => {
 	} );
 } );
 
-describe( 'usePerformanceGraph — end-to-end routing through the exospine', () => {
-	test( 'an overview reply lands in the view.overview slice via the router', async () => {
-		const client = makeFakeClient( { overview: { total_requests: 7 } } );
+describe( 'usePerformanceGraph — poll slices fire live args', () => {
+	test( 'fires overview + urls on the first poll, TO=performance via the egress', async () => {
+		const client = makeFakeClient();
 		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
 		await act( async () => {} );
-		const view = Core.node( VIEW );
-		expect( view.setStateCache.view.overview.data ).toEqual( {
-			total_requests: 7,
-		} );
+		const overview = findVerb( client.batches, 'overview' );
+		expect( overview ).toBeTruthy();
+		expect( overview[ TO ] ).toBe( 'performance' );
+		const urls = findVerb( client.batches, 'urls' );
+		expect( urls ).toBeTruthy();
 	} );
 
-	test( 'a urls reply lands in the view.urls slice (data + total)', async () => {
-		const client = makeFakeClient( {
-			urls: {
-				data: [ { hash: 'a' } ],
-				total: 12,
-				limit: 100,
-				offset: 0,
-			},
-		} );
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
-		await act( async () => {} );
-		const view = Core.node( VIEW );
-		expect( view.setStateCache.view.urls ).toEqual( {
-			data: [ { hash: 'a' } ],
-			total: 12,
-			loading: false,
-			error: null,
-		} );
-	} );
-} );
-
-describe( 'usePerformanceGraph — selection-driven fetches', () => {
-	test( 're-fetches when serverFilter changes', async () => {
+	test( 'the overview Fetcher emits the CURRENT serverFilter as a live arg', async () => {
 		const client = makeFakeClient();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { commandClient: client },
 		} );
 		await act( async () => {} );
-		const before = client.batches.flat().length;
 		await act( async () => {
 			rerender( { commandClient: client, serverFilter: 'web1' } );
 		} );
-		const after = client.batches.flat().length;
-		expect( after ).toBeGreaterThan( before );
 		const overview = client.batches
 			.flat()
 			.find(
@@ -223,7 +177,47 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 		expect( overview ).toBeTruthy();
 	} );
 
-	test( 'fires fetchUrlDetail with the selected hash when a URL is selected', async () => {
+	test( 'an overview reply lands in the overview:view slice', async () => {
+		const client = makeFakeClient( { overview: { total_requests: 7 } } );
+		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		await act( async () => {} );
+		const view = Core.node( 'overview:view' );
+		expect( view.setStateCache.view.data ).toEqual( { total_requests: 7 } );
+	} );
+
+	test( 'a urls reply lands in the urls:view slice (data + total)', async () => {
+		const client = makeFakeClient( {
+			urls: { data: [ { hash: 'a' } ], total: 12, limit: 100, offset: 0 },
+		} );
+		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		await act( async () => {} );
+		const view = Core.node( 'urls:view' );
+		expect( view.setStateCache.view ).toEqual( {
+			data: [ { hash: 'a' } ],
+			total: 12,
+			loading: false,
+			error: null,
+		} );
+	} );
+
+	test( 'a serverFilter change fires an immediate poke (not just next tick)', async () => {
+		const client = makeFakeClient();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		const before = countVerbs( client.batches, 'overview' );
+		await act( async () => {
+			rerender( { commandClient: client, serverFilter: 'web2' } );
+		} );
+		expect( countVerbs( client.batches, 'overview' ) ).toBeGreaterThan(
+			before
+		);
+	} );
+} );
+
+describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () => {
+	test( 'selecting a URL fires url_detail with the hash, routes the reply to urldetail:view', async () => {
 		const client = makeFakeClient( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
@@ -232,23 +226,22 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( {
-				commandClient: client,
-				selectedUrl: { hash: 'abc' },
-			} );
+			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
 		} );
 		const detail = findVerb( client.batches, 'url_detail' );
 		expect( detail ).toBeTruthy();
-		// hash is the first positional token in the args string.
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
 		).toBe( 'abc' );
+		const view = Core.node( 'urldetail:view' );
+		expect( view.setStateCache.view.data ).toEqual( {
+			last_modified: 1,
+			requests: [],
+		} );
 	} );
 
-	test( 'fires fetchRequestDetail using the provided partition', async () => {
-		const client = makeFakeClient( {
-			request_detail: { rid: 'r1' },
-		} );
+	test( 'selecting a request fires request_detail with the partition', async () => {
+		const client = makeFakeClient( { request_detail: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { commandClient: client },
 		} );
@@ -262,7 +255,6 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 		} );
 		const req = findVerb( client.batches, 'request_detail' );
 		expect( req ).toBeTruthy();
-		// partition 2 is non-default → `--partition=2` (string after parse).
 		expect(
 			parseCommandArgs( req[ VALUE ].arguments ).options.partition
 		).toBe( '2' );
@@ -272,9 +264,7 @@ describe( 'usePerformanceGraph — selection-driven fetches', () => {
 describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	test( 'debounces a search change (300ms)', async () => {
 		jest.useFakeTimers();
-		const client = makeFakeClient( {
-			urls: { data: [], total: 0 },
-		} );
+		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
 		let api;
 		const { unmount } = renderHook(
 			( p ) => {
@@ -299,7 +289,7 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	} );
 } );
 
-describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown', () => {
+describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)', () => {
 	test( 'resolveRequest returns the unwrapped reply payload', async () => {
 		const client = makeFakeClient( {
 			request_search: { url_hash: 'h', partition: 1 },
@@ -320,51 +310,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown', () => {
 		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
 	} );
 
-	test( 'resolveRequest falls back to the shared client when the node is not mounted (deep-link timing)', async () => {
-		// useUrlNavigation fires the `?request=`-only resolver from its mount
-		// effect, which runs BEFORE this hook's mount effect populates
-		// commandRef. Dropping the mounted node (unmount → commandRef.current
-		// null) stands in for that pre-mount state: resolveRequest must still
-		// resolve via the shared client directly. request_search is a stateless
-		// lookup with no view-model side effects.
-		// Support both HttpOutNode's postBatch (for mount-time overview/urls) AND
-		// the .send fallback path resolveRequest uses pre-mount.
-		const fallbackClient = {
-			calls: [],
-			buildMessage: ( { to, verb, args = '', payload = null } ) => {
-				const m = newMessage();
-				m[ TYPE ] = TM_COMMAND;
-				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: args, payload };
-				return m;
-			},
-			postBatch: () => Promise.resolve( [] ),
-			send( a ) {
-				this.calls.push( a );
-				const m = newMessage();
-				m[ VALUE ] = { payload: { url_hash: 'h', partition: 0 } };
-				return Promise.resolve( m );
-			},
-		};
-		let api;
-		const { unmount } = renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: { commandClient: fallbackClient } }
-		);
-		await act( async () => {} );
-		unmount();
-		fallbackClient.calls.length = 0;
-		const out = await api.resolveRequest( 'rid-7' );
-		expect( out ).toEqual( { url_hash: 'h', partition: 0 } );
-		expect(
-			fallbackClient.calls.some( ( c ) => c.verb === 'request_search' )
-		).toBe( true );
-	} );
-
-	test( 'fetchUrlBreakdown returns breakdown_time_series via the transform pending', async () => {
+	test( 'fetchUrlBreakdown returns breakdown_time_series via the transform', async () => {
 		const client = makeFakeClient( {
 			url_detail: { breakdown_time_series: { a: 1 } },
 		} );
@@ -383,6 +329,34 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown', () => {
 		} );
 		expect( result ).toEqual( { a: 1 } );
 	} );
+
+	test( 'fetchUrlBreakdown returns null on invalid hash without sending a breakdown command', async () => {
+		const client = makeFakeClient();
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		const before = client.batches.flat().length;
+		let result;
+		await act( async () => {
+			result = await api.fetchUrlBreakdown( 'NO', 'method' );
+		} );
+		expect( result ).toBeNull();
+		const breakdowns = client.batches
+			.flat()
+			.filter(
+				( m ) =>
+					m[ VALUE ]?.name === 'url_detail' &&
+					parseCommandArgs( m[ VALUE ]?.arguments ).options.breakdown
+			);
+		expect( breakdowns ).toHaveLength( 0 );
+		expect( client.batches.flat().length ).toBe( before );
+	} );
 } );
 
 describe( 'usePerformanceGraph — teardown', () => {
@@ -392,87 +366,16 @@ describe( 'usePerformanceGraph — teardown', () => {
 			usePerformanceGraph( { commandClient: client } )
 		);
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
+		for ( const name of [
+			HTTP,
+			'overview:view',
+			'urls:view',
+			'urldetail:view',
+			'requestdetail:view',
+			INTERPRETER,
+			ROUTER,
+		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
-	} );
-
-	test( 'a reply resolving after unmount does not throw (sink may be gone)', async () => {
-		let resolveReply;
-		const client = {
-			batches: [],
-			buildMessage: ( { to, verb } ) => {
-				const m = newMessage();
-				m[ TYPE ] = TM_COMMAND;
-				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: '', payload: null };
-				return m;
-			},
-			postBatch( messages ) {
-				client.batches.push( messages );
-				return new Promise( ( res ) => {
-					resolveReply = ( replies ) => res( replies );
-				} );
-			},
-		};
-		const { unmount } = renderHook( () =>
-			usePerformanceGraph( { commandClient: client } )
-		);
-		unmount();
-		expect( () => {
-			const r = newMessage();
-			r[ TYPE ] = TM_COMMAND | TM_RESPONSE;
-			r[ VALUE ] = { name: 'overview', payload: {} };
-			resolveReply( [ r ] );
-		} ).not.toThrow();
-		await Promise.resolve();
-	} );
-} );
-
-describe( 'usePerformanceGraph — Core.reinit (Reset Graph)', () => {
-	test( 'Core.reinit rebuilds the graph nodes fresh (backbone preserved)', async () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
-		await act( async () => {} );
-		const firstView = Core.node( VIEW );
-		const firstCommand = Core.node( COMMAND );
-		const backbone = Core.node( INTERPRETER );
-		expect( firstView ).not.toBeNull();
-		expect( typeof Core.reinit ).toBe( 'function' );
-
-		await act( async () => {
-			Core.reinit();
-		} );
-
-		// Soft nodes are fresh instances under the same names; backbone survives.
-		expect( Core.node( VIEW ) ).not.toBe( firstView );
-		expect( Core.node( COMMAND ) ).not.toBe( firstCommand );
-		expect( Core.node( COMMAND ).target ).toBe( VIEW );
-		expect( Core.node( HTTP ).client ).toBe( client );
-		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
-		expect( Core.node( INTERPRETER ) ).toBe( backbone );
-	} );
-
-	test( 'Core.reinit re-renders the consumer so useNodeState re-subscribes to the fresh view', async () => {
-		const client = makeFakeClient();
-		const { result } = renderHook( () => {
-			usePerformanceGraph( { commandClient: client } );
-			return useNodeState( VIEW, 'view' );
-		} );
-		await act( async () => {} );
-		const firstView = Core.node( VIEW );
-
-		await act( async () => {
-			Core.reinit();
-		} );
-		const freshView = Core.node( VIEW );
-		expect( freshView ).not.toBe( firstView );
-
-		// The fresh view publishes state; the consumer must observe it (proving it
-		// re-subscribed to freshView, not the removed firstView).
-		act( () => {
-			freshView.setState( 'view', { overview: { sentinel: true } } );
-		} );
-		expect( result.current ).toEqual( { overview: { sentinel: true } } );
 	} );
 } );

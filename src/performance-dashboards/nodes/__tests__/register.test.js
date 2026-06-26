@@ -6,16 +6,25 @@
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import '../register';
 
-it( 'registers its dashboard node classes for make_node', () => {
+it( 'registers the Error Log errors view for make_node', () => {
 	expect( CommandInterpreterNode.includeNodes.PerfErrorsView ).toBeDefined();
-	expect(
-		CommandInterpreterNode.includeNodes.PerformanceCommand
-	).toBeDefined();
-	expect( CommandInterpreterNode.includeNodes.PerformanceView ).toBeDefined();
 } );
 
 it( 'registers the D1b slice-view + transform node classes for make_node', () => {
 	expect( CommandInterpreterNode.includeNodes.OverviewView ).toBeDefined();
 	expect( CommandInterpreterNode.includeNodes.UrlsView ).toBeDefined();
 	expect( CommandInterpreterNode.includeNodes.UrlDetailMerge ).toBeDefined();
+	expect( CommandInterpreterNode.includeNodes.UrlDetailView ).toBeDefined();
+	expect(
+		CommandInterpreterNode.includeNodes.RequestDetailView
+	).toBeDefined();
+} );
+
+it( 'no longer registers the retired god command/view nodes', () => {
+	expect(
+		CommandInterpreterNode.includeNodes.PerformanceCommand
+	).toBeUndefined();
+	expect(
+		CommandInterpreterNode.includeNodes.PerformanceView
+	).toBeUndefined();
 } );

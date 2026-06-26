@@ -4,12 +4,12 @@
  *
  * Main container for performance monitoring UI.
  *
- * This is the orchestrator over the `performance:*` node graph (mounted by
- * `usePerformanceGraph`). The graph owns all data: `performance:command` issues
- * fetches via the CommandClient and `performance:view` holds the view model.
- * This component reads the published model via
- * `useNodeState('performance:view','view')`, derives its render-time slices, and
- * dispatches control through the hook's returned callbacks. It owns no fetching.
+ * This is the orchestrator over the Performance Dashboard node graph (mounted by
+ * `usePerformanceGraph`, built on the substrate batched-poll toolkit). The graph
+ * owns all data across FOUR independent per-slice view nodes — `overview:view`,
+ * `urls:view`, `urldetail:view`, `requestdetail:view`. This component reads each
+ * slice via its own `useNodeState`, derives its render-time values, and dispatches
+ * control through the hook's returned callbacks. It owns no fetching.
  */
 
 import {
@@ -91,17 +91,21 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const urlsRef = useRef( [] );
 	const setRequestPartitionRef = useRef( () => {} );
 
-	// Read the published view model directly (Error Log pattern). Null until the
-	// hook mounts the node; the hook's bumpBuild forces a re-render to subscribe.
-	const view = useNodeState( 'performance:view', 'view' );
+	// Read each slice from its own per-slice view node (D1b de-god — no single god
+	// view). Each is null until the hook mounts its node; useBatchedPoll's build
+	// re-render forces useNodeState to subscribe to the freshly-mounted views.
+	const overviewSlice = useNodeState( 'overview:view', 'view' );
+	const urlsSlice = useNodeState( 'urls:view', 'view' );
+	const urlDetailSlice = useNodeState( 'urldetail:view', 'view' );
+	const requestDetailSlice = useNodeState( 'requestdetail:view', 'view' );
 
-	// Derive the slices the orchestrator renders/derives from — SAME NAMES as the
-	// deleted state, so every surviving useMemo + the JSX reference them unchanged.
-	const overview = view?.overview?.data ?? null;
-	const urls = useMemo( () => view?.urls?.data ?? [], [ view?.urls?.data ] );
-	const totalUrls = view?.urls?.total ?? 0;
-	const urlDetail = view?.urlDetail?.data ?? null;
-	const requestDetail = view?.requestDetail?.data ?? null;
+	// Derive the locals the orchestrator renders/derives from — SAME NAMES as
+	// before, so every surviving useMemo + the JSX reference them unchanged.
+	const overview = overviewSlice?.data ?? null;
+	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );
+	const totalUrls = urlsSlice?.total ?? 0;
+	const urlDetail = urlDetailSlice?.data ?? null;
+	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
 
 	// Overview fan-out (replaces applyOverviewBreakdowns' setState calls).
@@ -413,13 +417,18 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		}
 	}, [ selectedRequest ] );
 
-	// "Initial load not done": no view yet, OR no slice has resolved (lastRefresh
-	// null) and overview hasn't errored. true→false once, then stays false — matches
-	// the old `loading` flag (cleared after the first attempt, even null/memcache-down
-	// data, which still stamps lastRefresh via a 'result').
-	const showLoadingScreen =
-		! view || ( null === view.lastRefresh && ! view.overview?.error );
-	if ( showLoadingScreen ) {
+	// "Initial load not done": the overview slice hasn't resolved yet — no view
+	// node mounted, OR mounted but its first reply (data, even null/memcache-down)
+	// or error hasn't landed. The overview slice's data starts null and loading
+	// starts false; a resolved reply stamps data (or error), a fired fetch flips
+	// loading true. So: still loading while there's no data, no error, and we
+	// haven't even started fetching (loading false).
+	const overviewResolved =
+		!! overviewSlice &&
+		( null !== overviewSlice.data ||
+			!! overviewSlice.error ||
+			overviewSlice.loading );
+	if ( ! overviewResolved ) {
 		return (
 			<div className="event-logger-performance-loading">
 				<Spinner />
