@@ -100,10 +100,7 @@ class Current_Request_Overlay {
 		$ver  = isset( $meta['version'] ) && \is_string( $meta['version'] ) ? $meta['version'] : \NEWSPACK_EVENT_LOGGER_NODES_VERSION;
 		\wp_enqueue_script( self::HANDLE, "{$url}/index.js", $deps, $ver, true );
 		if ( \file_exists( "{$dir}/index.css" ) ) {
-			// Cache-bust on the stylesheet's own content hash, not $ver (the JS bundle
-			// hash) — a SCSS-only rebuild leaves $ver unchanged, serving stale CSS.
-			// Mirrors Admin::enqueue_react_page.
-			$style_ver = \md5_file( "{$dir}/index.css" ) ?: $ver;
+			$style_ver = \Newspack_Nodes\Admin\Admin::css_cache_version( "{$dir}/index.css", $ver );
 			\wp_enqueue_style( self::HANDLE, "{$url}/index.css", [], $style_ver );
 		}
 	}
