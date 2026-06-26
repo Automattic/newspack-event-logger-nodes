@@ -1,6 +1,6 @@
 <?php
 /**
- * Logger_CI: command-dispatch for the performance-logger configuration
+ * Logger_CI: command-dispatch for the settings configuration
  * surface.
  *
  * Mounts at priority 11 alongside the rest of the M2 service CIs and

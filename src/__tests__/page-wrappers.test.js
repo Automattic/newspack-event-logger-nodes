@@ -9,18 +9,18 @@
  * chrome there, so there is no longer an ELN page wrapper for it.)
  */
 
-jest.mock( '../performance-gyroscope/Inflight', () => ( {
+jest.mock( '../gyroscope/Inflight', () => ( {
 	__esModule: true,
 	default: ( { maxRows } ) => `INFLIGHT[${ maxRows }]`,
 } ) );
-jest.mock( '../performance-request-log/RequestStream', () => ( {
+jest.mock( '../requests/RequestStream', () => ( {
 	__esModule: true,
 	default: ( { maxEntries } ) => `REQUEST_STREAM[${ maxEntries }]`,
 } ) );
 
 import * as React from 'react';
-import GyroscopePage from '../performance-gyroscope/GyroscopePage';
-import RequestStreamPage from '../performance-request-log/RequestStreamPage';
+import GyroscopePage from '../gyroscope/GyroscopePage';
+import RequestStreamPage from '../requests/RequestStreamPage';
 import { renderComponent } from '../test-helpers/renderHook';
 
 describe( 'page wrappers', () => {

@@ -329,7 +329,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span key={ col } role="cell">
 						<a
 							className="entry-rid"
-							href={ `admin.php?page=newspack-nodes-performance&request=${ encodeURIComponent(
+							href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
 								req.rid
 							) }` }
 							title={ __(
@@ -445,7 +445,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					>
 						<span className="entry-method">{ req.method }</span>{ ' ' }
 						<a
-							href={ `admin.php?page=newspack-nodes-performance&url=${ urlHash(
+							href={ `admin.php?page=event-logger-overview&url=${ urlHash(
 								req.url
 							) }` }
 							className="entry-url-link"

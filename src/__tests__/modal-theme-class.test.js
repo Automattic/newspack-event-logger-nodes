@@ -11,9 +11,9 @@ import fs from 'fs';
 import path from 'path';
 
 const MODAL_FILES = [
-	'performance-dashboards/PerformanceDashboard.js',
-	'performance-logger/settings/HookSelectorModal.js',
-	'performance-logger/settings/CustomEventSelectorModal.js',
+	'overview/PerformanceDashboard.js',
+	'settings/settings/HookSelectorModal.js',
+	'settings/settings/CustomEventSelectorModal.js',
 ];
 
 describe( 'dashboard Modal theme class', () => {

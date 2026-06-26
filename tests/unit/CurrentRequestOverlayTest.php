@@ -46,7 +46,7 @@ class CurrentRequestOverlayTest extends TestCase {
 		$js = Current_Request_Overlay::inline_data_js(
 			'abc123',
 			2,
-			'http://example.test/wp-admin/admin.php?page=newspack-nodes-performance'
+			'http://example.test/wp-admin/admin.php?page=event-logger-overview'
 		);
 
 		$this->assertStringContainsString( 'NewspackEventLoggerNodes', $js );
@@ -54,7 +54,7 @@ class CurrentRequestOverlayTest extends TestCase {
 		$this->assertStringContainsString( '"rid":"abc123"', $js );
 		$this->assertStringContainsString( '"partition":2', $js );
 		$this->assertStringContainsString(
-			'newspack-nodes-performance',
+			'event-logger-overview',
 			$js
 		);
 		// Distinct global — NOT the shared NewspackNodesData that other bundles
@@ -63,9 +63,9 @@ class CurrentRequestOverlayTest extends TestCase {
 	}
 
 	public function test_is_overlay_page_matches_the_overlay_embedding_perf_pages(): void {
-		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-stream' ) );
-		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-performance' ) );
-		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-gyroscope' ) );
+		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-requests' ) );
+		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-overview' ) );
+		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-gyroscope' ) );
 		// Hub is the substrate filter's job, not ours; unrelated pages never match.
 		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-hub' ) );
 		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'edit.php' ) );
@@ -82,7 +82,7 @@ class CurrentRequestOverlayTest extends TestCase {
 			// A page contributed via the substrate registry is now an overlay
 			// page, while ELN's own defaults still match and unrelated don't.
 			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'some-consumer-page' ) );
-			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-performance' ) );
+			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-overview' ) );
 			$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'unrelated-page' ) );
 		} finally {
 			unset( $GLOBALS['_wp_actions']['newspack_nodes/devtools_overlay_pages'] );

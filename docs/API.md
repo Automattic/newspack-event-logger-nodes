@@ -70,7 +70,7 @@ Read by hub aggregators probing each spoke. The CI handler itself doesn't call `
 
 Used by hub-side aggregator fan-out (Remote_Manager) when pushing core settings down to spokes; also the admin UI. Note: `settings.update` does NOT wrap writes in `Settings_Sync::suppress_sync` — the suppression-around-`update_option` guard is on the application-level `performance.settings_update` verb, not this substrate-key writer.
 
-### `logger` — performance-logger settings read
+### `logger` — settings read
 
 | Verb | Args | Returns |
 |------|------|---------|

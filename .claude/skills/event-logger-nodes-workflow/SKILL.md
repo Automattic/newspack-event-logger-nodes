@@ -78,8 +78,8 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 6. Reference implementations:
    - Command-fanout (CRUD): `src/aggregator-admin/hooks/useAggregatorAdminGraph.js` + `src/aggregator-admin/nodes/servers-view-node.js`.
    - Command-poll (de-god per-slice): in the substrate, `newspack-nodes/src/event-aggregator/hooks/useAggregatorStatusGraph.js` (useBatchedPoll + addSliceFetcher) + its per-slice `nodes/aggregator-{summary,servers}-view-node.js`.
-   - SSE-stream: `src/performance-request-log/hooks/useRequestLogGraph.js`.
-   - Sliced data model with incremental merge: `src/performance-dashboards/nodes/performance-view-node.js`.
+   - SSE-stream: `src/requests/hooks/useRequestLogGraph.js`.
+   - Sliced data model with incremental merge: `src/overview/nodes/overview-view-node.js`.
 7. Shared hooks/utils are imported from the substrate via the `@newspack-nodes/shared/...` alias (resolved by esbuild + jest to `newspack-nodes/src/shared`). There is no local `src/shared/` and no sync step. The one ELN-owned test helper (`renderHook`) lives in `src/test-helpers/`.
 
 #### Adding an application Node subclass
@@ -160,7 +160,7 @@ wp nodes reqgrep --recent | head -10
 wp nodes reqgrep --follow
 ```
 
-For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic. Telemetry dashboards land at `/wp-admin/admin.php?page=newspack-nodes-*` (`-performance`, `-errors`, `-gyroscope`, `-stream`, `-aggregator`); the Settings / hook-catalog tree (`performance-logger`) is served at `page=newspack-event-logger-nodes`.
+For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic. Telemetry dashboards land at `/wp-admin/admin.php?page=event-logger-*` (`event-logger-overview`, `event-logger-errors`, `event-logger-gyroscope`, `event-logger-requests`) plus `page=newspack-nodes-aggregator`; the Settings / hook-catalog tree (`settings`) is served at `page=newspack-event-logger-nodes`.
 
 For job handler changes: queue a job (via the legitimate caller), wait, check `wp nodes ls` for job-workers heartbeat, optionally reqgrep for the rid.
 

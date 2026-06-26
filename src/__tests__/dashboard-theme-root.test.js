@@ -1,5 +1,5 @@
 /**
- * Tests that the performance-dashboards page roots (AdminApp + ErrorLogPage)
+ * Tests that the overview page roots (AdminApp + ErrorLogPage)
  * carry the `.newspack-nodes-theme` class so their var(--np-*) token
  * references resolve from the shared newspack-nodes-theme stylesheet.
  *
@@ -9,17 +9,17 @@
  * "not wrapped in act" warning the shared jest.setup escalates to a failure.
  */
 
-jest.mock( '../performance-dashboards/PerformanceDashboard', () => ( {
+jest.mock( '../overview/PerformanceDashboard', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );
-jest.mock( '../performance-dashboards/ErrorLog', () => ( {
+jest.mock( '../overview/ErrorLog', () => ( {
 	__esModule: true,
 	default: () => 'ERROR_LOG',
 } ) );
 
 import * as React from 'react';
-import { AdminApp, ErrorLogPage } from '../performance-dashboards';
+import { AdminApp, ErrorLogPage } from '../overview';
 import { renderComponent, act } from '../test-helpers/renderHook';
 
 const flushLazy = async () =>
@@ -27,7 +27,7 @@ const flushLazy = async () =>
 		await Promise.resolve();
 	} );
 
-describe( 'performance-dashboards theme root', () => {
+describe( 'overview theme root', () => {
 	it( 'AdminApp root carries .newspack-nodes-theme', async () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( AdminApp )

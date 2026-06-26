@@ -96,11 +96,11 @@ Page slugs owned by this plugin (URL path: `/wp-admin/admin.php?page=<slug>`):
 
 | Slug | What |
 |------|------|
-| `newspack-nodes-performance` | Performance overview (URL leaderboard, breakdown by server / status / category) — also the top-level Event Logger menu landing page |
-| `newspack-nodes-performance&request=<rid>` | URL drilldown with the request rendered inline |
-| `newspack-nodes-errors` | Error log dashboard |
-| `newspack-nodes-gyroscope` | In-flight request timeline visualization |
-| `newspack-nodes-stream` | Request Log — recent completed requests + drilldown |
+| `event-logger-overview` | Performance overview (URL leaderboard, breakdown by server / status / category) — also the top-level Event Logger menu landing page |
+| `event-logger-overview&request=<rid>` | URL drilldown with the request rendered inline |
+| `event-logger-errors` | Error log dashboard |
+| `event-logger-gyroscope` | In-flight request timeline visualization |
+| `event-logger-requests` | Request Log — recent completed requests + drilldown |
 | `newspack-nodes-aggregator` | Hub-side per-spoke status (only registered when `Config::load_config()['enable_aggregator']` is truthy) |
 | `newspack-event-logger-nodes` (Settings menu) | Application settings — registered via `add_options_page` under Settings, not under the Event Logger menu |
 

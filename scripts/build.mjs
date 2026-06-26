@@ -49,20 +49,20 @@ const alias = {
 
 const ENTRIES = [
 	{
-		entry: 'src/performance-dashboards/index.js',
-		outDir: path.resolve( ROOT, 'build/performance-dashboards' ),
+		entry: 'src/overview/index.js',
+		outDir: path.resolve( ROOT, 'build/overview' ),
 	},
 	{
-		entry: 'src/performance-logger/index.js',
-		outDir: path.resolve( ROOT, 'build/performance-logger' ),
+		entry: 'src/settings/index.js',
+		outDir: path.resolve( ROOT, 'build/settings' ),
 	},
 	{
-		entry: 'src/performance-gyroscope/index.js',
-		outDir: path.resolve( ROOT, 'build/performance-gyroscope' ),
+		entry: 'src/gyroscope/index.js',
+		outDir: path.resolve( ROOT, 'build/gyroscope' ),
 	},
 	{
-		entry: 'src/performance-request-log/index.js',
-		outDir: path.resolve( ROOT, 'build/performance-request-log' ),
+		entry: 'src/requests/index.js',
+		outDir: path.resolve( ROOT, 'build/requests' ),
 	},
 	{
 		entry: 'src/current-request/index.js',

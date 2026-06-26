@@ -138,7 +138,7 @@ These are intentional. Don't "fix" them.
 | `topologies/` | Per-partition node graphs as declarative `.tsl` files; topology name = filename (no `name:` frontmatter): `aggregator`, `combined`, `performance`, `request-builder`, `job-router`, `flame-builder`. (Worker-restart classification is by CONSUMER NODE TYPE: each `Settings_Schema` field's `restart:` key holds node-class tokens — e.g. `['Flame_Builder']`, `['Partition','Topic','Log']` — or `'all'` / `'supervisor_only'` / `[]`, which `Restart_Planner` resolves to the live topologies that run a matching node. They are NOT topology-name labels.) |
 | `mu-plugins/` | Drop-in shipped alongside the plugin: `00-newspack-profiler.php` (standalone profiler — also copied to `release/` and attached to the GitHub release). (The refresh-ahead cache warmer moved to its own `newspack-cache-cozy` plugin in v0.15.0.) |
 | `scripts/` | `build.mjs` (esbuild dashboard builder invoked by `npm run build`); `pre-push` |
-| `src/` | React dashboard trees (`performance-dashboards`, `performance-gyroscope`, `performance-logger`, `performance-request-log`) + the `current-request` overlay-tab bundle |
+| `src/` | React dashboard trees (`overview`, `gyroscope`, `settings`, `requests`) + the `current-request` overlay-tab bundle |
 | `tests/` | PHPUnit suite (unit + integration + Rest); config at `tests/phpunit.xml` |
 
 ## Common Pitfalls

@@ -4,10 +4,10 @@
  * even a `module-shape` check is enough to count as covered.
  */
 
-describe( 'performance-gyroscope/constants', () => {
+describe( 'gyroscope/constants', () => {
 	let mod;
 	beforeAll( () => {
-		mod = require( '../performance-gyroscope/constants' );
+		mod = require( '../gyroscope/constants' );
 	} );
 
 	it( 'exposes INFLIGHT_REFRESH_OPTIONS as a non-empty array of {value (number), label}', () => {
@@ -20,10 +20,10 @@ describe( 'performance-gyroscope/constants', () => {
 	} );
 } );
 
-describe( 'performance-dashboards/constants', () => {
+describe( 'overview/constants', () => {
 	let mod;
 	beforeAll( () => {
-		mod = require( '../performance-dashboards/constants' );
+		mod = require( '../overview/constants' );
 	} );
 
 	it( 'DASHBOARD_REFRESH_OPTIONS is a non-empty array of {label, value:string}', () => {
