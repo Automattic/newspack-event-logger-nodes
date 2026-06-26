@@ -6,9 +6,18 @@ import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { PerfErrorsViewNode } from './perf-errors-view-node';
 import { PerformanceCommandNode } from './performance-command-node';
 import { PerformanceViewNode } from './performance-view-node';
+import { OverviewViewNode } from './overview-view-node';
+import { UrlsViewNode } from './urls-view-node';
+import { UrlDetailMergeNode } from './url-detail-merge-node';
 
 CommandInterpreterNode.registerNodeClasses( {
 	PerfErrorsView: PerfErrorsViewNode,
 	PerformanceCommand: PerformanceCommandNode,
 	PerformanceView: PerformanceViewNode,
+	// D1b de-god: the per-slice decoded-object views + the url_detail merge
+	// transform node (wired onto useBatchedPoll/addSliceFetcher in the
+	// follow-up integration split).
+	OverviewView: OverviewViewNode,
+	UrlsView: UrlsViewNode,
+	UrlDetailMerge: UrlDetailMergeNode,
 } );

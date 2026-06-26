@@ -13,3 +13,9 @@ it( 'registers its dashboard node classes for make_node', () => {
 	).toBeDefined();
 	expect( CommandInterpreterNode.includeNodes.PerformanceView ).toBeDefined();
 } );
+
+it( 'registers the D1b slice-view + transform node classes for make_node', () => {
+	expect( CommandInterpreterNode.includeNodes.OverviewView ).toBeDefined();
+	expect( CommandInterpreterNode.includeNodes.UrlsView ).toBeDefined();
+	expect( CommandInterpreterNode.includeNodes.UrlDetailMerge ).toBeDefined();
+} );
