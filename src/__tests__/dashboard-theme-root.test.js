@@ -51,4 +51,35 @@ describe( 'overview theme root', () => {
 		await flushLazy();
 		unmount();
 	} );
+
+	// The ThemedRoot token-provider wraps each root so a console-selected
+	// skin's universal tokens are in scope above the dashboard.
+	it( 'AdminApp wraps its root in a ThemedRoot token provider', async () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( AdminApp )
+		);
+		const provider = container.querySelector(
+			'.topology-app.newspack-nodes-theme'
+		);
+		expect( provider ).not.toBeNull();
+		expect( provider.style.display ).toBe( 'contents' );
+		expect(
+			provider.querySelector( '.event-logger-admin-wrap' )
+		).not.toBeNull();
+		await flushLazy();
+		unmount();
+	} );
+
+	it( 'ErrorLogPage wraps its root in a ThemedRoot token provider', async () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( ErrorLogPage )
+		);
+		const provider = container.querySelector(
+			'.topology-app.newspack-nodes-theme'
+		);
+		expect( provider ).not.toBeNull();
+		expect( provider.style.display ).toBe( 'contents' );
+		await flushLazy();
+		unmount();
+	} );
 } );
