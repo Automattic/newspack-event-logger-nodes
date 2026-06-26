@@ -1759,6 +1759,58 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
 
+	// ── shared memoized index read (slice_verb decomposition) ───────────────
+
+	public function test_dashboard_verb_reads_index_once_for_overview_and_urls(): void {
+		// The slice_verb decomposition shares ONE memoized index read across the
+		// slices a single dispatch composes. `dashboard` derives BOTH its
+		// overview block and its urls list from the URL index; with the shared
+		// memo the heavy index load runs exactly once per request, not once per
+		// slice. The `load_index` closure seam lets the test count reads while
+		// the real merge logic still runs (it delegates to the production loader).
+		$calls    = 0;
+		$original = Performance_CI_Node::$load_index;
+		Performance_CI_Node::$load_index = static function () use ( &$calls, $original ) {
+			++$calls;
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )();
+		};
+
+		try {
+			$interpreter = new Performance_CI_Node();
+			$result      = VerbHarness::fire( $interpreter, 'performance', 'dashboard' );
+
+			$this->assertIsArray( $result );
+			$this->assertArrayHasKey( 'overview', $result );
+			$this->assertArrayHasKey( 'urls', $result );
+			$this->assertSame( 1, $calls, 'dashboard must share ONE memoized index read across overview + urls' );
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+		}
+	}
+
+	public function test_index_memo_is_per_request_not_shared_across_instances(): void {
+		// The memo is per-CI-instance (per request). A fresh Performance_CI_Node
+		// re-reads — two dispatches on two instances each load once. This guards
+		// against a static memo leaking stale stats across requests.
+		$calls    = 0;
+		$original = Performance_CI_Node::$load_index;
+		Performance_CI_Node::$load_index = static function () use ( &$calls, $original ) {
+			++$calls;
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )();
+		};
+
+		try {
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+			// Each fire() builds a fresh request-scope graph; reset Core between
+			// the two so the second _router/_command_interpreter don't collide.
+			VerbHarness::reset();
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+			$this->assertSame( 2, $calls, 'each request (instance) must re-read the index' );
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+		}
+	}
+
 	// ── schema-driven dispatch ──────────────────────────────────────────────
 
 	public function test_node_schema_lists_all_verbs_with_handlers(): void {
