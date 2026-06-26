@@ -77,7 +77,7 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
    - No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on a production dashboard tree — they're for the console tree only and would collide with the debug-overlay's REPL.
 6. Reference implementations:
    - Command-fanout (CRUD): `src/aggregator-admin/hooks/useAggregatorAdminGraph.js` + `src/aggregator-admin/nodes/servers-view-node.js`.
-   - Command-poll: `src/event-aggregator/hooks/useAggregatorStatusGraph.js` + `src/event-aggregator/nodes/aggregator-view-node.js`.
+   - Command-poll (de-god per-slice): in the substrate, `newspack-nodes/src/event-aggregator/hooks/useAggregatorStatusGraph.js` (useBatchedPoll + addSliceFetcher) + its per-slice `nodes/aggregator-{summary,servers}-view-node.js`.
    - SSE-stream: `src/performance-request-log/hooks/useRequestLogGraph.js`.
    - Sliced data model with incremental merge: `src/performance-dashboards/nodes/performance-view-node.js`.
 7. Shared hooks/utils are imported from the substrate via the `@newspack-nodes/shared/...` alias (resolved by esbuild + jest to `newspack-nodes/src/shared`). There is no local `src/shared/` and no sync step. The one ELN-owned test helper (`renderHook`) lives in `src/test-helpers/`.
