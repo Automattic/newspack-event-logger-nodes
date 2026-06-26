@@ -216,6 +216,35 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 	} );
 } );
 
+describe( 'usePerformanceGraph — refresh interval wiring', () => {
+	test( 'arms the poll Timer at the selected refreshInterval (hitchhike + throttle)', () => {
+		const client = makeFakeClient();
+		renderHook( () =>
+			usePerformanceGraph( {
+				commandClient: client,
+				refreshInterval: '30000',
+			} )
+		);
+		const timer = Core.node( 'perf:timer' );
+		expect( timer.mode ).toBe( 'router' );
+		expect( timer.interval_ms ).toBe( 30000 );
+	} );
+
+	test( 'changing refreshInterval re-arms the poll Timer to the new cadence', async () => {
+		const client = makeFakeClient();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client, refreshInterval: '5000' },
+		} );
+		await act( async () => {} );
+		expect( Core.node( 'perf:timer' ).interval_ms ).toBe( 5000 );
+
+		await act( async () => {
+			rerender( { commandClient: client, refreshInterval: '60000' } );
+		} );
+		expect( Core.node( 'perf:timer' ).interval_ms ).toBe( 60000 );
+	} );
+} );
+
 describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () => {
 	test( 'selecting a URL fires url_detail with the hash, routes the reply to urldetail:view', async () => {
 		const client = makeFakeClient( {

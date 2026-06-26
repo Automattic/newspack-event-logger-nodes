@@ -210,7 +210,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 			act( () => {
 				jest.advanceTimersByTime( 5000 );
 			} );
-			expect( Core.node( HEARTBEAT ).lastFired ).toBeGreaterThan( 0 );
+			expect( Core.node( HEARTBEAT ).lastFireTime ).toBeGreaterThan( 0 );
 			expect( postBatch ).toHaveBeenCalled();
 		} finally {
 			jest.useRealTimers();
