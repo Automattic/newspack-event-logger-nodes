@@ -20,12 +20,20 @@ import { errorMessage } from '@newspack-nodes/shared/pendingReplies';
  * expects a JSON STRING and would JSON.parse a live object — forcing it here is
  * false symmetry. So this base reads `value.payload` as an object directly.
  *
- * `fill()` handles three message kinds, mirroring the old performance-view-node
+ * `fill()` handles these message kinds, mirroring the old performance-view-node
  * slice protocol but per-slice:
  *   - TM_STRUCT { action:'loading' }         → loading:true, error:null (data kept);
+ *   - TM_STRUCT { action:'clear' }           → reset to emptySlice() (modal close);
  *   - a command reply (VALUE = {name,payload}) → store the payload (subclass shapes
  *                                                it via storeResult), clear loading/error;
  *   - a TM_ERROR reply                        → error string, clear loading, KEEP prior data.
+ *
+ * Optional awaited-verb path: a subclass that ALSO awaits a verb (the on-demand
+ * url_detail/request_detail views await fetchUrlBreakdown/resolveRequest) assigns
+ * `this.replies = new PendingReplies()` and stashes `{ resolve, reject }` under
+ * each outbound `message[ID]`. `fill()` then settles a matching reply FIRST and
+ * returns — the awaited reply never touches the data slice. With no match (or no
+ * `replies`) it falls through to the slice path below.
  *
  * Subclasses supply `emptySlice()` (the shaped-but-empty initial model) and
  * `storeResult(payload)` (how a successful payload becomes the slice). A
@@ -49,6 +57,12 @@ export class DecodedSliceViewNode extends Node {
 	}
 
 	fill( message ) {
+		// Optional awaited-verb path: a settled reply is fully consumed here and
+		// never falls through to the slice logic.
+		if ( this.replies && this.replies.settle( message ) ) {
+			return;
+		}
+
 		const value = message[ VALUE ];
 		const type = message[ TYPE ] || 0;
 
@@ -59,6 +73,34 @@ export class DecodedSliceViewNode extends Node {
 			'loading' === value.action
 		) {
 			this.model = { ...this.model, loading: true, error: null };
+			this.setState( 'view', this.model );
+			return;
+		}
+
+		// Clear control: reset to the empty slice (modal close → next open fresh).
+		if (
+			TM_STRUCT === ( type & TM_STRUCT ) &&
+			value &&
+			'clear' === value.action
+		) {
+			this.model = this.emptySlice();
+			this.setState( 'view', this.model );
+			return;
+		}
+
+		// Error control: a client-side validation failure (the hook emits this for
+		// an invalid hash / rid before any network call). Surface the error, clear
+		// loading, KEEP prior data — same as a TM_ERROR reply.
+		if (
+			TM_STRUCT === ( type & TM_STRUCT ) &&
+			value &&
+			'error' === value.action
+		) {
+			this.model = {
+				...this.model,
+				loading: false,
+				error: value.error || errorMessage( null ),
+			};
 			this.setState( 'view', this.model );
 			return;
 		}

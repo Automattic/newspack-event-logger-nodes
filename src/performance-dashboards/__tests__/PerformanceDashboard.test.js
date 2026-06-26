@@ -2,27 +2,46 @@
 /**
  * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
  *
- * After the Phase-3 rework the orchestrator no longer fetches anything itself.
- * It reads the published view model via `useNodeState('performance:view','view')`
- * and dispatches every command through `usePerformanceGraph` (which returns the
- * control callbacks `{ handleUrlParamsChange, resolveRequest, fetchUrlBreakdown }`).
+ * Post-D1b de-god the orchestrator reads FOUR per-slice view nodes
+ * (`overview:view` / `urls:view` / `urldetail:view` / `requestdetail:view`), each
+ * via its own `useNodeState`, and dispatches every command through
+ * `usePerformanceGraph` (which returns the control callbacks
+ * `{ handleUrlParamsChange, resolveRequest, fetchUrlBreakdown }`). The orchestrator
+ * fetches nothing itself.
  *
  * These tests cover the ORCHESTRATION contract only — which child renders given
- * which view-model slice, what callbacks the children receive, how the
- * orchestrator derives its render-time slices from the model. The fetch
- * mechanics now live in usePerformanceGraph / performanceCommand / performanceView
- * tests, so the old fetch-mechanics cases are gone.
+ * which slice, what callbacks the children receive, how the orchestrator derives
+ * its render-time values. The fetch mechanics live in the usePerformanceGraph
+ * tests; the per-slice view-model logic lives in the per-node tests.
  *
- * The data seam is the view model: tests set `mockView` (returned by the mocked
- * useNodeState) and the graph control callbacks via `mockGraph`. Children are
- * mocked at the module boundary as stub components that record their props.
+ * The data seam is the slice model: tests set `mockView` (the same combined
+ * `{ overview, urls, urlDetail, requestDetail }` shape as before), and the mocked
+ * `useNodeState` fans it out by node name so the existing setups work unchanged.
+ * The graph control callbacks come from `mockGraph`. Children are mocked at the
+ * module boundary as stub components that record their props.
  */
 
-// The view model the orchestrator reads via useNodeState. Set per-test.
+// The view model the orchestrator reads via FOUR per-slice useNodeState calls
+// (overview:view / urls:view / urldetail:view / requestdetail:view). Set per-test
+// in the same combined `{ overview, urls, urlDetail, requestDetail }` shape the
+// old single god view used; the mock fans that out by node name, so the existing
+// per-test `loadedView({...})` setups work unchanged.
 let mockView = null;
 jest.mock( '@newspack-nodes/runtime', () => ( {
 	__esModule: true,
-	useNodeState: () => mockView,
+	useNodeState: ( nodeName ) => {
+		if ( ! mockView ) {
+			return undefined;
+		}
+		const sliceByNode = {
+			'overview:view': 'overview',
+			'urls:view': 'urls',
+			'urldetail:view': 'urlDetail',
+			'requestdetail:view': 'requestDetail',
+		};
+		const key = sliceByNode[ nodeName ];
+		return key ? mockView[ key ] : undefined;
+	},
 } ) );
 
 // The graph control callbacks usePerformanceGraph hands back.
