@@ -1,0 +1,106 @@
+// =============================================================================
+// Design Tokens — Newspack (light settings chrome + shared dark log tokens)
+// =============================================================================
+// This is the Event Logger SETTINGS page — light Cobalt-on-white Newspack
+// chrome. The `$light-*` tokens map onto the canonical --np-* product tokens;
+// the `$dark-*` tokens (shared with the log-stream dashboards) map onto the
+// dark `$term-*` set so the few dark-pane mixins they back stay legible. The
+// Material-blue accent (#64b5f6) is gone — Cobalt leads.
+
+// Terminal / log surfaces (kept dark for any shared log-pane mixin).
+$term-bg: #1e1e1e;
+$term-bg-alt: #262626;
+$term-text: #e6e6e6;
+$term-text-dim: #949494;
+$term-border: #3a3a3a;
+$term-accent: color-mix(in srgb, var(--np-primary) 58%, white);
+$term-accent-hover: color-mix(in srgb, var(--np-primary) 78%, white);
+
+// Dark log-pane surfaces — `$dark-bg*` carry the $term-* terminal neutrals.
+$dark-bg: $term-bg;
+$dark-bg-secondary: #232323;
+$dark-bg-tertiary: #2e2e2e;
+$dark-bg-hover: #3a3a3a;
+$dark-bg-active: #454545;
+$dark-bg-row-even: $term-bg-alt;
+$dark-bg-row-hover: #30363d;
+$dark-bg-deep: #1c1c1c;
+$dark-bg-deepest: #181818;
+$dark-header-border: $term-border;
+
+// Dark log-pane text.
+$dark-text: $term-text;
+$dark-text-muted: $term-text-dim;
+$dark-text-time: $term-text-dim;
+$dark-text-placeholder: $term-text-dim;
+$dark-text-dim: #6e6e6e;
+
+// Dark log-pane borders.
+$dark-border: $term-border;
+$dark-border-light: #4a4a4a;
+
+// Accents on the dark pane — Cobalt, lightened to read on dark.
+$dark-accent: $term-accent;
+$dark-accent-hover: $term-accent-hover;
+$dark-success: color-mix(in srgb, var(--np-success) 62%, white);
+$dark-info: color-mix(in srgb, var(--np-primary) 58%, white);
+
+// Light chrome — text + surfaces (the settings page).
+$light-text: var(--np-text);
+$light-text-secondary: var(--np-text-secondary);
+$light-text-muted: var(--np-text-secondary);
+$light-surface: var(--np-surface-subtle);
+$light-surface-alt: var(--np-surface-subtle);
+$light-surface-hover: var(--np-surface-muted);
+$light-selected: var(--np-primary-subtle);
+$light-border: var(--np-border-strong);
+$light-border-light: var(--np-border);
+$light-border-muted: var(--np-border);
+$light-border-faint: var(--np-surface-muted);
+
+// Status colors (HTTP) — functional, lightened where they ride dark log rows.
+$status-2xx: color-mix(in srgb, var(--np-success) 62%, white);
+$status-3xx: var(--np-warning);
+$status-4xx: color-mix(in srgb, var(--np-error) 72%, white);
+$status-5xx: var(--np-error);
+
+// Semantic colors.
+$error-bg: var(--np-error);
+$error-text: color-mix(in srgb, var(--np-error) 72%, white);
+$error-surface: var(--np-error-subtle);
+$success-bg: var(--np-success);
+$success-border: var(--np-success);
+$dead-bg: var(--np-error);
+$idle-bg: var(--np-text-secondary);
+$warning-color: var(--np-warning);
+$recommended-color: var(--np-warning);
+$discovered-bg: var(--np-warning-subtle);
+$discovered-hover: var(--np-warning-subtle);
+$discovered-hooks: var(--np-surface-subtle);
+
+// Focus/interactive — Cobalt.
+$focus-color: var(--np-primary);
+$wp-link: var(--np-primary);
+
+// Pure colors
+$white: #fff;
+
+// Typography — Inter in product; mono for log/terminal surfaces.
+$system-font: var(--np-font);
+$mono-font: var(--np-font-mono);
+
+// Sizing
+$control-height: 28px;
+$border-radius-sm: 3px;
+$border-radius: 4px;
+$border-radius-lg: 6px;
+
+// Spacing
+$space-xs: 4px;
+$space-sm: 8px;
+$space-md: 12px;
+$space-lg: 16px;
+$space-xl: 24px;
+
+// Focus — Cobalt glow.
+$focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
