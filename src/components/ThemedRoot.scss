@@ -60,13 +60,16 @@
 	}
 
 	// Form controls — reskin the WP-default light widgets onto the surface system.
-	// (The block scope above already keeps these off the substrate console's own
-	// inputs, whose `topology-*` class sits on an ancestor, not the input element.)
-	input[type="text"],
-	input[type="search"],
-	input[type="number"],
-	select,
-	textarea {
+	// EXCLUDE the substrate debug-overlay (`.nodes-debug`): it renders INLINE inside
+	// this ThemedRoot (no portal), so the console's REPL / settings inputs are
+	// descendants here. Block scoping alone can't spare them — the descendant rule
+	// out-specifies the REPL input's transparent bg and paints it light --paper-3
+	// (white-on-white under light skins). The overlay owns its own input styling.
+	input[type="text"]:not(.nodes-debug *),
+	input[type="search"]:not(.nodes-debug *),
+	input[type="number"]:not(.nodes-debug *),
+	select:not(.nodes-debug *),
+	textarea:not(.nodes-debug *) {
 		background: var(--paper-3);
 		color: var(--ink);
 		border: 1px solid var(--paper-shadow);
@@ -85,7 +88,7 @@
 		}
 	}
 
-	select {
+	select:not(.nodes-debug *) {
 		appearance: none;
 		padding: 0 22px 0 8px;
 		// neutral mid-tone chevron — reads on both light and dark surfaces.

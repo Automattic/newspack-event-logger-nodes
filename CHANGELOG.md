@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The overlay console REPL input is no longer white-on-white under light skins.** The standalone-dashboard form-control reskin (`ThemedRoot.scss`) painted every `input[type="text"]` with a light `--paper-3` background, and the substrate debug overlay renders INLINE inside `ThemedRoot` (not portaled), so the rule reached the console's REPL input (a `type="text"` descendant) and overpainted its transparent background while `-webkit-text-fill-color: var(--repl-fg)` kept the text light. The reskin now excludes the overlay subtree (`input[type="text"]:not(.nodes-debug *)`, etc.), so the REPL input keeps its transparent background over the dark bar. Dashboard/modal inputs are unaffected.
+
 ## [0.21.0] - 2026-06-27
 
 ### Changed
