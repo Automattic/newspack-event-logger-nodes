@@ -262,7 +262,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
 		$page_to_tree = [
 			'event-logger-overview'                  => 'overview',
-			'event-logger-errors'                    => 'overview',
+			'event-logger-errors'                    => 'error-log',
 			'event-logger-gyroscope'                 => 'gyroscope',
 			'event-logger-requests'                  => 'requests',
 			'newspack-event-logger-nodes'            => 'settings',

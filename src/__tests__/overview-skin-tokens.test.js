@@ -13,13 +13,11 @@ import path from 'path';
 const read = ( rel ) =>
 	fs.readFileSync( path.join( __dirname, '..', rel ), 'utf8' );
 
-describe( 'overview skin tokens', () => {
+describe( 'dashboard skin tokens', () => {
 	// Strip line comments so the no-fallback / no-lightening assertions check the
-	// actual declarations, not the header prose that describes them.
-	const tokens = read( 'overview/styles/_tokens.scss' ).replace(
-		/\/\/.*$/gm,
-		''
-	);
+	// actual declarations, not the header prose that describes them. Tokens were
+	// lifted to the shared src/styles/_tokens.scss (one copy for every dashboard).
+	const tokens = read( 'styles/_tokens.scss' ).replace( /\/\/.*$/gm, '' );
 
 	it( 'maps the surface/ink/accent primitives straight to bare skin tokens', () => {
 		expect( tokens ).toMatch( /\$surface:\s*var\(--paper\)\s*;/ );

@@ -1,9 +1,9 @@
 /**
- * Tests for the inline AdminApp + ErrorLogPage page components defined in
- * overview/index.js. The DOMContentLoaded → createRoot mount path
- * is covered by mount-entrypoints.test.js; here we render the components
- * DIRECTLY so we can drive AdminApp's error state machine (handleError + the 5s
- * auto-clear effect) and the Suspense LoadingFallback without the document-level
+ * Tests for the inline AdminApp page component defined in overview/index.js. The
+ * DOMContentLoaded → createRoot mount path is covered by
+ * mount-entrypoints.test.js; here we render the component DIRECTLY so we can
+ * drive AdminApp's error state machine (handleError + the 5s auto-clear effect)
+ * and the Suspense LoadingFallback without the document-level
  * listener-accumulation / multi-root hazards of re-requiring the entry module.
  */
 
@@ -23,18 +23,10 @@ jest.mock( '../PerformanceDashboard', () => ( {
 	},
 } ) );
 
-jest.mock( '../ErrorLog', () => ( {
-	__esModule: true,
-	default: () => {
-		const React = require( 'react' );
-		return React.createElement( 'div', null, 'ERROR_LOG' );
-	},
-} ) );
-
 import { act, renderComponent } from '../../test-helpers/renderHook';
-import { AdminApp, ErrorLogPage } from '../index';
+import { AdminApp } from '../index';
 
-describe( 'overview — AdminApp + ErrorLogPage', () => {
+describe( 'overview — AdminApp', () => {
 	let views;
 
 	beforeEach( () => {
@@ -86,10 +78,5 @@ describe( 'overview — AdminApp + ErrorLogPage', () => {
 		const view = renderComponent( <AdminApp /> );
 		views.push( view );
 		expect( view.container.textContent ).toContain( 'Loading' );
-	} );
-
-	it( 'ErrorLogPage renders the error log view', async () => {
-		const { container } = await mount( <ErrorLogPage /> );
-		expect( container.textContent ).toContain( 'ERROR_LOG' );
 	} );
 } );

@@ -11,13 +11,13 @@ jest.mock( '../requests/RequestStreamPage', () => ( {
 	__esModule: true,
 	default: () => 'REQUEST_STREAM_PAGE',
 } ) );
-// overview/index.js mounts two components — lazy-loaded
-// PerformanceDashboard and ErrorLog.
+// overview/index.js mounts the lazy-loaded PerformanceDashboard; the error log
+// is its own entry (error-log/index.js → lazy-loaded ErrorLog).
 jest.mock( '../overview/PerformanceDashboard', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );
-jest.mock( '../overview/ErrorLog', () => ( {
+jest.mock( '../error-log/ErrorLog', () => ( {
 	__esModule: true,
 	default: () => 'ERROR_LOG',
 } ) );
@@ -61,9 +61,8 @@ describe( 'dashboard mount-entry points', () => {
 		expect( () => require( '../requests' ) ).not.toThrow();
 	} );
 
-	it( 'overview/index.js mounts the dashboard + error containers', () => {
+	it( 'overview/index.js mounts the dashboard container', () => {
 		const admin = mountContainer( 'event-logger-admin' );
-		mountContainer( 'event-logger-errors' );
 		require( '../overview' );
 		// Dispatch DOMContentLoaded — required because the handler is
 		// registered at module-load time in jsdom (the document is
@@ -73,9 +72,23 @@ describe( 'dashboard mount-entry points', () => {
 		expect( admin.parentNode ).toBe( document.body );
 	} );
 
-	it( 'overview/index.js is a no-op without containers', () => {
+	it( 'overview/index.js is a no-op without the container', () => {
 		expect( () => {
 			require( '../overview' );
+			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		} ).not.toThrow();
+	} );
+
+	it( 'error-log/index.js mounts when #event-logger-errors exists', () => {
+		const errors = mountContainer( 'event-logger-errors' );
+		require( '../error-log' );
+		document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
+		expect( errors.parentNode ).toBe( document.body );
+	} );
+
+	it( 'error-log/index.js is a no-op without the container', () => {
+		expect( () => {
+			require( '../error-log' );
 			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
 		} ).not.toThrow();
 	} );
@@ -152,7 +165,6 @@ describe( 'dashboard mount-entry points', () => {
 	it( 'overview/index.js mounts via createRoot (no React 18 render deprecation)', () => {
 		const surfaced = renderDeprecationOnMount( '../overview', () => {
 			mountContainer( 'event-logger-admin' );
-			mountContainer( 'event-logger-errors' );
 		} );
 		expect( surfaced ).not.toContain(
 			'ReactDOM.render is no longer supported'

@@ -1,7 +1,7 @@
 /**
- * Tests that the overview page roots (AdminApp + ErrorLogPage)
- * carry the `.newspack-nodes-theme` class so their var(--np-*) token
- * references resolve from the shared newspack-nodes-theme stylesheet.
+ * Tests that the dashboard page roots (overview's AdminApp + the error log's
+ * ErrorLogPage) carry the `.newspack-nodes-theme` class so their var(--np-*)
+ * token references resolve from the shared newspack-nodes-theme stylesheet.
  *
  * Both roots render a lazy-loaded child; the assertion is on the
  * synchronously-rendered wrapper, then we flush the pending lazy resolution
@@ -13,13 +13,14 @@ jest.mock( '../overview/PerformanceDashboard', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );
-jest.mock( '../overview/ErrorLog', () => ( {
+jest.mock( '../error-log/ErrorLog', () => ( {
 	__esModule: true,
 	default: () => 'ERROR_LOG',
 } ) );
 
 import * as React from 'react';
-import { AdminApp, ErrorLogPage } from '../overview';
+import { AdminApp } from '../overview';
+import { ErrorLogPage } from '../error-log';
 import { renderComponent, act } from '../test-helpers/renderHook';
 
 const flushLazy = async () =>

@@ -18,29 +18,29 @@
 // Shared mixin bodies, configured with THIS dashboard's divergent color tokens
 // so the compiled CSS is byte-identical to the old inline definitions.
 // `dark-button` / `dark-column-picker` are excluded — kept local below.
-@forward "../../styles/dashboard-mixins" show
-	dark-error-banner, dark-stats, dark-stats-count, dark-stats-rps,
-	dark-search-input, table-header, table-list, table-row, table-cell,
-	table-cell-numeric, table-empty, sortable-header-button, widefat-themed
-	with (
-	$dark-bg-secondary: $dark-bg-secondary,
-	$dark-bg-tertiary: $dark-bg-tertiary,
-	$dark-bg-hover: $dark-bg-hover,
-	$dark-bg-active: $dark-bg-active,
-	$dark-text: $dark-text,
-	$dark-text-muted: $dark-text-muted,
-	$dark-text-placeholder: $dark-text-placeholder,
-	$dark-border: $dark-border,
-	$dark-accent: $dark-accent,
-	$dark-success: $dark-success,
-	$error-bg: $error-bg,
-	$light-surface: $light-surface,
-	$light-selected: $light-selected,
-	$light-border: $light-border,
-	$light-border-light: $light-border-light,
-	$light-text-muted: $light-text-muted,
-	$wp-link: $wp-link
-);
+@forward "../../styles/dashboard-mixins" show dark-error-banner, dark-stats,
+	dark-stats-count, dark-stats-rps, dark-search-input, table-header,
+	table-list, table-row, table-cell, table-cell-numeric, table-empty,
+	sortable-header-button,
+	widefat-themed with (
+		$dark-bg-secondary: $dark-bg-secondary,
+		$dark-bg-tertiary: $dark-bg-tertiary,
+		$dark-bg-hover: $dark-bg-hover,
+		$dark-bg-active: $dark-bg-active,
+		$dark-text: $dark-text,
+		$dark-text-muted: $dark-text-muted,
+		$dark-text-placeholder: $dark-text-placeholder,
+		$dark-border: $dark-border,
+		$dark-accent: $dark-accent,
+		$dark-success: $dark-success,
+		$error-bg: $error-bg,
+		$light-surface: $light-surface,
+		$light-selected: $light-selected,
+		$light-border: $light-border,
+		$light-border-light: $light-border-light,
+		$light-text-muted: $light-text-muted,
+		$wp-link: $wp-link
+	);
 @use "../../styles/dashboard-mixins" as mix;
 
 // =============================================================================
@@ -102,7 +102,6 @@
 		margin: 0;
 	}
 }
-
 
 // =============================================================================
 // Component Styles
