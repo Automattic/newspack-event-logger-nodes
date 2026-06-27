@@ -70,6 +70,27 @@ describe( 'overview skin tokens', () => {
 		expect( scss ).not.toMatch( /^\s*\.newspack-nodes-theme\s*\{/m );
 	} );
 
+	it( 'excludes the inline debug-overlay (.nodes-debug) from the form-control reskin', () => {
+		// DebugOverlay renders INLINE inside ThemedRoot (no portal), so the substrate
+		// console REPL input (type="text", background:transparent) is a DESCENDANT of
+		// `.topology-app > .newspack-nodes-theme`. Block scoping alone does NOT spare
+		// it — the descendant reskin (`… input[type="text"]`, specificity 0,3,1) beats
+		// the REPL's transparent bg (0,2,0) and paints it light --paper-3 → white-on-
+		// white under light skins. Every reskinned form control must opt the overlay
+		// subtree out so the overlay owns its own input styling.
+		const scss = read( 'components/ThemedRoot.scss' );
+		for ( const sel of [
+			'input\\[type="text"\\]',
+			'input\\[type="search"\\]',
+			'input\\[type="number"\\]',
+			'textarea',
+		] ) {
+			expect( scss ).toMatch(
+				new RegExp( sel + ':not\\(\\s*\\.nodes-debug' )
+			);
+		}
+	} );
+
 	it( 'settings/_tokens.scss keeps its --np-* fallback chain (settings is NOT reskinned)', () => {
 		// Unlike overview/gyroscope/requests, the settings page is deliberately
 		// Newspack-fixed (no ThemedRoot), so its tokens MUST keep the --np-* fallback.
