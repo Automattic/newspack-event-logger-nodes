@@ -3,7 +3,6 @@
 // namespace registration. Imported (for its side effect) by the hooks and the
 // bundle entry, so registration runs before any graph build.
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
-import { PerfErrorsViewNode } from './perf-errors-view-node';
 import { OverviewViewNode } from './overview-view-node';
 import { UrlsViewNode } from './urls-view-node';
 import { UrlDetailMergeNode } from './url-detail-merge-node';
@@ -11,8 +10,6 @@ import { UrlDetailViewNode } from './url-detail-view-node';
 import { RequestDetailViewNode } from './request-detail-view-node';
 
 CommandInterpreterNode.registerNodeClasses( {
-	// The Error Log's per-slice errors view (separate dashboard tree).
-	PerfErrorsView: PerfErrorsViewNode,
 	// D1b de-god: the per-slice decoded-object views (overview/urls polled,
 	// urldetail/requestdetail on-demand) + the url_detail merge transform node,
 	// all wired by usePerformanceGraph onto useBatchedPoll/addSliceFetcher. The

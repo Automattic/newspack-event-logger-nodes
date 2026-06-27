@@ -53,6 +53,10 @@ const ENTRIES = [
 		outDir: path.resolve( ROOT, 'build/overview' ),
 	},
 	{
+		entry: 'src/error-log/index.js',
+		outDir: path.resolve( ROOT, 'build/error-log' ),
+	},
+	{
 		entry: 'src/settings/index.js',
 		outDir: path.resolve( ROOT, 'build/settings' ),
 	},

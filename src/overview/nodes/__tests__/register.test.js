@@ -6,10 +6,6 @@
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import '../register';
 
-it( 'registers the Error Log errors view for make_node', () => {
-	expect( CommandInterpreterNode.includeNodes.PerfErrorsView ).toBeDefined();
-} );
-
 it( 'registers the D1b slice-view + transform node classes for make_node', () => {
 	expect( CommandInterpreterNode.includeNodes.OverviewView ).toBeDefined();
 	expect( CommandInterpreterNode.includeNodes.UrlsView ).toBeDefined();

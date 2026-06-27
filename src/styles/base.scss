@@ -1,27 +1,28 @@
 /**
- * Base Styles
+ * Shared dashboard base — the chrome + component styles that every event-logger
+ * dashboard (overview, error log, gyroscope, request log) re-declared verbatim,
+ * lifted to ONE source. Each dashboard's `styles/base.scss` `@forward`s + `@use`s
+ * this — so it (and its sibling stylesheets, which `@use "base"`) keep resolving
+ * `base.$token` / `base.<mixin>` — then adds only its scoped reset + the few
+ * rules that actually differ.
  *
- * Loading states, stats grid, admin wrapper, shared component rules.
- * Tokens live in `_tokens.scss` (this dashboard's divergent theme values);
- * the shared mixin bodies live in `src/styles/_dashboard-mixins.scss`.
- *
- * NOTE: this settings page keeps its OWN `dark-button` / `dark-column-picker`
- * (the white-on-dark hover/active variant) - those bodies genuinely diverge
- * from the shared set, so they stay local and are excluded from the forward.
+ * Settings opts out: it carries divergent theme tokens and its own local
+ * `dark-button` / `dark-column-picker` variants, so it keeps its bespoke base.
  */
 
-// Tokens: in local scope for the component rules + the mixin config below, and
-// re-exported so sibling stylesheets keep reading `base.$token`.
+// Shared design tokens, in local scope for the component rules + the mixin
+// config below, and re-exported so each dashboard base (and its siblings) keep
+// reading `base.$token`.
 @use "tokens" as *;
 @forward "tokens";
 
-// Shared mixin bodies, configured with THIS dashboard's divergent color tokens
-// so the compiled CSS is byte-identical to the old inline definitions.
-// `dark-button` / `dark-column-picker` are excluded — kept local below.
-@forward "../../styles/dashboard-mixins" show dark-error-banner, dark-stats,
-	dark-stats-count, dark-stats-rps, dark-search-input, table-header,
-	table-list, table-row, table-cell, table-cell-numeric, table-empty,
-	sortable-header-button,
+// Shared mixin bodies, configured with the dashboard color tokens so the
+// compiled CSS matches the old inline definitions. `@forward` re-exports them so
+// dashboards + their siblings keep calling `base.<mixin>`.
+@forward "dashboard-mixins" show dark-error-banner, dark-button,
+	dark-column-picker, dark-stats, dark-stats-count, dark-stats-rps,
+	dark-search-input, table-header, table-list, table-row, table-cell,
+	table-cell-numeric, table-empty, sortable-header-button,
 	widefat-themed with (
 		$dark-bg-secondary: $dark-bg-secondary,
 		$dark-bg-tertiary: $dark-bg-tertiary,
@@ -41,96 +42,30 @@
 		$light-text-muted: $light-text-muted,
 		$wp-link: $wp-link
 	);
-@use "../../styles/dashboard-mixins" as mix;
+@use "dashboard-mixins" as mix;
 
-// =============================================================================
-// Local Mixins — divergent button/column-picker (white-on-dark variant)
-// =============================================================================
-// Dark theme button
-@mixin dark-button {
-	background: $dark-bg-tertiary;
-	border: 2px solid $dark-border;
-	color: $dark-text;
-	padding: 0 $space-sm;
-	border-radius: $border-radius;
-	cursor: pointer;
-	font-size: 12px;
-	height: $control-height;
-	min-height: $control-height;
-	max-height: $control-height;
-	box-sizing: border-box;
-	vertical-align: middle;
-	transition: all 0.2s;
-
-	&:hover {
-		background: $dark-bg-hover;
-		color: $white;
-	}
-
-	&.active {
-		background: $dark-bg-active;
-		color: $white;
+// Scoped border-box baseline — each dashboard `@include`s this with its OWN root
+// id so the reset only applies inside that app's root, never leaking into the
+// rest of wp-admin.
+@mixin scoped-reset($root) {
+	#{$root} *,
+	#{$root} *::before,
+	#{$root} *::after {
+		box-sizing: border-box;
 	}
 }
 
-// Dark theme column picker
-@mixin dark-column-picker {
-	background: $dark-bg-secondary;
-	border: 2px solid $dark-border;
-	border-radius: $border-radius;
-	padding: $space-sm $space-md;
-	margin-bottom: $space-md;
-	display: flex;
-	flex-wrap: wrap;
-	gap: $space-sm;
-	font-size: 12px;
-	color: $dark-text;
-
-	label {
-		display: flex;
-		align-items: center;
-		gap: $space-xs;
-		color: $dark-text-muted;
-		cursor: pointer;
-
-		&:hover {
-			color: $white;
-		}
-	}
-
-	input[type="checkbox"] {
-		margin: 0;
-	}
+// Stats grid — the 4-column variant (gyroscope + request log). Overview uses a
+// flex variant, declared locally on its own base.
+@mixin stats-grid {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: $space-lg;
 }
 
 // =============================================================================
 // Component Styles
 // =============================================================================
-
-// Scoped border-box baseline — applies only inside this app's roots, never
-// leaking into the rest of wp-admin. Mount ids are `event-logger-${fieldName}`
-// where fieldName carries underscores (log_urls, skip_urls, …), so the id
-// selectors can't be kebab-cased without breaking the React mount scoping.
-/* stylelint-disable selector-id-pattern */
-#event-logger-log_urls *,
-#event-logger-log_urls *::before,
-#event-logger-log_urls *::after,
-#event-logger-skip_urls *,
-#event-logger-skip_urls *::before,
-#event-logger-skip_urls *::after,
-#event-logger-log_events *,
-#event-logger-log_events *::before,
-#event-logger-log_events *::after,
-#event-logger-custom_events *,
-#event-logger-custom_events *::before,
-#event-logger-custom_events *::after,
-#event-logger-significant_events *,
-#event-logger-significant_events *::before,
-#event-logger-significant_events *::after {
-	box-sizing: border-box;
-}
-
-/* stylelint-enable selector-id-pattern */
 
 // Loading container
 .event-logger-performance-loading {
@@ -203,13 +138,6 @@
 		background-repeat: no-repeat;
 		opacity: 0.6;
 	}
-}
-
-// Stats grid
-.event-logger-stats-grid {
-	display: grid;
-	grid-template-columns: repeat(4, 1fr);
-	gap: $space-lg;
 }
 
 .event-logger-stat {
@@ -322,9 +250,12 @@ select.event-logger-refresh-select {
 	}
 }
 
-// Shared header styles (dark theme)
+// Shared header styles (light chrome — title + controls above the dark pane).
+// Every dashboard carries the full selector list (the per-page header class that
+// matches is the only one with a target element).
 .event-logger-inflight-header,
 .event-logger-request-stream-header,
+.event-logger-error-log-header,
 .worker-status-full .worker-status-header {
 	display: flex;
 	justify-content: space-between;
@@ -333,19 +264,13 @@ select.event-logger-refresh-select {
 	margin-bottom: 12px;
 	padding-bottom: 12px;
 	border-bottom: 1px solid $dark-header-border;
-
-	h2,
-	h3 {
-		margin: 0;
-		font-size: 14px;
-		font-weight: 600;
-		color: $white;
-	}
 }
 
-// Shared entry cell styles (used by Request Log and Gyroscope)
+// Shared entry cell styles (used by Request Log, Gyroscope, Error Log) — these
+// ride the DARK log rows, so they read against $term-* (light-on-dark), not the
+// chrome.
 .entry-time {
-	color: $dark-text-time;
+	color: $term-text-dim;
 	font-size: 11px;
 }
 
@@ -355,7 +280,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-method {
-	color: $dark-accent;
+	color: $term-accent;
 	font-weight: 500;
 	text-transform: uppercase;
 	font-size: 11px;
@@ -383,7 +308,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-url {
-	color: $dark-text;
+	color: $term-text;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -394,17 +319,17 @@ select.event-logger-refresh-select {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: $dark-accent;
+	color: $term-accent;
 	text-decoration: none;
 
 	&:hover {
-		color: $dark-accent-hover;
+		color: $term-accent-hover;
 		text-decoration: underline;
 	}
 }
 
 .entry-url-link {
-	color: $dark-text;
+	color: $term-text;
 	text-decoration: none;
 
 	&:hover {
@@ -414,12 +339,12 @@ select.event-logger-refresh-select {
 }
 
 .entry-ip {
-	color: $dark-text-muted;
+	color: $term-text-dim;
 	font-size: 11px;
 }
 
 .entry-ua {
-	color: $dark-text-time;
+	color: $term-text-dim;
 	font-size: 10px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -427,13 +352,13 @@ select.event-logger-refresh-select {
 }
 
 .entry-partition {
-	color: $dark-text-dim;
+	color: $term-text-dim;
 	font-size: 10px;
 	text-align: center;
 }
 
 .entry-default {
-	color: $dark-text-dim;
+	color: $term-text-dim;
 }
 
 // Shared search input (dark theme)
