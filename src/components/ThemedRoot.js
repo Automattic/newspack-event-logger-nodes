@@ -1,26 +1,26 @@
-import { useState } from '@wordpress/element';
+import { useState, useEffect, useRef } from '@wordpress/element';
 import { getStoredTheme } from '@newspack-nodes/shared/theme';
+
+import './ThemedRoot.scss';
 
 /**
  * No-box themed token-provider for standalone ELN dashboards. Reads the
  * console-selected skin (persisted in localStorage) once at mount and wraps its
  * children in a `display:contents` `.topology-app.newspack-nodes-theme.theme-<slug>`
- * div, putting the skin's universal tokens (--paper/--ink/--cyan/…) + color in
- * scope for the dashboard's `var(--paper, var(--np-*))` chains so it reskins per
- * theme.
+ * div, putting the skin's universal tokens (--paper/--ink/--cyan/--font-mono/…)
+ * in scope so the dashboard reskins onto them.
  *
- * Two inline neutralizations keep it a PURE token provider — `.topology-app`'s
- * own rule block sets box layout AND a monospace `font-family`, both of which
- * would otherwise reach the dashboard:
- *   - `display: contents` drops this wrapper's box, so `.topology-app`'s
- *     grid/size/background layout never renders;
- *   - `font-family: inherit` overrides `.topology-app`'s `var(--font-mono)`,
- *     which `display:contents` would otherwise cascade into the dashboard
- *     (inheritance passes through a contents box). The product dashboards stay
- *     sans; the log/flame pieces that genuinely want mono set `$mono-font`
- *     themselves. Color is intentionally left to inherit so text reskins too.
- * Mirrors the debug-overlay DebugPanel token provider (which likewise resets the
- * inherited console mono for its reused dashboard pieces).
+ * `display: contents` drops this wrapper's own box, so `.topology-app`'s console
+ * grid/size/background layout never renders — but inheritance still passes
+ * through, so the skin's `font-family: var(--font-mono)` cascades into the
+ * dashboard (terminal-mono under decorative skins, the Newspack sans by default).
+ *
+ * The dashboard's dark surface only covers its own box; the WP-admin area around
+ * it (the ~20px left gutter beside the menu, the right `max-width` margin, the
+ * footer area below the content) otherwise shows the light body background as
+ * stray strips. The effect below paints `document.body` with the RESOLVED skin
+ * surface (read once from this themed wrapper) so every gutter matches the
+ * dashboard; it's restored on unmount.
  *
  * @param {Object}                    props          Component props.
  * @param {import('react').ReactNode} props.children Dashboard root(s) to skin.
@@ -28,11 +28,39 @@ import { getStoredTheme } from '@newspack-nodes/shared/theme';
  */
 export default function ThemedRoot( { children } ) {
 	const [ theme ] = useState( getStoredTheme );
+	const ref = useRef( null );
+
+	useEffect( () => {
+		const host = ref.current;
+		if ( ! host ) {
+			return undefined;
+		}
+		// Resolve the skin's --paper to a concrete colour from inside the themed
+		// wrapper (custom props resolve on the element even under display:contents).
+		const probe = document.createElement( 'span' );
+		host.appendChild( probe );
+		let paper;
+		try {
+			probe.style.background = 'var(--paper)';
+			paper = window.getComputedStyle( probe ).backgroundColor;
+		} finally {
+			probe.remove();
+		}
+		if ( ! paper || paper === 'rgba(0, 0, 0, 0)' ) {
+			return undefined;
+		}
+		const previous = document.body.style.background;
+		document.body.style.background = paper;
+		return () => {
+			document.body.style.background = previous;
+		};
+	}, [ theme ] );
 
 	return (
 		<div
+			ref={ ref }
 			className={ `topology-app newspack-nodes-theme theme-${ theme }` }
-			style={ { display: 'contents', fontFamily: 'inherit' } }
+			style={ { display: 'contents' } }
 		>
 			{ children }
 		</div>

@@ -28,10 +28,10 @@ describe( 'ThemedRoot', () => {
 			true
 		);
 		expect( wrapper.style.display ).toBe( 'contents' );
-		// font-family:inherit neutralizes .topology-app's inherited monospace font
-		// so the wrapped product dashboard keeps its sans typography (only the
-		// universal tokens + color cascade through to reskin it).
-		expect( wrapper.style.fontFamily ).toBe( 'inherit' );
+		// No font-family override: the skin's --font-mono cascades in (terminal
+		// under decorative skins, the Newspack sans via --np-font by default), so
+		// the dashboard reskins its typography too.
+		expect( wrapper.style.fontFamily ).toBe( '' );
 		expect(
 			wrapper.querySelector( '[data-testid="child"]' )
 		).not.toBeNull();
@@ -57,5 +57,25 @@ describe( 'ThemedRoot', () => {
 			container.querySelector( '.topology-app.theme-newspack' )
 		).not.toBeNull();
 		unmount();
+	} );
+
+	it( 'paints the WP-admin body with the resolved skin surface, restored on unmount', () => {
+		// The effect probes --paper from the themed wrapper; jsdom resolves no real
+		// CSS, so mock the probe span's computed colour and delegate everything else.
+		const real = window.getComputedStyle.bind( window );
+		const spy = jest
+			.spyOn( window, 'getComputedStyle' )
+			.mockImplementation( ( el, pseudo ) =>
+				el?.tagName === 'SPAN'
+					? { backgroundColor: 'rgb(2, 10, 5)' }
+					: real( el, pseudo )
+			);
+		const { unmount } = renderComponent(
+			React.createElement( ThemedRoot, null, 'x' )
+		);
+		expect( document.body.style.background ).toBe( 'rgb(2, 10, 5)' );
+		unmount();
+		expect( document.body.style.background ).toBe( '' );
+		spy.mockRestore();
 	} );
 } );
