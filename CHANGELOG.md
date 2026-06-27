@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-06-27
+
 ### Changed
 
 - **The overview / gyroscope / requests dashboards are now genuinely theme-responsive on PURE skin tokens (supersedes the `var(--universal, var(--np-*))` chain entry below for those three).** A `ThemedRoot` `display:contents` provider wraps each standalone dashboard root, reads the console-selected skin once (`@newspack-nodes/shared/theme`) and carries `.topology-app.theme-<slug>`, so the universal tokens (`--paper`/`--ink`/`--cyan`/`--chart-*`/`--font-mono`) are always in scope — each `_tokens.scss` maps straight onto the bare tokens (no `--np-*` fallback, no `color-mix`, no light/dark/`term` split). ThemedRoot also drops its `fontFamily` so the skin's `--font-mono` cascades (terminal under decorative skins, Newspack sans by default), and paints `document.body` with the resolved `--paper` so the WP-admin gutters (left/right/footer) don't leak the light body background. The detail Modal (portaled to `<body>`) gets the skin classes + a flex-layout reset (the `.topology-app` grid was squishing it); `@wordpress/components` Card/InputControl, section headings (incl. the `h1` modal title), sortable column-header buttons, zebra striping + row/button hover, and the disabled Find button are all pulled onto the surface system. The reskin block is scoped to the dashboard root + modal frame, NOT the bare `.newspack-nodes-theme` — which the substrate debug-overlay console also carries — so the dashboard CSS never paints the console's own REPL / settings-panel inputs unreadable. `settings` stays deliberately Newspack-fixed (still chains `--np-*`).
