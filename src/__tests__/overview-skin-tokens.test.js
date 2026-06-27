@@ -91,6 +91,17 @@ describe( 'overview skin tokens', () => {
 		}
 	} );
 
+	it( 'excludes the overlay from the button color:inherit reskin (else the dark primary modal button text goes invisible)', () => {
+		// `button { color: inherit }` (0,2,1) out-specifies the substrate's
+		// `.topology-modal__btn--primary { color: var(--paper) }` (0,1,0) and forces
+		// the primary modal button's light text to --ink — dark-on-dark on its --ink
+		// fill. The button reskin must opt the overlay subtree out too.
+		const scss = read( 'components/ThemedRoot.scss' );
+		expect( scss ).toMatch(
+			/button:not\(\s*\.nodes-debug \*\s*\)\s*\{\s*color:\s*inherit/
+		);
+	} );
+
 	it( 'settings/_tokens.scss keeps its --np-* fallback chain (settings is NOT reskinned)', () => {
 		// Unlike overview/gyroscope/requests, the settings page is deliberately
 		// Newspack-fixed (no ThemedRoot), so its tokens MUST keep the --np-* fallback.
