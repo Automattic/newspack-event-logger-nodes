@@ -41,8 +41,10 @@
 
 	// <button> does NOT inherit colour (UA ButtonText = black) — opt buttons in so
 	// the sortable column-header buttons read on the skinned surface. The themed
-	// component buttons below set their own colour and out-specify this.
-	button {
+	// component buttons below set their own colour and out-specify this. Exclude the
+	// overlay (`.nodes-debug`): forcing inherit there overrides the substrate's dark
+	// primary modal button (`--paper` text on an `--ink` fill) to --ink → invisible.
+	button:not(.nodes-debug *) {
 		color: inherit;
 	}
 
@@ -123,7 +125,7 @@
 		color: var(--ink);
 		box-shadow: inset 0 0 0 1px var(--paper-shadow);
 
-		&:hover:not( :disabled ) {
+		&:hover:not(:disabled) {
 			background: var(--paper-3);
 			color: var(--cyan);
 			box-shadow: inset 0 0 0 1px var(--cyan);
