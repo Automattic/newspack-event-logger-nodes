@@ -99,6 +99,24 @@ class AdminEffectiveConfigTest extends TestCase {
 		$this->assertStringContainsString( 'combined', $rows['significant_events']['restart'] );
 	}
 
+	public function test_large_array_field_value_collapses_to_count_and_sample(): void {
+		// ELN's `array_strings` fields (skip_urls/log_urls/…) render through the
+		// shared Settings_Renderer; a >6-entry list must collapse to a count +
+		// first-6 sample + remainder, so a long skip-list can't dominate the row.
+		$urls = [];
+		for ( $i = 1; $i <= 10; $i++ ) {
+			$urls[] = "/skip/{$i}";
+		}
+		\update_option( Admin::OPTION_PREFIX . 'skip_urls', $urls );
+		Config::reset();
+		$rows = $this->rows_by_key();
+		$this->assertArrayHasKey( 'skip_urls', $rows );
+		$this->assertSame(
+			'10 values: /skip/1, /skip/2, /skip/3, /skip/4, /skip/5, /skip/6, … (+4 more)',
+			$rows['skip_urls']['effective']
+		);
+	}
+
 	public function test_admin_render_section_is_hooked_and_echoes_widefat_table(): void {
 		// The action must be wired so the panel renders below ELN's settings form.
 		$called = 0;
