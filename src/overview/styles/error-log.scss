@@ -143,15 +143,18 @@ input.event-logger-error-log-search {
 		background: base.$term-bg-alt;
 
 		&:hover {
-			background: #30363d;
+			background: color-mix(in srgb, base.$accent 20%, base.$term-bg-alt);
 		}
 	}
 
 	&.row-even {
-		background: base.$term-bg;
+		// Surface tiers are nearly identical on dark skins, so tint every other
+		// row toward the ink for visible striping (lighter on dark, darker on
+		// light — it adapts to the skin).
+		background: color-mix(in srgb, base.$ink 8%, base.$term-bg-alt);
 
 		&:hover {
-			background: #30363d;
+			background: color-mix(in srgb, base.$accent 20%, base.$term-bg-alt);
 		}
 	}
 }

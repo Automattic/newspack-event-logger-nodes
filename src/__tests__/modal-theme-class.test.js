@@ -1,32 +1,39 @@
 /**
- * Regression guard: every @wordpress/components <Modal> in the dashboards must
- * carry `newspack-nodes-theme` on its className. WP Modals portal to
- * document.body, escaping the themed dashboard root — without the class the
- * modal's `var(--np-*)` token references resolve to nothing and its Newspack
- * chrome collapses to transparent/initial. (Caught in code review when the
- * reskin themed the page roots but missed the portaled modals.)
+ * Regression guard: @wordpress/components <Modal>s portal to document.body,
+ * escaping the themed dashboard root, so they must carry the theme classes
+ * themselves or their token references resolve to nothing.
+ *
+ * The contract diverges by page:
+ *   - The OVERVIEW dashboard is reskinned onto the PURE universal tokens, so its
+ *     Modal needs the full `.topology-app … theme-<slug>` context (which DEFINES
+ *     those tokens), keyed off the stored skin.
+ *   - The SETTINGS modals live on the un-reskinned settings page (still --np-*),
+ *     so `newspack-nodes-theme` alone is correct for them.
  */
 
 import fs from 'fs';
 import path from 'path';
 
-const MODAL_FILES = [
-	'overview/PerformanceDashboard.js',
-	'settings/settings/HookSelectorModal.js',
-	'settings/settings/CustomEventSelectorModal.js',
-];
+const read = ( rel ) =>
+	fs.readFileSync( path.join( __dirname, '..', rel ), 'utf8' );
 
 describe( 'dashboard Modal theme class', () => {
-	it.each( MODAL_FILES )(
-		'%s: the Modal frame className carries newspack-nodes-theme',
-		( rel ) => {
-			const src = fs.readFileSync(
-				path.join( __dirname, '..', rel ),
-				'utf8'
-			);
-			expect( src ).toMatch(
-				/className="event-logger-[\w-]+-modal newspack-nodes-theme"/
-			);
-		}
-	);
+	it( 'overview PerformanceDashboard Modal carries the full skin context', () => {
+		const src = read( 'overview/PerformanceDashboard.js' );
+		expect( src ).toMatch(
+			/topology-app newspack-nodes-theme theme-\$\{ getStoredTheme\(\) \} event-logger-performance-modal/
+		);
+		expect( src ).toContain(
+			"import { getStoredTheme } from '@newspack-nodes/shared/theme';"
+		);
+	} );
+
+	it.each( [
+		'settings/settings/HookSelectorModal.js',
+		'settings/settings/CustomEventSelectorModal.js',
+	] )( '%s: the settings Modal carries newspack-nodes-theme', ( rel ) => {
+		expect( read( rel ) ).toMatch(
+			/className="event-logger-[\w-]+-modal newspack-nodes-theme"/
+		);
+	} );
 } );

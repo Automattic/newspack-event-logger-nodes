@@ -1,111 +1,126 @@
 // =============================================================================
-// Design Tokens — Newspack (light chrome + dark data/log surfaces)
+// Overview dashboard tokens — PURE skin tokens, ONE surface system.
 // =============================================================================
-// Matches the substrate's Raw Logs skin: the CHROME (root, header, controls,
-// stats, buttons, column-header labels) is the light Cobalt-on-white product
-// look on the canonical --np-* tokens; only the live LOG STREAM pane stays a
-// DARK terminal surface, exactly as the Topology Console keeps a dark REPL. The
-// historical `$dark-*` names are RETAINED (only the VALUES flipped to light) to
-// bound the reskin churn — they now back the light chrome. The genuine log pane
-// (the request list + its rows) uses the `$term-*` set. Cobalt leads; status is
-// functional, lightened where it rides the dark rows.
+// Every value is a universal skin token, defined by every skin under the
+// ThemedRoot `.topology-app.theme-<slug>` provider (newspack-nodes
+// graph-view.scss). No --np-* fallback (ThemedRoot always supplies the skin
+// context), no color-mix lightening, no light/dark/terminal surface split — the
+// dashboard is ONE skinned surface: terminal-mono under decorative skins,
+// Newspack-light under the default. The legacy $dark-*/$light-*/$term-* names
+// are kept as thin aliases onto the surface system so the component rules + the
+// shared mixins keep compiling unchanged while everything reskins.
 
-// Terminal / log surfaces (the live stream stays dark, like the console REPL).
-$term-bg: #1e1e1e;
-$term-bg-alt: #262626;
-$term-text: #e6e6e6;
-$term-text-dim: #949494;
-$term-border: #3a3a3a;
-// Universal accent (Cobalt #003da5 floor) lightened for the dark log surface; --np-primary is undefined under decorative themes (which only define --cyan), which blanked the request-id link.
-$term-accent: color-mix(in srgb, var(--cyan, #003da5) 58%, white);
-$term-accent-hover: color-mix(in srgb, var(--cyan, #003da5) 78%, white);
+// --- Surface system ---------------------------------------------------------
+$surface: var(--paper); // page
+$surface-2: var(--paper-2); // panels, cards, table body, toolbars
+$surface-3: var(--paper-3); // insets: table headers, inputs, the log pane
+$border: var(--paper-shadow);
+$selected: var(--cyan-subtle);
 
-// Chrome surfaces (light) — universal token, --np-* fallback for standalone.
-$dark-bg: var(--paper, var(--np-surface));
-$dark-bg-secondary: var(--paper, var(--np-surface));
-$dark-bg-tertiary: var(--paper-2, var(--np-surface-subtle));
-$dark-bg-hover: var(--paper-3, var(--np-surface-muted));
-$dark-bg-active: var(--cyan-subtle, var(--np-primary-subtle));
-$dark-bg-row-even: var(--paper-2, var(--np-surface-subtle));
-$dark-bg-row-hover: var(--paper-3, var(--np-surface-muted));
-$dark-bg-deep: var(--paper-2, var(--np-surface-subtle));
-$dark-bg-deepest: var(--paper-3, var(--np-surface-muted));
-$dark-header-border: var(--paper-shadow, var(--np-border));
+// --- Ink --------------------------------------------------------------------
+$ink: var(--ink);
+$ink-2: var(--ink-2);
+$ink-3: var(--ink-3);
 
-// Chrome text (dark ink on light).
-$dark-text: var(--ink, var(--np-text));
-$dark-text-muted: var(--ink-3, var(--np-text-secondary));
-$dark-text-time: var(--ink-3, var(--np-text-secondary));
-$dark-text-placeholder: var(--ink-3, var(--np-text-secondary));
-$dark-text-dim: var(--ink-3, var(--np-text-secondary));
+// --- Accent + status --------------------------------------------------------
+$accent: var(--cyan);
+$accent-hover: var(--cyan-dark);
+$ok: var(--sage); // 2xx / success
+$warn: var(--brass); // 3xx / warning
+$err: var(--oxide); // 4xx-5xx / error
 
-// Chrome borders.
-$dark-border: var(--paper-shadow, var(--np-border));
-$dark-border-light: var(--paper-shadow, var(--np-border));
+// --- Categorical chart series -----------------------------------------------
+$chart-1: var(--chart-1);
+$chart-2: var(--chart-2);
+$chart-3: var(--chart-3);
+$chart-4: var(--chart-4);
+$chart-5: var(--chart-5);
+$chart-6: var(--chart-6);
+$chart-7: var(--chart-7);
+$chart-8: var(--chart-8);
 
-// Accents — Cobalt leads (light chrome).
-$dark-accent: var(--cyan, var(--np-primary));
-$dark-accent-hover: var(--cyan-dark, var(--np-primary-hover));
-$dark-success: var(--sage, var(--np-success));
-$dark-info: var(--cyan, var(--np-primary));
+// --- Typography (mono = terminal; resolves to the Newspack sans via --np-font
+//     under the default skin) ----------------------------------------------
+$mono: var(--font-mono);
 
-// Light chrome — text + surfaces.
-$light-text: var(--ink, var(--np-text));
-$light-text-secondary: var(--ink-3, var(--np-text-secondary));
-$light-text-muted: var(--ink-3, var(--np-text-secondary));
-$light-surface: var(--paper-2, var(--np-surface-subtle));
-$light-surface-alt: var(--paper-2, var(--np-surface-subtle));
-$light-surface-hover: var(--paper-3, var(--np-surface-muted));
-$light-selected: var(--cyan-subtle, var(--np-primary-subtle));
-$light-border: var(--ink-3, var(--np-border-strong));
-$light-border-light: var(--paper-shadow, var(--np-border));
-$light-border-muted: var(--paper-shadow, var(--np-border));
-$light-border-faint: var(--paper-3, var(--np-surface-muted));
-
-// Status colors (HTTP) — functional, lightened where they ride dark log rows.
-$status-2xx: color-mix(in srgb, var(--sage, var(--np-success)) 62%, white);
-$status-3xx: var(--brass, var(--np-warning));
-$status-4xx: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
-$status-5xx: var(--oxide, var(--np-error));
-
-// Semantic colors. `$error-text`/`$warning-color` ride the dark log rows, so
-// they're lightened to stay legible there while reading as Newspack status.
-$error-bg: var(--oxide, var(--np-error));
-$error-text: color-mix(in srgb, var(--oxide, var(--np-error)) 72%, white);
-$error-surface: var(--oxide-subtle, var(--np-error-subtle));
-$success-bg: var(--sage, var(--np-success));
-$success-border: var(--sage, var(--np-success));
-$dead-bg: var(--oxide, var(--np-error));
-$idle-bg: var(--ink-3, var(--np-text-secondary));
-$warning-color: var(--brass, var(--np-warning));
-$recommended-color: var(--brass, var(--np-warning));
-$discovered-bg: var(--brass-subtle, var(--np-warning-subtle));
-$discovered-hover: var(--brass-subtle, var(--np-warning-subtle));
-$discovered-hooks: var(--paper-2, var(--np-surface-subtle));
-
-// Focus/interactive — Cobalt (light chrome).
-$focus-color: var(--cyan, var(--np-primary));
-$wp-link: var(--cyan, var(--np-primary));
-
-// Pure colors
-$white: #fff;
-
-// Typography — Inter in product; mono for log/terminal surfaces.
-$system-font: var(--np-font);
-$mono-font: var(--np-font-mono);
-
-// Sizing
+// --- Sizing -----------------------------------------------------------------
 $control-height: 28px;
 $border-radius-sm: 3px;
 $border-radius: 4px;
 $border-radius-lg: 6px;
-
-// Spacing
 $space-xs: 4px;
 $space-sm: 8px;
 $space-md: 12px;
 $space-lg: 16px;
 $space-xl: 24px;
+$focus-shadow: 0 0 0 2px var(--cyan-subtle);
 
-// Focus — Cobalt glow.
-$focus-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
+// --- Legacy aliases onto the surface system (repoint, don't rename) ---------
+// The component rules + shared mixins still read these names; they now resolve
+// to the one skinned surface system instead of the old three-way split.
+$term-bg: $surface-3;
+$term-bg-alt: $surface-2;
+$term-text: $ink;
+$term-text-dim: $ink-3;
+$term-border: $border;
+$term-accent: $accent;
+$term-accent-hover: $accent-hover;
+
+$dark-bg: $surface;
+$dark-bg-secondary: $surface-2;
+$dark-bg-tertiary: $surface-3;
+$dark-bg-hover: $selected; // cyan-tint hover, distinct from the resting bg
+$dark-bg-active: $selected;
+$dark-bg-row-even: $surface-2;
+$dark-bg-row-hover: $surface-3;
+$dark-bg-deep: $surface-2;
+$dark-bg-deepest: $surface-3;
+$dark-header-border: $border;
+$dark-text: $ink;
+$dark-text-muted: $ink-3;
+$dark-text-time: $ink-3;
+$dark-text-placeholder: $ink-3;
+$dark-text-dim: $ink-3;
+$dark-border: $border;
+$dark-border-light: $border;
+$dark-accent: $accent;
+$dark-accent-hover: $accent-hover;
+$dark-success: $ok;
+$dark-info: $accent;
+
+$light-text: $ink;
+$light-text-secondary: $ink-3;
+$light-text-muted: $ink-3;
+$light-surface: $surface-2;
+$light-surface-alt: $surface-2;
+$light-surface-hover: $surface-3;
+$light-selected: $selected;
+$light-border: $border;
+$light-border-light: $border;
+$light-border-muted: $border;
+$light-border-faint: $surface-3;
+
+$status-2xx: $ok;
+$status-3xx: $warn;
+$status-4xx: $err;
+$status-5xx: $err;
+
+$error-bg: $err;
+$error-text: $err;
+$error-surface: var(--oxide-subtle);
+$success-bg: $ok;
+$success-border: $ok;
+$dead-bg: $err;
+$idle-bg: $ink-3;
+$warning-color: $warn;
+$recommended-color: $warn;
+$discovered-bg: var(--brass-subtle);
+$discovered-hover: var(--brass-subtle);
+$discovered-hooks: $surface-2;
+
+$focus-color: $accent;
+$wp-link: $accent;
+
+$white: $ink; // legacy emphasis-"white" → brightest ink (reskins)
+$system-font: $mono;
+$mono-font: $mono;

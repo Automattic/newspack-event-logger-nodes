@@ -29,6 +29,7 @@ import {
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
+import { getStoredTheme } from '@newspack-nodes/shared/theme';
 import { computeIndentedEntries } from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
 import { usePerformanceGraph } from './hooks/usePerformanceGraph';
@@ -512,7 +513,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 						selectUrl( null );
 						selectRequest( null );
 					} }
-					className="event-logger-performance-modal newspack-nodes-theme"
+					className={ `topology-app newspack-nodes-theme theme-${ getStoredTheme() } event-logger-performance-modal` }
 					headerActions={
 						! selectedRequest && (
 							<div className="event-logger-header-stats">
