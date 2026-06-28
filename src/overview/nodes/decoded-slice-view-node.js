@@ -46,16 +46,6 @@ export class DecodedSliceViewNode extends Node {
 		this.setState( 'view', this.model );
 	}
 
-	// The shaped-but-empty slice; subclass override.
-	emptySlice() {
-		return { data: null, loading: false, error: null };
-	}
-
-	// Map a successful decoded payload onto the slice model; subclass override.
-	storeResult( payload ) {
-		this.model = { data: payload, loading: false, error: null };
-	}
-
 	fill( message ) {
 		// Optional awaited-verb path: a settled reply is fully consumed here and
 		// never falls through to the slice logic.
@@ -125,6 +115,16 @@ export class DecodedSliceViewNode extends Node {
 		}
 		this.storeResult( value.payload );
 		this.setState( 'view', this.model );
+	}
+
+	// The shaped-but-empty slice; subclass override.
+	emptySlice() {
+		return { data: null, loading: false, error: null };
+	}
+
+	// Map a successful decoded payload onto the slice model; subclass override.
+	storeResult( payload ) {
+		this.model = { data: payload, loading: false, error: null };
 	}
 
 	_publish() {
