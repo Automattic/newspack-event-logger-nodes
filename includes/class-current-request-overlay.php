@@ -38,42 +38,6 @@ class Current_Request_Overlay {
 	];
 
 	/**
-	 * Hook the substrate's tab-bundle filter (hub) + our own enqueue on the ELN
-	 * pages that embed the overlay + the per-request data injection.
-	 */
-	public static function init(): void {
-		\add_filter( 'newspack_nodes/devtools_tab_bundles', [ self::class, 'register_bundle' ] );
-		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_on_overlay_pages' ] );
-		// Priority 20: after both enqueue paths (the substrate filter on the hub,
-		// our enqueue on the ELN pages) have run, so wp_add_inline_script binds.
-		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_inline_data' ], 20 );
-	}
-
-	/**
-	 * Whether `$page` is a page that embeds the overlay — the UNION of ELN's own
-	 * defaults and the substrate's `devtools_overlay_pages` registry (so any
-	 * plugin's overlay page, e.g. the AI Newsletter's, gets the Request tab).
-	 *
-	 * @param string $page The `?page=` admin slug.
-	 * @return bool
-	 */
-	public static function is_overlay_page( string $page ): bool {
-		return \in_array( $page, self::overlay_pages(), true );
-	}
-
-	/**
-	 * The overlay-page set: ELN's own {@see OVERLAY_PAGES} merged with the slugs
-	 * other plugins contribute via the substrate's `devtools_overlay_pages`
-	 * registry.
-	 *
-	 * @return string[]
-	 */
-	private static function overlay_pages(): array {
-		$extra = \class_exists( '\Newspack_Nodes\Admin\Admin' ) ? \Newspack_Nodes\Admin\Admin::devtools_overlay_pages() : [];
-		return \array_values( \array_unique( \array_merge( self::OVERLAY_PAGES, $extra ) ) );
-	}
-
-	/**
 	 * Enqueue the tab bundle on the ELN pages that embed the overlay (the hub is
 	 * the substrate filter's job). Same window-singleton tab registry, so the tab
 	 * shows up beside the substrate's overlay tabs.
@@ -106,18 +70,27 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * Append our bundle descriptor for the substrate to enqueue.
+	 * Whether `$page` is a page that embeds the overlay — the UNION of ELN's own
+	 * defaults and the substrate's `devtools_overlay_pages` registry (so any
+	 * plugin's overlay page, e.g. the AI Newsletter's, gets the Request tab).
 	 *
-	 * @param array<int,array<string,mixed>> $bundles Existing descriptors.
-	 * @return array<int,array<string,mixed>>
+	 * @param string $page The `?page=` admin slug.
+	 * @return bool
 	 */
-	public static function register_bundle( array $bundles ): array {
-		$bundles[] = [
-			'handle' => self::HANDLE,
-			'dir'    => \NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/current-request',
-			'url'    => \NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/current-request',
-		];
-		return $bundles;
+	public static function is_overlay_page( string $page ): bool {
+		return \in_array( $page, self::overlay_pages(), true );
+	}
+
+	/**
+	 * The overlay-page set: ELN's own {@see OVERLAY_PAGES} merged with the slugs
+	 * other plugins contribute via the substrate's `devtools_overlay_pages`
+	 * registry.
+	 *
+	 * @return string[]
+	 */
+	private static function overlay_pages(): array {
+		$extra = \class_exists( '\Newspack_Nodes\Admin\Admin' ) ? \Newspack_Nodes\Admin\Admin::devtools_overlay_pages() : [];
+		return \array_values( \array_unique( \array_merge( self::OVERLAY_PAGES, $extra ) ) );
 	}
 
 	/**
@@ -157,5 +130,32 @@ class Current_Request_Overlay {
 		return 'window.NewspackEventLoggerNodes=Object.assign(window.NewspackEventLoggerNodes||{},{currentRequest:'
 			. \wp_json_encode( $data )
 			. '});';
+	}
+
+	/**
+	 * Hook the substrate's tab-bundle filter (hub) + our own enqueue on the ELN
+	 * pages that embed the overlay + the per-request data injection.
+	 */
+	public static function init(): void {
+		\add_filter( 'newspack_nodes/devtools_tab_bundles', [ self::class, 'register_bundle' ] );
+		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_on_overlay_pages' ] );
+		// Priority 20: after both enqueue paths (the substrate filter on the hub,
+		// our enqueue on the ELN pages) have run, so wp_add_inline_script binds.
+		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_inline_data' ], 20 );
+	}
+
+	/**
+	 * Append our bundle descriptor for the substrate to enqueue.
+	 *
+	 * @param array<int,array<string,mixed>> $bundles Existing descriptors.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function register_bundle( array $bundles ): array {
+		$bundles[] = [
+			'handle' => self::HANDLE,
+			'dir'    => \NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/current-request',
+			'url'    => \NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/current-request',
+		];
+		return $bundles;
 	}
 }

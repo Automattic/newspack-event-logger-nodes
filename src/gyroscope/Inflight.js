@@ -666,7 +666,7 @@ export default function Inflight( { maxRows = 20 } ) {
 						requests.map( ( req, index ) => {
 							const nowSec = Date.now() / 1000;
 							const ageSec = req.last_log_ts
-								? nowSec - req.last_log_ts
+								? Math.max( 0, nowSec - req.last_log_ts )
 								: 0;
 							const ageMs = ageSec * 1000;
 

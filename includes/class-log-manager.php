@@ -383,22 +383,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Lazy Topic→interpreter relay (a Callback_Node sink): when the Topic was
-	 * wired before the command_interpreter node existed (load order), rewire it
-	 * to the now-built interpreter on the first message and forward — so an
-	 * early-wired Topic never fills into a missing sink.
-	 *
-	 * @param array<int, mixed> $message The positional Message array.
-	 */
-	public function relay_topic_to_ci( array &$message ): void {
-		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-		if ( null !== $ci ) {
-			$this->topic?->sink( $ci );
-			$ci->fill( $message );
-		}
-	}
-
-	/**
 	 * Generate a new request ID for the current request.
 	 *
 	 * @return string
@@ -741,6 +725,22 @@ class Log_Manager {
 			self::$instance->saved_unique_id = \is_string( $saved ) ? $saved : null;
 			self::$context_stack[]           = self::$instance;
 			self::$instance                  = null;
+		}
+	}
+
+	/**
+	 * Lazy Topic→interpreter relay (a Callback_Node sink): when the Topic was
+	 * wired before the command_interpreter node existed (load order), rewire it
+	 * to the now-built interpreter on the first message and forward — so an
+	 * early-wired Topic never fills into a missing sink.
+	 *
+	 * @param array<int, mixed> $message The positional Message array.
+	 */
+	public function relay_topic_to_ci( array &$message ): void {
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null !== $ci ) {
+			$this->topic?->sink( $ci );
+			$ci->fill( $message );
 		}
 	}
 

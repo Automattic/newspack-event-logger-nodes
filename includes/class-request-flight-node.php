@@ -108,7 +108,7 @@ class Request_Flight_Node extends Timer_Node {
 				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
 				'start_time'  => $start_time,
 				'last_log_ts' => $last_log_ts,
-				'lag_ms'      => \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ),
+				'lag_ms'      => \max( 0, \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ) ),
 				'remote_addr' => \is_scalar( $remote_addr_v ) ? (string) $remote_addr_v : '',
 				'user_agent'  => \is_scalar( $user_agent_v ) ? (string) $user_agent_v : '',
 			];
