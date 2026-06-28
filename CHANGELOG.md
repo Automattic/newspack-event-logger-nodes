@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-06-27
+
 ### Fixed
 
 - **Aligned the SSE dashboard tests with the substrate's reworked `connected` handshake.** The Error Log / Gyroscope / Request Log slot keep-alive bridge tests built the old object envelope (`VALUE = { pid, slot, partition }`); the substrate's SSE rework made the handshake a flat `KEY VALUE` string (`PID n SLOT n …`) and removed `partition` end-to-end. The fixtures now emit the flat string and assert slot only — production was already correct (it delegates the bridge to the substrate `RemoteLink`). Requires newspack-nodes ≥ 0.22.0.
