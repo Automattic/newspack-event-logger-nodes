@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-06-28
+
 ### Fixed
 
 - **Hook Catalog modal: reuse the substrate's backbone `_http` instead of minting a second one.** newspack-nodes 0.22.1 makes `_http`/`_heartbeat` permanent backbone fixtures of `mountExospine`, so `useHookCatalogGraph`'s `makeNode( 'HttpOut', '_http' )` now collides on the reserved name (`node name collision: _http already registered`) and crashed the modal once rebuilt against the new substrate. It now reuses the backbone `_http` (like the other dashboards). Reinit tests aligned: the backbone `_http` is preserved across Reset Graph, not rebuilt.
