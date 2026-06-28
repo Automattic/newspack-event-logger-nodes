@@ -80,12 +80,18 @@ const VIEW = 'gyroscope:view';
 const TEE = 'gyroscope:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
-// A `connected` envelope as SseConnector recognizes it.
-function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
+// A `connected` envelope as SseInNode recognizes it: a flat `KEY VALUE` string
+// (the SSE rework). SLOT is omitted when null; `partition` was removed.
+function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
 	m[ KEY ] = 'connected';
-	m[ VALUE ] = { pid, slot, partition };
+	const parts = [ `PID ${ pid }` ];
+	if ( null !== slot && undefined !== slot ) {
+		parts.push( `SLOT ${ slot }` );
+	}
+	parts.push( 'SUBSCRIPTIONS x INTERVAL 2000' );
+	m[ VALUE ] = parts.join( ' ' );
 	return m;
 }
 
@@ -191,17 +197,16 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 } );
 
 describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
-	test( 'a `connected` envelope populates heartbeat.slot and heartbeat.partition', () => {
+	test( 'a `connected` envelope populates heartbeat.slot', () => {
 		renderHook( () => useGyroscopeGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
 		const heartbeat = Core.node( HEARTBEAT );
 		expect( heartbeat.slot ).toBe( 5 );
-		expect( heartbeat.partition ).toBe( 2 );
 	} );
 
 	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
@@ -209,9 +214,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack(
-					connectedEnvelope( { pid: 7, slot: null, partition: 2 } )
-				)
+				pack( connectedEnvelope( { pid: 7, slot: null } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
@@ -227,9 +230,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 			act( () => {
 				FakeEventSource.last.dispatch(
 					'msg',
-					pack(
-						connectedEnvelope( { pid: 7, slot: 5, partition: 0 } )
-					)
+					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
 			act( () => {
@@ -291,7 +292,7 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
