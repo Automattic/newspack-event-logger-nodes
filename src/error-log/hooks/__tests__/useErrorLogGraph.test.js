@@ -379,9 +379,10 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 			Core.reinit();
 		} );
 
-		// Soft nodes are fresh instances under the same names; backbone survives.
+		// Soft nodes are fresh instances under the same names; backbone survives —
+		// including the shared `_http` singleton it now owns (preserved, not rebuilt).
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
-		expect( Core.node( HTTP ) ).not.toBe( firstHttp );
+		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `errors` topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );

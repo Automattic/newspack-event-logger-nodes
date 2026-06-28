@@ -53,7 +53,8 @@ import '../nodes/register';
 
 const HTTP = '_http';
 const VIEW = 'hookcatalog:view';
-const GRAPH_NODE_NAMES = [ HTTP, VIEW ];
+// `_http` is backbone-owned (teardownSpine removes it); only the view is ours.
+const GRAPH_NODE_NAMES = [ VIEW ];
 
 // Monotonic per-hook-instance ID counter — message[ID] is what the view uses
 // to match a reply back to a pending Promise resolver.
@@ -100,10 +101,11 @@ export function useHookCatalogGraph( opts = {} ) {
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
 		// The canonical backbone every node clips onto: everything → interpreter → router.
-		const { interpreter, teardown: teardownSpine } = mountExospine();
+		const { interpreter, http, teardown: teardownSpine } = mountExospine();
 
-		// I/O boundary node — HttpOutNode is the only one this modal needs.
-		const http = interpreter.makeNode( 'HttpOut', HTTP );
+		// `_http` is a backbone singleton now (mountExospine owns it); just assign
+		// this modal's command boundary instead of minting our own, which would
+		// collide on the reserved `_http` name.
 		http.client =
 			optsRef.current.commandClient ||
 			new CommandClient( {
