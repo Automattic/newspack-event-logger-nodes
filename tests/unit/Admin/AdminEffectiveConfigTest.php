@@ -127,7 +127,11 @@ class AdminEffectiveConfigTest extends TestCase {
 			}
 		);
 		$admin = new Admin();
+		// The action fires the hooked section renderers, which echo their panels;
+		// capture + discard so the markup doesn't leak to the test runner's stdout.
+		\ob_start();
 		\do_action( 'newspack_event_logger_nodes/settings_after_form' );
+		\ob_end_clean();
 		$this->assertGreaterThanOrEqual( 1, $called );
 
 		\ob_start();
