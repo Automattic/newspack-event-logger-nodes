@@ -81,12 +81,18 @@ const VIEW = 'requestlog:view';
 const TEE = 'requestlog:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
-// Build a `connected` envelope as the SseConnector recognizes it.
-function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
+// Build a `connected` envelope as SseInNode recognizes it: a flat `KEY VALUE`
+// string (the SSE rework). SLOT is omitted when null; `partition` was removed.
+function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
 	m[ KEY ] = 'connected';
-	m[ VALUE ] = { pid, slot, partition };
+	const parts = [ `PID ${ pid }` ];
+	if ( null !== slot && undefined !== slot ) {
+		parts.push( `SLOT ${ slot }` );
+	}
+	parts.push( 'SUBSCRIPTIONS x INTERVAL 2000' );
+	m[ VALUE ] = parts.join( ' ' );
 	return m;
 }
 
@@ -190,17 +196,15 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 } );
 
 describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
-	test( 'a `connected` envelope populates heartbeat.slot and heartbeat.partition', () => {
+	test( 'a `connected` envelope populates heartbeat.slot', () => {
 		renderHook( () => useRequestLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
-		const heartbeat = Core.node( HEARTBEAT );
-		expect( heartbeat.slot ).toBe( 5 );
-		expect( heartbeat.partition ).toBe( 2 );
+		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
 	} );
 
 	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
@@ -208,13 +212,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack(
-					connectedEnvelope( {
-						pid: 7,
-						slot: null,
-						partition: 2,
-					} )
-				)
+				pack( connectedEnvelope( { pid: 7, slot: null } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
@@ -231,9 +229,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 			act( () => {
 				FakeEventSource.last.dispatch(
 					'msg',
-					pack(
-						connectedEnvelope( { pid: 7, slot: 5, partition: 0 } )
-					)
+					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
 			// 1s Router TIMER × 5 = past the 5s base-Timer throttle (lastFireTime).
@@ -279,7 +275,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
@@ -305,7 +301,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
 		const openSource = FakeEventSource.last;

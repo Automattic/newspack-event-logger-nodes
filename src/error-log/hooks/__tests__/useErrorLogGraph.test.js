@@ -86,12 +86,19 @@ const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
 const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
 
-// Build a `connected` envelope as the SseConnector recognizes it.
-function connectedEnvelope( { pid = 4242, slot = 3, partition = 0 } = {} ) {
+// Build a `connected` envelope as SseInNode recognizes it: a flat `KEY VALUE`
+// string (the SSE rework). SLOT is omitted when null so the bridge leaves
+// heartbeat.slot null. `partition` was removed end-to-end.
+function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
 	m[ KEY ] = 'connected';
-	m[ VALUE ] = { pid, slot, partition };
+	const parts = [ `PID ${ pid }` ];
+	if ( null !== slot && undefined !== slot ) {
+		parts.push( `SLOT ${ slot }` );
+	}
+	parts.push( 'SUBSCRIPTIONS x INTERVAL 2000' );
+	m[ VALUE ] = parts.join( ' ' );
 	return m;
 }
 
@@ -197,17 +204,15 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 } );
 
 describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
-	test( 'a `connected` envelope populates heartbeat.slot and heartbeat.partition', () => {
+	test( 'a `connected` envelope populates heartbeat.slot', () => {
 		renderHook( () => useErrorLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
-		const heartbeat = Core.node( HEARTBEAT );
-		expect( heartbeat.slot ).toBe( 5 );
-		expect( heartbeat.partition ).toBe( 2 );
+		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
 	} );
 
 	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
@@ -215,13 +220,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack(
-					connectedEnvelope( {
-						pid: 7,
-						slot: null,
-						partition: 2,
-					} )
-				)
+				pack( connectedEnvelope( { pid: 7, slot: null } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
@@ -237,9 +236,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 			act( () => {
 				FakeEventSource.last.dispatch(
 					'msg',
-					pack(
-						connectedEnvelope( { pid: 7, slot: 5, partition: 0 } )
-					)
+					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
 			act( () => {
@@ -280,7 +277,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
@@ -306,7 +303,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
-				pack( connectedEnvelope( { pid: 7, slot: 5, partition: 2 } ) )
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
 		const openSource = FakeEventSource.last;
