@@ -1151,6 +1151,317 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'arbitrary_option', $GLOBALS['_wp_options'] );
 	}
 
+	public function test_set_verb_writes_valid_int_option(): void {
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_disable_threshold 42'
+		);
+
+		$this->assertSame( 42, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
+	}
+
+	public function test_set_verb_rejects_non_numeric_int(): void {
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_disable_threshold notanumber'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_auto_disable_threshold', $GLOBALS['_wp_options'] );
+	}
+
+	public function test_set_verb_rejects_out_of_range_int(): void {
+		// > SETTINGS_INT_MAX (2^30) → rejected.
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_disable_threshold 2000000000'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
+	}
+
+	public function test_set_verb_rejects_non_numeric_float(): void {
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_protect_time_threshold notafloat'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
+	}
+
+	public function test_set_verb_rejects_out_of_range_float(): void {
+		// > SETTINGS_FLOAT_MAX (86400s) → rejected.
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_auto_protect_time_threshold 99999'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
+	}
+
+	public function test_set_verb_coerces_bool_option(): void {
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_log_memory 1'
+		);
+
+		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
+	public function test_set_verb_preserves_nested_array_via_json(): void {
+		// A nested map must recurse one level and keep the structure (sanitize_array
+		// recursion branch), not flatten or reject it.
+		$args = \Newspack_Nodes\Command_Args::format(
+			[
+				'newspack_event_logger_nodes_custom_events',
+				(string) \json_encode( [ 'group' => [ 'inner' => 'val' ] ] ),
+			],
+			[]
+		);
+
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
+
+		$this->assertSame(
+			[ 'group' => [ 'inner' => 'val' ] ],
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
+		);
+	}
+
+	public function test_set_verb_rejects_array_nested_too_deep(): void {
+		// SETTINGS_ARRAY_DEPTH is 5; a 7-level-deep map blows the depth cap and the
+		// whole sanitize returns null → rejected.
+		$deep = 'leaf';
+		for ( $i = 0; $i < 7; $i++ ) {
+			$deep = [ 'n' => $deep ];
+		}
+		$args = \Newspack_Nodes\Command_Args::format(
+			[ 'newspack_event_logger_nodes_custom_events', (string) \json_encode( $deep ) ],
+			[]
+		);
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'set', $args );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
+	}
+
+	public function test_set_verb_requires_option(): void {
+		// No positional args → 'option required'.
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'set' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'option required', \strtolower( $result ) );
+	}
+
+	public function test_set_verb_empty_array_value_yields_empty_list(): void {
+		// An empty value decodes (json fails → csv split of '') to [].
+		$interpreter = new Performance_CI_Node();
+		VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_log_urls ""'
+		);
+
+		$this->assertSame( [], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] );
+	}
+
+	public function test_sanitize_settings_value_rejects_non_array_and_unknown_type(): void {
+		// Two reject paths unreachable through `set` (which always hands an array
+		// for array-typed options and only ever a whitelisted type): a non-array
+		// value for the array branch, and an unrecognized type.
+		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$ref->setAccessible( true );
+
+		$this->assertNull( $ref->invoke( null, 'not-an-array', 'array' ) );
+		$this->assertNull( $ref->invoke( null, 'whatever', 'nonexistent-type' ) );
+	}
+
+	// ── urls verb fallbacks + server filter ─────────────────────────────────
+
+	public function test_urls_verb_falls_back_to_defaults_on_invalid_sort_and_order(): void {
+		// Out-of-whitelist sort/order silently fall back to count/desc; an
+		// unmatched server filter empties the result.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => '/only-host', 'count' => 3, 'sum_ms' => 30.0, 'last_seen' => 1700000001 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'urls',
+			'--sort=bogus --order=bogus --server=nomatchhost'
+		);
+
+		// Server filter removed the only row.
+		$this->assertSame( 0, $result['total'] );
+		$this->assertSame( [], $result['data'] );
+	}
+
+	public function test_urls_verb_sorts_ascending(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'urls',
+			'--sort=count --order=asc'
+		);
+
+		// Ascending by count: /b (1) before /a (5).
+		$this->assertSame( '/b', $result['data'][0]['url'] );
+		$this->assertSame( '/a', $result['data'][1]['url'] );
+	}
+
+	// ── overview categories flag (string-valued flag) ───────────────────────
+
+	public function test_overview_categories_flag_accepts_explicit_truthy_value(): void {
+		// `--categories=1` exercises the string-valued flag resolution (not the
+		// bare `--categories` true). The categories slice is added even with no data.
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'overview',
+			'--categories=1'
+		);
+
+		$this->assertArrayHasKey( 'category_time_series', $result );
+	}
+
+	// ── load_index StatsAggregator-shaped buckets ───────────────────────────
+
+	public function test_overview_handles_url_string_keyed_buckets_with_sum_req_time(): void {
+		// A StatsAggregator-style bucket keys by URL string directly (no embedded
+		// `url` field) and carries `sum_req_time` (seconds) instead of `sum_ms`.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'/aggregator-style' => [ 'count' => 4, 'sum_req_time' => 0.8, 'last_seen' => 1700000000 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'overview' );
+
+		$this->assertSame( 1, $result['total_urls'] );
+		$this->assertSame( '/aggregator-style', $result['most_requested'][0]['url'] );
+		// sum_ms = sum_req_time*1000 = 800; avg over 4 = 200ms.
+		$this->assertEqualsWithDelta( 200.0, $result['most_requested'][0]['avg_ms'], 0.01 );
+	}
+
+	public function test_urls_verb_folds_min_ms_across_two_timed_buckets(): void {
+		// Two timed buckets for the same hash: the read merge must take the min of
+		// both bucket minima (the second fold hits the min() branch).
+		$store    = new Stats_Store( 0, 86400 );
+		$hash     = 'abcabcabc123';
+		$bucket_a = $this->bucket_key_for( \time() - 600 );
+		$bucket_b = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket_a, [
+			$hash => [ 'url' => '/m', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 200.0, 'min_ms' => 80, 'max_ms' => 100.0, 'last_seen' => 1 ],
+		] );
+		$store->set_url_index_hourly( $bucket_b, [
+			$hash => [ 'url' => '/m', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'min_ms' => 30, 'max_ms' => 120.0, 'last_seen' => 2 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'urls' );
+
+		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 30, $result['data'][0]['min_ms'] );
+	}
+
+	// ── find_recent_requests_for_url (disk walk for a known URL) ─────────────
+
+	public function test_url_detail_returns_recent_matching_requests(): void {
+		// url_detail's `requests` slice walks requests.log for entries whose
+		// url_hash matches. Seed the URL in the memcache index AND two on-disk
+		// requests so the collect + dedup walk runs (not the empty-result skip).
+		$url    = '/recent-list';
+		$hash   = Request_Builder_Node::url_hash( $url );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => 1700002000 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-recent-a-1234567890123456',
+			'url'            => $url,
+			'timestamp'      => 1700001000,
+			'duration_ms'    => 12,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-recent-b-1234567890123456',
+			'url'            => $url,
+			'timestamp'      => 1700002000,
+			'duration_ms'    => 20,
+			'status_code'    => 500,
+			'peak_mb'        => 3,
+			'request_method' => 'POST',
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 2, $result['requests'] );
+		// Sorted by timestamp DESC → the newest (b, ts 1700002000) leads.
+		$this->assertSame( 'rid-recent-b-1234567890123456', $result['requests'][0]['rid'] );
+	}
+
+	public function test_url_detail_time_series_accepts_sum_req_time_buckets(): void {
+		// build_url_time_series accepts StatsAggregator buckets that carry
+		// `sum_req_time` (seconds) rather than `sum_ms`.
+		$hash   = 'deadbeef0001';
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			$hash => [ 'url' => '/agg-detail', 'count' => 2, 'sum_req_time' => 0.4, 'last_seen' => 1700000000 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
+
+		$this->assertArrayHasKey( $bucket, $result['stats']['time_series'] );
+		// sum_ms derived from sum_req_time*1000 = 400.
+		$this->assertEqualsWithDelta( 400.0, $result['stats']['time_series'][ $bucket ]['sum_ms'], 0.01 );
+	}
+
 	// ── shared memoized index read (slice_verb decomposition) ───────────────
 
 	public function test_index_memo_is_per_request_not_shared_across_instances(): void {
