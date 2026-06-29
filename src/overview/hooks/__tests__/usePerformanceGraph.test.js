@@ -101,6 +101,24 @@ function countVerbs( batches, verb ) {
 	return count;
 }
 
+// Drive document.visibilityState (matches usePageVisibility / useBatchedPoll tests).
+function setVisibility( state ) {
+	Object.defineProperty( document, 'visibilityState', {
+		configurable: true,
+		get: () => state,
+	} );
+	document.dispatchEvent( new Event( 'visibilitychange' ) );
+}
+
+// Restore the default visible state for the next test WITHOUT dispatching into a
+// still-mounted hook (the event would fire a setState outside act → warning).
+afterEach( () => {
+	Object.defineProperty( document, 'visibilityState', {
+		configurable: true,
+		get: () => 'visible',
+	} );
+} );
+
 describe( 'usePerformanceGraph — toolkit wiring', () => {
 	test( 'mounts the backbone + _http + the slice views, each sinking into the interpreter', () => {
 		const client = makeFakeClient();
@@ -385,6 +403,140 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			);
 		expect( breakdowns ).toHaveLength( 0 );
 		expect( client.batches.flat().length ).toBe( before );
+	} );
+} );
+
+describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
+	test( 'pauses perf:timer while a URL detail is open, re-arms when it closes', async () => {
+		const client = makeFakeClient( {
+			url_detail: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
+
+		// Open the URL detail modal — the overview/urls poll must suspend.
+		await act( async () => {
+			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+		} );
+		expect( Core.node( 'perf:timer' ).mode ).toBe( 'inactive' );
+
+		// Close it — the overview/urls poll resumes.
+		await act( async () => {
+			rerender( { commandClient: client, selectedUrl: null } );
+		} );
+		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
+	} );
+
+	test( 'url_detail auto-refresh rides a urldetail:timer + fetch-urldetail Fetcher (a router tick re-fires url_detail with the hash)', async () => {
+		const client = makeFakeClient( {
+			url_detail: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client, refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				refreshInterval: '0',
+				selectedUrl: { hash: 'abc' },
+			} );
+		} );
+		// The on-demand slice is now driven by a real Timer + Fetcher, not setInterval.
+		expect( Core.node( 'urldetail:timer' ) ).toBeTruthy();
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'fetch-urldetail' ) ).toBeTruthy();
+
+		client.batches.length = 0;
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+		const detail = findVerb( client.batches, 'url_detail' );
+		expect( detail ).toBeTruthy();
+		expect(
+			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
+		).toBe( 'abc' );
+	} );
+
+	test( 'stops the urldetail:timer when a request detail opens, re-arms when it closes', async () => {
+		const client = makeFakeClient( {
+			url_detail: { last_modified: 1, requests: [] },
+			request_detail: { rid: 'r1' },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+		} );
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+
+		// Drill into a request — the url_detail poll must stop.
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				selectedUrl: { hash: 'abc' },
+				selectedRequest: 'r1',
+				requestPartition: 0,
+			} );
+		} );
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'inactive' );
+
+		// Back out to the URL detail — the url_detail poll resumes.
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				selectedUrl: { hash: 'abc' },
+				selectedRequest: null,
+			} );
+		} );
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+	} );
+
+	test( 'closing the last detail modal immediately re-fetches overview + urls (perf:timer was paused)', async () => {
+		const client = makeFakeClient( {
+			url_detail: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+		} );
+		// While the modal is open the overview/urls poll is suspended.
+		client.batches.length = 0;
+
+		// Closing it must refresh the now-visible overview at once, not after a tick.
+		await act( async () => {
+			rerender( { commandClient: client, selectedUrl: null } );
+		} );
+		expect( findVerb( client.batches, 'overview' ) ).toBeTruthy();
+		expect( findVerb( client.batches, 'urls' ) ).toBeTruthy();
+	} );
+
+	test( 'a hidden tab stops the urldetail:timer; returning to visible re-arms it', async () => {
+		const client = makeFakeClient( {
+			url_detail: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+		} );
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+
+		await act( async () => setVisibility( 'hidden' ) );
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'inactive' );
+
+		await act( async () => setVisibility( 'visible' ) );
+		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
 	} );
 } );
 

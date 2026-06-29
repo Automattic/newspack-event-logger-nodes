@@ -65,7 +65,25 @@ const URLS_VIEW = 'urls:view';
 const URLDETAIL_VIEW = 'urldetail:view';
 const URLDETAIL_RECV = 'urldetailIn';
 const URLDETAIL_MERGE = 'urldetail:merge';
+const URLDETAIL_TIMER = 'urldetail:timer';
+const URLDETAIL_FETCHER = 'fetch-urldetail';
 const REQUESTDETAIL_VIEW = 'requestdetail:view';
+
+// Arm a Timer's router-TIMER hitchhike at the optional intervalMs (mirrors
+// useBatchedPoll's helper): > 1000 hitchhikes + throttles; 0/omitted fires every
+// tick. The on-demand url_detail poll rides the same shared TIMER as perf:timer.
+function armTimer( timer, intervalMs ) {
+	if ( intervalMs > 1000 ) {
+		timer.setTimer( intervalMs );
+	} else {
+		timer.setTimer();
+	}
+}
+
+// url_detail command args from a selectedUrl ({ hash }): the verb the on-demand
+// Fetcher emits each tick + the initial open fetch — both must match byte-for-byte.
+const urlDetailArgs = ( hash ) =>
+	formatCommandArgs( [ hash ], { categories: true } );
 
 // Validation — mirror the old command-node guards.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
@@ -161,6 +179,9 @@ export function usePerformanceGraph( opts = {} ) {
 
 	const isPageVisible = usePageVisibility();
 
+	// Poll cadence (ms): > 1000 hitchhikes + throttles the router TIMER; 0 every tick.
+	const intervalMs = parseInt( refreshInterval, 10 ) || 0;
+
 	// The poll graph: overview + urls slices on the Timer; the on-demand
 	// url_detail/request_detail views + the urlDetail merge edge.
 	const { interpreterRef } = useBatchedPoll( {
@@ -205,6 +226,20 @@ export function usePerformanceGraph( opts = {} ) {
 			urldetailIn.connectNode( URLDETAIL_MERGE );
 			interpreter.makeNode( 'UrlDetailView', URLDETAIL_VIEW );
 
+			// On-demand url_detail auto-refresh: a Timer → Fetcher (live-hash argsFn),
+			// armed/stopped by the selection effect; left INACTIVE here.
+			const udFetcher = interpreter.makeNode(
+				'Fetcher',
+				URLDETAIL_FETCHER,
+				`${ URLDETAIL_RECV } url_detail`
+			);
+			udFetcher.command_args = () =>
+				urlDetailArgs( optsRef.current.selectedUrl?.hash );
+			udFetcher.connectNode( TARGET );
+			interpreter
+				.makeNode( 'Timer', URLDETAIL_TIMER )
+				.connectNode( URLDETAIL_FETCHER );
+
 			// On-demand request_detail: its view receives replies directly.
 			interpreter.makeNode( 'RequestDetailView', REQUESTDETAIL_VIEW );
 
@@ -216,10 +251,10 @@ export function usePerformanceGraph( opts = {} ) {
 		},
 		timerName: 'perf:timer',
 		teeName: 'perf:tee',
+		// Suspend the offscreen overview/urls poll while any detail modal is open.
+		paused: !! ( selectedUrl || selectedRequest ),
 		commandClient: opts.commandClient,
-		// The refresh-rate selector's value (ms string) becomes the poll cadence:
-		// > 1s hitchhikes the router TIMER and throttles to it; changing it re-arms.
-		intervalMs: parseInt( refreshInterval, 10 ) || 0,
+		intervalMs,
 	} );
 
 	// Fire a TM_COMMAND through the interpreter toward the egress. FROM = the
@@ -304,45 +339,61 @@ export function usePerformanceGraph( opts = {} ) {
 		pokeOverviewUrls();
 	}, [ serverFilter, chartBreakdown, pokeOverviewUrls ] );
 
-	// Selection-driven url_detail: initial fetch on open + silent auto-refresh.
+	// Resume-refresh overview/urls the instant the last modal closes (perf:timer was paused).
+	const modalWasOpen = useRef( false );
+	useEffect( () => {
+		const modalOpen = !! ( selectedUrl || selectedRequest );
+		if ( modalWasOpen.current && ! modalOpen && isPageVisible ) {
+			pokeOverviewUrls();
+		}
+		modalWasOpen.current = modalOpen;
+	}, [ selectedUrl, selectedRequest, isPageVisible, pokeOverviewUrls ] );
+
+	// Selection-driven url_detail, initial fetch on open (clear on close). Keyed on
+	// selectedUrl ONLY — entering/leaving request detail must NOT refire this (the
+	// arm/disarm of the auto-refresh is the separate effect below).
 	useEffect( () => {
 		if ( ! selectedUrl ) {
 			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
 			sendControl( URLDETAIL_MERGE, { action: 'clear' } );
-			return undefined;
+			return;
 		}
 		if ( ! isValidHash( selectedUrl.hash ) ) {
 			sendControl( URLDETAIL_VIEW, {
 				action: 'error',
 				error: 'Invalid URL hash format',
 			} );
+			return;
+		}
+		sendControl( URLDETAIL_VIEW, { action: 'loading' } );
+		sendCommand(
+			'url_detail',
+			urlDetailArgs( selectedUrl.hash ),
+			URLDETAIL_RECV
+		);
+	}, [ selectedUrl, sendCommand, sendControl ] );
+
+	// Arm/stop the url_detail auto-refresh Timer. Poll only while the URL detail is
+	// the visible view: a URL is selected, NO request detail is drilled in, and the
+	// tab is visible. Opening request detail or hiding the tab stops it; backing out
+	// / returning to visible re-arms it. The Fetcher reads the live hash at fire time.
+	useEffect( () => {
+		const timer = Core.node( URLDETAIL_TIMER );
+		if ( ! timer ) {
 			return undefined;
 		}
-		const fire = ( initial ) => {
-			if ( initial ) {
-				sendControl( URLDETAIL_VIEW, { action: 'loading' } );
-			}
-			sendCommand(
-				'url_detail',
-				formatCommandArgs( [ selectedUrl.hash ], { categories: true } ),
-				URLDETAIL_RECV
-			);
-		};
-		fire( true );
-		if ( ! selectedRequest && isPageVisible ) {
-			const intervalMs = parseInt( refreshInterval, 10 );
-			const interval = setInterval( () => fire( false ), intervalMs );
-			return () => clearInterval( interval );
+		if (
+			selectedUrl &&
+			isValidHash( selectedUrl.hash ) &&
+			! selectedRequest &&
+			isPageVisible
+		) {
+			armTimer( timer, intervalMs );
+			return () => timer.stopTimer();
 		}
+		timer.stopTimer();
 		return undefined;
-	}, [
-		selectedUrl,
-		selectedRequest,
-		refreshInterval,
-		isPageVisible,
-		sendCommand,
-		sendControl,
-	] );
+	}, [ selectedUrl, selectedRequest, isPageVisible, intervalMs ] );
 
 	// Selection-driven request_detail.
 	useEffect( () => {
