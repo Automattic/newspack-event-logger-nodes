@@ -16,11 +16,11 @@ After any diff touching files under `newspack-event-logger-nodes/`. Run BEFORE p
 
 ### 1. Remote-activity gate
 
-`enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Declared as a typed `bool` `Field` in `Settings_Schema` (the v0.13.0 declarative schema), persisted by `register_setting` as `0`/`1`, default OFF; hubs opt in explicitly. Fresh installs are spokes / standalone. Read with a truthy check (`! empty( $cfg['enable_aggregator'] )` — what the admin-menu gate uses), NOT a coerced-string `=== true` match.
+There is no operator hub toggle — both `enable_workers` (v0.5.0) and `enable_aggregator` were retired (`tests/unit/RetiredConfigKeysTest.php` guards both keys). Hub-mode is derived purely from whether the `aggregator` topology (and, for settings/discovery fan-out, `hub-control`) is in the substrate's active `topologies` list. Fresh installs are spokes / standalone.
 
-Push-side fanout (`Settings_Sync::maybe_queue_static_sync`, `Auto_Tuner_Node::persist`) is INTENTIONALLY ungated — both always queue a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops; missing consumers ARE the structural gate. A diff that adds a polarity check around the push-side fanout regresses to the legacy `enable_workers` design — push back. Pull-side activation (`Stream_Merger_Node`) and admin submenu visibility ARE gated on `enable_aggregator`.
+Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology; `Auto_Tuner_Node::persist` is a plain `update_option` (no `remote_manager` job, no `suppress_sync`). An option change always records a settings event; nothing fans it out unless `hub-control` is active and per-spoke `HTTP_Out` nodes are wired — missing consumers ARE the structural gate.
 
-If a diff introduces a separate hub flag (`enable_workers === true` checks, a `Hub::is_active()` helper) or duplicates the gate in a new call site, push back — the whole point of the v0.5.0 consolidation is one switch, no polarity drift. The legacy `enable_workers` toggle was retired.
+If a diff introduces ANY hub flag (`enable_aggregator` / `enable_workers` checks, a `Hub::is_active()` helper, a `MINIMUM`-style gate), push back — those keys are retired and hub-mode is topology-derived. A diff that adds a polarity check around the settings/discovery fan-out regresses to the legacy design.
 
 ### 2. Stats fail-soft, SSE fail-closed
 
@@ -93,19 +93,19 @@ A diff that introduces a new blocking command and bakes the streams in (no injec
 
 Inherited from substrate: array VALUE → `TM_STRUCT`. String VALUE → `TM_BYTESTREAM`. Consumers reading array VALUE must gate on `TM_STRUCT`. Mixing is a known-buggy pattern; don't regress.
 
-LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobIntake all use TM_STRUCT. `Stream_Merger_Node`'s own messages are TM_STRUCT; the raw-remote-SSE-chunk TM_BYTESTREAM path is in `Remote_Source_Node`, which forwards the remote envelope's TYPE (string VALUE).
+LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobIntake all use TM_STRUCT. Hub fan-in is the substrate `\Newspack_Nodes\Remote_Source_Node` (it forwards the remote envelope's TYPE); ELN's `Remote_Job_Rewrite_Node` reads array VALUE (gated on it being an array) and forwards in place. The old ELN `Stream_Merger_Node` / `Remote_Source_Node` were deleted in the pull-side cutover.
 
 ### 13. Flame JSON decode-depth invariant (v0.13.1)
 
 `Flame_Builder_Node::FLAME_JSON_DEPTH` (= `2 * MAX_STACK_DEPTH + 8`) MUST be the `json_decode` depth for packed flame lines on BOTH sides — write (`Flame_Builder_Node`) and read (`Performance_CI_Node::find_flame_for_rid`). A diff that hardcodes a literal `64` (or any other depth) for flame-line decode silently drops deep flames — that was a real shipped bug. Use the constant.
 
-### 14. Numeric server-id key-preservation (v0.11.0)
+### 14. Spoke credentials live in the substrate Vault
 
-`Server_Registry::get_all()` MUST union with the key-preserving `+` operator (`$option + $config_defaults`), NEVER `array_merge()` — `array_merge` renumbers integer keys and destroys numeric server ids. `Remote_Manager` loops `(string)`-normalize the key. A diff that reintroduces `array_merge` for the registry union is a known regression with a dedicated test; flag it alongside the salt/stats gates.
+`Server_Registry`, `Remote_Manager`, and `Health_Check_Extensions` were deleted — spoke credentials and the registry now live in the substrate **Vault** (`\Newspack_Nodes\Vault`, managed via the substrate `vault` CI). A diff that reintroduces a `Server_Registry` / `aggregator_servers` option, a `Remote_Manager` job handler, or any numeric-server-id storage in ELN is reviving deleted machinery — push back; that concern belongs in newspack-nodes' Vault now.
 
 ## Service CI specifics
 
-Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs (`Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`). The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` and the entire `includes/rest/` directory were DELETED in v0.9.0; an `M2BootstrapTest` regression guard asserts the class stays gone. A diff that reintroduces `Performance_Controller_Base`, adds `extends Performance_Controller_Base`, or revives `includes/rest/` reverts that v0.9.0 deletion; push back.
+Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs. This plugin owns four: `Discovery_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Performance_CI_Node`. (`status`/`settings`/`aggregator` are substrate-owned CIs; the old `servers` CI was replaced by the substrate `vault` CI.) The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` and the entire `includes/rest/` directory were DELETED in v0.9.0; an `M2BootstrapTest` regression guard asserts the class stays gone. A diff that reintroduces `Performance_Controller_Base`, adds `extends Performance_Controller_Base`, or revives `includes/rest/` reverts that v0.9.0 deletion; push back.
 
 - Verb declaration: in `node_schema()['commands']` — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field.
 - Per-verb capability gate: every handler calls `self::require_manage_options()` (the `Service_CI_Node` static helper) at the top; worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag set pre-dispatch.
@@ -116,14 +116,14 @@ Per-plugin REST controllers are gone — endpoints are now declared as verbs on 
 
 ### 15. Canonical view contract (v0.8.0)
 
-Every dashboard hook (`useRequestLogGraph`, `useAggregatorStatusGraph`, `useAggregatorAdminGraph`, `usePerformanceGraph`, …) MUST follow the same view contract — the gut of the dashboard rewrite:
+Every dashboard hook (`useRequestLogGraph`, `usePerformanceGraph`, `useGyroscopeGraph`, `useErrorLogGraph`, `useHookCatalogGraph`) MUST follow the same view contract — the gut of the dashboard rewrite:
 
 - Command-fanout views (any view that issues a TM_COMMAND it expects a reply for) own a `pending` Map keyed by `message[ID]`. The hook stashes `{ resolve, reject }` resolvers under the ID before filling the message; the view's `fill()` matches by ID, settles, then updates the render model. Pure-SSE views (no outbound commands) don't need `pending`.
 - TM_ERROR envelopes route through an internal `_errorMessage(payload)` helper that coerces string / `{message}` / fallback payloads to a human-readable string before stashing in the view model's `error` field or rejecting the pending Promise. Never throw inline from `fill()` — that crashes React.
-- View-model updates preserve prior data on partial replies — per-slice last-modified dedup in `performanceView`; list-replaces-table in `serversView`; complete-wins upsert in `gyroscopeView`. A diff that wholesale-replaces the model on every reply (clobbering sibling slices / prior rows) breaks drilldown — flag it.
+- View-model updates preserve prior data on partial replies — per-slice last-modified dedup in `overview-view-node`; list-replaces-table in `urls-view-node` (`storeResult` swaps the whole `data` rows array); complete-wins upsert-by-rid in `gyroscope-view-node` (never overwrites an entry already marked complete). A diff that wholesale-replaces the model on every reply (clobbering sibling slices / prior rows) breaks drilldown — flag it.
 - No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on production dashboards. The CommandInterpreter mount is for the console tree only; copy-pasting it into a Performance dashboard adds dead nodes that compete for `_router` traffic and collide with the debug-overlay's REPL.
 - All mounted nodes (`_sse`, `_http`, `_heartbeat`, view, transform, route) `sink = interpreter`; flow is steered via `target` / `TO`, not bespoke `nodeA.sink = nodeB` chains.
-- Mount only what the dashboard needs: CRUD-on-demand (aggregator-admin) gets `_http` + view only; live-stream dashboards (request log, gyroscope, error log) get `_sse` + `_heartbeat` + transform + view. Mounting unused boundary nodes is dead weight.
+- Mount only what the dashboard needs: a command/reply (no live stream) dashboard (`overview`/performance — poll + on-demand commands) gets `_http` + view only; live-stream dashboards (request log, gyroscope, error log) get `_sse` + `_heartbeat` + transform + view. Mounting unused boundary nodes is dead weight.
 
 A diff that lands a new dashboard or hook without these is a regression to the pre-canonical pattern. Flag it.
 
@@ -156,7 +156,7 @@ The job executor (`Job_Worker_Node`) moved to `newspack-nodes` in v0.12.0. This 
 
 ## Tests
 
-- Unit tests under `tests/unit/` — mostly flat (Service CI tests sit alongside other unit tests, e.g. `AggregatorCITest.php`, `PerformanceCITest.php`, `SettingsCITest.php`); the only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
+- Unit tests under `tests/unit/` — mostly flat. ELN owns four Service-CI test files: `DiscoveryCITest.php`, `LoggerCITest.php`, `EventsCITest.php`, `PerformanceCITest.php` (the `AggregatorCITest` / `SettingsCITest` are substrate tests in newspack-nodes, not here). The only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
 - Coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
 - New Service CI verbs should have a happy-path test, an unauthorized-request test (verifying `require_manage_options` throws for non-admins), and a memcache-failure test (where the handler reads `Core::$memd`). Rate-limit tests aren't applicable — Service CI verbs aren't rate-limited at the CI layer; the SSE slot pool is the only structural backpressure.

@@ -47,7 +47,7 @@ Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the 
 wp nodes cli combined.p0
 ```
 
-Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes ls`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (Worker-restart classification is unrelated to topology names: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — e.g. `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
+Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, `hub-control`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes ls`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (Worker-restart classification is unrelated to topology names: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — e.g. `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
 
 From the prompt:
 
@@ -101,8 +101,9 @@ Page slugs owned by this plugin (URL path: `/wp-admin/admin.php?page=<slug>`):
 | `event-logger-errors` | Error log dashboard |
 | `event-logger-gyroscope` | In-flight request timeline visualization |
 | `event-logger-requests` | Request Log — recent completed requests + drilldown |
-| `newspack-nodes-aggregator` | Hub-side per-spoke status (only registered when `Config::load_config()['enable_aggregator']` is truthy) |
 | `newspack-event-logger-nodes` (Settings menu) | Application settings — registered via `add_options_page` under Settings, not under the Event Logger menu |
+
+The hub-side aggregator status page (`newspack-nodes-aggregator`) is no longer routed by this plugin — it is substrate-owned (newspack-nodes), driven by whether the `aggregator` topology is active. There is no `enable_aggregator` gate (the key was retired).
 
 Workers + Raw Logs are substrate-owned dashboards under the "Nodes" top-level menu — they register from `newspack-nodes/includes/admin/class-admin.php::register_event_dashboard_pages`. Don't look for them in this plugin.
 
@@ -118,7 +119,7 @@ If panels are blank but the page renders: verify memcache is actually running (`
 
 There is no per-plugin SSE controller layer anymore — `SSEControllerBase` was deleted in M6.10. The substrate's `SSE_Out` node serves the unified endpoint `/wp-json/newspack-nodes/v1/messages/stream`; clients subscribe to one or more `<log>.p<N>` partitions and receive a 7-field message envelope per line plus an idle `heartbeat` event.
 
-This plugin wires the substrate's `SSE_Slot_Pool` onto `SSE_Out`'s 3-Closure seam at boot (`\Newspack_Nodes\SSE_Slot_Pool::wire()` in `newspack-event-logger-nodes.php`), so the unified SSE endpoint inherits the concurrency cap — fail-CLOSED (HTTP 429 if memcache is down — slot pool IS the rate limit).
+The SSE slot pool is substrate-internal — this plugin does NOT call `SSE_Slot_Pool::wire()` (that wiring lives entirely in newspack-nodes). The unified SSE endpoint inherits the concurrency cap from the substrate — fail-CLOSED (HTTP 429 if memcache is down — slot pool IS the rate limit).
 
 On the client side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`) — `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI (which internally calls `SSE_Slot_Pool::touch`). Per-line shape-mapping moved from server PHP to the browser, inlined into each dashboard view node's `fill()` (`request-log-view-node.js`, etc.) — the standalone transform helpers were deleted, so the view is now the single place that knows the envelope → render-entry mapping.
 
@@ -128,29 +129,25 @@ If clients reconnect every few seconds: the SSE slot might be expiring. The slot
 
 ## Hub / spoke routing
 
-A node is a hub when `enable_aggregator` is truthy in the merged Config (the single operator switch for remote-server activity — typed bool, default OFF; hubs opt in explicitly). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally pulls remote firehoses via StreamMerger; the `newspack_nodes/aggregator_ingest_line` filter rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map.
+A node is a hub when the `aggregator` topology is in the substrate's active `topologies` list (no operator toggle — `enable_aggregator` was retired). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally runs the `aggregator` topology: per-spoke substrate `Remote_Source_Node`s pull each spoke's firehose, and ELN's `Remote_Job_Rewrite_Node` (wired between the sources and the firehose `Topic`) rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map. Spoke credentials live in the substrate **Vault**.
 
 Diagnostic flow:
 
 ```bash
-# Is this node a hub? Stored as 0/1 by register_setting; default OFF.
-# The legacy enable_workers gate was retired in v0.5.0 — enable_aggregator
-# is the single operator switch now.
-wp option get newspack_event_logger_nodes_enable_aggregator
+# Is this node a hub? Derived from active topologies, not an option.
+wp nodes types     # cataloged topologies
+wp nodes ls        # what's actually live — look for aggregator.pN / hub-control.p0
 
-# Aggregator status / health / servers — there is no standalone REST
-# namespace for these any more (the legacy `newspack-nodes-aggregator/v1/*`
-# routes were retired in the Service-CI cutover, and the unused
-# `aggregatorRestUrl` localized var was dropped with them). Dispatch via the unified
-# command-protocol endpoint instead — same payload shape:
+# Aggregator status / health — substrate-owned now (the `aggregator` CI moved
+# to newspack-nodes). Dispatch via the unified command-protocol endpoint:
 NONCE=$(wp eval 'echo wp_create_nonce("wp_rest");' --user=<admin>)
 curl -sk -X POST "<site>/wp-json/newspack-nodes/v1/command" \
   -H "X-WP-Nonce: $NONCE" -H "Content-Type: application/json" \
   -d '{"to":"aggregator","verb":"status"}'
-# Swap verb for "health" or "servers" to hit the other Aggregator_CI verbs.
+# Spoke credentials are managed through the substrate `vault` CI.
 ```
 
-If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cURL drops 5s of data on reconnect (single-segment seek); if your spoke is bouncing frequently the hub will see gaps.
+If a hub is missing entries from a spoke: check the substrate `Remote_Source_Node`'s reconnect/backoff (it publishes a status snapshot to `np:remote:<node-name>:p<partition>`). A reconnecting cURL pull can drop a brief window of data on resume; if your spoke is bouncing frequently the hub will see gaps.
 
 ## Common failure modes
 
@@ -162,7 +159,7 @@ If a hub is missing entries from a spoke: check StreamMerger's reconnect log. cU
 
 **Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at `MAX_DATA_SIZE` (3840B) — category tagged `" (truncated)"`, data clipped to a 1000-char excerpt — so the handler never saw a parseable payload (an `error_log` notice marks it). Use `JobIntake::queue()` instead.
 
-**SettingsSync silently doing nothing.** SettingsSync ITSELF is ungated and always queues a `remote_manager` job when a synced option changes. Without an aggregator topology running and remotes registered, the queued job has no consumer and silently drops — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check whether the hub side actually has an aggregator topology live (`enable_aggregator` truthy in the merged Config, default OFF) and remotes registered. The legacy `enable_workers` toggle was retired in v0.5.0.
+**Settings sync silently doing nothing.** Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology. An option change always records a settings event (substrate `Settings_Event_Writer` → `settings.p0`); nothing fans it out unless `hub-control` is live and per-spoke `HTTP_Out` nodes are wired — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check `wp nodes ls` for a live `hub-control.p0` and that the operator wired spoke `HTTP_Out` nodes. Both `enable_workers` (v0.5.0) and `enable_aggregator` were retired.
 
 **Cache warmer.** The refresh-ahead cache warmer was extracted to its own plugin, `newspack-cache-cozy` (v0.15.0). It no longer lives here — debug it from that plugin's repo.
 

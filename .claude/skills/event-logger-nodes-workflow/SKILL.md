@@ -17,7 +17,7 @@ Read AGENTS.md for the application's architecture decisions and key files; this 
 - Touching the React dashboards (any tree under `src/`)
 - Adding an application Node subclass (RequestBuilder-style processor)
 - Modifying topology files under `topologies/`
-- Changes to Log_Manager, Job_Intake, Stream_Merger_Node, Flame_Builder_Node, Stats_Store, Settings_Sync, Remote_Manager
+- Changes to Log_Manager, Job_Intake, Flame_Builder_Node, Stats_Store, Remote_Job_Rewrite_Node, Discovery_Collector_Node
 
 ## Phases
 
@@ -45,9 +45,9 @@ A worked example of a timer-driven local handler: `Health_Check_Tick_Node` (a `T
 
 Endpoints are now declared as verbs on a Service CI (`App\*_CI_Node`). The substrate's command-protocol REST surface exposes them at `/wp-json/newspack-nodes/v1/command` (POST one or more envelopes per request, dispatched against the addressed node) and `/wp-json/newspack-nodes/v1/messages/stream` (GET SSE). There are no per-plugin REST controllers anymore.
 
-1. Pick the right service CI class (files under `includes/app/class-*-ci-node.php`): `Discovery_CI_Node`, `Status_CI_Node`, `Settings_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Servers_CI_Node`, `Aggregator_CI_Node`, `Performance_CI_Node`.
+1. Pick the right service CI class (files under `includes/app/class-*-ci-node.php`): `Discovery_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Performance_CI_Node`. (`status`/`settings`/`aggregator` are substrate-owned CIs; the old `servers` CI was replaced by the substrate `vault` CI — add those verbs in newspack-nodes, not here.)
 2. Add a new verb entry in that CI's `node_schema()['commands']` array — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field; gate inside the handler instead (see step 4).
-3. Handler signature is `static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array`. Most handlers type `$self` as `Command_Interpreter_Node`; only the registry-injected CIs (`Servers_CI_Node`, `Aggregator_CI_Node`) type `$self` to the concrete `*_CI_Node` so the closure can read injected dependencies (registries, stores) off `$self`. `node_schema()` is static, so anything stateful comes through `$self`.
+3. Handler signature is `static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array`. All four live ELN CIs type `$self` as `Command_Interpreter_Node` — there are no registry-injected CIs left. `node_schema()` is static, so anything stateful comes through `$self`.
 4. Capability gate: call `self::require_manage_options()` at the top of the handler — a `protected static` helper on `Service_CI_Node` that throws a `\RuntimeException` for non-admins, which the interpreter's central catch (step 5) turns into a `TM_COMMAND|TM_ERROR` reply along the FROM trail. Worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag the substrate sets pre-dispatch.
 5. Throw freely — the substrate wraps thrown errors as `TM_COMMAND|TM_ERROR` along the FROM trail. Reserve `return 'error: ...'` for canonical-OK-shaped argument validation.
 6. Stats reads are fail-soft (`null` / `[]` / `false`). Slot-pool ops are fail-closed (HTTP 429 if memcache is down — slot pool IS the rate limit).
@@ -62,22 +62,21 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`, `CommandClient`).
 4. Hook layout per dashboard. Two valid `mountExospine` call forms:
    - **Bare** — `const { interpreter, teardown: teardownSpine } = mountExospine();` returns the request-scope interpreter and a teardown directly. Use only when the tree has no overlay/reinit (the one current example is `useHookCatalogGraph`).
-   - **Build-callback** — `const { teardown } = mountExospine( build );` where `build` receives `{ interpreter }`, wires the graph, and returns `{ teardown }`. The substrate snapshots Core and rebuilds via `Core.reinit()` on "Reset Graph". Every reinit-capable dashboard (request-log, aggregator-admin, performance, gyroscope, error-log) uses this form.
+   - **Build-callback** — `const { teardown } = mountExospine( build );` where `build` receives `{ interpreter }`, wires the graph, and returns `{ teardown }`. The substrate snapshots Core and rebuilds via `Core.reinit()` on "Reset Graph". Every reinit-capable dashboard (request-log, performance, gyroscope, error-log) uses this form.
    - Mount only the substrate boundary nodes the dashboard needs:
      - `_sse` (`SseIn` — EventSource ingress) — required for live-stream dashboards (request log, gyroscope, error log).
      - `_http` (`HttpOut` — POST /command boundary; `http.client = new CommandClient({ baseUrl: data.restUrl, nonce: data.nonce })`) — required for any command-fanout dashboard.
      - `_heartbeat` (`Heartbeat` — SSE slot keep-alive; `target = '_http/workers'` — pokes the substrate's `workers/heartbeat` verb which calls `SSE_Slot_Pool::touch`). Required whenever `_sse` is mounted.
-   - A CRUD-on-demand dashboard (e.g. `aggregator-admin`) needs only `_http` + the view node. A pure live-stream dashboard needs `_sse` + `_heartbeat` + transform/view chain.
+   - A command/reply (no live stream) dashboard — e.g. `overview`/performance, which polls + issues on-demand commands — needs only `_http` + the view node(s). A pure live-stream dashboard needs `_sse` + `_heartbeat` + transform/view chain.
    - All mounted nodes set `sink = interpreter`. Flow direction is steered with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
    - The view node owns the React render-state (published via `setState('view', model)`) and — for command-fanout views — a `pending` Map keyed by `message[ID]` for Promise settlement. Reply handler matches incoming envelopes against `pending`, resolves/rejects, then updates `this.model` and republishes.
 5. View contract (canonical, enforced in `event-logger-nodes-review`):
    - Command-fanout views own a `pending` Map keyed by `message[ID]`; the hook stashes `{ resolve, reject }` resolvers before filling each TM_COMMAND. Pure-SSE views don't need `pending`.
    - TM_ERROR envelopes route through an internal `_errorMessage(payload)` helper that coerces string / `{message}` / fallback payloads to a human-readable string — never thrown inline from `fill()` (that crashes React).
-   - View-model updates preserve prior data on partial replies (per-slice last-modified dedup in `performance-view-node`; servers-list-replaces-table in `servers-view-node`). Don't wholesale-clobber the model on every reply — preserve sibling slices.
+   - View-model updates preserve prior data on partial replies (per-slice last-modified dedup in `overview-view-node`; list-replaces-table in `urls-view-node`, whose `storeResult` swaps the whole `data` rows array per reply). Don't wholesale-clobber the model on every reply — preserve sibling slices.
    - No dead REPL mounts (`_output` / `_completion` / `_uptime` / `_cwd`) on a production dashboard tree — they're for the console tree only and would collide with the debug-overlay's REPL.
 6. Reference implementations:
-   - Command-fanout (CRUD): `src/aggregator-admin/hooks/useAggregatorAdminGraph.js` + `src/aggregator-admin/nodes/servers-view-node.js`.
-   - Command-poll (de-god per-slice): in the substrate, `newspack-nodes/src/event-aggregator/hooks/useAggregatorStatusGraph.js` (useBatchedPoll + addSliceFetcher) + its per-slice `nodes/aggregator-{summary,servers}-view-node.js`.
+   - Command-driven (poll + on-demand, per-slice de-god): `src/overview/hooks/usePerformanceGraph.js` (useBatchedPoll + addSliceFetcher) + its per-slice view nodes `src/overview/nodes/{overview,urls,url-detail,request-detail}-view-node.js`.
    - SSE-stream: `src/requests/hooks/useRequestLogGraph.js`.
    - Sliced data model with incremental merge: `src/overview/nodes/overview-view-node.js`.
 7. Shared hooks/utils are imported from the substrate via the `@newspack-nodes/shared/...` alias (resolved by esbuild + jest to `newspack-nodes/src/shared`). There is no local `src/shared/` and no sync step. The one ELN-owned test helper (`renderHook`) lives in `src/test-helpers/`.
@@ -135,12 +134,13 @@ wp nodes restart all --all-partitions
 
 # Or per topology — the basename of the `.tsl` file (run `wp nodes types`
 # first to enumerate cataloged topologies). Current topologies: combined,
-# request-builder, job-router, flame-builder, performance, aggregator.
+# request-builder, job-router, flame-builder, performance, aggregator, hub-control.
 wp nodes restart combined        --all-partitions
 wp nodes restart request-builder --all-partitions
 wp nodes restart job-router      --all-partitions
 wp nodes restart flame-builder   --all-partitions
 wp nodes restart aggregator      --all-partitions   # hub-only; errors out on spokes (substrate validates against active topologies)
+wp nodes restart hub-control     --all-partitions   # hub-only single-instance settings-sync + discovery control plane
 ```
 
 The worker-CLI verbs (`wp nodes {types,run,restart,status}` and `{ls,cli}`) are all registered by the **substrate**. This plugin registers only `wp nodes reqgrep` (in the `WP_CLI` block of `newspack-event-logger-nodes.php`).
@@ -160,13 +160,13 @@ wp nodes reqgrep --recent | head -10
 wp nodes reqgrep --follow
 ```
 
-For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic. Telemetry dashboards land at `/wp-admin/admin.php?page=event-logger-*` (`event-logger-overview`, `event-logger-errors`, `event-logger-gyroscope`, `event-logger-requests`) plus `page=newspack-nodes-aggregator`; the Settings / hook-catalog tree (`settings`) is served at `page=newspack-event-logger-nodes`.
+For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic. Telemetry dashboards land at `/wp-admin/admin.php?page=event-logger-*` (`event-logger-overview`, `event-logger-errors`, `event-logger-gyroscope`, `event-logger-requests`); the Settings / hook-catalog tree (`settings`) is served at `page=newspack-event-logger-nodes`. The aggregator admin page is now substrate-owned (newspack-nodes), not routed here.
 
 For job handler changes: queue a job (via the legitimate caller), wait, check `wp nodes ls` for job-workers heartbeat, optionally reqgrep for the rid.
 
 ## Patterns That Trip People Up
 
-- **Hub vs spoke**: `enable_aggregator` is the single operator switch for the admin-visible side of hub-mode. Typed bool in the Config schema, persisted by `register_setting` as `0`/`1`, default OFF — fresh installs are spokes/standalone; hubs opt in explicitly by checking the box in Event Logger Settings → Remote Servers. Read with a truthy check (`! empty( $cfg['enable_aggregator'] )`). Push-side fanout (`Settings_Sync`, `Auto_Tuner_Node`) is ungated; missing consumers are the structural gate. The legacy `enable_workers` toggle was retired in v0.5.0.
+- **Hub vs spoke**: there is no operator hub toggle — both `enable_workers` (v0.5.0) and `enable_aggregator` were retired (`tests/unit/RetiredConfigKeysTest.php` guards them). Hub-mode is derived from whether the `aggregator` topology is in the substrate's `topologies` list (and `hub-control` for settings/discovery fan-out). Settings fan-out is the substrate `Settings_Sync_Node` graph in `hub-control`; `Auto_Tuner_Node::persist` is a plain `update_option`. Missing consumers (no `hub-control`, no per-spoke `HTTP_Out` wired) are the structural gate — a recorded settings event is tailed and dropped.
 - **Memcache is required** for the application — Stats_Store (driven by Flame_Builder_Node), SSE slot rate limiting, and worker-position publishing all use it. If running locally without memcache, the stats path goes fail-soft (no data on dashboards); the SSE slot pool fails closed (429).
 - **Salt rotation orphans keys but doesn't flush them** — workers keep writing to the OLD salt until they respawn. After `Stats_Store::flush_all()`, restart workers to take effect immediately.
 - **Application nodes resolve by namespace prefix** (no registry): `make_node Flame_Builder` (in a `.tsl` topology) → `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` via the registered `Newspack_Event_Logger_Nodes\` prefix. The `.tsl` shell-name is the class minus `_Node` (`make_node Flame_Builder`, `Job_Router`, `Request_Builder`, …).
