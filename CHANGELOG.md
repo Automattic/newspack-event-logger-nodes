@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-06-28
+
 ### Fixed
 
 - **Performance dashboard: detail modals no longer poll their hidden parent view in the background.** Opening a URL-detail modal left `perf:timer` polling the offscreen overview/urls every interval, and the url_detail auto-refresh was a raw `setInterval` (no Timer/Fetcher node) that kept firing once a request-detail modal was opened over it. Now `usePerformanceGraph` suspends `perf:timer` (via `useBatchedPoll`'s `paused`) whenever any detail modal is open, and the url_detail auto-refresh is a real node-graph `urldetail:timer` (Timer) → `fetch-urldetail` (Fetcher, live-hash `argsFn`) armed only while the URL detail is the visible view — a URL is selected, no request detail is drilled in, and the tab is visible. Opening request detail or hiding the tab stops it; backing out / returning to visible re-arms it. Closing the last modal immediately re-fetches the now-visible overview/urls (the paused poll would otherwise leave it stale for up to one interval).
