@@ -72,6 +72,18 @@ function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 			} );
 			return Promise.resolve( replies );
 		},
+		// One-shot send seam used by resolveRequest's no-graph fallback path
+		// (interpreter not mounted yet / torn down). Mirrors getCommandClient().send.
+		send: jest.fn( ( { verb } ) => {
+			const reply = newMessage();
+			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+			reply[ VALUE ] = {
+				name: verb,
+				payload:
+					payloadByVerb[ verb ] ?? payloadByVerb._default ?? null,
+			};
+			return Promise.resolve( reply );
+		} ),
 	};
 	return client;
 }
@@ -558,5 +570,246 @@ describe( 'usePerformanceGraph — teardown', () => {
 		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
+	} );
+} );
+
+// Mount the hook, capture its returned control API, and flush the first poll.
+function renderGraph( props = {} ) {
+	let api;
+	const handle = renderHook(
+		( p ) => {
+			api = usePerformanceGraph( p );
+			return api;
+		},
+		{ initialProps: props }
+	);
+	return { ...handle, getApi: () => api };
+}
+
+describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
+	test( 'an empty chartBreakdown pads the overview breakdown list with status', async () => {
+		const client = makeFakeClient();
+		renderHook( () =>
+			usePerformanceGraph( {
+				commandClient: client,
+				chartBreakdown: '',
+			} )
+		);
+		await act( async () => {} );
+		const overview = findVerb( client.batches, 'overview' );
+		expect(
+			parseCommandArgs( overview[ VALUE ].arguments ).options.breakdown
+		).toBe( 'server,status' );
+	} );
+
+	test( 'a non-zero offset is emitted in the urls args (immediate fetch on a page change)', async () => {
+		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		const { getApi } = renderGraph( { commandClient: client } );
+		await act( async () => {} );
+		const before = countVerbs( client.batches, 'urls' );
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				search: '',
+				sort: 'count',
+				order: 'desc',
+				offset: 50,
+			} );
+		} );
+		// A non-search change fetches immediately (no debounce).
+		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
+		const urls = client.batches
+			.flat()
+			.reverse()
+			.find( ( m ) => m[ VALUE ]?.name === 'urls' );
+		expect(
+			parseCommandArgs( urls[ VALUE ].arguments ).options.offset
+		).toBe( '50' );
+	} );
+
+	test( 'an unchanged params object is a no-op (no extra urls fetch)', async () => {
+		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		const { getApi } = renderGraph( { commandClient: client } );
+		await act( async () => {} );
+		const before = countVerbs( client.batches, 'urls' );
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				search: '',
+				sort: 'count',
+				order: 'desc',
+				offset: 0,
+			} );
+		} );
+		expect( countVerbs( client.batches, 'urls' ) ).toBe( before );
+	} );
+
+	test( 'a second search change clears the first pending debounce timer', async () => {
+		jest.useFakeTimers();
+		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		await act( async () => {} );
+		const before = countVerbs( client.batches, 'urls' );
+		getApi().handleUrlParamsChange( {
+			search: 'a',
+			sort: 'count',
+			order: 'desc',
+			offset: 0,
+		} );
+		// Second search before the first debounce fires → first timer cleared.
+		getApi().handleUrlParamsChange( {
+			search: 'ab',
+			sort: 'count',
+			order: 'desc',
+			offset: 0,
+		} );
+		jest.advanceTimersByTime( 300 );
+		// Exactly one fetch despite two changes — the first was cancelled.
+		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
+		unmount();
+		jest.useRealTimers();
+	} );
+} );
+
+describe( 'usePerformanceGraph — invalid selection guards', () => {
+	test( 'an invalid URL hash sends no url_detail command', async () => {
+		const client = makeFakeClient();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		const before = countVerbs( client.batches, 'url_detail' );
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				selectedUrl: { hash: 'NOT-HEX!' },
+			} );
+		} );
+		expect( countVerbs( client.batches, 'url_detail' ) ).toBe( before );
+		expect( Core.node( 'urldetail:view' ).setStateCache.view.error ).toBe(
+			'Invalid URL hash format'
+		);
+	} );
+
+	test( 'an invalid request id sends no request_detail command', async () => {
+		const client = makeFakeClient();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				selectedRequest: 'bad id!',
+			} );
+		} );
+		expect( findVerb( client.batches, 'request_detail' ) ).toBeNull();
+		expect(
+			Core.node( 'requestdetail:view' ).setStateCache.view.error
+		).toBe( 'Invalid request ID format' );
+	} );
+
+	test( 'a valid request with no resolvable partition sends no request_detail command', async () => {
+		const client = makeFakeClient();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				selectedRequest: 'r1',
+				requestPartition: null,
+				urlDetailData: { requests: [] },
+			} );
+		} );
+		expect( findVerb( client.batches, 'request_detail' ) ).toBeNull();
+	} );
+
+	test( 'resolves the partition from urlDetailData.requests when requestPartition is null', async () => {
+		const client = makeFakeClient( { request_detail: { rid: 'r1' } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				commandClient: client,
+				selectedRequest: 'r1',
+				requestPartition: null,
+				urlDetailData: {
+					requests: [ { rid: 'r1', partition: 3 } ],
+				},
+			} );
+		} );
+		const req = findVerb( client.batches, 'request_detail' );
+		expect( req ).toBeTruthy();
+		expect(
+			parseCommandArgs( req[ VALUE ].arguments ).options.partition
+		).toBe( '3' );
+	} );
+} );
+
+describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () => {
+	test( 'resolveRequest falls back to the one-shot client when the graph is gone', async () => {
+		const client = makeFakeClient( {
+			request_search: { url_hash: 'h', partition: 1 },
+		} );
+		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		await act( async () => {} );
+		unmount(); // interpreterRef.current → null, view nodes removed
+		let resolved;
+		await act( async () => {
+			resolved = await getApi().resolveRequest( 'r9' );
+		} );
+		expect( client.send ).toHaveBeenCalledWith( {
+			to: 'performance',
+			verb: 'request_search',
+			args: 'r9',
+		} );
+		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
+	} );
+
+	test( 'fetchUrlBreakdown returns null when the graph is gone', async () => {
+		const client = makeFakeClient();
+		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		await act( async () => {} );
+		unmount();
+		let result;
+		await act( async () => {
+			result = await getApi().fetchUrlBreakdown( 'abc123', 'method' );
+		} );
+		expect( result ).toBeNull();
+	} );
+
+	test( 'fetchUrlBreakdown reports the error and returns null when the reply rejects', async () => {
+		const onError = jest.fn();
+		const client = makeFakeClient(
+			{ url_detail: { breakdown_time_series: { a: 1 } } },
+			{ errorVerbs: [ 'url_detail' ] }
+		);
+		const { getApi } = renderGraph( { commandClient: client, onError } );
+		await act( async () => {} );
+		let result;
+		await act( async () => {
+			result = await getApi().fetchUrlBreakdown( 'abc123', 'method' );
+		} );
+		expect( result ).toBeNull();
+		expect( onError ).toHaveBeenCalled();
+	} );
+
+	test( 'control callbacks no-op after unmount (interpreter detached)', async () => {
+		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		await act( async () => {} );
+		unmount();
+		// A param change after unmount must not throw — sendControl/sendCommand
+		// short-circuit on the missing view / detached interpreter.
+		expect( () =>
+			getApi().handleUrlParamsChange( {
+				search: '',
+				sort: 'count',
+				order: 'desc',
+				offset: 7,
+			} )
+		).not.toThrow();
 	} );
 } );
