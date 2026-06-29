@@ -15,8 +15,8 @@ This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesa
 - [Memcache Schema (9 Namespaces)](#memcache-schema-9-namespaces)
 - [Stats_Store: Sums-Not-Means + Salt Rotation](#stats_store-sums-not-means--salt-rotation)
 - [Hub vs Spoke Topology](#hub-vs-spoke-topology)
-- [Hub-Side Helpers: Server_Registry / Remote_Manager / Discovery](#hub-side-helpers-server_registry--remote_manager--discovery)
-- [Settings_Sync: No Operator Gate](#settings_sync-no-operator-gate)
+- [Hub-Side Settings Sync, Discovery, and Vault](#hub-side-settings-sync-discovery-and-vault)
+- [Settings Sync: No Operator Gate](#settings-sync-no-operator-gate)
 - [Job_Intake vs Firehose Routing](#job_intake-vs-firehose-routing)
 - [Configuration](#configuration)
 - [REST + React](#rest--react)
@@ -75,17 +75,16 @@ This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesa
 +--------------------------------------------------------------------------+
 |                       AGGREGATOR HUB (one per site)                      |
 |                                                                          |
-|  Stream_Merger_Node (cURL multi)                                         |
-|     |                                                                    |
-|     +-- SSE pull -->  remote spoke 1 firehose                            |
-|     +-- SSE pull -->  remote spoke 2 firehose                            |
-|     +-- SSE pull -->  remote spoke N firehose                            |
+|  substrate Remote_Source spoke-1  --SSE pull-->  spoke 1 firehose        |
+|  substrate Remote_Source spoke-2  --SSE pull-->  spoke 2 firehose        |
+|  substrate Remote_Source spoke-N  --SSE pull-->  spoke N firehose        |
+|     |  (operator-wired on the console, one per spoke/partition)          |
+|     v                                                                    |
+|  Remote_Job_Rewrite_Node (ELN node):                                     |
+|     k:"job"  ->  k:"remote_job"   (separate handler map on the hub)      |
 |     |                                                                    |
 |     v                                                                    |
 |  Topic(local firehose.log)  -- KEY-routed ->  Partition pN               |
-|                                                                          |
-|  filter newspack_nodes/aggregator_ingest_line:                           |
-|     k:"job"  ->  k:"remote_job"   (separate handler map on the hub)      |
 +--------------------------------------------------------------------------+
 ```
 
@@ -156,7 +155,7 @@ Orphaned `start`s (callback threw, exit called, fatal error before `complete`) g
 
 ## Topologies
 
-Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is a line-oriented script the substrate's topology loader interprets per partition: `make_node <Type> <name> [ctor args…]` instantiates a Node, `connect_node <from> <to>` wires a sink, `cmd <node>:config <verb> [args…]` runs a config verb on the node, and `var <key> = <value>` declares frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. Tokens like `<partition>`, `<config:logs_dir>`, `<config:num_partitions>` are interpolated at load time against the substrate Config; `<eln:auto_disable_threshold>`, `<eln:is_hub>`, etc., resolve against the application Config (the v0.4.0 namespace split). The `make_node` first argument is a **shell name** that the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`) resolve under the substrate's own prefix. Six `.tsl` files ship: `combined`, `performance`, `request-builder`, `flame-builder`, `job-router`, and `aggregator`. Job *dispatch* (`Job_Worker_Node` tailing `jobs.log`) is NOT a file shipped here — it comes from the substrate's stock `job-worker` topology (the local `job-worker.tsl` was deleted in v0.12.0 when `Job_Worker_Node` moved to the substrate).
+Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is a line-oriented script the substrate's topology loader interprets per partition: `make_node <Type> <name> [ctor args…]` instantiates a Node, `connect_node <from> <to>` wires a sink, `cmd <node>:config <verb> [args…]` runs a config verb on the node, and `var <key> = <value>` declares frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. Tokens like `<partition>`, `<config:logs_dir>`, `<config:num_partitions>` are interpolated at load time against the substrate Config; `<eln:auto_disable_threshold>`, `<eln:is_hub>`, etc., resolve against the application Config (the v0.4.0 namespace split). The `make_node` first argument is a **shell name** that the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`) resolve under the substrate's own prefix. Seven `.tsl` files ship: `combined`, `performance`, `request-builder`, `flame-builder`, `job-router`, `aggregator`, and `hub-control`. Job *dispatch* (`Job_Worker_Node` tailing `jobs.log`) is NOT a file shipped here — it comes from the substrate's stock `job-worker` topology (the local `job-worker.tsl` was deleted in v0.12.0 when `Job_Worker_Node` moved to the substrate).
 
 ### `topologies/combined.tsl`
 
@@ -273,18 +272,43 @@ Both Consumers feed `job-router` directly — each has a single target, so neith
 
 ### `topologies/aggregator.tsl`
 
-Hub-side ingest. One `Stream_Merger` pulls from configured spokes via SSE; sinks into a multi-partition Topic that KEY-routes by URL hash so each downstream firehose-consuming partition sees its own slice.
+Hub-side ingest. Per-spoke substrate `Remote_Source` nodes (operator-wired on the console canvas) pull each spoke's firehose via SSE; the ELN `Remote_Job_Rewrite` node flips aggregated `k:"job"` entries to `k:"remote_job"`; the multi-partition `Topic` KEY-routes by URL hash so each downstream firehose-consuming partition sees its own slice.
 
 ```tsl
-make_node Topic firehose:topic <config:logs_dir>/firehose.p<partition> <config:num_partitions> ...
-
-make_node Stream_Merger stream-merger firehose <partition>
-cmd stream-merger:config set_verify_ssl <eln:aggregator_verify_ssl>
-cmd stream-merger:config set_require_https <eln:aggregator_require_https>
-connect_node stream-merger firehose:topic
+make_node Remote_Job_Rewrite remote-job-rewrite
+make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
+connect_node remote-job-rewrite firehose:topic
 ```
 
-`Stream_Merger` is a fan-in (partition count comes from the destination Topic, not the merger), and it owns a hidden `Health_Check_Tick` sibling (`stream-merger:health-check`) that hitchhikes the same Router TIMER heartbeat to run the periodic discovery + sync sweep. Registry remotes load automatically when `connect_node` wires the target (lifecycle hook on `Stream_Merger::connect_node`) — there's no separate `load_remotes_from_registry` verb. SSL/HTTPS setters run BEFORE `connect_node` so the `Remote_Source` children created during the load inherit current policy. The `k:"job"` → `k:"remote_job"` rewrite filter is registered statically at plugin load (`Stream_Merger_Node::register_remote_job_rewrite_filter`), not from TSL. Aggregator is **gated** by the `enable_aggregator` config key (typed bool, default OFF): if not explicitly enabled, the topology isn't activated, the supervisor never spawns the worker, and the admin "Aggregator" submenu is hidden. Hubs opt in by setting `'enable_aggregator' => true` in their `newspack-event-logger-nodes-config.php` overlay or via the admin checkbox.
+Per-spoke `Remote_Source` nodes are NOT in the stock topology — the operator adds them on the canvas, one per spoke/partition:
+
+```tsl
+make_node Remote_Source spoke-<id> <vault-id> firehose <partition>
+connect_node spoke-<id> remote-job-rewrite
+```
+
+Each substrate `Remote_Source_Node` is self-sufficient: it patrons its own `SSE_In` + `HTTP_Out`, owns its offsetlog, and publishes a status snapshot to `np:remote:<node-name>:p<partition>`. SSL/HTTPS policy comes from the substrate `vault_verify_ssl` / `vault_require_https` config, not a per-topology setter; spoke credentials are looked up from the substrate **Vault** by `<vault-id>`. The `k:"job"` → `k:"remote_job"` rewrite is the `Remote_Job_Rewrite_Node` graph node (see [Remote_Job_Rewrite_Node](#remote_job_rewrite_node)) — not a filter, not a TSL setter; non-`job` entries pass through. Hub-mode is derived from whether `aggregator` is in the substrate's Topologies multi-select — there's no `enable_aggregator` config key (it was retired). Operators stand a hub up by selecting the `aggregator` and `hub-control` topologies.
+
+### `topologies/hub-control.tsl`
+
+Single-instance hub control plane (`var num_partitions = 1` — runs ONCE regardless of the data `num_partitions`). The settings-sync + discovery push side: a `Consumer` tails the `settings.p0` log (the substrate's `Settings_Event_Writer` appends option-name-only events to it on watched WP-option changes), `Settings_Sync` reads each option's current value and emits one `set` command per registered option (re-pushing every registered option on its 300s tick), and `Discovery_Collector` fans `discovery.get` to every spoke on its own 300s tick, union-merging the replies into the hub options. Both feed a shared `Tee`; the pipeline is inert until the operator wires per-spoke `HTTP_Out remote:<id>` nodes from the console and connects `spokes:tee` to them.
+
+```tsl
+var num_partitions = 1;
+
+make_node Consumer settings:consumer <config:logs_dir>/settings.p0 <config:offsets_dir>/settings.settings-sync.p0
+make_node Settings_Sync settings-sync 300
+make_node Tee spokes:tee
+make_node Discovery_Collector discovery-collector 300
+
+cmd settings-sync:config add_setting <option> <ci> <remote-option>   # one per registered option
+
+connect_node settings:consumer settings-sync
+connect_node settings-sync spokes:tee
+connect_node discovery-collector spokes:tee
+```
+
+`Settings_Sync` and `Settings_Event_Writer` live in the substrate (`\Newspack_Nodes\Settings_Sync_Node`, `\Newspack_Nodes\Settings_Event_Writer`); `Discovery_Collector_Node` is this plugin's (see [Discovery_Collector_Node](#discovery_collector_node)).
 
 ### Topology resolution
 
@@ -366,31 +390,28 @@ Flush every 5s via Router-hitchhike Timer; flush on shutdown via `cleanup` (TM_E
 
 ### Auto_Tuner_Node
 
-Receives Flame_Builder_Node's tuning decisions as `TM_STRUCT` messages and applies them locally; also unconditionally queues a `remote_manager` sync_setting job via Job_Intake — when a hub aggregator topology is running, the registered `remote_manager` handler picks it up and fans the change out to every enabled spoke; on non-hub sites, the queued job has no consumer and silently drops.
+Receives Flame_Builder_Node's tuning decisions as `TM_STRUCT` messages and applies them as ordinary local option writes. There is no `remote_manager` job and no `suppress_sync` guard — `persist()` is a plain `update_option`, and the change reaches spokes the same way any admin edit does: the substrate's `Settings_Event_Writer` records the option change to `settings.p0`, which the `hub-control` topology's `Settings_Sync` node fans out (see [Settings Sync: No Operator Gate](#settings-sync-no-operator-gate)).
 
 ```
 Flame_Builder_Node.apply_auto_tune()  ──TM_STRUCT msg──→  Auto_Tuner_Node.fill()
        TO=auto-tuner                                  │
-       KEY=disable_hooks /                            ├─→ Settings_Sync::queue_job('remote_manager', ...)
-           disable_custom_events /                    │   (writes to jobintake.log; no-op on non-hubs)
-           add_significant_events                     │
-       VALUE={ items: string[], context: {…} }        │
-                                                      └─→ update_option(...)   (suppress_sync wrapped)
+       KEY=disable_hooks /                            └─→ apply_*() ─→ persist()
+           disable_custom_events /                          = update_option( $option,
+           add_significant_events                                       $value,
+       VALUE={ items: string[], context: {…} }                         Config::autoload_for( $option ) )
 ```
 
-The KEY discriminates the option being tuned; Auto_Tuner_Node dispatches by KEY inside `fill()`:
+The KEY discriminates the option being tuned; Auto_Tuner_Node dispatches by KEY inside `fill()` to the matching `apply_*` method, each a read-modify-write on a WP option:
 
-| KEY | Updates | Hub-side fanout |
-|-----|---------|-----------------|
-| `disable_hooks` | `newspack_event_logger_nodes_log_events` minus the items (significant events preserved) | spoke receives the same updated array |
-| `disable_custom_events` | `newspack_event_logger_nodes_custom_events` minus the items (significant events preserved) | same |
-| `add_significant_events` | `newspack_event_logger_nodes_significant_events` ∪ items | same |
+| KEY | Updates |
+|-----|---------|
+| `disable_hooks` | `newspack_event_logger_nodes_log_events` minus the items (significant events preserved) |
+| `disable_custom_events` | `newspack_event_logger_nodes_custom_events` minus the items (significant events preserved) |
+| `add_significant_events` | `newspack_event_logger_nodes_significant_events` ∪ items |
 
 Replaces the legacy `AutoTuneHandlers` six-listener pattern (hub @ priority 5 + standalone @ priority 10 × three events). Both sides used to wire on WP actions; both sides ran in the same flame-builder worker process; the action plumbing was intra-process IPC dressed up as hooks. Expressing it as a Node with `fill()` dispatch is one straight path through the same logic.
 
-**Local-write suppression**: Auto_Tuner_Node wraps every `update_option` in `Settings_Sync::suppress_sync(true)` / `suppress_sync(false)` so the local write doesn't re-trigger Settings_Sync's `update_option` listener (which would re-queue the same remote sync that Auto_Tuner_Node just queued). The hub fan-out happens *before* the local write so a failed fan-out (memcache down, Job_Intake stale) doesn't block the local update.
-
-**Distributed lock**: Flame_Builder_Node still holds a 5s `evlog:auto_disable_lock` memcache lock across the three `fill()` calls. Without it, two Flame_Builder_Node workers (different partitions, both flushing at the same instant) would fan out twice for overlapping decisions.
+**Distributed lock**: Flame_Builder_Node still holds a 5s `evlog:auto_disable_lock` memcache lock across the three `fill()` calls. Without it, two Flame_Builder_Node workers (different partitions, both flushing at the same instant) would emit overlapping decisions twice.
 
 ### Job_Router_Node
 
@@ -439,32 +460,37 @@ public function fill( array &$message ): void {
 
 Image-handler circular refs (`wp_generate_attachment_metadata` loading full-resolution images into GD) are the documented reason for the discipline. Preserve in any successor.
 
-### Stream_Merger_Node
+### Remote_Job_Rewrite_Node
 
-Hub-side fan-in over remote spokes. `Stream_Merger_Node` is now a coordinator: it instantiates one `Remote_Source_Node` child per `Server_Registry::get_enabled()` entry (each owns its own cURL easy handle on a shared multi-handle registered with `Event_Framework`, plus its own SSE parser and cursor), owns one shared offsetlog `Partition_Node` (`$offsetlog`) for the whole hub, and periodically walks its children to commit positions. The offsetlog is a named sibling registered in `Core`; `Stream_Merger_Node::remove_node()` tears it down explicitly (`$this->offsetlog?->remove_node()`) along with each `Remote_Source_Node` child and the `Health_Check_Tick` sibling so a removed merger doesn't leak nodes in `Core`. The per-remote SSE pull, reconnect/backoff, and envelope parsing live in `Remote_Source_Node` (M6.7 migrated its feed to the substrate's `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume). `Stream_Merger_Node::MAX_BACKOFF` / `INITIAL_BACKOFF` are aliases of the `Remote_Source_Node` constants. `Stream_Merger_Node`'s own `process_sse_chunk()` is a **test-only delegate** — it lazily spins up a synthetic `__test__` `Remote_Source_Node` and forwards the chunk to it so prototype-era fixtures keep working; production never calls it. The real parsing path below lives in `Remote_Source_Node`.
+Hub-side fan-in is now the self-sufficient substrate `\Newspack_Nodes\Remote_Source_Node` — one per spoke/partition, operator-wired on the topology console. Each substrate `Remote_Source_Node` patrons its own `SSE_In` + `HTTP_Out`, owns its offsetlog and reconnect/backoff, pulls `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume, looks up its spoke credentials from the substrate **Vault**, and publishes a status snapshot to `np:remote:<node-name>:p<partition>`. The old ELN `Stream_Merger_Node` and ELN-local `Remote_Source_Node` were deleted in the pull-side cutover, along with `Health_Check_Extensions` and the `newspack_nodes/aggregator_ingest_line` filter.
+
+The one application-specific piece is `Remote_Job_Rewrite_Node` — a pass-through transform the `aggregator` topology wires between the substrate `Remote_Source` sources and the firehose `Topic`. It flips aggregated `k:"job"` entries to `k:"remote_job"` so they dispatch centrally on the hub via `newspack_nodes/remote_job_handlers` rather than locally; non-`job` entries and non-array VALUEs pass through untouched.
 
 ```php
-// includes/class-remote-source-node.php — the production SSE-parse path.
-class Remote_Source_Node extends Node {
-    public const MAX_BACKOFF     = 30;
-    public const INITIAL_BACKOFF = 1;
-
-    public function process_sse_chunk( string $chunk ): void {
-        $this->buffer .= $chunk;
-        while ( ( $pos = strpos( $this->buffer, "\n\n" ) ) !== false ) {
-            $event        = substr( $this->buffer, 0, $pos );
-            $this->buffer = substr( $this->buffer, $pos + 2 );
-            // Extract data: lines, apply newspack_nodes/aggregator_ingest_line filter
-            // (the k:"job" -> k:"remote_job" rewrite for hub topologies),
-            // emit TM_BYTESTREAM with VALUE = filtered payload into the shared Topic sink.
+// includes/class-remote-job-rewrite-node.php
+class Remote_Job_Rewrite_Node extends Node {
+    public function fill( array &$message ): void {
+        $value = $message[ Message::VALUE ];
+        if ( is_array( $value ) && 'job' === ( $value['k'] ?? null ) ) {
+            $value['k']                = 'remote_job';
+            $message[ Message::VALUE ] = $value;
+            // The rewrite only grows the line by the `job` -> `remote_job` delta;
+            // still guard against the PIPE_BUF cap a downstream Partition enforces.
+            if ( Message::packed_size( $message ) > Partition_Node::MAX_LINE_SIZE ) {
+                Core::print_less_often( 'Remote_Job_Rewrite: dropping entry > MAX_LINE_SIZE bytes after rewrite' );
+                return;
+            }
         }
+        parent::fill( $message );
     }
 }
 ```
 
-Position advances on successful local-Topic write OR on intentional drop by an ingest filter; failed writes leave the remote position unchanged so the next iteration re-fetches. Per-remote reconnect uses `current_backoff` (starts at `INITIAL_BACKOFF`, capped at `MAX_BACKOFF`).
+Relocating the rewrite from the deleted Stream_Merger's `aggregator_ingest_line` filter to a graph node keeps the substrate `Remote_Source` / `SSE_In` application-agnostic: the rewrite is a node the hub topology wires in, not a filter the substrate has to call. An oversized post-rewrite line is dropped (rate-limited) rather than forwarded to corrupt the segment.
 
-Stream_Merger_Node does NOT perform the `k:"job"` -> `k:"remote_job"` rewrite itself. The rewrite is a `newspack_nodes/aggregator_ingest_line` filter (renamed from `newspack_event_aggregator_ingest_line`) registered by the application plugin's hub-side bootstrap; Stream_Merger_Node applies the filter chain. Plugins that don't load the rewrite filter (because they're spokes, not hubs) get raw `k:"job"` entries through.
+### Discovery_Collector_Node
+
+Hub-side periodic discovery fan-out. A `Timer_Node` the `hub-control` topology mounts (`make_node Discovery_Collector discovery-collector 300`): `arguments()` arms `set_timer()` at the given interval (300s default). On each `fire()` it mints a `discovery.get` TM_COMMAND to every connected spoke's `Discovery_CI`; each spoke's reply self-routes back (TO=FROM) into `fill()`, which monotonically union-merges the reply's `registered_hooks` / `custom_events` (under `VALUE['payload']`) into the hub's local options — folded one reply at a time, so out-of-order / partial replies converge (cap `MAX_EVENTS = 10000`). It replaces the legacy poll-based discovery sweep that `Remote_Manager` / `Health_Check_Extensions` used to drive.
 
 ### Stats production (owned by Flame_Builder_Node)
 
@@ -555,104 +581,52 @@ Aggregator runs hub-and-spoke across multiple WordPress sites:
               |  Hub                        |
               |  newspack-event-logger-     |
               |  nodes (hub)                |
-              |  enable_aggregator on       |
+              |  aggregator + hub-control   |
+              |  topologies active          |
               |                             |
-              |  Stream_Merger_Node pulls   |
-              |  from configured spokes     |
+              |  substrate Remote_Source    |
+              |  nodes pull each spoke      |
               |                             |
-              |  Remote_Manager handles     |
-              |  remote_job dispatch        |
+              |  Remote_Job_Rewrite_Node    |
+              |  flips job -> remote_job    |
               |                             |
-              |  Settings_Sync fans out     |
-              |  options to spokes          |
+              |  hub-control: Settings_Sync |
+              |  + Discovery_Collector      |
               +-----------------------------+
 ```
 
-**Hub identification**: a site is acting as a hub when `enable_aggregator` is truthy AND it has at least one spoke registered. The toggle is a single operator switch — typed bool, default OFF (fresh installs are not hubs); persisted by `register_setting` as `0`/`1` with a truthy admin-side read (`! empty( $cfg['enable_aggregator'] )`). It gates the Aggregator admin submenu visibility. Push-side fan-out listeners (`Settings_Sync`, `Auto_Tuner_Node`) are themselves ungated — they always queue a `remote_manager` job; without an aggregator topology running there's no consumer, and the queued job silently no-ops. Pull-side activation (whether the Stream_Merger_Node worker actually spawns) is decoupled — driven by whether `aggregator` is in the substrate's Topologies multi-select.
+**Hub identification**: a site acts as a hub when the `aggregator` topology is in the substrate's Topologies multi-select (and, for settings/discovery fan-out, `hub-control` too). There is no operator hub toggle — `enable_aggregator` (like `enable_workers` before it) was retired; hub-mode is derived purely from topology membership. Push-side fan-out (the `hub-control` topology's `Settings_Sync` + `Discovery_Collector` nodes) is structurally gated the same way: without `hub-control` active and per-spoke `HTTP_Out` nodes wired, the settings/discovery pipeline is inert.
 
 **`k:"job"` vs `k:"remote_job"`**:
 
 Nodes only ever write `k:"job"` to their own firehose — there's no "spoke vs hub" distinction at write time. The distinction emerges at dispatch:
 
 - Every node's Job_Worker_Node tails its own `jobs.log` and dispatches `k:"job"` entries against the `newspack_nodes/job_handlers` filter. This runs locally on every node, hub or spoke.
-- The hub additionally runs Stream_Merger_Node, which pulls each enabled spoke's firehose. Stream_Merger_Node applies the `newspack_nodes/aggregator_ingest_line` filter, which rewrites the ingested `k:"job"` lines to `k:"remote_job"` before they reach the hub's firehose. The hub's Job_Worker_Node then dispatches those entries against `newspack_nodes/remote_job_handlers`.
+- The hub additionally runs the `aggregator` topology: per-spoke substrate `Remote_Source_Node`s pull each spoke's firehose, and ELN's `Remote_Job_Rewrite_Node` (wired between the sources and the firehose `Topic`) rewrites the ingested `k:"job"` lines to `k:"remote_job"` before they reach the hub's firehose. The hub's Job_Worker_Node then dispatches those entries against `newspack_nodes/remote_job_handlers`.
 - The two filters are independent registrations — a job type registers under whichever side(s) should run it:
   - **`job_handlers` only** → runs locally on every node. The hub's view of spoke-aggregated copies (as `remote_job`) is ignored.
   - **`remote_job_handlers` only** → only the hub acts. Spokes write the entries but don't act on them; the hub does the centralized work after aggregation.
   - **Both** → handler runs locally on every node, AND runs on the hub for entries aggregated from spokes. Useful when a job needs local + centralized handling under the same name (the two handler implementations can differ — e.g., one filters by local attributes, the other dispatches differently).
 
-The rewrite filter is NOT auto-loaded. Plugins that don't register the filter (because they're spokes, not hubs) get raw `k:"job"` entries through and dispatch locally — exactly what spokes want.
+The rewrite is NOT in a spoke's graph. A spoke runs neither the `aggregator` topology nor `Remote_Job_Rewrite_Node`, so its own `k:"job"` entries dispatch locally — exactly what spokes want.
 
-## Hub-Side Helpers: Server_Registry / Remote_Manager / Discovery
+## Hub-Side Settings Sync, Discovery, and Vault
 
-Three static-mode classes own the hub's outbound side. They don't run in the worker fleet — they run in admin requests (Remote Servers UI), inside Job_Worker_Node contexts when handling `remote_manager` jobs, and on the hub's periodic health-check tick.
+The hub's outbound side is no longer a set of static helper classes. `Server_Registry`, `Remote_Manager`, `Health_Check_Extensions`, and the ELN `Settings_Sync` were all deleted in the node-graph cutover. Three things took their place:
 
-### Remote activity gate: `enable_aggregator`
+- **Spoke credentials live in the substrate Vault.** The substrate `\Newspack_Nodes\Vault` (managed through the substrate `vault` CI) stores each spoke's URL + Basic Auth, encrypted at rest. A `Remote_Source` node references its spoke by `<vault-id>`; SSL/HTTPS enforcement comes from the substrate `vault_verify_ssl` / `vault_require_https` config. There is no `aggregator_servers` option and no `Server_Registry` CRUD anymore. The plugin reacts to credential changes via the `newspack_nodes/vault/changed` action.
 
-A single config flag, `enable_aggregator` (default OFF), gates the operator-visible side of hub-mode:
+- **Settings fan-out is a node graph (`hub-control` topology).** The substrate's `Settings_Event_Writer` records watched WP-option changes to the `settings.p0` log (option name only). The `hub-control` topology's `Consumer` tails it, the substrate `\Newspack_Nodes\Settings_Sync_Node` reads each option's current value at consume time and emits one `set` command per registered option (re-pushing the full registered set on its 300s tick), and a `Tee` fans the commands to per-spoke `HTTP_Out` nodes the operator wires on the console. ELN supplies the value-resolver via the `newspack_nodes/settings_sync/value` filter (`newspack_event_logger_nodes_resolve_settings_sync_value`), which maps a `newspack_event_logger_nodes_*` / `newspack_nodes_*` option name to its live value.
 
-- **Admin submenu** — the `Aggregator` submenu under Performance is hidden when off. The "Enable Aggregator" checkbox in Event Logger Settings → Remote Servers is the operator-facing toggle.
-- **Push side** — `Settings_Sync::maybe_queue_static_sync` and `Auto_Tuner_Node::persist` always queue a `remote_manager` job. The structural gate is the consumer: without an aggregator topology running there's no `remote_manager` handler registered, so the queued jobs silently no-op. The admin checkbox is the operator-visible part of the gate (Aggregator submenu + topology selection); the dispatch layer takes care of the rest.
+- **Discovery is `Discovery_Collector_Node`** (also in `hub-control`) — see [Discovery_Collector_Node](#discovery_collector_node). It fans `discovery.get` to every spoke on its 300s tick and union-merges the replies into the hub's options, replacing the old `Remote_Manager` discovery sweep + `Health_Check_Extensions` merge.
 
-Pull-side worker activation is independent: the Stream_Merger_Node spawns whenever `aggregator` is in the substrate's Topologies multi-select. Two operator choices, two surfaces — checking "Enable Aggregator" without also checking the `aggregator` topology gives you a visible dashboard with no live data; checking the topology without the checkbox gives you a running worker but no UI to see it. The intentional design is that operators do both when standing up a hub; either alone is a partial state.
+## Settings Sync: No Operator Gate
 
-### `Server_Registry`
+Settings fan-out is now the substrate `Settings_Sync_Node` graph in the `hub-control` topology (see [Hub-Side Settings Sync, Discovery, and Vault](#hub-side-settings-sync-discovery-and-vault)). It is **ungated** in the same structural sense as before: an option change always records a settings event (via the substrate `Settings_Event_Writer`), but nothing fans it out unless the `hub-control` topology is active and per-spoke `HTTP_Out` nodes are wired. On a spoke / standalone site there is no consumer, so the event is simply tailed and dropped.
 
-CRUD for the spoke list. Storage is `newspack_event_logger_nodes_aggregator_servers` (a single autoloaded option) merged with whatever `aggregator_servers` keys arrive via `newspack_event_logger_nodes/config` filter. Filter-supplied entries are read-only at the registry level — `remove()` no-ops on a config-supplied server (`is_config_server()` returns true) so an operator click can't disable a server the config file declares.
+`Auto_Tuner_Node::persist` is likewise ungated and gate-free: it's a plain `update_option(..., Config::autoload_for($option))` (no `remote_manager` job, no `suppress_sync`). The write records a settings event like any admin edit; if `hub-control` is running, `Settings_Sync_Node` picks the change up at consume time. There is no operator hub toggle — the legacy `enable_workers` polarity dance was retired in v0.5.0, and `enable_aggregator` was retired too; hub-mode is derived from whether the `aggregator` / `hub-control` topologies are active. Letting the no-consumer drop happen at the node-graph level is cheaper and harder to misconfigure than a per-listener `get_option` gate.
 
-```php
-class Server_Registry {
-    public const MAX_SERVERS = 100;
-
-    public function get_all(): array;                   // merged option + filter
-    public function get_enabled(): array;               // get_all() filtered by enabled=true
-    public function get( string $id ): ?array;
-    public function add( string $id, array $config ): bool;
-    public function update( string $id, array $partial ): bool;
-    public function remove( string $id ): bool;        // no-op on config-supplied entries
-    public function is_config_server( string $id ): bool;
-}
-```
-
-Validation at write time: ID matches `/^[a-zA-Z0-9_-]{1,64}$/`, URL is a valid HTTPS URL on the `ALLOWED_ENDPOINT_PREFIXES` whitelist (no smuggling arbitrary endpoints through the form), `auth_username` is a WordPress username (sanitized), `auth_password` is sodium-secretbox encrypted at rest (key derived from `wp_salt('auth')` via `sodium_crypto_generichash`); legacy plaintext rows still decode through the same accessor. Cap of 100 servers per registry to bound the periodic health-check sweep.
-
-### `Remote_Manager`
-
-Outbound HTTP to spokes plus a registered `remote_manager` job handler. Two distinct roles:
-
-1. **Discovery sweep** (periodic): walks every enabled server, dispatching a `discovery.get` TM_COMMAND to each spoke's `/wp-json/newspack-nodes/v1/command` endpoint (the legacy `/wp-json/newspack-nodes/v1/discovery` REST route was deleted in M5 in favor of the unified command path), collects per-server payloads, then calls `Health_Check_Extensions::process_discovery()` directly (and also fires `newspack_event_logger_nodes/health_check_discovery` for external listeners), then calls `sync_all_settings()` to push every operator-configured option to every enabled spoke.
-
-2. **`remote_manager` job handler**: registered via `newspack_nodes/job_handlers`. The handler dispatches by `action`:
-   - `sync_setting` → POST `{option, value}` to every enabled spoke under the configured endpoint. The settings endpoint must be in `ALLOWED_ENDPOINT_PREFIXES` (`newspack-nodes` or `newspack-nodes-aggregator` namespaces only).
-   - `health_check` → idempotent shortcut for dispatchers that prefer queueing over `add_action`.
-   - Anything else → looked up in `newspack_event_logger_nodes/remote_actions` filter for plugin extension. Unknown actions log via `print_less_often` and drop.
-
-Stale-job protection: every `remote_manager` job carries `queued_at`. Jobs older than `STALE_THRESHOLD` (600s) drop with a rate-limited error log. Prevents a stuck cron tick from blasting through dozens of obsolete sync requests in a row.
-
-Caps: `MAX_SERVERS = 100`, `MAX_SETTINGS = 50` per sync. Prevents a filter-abuse from triggering an unbounded fan-out.
-
-### `Health_Check_Extensions`
-
-Merges discovered hooks and custom events from spokes into the hub's local settings. Called directly by `Remote_Manager::health_check()` (no WP action indirection — the in-plugin coupling is one method call). The action is *also* fired alongside, so external plugins (pyrobase, etc.) can still subscribe.
-
-`process_discovery( array $all_discovery )` does two merges:
-
-- Discovered **registered hooks** from each spoke → `newspack_event_logger_nodes_log_events`. New names get added; existing names stay; the local "checked / unchecked" state is preserved (discovered hooks land unchecked by default).
-- Discovered **custom events** from each spoke → `newspack_event_logger_nodes_discovered_events`. New events get a `true` flag; existing entries are left alone.
-
-Both merges suppress `Settings_Sync` first (`Settings_Sync::suppress_sync()` / `finally`) so the local `update_option` write doesn't get fanned BACK out to the spokes that just contributed it. Without the suppression, every discovery sweep would echo every spoke's hooks to every other spoke. Cap on accumulated entries: `MAX_EVENTS = 10000`.
-
-## Settings_Sync: No Operator Gate
-
-`Settings_Sync::maybe_queue_static_sync` is **ungated** — it always queues a `remote_manager` job into JobIntake when a synced option changes. The gate is structural: without an aggregator topology running and remotes registered, the queued job has no consumer and silently no-ops (the `Job_Worker_Node` finds no `remote_manager` handler in `newspack_nodes/job_handlers` and drops the line). Any topology that DOES dispatch `remote_manager` jobs picks them up automatically.
-
-`Auto_Tuner_Node::persist` is also ungated — it always queues the `remote_manager` sync_setting job before the local `update_option` write, for the same no-consumer-equals-no-op reason. This was a deliberate simplification: the legacy `enable_workers`-as-hub-designation polarity dance was retired in v0.5.0. The remaining operator-facing toggle is `enable_aggregator` (typed bool, default OFF), which gates the Aggregator admin submenu visibility and the Stream_Merger_Node pull-side activation; push-side fan-out listeners (Settings_Sync, Auto_Tuner) just queue, and let dispatch silently drop on non-hubs. Letting the no-consumer drop happen at dispatch time is cheaper and harder to misconfigure than a per-listener `get_option` gate.
-
-**Re-entrancy guard via `$syncing`**: Health_Check_Extensions calls `update_option` in response to a sync; without the guard, that triggers another sync, ad infinitum. The `suppress_sync(true)` API is called before the update, restored after.
-
-**Job_Intake for >4KB payloads**: options like `log_events` (50+ hook names) routinely exceed 4KB. Settings_Sync uses `Job_Intake::queue('remote_manager', ...)` with the option name as the partition key (so one sync per option at a time across the queue).
-
-**Endpoint allowlist**: `ALLOWED_ENDPOINT_PREFIXES = ['/wp-json/newspack-nodes/', '/wp-json/newspack-nodes-aggregator/']` + handler-name parameter sanitization. Security boundary; port verbatim with renamed prefixes.
+**Value resolved at consume time, not at write time.** `Settings_Event_Writer` records only the option *name*; `Settings_Sync_Node` reads the current value when it consumes the event (and on its 300s tick re-reads + re-pushes every registered option). So a burst of writes to one option collapses to a single current-value push, and there's no stale-value race. ELN supplies the name→value mapping through the `newspack_nodes/settings_sync/value` filter.
 
 ## Job_Intake vs Firehose Routing
 
@@ -686,7 +660,7 @@ Two write paths into the job queue:
 **Use firehose** (`Log_Manager->message('job', $payload)`) when:
 
 - Payload fits in 4KB (PIPE_BUF atomic append).
-- Job needs to be aggregated from spokes to hub (only firehose entries flow through Stream_Merger_Node).
+- Job needs to be aggregated from spokes to hub (only firehose entries flow through the hub's `Remote_Source` pull).
 
 **Use Job_Intake** (`Job_Intake::queue($handler, $params)`) when:
 
@@ -716,18 +690,17 @@ $config = \Newspack_Event_Logger_Nodes\Config::load_config();          // every 
 $config = \Newspack_Event_Logger_Nodes\Config::load_config_defaults(); // file-only (no WP option overlay, no substrate merge)
 ```
 
-`load_config()` is the single zero-arg entry point — every key in the `$option_schema` whitelist is loaded on every call, including `auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events`, and the substrate keys merged in from `RuntimeConfig::load_config()`. The result is cached in a static for the rest of the request, so the cost is one round of `get_option` per schema key on first call. `load_config_defaults()` is the file-only escape hatch used by `Server_Registry` to read `aggregator_servers` defaults without the circular WP-option merge (`aggregator_servers` is intentionally not in the per-request schema — admin/hub-only, read lazily).
+`load_config()` is the single zero-arg entry point — every key in the `$option_schema` whitelist is loaded on every call, including `auto_disable_threshold`, `auto_protect_time_threshold`, `significant_events`, and the substrate keys merged in from `RuntimeConfig::load_config()`. The result is cached in a static for the rest of the request, so the cost is one round of `get_option` per schema key on first call. `load_config_defaults()` is the file-only escape hatch (no WP-option overlay, no substrate merge) for callers that need the shipped defaults without the per-request layering.
 
 ### Settings_Schema: one Field per setting
 
-`Settings_Schema` (`includes/class-settings-schema.php`) is the single declaration both `Config` and `Admin` derive from — one `\Newspack_Nodes\Config_System\Field` per setting, collected into a `Schema`. It replaced the three parallel arrays `Config` and `Admin` used to hand-maintain in lockstep (`Config::$option_schema`, `Admin::$option_names`, `Admin::$delete_on_blank_options`). `Config` reads it for the overlay key-list + autoload sweep; `Admin` reads it to drive the `register_setting` / `add_settings_field` loops, the reset list, and the delete-on-blank classification. Substrate keys (`base_directory`, partitioning, `memcache_servers`, `topologies`) are owned by the substrate's own Settings_Schema under `newspack_nodes_*` and reach this plugin via the `array_merge(RuntimeConfig::load_config(), …)` layering — never declared here. `aggregator_servers` is the one carve-out: it has an option name and file default but is neither an overlay key nor a form field (encrypted spoke credentials, read lazily by `Server_Registry`), so it's absent from the Field set. The schema layer builds on the shared `\Newspack_Nodes\Config_System` (`Field`, `Schema`, plus the substrate's renderer / overlay / reset-gate machinery).
+`Settings_Schema` (`includes/class-settings-schema.php`) is the single declaration both `Config` and `Admin` derive from — one `\Newspack_Nodes\Config_System\Field` per setting, collected into a `Schema`. It replaced the three parallel arrays `Config` and `Admin` used to hand-maintain in lockstep (`Config::$option_schema`, `Admin::$option_names`, `Admin::$delete_on_blank_options`). `Config` reads it for the overlay key-list + autoload sweep; `Admin` reads it to drive the `register_setting` / `add_settings_field` loops, the reset list, and the delete-on-blank classification. Substrate keys (`base_directory`, partitioning, `memcache_servers`, `topologies`) are owned by the substrate's own Settings_Schema under `newspack_nodes_*` and reach this plugin via the `array_merge(RuntimeConfig::load_config(), …)` layering — never declared here. Spoke credentials are no longer an application option at all — they live in the substrate **Vault**. The schema layer builds on the shared `\Newspack_Nodes\Config_System` (`Field`, `Schema`, plus the substrate's renderer / overlay / reset-gate machinery).
 
 ### Application option keys
 
 | Option | Type | Loaded by | Default | Use |
 |--------|------|-----------|---------|-----|
 | `enable_logging` | bool | `load_config()` | `true` | Master switch for the firehose write path |
-| `enable_aggregator` | bool | `load_config()` | `false` | Gates the Aggregator admin submenu (operator-visible side of hub-mode); push-side fanout listeners are themselves ungated and rely on no-consumer-as-no-op |
 | `log_urls` | array of strings | `load_config()` | `[]` | URL substring allowlist (empty = log everything) |
 | `skip_urls` | array of strings | `load_config()` | substrate-command paths | URL substring denylist; wins over `log_urls` |
 | `log_events` | array of strings | `load_config()` | `[]` | Hook names to instrument (start at `hook_start_priority`, default -10000; complete at MAX-1) |
@@ -739,13 +712,11 @@ $config = \Newspack_Event_Logger_Nodes\Config::load_config_defaults(); // file-o
 | `log_memory` | bool | `load_config()` | `false` | Debug: append peak_mb to every complete entry |
 | `allowed_users` | array of strings | `load_config()` | `[]` | Deployment override: restrict admin UI to these usernames |
 | `hook_start_priority` | int | `load_config()` | `-10000` | Action priority for the `hook_start` instrumentation hook |
-| `discovered_events` | array of strings | lazy (admin/health-check only) | `[]` | Custom events discovered from spokes — merged via `Health_Check_Extensions`. Not in the per-request schema; non-autoloaded |
-| `aggregator_servers` | array | lazy (`Server_Registry`) | `[]` | Spoke registry storage; per-server `{url, auth_username, auth_password, enabled}`. Not in the per-request schema — encrypted-credential blob read lazily |
-| `aggregator_verify_ssl` | bool | file-only | `true` | Hub-side cURL `CURLOPT_SSL_VERIFYPEER` for the SSE pull. File-only — no WP-option overlay, no admin form |
-| `aggregator_require_https` | bool | file-only | `true` | Hub-side scheme enforcement on registered spoke URLs. File-only |
 | `remote_num_segments` | int | file-only | `2` | Hub-side default segment count for remote-pull partitions |
-| `remote_segment_size` | int | file-only | `33554432` (32MB) | Hub-side default segment size for remote-pull partitions |
+| `remote_segment_size` | int | file-only | `10 * 1024 * 1024` (10MB) | Hub-side default segment size for remote-pull partitions |
 | `remote_max_lifespan` | int | file-only | `3600` | Minimum spoke-side retention the hub expects to be able to seek into |
+
+Spoke credentials and SSL/HTTPS policy are no longer application config keys — they live in the substrate **Vault** (`vault_verify_ssl` / `vault_require_https` on the substrate side). The retired `enable_aggregator`, `aggregator_servers`, `aggregator_verify_ssl`, `aggregator_require_https`, and `discovered_events` keys are gone.
 
 ### Substrate option keys (read but not owned here)
 
@@ -770,7 +741,7 @@ Most config keys read through `Config::load_config()` which has a 5s in-process 
 
 ## REST + React
 
-There is no per-endpoint controller hierarchy anymore. The dashboards and admin tooling reach the application through the substrate's **command protocol**: one `POST /wp-json/newspack-nodes/v1/command` endpoint that routes a TM_COMMAND envelope to a named service CI node (`performance`, `events`, `status`, `logger`, `settings`, `servers`, `aggregator`, `discovery`). Each verb's request/response shape is documented in [API.md](API.md) (still expressed under the legacy `newspack-nodes/v1/*` and `newspack-nodes-aggregator/v1/*` paths for the reader's mental model — those are the verbs each CI exposes, not standalone routes). The CIs mount on `newspack_nodes/request_graph_ready`.
+There is no per-endpoint controller hierarchy anymore. The dashboards and admin tooling reach the application through the substrate's **command protocol**: one `POST /wp-json/newspack-nodes/v1/command` endpoint that routes a TM_COMMAND envelope to a named service CI node. This plugin owns four CIs — `performance`, `events`, `logger`, `discovery`; the `status`, `settings`, and `aggregator` CIs (and the `vault` CI that replaced `servers`) are substrate-owned. Each verb's request/response shape is documented in [API.md](API.md) (still expressed under the legacy `newspack-nodes/v1/*` and `newspack-nodes-aggregator/v1/*` paths for the reader's mental model — those are the verbs each CI exposes, not standalone routes). The CIs mount on `newspack_nodes/request_graph_ready`.
 
 The whole `includes/rest/` directory — including the orphaned `Performance_Controller_Base` helper class — has been deleted. The command-protocol CIs are the only REST surface now; nothing extends a per-endpoint controller base. `tests/integration/M2BootstrapTest.php` carries a regression guard so a future revert that reintroduces `includes/rest/` would fail.
 
@@ -800,7 +771,7 @@ SSE is now a single substrate surface: the substrate's `SSE_Out_Node` doubles as
 
 ### React trees
 
-4 dashboards (`overview`, `gyroscope`, `settings`, `requests`) ride the substrate's `_http` / `_sse` / `_heartbeat` spine: each dashboard mounts a graph that builds TM_COMMANDs (TO=`_http/<ci-name>`) and resolves replies via a pending-Map keyed on `message[ID]`; SSE-driven dashboards additionally mount `_sse` (subscribing to the relevant `<log>.pN` feeds) and a `_heartbeat` Node that keeps the slot alive against `_http/workers`. Shared hooks/utils/components are NOT copied into this plugin — there is no local `src/shared/` tree. They're imported via the `@newspack-nodes/shared/*` path alias (e.g. `import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth'`), which esbuild + jest resolve to the `newspack-nodes` sibling checkout's `src/shared`. The old synced-copy mechanism (`sync-shared.sh`) was retired in v0.12.0. The four per-dashboard line transforms (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …) live per-tree and turn raw envelope VALUEs into the shape each dashboard renders.
+Five dashboards (`overview`, `error-log`, `gyroscope`, `settings`, `requests`) plus the `current-request` overlay tab ride the substrate's `_http` / `_sse` / `_heartbeat` spine: each dashboard mounts a graph that builds TM_COMMANDs (TO=`_http/<ci-name>`) and resolves replies via a pending-Map keyed on `message[ID]`; SSE-driven dashboards additionally mount `_sse` (subscribing to the relevant `<log>.pN` feeds) and a `_heartbeat` Node that keeps the slot alive against `_http/workers`. Shared hooks/utils/components are NOT copied into this plugin — there is no local `src/shared/` tree. They're imported via the `@newspack-nodes/shared/*` path alias (e.g. `import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth'`), which esbuild + jest resolve to the `newspack-nodes` sibling checkout's `src/shared`. The old synced-copy mechanism (`sync-shared.sh`) was retired in v0.12.0. The four per-dashboard line transforms (`transformCompletedLine`, `transformGyroscopeLine`, `transformErrorLine`, …) live per-tree and turn raw envelope VALUEs into the shape each dashboard renders.
 
 ### Canonical view contract (v0.8.0)
 
