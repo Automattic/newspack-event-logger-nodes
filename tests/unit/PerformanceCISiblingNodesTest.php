@@ -57,7 +57,6 @@ class PerformanceCISiblingNodesTest extends TestCase {
 	private function wire_scratch( string $log, int $index ): Partition_Node {
 		$p = new Partition_Node();
 		$m = new \ReflectionMethod( Performance_CI_Node::class, 'name_scratch_partition' );
-		$m->setAccessible( true );
 		$m->invoke( null, $p, $log, $index );
 		return $p;
 	}

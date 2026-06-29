@@ -30,7 +30,6 @@ abstract class TestCase extends RuntimeTestCase {
 			// back to the bundled plugin defaults and tests that depend
 			// on the `$extras` override silently see the wrong defaults.
 			$ref  = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Config::class, 'allowed_config_dirs' );
-			$ref->setAccessible( true );
 			$dirs = $ref->getValue();
 			if ( ! \in_array( $dir, $dirs, true ) ) {
 				$dirs[] = $dir;

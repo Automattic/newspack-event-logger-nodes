@@ -895,7 +895,6 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0 ] ) );
 
 		$ref = new \ReflectionProperty( Flame_Builder_Node::class, 'last_flush_time' );
-		$ref->setAccessible( true );
 		$ref->setValue( $fb, \microtime( true ) - ( Flame_Builder_Node::FLUSH_INTERVAL_SEC + 1 ) );
 
 		// Confirm hourly is NOT yet persisted (last fill happened mid-window).

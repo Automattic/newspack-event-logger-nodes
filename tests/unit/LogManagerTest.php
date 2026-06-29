@@ -249,7 +249,6 @@ class LogManagerTest extends TestCase {
 
 		// Verify the timer stack only has the root 'process' entry left.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
-		$ref->setAccessible( true );
 		$times = $ref->getValue( $lm );
 		$this->assertCount( 1, $times, 'Timer stack should have only root entry after complete' );
 	}
@@ -482,7 +481,6 @@ class LogManagerTest extends TestCase {
 
 		// Use reflection to set line_limited to true.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'line_limited' );
-		$ref->setAccessible( true );
 		$ref->setValue( $lm, true );
 
 		// start() and complete() should not throw when line_limited.
@@ -519,7 +517,6 @@ class LogManagerTest extends TestCase {
 
 		// Verify log_memory flag is set via reflection.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'log_memory' );
-		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $lm ), 'log_memory should be true with logging-memory config' );
 
 		// start/complete with log_memory should add peak_mb to complete entry.
@@ -806,7 +803,6 @@ class LogManagerTest extends TestCase {
 	 */
 	private function read_context_stack(): array {
 		$ref = new \ReflectionProperty( Log_Manager::class, 'context_stack' );
-		$ref->setAccessible( true );
 		return $ref->getValue();
 	}
 
@@ -818,7 +814,6 @@ class LogManagerTest extends TestCase {
 	 */
 	private function clear_context_stack(): void {
 		$ref = new \ReflectionProperty( Log_Manager::class, 'context_stack' );
-		$ref->setAccessible( true );
 		$ref->setValue( null, [] );
 	}
 
@@ -1226,7 +1221,6 @@ class LogManagerTest extends TestCase {
 
 		// Read property to confirm finished latch.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'finished' );
-		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $lm ) );
 
 		// Second finish must be a no-op (no exception, no extra writes).
@@ -1243,7 +1237,6 @@ class LogManagerTest extends TestCase {
 
 		// 'finished' latch should remain unchanged because started was false.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'finished' );
-		$ref->setAccessible( true );
 		$this->assertFalse( $ref->getValue( $lm ) );
 	}
 
@@ -1324,7 +1317,6 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'dud' );
 
 		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
-		$ref->setAccessible( true );
 		$this->assertSame( [], $ref->getValue( $lm ), 'Disabled logger must not accumulate timer entries' );
 	}
 
@@ -1338,7 +1330,6 @@ class LogManagerTest extends TestCase {
 		// Seed the timer stack at the cap via reflection — saves doing 100
 		// real start() calls.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
-		$ref->setAccessible( true );
 		$seeded = [];
 		for ( $i = 0; $i < $cap; $i++ ) {
 			$seeded[] = [ 'label' => "seed_$i", 'ts' => \hrtime( true ), 'muted' => false ];
@@ -1406,7 +1397,6 @@ class LogManagerTest extends TestCase {
 		// Force-start without calling start() — Topic remains null because
 		// init_firehose was never invoked.
 		$started_ref = new \ReflectionProperty( Log_Manager::class, 'started' );
-		$started_ref->setAccessible( true );
 		$started_ref->setValue( $lm, true );
 
 		// Topic null → message() returns false at the topic-null guard.
@@ -1437,7 +1427,6 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'priming_start' );
 
 		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
-		$ref->setAccessible( true );
 
 		// Now overwrite to exactly cap entries (well past the seeded root).
 		$seeded = [];
@@ -1488,7 +1477,6 @@ class LogManagerTest extends TestCase {
 
 		// Verify the flush_every_line property was actually set from config.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'flush_every_line' );
-		$ref->setAccessible( true );
 		$this->assertTrue( $ref->getValue( $lm ) );
 
 		// Drain the singleton before tearDown.
@@ -1519,11 +1507,9 @@ class LogManagerTest extends TestCase {
 		// Force-set both regex sources via reflection so we exercise the
 		// skip-then-log composition without touching disk.
 		$skip = new \ReflectionProperty( Log_Manager::class, 'skip_regex' );
-		$skip->setAccessible( true );
 		$skip->setValue( $lm, '/\/health/i' );
 
 		$log = new \ReflectionProperty( Log_Manager::class, 'log_regex' );
-		$log->setAccessible( true );
 		$log->setValue( $lm, '/\/health/i' );
 
 		// Both patterns match /health — but skip beats log.
@@ -1753,12 +1739,10 @@ class LogManagerTest extends TestCase {
 
 		// Force line_limited true.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'line_limited' );
-		$ref->setAccessible( true );
 		$ref->setValue( $lm, true );
 
 		// times-stack snapshot.
 		$tref = new \ReflectionProperty( Log_Manager::class, 'times' );
-		$tref->setAccessible( true );
 		$before = $tref->getValue( $lm );
 
 		$lm->start( 'muted_label' );
@@ -1807,7 +1791,6 @@ class LogManagerTest extends TestCase {
 
 	private function invoke_extract_plugin_slug( string $file ): ?string {
 		$ref = new \ReflectionMethod( Log_Manager::class, 'extract_plugin_slug' );
-		$ref->setAccessible( true );
 		return $ref->invoke( null, $file );
 	}
 

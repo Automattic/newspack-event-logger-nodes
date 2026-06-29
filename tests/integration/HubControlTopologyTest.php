@@ -106,7 +106,6 @@ class HubControlTopologyTest extends TestCase {
 		$this->load_hub_control();
 
 		$registry = ( new \ReflectionProperty( Settings_Sync_Node::class, 'registry' ) );
-		$registry->setAccessible( true );
 		$map = $registry->getValue( Core::node( 'settings-sync' ) );
 
 		$this->assertCount( 13, $map );

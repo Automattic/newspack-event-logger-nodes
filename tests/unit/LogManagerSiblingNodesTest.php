@@ -74,7 +74,6 @@ class LogManagerSiblingNodesTest extends TestCase {
 	/** Read the private firehose Topic after init_firehose has materialized it. */
 	private function topic( Log_Manager $lm ): ?Topic_Node {
 		$ref = new \ReflectionProperty( Log_Manager::class, 'topic' );
-		$ref->setAccessible( true );
 		return $ref->getValue( $lm );
 	}
 

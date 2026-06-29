@@ -275,7 +275,6 @@ class JobIntakeTest extends TestCase {
 		// Whitelist the temp dir on the substrate Config so the override file
 		// validates (Job_Intake reads the substrate's get_base_directory()).
 		$ref    = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'allowed_config_dirs' );
-		$ref->setAccessible( true );
 		$dirs   = $ref->getValue();
 		$dirs[] = $this->tmp;
 		$ref->setValue( null, $dirs );

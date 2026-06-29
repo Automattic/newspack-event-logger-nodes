@@ -128,21 +128,18 @@ class AppCoreTest extends TestCase {
 
 	public function test_short_name_string_function(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$this->assertSame( 'do_blocks', $ref->invoke( null, 'do_blocks' ) );
 	}
 
 	public function test_short_name_namespaced_string(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$this->assertSame( 'do_stuff', $ref->invoke( null, 'Some\\Namespace\\do_stuff' ) );
 	}
 
 	public function test_short_name_array_class_method_string(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$this->assertSame(
 			'Image_CDN::filter_the_content',
@@ -152,7 +149,6 @@ class AppCoreTest extends TestCase {
 
 	public function test_short_name_array_object_method(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$this->assertSame(
 			'stdClass::some_method',
@@ -162,7 +158,6 @@ class AppCoreTest extends TestCase {
 
 	public function test_short_name_closure(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$closure = function () { return 42; };
 		$result  = $ref->invoke( null, $closure );
@@ -172,7 +167,6 @@ class AppCoreTest extends TestCase {
 
 	public function test_short_name_invokable_object(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$invokable = new class() {
 			public function __invoke() {}
@@ -182,14 +176,12 @@ class AppCoreTest extends TestCase {
 
 	public function test_short_name_unknown_type(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$this->assertSame( '{unknown}', $ref->invoke( null, 42 ) );
 	}
 
 	public function test_short_name_single_element_array(): void {
 		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-		$ref->setAccessible( true );
 
 		$this->assertSame( '{unknown}', $ref->invoke( null, [ 'only_one' ] ) );
 	}
@@ -368,7 +360,6 @@ class AppCoreTest extends TestCase {
 		$core = new Core();
 
 		$ref = new \ReflectionProperty( Core::class, 'significant' );
-		$ref->setAccessible( true );
 		$sig = $ref->getValue( $core );
 
 		$this->assertArrayHasKey( 'the_content', $sig );
@@ -433,7 +424,6 @@ class AppCoreTest extends TestCase {
 
 		$core = new Core();
 		$ref      = new \ReflectionProperty( Core::class, 'start_priority' );
-		$ref->setAccessible( true );
 		$priority = $ref->getValue( $core );
 
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';
@@ -725,7 +715,6 @@ class AppCoreTest extends TestCase {
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'significant' );
-		$ref->setAccessible( true );
 		$sig  = $ref->getValue( $core );
 
 		$this->assertArrayHasKey( 'the_content', $sig );
@@ -745,7 +734,6 @@ class AppCoreTest extends TestCase {
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );
-		$ref->setAccessible( true );
 		// Default lives in the plugin's bundled config (-10000), not the
 		// fallback `?? 1` baked into Core::__construct — so this test pins
 		// the deployed config's value, not the code-level fallback.
@@ -762,7 +750,6 @@ class AppCoreTest extends TestCase {
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );
-		$ref->setAccessible( true );
 		$this->assertSame( 7, $ref->getValue( $core ) );
 
 		// And the registered filter uses the configured priority.

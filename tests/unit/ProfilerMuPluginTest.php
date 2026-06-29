@@ -41,7 +41,6 @@ class ProfilerMuPluginTest extends TestCase {
 			// passes, materializing the singleton. A stale class name returns at
 			// the guard and leaves the singleton null.
 			$ref = new \ReflectionProperty( Log_Manager::class, 'instance' );
-			$ref->setAccessible( true );
 			$this->assertNotNull(
 				$ref->getValue(),
 				'profiler plugins_loaded flush must resolve Log_Manager — a stale class name would silently no-op it'
