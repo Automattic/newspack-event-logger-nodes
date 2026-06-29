@@ -393,7 +393,6 @@ class AdminTest extends TestCase {
 		// Config::validate_config_path() restricts overrides to allowed dirs;
 		// add /tmp via reflection for the duration of the test.
 		$ref           = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
-		$ref->setAccessible( true );
 		$saved_allowed = $ref->getValue();
 		$ref->setValue( null, [ ...$saved_allowed, '/tmp' ] );
 
@@ -844,7 +843,6 @@ class AdminTest extends TestCase {
 		$admin->register_settings();
 
 		$ref = new \ReflectionProperty( Admin::class, 'option_names' );
-		$ref->setAccessible( true );
 		$reset_list = $ref->getValue();
 
 		foreach ( \array_keys( $GLOBALS['_registered_settings'] ) as $registered ) {
@@ -1069,7 +1067,6 @@ class AdminTest extends TestCase {
 	public function test_checkbox_carries_file_default_reset_attribute( string $callback, array $defaults, string $expected ): void {
 		Config::reset();
 		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
-		$ref->setAccessible( true );
 		$ref->setValue( null, $defaults );
 
 		try {
@@ -1091,7 +1088,6 @@ class AdminTest extends TestCase {
 	public function test_reset_default_attribute_ignores_stored_value(): void {
 		Config::reset();
 		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
-		$ref->setAccessible( true );
 		$ref->setValue( null, [ 'enable_logging' => true ] );
 		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
 
@@ -1490,7 +1486,6 @@ class AdminTest extends TestCase {
 
 	public function test_reset_mark_name_matches_shared_reset_gate(): void {
 		$method = new \ReflectionMethod( Admin::class, 'reset_mark_name' );
-		$method->setAccessible( true );
 		$got = $method->invoke( new Admin(), 'enable_logging' );
 
 		$this->assertSame(

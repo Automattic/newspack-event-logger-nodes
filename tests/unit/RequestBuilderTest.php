@@ -575,9 +575,7 @@ class RequestBuilderTest extends TestCase {
 	private function force_rotation_due( \Newspack_Event_Logger_Nodes\LRU_Cache $cache ): void {
 		$ro       = new \ReflectionObject( $cache );
 		$interval = $ro->getProperty( 'rotate_interval' );
-		$interval->setAccessible( true );
 		$last = $ro->getProperty( 'last_rotation' );
-		$last->setAccessible( true );
 		$last->setValue( $cache, \microtime( true ) - (float) $interval->getValue( $cache ) - 1.0 );
 	}
 
@@ -856,7 +854,6 @@ class RequestBuilderTest extends TestCase {
 		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target' );
 		$this->assertSame( 'ok', $result );
 		$p = ( new \ReflectionObject( $rb ) )->getProperty( 'errors_target' );
-		$p->setAccessible( true );
 		$this->assertSame( '', $p->getValue( $rb ) );
 	}
 

@@ -54,7 +54,6 @@ class TopologyRegisterPluginTest extends TestCase {
 		$out = [];
 		foreach ( [ 'stock_dirs', 'user_dir', 'segment_size_overrides_cache', 'registered_plugins' ] as $prop ) {
 			$ref = new \ReflectionProperty( Topology_Registry::class, $prop );
-			$ref->setAccessible( true );
 			$out[ $prop ] = $ref->getValue();
 		}
 		return $out;
@@ -64,7 +63,6 @@ class TopologyRegisterPluginTest extends TestCase {
 	private function restore_registry( array $state ): void {
 		foreach ( $state as $prop => $value ) {
 			$ref = new \ReflectionProperty( Topology_Registry::class, $prop );
-			$ref->setAccessible( true );
 			$ref->setValue( null, $value );
 		}
 	}

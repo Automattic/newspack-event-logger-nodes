@@ -818,14 +818,12 @@ class Log_Manager {
 			return;
 		}
 		$ref_partition_method = new \ReflectionMethod( Topic_Node::class, 'partition' );
-		$ref_partition_method->setAccessible( true );
 		$partition = $ref_partition_method->invoke( $this->topic, $this->partition_idx );
 		if ( ! $partition instanceof Partition_Node ) {
 			return;
 		}
 
 		$ref_init = new \ReflectionMethod( Partition_Node::class, 'init_current_segment' );
-		$ref_init->setAccessible( true );
 		$ref_init->invoke( $partition );
 	}
 

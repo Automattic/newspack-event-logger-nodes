@@ -94,7 +94,6 @@ class ReqgrepCommandTest extends TestCase {
 
 		$set = function ( string $prop, $value ) use ( $cmd ): void {
 			$ref = new \ReflectionProperty( $cmd, $prop );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, $value );
 		};
 		$set( 'pattern', $pattern );
@@ -111,7 +110,6 @@ class ReqgrepCommandTest extends TestCase {
 					return;
 				}
 				$out = new \ReflectionMethod( $cmd, 'output_request' );
-				$out->setAccessible( true );
 				$out->invoke( $cmd, $state->lines );
 				echo "[incomplete]\n\n";
 			}
@@ -119,13 +117,9 @@ class ReqgrepCommandTest extends TestCase {
 		$set( 'inflight', $inflight );
 
 		$this->process_line     = new \ReflectionMethod( $cmd, 'process_line' );
-		$this->process_line->setAccessible( true );
 		$this->format_entry     = new \ReflectionMethod( $cmd, 'format_entry' );
-		$this->format_entry->setAccessible( true );
 		$this->output_request   = new \ReflectionMethod( $cmd, 'output_request' );
-		$this->output_request->setAccessible( true );
 		$this->output_remaining = new \ReflectionMethod( $cmd, 'output_remaining' );
-		$this->output_remaining->setAccessible( true );
 
 		$this->cmd = $cmd;
 		return $cmd;
@@ -133,7 +127,6 @@ class ReqgrepCommandTest extends TestCase {
 
 	private function get_prop( string $prop ) {
 		$ref = new \ReflectionProperty( $this->cmd, $prop );
-		$ref->setAccessible( true );
 		return $ref->getValue( $this->cmd );
 	}
 
@@ -238,7 +231,6 @@ class ReqgrepCommandTest extends TestCase {
 		\ob_get_clean();
 
 		$indent_prop = new \ReflectionProperty( $cmd, 'fmt_indent' );
-		$indent_prop->setAccessible( true );
 		$this->assertGreaterThanOrEqual( 0, $indent_prop->getValue( $cmd ) );
 	}
 
@@ -639,7 +631,6 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_stdin_has_data_returns_false_when_no_stdin(): void {
 		$cmd = $this->make_cmd();
 		$ref = new \ReflectionMethod( $cmd, 'stdin_has_data' );
-		$ref->setAccessible( true );
 		// In PHPUnit, STDIN is typically a TTY/sock; expect false (no piped data).
 		$result = $ref->invoke( $cmd );
 		$this->assertIsBool( $result );
@@ -654,7 +645,6 @@ class ReqgrepCommandTest extends TestCase {
 			$stream = \fopen( $tmp, 'r' );
 			$cmd    = $this->make_cmd();
 			$ref    = new \ReflectionMethod( $cmd, 'stdin_has_data' );
-			$ref->setAccessible( true );
 			$this->assertTrue( $ref->invoke( $cmd, $stream ) );
 			\fclose( $stream );
 		} finally {
@@ -670,7 +660,6 @@ class ReqgrepCommandTest extends TestCase {
 		// guard rather than the underlying syscall.
 		$cmd = $this->make_cmd();
 		$ref = new \ReflectionMethod( $cmd, 'stdin_has_data' );
-		$ref->setAccessible( true );
 
 		// fstat on a closed resource returns false → method short-circuits.
 		$stream = \fopen( 'php://memory', 'r+' );
@@ -685,7 +674,6 @@ class ReqgrepCommandTest extends TestCase {
 		// matched rid completed, output_request fires.
 		$cmd = $this->make_cmd( 'targetR' );
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
-		$ref->setAccessible( true );
 
 		$stream = \fopen( 'php://memory', 'r+' );
 		\fwrite( $stream, \json_encode( [ 'n' => 1, 'rid' => 'targetR', 'k' => 'process (start)',    'm' => '/api', 'ts' => 1700000000.0 ] ) . "\n" );
@@ -712,7 +700,6 @@ class ReqgrepCommandTest extends TestCase {
 		// at end-of-stream; output_remaining flushes it as `[incomplete]`.
 		$cmd = $this->make_cmd( 'partialR', /*raw*/ false, /*incomplete*/ true );
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
-		$ref->setAccessible( true );
 
 		$stream = \fopen( 'php://memory', 'r+' );
 		\fwrite( $stream, \json_encode( [ 'n' => 1, 'rid' => 'partialR', 'k' => 'process (start)', 'm' => '/half', 'ts' => 1700000000.0 ] ) . "\n" );
@@ -733,7 +720,6 @@ class ReqgrepCommandTest extends TestCase {
 		// shell-level scaffolding), and inflight stays empty.
 		$cmd = $this->make_cmd( 'never-matches' );
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
-		$ref->setAccessible( true );
 
 		$stream = \fopen( 'php://memory', 'r+' );
 		\fwrite( $stream, \json_encode( [ 'n' => 1, 'rid' => 'noiseR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) . "\n" );
@@ -793,7 +779,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd( '/calendar' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -802,7 +787,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			\ob_start();
 			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
-			$ref->setAccessible( true );
 			$ref->invoke( $cmd );
 			$out = \ob_get_clean();
 
@@ -848,7 +832,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd( '/' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -857,7 +840,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			\ob_start();
 			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
-			$ref->setAccessible( true );
 			$ref->invoke( $cmd );
 			$out = \ob_get_clean();
 
@@ -878,13 +860,11 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
 
 			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$ref->setAccessible( true );
 
 			$a = $ref->invoke( $cmd, 0 );
 			$b = $ref->invoke( $cmd, 0 );
@@ -912,13 +892,11 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp . '/firehose.log' );
 
 			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$ref->setAccessible( true );
 			$p = $ref->invoke( $cmd, 0 );
 
 			$this->assertStringStartsWith( 'firehose.', $p->name(), 'sibling Partition must be named after the firehose log' );
@@ -935,13 +913,11 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp . '/firehose.log' );
 
 			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$ref->setAccessible( true );
 			$p = $ref->invoke( $cmd, 0 );
 
 			$this->assertNotNull( $p->patron(), 'sibling Partition must have a patron (marks it as plumbing)' );
@@ -961,13 +937,11 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp . '/firehose.log' );
 
 			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$ref->setAccessible( true );
 			$p = $ref->invoke( $cmd, 0 );
 
 			$this->assertSame( $ci, $p->sink(), 'sibling Partition must sink into the interpreter when one is registered' );
@@ -987,13 +961,11 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp . '/firehose.log' );
 
 			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$ref->setAccessible( true );
 			$p = $ref->invoke( $cmd, 0 );
 
 			$this->assertStringStartsWith( 'firehose.', $p->name() );
@@ -1010,7 +982,6 @@ class ReqgrepCommandTest extends TestCase {
 		try {
 			$cmd = $this->make_cmd();
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
-			$ref_method->setAccessible( true );
 
 			$partition = new \Newspack_Nodes\Partition_Node();
 
@@ -1040,7 +1011,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd( 'r1' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1049,7 +1019,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$partition->arguments( "{$tmp}/p0" );
 			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
-			$ref_method->setAccessible( true );
 
 			\ob_start();
 			$consumed = $ref_method->invoke( $cmd, $partition, 0, 0, \strlen( $line1 ) + \strlen( $partial ) );
@@ -1082,14 +1051,12 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
 			$set( 'num_partitions', 1 );
 
 			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
-			$ref->setAccessible( true );
 			$cursors = $ref->invoke( $cmd );
 
 			$this->assertSame( 3, $cursors[0]['seg'] );
@@ -1106,14 +1073,12 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
 			$set( 'num_partitions', 1 );
 
 			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
-			$ref->setAccessible( true );
 			$cursors = $ref->invoke( $cmd );
 
 			$this->assertSame( [ 'seg' => 0, 'off' => 0 ], $cursors[0] );
@@ -1139,7 +1104,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1147,7 +1111,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cursors = [ 0 => [ 'seg' => 0, 'off' => $size ] ];
 			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-			$ref->setAccessible( true );
 			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
 
 			$this->assertFalse( $had_data );
@@ -1175,7 +1138,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd( 'cal-rid' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1183,7 +1145,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cursors = [ 0 => [ 'seg' => 0, 'off' => 0 ] ];
 			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-			$ref->setAccessible( true );
 
 			\ob_start();
 			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
@@ -1222,7 +1183,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd( 'new' );
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1230,7 +1190,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cursors = [ 0 => [ 'seg' => 0, 'off' => $seg0_size ] ];
 			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-			$ref->setAccessible( true );
 
 			\ob_start();
 			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
@@ -1253,7 +1212,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1261,7 +1219,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			// 0 iterations: just the seed + log lines, no polling.
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
-			$ref->setAccessible( true );
 			\ob_start();
 			$ref->invoke( $cmd, 0 );
 			\ob_get_clean();
@@ -1306,7 +1263,6 @@ class ReqgrepCommandTest extends TestCase {
 			// Suppress the prod-only output-buffer drain so PHPUnit's own
 			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			// Path must be inside the logs directory the Config resolves.
@@ -1344,7 +1300,6 @@ class ReqgrepCommandTest extends TestCase {
 			// Suppress the prod-only output-buffer drain so PHPUnit's own
 			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			$this->expectException( \RuntimeException::class );
@@ -1376,7 +1331,6 @@ class ReqgrepCommandTest extends TestCase {
 			// Suppress the prod-only output-buffer drain so PHPUnit's own
 			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			$this->expectException( \RuntimeException::class );
@@ -1419,7 +1373,6 @@ class ReqgrepCommandTest extends TestCase {
 		// the test ends so other tests don't see torn-down buffers.
 		$cmd = $this->make_cmd();
 		$ref = new \ReflectionMethod( $cmd, 'drain_output_buffers' );
-		$ref->setAccessible( true );
 
 		$start_level = \ob_get_level();
 		\ob_start();
@@ -1579,7 +1532,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			\ob_start();
@@ -1594,9 +1546,7 @@ class ReqgrepCommandTest extends TestCase {
 			\ob_get_clean();
 
 			$bucket = new \ReflectionProperty( $cmd, 'bucket_size' );
-			$bucket->setAccessible( true );
 			$buckets_n = new \ReflectionProperty( $cmd, 'num_buckets' );
-			$buckets_n->setAccessible( true );
 			$this->assertSame( 10000, $bucket->getValue( $cmd ) );
 			$this->assertSame( 100, $buckets_n->getValue( $cmd ) );
 		} finally {
@@ -1619,7 +1569,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			\ob_start();
@@ -1634,9 +1583,7 @@ class ReqgrepCommandTest extends TestCase {
 			\ob_get_clean();
 
 			$bucket = new \ReflectionProperty( $cmd, 'bucket_size' );
-			$bucket->setAccessible( true );
 			$buckets_n = new \ReflectionProperty( $cmd, 'num_buckets' );
-			$buckets_n->setAccessible( true );
 			$this->assertSame( 1, $bucket->getValue( $cmd ) );
 			$this->assertSame( 1, $buckets_n->getValue( $cmd ) );
 		} finally {
@@ -1667,7 +1614,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			\ob_start();
@@ -1681,7 +1627,6 @@ class ReqgrepCommandTest extends TestCase {
 			\ob_get_clean();
 
 			$offset = new \ReflectionProperty( $cmd, 'cat_offset' );
-			$offset->setAccessible( true );
 			$this->assertSame( 'recent', $offset->getValue( $cmd ) );
 		} finally {
 			$GLOBALS['_wp_actions'] = [];
@@ -1704,14 +1649,12 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
 			$set( 'num_partitions', 1 );
 
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
-			$ref->setAccessible( true );
 			$ref->invoke( $cmd, 0 );
 
 			$joined = \implode( "\n", $GLOBALS['_test_wp_cli_logs'] );
@@ -1747,14 +1690,12 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
 			$set( 'num_partitions', 2 );
 
 			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
-			$ref->setAccessible( true );
 			$cursors = $ref->invoke( $cmd );
 
 			$this->assertCount( 2, $cursors );
@@ -1789,7 +1730,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1797,7 +1737,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cursors = [ 0 => [ 'seg' => 0, 'off' => $seg0_size ] ];
 			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-			$ref->setAccessible( true );
 
 			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
 			// No data from either segment (seg0 at-end, seg2 empty) → false.
@@ -1818,7 +1757,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1826,7 +1764,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cursors = [ 0 => [ 'seg' => 0, 'off' => 0 ] ];
 			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-			$ref->setAccessible( true );
 
 			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
 			$this->assertFalse( $had_data );
@@ -1846,7 +1783,6 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setAccessible( true );
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
@@ -1855,7 +1791,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			\ob_start();
 			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
-			$ref->setAccessible( true );
 			$ref->invoke( $cmd );
 			$out = \ob_get_clean();
 
@@ -1875,7 +1810,6 @@ class ReqgrepCommandTest extends TestCase {
 		// → output_remaining() fires with empty inflight (no output).
 		$cmd = $this->make_cmd();
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
-		$ref->setAccessible( true );
 
 		$stream = \fopen( 'php://memory', 'r+' );
 		// Don't write anything → stream starts at EOF.
@@ -1902,7 +1836,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			\ob_start();
@@ -1916,7 +1849,6 @@ class ReqgrepCommandTest extends TestCase {
 			\ob_get_clean();
 
 			$prop = new \ReflectionProperty( $cmd, 'raw' );
-			$prop->setAccessible( true );
 			$this->assertTrue( $prop->getValue( $cmd ) );
 		} finally {
 			$GLOBALS['_wp_actions'] = [];
@@ -1937,7 +1869,6 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setAccessible( true );
 			$ref->setValue( $cmd, false );
 
 			\ob_start();
@@ -1951,7 +1882,6 @@ class ReqgrepCommandTest extends TestCase {
 			\ob_get_clean();
 
 			$prop = new \ReflectionProperty( $cmd, 'incomplete' );
-			$prop->setAccessible( true );
 			$this->assertTrue( $prop->getValue( $cmd ) );
 		} finally {
 			$GLOBALS['_wp_actions'] = [];

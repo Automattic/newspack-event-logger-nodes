@@ -515,7 +515,6 @@ require_once __DIR__ . '/Helpers/VerbHarness.php';
 		return;
 	}
 	$ref     = new \ReflectionProperty( \Newspack_Nodes\Config::class, 'allowed_config_dirs' );
-	$ref->setAccessible( true );
 	$dirs    = $ref->getValue();
 	$dirs[]  = \dirname( __DIR__ );
 	$ref->setValue( null, $dirs );

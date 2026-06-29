@@ -73,7 +73,6 @@ class SettingsSyncResolverTest extends TestCase {
 		$eln_defaults = Config::load_config_defaults();
 		unset( $eln_defaults['num_partitions'] );
 		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
-		$ref->setAccessible( true );
 		$ref->setValue( null, $eln_defaults );
 
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(

@@ -142,7 +142,6 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
 
 		$ref = new \ReflectionProperty( Request_Builder_Node::class, 'completed_target' );
-		$ref->setAccessible( true );
 		$this->assertSame( 'completed:tee', $ref->getValue( $rb ) );
 	}
 
