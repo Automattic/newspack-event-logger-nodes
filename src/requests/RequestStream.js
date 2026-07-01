@@ -5,7 +5,7 @@
  * Real-time scrolling log of completed requests.
  *
  * This is a THIN view over the `requestlog:*` node graph (mounted by
- * `useRequestLogGraph`). The graph owns all data: `_sse` holds the EventSource
+ * `useRequestLogGraph`). The graph owns all data: `requestlog:link` holds the EventSource
  * and routes envelopes directly to `requestlog:view`, which defensively shapes
  * each completed-request envelope (drop missing-url, clip url + UA, default-fill)
  * and holds the buffer + view model. This component only renders.
@@ -46,7 +46,7 @@ import './styles/request-stream.scss';
 
 const ROW_HEIGHT = 33; // Fixed row height in pixels.
 const VIEW_NODE = 'requestlog:view';
-const SSE_NODE = '_sse';
+const LINK_NODE = 'requestlog:link';
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
@@ -301,7 +301,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
 	const filterRef = useRef( filter );
 	filterRef.current = filter;
-	// Last _sse connector lastEventTime the rAF observed — drives "Xs ago".
+	// Last RemoteLink lastEventTime() the rAF observed — drives "Xs ago".
 	const lastEventTimeRef = useRef( null );
 
 	// Ticking "Xs ago" display.
@@ -326,13 +326,14 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			const rps = node?.rps ?? 0;
 			const filterLower = filterRef.current.toLowerCase();
 
-			// Staleness reflects CONNECTION liveness, owned by the shared _sse
-			// connector (it stamps lastEventTime on every frame AND the server's
-			// idle heartbeats), so an idle-but-healthy stream resets "Xs ago"
-			// instead of climbing; a real drop (no heartbeats) leaves it frozen
-			// and "ago" climbs as the intended warning.
+			// Staleness reflects CONNECTION liveness, owned by the RemoteLink's
+			// composed SseIn (it stamps lastEventTime on every frame AND the
+			// server's idle heartbeats), read via the link's lastEventTime()
+			// passthrough — so an idle-but-healthy stream resets "Xs ago" instead of
+			// climbing; a real drop (no heartbeats) leaves it frozen and "ago"
+			// climbs as the intended warning.
 			lastEventTimeRef.current =
-				Core.node( SSE_NODE )?.lastEventTime ?? null;
+				Core.node( LINK_NODE )?.lastEventTime() ?? null;
 
 			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
 			// what we draw / count.

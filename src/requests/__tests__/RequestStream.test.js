@@ -383,13 +383,15 @@ describe( 'RequestStream', () => {
 		expect( uaIdx ).toBeLessThan( durIdx );
 	} );
 
-	it( 'sources the staleness display from the _sse connector lastEventTime', () => {
-		// Staleness now reflects CONNECTION liveness, owned by the shared _sse
+	it( 'sources the staleness display from the link connector lastEventTime', () => {
+		// Staleness now reflects CONNECTION liveness, owned by the shared link
 		// connector — the rAF reads its lastEventTime, not the view node's.
 		registerViewFixture( {
 			entries: [ entry( { rid: 'r-stale' } ) ],
 		} );
-		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 5000 } );
+		Core.nodes.set( 'requestlog:link', {
+			lastEventTime: () => Date.now() - 5000,
+		} );
 		const { container } = mount();
 		tickFrame();
 		// Find any sibling span inside the stats element whose text matches "Xs ago".
@@ -531,11 +533,13 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'staleness is connection-driven, so a filter never affects it', () => {
-		// Staleness reflects the _sse connection's liveness, not the displayed
+		// Staleness reflects the link connection's liveness, not the displayed
 		// rows — so a non-matching filter (which hides every row) still shows
 		// "Xs ago" off the connector.
 		registerViewFixture( { entries: [] } );
-		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 3000 } );
+		Core.nodes.set( 'requestlog:link', {
+			lastEventTime: () => Date.now() - 3000,
+		} );
 		const { container } = mount();
 		tickFrame();
 		const input = container.querySelector(
@@ -557,12 +561,14 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'Clear keeps the live-stream staleness (connection still alive)', () => {
-		// Clear empties the displayed rows, but the _sse connection is still
+		// Clear empties the displayed rows, but the link connection is still
 		// alive — so "Xs ago" must persist (Clear no longer touches staleness).
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
-		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 8000 } );
+		Core.nodes.set( 'requestlog:link', {
+			lastEventTime: () => Date.now() - 8000,
+		} );
 		const { container } = mount();
 		tickFrame();
 		expect(
@@ -583,12 +589,14 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'resets "Xs ago" when an idle stream gets a heartbeat (connector lastEventTime advances)', () => {
-		// An idle stream (no new rows) whose _sse lastEventTime advances on a
+		// An idle stream (no new rows) whose link lastEventTime advances on a
 		// heartbeat must reset "Xs ago" — that is the whole point of sourcing
 		// staleness from the connector.
 		jest.useFakeTimers();
 		registerViewFixture( { entries: [] } );
-		Core.nodes.set( '_sse', { lastEventTime: Date.now() - 12000 } );
+		Core.nodes.set( 'requestlog:link', {
+			lastEventTime: () => Date.now() - 12000,
+		} );
 		const { container } = mount();
 		tickFrame();
 		// Advance the 1s display timer so the ticking "now" re-reads the ref.
@@ -601,7 +609,7 @@ describe( 'RequestStream', () => {
 		expect( stats.textContent ).toMatch( /1[123]s ago/ );
 		// A heartbeat advances the connector's lastEventTime to now — "Xs ago"
 		// must reset to a small value instead of climbing past 12s.
-		Core.node( '_sse' ).lastEventTime = Date.now();
+		Core.node( 'requestlog:link' ).lastEventTime = () => Date.now();
 		tickFrame();
 		act( () => {
 			jest.advanceTimersByTime( 1000 );
