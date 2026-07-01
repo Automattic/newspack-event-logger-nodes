@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.22.3
+ * Version: 0.22.4
  * Author: Automattic
  * Requires Plugins: newspack-nodes
  * Requires at least: 6.5
@@ -16,7 +16,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.22.3' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.22.4' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
