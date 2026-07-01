@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Request Log / Error Log / Gyroscope "Xs ago" stream-staleness indicator works again.** All three drove staleness off `Core.node('_sse').lastEventTime`, but `_sse` is not a registered browser node (the substrate's `RemoteLink` composes its `SseIn` unnamed), so the lookup was always `undefined` and the indicator was silently dead. They now read the substrate's new `RemoteLink.lastEventTime()` passthrough off the link's own name (`requestlog:link` / `perferrors:link` / `gyroscope:link`). Requires newspack-nodes with that passthrough.
 - **SSE dashboards (Request Log, Error Log, Gyroscope) now resume from their last offset when the tab regains visibility, instead of restarting from the live end.** Each dashboard's page-visibility effect closed the SSE stream while the tab was hidden and reconnected with a bare `link.connect()` on refocus — no position seed — so the substrate tail-seeked and everything that streamed while hidden was dropped. They now mirror the substrate's own Raw Logs / Topic Probe dashboards: the FIRST connect of a link live-follows, but a RECONNECT of the same link (hide→show, or unpause) passes `link.resumePositions()` so the hidden gap streams in. A `connectedLinkRef` guard keeps a redundant re-render from tearing a live seek down into a tail reconnect (and, for Gyroscope, from re-clearing the in-flight map mid-stream).
 
 ## [0.22.3] - 2026-06-29

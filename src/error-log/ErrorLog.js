@@ -5,7 +5,7 @@
  * Real-time scrolling log of errors and warnings from errors.log.
  *
  * This is a THIN view over the `perferrors:view` node graph (mounted by
- * `useErrorLogGraph`). The graph owns all data: the substrate's `_sse` holds
+ * `useErrorLogGraph`). The graph owns all data: the substrate's `perferrors:link` holds
  * the EventSource connection and streams envelopes directly into
  * `perferrors:view`, which shapes them into rows and owns the buffer + view
  * model. This component only renders.
@@ -39,7 +39,7 @@ import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
 const VIEW_NODE = 'perferrors:view';
-const SSE_NODE = '_sse';
+const LINK_NODE = 'perferrors:link';
 const EMPTY_VIEW = {
 	paused: false,
 	connectionError: false,
@@ -228,7 +228,7 @@ export default function ErrorLog() {
 	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
 	const filterRef = useRef( filter );
 	filterRef.current = filter;
-	// Last _sse connector lastEventTime the rAF observed — drives "Xs ago".
+	// Last RemoteLink lastEventTime() the rAF observed — drives "Xs ago".
 	const lastEventTimeRef = useRef( null );
 
 	// Ticking "Xs ago" display.
@@ -258,13 +258,14 @@ export default function ErrorLog() {
 			const buffer = node?.entries ?? [];
 			const filterLower = filterRef.current.toLowerCase();
 
-			// Staleness reflects CONNECTION liveness, owned by the shared _sse
-			// connector (it stamps lastEventTime on every frame AND the server's
-			// idle heartbeats), so an idle-but-healthy stream resets "Xs ago"
-			// instead of climbing; a real drop (no heartbeats) leaves it frozen
-			// and "ago" climbs as the intended warning.
+			// Staleness reflects CONNECTION liveness, owned by the RemoteLink's
+			// composed SseIn (it stamps lastEventTime on every frame AND the
+			// server's idle heartbeats), read via the link's lastEventTime()
+			// passthrough — so an idle-but-healthy stream resets "Xs ago" instead of
+			// climbing; a real drop (no heartbeats) leaves it frozen and "ago"
+			// climbs as the intended warning.
 			lastEventTimeRef.current =
-				Core.node( SSE_NODE )?.lastEventTime ?? null;
+				Core.node( LINK_NODE )?.lastEventTime() ?? null;
 
 			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
 			// what we draw / count.
