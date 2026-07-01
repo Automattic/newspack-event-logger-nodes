@@ -5,7 +5,7 @@
  * The graph is owned by useGyroscopeGraph (tested separately); here we mock it so
  * the view never touches a real EventSource, and we register a fixture
  * `gyroscope:view` node in Core whose `snapshot()` returns the render rows and
- * whose `rps` / `lastEventTime` the refresh tick reads. The view samples the node
+ * whose `rps` the refresh tick reads. The view samples the node
  * on its refresh-interval timer (the gyroscope analog of RequestStream's rAF), so
  * tests advance fake timers to drive a render pass.
  */
@@ -22,20 +22,18 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 const { useGyroscopeGraph } = require( '../hooks/useGyroscopeGraph' );
 
 // A minimal stand-in for the gyroscope:view node: snapshot() returns the render
-// rows (the real node reaps + sorts + caps here), and rps / lastEventTime live on
-// the instance — exactly what the refresh tick reads off Core.node('gyroscope:view').
+// rows (the real node reaps + sorts + caps here), and rps lives on the instance —
+// exactly what the refresh tick reads off Core.node('gyroscope:view').
 // The register/setState/setStateCache machinery backs useNodeState('gyroscope:view',
 // 'view'), which the view reads for the low-frequency { connectionError } model
 // (the reconnect banner). setState here notifies subscribers like the real Node.
 function registerViewFixture( {
 	rows = [],
 	rps = 0,
-	lastEventTime = null,
 	connectionError = false,
 } = {} ) {
 	const node = {
 		rps,
-		lastEventTime,
 		snapshot: jest.fn( () => rows ),
 		registrations: { view: {} },
 		setStateCache: {},
@@ -209,7 +207,7 @@ describe( 'Inflight', () => {
 		// The connector owns stream liveness (it sees data rows AND heartbeats), so
 		// an idle-but-healthy stream — view node with no row arrivals — still shows a
 		// fresh "ago" off the connector's lastEventTime.
-		registerViewFixture(); // no view-node lastEventTime
+		registerViewFixture(); // no row arrivals
 		Core.nodes.set( 'gyroscope:link', { lastEventTime: () => Date.now() } );
 		const { container } = mount();
 		tickRefresh();
@@ -217,7 +215,7 @@ describe( 'Inflight', () => {
 	} );
 
 	it( 'hides "Xs ago" when the link stream is closed (lastEventTime null)', () => {
-		registerViewFixture( { lastEventTime: Date.now() } ); // view-node time is ignored now
+		registerViewFixture();
 		Core.nodes.set( 'gyroscope:link', { lastEventTime: () => null } );
 		const { container } = mount();
 		tickRefresh();

@@ -13,9 +13,9 @@
  * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the
  * render cadence: each tick it calls `Core.node('gyroscope:view').snapshot(maxRows)`
  * — which reaps completed entries (shown one tick then dropped), sorts by est_ms
- * desc, caps to maxRows — and reads `.rps` / `.lastEventTime` off the node. A busy
- * stream never re-renders React per message; only the cheap snapshot is pushed at
- * the refresh cadence.
+ * desc, caps to maxRows — and reads `.rps` off the node (and the RemoteLink's
+ * `lastEventTime()` for staleness). A busy stream never re-renders React per
+ * message; only the cheap snapshot is pushed at the refresh cadence.
  *
  * The low-frequency `{ connectionError }` model (the reconnect banner) is read
  * separately via `useNodeState('gyroscope:view','view')`.

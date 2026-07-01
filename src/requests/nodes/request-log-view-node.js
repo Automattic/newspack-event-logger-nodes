@@ -34,7 +34,7 @@ const urlHash = ( url ) => {
  * Two cadences, deliberately split for performance (mirrors rawLogsView):
  * - HIGH frequency (the request stream): `_appendRow` writes each enriched entry
  *   into a fixed ring buffer (O(1): write at head, advance, overwrite oldest) and
- *   updates `this.rps` / `this.lastEventTime`, but does NOT publish. The React
+ *   updates `this.rps`, but does NOT publish. The React
  *   view reads the VISIBLE window straight off the node each animation frame via
  *   `entriesCount` + `entryAt(i)` (newest-first) — O(rows-on-screen), not
  *   O(buffer) — so a high-volume stream never re-renders or re-copies per frame.
@@ -72,7 +72,6 @@ export class RequestLogViewNode extends Node {
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
-		this.lastEventTime = null;
 		this.paused = false;
 		this.connectionError = false;
 		this._publish();
@@ -112,9 +111,9 @@ export class RequestLogViewNode extends Node {
 		this.rps = 0;
 	}
 
-	// Publish ONLY the low-frequency view model. `entries` / `rps` /
-	// `lastEventTime` are the high-frequency buffer the rAF reads off the node
-	// directly — keeping them out of setState is what stops a busy stream
+	// Publish ONLY the low-frequency view model. `entries` / `rps` are the
+	// high-frequency buffer the rAF reads off the node directly — keeping them
+	// out of setState is what stops a busy stream
 	// re-rendering React per request. `connectionError` is low-frequency (only
 	// flips on connect/disconnect) so it rides setState for the reconnect banner.
 	_publish() {
@@ -160,7 +159,6 @@ export class RequestLogViewNode extends Node {
 			user_agent: clip( req.user_agent || '', MAX_UA_LENGTH ),
 			isEven: this.entryCounter % 2 === 0,
 		} );
-		this.lastEventTime = Date.now();
 		this._updateRequestsPerSecond( 1 );
 	}
 

@@ -32,21 +32,19 @@ const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 
 // A minimal stand-in for the requestlog:view node: the low-frequency model lives
 // in setStateCache.view (what useNodeState subscribes to) and the high-frequency
-// buffer / rps / lastEventTime live directly on the instance (what the rAF reads).
-// setState here notifies subscribers exactly like the real Node.setState.
+// buffer / rps live directly on the instance (what the rAF reads). setState here
+// notifies subscribers exactly like the real Node.setState.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
 	entries = [],
 	rps = 0,
-	lastEventTime = null,
 } = {} ) {
 	const node = {
 		registrations: { view: {} },
 		setStateCache: {},
 		entries,
 		rps,
-		lastEventTime,
 		register( event, listener, cb ) {
 			this.registrations[ event ][ listener ] = cb;
 			if ( event in this.setStateCache ) {

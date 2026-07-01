@@ -12,8 +12,8 @@
  *
  * Two read paths, matching the view node's two cadences:
  * - LOW frequency: `useNodeState('perferrors:view','view')` for
- *   `{ paused, connectionError, lastEventTime }` (the pause button, the reconnect
- *   banner, the empty-state label, and the "Xs ago" staleness).
+ *   `{ paused, connectionError }` (the pause button, the reconnect banner, the
+ *   empty-state label). The "Xs ago" staleness is read off the RemoteLink.
  * - HIGH frequency: the rAF reads `Core.node('perferrors:view').entries` directly
  *   each frame — a busy stream never re-renders React per error.
  *
@@ -43,7 +43,6 @@ const LINK_NODE = 'perferrors:link';
 const EMPTY_VIEW = {
 	paused: false,
 	connectionError: false,
-	lastEventTime: null,
 };
 
 /**

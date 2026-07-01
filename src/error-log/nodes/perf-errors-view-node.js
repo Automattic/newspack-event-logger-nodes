@@ -15,15 +15,14 @@ const MAX_M_LENGTH = 1000;
  * Two cadences, deliberately split for performance (mirrors requestLogView):
  * - HIGH frequency (the error stream): `_appendEnvelope` validates + enriches
  *   each envelope, writes it into a fixed ring buffer (O(1): write at head,
- *   advance, overwrite oldest), and updates `this.rps` / `this.lastEventTime`, but
+ *   advance, overwrite oldest), and updates `this.rps`, but
  *   does NOT publish. The React view reads the VISIBLE window straight off the
  *   node each animation frame via `entriesCount` + `entryAt(i)` (newest-first) —
  *   O(rows-on-screen), not O(buffer). `entries` materializes the whole buffer
  *   newest-first for the filter path + tests only; it is NOT on the frame path.
  * - LOW frequency (control): only `_control` publishes the small view model via
- *   `setState('view', { paused, connectionError, lastEventTime })` — the pause
- *   button, the reconnect banner, and the "Xs ago" staleness label, consumed by
- *   `useNodeState('perferrors:view','view')`.
+ *   `setState('view', { paused, connectionError })` — the pause button and the
+ *   reconnect banner, consumed by `useNodeState('perferrors:view','view')`.
  *
  * `fill()` distinguishes its two inputs by `VALUE.action`:
  * - control (`VALUE = { action, … }`, KEY empty) comes HOOK-DIRECT from
@@ -50,7 +49,6 @@ export class PerfErrorsViewNode extends Node {
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
-		this.lastEventTime = null;
 		this.paused = false;
 		this.connectionError = false;
 		this._publish();
@@ -91,14 +89,12 @@ export class PerfErrorsViewNode extends Node {
 	}
 
 	// Publish ONLY the low-frequency view model. `entries` / `rps` are the
-	// high-frequency buffer the rAF reads off the node directly. `lastEventTime`
-	// is also rAF-read off the node; publishing it lets the banner / empty-state /
-	// "Xs ago" re-render at low frequency.
+	// high-frequency buffer the rAF reads off the node directly, kept out of
+	// setState so a busy stream never re-renders React per envelope.
 	_publish() {
 		this.setState( 'view', {
 			paused: this.paused,
 			connectionError: this.connectionError,
-			lastEventTime: this.lastEventTime,
 		} );
 	}
 
@@ -139,7 +135,6 @@ export class PerfErrorsViewNode extends Node {
 			m,
 			isEven: this.entryCounter % 2 === 0,
 		} );
-		this.lastEventTime = Date.now();
 		this._updateRequestsPerSecond( 1 );
 	}
 

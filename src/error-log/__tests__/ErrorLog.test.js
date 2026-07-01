@@ -4,8 +4,8 @@
  * The graph is owned by useErrorLogGraph (tested separately); here we mock it to
  * hand back spy control callbacks, and we register a fixture `perferrors:view`
  * node in Core so the view can read its low-frequency model via useNodeState
- * ({ paused, connectionError, lastEventTime }) and its high-frequency buffer
- * (entries) directly off the node in the rAF. Mirrors RequestStream.test.js.
+ * ({ paused, connectionError }) and its high-frequency buffer (entries) directly
+ * off the node in the rAF. Mirrors RequestStream.test.js.
  */
 
 jest.mock( '../hooks/useErrorLogGraph', () => ( {
@@ -37,7 +37,6 @@ const { useErrorLogGraph } = require( '../hooks/useErrorLogGraph' );
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
-	lastEventTime = null,
 	entries = [],
 } = {} ) {
 	const node = {
@@ -60,7 +59,7 @@ function registerViewFixture( {
 			);
 		},
 	};
-	node.setState( 'view', { paused, connectionError, lastEventTime } );
+	node.setState( 'view', { paused, connectionError } );
 	Core.nodes.set( 'perferrors:view', node );
 	return node;
 }

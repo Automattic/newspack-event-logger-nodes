@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed the dead `lastEventTime` stamping from the three stream view nodes.** Since staleness is now read off the RemoteLink's `lastEventTime()`, the `RequestLogView` / `PerfErrorsView` / `GyroscopeView` nodes no longer stamp (nor, for `PerfErrorsView`, publish) their own `lastEventTime` — it had no reader. No behavior change; the "Xs ago" indicator is sourced entirely from the link.
 - **The Request Log / Error Log / Gyroscope dashboards now share the substrate's new `useVisibilityGatedLink` hook** instead of each hand-rolling the mount + visibility-gated SSE-connection lifecycle. Behavior is unchanged (same subscribe, view, pause, and resume-on-refocus); the ~15-line resume guard that had been copy-pasted into all three now lives once in `newspack-nodes/src/shared/hooks`, consumed via the `@newspack-nodes/shared` alias.
 
 ### Fixed

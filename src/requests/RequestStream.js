@@ -14,9 +14,10 @@
  * - LOW frequency: `useNodeState('requestlog:view','view')` for
  *   `{ paused, connectionError }` (the pause button, empty-state label, and the
  *   reconnect banner).
- * - HIGH frequency: the rAF reads `Core.node('requestlog:view').entries`, `.rps`
- *   and `.lastEventTime` directly each frame — a busy stream never re-renders
- *   React per request; only the cheap derived state (the snapshot + rps) is pushed
+ * - HIGH frequency: the rAF reads `Core.node('requestlog:view').entries` + `.rps`
+ *   directly each frame (and the RemoteLink's `lastEventTime()` for staleness) — a
+ *   busy stream never re-renders React per request; only the cheap derived state
+ *   (the snapshot + rps) is pushed
  *   when it changes.
  *
  * Click any request to view its full trace in the Performance Dashboard. Entries

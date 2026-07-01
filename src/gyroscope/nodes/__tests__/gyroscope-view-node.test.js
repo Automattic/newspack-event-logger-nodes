@@ -149,7 +149,6 @@ test( 'drops the substrate `connected` envelope (never a gyroscope record)', () 
 	const v = makeView( 'gyroscope:view' );
 	v.fill( connectedEnvelope() );
 	expect( v.requests.size ).toBe( 0 );
-	expect( v.lastEventTime ).toBeNull();
 } );
 
 test( 'drops an unrecognized wire envelope (string VALUE, no rid)', () => {
@@ -159,7 +158,6 @@ test( 'drops an unrecognized wire envelope (string VALUE, no rid)', () => {
 	m[ VALUE ] = 'string';
 	v.fill( m );
 	expect( v.requests.size ).toBe( 0 );
-	expect( v.lastEventTime ).toBeNull();
 } );
 
 test( 'drops an object VALUE missing rid (defensive)', () => {
@@ -223,13 +221,6 @@ test( 'RPS tracking aggregates per second, not one entry per tick (bounded windo
 	}
 	expect( Array.isArray( v.rpsBuckets ) ).toBe( true );
 	expect( v.rpsBuckets.length ).toBeLessThanOrEqual( 12 );
-} );
-
-test( 'touches lastEventTime on each processed envelope', () => {
-	const v = makeView( 'gyroscope:view' );
-	expect( v.lastEventTime ).toBeNull();
-	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
-	expect( typeof v.lastEventTime ).toBe( 'number' );
 } );
 
 test( 'clear empties the map, history and rps', () => {
