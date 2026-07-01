@@ -21,17 +21,15 @@
  * substrate uses 'connected' AND snoops it off before routing) and transform
  * was just an envelope-shape dispatcher the view can now do itself.
  *
- * The graph build is handed to `mountExospine( build )`, which snapshots Core so
- * the soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The
- * `connected → slot` bridge lives inside RemoteLink now. The page-visibility
- * effect drives `link.connect()` / `link.close()` (close clears the slot too).
- * On each (re)connect the view map is reset (mirrors the legacy Inflight
- * `onBeforeConnect` reset).
+ * The graph + connection lifecycle are handed to the shared `useVisibilityGatedLink`
+ * hook: it mounts via `mountExospine` (snapshotting Core so the soft nodes tear down +
+ * rebuild on `reinit()` — "Reset Graph"), closes the stream while hidden, and
+ * RECONNECTS from the last seen offset on refocus. The `connected → slot` bridge lives
+ * inside RemoteLink. `onConnect` resets the view map before each (re)connect (mirrors
+ * the legacy Inflight `onBeforeConnect` reset).
  */
 
-import { useEffect, useRef, useState } from '@wordpress/element';
 import {
-	mountExospine,
 	CommandClient,
 	TYPE,
 	VALUE,
@@ -40,6 +38,7 @@ import {
 } from '@newspack-nodes/runtime';
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
+import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 
 // The single RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'gyroscope:link';
@@ -60,31 +59,15 @@ const controlMsg = ( value ) => {
  *   Reset Graph is driven by the overlay via `Core.reinit`, stashed by mountExospine.
  */
 export function useGyroscopeGraph() {
-	// Live node handles for the connection effect.
-	const linkRef = useRef( null );
-	const viewRef = useRef( null );
-
-	// First connect of a link live-follows; a RECONNECT of the SAME link (hide→show)
-	// resumes from the last seen offset so the hidden gap streams instead of
-	// tail-dropping it. `connectedLinkRef` records which link is currently streaming
-	// so a re-render never tears a live seek into a tail reconnect (or re-clears the
-	// view); `hasConnectedRef` (reset per build) picks tail-vs-resume.
-	const hasConnectedRef = useRef( false );
-	const connectedLinkRef = useRef( null );
-
 	const isPageVisible = usePageVisibility();
 
-	// Bumped on every (re)build so the connection effect re-runs against the
-	// fresh _sse and a consumer's useNodeState re-subscribes to the freshly-
-	// registered view node. A monotonic counter, not a boolean latch — reinit()'s
-	// second build must still force a render.
-	const [ buildCount, bumpBuild ] = useState( 0 );
-
-	// Mount the graph once onto the exospine.
-	useEffect( () => {
-		// The soft view-nodes the backbone clips onto. mountExospine snapshots
-		// Core around this so reinit() removes exactly these and rebuilds them.
-		const build = ( { interpreter } ) => {
+	// The shared lifecycle owns close-while-hidden + resume-on-refocus. On each
+	// genuine (re)connect we clear the stale in-flight map first, then connect: the
+	// FIRST connect live-follows (null = tail); a RECONNECT resumes from the last
+	// seen offset so the gap accumulated while hidden replays into a correct
+	// in-flight snapshot instead of tail-dropping.
+	useVisibilityGatedLink( {
+		mountNodes: ( interpreter ) => {
 			const data =
 				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
 				{};
@@ -112,62 +95,16 @@ export function useGyroscopeGraph() {
 			// Dashboard view — consumes wire envelopes directly.
 			const view = interpreter.makeNode( 'GyroscopeView', VIEW );
 
-			linkRef.current = link;
-			viewRef.current = view;
-			// A fresh link's SseIn has no tracked offset — first connect live-follows.
-			hasConnectedRef.current = false;
-
-			// Re-render so the connection effect re-runs against the fresh link and
-			// useNodeState re-subscribes to the freshly-mounted view node.
-			bumpBuild( ( n ) => n + 1 );
-
-			// Tear down the RemoteLink (closes its stream + removes all three
-			// children) before the exospine removes the rest.
-			return () => {
-				link.removeNode();
-				linkRef.current = null;
-				viewRef.current = null;
-				connectedLinkRef.current = null;
-			};
-		};
-
-		const { teardown } = mountExospine( build );
-		return teardown;
-	}, [] );
-
-	// Own the live SSE connection: open while visible, else close. On (re)connect
-	// clear the view map first (mirrors Inflight's onBeforeConnect reset). The
-	// link's close() clears its heartbeat slot too. Re-runs on every (re)build
-	// via buildCount.
-	useEffect( () => {
-		const link = linkRef.current;
-		if ( ! buildCount || ! link ) {
-			return undefined;
-		}
-		if ( ! isPageVisible ) {
-			link.close();
-			connectedLinkRef.current = null;
-			return undefined;
-		}
-		// Already streaming this exact link — a re-render must NOT tear the seek
-		// down into a tail reconnect (nor re-clear the view mid-stream).
-		if ( connectedLinkRef.current === link ) {
-			return undefined;
-		}
-		// Clear the stale in-flight map, then (re)connect: first connect live-follows;
-		// a reconnect resumes from the last seen offset so the gap accumulated while
-		// hidden replays into a correct in-flight snapshot instead of tail-dropping.
-		if ( viewRef.current ) {
-			viewRef.current.fill( controlMsg( { action: 'clear' } ) );
-		}
-		const positions = hasConnectedRef.current
-			? link.resumePositions()
-			: null;
-		hasConnectedRef.current = true;
-		connectedLinkRef.current = link;
-		link.connect( positions );
-		return undefined;
-	}, [ buildCount, isPageVisible ] );
+			return { link, view };
+		},
+		isActive: isPageVisible,
+		onConnect: ( link, { isReconnect, view } ) => {
+			if ( view ) {
+				view.fill( controlMsg( { action: 'clear' } ) );
+			}
+			link.connect( isReconnect ? link.resumePositions() : null );
+		},
+	} );
 
 	return {};
 }

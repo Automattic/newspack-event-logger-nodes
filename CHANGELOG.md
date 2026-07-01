@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Request Log / Error Log / Gyroscope dashboards now share the substrate's new `useVisibilityGatedLink` hook** instead of each hand-rolling the mount + visibility-gated SSE-connection lifecycle. Behavior is unchanged (same subscribe, view, pause, and resume-on-refocus); the ~15-line resume guard that had been copy-pasted into all three now lives once in `newspack-nodes/src/shared/hooks`, consumed via the `@newspack-nodes/shared` alias.
+
 ### Fixed
 
 - **SSE dashboards (Request Log, Error Log, Gyroscope) now resume from their last offset when the tab regains visibility, instead of restarting from the live end.** Each dashboard's page-visibility effect closed the SSE stream while the tab was hidden and reconnected with a bare `link.connect()` on refocus — no position seed — so the substrate tail-seeked and everything that streamed while hidden was dropped. They now mirror the substrate's own Raw Logs / Topic Probe dashboards: the FIRST connect of a link live-follows, but a RECONNECT of the same link (hide→show, or unpause) passes `link.resumePositions()` so the hidden gap streams in. A `connectedLinkRef` guard keeps a redundant re-render from tearing a live seek down into a tail reconnect (and, for Gyroscope, from re-clearing the in-flight map mid-stream).

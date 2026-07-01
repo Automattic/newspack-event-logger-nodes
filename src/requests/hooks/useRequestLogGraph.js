@@ -24,15 +24,15 @@
  * url@2000 + UA@500, default-fill) moved into the view's `_appendRow()` — the
  * single place that knows envelope → render-entry mapping.
  *
- * The graph build is handed to `mountExospine( build )`, which snapshots Core so
- * the soft nodes can be torn down + rebuilt on `reinit()` ("Reset Graph"). The
- * `connected → slot` bridge now lives inside RemoteLink. The page-visibility /
- * pause effect drives `link.connect()` / `link.close()`.
+ * The graph + connection lifecycle are handed to the shared
+ * `useVisibilityGatedLink` hook: it mounts via `mountExospine` (snapshotting Core so
+ * the soft nodes tear down + rebuild on `reinit()` — "Reset Graph"), closes the
+ * stream while hidden or paused, and RECONNECTS from the last seen offset on refocus.
+ * The `connected → slot` bridge lives inside RemoteLink.
  */
 
-import { useEffect, useRef, useState } from '@wordpress/element';
+import { useRef, useState } from '@wordpress/element';
 import {
-	mountExospine,
 	CommandClient,
 	TYPE,
 	VALUE,
@@ -41,6 +41,7 @@ import {
 } from '@newspack-nodes/runtime';
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
+import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 
 // The single RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'requestlog:link';
@@ -66,39 +67,22 @@ export function useRequestLogGraph( opts = {} ) {
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
-	// Live node handles for the connection effect + control callbacks.
-	const linkRef = useRef( null );
-	const viewRef = useRef( null );
-
-	// First connect of a link live-follows; a RECONNECT of the SAME link (hide→show,
-	// unpause) resumes from the last seen offset so the hidden gap streams instead of
-	// tail-dropping it. `connectedLinkRef` records which link is currently streaming
-	// so a re-render never tears a live seek into a tail reconnect; `hasConnectedRef`
-	// (reset per build — a rebuilt link's SseIn has no tracked offset) picks tail-vs-resume.
-	const hasConnectedRef = useRef( false );
-	const connectedLinkRef = useRef( null );
-
 	// Paused state drives BOTH the view control (published for the button/label)
-	// and the connection effect below (paused closes the SSE stream).
+	// and the shared connection lifecycle (paused closes the SSE stream).
 	const [ isPaused, setIsPaused ] = useState( false );
 	const isPageVisible = usePageVisibility();
 
-	// Mirror isPaused into a ref so build() (created once on mount) reads the
-	// CURRENT pause when reinit re-runs it — the fresh view defaults paused:false.
+	// Mirror isPaused into a ref so mountNodes (which reads it at (re)build time)
+	// sees the CURRENT pause on a reinit — the fresh view defaults paused:false.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
 
-	// Bumped on every (re)build so the connection effect re-runs against the
-	// fresh link and a consumer's useNodeState re-subscribes to the freshly-
-	// registered view node. A monotonic counter, not a boolean latch — reinit()'s
-	// second build must still force a render.
-	const [ buildCount, bumpBuild ] = useState( 0 );
-
-	// Mount the graph once onto the exospine.
-	useEffect( () => {
-		// The soft view-nodes the backbone clips onto. mountExospine snapshots
-		// Core around this so reinit() removes exactly these and rebuilds them.
-		const build = ( { interpreter } ) => {
+	// The shared lifecycle owns close-while-hidden/paused + resume-on-refocus. We
+	// supply the graph and a plain connect: the FIRST connect of a link live-follows
+	// (null = tail), a RECONNECT resumes from the last seen offset so the gap
+	// accumulated while hidden/paused streams in instead of tail-dropping.
+	const { viewRef } = useVisibilityGatedLink( {
+		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
 			const data =
 				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
@@ -129,64 +113,19 @@ export function useRequestLogGraph( opts = {} ) {
 				view.maxEntries = maxEntries;
 			}
 
-			linkRef.current = link;
-			viewRef.current = view;
-			// A fresh link's SseIn has no tracked offset — first connect live-follows.
-			hasConnectedRef.current = false;
-
 			// On a reinit-while-paused, re-publish the surviving pause to the fresh
-			// view so its `paused` flag matches the connection effect (which keeps
+			// view so its `paused` flag matches the connection lifecycle (which keeps
 			// the stream closed while isPaused). No-op on first mount (isPaused=false).
 			if ( isPausedRef.current ) {
 				view.fill( controlMsg( { action: 'pause', paused: true } ) );
 			}
 
-			// Re-render so the connection effect re-runs against the fresh link and
-			// useNodeState re-subscribes to the freshly-mounted view node.
-			bumpBuild( ( n ) => n + 1 );
-
-			// Tear down the RemoteLink (closes its stream + removes all three
-			// children) before the exospine removes the rest.
-			return () => {
-				link.removeNode();
-				linkRef.current = null;
-				viewRef.current = null;
-				connectedLinkRef.current = null;
-			};
-		};
-
-		const { teardown } = mountExospine( build );
-		return teardown;
-	}, [] );
-
-	// Own the live SSE connection: open while visible AND not paused, else close.
-	// link.close() forgets the slot so timer firings become no-ops. Re-runs on
-	// every (re)build via buildCount.
-	useEffect( () => {
-		const link = linkRef.current;
-		if ( ! buildCount || ! link ) {
-			return undefined;
-		}
-		if ( ! isPageVisible || isPaused ) {
-			link.close();
-			connectedLinkRef.current = null;
-			return undefined;
-		}
-		// Already streaming this exact link — a re-render must NOT tear the seek
-		// down into a tail reconnect.
-		if ( connectedLinkRef.current === link ) {
-			return undefined;
-		}
-		// First connect live-follows; a reconnect resumes from the last seen offset
-		// so the gap accumulated while hidden/paused streams instead of tail-dropping.
-		const positions = hasConnectedRef.current
-			? link.resumePositions()
-			: null;
-		hasConnectedRef.current = true;
-		connectedLinkRef.current = link;
-		link.connect( positions );
-		return undefined;
-	}, [ buildCount, isPageVisible, isPaused ] );
+			return { link, view };
+		},
+		isActive: isPageVisible && ! isPaused,
+		onConnect: ( link, { isReconnect } ) =>
+			link.connect( isReconnect ? link.resumePositions() : null ),
+	} );
 
 	// setPaused: flip the hook state (re-runs the connection effect) AND publish
 	// the paused flag through the view so the button / empty-state label reflect it.
