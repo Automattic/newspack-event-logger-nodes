@@ -4,7 +4,7 @@
  * Two cadences (matching requestLogView): the HIGH-frequency error buffer
  * (node.entries) lives on the instance and is NOT published — the React view's
  * rAF reads it directly each frame. The LOW-frequency control model
- * ({ paused, connectionError, lastEventTime }) publishes via setState('view', …).
+ * ({ paused, connectionError }) publishes via setState('view', …).
  *
  * As of the chain collapse, `_sse` targets the view directly: fill() now
  * receives the raw 7-field envelope (KEY=rid, VALUE={ts, k, m, n}) and shapes
@@ -177,13 +177,6 @@ test( 'appending rows does NOT publish setState (no per-row React re-render)', (
 	expect( spy ).not.toHaveBeenCalled();
 } );
 
-test( 'touches lastEventTime on each appended row', () => {
-	const v = makeView( 'perferrors:view' );
-	expect( v.lastEventTime ).toBeNull();
-	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
-	expect( typeof v.lastEventTime ).toBe( 'number' );
-} );
-
 test( 'pause stops appends and publishes paused', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
@@ -218,7 +211,6 @@ test( 'publishes an initial view model on construction', () => {
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
-		lastEventTime: null,
 	} );
 } );
 

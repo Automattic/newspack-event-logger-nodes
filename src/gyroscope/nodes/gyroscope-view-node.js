@@ -7,7 +7,7 @@ const RPS_WINDOW_SEC = 10;
  *
  * Two cadences, deliberately split for performance (mirrors requestlog/view):
  * - HIGH frequency (the gyroscope stream): `_inflight` / `_complete` mutate the
- *   `this.requests` map and touch `this.lastEventTime`, but do NOT publish. The
+ *   `this.requests` map, but do NOT publish. The
  *   React view's refresh tick calls `snapshot()` each interval to read the
  *   sorted+capped render list (which also reaps completed entries + updates RPS)
  *   so a high-volume stream never re-renders React per message.
@@ -42,7 +42,6 @@ export class GyroscopeViewNode extends Node {
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
-		this.lastEventTime = null;
 		this.connectionError = false;
 		this._publish();
 	}
@@ -88,7 +87,6 @@ export class GyroscopeViewNode extends Node {
 				this.requests.set( req.rid, req );
 			}
 		}
-		this.lastEventTime = Date.now();
 	}
 
 	// A completion: merge into the existing entry, mark state=complete. Ported
@@ -102,7 +100,6 @@ export class GyroscopeViewNode extends Node {
 			time_ms: req.duration_ms || 0,
 			est_ms: req.duration_ms || 0,
 		} );
-		this.lastEventTime = Date.now();
 	}
 
 	_control( value ) {
@@ -121,9 +118,9 @@ export class GyroscopeViewNode extends Node {
 		this.rps = 0;
 	}
 
-	// Publish ONLY the low-frequency view model. `requests` / `rps` /
-	// `lastEventTime` are the high-frequency state the refresh tick reads off the
-	// node directly via snapshot() — keeping them out of setState is what stops a
+	// Publish ONLY the low-frequency view model. `requests` / `rps` are the
+	// high-frequency state the refresh tick reads off the node directly via
+	// snapshot() — keeping them out of setState is what stops a
 	// busy stream re-rendering React per message. `connectionError` is low-frequency
 	// (only flips on connect/disconnect) so it rides setState for the reconnect banner.
 	_publish() {

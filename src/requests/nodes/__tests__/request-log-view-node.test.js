@@ -154,13 +154,6 @@ test( 'entryAt + entriesCount respect the cap (oldest overwritten) on a small ri
 	expect( v.entryAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
 } );
 
-test( 'touches lastEventTime on each appended row', () => {
-	const v = makeView( 'requestlog:view' );
-	expect( v.lastEventTime ).toBeNull();
-	v.fill( rowMsg( row() ) );
-	expect( typeof v.lastEventTime ).toBe( 'number' );
-} );
-
 test( 'pause stops appends and the published model reflects paused', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
