@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.4] - 2026-06-30
+
 ### Changed
 
 - **Removed the dead `lastEventTime` stamping from the three stream view nodes.** Since staleness is now read off the RemoteLink's `lastEventTime()`, the `RequestLogView` / `PerfErrorsView` / `GyroscopeView` nodes no longer stamp (nor, for `PerfErrorsView`, publish) their own `lastEventTime` — it had no reader. No behavior change; the "Xs ago" indicator is sourced entirely from the link.
