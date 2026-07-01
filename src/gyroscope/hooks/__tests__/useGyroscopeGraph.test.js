@@ -24,6 +24,8 @@ import {
 	VALUE,
 	KEY,
 	TYPE,
+	FROM,
+	ID,
 	TM_INFO,
 	TM_STRUCT,
 	Core,
@@ -311,6 +313,29 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 		mockPageVisible = true;
 		act( () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
+	} );
+
+	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
+		const { rerender } = renderHook( () => useGyroscopeGraph() );
+		// A real tailed record: seg:off breadcrumb in ID, partition dir in FROM.
+		const rec = inflightEnvelope( [ { rid: 'r1' } ] );
+		rec[ FROM ] = 'gyroscope.p0';
+		rec[ ID ] = '1:64';
+		act( () => {
+			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
+		} );
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		mockPageVisible = true;
+		act( () => rerender( { n: 2 } ) );
+		const url = FakeEventSource.last.url;
+		expect( url ).toContain( 'positions=' );
+		const positions = JSON.parse(
+			decodeURIComponent(
+				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
+			)
+		);
+		expect( positions ).toEqual( { 'gyroscope.p0': { seg: 1, off: 64 } } );
 	} );
 
 	test( 'resets the view map on (re)connect', () => {

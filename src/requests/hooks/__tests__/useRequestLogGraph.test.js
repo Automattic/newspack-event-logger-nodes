@@ -23,6 +23,8 @@ import {
 	VALUE,
 	KEY,
 	TYPE,
+	FROM,
+	ID,
 	TM_INFO,
 	TM_STRUCT,
 	Core,
@@ -294,6 +296,34 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		mockPageVisible = true;
 		act( () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
+	} );
+
+	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
+		const { rerender } = renderHook( () => useRequestLogGraph() );
+		// Stream a real tailed record: the server stamps a `seg:off` breadcrumb in
+		// ID and the partition dir in FROM — that is what the SseIn tracks.
+		const rec = completedEnvelope( { rid: 'r1', url: '/a' } );
+		rec[ FROM ] = 'completed.p0';
+		rec[ ID ] = '2:8800';
+		act( () => {
+			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
+		} );
+		// Hide → close.
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		// Show → reopen MUST seek the last offset (fill the hidden gap), not tail.
+		mockPageVisible = true;
+		act( () => rerender( { n: 2 } ) );
+		const url = FakeEventSource.last.url;
+		expect( url ).toContain( 'positions=' );
+		const positions = JSON.parse(
+			decodeURIComponent(
+				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
+			)
+		);
+		expect( positions ).toEqual( {
+			'completed.p0': { seg: 2, off: 8800 },
+		} );
 	} );
 
 	test( 'setPaused(true) closes the EventSource and clears the heartbeat slot', () => {
