@@ -28,6 +28,8 @@ import {
 	VALUE,
 	KEY,
 	TYPE,
+	FROM,
+	ID,
 	TM_INFO,
 	TM_STRUCT,
 	Core,
@@ -296,6 +298,29 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		mockPageVisible = true;
 		act( () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
+	} );
+
+	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
+		const { rerender } = renderHook( () => useErrorLogGraph() );
+		// A real tailed record: seg:off breadcrumb in ID, partition dir in FROM.
+		const rec = errorEnvelope( 'r1', { ts: 1, k: 'error', m: 'x' } );
+		rec[ FROM ] = 'errors.p0';
+		rec[ ID ] = '4:512';
+		act( () => {
+			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
+		} );
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		mockPageVisible = true;
+		act( () => rerender( { n: 2 } ) );
+		const url = FakeEventSource.last.url;
+		expect( url ).toContain( 'positions=' );
+		const positions = JSON.parse(
+			decodeURIComponent(
+				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
+			)
+		);
+		expect( positions ).toEqual( { 'errors.p0': { seg: 4, off: 512 } } );
 	} );
 
 	test( 'setPaused(true) closes the EventSource and clears the heartbeat slot', () => {

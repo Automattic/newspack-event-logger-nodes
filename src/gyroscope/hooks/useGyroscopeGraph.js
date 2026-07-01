@@ -64,6 +64,14 @@ export function useGyroscopeGraph() {
 	const linkRef = useRef( null );
 	const viewRef = useRef( null );
 
+	// First connect of a link live-follows; a RECONNECT of the SAME link (hide→show)
+	// resumes from the last seen offset so the hidden gap streams instead of
+	// tail-dropping it. `connectedLinkRef` records which link is currently streaming
+	// so a re-render never tears a live seek into a tail reconnect (or re-clears the
+	// view); `hasConnectedRef` (reset per build) picks tail-vs-resume.
+	const hasConnectedRef = useRef( false );
+	const connectedLinkRef = useRef( null );
+
 	const isPageVisible = usePageVisibility();
 
 	// Bumped on every (re)build so the connection effect re-runs against the
@@ -106,6 +114,8 @@ export function useGyroscopeGraph() {
 
 			linkRef.current = link;
 			viewRef.current = view;
+			// A fresh link's SseIn has no tracked offset — first connect live-follows.
+			hasConnectedRef.current = false;
 
 			// Re-render so the connection effect re-runs against the fresh link and
 			// useNodeState re-subscribes to the freshly-mounted view node.
@@ -117,6 +127,7 @@ export function useGyroscopeGraph() {
 				link.removeNode();
 				linkRef.current = null;
 				viewRef.current = null;
+				connectedLinkRef.current = null;
 			};
 		};
 
@@ -133,14 +144,28 @@ export function useGyroscopeGraph() {
 		if ( ! buildCount || ! link ) {
 			return undefined;
 		}
-		if ( isPageVisible ) {
-			if ( viewRef.current ) {
-				viewRef.current.fill( controlMsg( { action: 'clear' } ) );
-			}
-			link.connect();
-		} else {
+		if ( ! isPageVisible ) {
 			link.close();
+			connectedLinkRef.current = null;
+			return undefined;
 		}
+		// Already streaming this exact link — a re-render must NOT tear the seek
+		// down into a tail reconnect (nor re-clear the view mid-stream).
+		if ( connectedLinkRef.current === link ) {
+			return undefined;
+		}
+		// Clear the stale in-flight map, then (re)connect: first connect live-follows;
+		// a reconnect resumes from the last seen offset so the gap accumulated while
+		// hidden replays into a correct in-flight snapshot instead of tail-dropping.
+		if ( viewRef.current ) {
+			viewRef.current.fill( controlMsg( { action: 'clear' } ) );
+		}
+		const positions = hasConnectedRef.current
+			? link.resumePositions()
+			: null;
+		hasConnectedRef.current = true;
+		connectedLinkRef.current = link;
+		link.connect( positions );
 		return undefined;
 	}, [ buildCount, isPageVisible ] );
 

@@ -72,6 +72,14 @@ export function useErrorLogGraph( opts = {} ) {
 	const linkRef = useRef( null );
 	const viewRef = useRef( null );
 
+	// First connect of a link live-follows; a RECONNECT of the SAME link (hide→show,
+	// unpause) resumes from the last seen offset so the hidden gap streams instead of
+	// tail-dropping it. `connectedLinkRef` records which link is currently streaming
+	// so a re-render never tears a live seek into a tail reconnect; `hasConnectedRef`
+	// (reset per build — a rebuilt link's SseIn has no tracked offset) picks tail-vs-resume.
+	const hasConnectedRef = useRef( false );
+	const connectedLinkRef = useRef( null );
+
 	// Paused state drives BOTH the view control (published for the button /
 	// empty-state label) and the connection effect below (paused closes the SSE
 	// stream).
@@ -127,6 +135,8 @@ export function useErrorLogGraph( opts = {} ) {
 
 			linkRef.current = link;
 			viewRef.current = view;
+			// A fresh link's SseIn has no tracked offset — first connect live-follows.
+			hasConnectedRef.current = false;
 
 			// On a reinit-while-paused, re-publish the surviving pause to the fresh
 			// view so its `paused` flag matches the connection effect (which keeps
@@ -145,6 +155,7 @@ export function useErrorLogGraph( opts = {} ) {
 				link.removeNode();
 				linkRef.current = null;
 				viewRef.current = null;
+				connectedLinkRef.current = null;
 			};
 		};
 
@@ -160,11 +171,24 @@ export function useErrorLogGraph( opts = {} ) {
 		if ( ! buildCount || ! link ) {
 			return undefined;
 		}
-		if ( isPageVisible && ! isPaused ) {
-			link.connect();
-		} else {
+		if ( ! isPageVisible || isPaused ) {
 			link.close();
+			connectedLinkRef.current = null;
+			return undefined;
 		}
+		// Already streaming this exact link — a re-render must NOT tear the seek
+		// down into a tail reconnect.
+		if ( connectedLinkRef.current === link ) {
+			return undefined;
+		}
+		// First connect live-follows; a reconnect resumes from the last seen offset
+		// so the gap accumulated while hidden/paused streams instead of tail-dropping.
+		const positions = hasConnectedRef.current
+			? link.resumePositions()
+			: null;
+		hasConnectedRef.current = true;
+		connectedLinkRef.current = link;
+		link.connect( positions );
 		return undefined;
 	}, [ buildCount, isPageVisible, isPaused ] );
 
