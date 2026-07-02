@@ -222,6 +222,7 @@ export default function AggregateTimeChart( {
 				);
 
 				svg.append( 'text' )
+					.attr( 'class', 'y-label' )
 					.attr( 'transform', 'rotate(-90)' )
 					.attr( 'y', 0 - MARGIN.left )
 					.attr( 'x', 0 - height / 2 )
@@ -320,6 +321,7 @@ export default function AggregateTimeChart( {
 				);
 
 				svg.append( 'text' )
+					.attr( 'class', 'y-label' )
 					.attr( 'transform', 'rotate(-90)' )
 					.attr( 'y', 0 - MARGIN.left )
 					.attr( 'x', 0 - height / 2 )
