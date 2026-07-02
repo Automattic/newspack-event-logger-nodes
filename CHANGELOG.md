@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-02
+
 ### Fixed
 
 - **Firehose reader opts into the substrate seal-grace.** The `firehose:consumer` in the `combined`, `request-builder`, `performance`, and `job-router` topologies now sets `set_multi_writer true`, closing the segment-rotation race that orphaned a request's terminal `process (complete)` line — which left the request languishing in the in-flight LRU until it aged out (~10 min) as a timed-out partial. Requires newspack-nodes with `Consumer_Node` seal-grace. Only the firehose is multi-writer; the `requests`/`jobintake` consumers read single-writer logs and are unchanged.
