@@ -126,6 +126,10 @@ class Config {
 			return self::$config;
 		}
 
+		if ( ! \class_exists( '\Newspack_Nodes\Config_Utils' ) ) {
+			return [];
+		}
+
 		// Layer substrate config first; application values win on key
 		// collisions. Substrate `load_config()` already handles the
 		// substrate sample overlay.
@@ -156,6 +160,10 @@ class Config {
 	public static function load_config_defaults(): array {
 		if ( null !== self::$config_defaults ) {
 			return self::$config_defaults;
+		}
+
+		if ( ! \class_exists( '\Newspack_Nodes\Config_Utils' ) ) {
+			return [];
 		}
 
 		$config = Config_Utils::load_config_file(
