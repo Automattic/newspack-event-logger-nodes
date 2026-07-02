@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Firehose reader opts into the substrate seal-grace.** The `firehose:consumer` in the `combined`, `request-builder`, `performance`, and `job-router` topologies now sets `set_multi_writer true`, closing the segment-rotation race that orphaned a request's terminal `process (complete)` line — which left the request languishing in the in-flight LRU until it aged out (~10 min) as a timed-out partial. Requires newspack-nodes with `Consumer_Node` seal-grace. Only the firehose is multi-writer; the `requests`/`jobintake` consumers read single-writer logs and are unchanged.
+
+### Added
+
+- **Request_Builder sequence validation** (ported from Tachikoma `InstrumentalityGrail`): per-request `n`-sequence checks surface orphaned mid-stream lines (`WARNING: missing message`), re-delivery/reorder (`INFO: duplicate message`), and request-id reuse (`WARNING: multiple requests with ID`) instead of silently corrupting assembly — the correctness guard complementing the seal-grace fix. Out-of-sequence lines are skipped (rate-limited). Nested-subprocess sequences are handled: nuclear-gyrobase shells out to the Perl engine (`proc_open`), whose child emits its own `n`-sequence (restarting at 1) inside the parent request's stream under the same rid — `gyrobase (start)` stashes the parent's expected `n` and `gyrobase (complete)` restores it (a stack, so sequential/nested renders both work), so neither the nested restart nor the parent's resume reads as a gap/dup.
+- **Timed-out-trace log signal.** `evict_request` now emits one rate-limited `WARNING: trace timed out on {rid} ({url})` when an in-flight request ages out of the LRU without completing — a log-level complement to the performance dashboard's "show errors" for the trailing-loss case the sequence check can't see.
+
 ## [0.22.5] - 2026-07-02
 
 ### Added

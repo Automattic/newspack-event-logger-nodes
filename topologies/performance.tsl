@@ -12,6 +12,7 @@ make_node Partition requests:partition <config:logs_dir>/requests.p<partition> <
 make_node Partition flames:partition <config:logs_dir>/flames.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 make_node Tee completed:tee
 cmd firehose:consumer:config set_snapshot_node request-builder
+cmd firehose:consumer:config set_multi_writer true
 cmd request-builder:config set_completed_target completed:tee
 cmd request-builder:config set_errors_target errors:partition
 cmd request-builder:config set_inflight_target gyroscope:partition

@@ -514,7 +514,8 @@ class RequestBuilderTest extends TestCase {
 		for ( $i = 0; $i < 100; $i++ ) {
 			$this->fill( $rb, $i + 3, 'r1', 'noise', [ 'm' => "msg-$i" ] );
 		}
-		$this->fill( $rb, 200, 'r1', 'process (complete)' );
+		// Contiguous n (real firehose numbering) — the sequence validator skips gaps.
+		$this->fill( $rb, 103, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
 		$this->assertArrayNotHasKey( 'truncated', $req );
