@@ -9,6 +9,12 @@
  *  - Indent state machine: (start)/(complete) push/pop with depth tracking.
  *  - Per-rid byte cap enforcement.
  *  - Path validation on `__invoke()`.
+ *  - The Consumer-based read path (cat / follow / stdin) → process_message.
+ *
+ * Every firehose line is a 7-field positional Message envelope (rid at
+ * Message::KEY, entry hash at Message::VALUE); there is no legacy entry-hash
+ * format. Tests feed process_message the unpacked Message array (built via
+ * packed_struct()), or a packed envelope through the stdin / disk paths.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -18,10 +24,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\CLI;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Command_Interpreter_Node;
-use Newspack_Nodes\Core;
-use Newspack_Nodes\Node_Names;
-use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Event_Framework;
+use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 require_once \dirname( __DIR__, 3 ) . '/includes/cli/class-reqgrep-command.php';
@@ -35,7 +39,7 @@ class ReqgrepCommandTest extends TestCase {
 	private string $tmp;
 
 	/** @var \ReflectionMethod */
-	private \ReflectionMethod $process_line;
+	private \ReflectionMethod $process_message;
 
 	/** @var \ReflectionMethod */
 	private \ReflectionMethod $format_entry;
@@ -50,6 +54,9 @@ class ReqgrepCommandTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// A fresh Event_Framework per test so a prior follow_mode drain leaves no
+		// stray Consumer timers behind (follow_mode runs its Consumers under it).
+		Event_Framework::reset();
 		// Use /tmp directly for tests that exercise __invoke (path validation).
 		$staging = '/tmp/reqgrep-test-' . \uniqid();
 		\mkdir( $staging, 0755, true );
@@ -72,6 +79,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	protected function tearDown(): void {
 		Config::reset();
+		Event_Framework::reset();
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
@@ -116,7 +124,7 @@ class ReqgrepCommandTest extends TestCase {
 		);
 		$set( 'inflight', $inflight );
 
-		$this->process_line     = new \ReflectionMethod( $cmd, 'process_line' );
+		$this->process_message  = new \ReflectionMethod( $cmd, 'process_message' );
 		$this->format_entry     = new \ReflectionMethod( $cmd, 'format_entry' );
 		$this->output_request   = new \ReflectionMethod( $cmd, 'output_request' );
 		$this->output_remaining = new \ReflectionMethod( $cmd, 'output_remaining' );
@@ -128,6 +136,32 @@ class ReqgrepCommandTest extends TestCase {
 	private function get_prop( string $prop ) {
 		$ref = new \ReflectionProperty( $this->cmd, $prop );
 		return $ref->getValue( $this->cmd );
+	}
+
+	/**
+	 * Feed one entry hash through process_message as an unpacked Message: rid in
+	 * Message::KEY, entry in Message::VALUE — exactly what the Consumer forwards.
+	 *
+	 * @param array<string, mixed> $entry Entry hash (must carry `rid`).
+	 */
+	private function feed( Reqgrep_Command $cmd, array $entry ): void {
+		$this->process_message->invoke( $cmd, $this->packed_struct( $entry ) );
+	}
+
+	/**
+	 * Build a Message struct envelope around an entry — rid in KEY, entry hash in
+	 * VALUE (mirrors Log_Manager since v0.2.17).
+	 *
+	 * @param array<string, mixed> $entry Entry hash.
+	 * @return array<int, mixed> The 7-field positional Message array.
+	 */
+	private function packed_struct( array $entry ): array {
+		$message                        = Message::new_message();
+		$message[ Message::TYPE ]       = Message::TM_STRUCT;
+		$message[ Message::TIMESTAMP ]  = (float) ( $entry['ts'] ?? 0 );
+		$message[ Message::KEY ]        = (string) ( $entry['rid'] ?? '' );
+		$message[ Message::VALUE ]      = $entry;
+		return $message;
 	}
 
 	// -------------------------------------------------------------------------
@@ -161,7 +195,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertSame( 'B', $cache->get( 'b' ) );
 	}
 
-// -------------------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Indent state machine.
 	// -------------------------------------------------------------------------
 
@@ -187,7 +221,7 @@ class ReqgrepCommandTest extends TestCase {
 			[ 'n' => 5, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/i', 'ts' => $ts + 0.04 ],
 		];
 		foreach ( $lines as $entry ) {
-			$this->process_line->invoke( $cmd, \json_encode( $entry ) . "\n" );
+			$this->feed( $cmd, $entry );
 		}
 
 		$out = \ob_get_clean();
@@ -220,14 +254,8 @@ class ReqgrepCommandTest extends TestCase {
 
 		// (complete) before any (start) should clamp to 0, not go negative.
 		$rid = 'clampR';
-		$this->process_line->invoke(
-			$cmd,
-			\json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'foo (complete)', 'm' => 'x', 'ts' => 1700000000 ] ) . "\n"
-		);
-		$this->process_line->invoke(
-			$cmd,
-			\json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ) . "\n"
-		);
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'foo (complete)', 'm' => 'x', 'ts' => 1700000000 ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] );
 		\ob_get_clean();
 
 		$indent_prop = new \ReflectionProperty( $cmd, 'fmt_indent' );
@@ -240,9 +268,9 @@ class ReqgrepCommandTest extends TestCase {
 
 		$rid = 'reqA';
 		$ts  = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/calendar', 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'mid', 'ts' => $ts + 0.1 ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/calendar', 'ts' => $ts + 0.5, 'duration_ms' => 500.12 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/calendar', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'mid', 'ts' => $ts + 0.1 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/calendar', 'ts' => $ts + 0.5, 'duration_ms' => 500.12 ] );
 
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( "request_id:{$rid}", $out );
@@ -255,8 +283,8 @@ class ReqgrepCommandTest extends TestCase {
 		\ob_start();
 
 		$ts = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => 'X', 'k' => 'process (start)', 'm' => '/other', 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => 'X', 'k' => 'process (complete)', 'm' => '/other', 'ts' => $ts + 0.1 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => 'X', 'k' => 'process (start)', 'm' => '/other', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => 'X', 'k' => 'process (complete)', 'm' => '/other', 'ts' => $ts + 0.1 ] );
 
 		$out = \ob_get_clean();
 		$this->assertStringNotContainsString( 'request_id:X', $out );
@@ -268,10 +296,11 @@ class ReqgrepCommandTest extends TestCase {
 
 		$rid = 'rawR';
 		$ts  = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/raw', 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/raw', 'ts' => $ts + 0.1 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/raw', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/raw', 'ts' => $ts + 0.1 ] );
 
 		$out = \ob_get_clean();
+		// Raw mode echoes the packed envelope verbatim; rid + entry fields survive.
 		$this->assertStringContainsString( '"rid":"rawR"', $out );
 		$this->assertStringContainsString( '"k":"process (start)"', $out );
 	}
@@ -285,19 +314,13 @@ class ReqgrepCommandTest extends TestCase {
 		$cmd = $this->make_cmd( $rid );
 
 		// First call seeds the in-flight rid.
-		$this->process_line->invoke(
-			$cmd,
-			\json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 ] ) . "\n"
-		);
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 ] );
 
 		// Pump ~10KB lines until we'd exceed the 10MB cap. Exiting via cap is
 		// silent — append_to_state returns false but doesn't print.
 		$message = \str_repeat( 'X', 10000 );
 		for ( $i = 0; $i < 2000; $i++ ) {
-			$this->process_line->invoke(
-				$cmd,
-				\json_encode( [ 'n' => 2 + $i, 'rid' => $rid, 'k' => 'init', 'm' => $message, 'ts' => 1700000000 + $i * 0.001 ] ) . "\n"
-			);
+			$this->feed( $cmd, [ 'n' => 2 + $i, 'rid' => $rid, 'k' => 'init', 'm' => $message, 'ts' => 1700000000 + $i * 0.001 ] );
 		}
 
 		/** @var LRU_Cache $inflight */
@@ -313,13 +336,13 @@ class ReqgrepCommandTest extends TestCase {
 		\ob_start();
 
 		// Start a non-matching rid; it lands in history.
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => 'targetRid', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => 'targetRid', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 ] );
 
 		// Pattern match ON the rid bootstraps tracking.
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => 'targetRid', 'k' => 'init', 'm' => 'something', 'ts' => 1700000000.1 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => 'targetRid', 'k' => 'init', 'm' => 'something', 'ts' => 1700000000.1 ] );
 
 		// Complete it.
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => 'targetRid', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.2 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => 'targetRid', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.2 ] );
 
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( 'request_id:targetRid', $out );
@@ -337,10 +360,10 @@ class ReqgrepCommandTest extends TestCase {
 		// for each elapsed second.
 		$rid = 'gapR';
 		$ts0 = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] );
 		// 5-second gap.
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-gap', 'ts' => $ts0 + 5 ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 5.1 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-gap', 'ts' => $ts0 + 5 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 5.1 ] );
 
 		$out = \ob_get_clean();
 		// Look for at least one dot row (lines ending with " .").
@@ -354,8 +377,8 @@ class ReqgrepCommandTest extends TestCase {
 
 		$rid = 'memR';
 		$ts  = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/p', 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/p', 'ts' => $ts ] );
+		$this->feed( $cmd, [
 			'n' => 2,
 			'rid' => $rid,
 			'k' => 'process (complete)',
@@ -363,7 +386,7 @@ class ReqgrepCommandTest extends TestCase {
 			'ts' => $ts + 0.1,
 			'duration_ms' => 99.99,
 			'peak_mb' => 42,
-		] ) . "\n" );
+		] );
 
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( '99.99ms', $out );
@@ -376,16 +399,16 @@ class ReqgrepCommandTest extends TestCase {
 
 		$rid = 'arrR';
 		$ts  = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/a', 'ts' => $ts ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/a', 'ts' => $ts ] );
 		// Array message — should be json-encoded with newlines.
-		$this->process_line->invoke( $cmd, \json_encode( [
+		$this->feed( $cmd, [
 			'n'   => 2,
 			'rid' => $rid,
 			'k'   => 'init',
 			'm'   => [ 'key1' => 'v1', 'key2' => 'v2' ],
 			'ts'  => $ts + 0.1,
-		] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/a', 'ts' => $ts + 0.2 ] ) . "\n" );
+		] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/a', 'ts' => $ts + 0.2 ] );
 
 		$out = \ob_get_clean();
 		// JSON-encoded array message should include the keys.
@@ -399,16 +422,16 @@ class ReqgrepCommandTest extends TestCase {
 
 		$rid = 'mlR';
 		$ts  = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/m', 'ts' => $ts ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/m', 'ts' => $ts ] );
 		// Embed a literal newline in the message (gets escaped through JSON).
-		$this->process_line->invoke( $cmd, \json_encode( [
+		$this->feed( $cmd, [
 			'n'   => 2,
 			'rid' => $rid,
 			'k'   => 'init',
 			'm'   => "line one\nline two\nline three",
 			'ts'  => $ts + 0.1,
-		] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/m', 'ts' => $ts + 0.2 ] ) . "\n" );
+		] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/m', 'ts' => $ts + 0.2 ] );
 
 		$out = \ob_get_clean();
 		// All three lines should appear in output.
@@ -424,11 +447,11 @@ class ReqgrepCommandTest extends TestCase {
 		$rid = 'sepR';
 		$ts  = 1700000000.0;
 		// First request (sequence: 1, 2, 3).
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/s', 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'middle', 'ts' => $ts + 0.1 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/s', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'middle', 'ts' => $ts + 0.1 ] );
 		// Number rewinds to 1 (rid reset case mid-stream).
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'shutdown', 'm' => 'reset', 'ts' => $ts + 0.2 ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/s', 'ts' => $ts + 0.3 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'shutdown', 'm' => 'reset', 'ts' => $ts + 0.2 ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/s', 'ts' => $ts + 0.3 ] );
 
 		$out = \ob_get_clean();
 		// Separator (60 hash chars) should appear when number rewinds.
@@ -436,71 +459,38 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// process_line: stash/match path edge cases.
+	// process_message: guard + envelope handling.
 	// -------------------------------------------------------------------------
 
-	public function test_process_line_skips_invalid_json(): void {
+	public function test_process_message_skips_messages_without_rid(): void {
 		$cmd = $this->make_cmd();
 		\ob_start();
-		$this->process_line->invoke( $cmd, "not-valid-json\n" );
-		// No crash, no output.
+		// No `rid` → Message::KEY is '' → process_message returns early.
+		$this->feed( $cmd, [ 'n' => 1, 'k' => 'foo', 'm' => 'bar' ] );
 		$out = \ob_get_clean();
 		$this->assertSame( '', $out );
 	}
 
-	public function test_process_line_skips_lines_without_rid(): void {
+	public function test_process_message_skips_non_array_value(): void {
 		$cmd = $this->make_cmd();
 		\ob_start();
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'k' => 'foo', 'm' => 'bar' ] ) . "\n" );
+		// A TM_EOF-shaped message (VALUE '') must be ignored, not crash.
+		$message                    = Message::new_message();
+		$message[ Message::TYPE ]   = Message::TM_EOF;
+		$message[ Message::KEY ]    = 'anything';
+		$this->process_message->invoke( $cmd, $message );
 		$out = \ob_get_clean();
 		$this->assertSame( '', $out );
 	}
 
-	public function test_process_line_skips_blank_lines(): void {
-		$cmd = $this->make_cmd();
-		\ob_start();
-		$this->process_line->invoke( $cmd, "" );
-		$this->process_line->invoke( $cmd, "\n" );
-		$this->process_line->invoke( $cmd, "   \n" );
-		$out = \ob_get_clean();
-		$this->assertSame( '', $out );
-	}
-
-	public function test_process_line_unwraps_packed_message_envelope(): void {
+	public function test_process_message_groups_and_outputs_completed_request(): void {
 		$cmd = $this->make_cmd( '/wrapped' );
 		\ob_start();
 
-		$rid     = 'wrappedR';
-		$ts      = 1700000000.0;
-		$message = \Newspack_Nodes\Message::new_message();
-		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $ts;
-		$message[ \Newspack_Nodes\Message::KEY ]       = $rid;
-		$message[ \Newspack_Nodes\Message::VALUE ]     = [
-			'n'   => 1,
-			'rid' => $rid,
-			'k'   => 'process (start)',
-			'm'   => '/wrapped',
-			'ts'  => $ts,
-		];
-		$packed = \Newspack_Nodes\Message::packed( $message );
-		// process_line should detect the array-is-list shape and unwrap to entry.
-		$this->process_line->invoke( $cmd, $packed );
-
-		$message2 = \Newspack_Nodes\Message::new_message();
-		$message2[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message2[ \Newspack_Nodes\Message::TIMESTAMP ] = $ts + 0.1;
-		$message2[ \Newspack_Nodes\Message::KEY ]       = $rid;
-		$message2[ \Newspack_Nodes\Message::VALUE ]     = [
-			'n'           => 2,
-			'rid'         => $rid,
-			'k'           => 'process (complete)',
-			'm'           => '/wrapped',
-			'ts'          => $ts + 0.1,
-			'duration_ms' => 100,
-		];
-		$packed2 = \Newspack_Nodes\Message::packed( $message2 );
-		$this->process_line->invoke( $cmd, $packed2 );
+		$rid = 'wrappedR';
+		$ts  = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/wrapped', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/wrapped', 'ts' => $ts + 0.1, 'duration_ms' => 100 ] );
 
 		$out = \ob_get_clean();
 		$this->assertStringContainsString( "request_id:{$rid}", $out );
@@ -517,10 +507,7 @@ class ReqgrepCommandTest extends TestCase {
 
 		// Pump many non-matching rids — should rotate history buckets.
 		for ( $i = 0; $i < 20; $i++ ) {
-			$this->process_line->invoke(
-				$cmd,
-				\json_encode( [ 'n' => 1, 'rid' => "rid-$i", 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 + $i * 0.01 ] ) . "\n"
-			);
+			$this->feed( $cmd, [ 'n' => 1, 'rid' => "rid-$i", 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 + $i * 0.01 ] );
 		}
 
 		// History should have been rotated/trimmed; check internal state.
@@ -535,14 +522,8 @@ class ReqgrepCommandTest extends TestCase {
 		$cmd = $this->make_cmd( 'never-matches', false, false, 5000, 1 );
 		$rid = 'manyR';
 
-		// Push way more than MAX_LINES_PER_REQUEST_IN_HISTORY (10000) lines.
-		// We won't actually hit it (would be slow), but verify the cap branch
-		// is exercised by checking the cap doesn't crash on an extra line.
 		for ( $i = 0; $i < 10; $i++ ) {
-			$this->process_line->invoke(
-				$cmd,
-				\json_encode( [ 'n' => $i, 'rid' => $rid, 'k' => 'init', 'm' => "msg{$i}", 'ts' => 1700000000.0 + $i * 0.001 ] ) . "\n"
-			);
+			$this->feed( $cmd, [ 'n' => $i, 'rid' => $rid, 'k' => 'init', 'm' => "msg{$i}", 'ts' => 1700000000.0 + $i * 0.001 ] );
 		}
 		// history bucket 0 should have the rid with up to 10 lines.
 		$history = $this->get_prop( 'history' );
@@ -561,8 +542,8 @@ class ReqgrepCommandTest extends TestCase {
 		$rid = 'inflightR';
 		$ts  = 1700000000.0;
 		// Start matching request — never complete.
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/inflight', 'ts' => $ts ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'mid', 'ts' => $ts + 0.1 ] ) . "\n" );
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/inflight', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'mid', 'ts' => $ts + 0.1 ] );
 
 		// Now flush remaining — should emit [incomplete].
 		$this->output_remaining->invoke( $cmd );
@@ -573,7 +554,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// Output mode: raw vs formatted.
+	// Output mode: raw vs formatted. Lines are packed Message envelopes.
 	// -------------------------------------------------------------------------
 
 	public function test_output_request_raw_emits_jsonl(): void {
@@ -581,13 +562,13 @@ class ReqgrepCommandTest extends TestCase {
 		\ob_start();
 
 		$lines = [
-			\json_encode( [ 'n' => 1, 'rid' => 'rawX', 'k' => 'a', 'm' => 'one', 'ts' => 1700000000.0 ] ),
-			\json_encode( [ 'n' => 2, 'rid' => 'rawX', 'k' => 'b', 'm' => 'two', 'ts' => 1700000000.1 ] ),
+			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'rawX', 'k' => 'a', 'm' => 'one', 'ts' => 1700000000.0 ] ) ),
+			Message::packed( $this->packed_struct( [ 'n' => 2, 'rid' => 'rawX', 'k' => 'b', 'm' => 'two', 'ts' => 1700000000.1 ] ) ),
 		];
 		$this->output_request->invoke( $cmd, $lines, 'rawX' );
 
 		$out = \ob_get_clean();
-		// Raw mode emits each line verbatim.
+		// Raw mode emits each packed envelope verbatim.
 		foreach ( $lines as $line ) {
 			$this->assertStringContainsString( $line, $out );
 		}
@@ -598,34 +579,75 @@ class ReqgrepCommandTest extends TestCase {
 		\ob_start();
 
 		$lines = [
-			\json_encode( [ 'n' => 1, 'rid' => 'fmtX', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ),
-			\json_encode( [ 'n' => 2, 'rid' => 'fmtX', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ),
+			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'fmtX', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ),
+			Message::packed( $this->packed_struct( [ 'n' => 2, 'rid' => 'fmtX', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ) ),
 		];
 		$this->output_request->invoke( $cmd, $lines, 'fmtX' );
 
 		$out = \ob_get_clean();
-		// Header line carries request_id:fmtX.
+		// Header line carries request_id:fmtX; the unwrapped body carries the key.
 		$this->assertStringContainsString( 'request_id:fmtX', $out );
+		$this->assertStringContainsString( 'process (complete)', $out );
 	}
 
-	public function test_output_request_falls_through_for_non_array_entry(): void {
+	public function test_output_request_falls_through_for_unparseable_line(): void {
 		$cmd = $this->make_cmd();
 		\ob_start();
 
-		// One line is invalid JSON — should pass through verbatim.
+		// One line is not a packed Message — should pass through verbatim.
 		$lines = [
-			\json_encode( [ 'n' => 1, 'rid' => 'pthroughX', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ),
-			'this-is-not-json',
-			\json_encode( [ 'n' => 2, 'rid' => 'pthroughX', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ),
+			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'pthroughX', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ),
+			'this-is-not-a-message',
+			Message::packed( $this->packed_struct( [ 'n' => 2, 'rid' => 'pthroughX', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ) ),
 		];
 		$this->output_request->invoke( $cmd, $lines, 'pthroughX' );
 
 		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'this-is-not-json', $out );
+		$this->assertStringContainsString( 'this-is-not-a-message', $out );
+	}
+
+	public function test_output_request_skips_header_when_rid_empty(): void {
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$lines = [
+			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'noheaderR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ),
+			Message::packed( $this->packed_struct( [ 'n' => 2, 'rid' => 'noheaderR', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ) ),
+		];
+		// Pass empty rid → no "request_id:" header line should appear.
+		$this->output_request->invoke( $cmd, $lines, '' );
+
+		$out = \ob_get_clean();
+		$this->assertStringNotContainsString( 'request_id:', $out );
+		// Body still emitted.
+		$this->assertStringContainsString( 'process (start)', $out );
+	}
+
+	public function test_output_request_formatted_unwraps_packed_envelope(): void {
+		// Formatted mode (raw=false) unpacks packed Message envelopes so on-disk
+		// envelopes render correctly.
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$rid     = 'envR';
+		$ts      = 1700000000.0;
+		$packed1 = Message::packed( $this->packed_struct( [
+			'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/env', 'ts' => $ts,
+		] ) );
+		$packed2 = Message::packed( $this->packed_struct( [
+			'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/env', 'ts' => $ts + 0.1,
+		] ) );
+		$this->output_request->invoke( $cmd, [ $packed1, $packed2 ], $rid );
+
+		$out = \ob_get_clean();
+		// Header + key strings make it through the unwrap.
+		$this->assertStringContainsString( 'request_id:' . $rid, $out );
+		$this->assertStringContainsString( '/env', $out );
+		$this->assertStringContainsString( 'process (complete)', $out );
 	}
 
 	// -------------------------------------------------------------------------
-	// process_stdin path: feed via in-memory stream.
+	// process_stdin path: feed packed Message envelopes via in-memory stream.
 	// -------------------------------------------------------------------------
 
 	public function test_stdin_has_data_returns_false_when_no_stdin(): void {
@@ -653,32 +675,27 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_stdin_has_data_returns_false_for_memory_stream(): void {
-		// php://memory reports as a "regular file" via fstat → returns true
-		// even though there's no actual piped data. Use php://temp instead so
-		// the contract "in-memory ≠ piped data" stays observable. Real fstat
-		// on a memory stream is environment-dependent, so this test pins the
-		// guard rather than the underlying syscall.
+		// fstat on a closed resource returns false → method short-circuits.
 		$cmd = $this->make_cmd();
 		$ref = new \ReflectionMethod( $cmd, 'stdin_has_data' );
 
-		// fstat on a closed resource returns false → method short-circuits.
 		$stream = \fopen( 'php://memory', 'r+' );
 		\fclose( $stream );
 		$this->assertFalse( $ref->invoke( $cmd, $stream ) );
 	}
 
 	public function test_process_stdin_consumes_lines_and_emits_matched_request(): void {
-		// Inject a memory stream pre-populated with two complete request
-		// lines (start + complete) for a matching rid plus one unrelated
-		// line. process_stdin should process all three and, because the
-		// matched rid completed, output_request fires.
+		// Inject a memory stream pre-populated with two complete request lines
+		// (start + complete) for a matching rid plus one unrelated line, all as
+		// packed Message envelopes. process_stdin unpacks + processes all three
+		// and, because the matched rid completed, output_request fires.
 		$cmd = $this->make_cmd( 'targetR' );
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
 
 		$stream = \fopen( 'php://memory', 'r+' );
-		\fwrite( $stream, \json_encode( [ 'n' => 1, 'rid' => 'targetR', 'k' => 'process (start)',    'm' => '/api', 'ts' => 1700000000.0 ] ) . "\n" );
-		\fwrite( $stream, \json_encode( [ 'n' => 2, 'rid' => 'unrelated','k' => 'process (start)',   'm' => '/x',   'ts' => 1700000000.5 ] ) . "\n" );
-		\fwrite( $stream, \json_encode( [ 'n' => 3, 'rid' => 'targetR', 'k' => 'process (complete)', 'm' => '/api', 'ts' => 1700000001.0 ] ) . "\n" );
+		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'targetR', 'k' => 'process (start)',    'm' => '/api', 'ts' => 1700000000.0 ] ) ) . "\n" );
+		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 2, 'rid' => 'unrelated','k' => 'process (start)',   'm' => '/x',   'ts' => 1700000000.5 ] ) ) . "\n" );
+		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 3, 'rid' => 'targetR', 'k' => 'process (complete)', 'm' => '/api', 'ts' => 1700000001.0 ] ) ) . "\n" );
 		\rewind( $stream );
 
 		\ob_start();
@@ -696,13 +713,13 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_process_stdin_calls_output_remaining_after_stream_ends(): void {
-		// A request that never completes within the stream stays in inflight
-		// at end-of-stream; output_remaining flushes it as `[incomplete]`.
+		// A request that never completes within the stream stays in inflight at
+		// end-of-stream; output_remaining flushes it as `[incomplete]`.
 		$cmd = $this->make_cmd( 'partialR', /*raw*/ false, /*incomplete*/ true );
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
 
 		$stream = \fopen( 'php://memory', 'r+' );
-		\fwrite( $stream, \json_encode( [ 'n' => 1, 'rid' => 'partialR', 'k' => 'process (start)', 'm' => '/half', 'ts' => 1700000000.0 ] ) . "\n" );
+		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'partialR', 'k' => 'process (start)', 'm' => '/half', 'ts' => 1700000000.0 ] ) ) . "\n" );
 		\rewind( $stream );
 
 		\ob_start();
@@ -716,13 +733,12 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_process_stdin_skips_non_matching_lines(): void {
-		// No lines match the pattern — output should be empty (or just have
-		// shell-level scaffolding), and inflight stays empty.
+		// No lines match the pattern — inflight stays empty.
 		$cmd = $this->make_cmd( 'never-matches' );
 		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
 
 		$stream = \fopen( 'php://memory', 'r+' );
-		\fwrite( $stream, \json_encode( [ 'n' => 1, 'rid' => 'noiseR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) . "\n" );
+		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'noiseR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ) . "\n" );
 		\rewind( $stream );
 
 		\ob_start();
@@ -734,15 +750,53 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertNull( $inflight->get( 'noiseR' ) );
 	}
 
+	public function test_process_stdin_skips_unparseable_lines(): void {
+		// A line that isn't a 7-element packed Message is skipped (Message::unpacked
+		// throws → caught) without crashing or emitting output.
+		$cmd = $this->make_cmd( '.' );
+		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
+
+		$stream = \fopen( 'php://memory', 'r+' );
+		\fwrite( $stream, "not-a-message\n" );
+		\fwrite( $stream, '{"just":"a hash"}' . "\n" );
+		\rewind( $stream );
+
+		\ob_start();
+		$ref->invoke( $cmd, $stream );
+		$out = \ob_get_clean();
+		\fclose( $stream );
+
+		$this->assertSame( '', $out );
+	}
+
+	public function test_process_stdin_with_empty_stream_emits_nothing(): void {
+		// Empty stream → fgets() returns false immediately → loop exits
+		// → output_remaining() fires with empty inflight (no output).
+		$cmd = $this->make_cmd();
+		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
+
+		$stream = \fopen( 'php://memory', 'r+' );
+		// Don't write anything → stream starts at EOF.
+
+		\ob_start();
+		$ref->invoke( $cmd, $stream );
+		$out = \ob_get_clean();
+		\fclose( $stream );
+		$this->assertSame( '', $out );
+	}
+
 	// -------------------------------------------------------------------------
-	// cat_mode / stream_segment_lines / get_partition end-to-end
+	// cat_mode / build_consumer end-to-end (Consumer.drain → process_message).
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Build a real on-disk partition with two complete entries — one matching the
-	 * pattern (will be output), one not — so cat_mode → stream_segment_lines →
-	 * process_line round-trips through the actual code path rather than the
-	 * reflection-only direct invocations the rest of this suite uses.
+	 * Seed a real on-disk partition with packed Message entries so the read path
+	 * (build_consumer → Consumer.drain → process_message) round-trips through the
+	 * actual substrate reader rather than the reflection-only direct invocations.
+	 *
+	 * @param string                     $base_dir  reqgrep base dir (partition = its `.p{N}` sibling).
+	 * @param int                        $partition Partition index.
+	 * @param array<int, array<string, mixed>> $entries Entry hashes to write.
 	 */
 	private function seed_partition( string $base_dir, int $partition, array $entries ): void {
 		// Flat layout: reqgrep reads `preg_replace('/\.log$/','',base_dir).".p{N}"`,
@@ -752,24 +806,20 @@ class ReqgrepCommandTest extends TestCase {
 		$p = new \Newspack_Nodes\Partition_Node();
 		$p->arguments( $flat_dir );
 		foreach ( $entries as $entry ) {
-			$message                       = \Newspack_Nodes\Message::new_message();
-			$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-			$message[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
-			$message[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
-			$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+			$message = $this->packed_struct( $entry );
 			$p->fill( $message );
 		}
 		$p->flush();
 	}
 
-	public function test_cat_mode_drives_stream_segment_lines_and_process_line(): void {
+	public function test_cat_mode_drives_consumer_and_process_message(): void {
 		$tmp = '/tmp/reqgrep-cat-mode-' . \uniqid();
 		\mkdir( $tmp, 0755, true );
 		try {
-			// Two entries: a complete request matching '/calendar' and a noise
-			// line that won't match. cat_mode walks the partition, feeds each
-			// line through process_line, and (because complete is the second
-			// matching entry) calls output_request when the rid completes.
+			// A complete request matching '/calendar' plus a noise line that
+			// won't match. cat_mode drains the partition Consumer, feeding each
+			// unpacked Message to process_message; the matched rid completes so
+			// output_request fires.
 			$this->seed_partition( $tmp, 0, [
 				[ 'n' => 1, 'rid' => 'cal-rid', 'k' => 'process (start)',    'm' => '/calendar/today', 'ts' => 1700000000.0 ],
 				[ 'n' => 5, 'rid' => 'cal-rid', 'k' => 'process (complete)', 'm' => '/calendar/today', 'ts' => 1700000000.5 ],
@@ -799,32 +849,27 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_cat_mode_recent_offset_skips_older_segments(): void {
-		// `cat_offset = 'recent'` means "start at second-to-last segment" so
-		// long-running cat doesn't replay ancient history. Verify by writing
-		// across multiple segments and asserting the older one is skipped.
+		// `cat_offset = 'recent'` seeds the Consumer at the second-to-last segment
+		// so a long-running cat doesn't replay ancient history.
 		$tmp = '/tmp/reqgrep-cat-recent-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
-			// Segment 0 with one entry.
+			// Three segments: 0 (oldest), 3 (second-to-last), 5 (newest).
 			\file_put_contents(
 				"{$tmp}.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+				Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'old-rid', 'k' => 'process (start)', 'm' => '/old', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
-			// Segment 5 (newest) with one entry. cat_offset=recent picks
-			// the second-to-last (which doesn't exist for 2 segs, falls
-			// back to oldest), so we need at least 3 segments to see the
-			// "skip oldest" behavior — make that.
 			\file_put_contents(
 				"{$tmp}.p0/3.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+				Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'mid-rid', 'k' => 'process (start)', 'm' => '/mid', 'ts' => 1700000001.0,
 				] ) ) . "\n"
 			);
 			\file_put_contents(
 				"{$tmp}.p0/5.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+				Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'new-rid', 'k' => 'process (start)', 'm' => '/new', 'ts' => 1700000002.0,
 				] ) ) . "\n"
 			);
@@ -843,19 +888,16 @@ class ReqgrepCommandTest extends TestCase {
 			$ref->invoke( $cmd );
 			$out = \ob_get_clean();
 
-			// 'recent' starts at segments[count-2] = id 3, so seg 0 is skipped
-			// but segs 3 and 5 are processed. Sanity check the assertion makes
-			// sense: old-rid must NOT appear; mid-rid / new-rid CAN appear
-			// (incomplete by design).
+			// 'recent' starts at segments[count-2] = id 3, so seg 0 is skipped.
 			$this->assertStringNotContainsString( 'old-rid', $out );
 		} finally {
 			$this->rmdir_recursive( $tmp );
 		}
 	}
 
-	public function test_get_partition_caches_per_index(): void {
-		$tmp = '/tmp/reqgrep-get-partition-' . \uniqid();
-		\mkdir( $tmp, 0755, true );
+	public function test_cat_mode_skips_partition_with_no_segments(): void {
+		$tmp = '/tmp/reqgrep-cat-nosegs-' . \uniqid();
+		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
@@ -863,211 +905,27 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-
-			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-
-			$a = $ref->invoke( $cmd, 0 );
-			$b = $ref->invoke( $cmd, 0 );
-			$c = $ref->invoke( $cmd, 1 );
-
-			$this->assertSame( $a, $b, 'same partition index returns the cached instance' );
-			$this->assertNotSame( $a, $c, 'different index → different instance' );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// Sibling-node contract: the Partition materialized in get_partition() is a
-	// SIBLING (utility node created inside a helper). Per the make_node
-	// discipline it MUST be named, have its patron set (so dump_metadata hides
-	// it from the canvas), and be sunk into the `_command_interpreter` when one
-	// is in scope (Rule 4 skips the sink when no interpreter is registered).
-	// -------------------------------------------------------------------------
-
-	public function test_get_partition_names_the_sibling(): void {
-		$tmp = '/tmp/reqgrep-sibling-name-' . \uniqid();
-		\mkdir( $tmp, 0755, true );
-		try {
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp . '/firehose.log' );
-
-			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$p = $ref->invoke( $cmd, 0 );
-
-			$this->assertStringStartsWith( 'firehose.', $p->name(), 'sibling Partition must be named after the firehose log' );
-			$this->assertStringEndsWith( '.p0', $p->name() );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_get_partition_sets_patron(): void {
-		$tmp = '/tmp/reqgrep-sibling-patron-' . \uniqid();
-		\mkdir( $tmp, 0755, true );
-		try {
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp . '/firehose.log' );
-
-			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$p = $ref->invoke( $cmd, 0 );
-
-			$this->assertNotNull( $p->patron(), 'sibling Partition must have a patron (marks it as plumbing)' );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_get_partition_sunk_into_command_interpreter_when_present(): void {
-		$tmp = '/tmp/reqgrep-sibling-sink-' . \uniqid();
-		\mkdir( $tmp, 0755, true );
-		try {
-			// Rule 4: an in-scope `_command_interpreter` becomes the sibling's sink.
-			$ci = new Command_Interpreter_Node();
-			$ci->name( Node_Names::COMMAND_INTERPRETER );
-
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp . '/firehose.log' );
-
-			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$p = $ref->invoke( $cmd, 0 );
-
-			$this->assertSame( $ci, $p->sink(), 'sibling Partition must sink into the interpreter when one is registered' );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_get_partition_no_interpreter_leaves_sink_null(): void {
-		$tmp = '/tmp/reqgrep-sibling-nosink-' . \uniqid();
-		\mkdir( $tmp, 0755, true );
-		try {
-			// Rule 4 exception: no `_command_interpreter` in scope — still NAME +
-			// set patron, but skip the interpreter sink (sink stays null).
-			$this->assertNull( Core::node( Node_Names::COMMAND_INTERPRETER ) );
-
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp . '/firehose.log' );
-
-			$ref = new \ReflectionMethod( $cmd, 'get_partition' );
-			$p = $ref->invoke( $cmd, 0 );
-
-			$this->assertStringStartsWith( 'firehose.', $p->name() );
-			$this->assertNotNull( $p->patron() );
-			$this->assertNull( $p->sink(), 'with no interpreter in scope the sibling sink stays null (Rule 4)' );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_stream_segment_lines_returns_zero_for_empty_length(): void {
-		$tmp = '/tmp/reqgrep-stream-empty-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
-		try {
-			$cmd = $this->make_cmd();
-			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
-
-			$partition = new \Newspack_Nodes\Partition_Node();
-
-			$partition->arguments( "{$tmp}/p0" );
-			$consumed  = $ref_method->invoke( $cmd, $partition, 0, 0, 0 );
-			$this->assertSame( 0, $consumed );
-
-			$consumed_neg = $ref_method->invoke( $cmd, $partition, 0, 0, -10 );
-			$this->assertSame( 0, $consumed_neg );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_stream_segment_lines_consumes_complete_lines_only(): void {
-		// Trailing partial line (no newline) must NOT count toward `consumed`,
-		// so the next poll picks it up after the writer flushes.
-		$tmp = '/tmp/reqgrep-stream-partial-' . \uniqid();
-		\mkdir( "{$tmp}/p0", 0755, true );
-		try {
-			$line1 = \Newspack_Nodes\Message::packed( $this->packed_struct( [
-				'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/a', 'ts' => 1700000000.0,
-			] ) ) . "\n";
-			$partial = '{"incomplete":'; // no trailing newline
-			\file_put_contents( "{$tmp}/p0/0.log", $line1 . $partial );
-
-			$cmd = $this->make_cmd( 'r1' );
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-
-			$partition = new \Newspack_Nodes\Partition_Node();
-
-			$partition->arguments( "{$tmp}/p0" );
-			$ref_method = new \ReflectionMethod( $cmd, 'stream_segment_lines' );
+			$set( 'num_partitions', 1 );
+			$set( 'cat_offset', 'start' );
 
 			\ob_start();
-			$consumed = $ref_method->invoke( $cmd, $partition, 0, 0, \strlen( $line1 ) + \strlen( $partial ) );
-			\ob_get_clean();
+			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
+			$ref->invoke( $cmd );
+			$out = \ob_get_clean();
 
-			// Only line1 (with its trailing newline) was consumed. The partial
-			// line stays in the unconsumed tail.
-			$this->assertSame( \strlen( $line1 ), $consumed );
+			// Empty partition → nothing but the Consumer's terminal EOF (ignored).
+			$this->assertSame( '', $out );
 		} finally {
 			$this->rmdir_recursive( $tmp );
 		}
 	}
 
 	// -------------------------------------------------------------------------
-	// follow_mode + follow_tick
+	// build_consumer: partition-dir derivation.
 	// -------------------------------------------------------------------------
 
-	public function test_seed_follow_cursors_starts_at_tail_of_newest_segment(): void {
-		$tmp = '/tmp/reqgrep-seed-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			\file_put_contents(
-				"{$tmp}.p0/3.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
-				] ) ) . "\n"
-			);
-			$expected_size = \filesize( "{$tmp}.p0/3.log" );
-
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-
-			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
-			$cursors = $ref->invoke( $cmd );
-
-			$this->assertSame( 3, $cursors[0]['seg'] );
-			$this->assertSame( $expected_size, $cursors[0]['off'] );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_seed_follow_cursors_starts_at_zero_for_empty_partition(): void {
-		$tmp = '/tmp/reqgrep-seed-empty-' . \uniqid();
+	public function test_build_consumer_targets_flat_partition_dir(): void {
+		$tmp = '/tmp/reqgrep-build-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
@@ -1076,136 +934,45 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
 
-			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
-			$cursors = $ref->invoke( $cmd );
+			$ref      = new \ReflectionMethod( $cmd, 'build_consumer' );
+			$consumer = $ref->invoke( $cmd, 0 );
 
-			$this->assertSame( [ 'seg' => 0, 'off' => 0 ], $cursors[0] );
+			$src = new \ReflectionProperty( $consumer, 'source_dir' );
+			$this->assertSame( "{$tmp}.p0", $src->getValue( $consumer ) );
 		} finally {
 			$this->rmdir_recursive( $tmp );
 		}
 	}
 
-	public function test_follow_tick_returns_false_when_no_new_bytes(): void {
-		// Cursor at the end of the segment → no unread bytes → tick reports
-		// "no data" so the caller can sleep instead of busy-spinning.
-		$tmp = '/tmp/reqgrep-tick-noop-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
+	public function test_build_consumer_strips_log_suffix_from_base_dir(): void {
+		$tmp = '/tmp/reqgrep-build-log-' . \uniqid();
+		\mkdir( "{$tmp}/firehose.p1", 0755, true );
 		try {
-			\file_put_contents(
-				"{$tmp}.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
-				] ) ) . "\n"
-			);
-			$size = \filesize( "{$tmp}.p0/0.log" );
-
 			$cmd = $this->make_cmd();
 			$set = function ( string $prop, $value ) use ( $cmd ): void {
 				$ref = new \ReflectionProperty( $cmd, $prop );
 				$ref->setValue( $cmd, $value );
 			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'base_dir', "{$tmp}/firehose.log" );
 
-			$cursors = [ 0 => [ 'seg' => 0, 'off' => $size ] ];
-			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
+			$ref      = new \ReflectionMethod( $cmd, 'build_consumer' );
+			$consumer = $ref->invoke( $cmd, 1 );
 
-			$this->assertFalse( $had_data );
-			// Cursor unchanged.
-			$this->assertSame( $size, $cursors[0]['off'] );
+			$src = new \ReflectionProperty( $consumer, 'source_dir' );
+			$this->assertSame( "{$tmp}/firehose.p1", $src->getValue( $consumer ) );
 		} finally {
 			$this->rmdir_recursive( $tmp );
 		}
 	}
 
-	public function test_follow_tick_consumes_appended_bytes(): void {
-		// Cursor at offset 0 of a non-empty segment → tick reads the line,
-		// reports had_data=true, and advances the cursor to end-of-line.
-		$tmp = '/tmp/reqgrep-tick-consume-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			\file_put_contents(
-				"{$tmp}.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'cal-rid', 'k' => 'process (start)', 'm' => '/calendar', 'ts' => 1700000000.0,
-				] ) ) . "\n"
-			);
-			$size = \filesize( "{$tmp}.p0/0.log" );
-
-			$cmd = $this->make_cmd( 'cal-rid' );
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-
-			$cursors = [ 0 => [ 'seg' => 0, 'off' => 0 ] ];
-			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-
-			\ob_start();
-			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
-			\ob_get_clean();
-
-			$this->assertTrue( $had_data );
-			$this->assertSame( $size, $cursors[0]['off'] );
-			// Inflight tracker now has the rid (start without complete).
-			$inflight = $this->get_prop( 'inflight' );
-			$this->assertNotNull( $inflight->get( 'cal-rid' ) );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	public function test_follow_tick_advances_to_next_segment_when_current_is_drained(): void {
-		// Cursor at end of seg 0; seg 1 has new data. Tick should jump to
-		// seg 1 and consume it.
-		$tmp = '/tmp/reqgrep-tick-advance-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			\file_put_contents(
-				"{$tmp}.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'old', 'k' => 'process (start)', 'm' => '/old', 'ts' => 1700000000.0,
-				] ) ) . "\n"
-			);
-			\file_put_contents(
-				"{$tmp}.p0/1.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'new', 'k' => 'process (start)', 'm' => '/new', 'ts' => 1700000001.0,
-				] ) ) . "\n"
-			);
-			$seg0_size = \filesize( "{$tmp}.p0/0.log" );
-
-			$cmd = $this->make_cmd( 'new' );
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-
-			$cursors = [ 0 => [ 'seg' => 0, 'off' => $seg0_size ] ];
-			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-
-			\ob_start();
-			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
-			\ob_get_clean();
-
-			$this->assertTrue( $had_data );
-			// Cursor jumped to seg 1.
-			$this->assertSame( 1, $cursors[0]['seg'] );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
+	// -------------------------------------------------------------------------
+	// follow_mode: Consumer run under the Event_Framework drain loop.
+	// -------------------------------------------------------------------------
 
 	public function test_follow_mode_with_max_iterations_terminates(): void {
-		// Production calls follow_mode() with no arg → PHP_INT_MAX → infinite
-		// loop. Tests pass a small max so the method actually returns.
+		// Production calls follow_mode() with no arg → PHP_INT_MAX → runs until
+		// SIGINT. Tests pass a small max so the drain loop returns.
 		$tmp = '/tmp/reqgrep-follow-bounded-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
@@ -1217,15 +984,74 @@ class ReqgrepCommandTest extends TestCase {
 			$set( 'base_dir', $tmp );
 			$set( 'num_partitions', 1 );
 
-			// 0 iterations: just the seed + log lines, no polling.
+			// 0 iterations: seed the tail Consumers + log lines, no polling.
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
 			\ob_start();
 			$ref->invoke( $cmd, 0 );
 			\ob_get_clean();
 
-			// Returned without infinite-looping. Successful assertion is reaching here.
+			// Returned without infinite-looping. Reaching here is the assertion.
 			$this->assertTrue( true );
 		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_follow_mode_emits_entry_log_lines(): void {
+		// follow_mode prints "Base dir:" + "Following N partition(s)" via
+		// WP_CLI::log before entering the drain loop. With max_iterations=0 the
+		// loop is a no-op and only the entry log lines fire.
+		$tmp = '/tmp/reqgrep-follow-entry-log-' . \uniqid();
+		\mkdir( "{$tmp}.p0", 0755, true );
+		try {
+			$GLOBALS['_test_wp_cli_logs'] = [];
+
+			$cmd = $this->make_cmd();
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 1 );
+
+			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
+			$ref->invoke( $cmd, 0 );
+
+			$joined = \implode( "\n", $GLOBALS['_test_wp_cli_logs'] );
+			$this->assertStringContainsString( 'Base dir:', $joined );
+			$this->assertStringContainsString( 'Following 1 partition(s)', $joined );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_follow_mode_seeds_at_tail_and_does_not_replay_history(): void {
+		// A partition with existing data: follow seeds each Consumer at 'end'
+		// (the tail), so a bounded drain never replays the pre-existing lines.
+		$tmp = '/tmp/reqgrep-follow-tail-' . \uniqid();
+		try {
+			$this->seed_partition( $tmp, 0, [
+				[ 'n' => 1, 'rid' => 'existing-rid', 'k' => 'process (start)',    'm' => '/before', 'ts' => 1700000000.0 ],
+				[ 'n' => 2, 'rid' => 'existing-rid', 'k' => 'process (complete)', 'm' => '/before', 'ts' => 1700000000.1 ],
+			] );
+
+			$cmd = $this->make_cmd( '/' );
+			$set = function ( string $prop, $value ) use ( $cmd ): void {
+				$ref = new \ReflectionProperty( $cmd, $prop );
+				$ref->setValue( $cmd, $value );
+			};
+			$set( 'base_dir', $tmp );
+			$set( 'num_partitions', 1 );
+
+			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
+			\ob_start();
+			$ref->invoke( $cmd, 1 );
+			$out = \ob_get_clean();
+
+			// Seeded at the tail → the pre-existing request is NOT replayed.
+			$this->assertStringNotContainsString( 'existing-rid', $out );
+		} finally {
+			$this->rmdir_recursive( "{$tmp}.p0" );
 			$this->rmdir_recursive( $tmp );
 		}
 	}
@@ -1237,10 +1063,8 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_dispatches_to_cat_mode_with_explicit_path(): void {
 		// Set up a real on-disk firehose layout under a controlled base_dir,
 		// point Config at it via use_base_dir(), and exercise __invoke
-		// end-to-end. Default `assoc_args` (no --follow,
-		// stdin not piped) routes to cat_mode, which we have separate
-		// coverage for — this test is specifically about __invoke's setup
-		// + dispatch + path validation.
+		// end-to-end. Default `assoc_args` (no --follow, stdin not piped)
+		// routes to cat_mode.
 		$base_dir = '/tmp/reqgrep-invoke-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
@@ -1248,13 +1072,12 @@ class ReqgrepCommandTest extends TestCase {
 			// Seed one matching request line so cat_mode has something to do.
 			\file_put_contents(
 				"{$base_dir}/logs/firehose.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+				Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'invoke-rid', 'k' => 'process (start)', 'm' => '/calendar', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
 
 			// Repoint substrate Config at our temp base_dir.
-			$saved_opt = $GLOBALS['_wp_options']['newspack_nodes_base_directory'] ?? null;
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
@@ -1291,14 +1114,11 @@ class ReqgrepCommandTest extends TestCase {
 		$base_dir = '/tmp/reqgrep-invoke-bad-' . \uniqid();
 		\mkdir( "{$base_dir}/logs", 0755, true );
 		try {
-			$saved_opt = $GLOBALS['_wp_options']['newspack_nodes_base_directory'] ?? null;
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			// Suppress the prod-only output-buffer drain so PHPUnit's own
-			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setValue( $cmd, false );
 
@@ -1322,14 +1142,11 @@ class ReqgrepCommandTest extends TestCase {
 		\mkdir( "{$base_dir}/logs", 0755, true );
 		\mkdir( $elsewhere, 0755, true );
 		try {
-			$saved_opt = $GLOBALS['_wp_options']['newspack_nodes_base_directory'] ?? null;
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			// Suppress the prod-only output-buffer drain so PHPUnit's own
-			// ob_start layer stays intact for the duration of the test.
 			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
 			$ref->setValue( $cmd, false );
 
@@ -1344,181 +1161,6 @@ class ReqgrepCommandTest extends TestCase {
 			$this->rmdir_recursive( $elsewhere );
 		}
 	}
-
-	/**
-	 * Build a Message struct envelope around an entry — convenience for tests
-	 * that need to write packed Messages directly.
-	 */
-	private function packed_struct( array $entry ): array {
-		$message                                       = \Newspack_Nodes\Message::new_message();
-		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? 0 );
-		// Producer convention: rid is stamped in Message::KEY (LogManager since
-		// v0.2.17). Tests mirror that here — reqgrep's ingest_line reads rid
-		// from KEY only.
-		$message[ \Newspack_Nodes\Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
-		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		return $message;
-	}
-
-	// -------------------------------------------------------------------------
-	// drain_output_buffers — direct unit coverage of the OB drain path.
-	// -------------------------------------------------------------------------
-
-	public function test_drain_output_buffers_clears_userspace_layers(): void {
-		// __invoke calls this on production runs to flush plugin-installed ob
-		// layers so the streaming echoes hit the terminal. Stack three extra
-		// layers and verify the method tears at least those down (the safety
-		// cap is 16 so 3 stays well below). Restore PHPUnit's baseline before
-		// the test ends so other tests don't see torn-down buffers.
-		$cmd = $this->make_cmd();
-		$ref = new \ReflectionMethod( $cmd, 'drain_output_buffers' );
-
-		$start_level = \ob_get_level();
-		\ob_start();
-		\ob_start();
-		\ob_start();
-		$mid_level = \ob_get_level();
-		$this->assertSame( $start_level + 3, $mid_level );
-
-		$ref->invoke( $cmd );
-
-		// At minimum the 3 pushed layers were torn down (the cap is 16 so
-		// three is well within reach).
-		$end_level = \ob_get_level();
-		$this->assertLessThan( $mid_level, $end_level, 'drain_output_buffers must remove pushed layers' );
-
-		// Restore baseline so subsequent tests don't see fewer layers.
-		while ( \ob_get_level() < $start_level ) {
-			\ob_start();
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// process_line: warning emission when history miss + non-first entry.
-	// -------------------------------------------------------------------------
-
-	public function test_process_line_warns_on_missing_history_when_not_first_entry(): void {
-		// num_buckets=2 keeps the history bounded. Push enough non-matching
-		// rids to fill the bucket array; THEN feed a matching rid whose
-		// `n` > 1 (no history) — process_line emits a WP_CLI::warning.
-		$cmd = $this->make_cmd( 'targetWarn', false, false, 1, 2 );
-
-		// Fill 2 history buckets so the warning branch's
-		// `count(history) >= num_buckets` predicate fires.
-		for ( $i = 0; $i < 4; $i++ ) {
-			$this->process_line->invoke(
-				$cmd,
-				\json_encode( [ 'n' => 1, 'rid' => "noise-{$i}", 'k' => 'init', 'm' => '/x', 'ts' => 1700000000 + $i ] ) . "\n"
-			);
-		}
-
-		$GLOBALS['_test_wp_cli_warns'] = [];
-
-		// Matching rid with n=5 (NOT 1) so process_line goes through the
-		// "non-first entry, no history" warning branch.
-		$this->process_line->invoke(
-			$cmd,
-			\json_encode( [ 'n' => 5, 'rid' => 'targetWarn', 'k' => 'init', 'm' => 'late-arrival', 'ts' => 1700001000 ] ) . "\n"
-		);
-
-		$this->assertNotEmpty( $GLOBALS['_test_wp_cli_warns'] );
-		$this->assertStringContainsString(
-			"Couldn't find request start in history",
-			$GLOBALS['_test_wp_cli_warns'][0]
-		);
-	}
-
-	// -------------------------------------------------------------------------
-	// format_entry: escalating-interval dot-row compression for huge gaps.
-	// -------------------------------------------------------------------------
-
-	public function test_format_entry_escalating_dot_intervals_for_long_gaps(): void {
-		// A 200-second gap should NOT produce 200 dot rows — the first 10
-		// rows are at 1s spacing, then 10 at 10s, etc. This caps the row
-		// count at roughly O(log gap) so multi-hour gaps stay readable.
-		$cmd = $this->make_cmd();
-		\ob_start();
-
-		$rid = 'longGapR';
-		$ts0 = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] ) . "\n" );
-		// Jump 200 seconds.
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-long', 'ts' => $ts0 + 200 ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 200.1 ] ) . "\n" );
-
-		$out = \ob_get_clean();
-		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
-		// First 10 rows at 1s + ~10 rows at 10s = ~20 max. Asserting <50 keeps
-		// the test robust against floor/jump alignment edge cases.
-		$this->assertGreaterThanOrEqual( 1, $dot_rows );
-		$this->assertLessThan( 50, $dot_rows );
-	}
-
-	public function test_format_entry_no_dot_rows_for_consecutive_seconds(): void {
-		// A 1-second gap should NOT emit any dot rows (curr_sec <= last_sec+1
-		// branch short-circuits).
-		$cmd = $this->make_cmd();
-		\ob_start();
-
-		$rid = 'tightR';
-		$ts0 = 1700000000.0;
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/t', 'ts' => $ts0 ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'a', 'ts' => $ts0 + 0.5 ] ) . "\n" );
-		$this->process_line->invoke( $cmd, \json_encode( [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/t', 'ts' => $ts0 + 1.0 ] ) . "\n" );
-
-		$out      = \ob_get_clean();
-		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
-		$this->assertSame( 0, $dot_rows, 'sub-second gaps must not emit dot rows' );
-	}
-
-	// -------------------------------------------------------------------------
-	// output_request: empty rid means no header line.
-	// -------------------------------------------------------------------------
-
-	public function test_output_request_skips_header_when_rid_empty(): void {
-		$cmd = $this->make_cmd();
-		\ob_start();
-
-		$lines = [
-			\json_encode( [ 'n' => 1, 'rid' => 'noheaderR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ),
-			\json_encode( [ 'n' => 2, 'rid' => 'noheaderR', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] ),
-		];
-		// Pass empty rid → no "request_id:" header line should appear.
-		$this->output_request->invoke( $cmd, $lines, '' );
-
-		$out = \ob_get_clean();
-		$this->assertStringNotContainsString( 'request_id:', $out );
-		// Body still emitted.
-		$this->assertStringContainsString( 'process (start)', $out );
-	}
-
-	public function test_output_request_formatted_unwraps_packed_envelope(): void {
-		// Formatted mode (raw=false) must unwrap packed Message envelopes the
-		// same way process_line does, so on-disk envelopes render correctly.
-		$cmd = $this->make_cmd();
-		\ob_start();
-
-		$rid     = 'envR';
-		$ts      = 1700000000.0;
-		$packed1 = \Newspack_Nodes\Message::packed( $this->packed_struct( [
-			'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/env', 'ts' => $ts,
-		] ) );
-		$packed2 = \Newspack_Nodes\Message::packed( $this->packed_struct( [
-			'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/env', 'ts' => $ts + 0.1,
-		] ) );
-		$this->output_request->invoke( $cmd, [ $packed1, $packed2 ], $rid );
-
-		$out = \ob_get_clean();
-		// Header + key strings make it through the unwrap.
-		$this->assertStringContainsString( 'request_id:' . $rid, $out );
-		$this->assertStringContainsString( '/env', $out );
-		$this->assertStringContainsString( 'process (complete)', $out );
-	}
-
-	// -------------------------------------------------------------------------
-	// __invoke: dispatcher branches — --follow flag and --raw/--incomplete flags.
-	// -------------------------------------------------------------------------
 
 	public function test_invoke_clamps_bucket_size_to_max(): void {
 		// bucket-size >10000 must clamp to 10000.
@@ -1595,15 +1237,14 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_invoke_recent_offset_takes_effect(): void {
-		// --recent must propagate to the cat_offset property which cat_mode
-		// reads.
+		// --recent must propagate to the cat_offset property which cat_mode reads.
 		$base_dir = '/tmp/reqgrep-invoke-recent-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			\file_put_contents(
 				"{$base_dir}/logs/firehose.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
+				Message::packed( $this->packed_struct( [
 					'n' => 1, 'rid' => 'recent-rid', 'k' => 'process (start)', 'm' => '/r', 'ts' => 1700000000.0,
 				] ) ) . "\n"
 			);
@@ -1635,195 +1276,6 @@ class ReqgrepCommandTest extends TestCase {
 			$this->rmdir_recursive( $base_dir );
 		}
 	}
-
-	public function test_follow_mode_emits_entry_log_lines(): void {
-		// follow_mode prints "Base dir:" + "Following N partition(s)" via
-		// WP_CLI::log before entering the poll loop. With max_iterations=0
-		// the loop is a no-op and only the entry log lines fire — the same
-		// emissions __invoke triggers when it dispatches to follow_mode.
-		$tmp = '/tmp/reqgrep-follow-entry-log-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			$GLOBALS['_test_wp_cli_logs'] = [];
-
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-
-			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
-			$ref->invoke( $cmd, 0 );
-
-			$joined = \implode( "\n", $GLOBALS['_test_wp_cli_logs'] );
-			$this->assertStringContainsString( 'Base dir:', $joined );
-			$this->assertStringContainsString( 'Following 1 partition(s)', $joined );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// seed_follow_cursors: multiple partitions.
-	// -------------------------------------------------------------------------
-
-	public function test_seed_follow_cursors_builds_one_entry_per_partition(): void {
-		$tmp = '/tmp/reqgrep-seed-multi-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		\mkdir( "{$tmp}.p1", 0755, true );
-		try {
-			\file_put_contents(
-				"{$tmp}.p0/2.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'r0', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
-				] ) ) . "\n"
-			);
-			\file_put_contents(
-				"{$tmp}.p1/7.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '/y', 'ts' => 1700000001.0,
-				] ) ) . "\n"
-			);
-
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 2 );
-
-			$ref = new \ReflectionMethod( $cmd, 'seed_follow_cursors' );
-			$cursors = $ref->invoke( $cmd );
-
-			$this->assertCount( 2, $cursors );
-			$this->assertSame( 2, $cursors[0]['seg'] );
-			$this->assertSame( 7, $cursors[1]['seg'] );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// follow_tick: cursor advance past an empty range without consuming.
-	// -------------------------------------------------------------------------
-
-	public function test_follow_tick_advances_past_empty_intervening_segments(): void {
-		// Cursor sits at end of seg 0. Seg 2 exists but is empty (zero bytes).
-		// Tick must advance cursor over the empty range without firing
-		// $had_data.
-		$tmp = '/tmp/reqgrep-tick-empty-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			\file_put_contents(
-				"{$tmp}.p0/0.log",
-				\Newspack_Nodes\Message::packed( $this->packed_struct( [
-					'n' => 1, 'rid' => 'r0', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0,
-				] ) ) . "\n"
-			);
-			$seg0_size = \filesize( "{$tmp}.p0/0.log" );
-			// Empty segment 2.
-			\file_put_contents( "{$tmp}.p0/2.log", '' );
-
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-
-			$cursors = [ 0 => [ 'seg' => 0, 'off' => $seg0_size ] ];
-			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-
-			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
-			// No data from either segment (seg0 at-end, seg2 empty) → false.
-			$this->assertFalse( $had_data );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// follow_tick: skips partitions with no segments.
-	// -------------------------------------------------------------------------
-
-	public function test_follow_tick_skips_partition_with_no_segments(): void {
-		$tmp = '/tmp/reqgrep-tick-empty-part-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-
-			$cursors = [ 0 => [ 'seg' => 0, 'off' => 0 ] ];
-			$ref = new \ReflectionMethod( $cmd, 'follow_tick' );
-
-			$had_data = $ref->invokeArgs( $cmd, [ &$cursors ] );
-			$this->assertFalse( $had_data );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// cat_mode: skip partition with no segments.
-	// -------------------------------------------------------------------------
-
-	public function test_cat_mode_skips_partition_with_no_segments(): void {
-		$tmp = '/tmp/reqgrep-cat-nosegs-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
-		try {
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
-			$set( 'cat_offset', 'start' );
-
-			\ob_start();
-			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
-			$ref->invoke( $cmd );
-			$out = \ob_get_clean();
-
-			// Empty partition → no output (other than possibly nothing).
-			$this->assertSame( '', $out );
-		} finally {
-			$this->rmdir_recursive( $tmp );
-		}
-	}
-
-	// -------------------------------------------------------------------------
-	// process_stdin: null stream branch when STDIN undefined.
-	// -------------------------------------------------------------------------
-
-	public function test_process_stdin_with_empty_stream_emits_nothing(): void {
-		// Empty stream → fgets() returns false immediately → loop exits
-		// → output_remaining() fires with empty inflight (no output).
-		$cmd = $this->make_cmd();
-		$ref = new \ReflectionMethod( $cmd, 'process_stdin' );
-
-		$stream = \fopen( 'php://memory', 'r+' );
-		// Don't write anything → stream starts at EOF.
-
-		\ob_start();
-		$ref->invoke( $cmd, $stream );
-		$out = \ob_get_clean();
-		\fclose( $stream );
-		$this->assertSame( '', $out );
-	}
-
-	// -------------------------------------------------------------------------
-	// __invoke: --raw flag sets the raw property.
-	// -------------------------------------------------------------------------
 
 	public function test_invoke_propagates_raw_flag(): void {
 		$base_dir = '/tmp/reqgrep-invoke-raw-' . \uniqid();
@@ -1903,5 +1355,110 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertStringContainsString( '[--follow]', $doc );
 		$this->assertStringContainsString( '## EXAMPLES', $doc );
 		$this->assertStringContainsString( 'wp nodes reqgrep --follow', $doc );
+	}
+
+	// -------------------------------------------------------------------------
+	// drain_output_buffers — direct unit coverage of the OB drain path.
+	// -------------------------------------------------------------------------
+
+	public function test_drain_output_buffers_clears_userspace_layers(): void {
+		// __invoke calls this on production runs to flush plugin-installed ob
+		// layers so the streaming echoes hit the terminal. Stack three extra
+		// layers and verify the method tears at least those down (the safety
+		// cap is 16 so 3 stays well below). Restore PHPUnit's baseline before
+		// the test ends so other tests don't see torn-down buffers.
+		$cmd = $this->make_cmd();
+		$ref = new \ReflectionMethod( $cmd, 'drain_output_buffers' );
+
+		$start_level = \ob_get_level();
+		\ob_start();
+		\ob_start();
+		\ob_start();
+		$mid_level = \ob_get_level();
+		$this->assertSame( $start_level + 3, $mid_level );
+
+		$ref->invoke( $cmd );
+
+		// At minimum the 3 pushed layers were torn down (the cap is 16 so
+		// three is well within reach).
+		$end_level = \ob_get_level();
+		$this->assertLessThan( $mid_level, $end_level, 'drain_output_buffers must remove pushed layers' );
+
+		// Restore baseline so subsequent tests don't see fewer layers.
+		while ( \ob_get_level() < $start_level ) {
+			\ob_start();
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	// process_message: warning emission when history miss + non-first entry.
+	// -------------------------------------------------------------------------
+
+	public function test_process_message_warns_on_missing_history_when_not_first_entry(): void {
+		// num_buckets=2 keeps the history bounded. Push enough non-matching
+		// rids to fill the bucket array; THEN feed a matching rid whose
+		// `n` > 1 (no history) — group_and_output emits a WP_CLI::warning.
+		$cmd = $this->make_cmd( 'targetWarn', false, false, 1, 2 );
+
+		// Fill 2 history buckets so the warning branch's
+		// `count(history) >= num_buckets` predicate fires.
+		for ( $i = 0; $i < 4; $i++ ) {
+			$this->feed( $cmd, [ 'n' => 1, 'rid' => "noise-{$i}", 'k' => 'init', 'm' => '/x', 'ts' => 1700000000 + $i ] );
+		}
+
+		$GLOBALS['_test_wp_cli_warns'] = [];
+
+		// Matching rid with n=5 (NOT 1) so it goes through the "non-first entry,
+		// no history" warning branch.
+		$this->feed( $cmd, [ 'n' => 5, 'rid' => 'targetWarn', 'k' => 'init', 'm' => 'late-arrival', 'ts' => 1700001000 ] );
+
+		$this->assertNotEmpty( $GLOBALS['_test_wp_cli_warns'] );
+		$this->assertStringContainsString(
+			"Couldn't find request start in history",
+			$GLOBALS['_test_wp_cli_warns'][0]
+		);
+	}
+
+	// -------------------------------------------------------------------------
+	// format_entry: escalating-interval dot-row compression for huge gaps.
+	// -------------------------------------------------------------------------
+
+	public function test_format_entry_escalating_dot_intervals_for_long_gaps(): void {
+		// A 200-second gap should NOT produce 200 dot rows — the first 10
+		// rows are at 1s spacing, then 10 at 10s, etc. This caps the row
+		// count at roughly O(log gap) so multi-hour gaps stay readable.
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$rid = 'longGapR';
+		$ts0 = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] );
+		// Jump 200 seconds.
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-long', 'ts' => $ts0 + 200 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 200.1 ] );
+
+		$out = \ob_get_clean();
+		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
+		// First 10 rows at 1s + ~10 rows at 10s = ~20 max. Asserting <50 keeps
+		// the test robust against floor/jump alignment edge cases.
+		$this->assertGreaterThanOrEqual( 1, $dot_rows );
+		$this->assertLessThan( 50, $dot_rows );
+	}
+
+	public function test_format_entry_no_dot_rows_for_consecutive_seconds(): void {
+		// A 1-second gap should NOT emit any dot rows (curr_sec <= last_sec+1
+		// branch short-circuits).
+		$cmd = $this->make_cmd();
+		\ob_start();
+
+		$rid = 'tightR';
+		$ts0 = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/t', 'ts' => $ts0 ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'a', 'ts' => $ts0 + 0.5 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/t', 'ts' => $ts0 + 1.0 ] );
+
+		$out      = \ob_get_clean();
+		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
+		$this->assertSame( 0, $dot_rows, 'sub-second gaps must not emit dot rows' );
 	}
 }

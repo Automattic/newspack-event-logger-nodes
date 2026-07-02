@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`wp nodes reqgrep` consumes Messages through `Consumer_Node::drain()`** instead of hand-rolling `read_at` + `json_decode` + segment/follow bookkeeping. cat/recent modes drain synchronously; follow rides the event loop; stdin unpacks each line via `Message::unpacked`. Drops the dual-shape "legacy entry-hash" stdin path (there is no legacy entry-hash format) and the private `read_at`/`stream_segment_lines`/`follow_tick`/`seed_follow_cursors`/`get_partition` machinery — a non-envelope stdin line is now skipped rather than decoded.
+- **Index-formatter cutover to the Message array.** `Flame_Builder_Node` / `Request_Builder_Node` `format_index_entry()` and `Performance_CI_Node`'s four `with_index` closures now receive the unpacked Message + `{segment, offset, length}` position (the substrate's new `Partition_Node` formatter contract) and read `Message::VALUE` directly — no `json_decode`, and the flame path no longer needs its own decode-depth constant. Requires newspack-nodes with `read_message_at` + the new formatter contract.
+
 ## [0.23.0] - 2026-07-02
 
 ### Fixed

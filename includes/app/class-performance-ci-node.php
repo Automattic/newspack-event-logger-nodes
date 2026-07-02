@@ -769,10 +769,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::name_scratch_partition( $partition, 'requests', $p );
 			$partition->arguments( "{$log_base}/requests.p{$p}" );
 			$partition->with_index(
-				static function ( string $line, array $position, &$data = null ): ?string {
-					/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
-					/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
-					return Request_Builder_Node::format_index_entry( $line, $position, $data );
+				static function ( array $message, array $position ): ?string {
+					return Request_Builder_Node::format_index_entry( $message, $position );
 				}
 			);
 			$partition->scan_index(
@@ -834,10 +832,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		self::name_scratch_partition( $requests, 'requests', $partition );
 		$requests->arguments( "{$log_base}/requests.p{$partition}" );
 		$requests->with_index(
-			static function ( string $line, array $position, &$data = null ): ?string {
-				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
-				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
-				return Request_Builder_Node::format_index_entry( $line, $position, $data );
+			static function ( array $message, array $position ): ?string {
+				return Request_Builder_Node::format_index_entry( $message, $position );
 			}
 		);
 		$requests->scan_index(
@@ -876,10 +872,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		self::name_scratch_partition( $requests, 'requests', $partition );
 		$requests->arguments( "{$log_base}/requests.p{$partition}" );
 		$requests->with_index(
-			static function ( string $line, array $position, &$data = null ): ?string {
-				/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
-				/** @var array<string,mixed>|\stdClass|null $data -- by-ref pre-decoded payload from the formatter. */
-				return Request_Builder_Node::format_index_entry( $line, $position, $data );
+			static function ( array $message, array $position ): ?string {
+				return Request_Builder_Node::format_index_entry( $message, $position );
 			}
 		);
 		$requests->scan_index(
@@ -892,16 +886,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( ! \is_array( $entry ) || \trim( self::to_string( $entry['rid'] ) ) !== $rid ) {
 					return null;
 				}
-				$data = $requests->read_at(
+				$message = $requests->read_message_at(
 					self::to_int( $entry['segment_id'] ?? 0 ),
 					self::to_int( $entry['offset'] ?? 0 ),
 					self::to_int( $entry['length'] ?? 0 )
 				);
-				if ( '' === $data ) {
-					return false;
-				}
-				$decoded = \json_decode( \trim( $data ), true, 64 );
-				$req     = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
+				$req = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
 				if ( ! \is_array( $req ) ) {
 					return false;
 				}
@@ -961,10 +951,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::name_scratch_partition( $flames, 'flames', $p );
 			$flames->arguments( "{$log_base}/flames.p{$p}" );
 			$flames->with_index(
-				static function ( string $line, array $position, ?array &$data = null ): ?string {
-					/** @var array<string,int> $position -- with_index() callback contract; the substrate always passes {segment_id,offset,length}. */
-					/** @var array<string,mixed>|null $data -- by-ref pre-decoded payload from the formatter. */
-					return Flame_Builder_Node::format_index_entry( $line, $position, $data );
+				static function ( array $message, array $position ): ?string {
+					return Flame_Builder_Node::format_index_entry( $message, $position );
 				}
 			);
 			$result = null;
@@ -978,16 +966,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					if ( ! \is_array( $entry ) || \trim( $entry['rid'] ) !== $rid ) {
 						return null;
 					}
-					$data = $flames->read_at(
+					$message = $flames->read_message_at(
 						$entry['segment_id'],
 						$entry['offset'],
 						$entry['length']
 					);
-					if ( '' === $data ) {
-						return false;
-					}
-					$decoded = \json_decode( \trim( $data ), true, Flame_Builder_Node::FLAME_JSON_DEPTH );
-					$flame   = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
+					$flame = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
 					if ( \is_array( $flame ) ) {
 						$result = $flame;
 					}
