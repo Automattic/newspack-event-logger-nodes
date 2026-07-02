@@ -77,7 +77,7 @@ class FullPipelineTest extends TestCase {
 			],
 			'ts'  => 1,
 		] );
-		$this->topic_write( $topic, '/x', [ 'n' => 5, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 6, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
 		// Worker side: scaffolding.
 		$router = new Router_Node();

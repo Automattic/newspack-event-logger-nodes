@@ -186,10 +186,55 @@ class Request_Builder_Node extends Timer_Node {
 			}
 			$request = new \stdClass();
 			$request->rid = $rid;
+			$request->expected_n = 1;
 			$this->cache->set( $rid, $request );
 		}
 		// The cache only ever stores the \stdClass built above for a given rid.
 		/** @var \stdClass $request */
+
+		// Per-request sequence validation (ported from Tachikoma InstrumentalityGrail):
+		// surface orphaned mid-stream lines, dupes/reorders, and rid reuse instead of
+		// silently corrupting assembly. NB: a lost *trailing* line (e.g. the terminal
+		// `process (complete)`) has no later n to reveal a gap — that case is the
+		// evict-timeout path below, and is prevented by the Consumer seal-grace.
+		$seq_n = \is_scalar( $n ) ? (int) $n : 0;
+
+		// Nested subprocess sequence: nuclear-gyrobase shells out to the Perl engine
+		// (proc_open), and the child emits its OWN n-sequence (restarting at 1) inside
+		// the parent request's stream under the SAME rid. Stash the parent's expected n
+		// on `gyrobase (start)` (reset to the nested sequence) and restore it on
+		// `gyrobase (complete)` below — so neither the nested restart nor the parent's
+		// resume reads as a gap/dup. A stack handles sequential or nested renders.
+		if ( 'gyrobase (start)' === $keyword ) {
+			$stack               = \is_array( $request->seq_stack ?? null ) ? $request->seq_stack : [];
+			$stack[]             = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
+			$request->seq_stack  = $stack;
+			$request->expected_n = 1;
+		}
+
+		$expected = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
+		if ( 'process (start)' === $keyword && $expected > 1 ) {
+			$this->print_less_often( 'WARNING: multiple requests with ID: ' . $rid );
+			$expected = 1;
+			$request->expected_n = 1;
+		}
+		if ( $seq_n < $expected ) {
+			$this->print_less_often( 'INFO: duplicate message: expected #' . $expected . ', got #' . $seq_n . ' on ' . $rid );
+			return;
+		}
+		if ( $seq_n > $expected ) {
+			$this->print_less_often( 'WARNING: missing message: expected #' . $expected . ', got #' . $seq_n . ' on ' . $rid );
+			return;
+		}
+		$request->expected_n = $seq_n + 1;
+
+		// End of the nested subprocess sequence: pop back to the parent's expected n.
+		if ( 'gyrobase (complete)' === $keyword && \is_array( $request->seq_stack ?? null ) && [] !== $request->seq_stack ) {
+			$stack               = $request->seq_stack;
+			$popped              = \array_pop( $stack );
+			$request->expected_n = \is_int( $popped ) ? $popped : 1;
+			$request->seq_stack  = $stack;
+		}
 
 		// Forward errors and warnings to errors.log. Pass the rid so the
 		// emitted Message carries it in KEY — errors.log readers (and any
@@ -700,6 +745,8 @@ class Request_Builder_Node extends Timer_Node {
 		$request->duration_ms   = ( $now - $start_ts ) * 1000;
 		$request->status_code   = $request->status_code ?? 0;
 		$request->state         = 'complete';
+		$url                    = \is_string( $request->url ?? null ) ? $request->url : '';
+		$this->print_less_often( 'WARNING: trace timed out on ' . $rid . ' (' . $url . ') after ' . $request->duration_ms . 'ms' );
 		$this->emit_request( $request );
 	}
 
