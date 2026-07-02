@@ -751,14 +751,13 @@ class RequestBuilderTest extends TestCase {
 			'request_method' => 'GET',
 			'error_status'   => '-',
 		];
-		// $line is the packed Message wire format (positional JSON); VALUE at index 6.
+		// The formatter receives the unpacked message array; VALUE at index 6.
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = $req;
-		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
 
-		$entry = Request_Builder_Node::format_index_entry( $line, $position );
+		$entry = Request_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 97, \strlen( $entry ) );
 
@@ -778,9 +777,8 @@ class RequestBuilderTest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = [ 'rid' => 'x' ];
-		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( Request_Builder_Node::format_index_entry( $line, $position ) );
+		$this->assertNull( Request_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
 	public function test_parse_request_index_handles_v2_v3_v4_field_lengths(): void {
@@ -1365,8 +1363,7 @@ class RequestBuilderTest extends TestCase {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::VALUE ] = $value;
-		$line                  = Message::packed( $message );
-		return Request_Builder_Node::format_index_entry( $line, $position );
+		return Request_Builder_Node::format_index_entry( $message, $position );
 	}
 
 	public function test_format_index_entry_returns_empty_when_offset_exceeds_cap(): void {
@@ -1397,14 +1394,13 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_format_index_entry_returns_null_when_value_is_not_array(): void {
-		// A packed message where VALUE is a string (TM_BYTESTREAM-shaped wire).
+		// A message where VALUE is a string (TM_BYTESTREAM-shaped).
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
 		$message[ Message::VALUE ] = 'raw';
-		$line                  = Message::packed( $message );
 		$this->assertNull(
 			Request_Builder_Node::format_index_entry(
-				$line,
+				$message,
 				[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
 			)
 		);

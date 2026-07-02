@@ -1,19 +1,19 @@
 <?php
 /**
  * ReqgrepCommand: WP-CLI subcommand for filtering firehose JSONL by request id
- * (or any pattern). Verbatim port of Performance Logger's ReqgrepCommand
- * (`newspack-performance-logger/includes/cli/class-reqgrep-command.php`),
- * adapted to the Newspack Nodes runtime:
+ * (or any pattern). Reads the firehose through the substrate's `Consumer_Node`
+ * instead of hand-rolling `Partition::read_at()` + `json_decode()`:
  *
- *  - Walks `Partition` segments directly (`get_segments()` + `read_at()`).
- *  - Live follow uses `Tail` semantics — but since reqgrep is a one-shot CLI
- *    tool we drive segment iteration synchronously rather than registering
- *    Tail with the EventFramework. Each poll iteration scans the partition's
- *    segments and emits new bytes since the last scan.
- *  - Logs path: `Config::get_logs_directory() . '/firehose.log'` (relocated
- *    from event-logger plugin to event-logger-nodes plugin).
- *  - Namespace: `Newspack_Event_Logger_Nodes\CLI`. Uses the local LruCache
- *    port (no dependency on the legacy plugin).
+ *  - cat / --recent: one `Consumer_Node` per partition, sink → a `Callback_Node`
+ *    that hands each unpacked `Message` to `process_message()`, driven to EOF via
+ *    the Consumer's synchronous `drain()`.
+ *  - --follow: the same Consumer graph seeded at the partition tail, run under the
+ *    `Event_Framework` drain loop (each Consumer's `fire_cb` polls for new bytes).
+ *  - Every firehose line on disk is a 7-field positional `Message` envelope
+ *    (`Message::packed`); the entry hash is at `Message::VALUE`, the rid at
+ *    `Message::KEY`. There is no legacy entry-hash format.
+ *  - Logs path: `Config::get_logs_directory() . '/firehose.log'`.
+ *  - Namespace: `Newspack_Event_Logger_Nodes\CLI`. Uses the local LruCache port.
  *
  * Behaviour preserved 1:1:
  *  - 300-slot 3-bucket × 100 LruCache with 60-second timed rotation; on-evict
@@ -38,16 +38,16 @@
  *
  * @package Newspack_Event_Logger_Nodes
  * @phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- CLI output, not web
- * @phpcs:disable WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Intentional log file access
  */
 
 namespace Newspack_Event_Logger_Nodes\CLI;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
-use Newspack_Nodes\Core;
-use Newspack_Nodes\Node_Names;
-use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Callback_Node;
+use Newspack_Nodes\Consumer_Node;
+use Newspack_Nodes\Event_Framework;
+use Newspack_Nodes\Message;
 
 class Reqgrep_Command {
 
@@ -79,12 +79,6 @@ class Reqgrep_Command {
 
 	/** Output-buffer drain cap (defends against non-erasable userland buffers). */
 	private const OB_DRAIN_CAP = 16;
-
-	/** Per-read chunk for the cat/follow reader — bounds CLI memory on multi-GB segments. */
-	private const READ_CHUNK_BYTES = 10 * 1024 * 1024;
-
-	/** Live-follow sleep when no segments produced new bytes (microseconds). */
-	private const FOLLOW_IDLE_USLEEP = 100_000;
 
 	/** Formatting state — current indent column. */
 	private int $fmt_indent = 0;
@@ -133,9 +127,6 @@ class Reqgrep_Command {
 
 	/** @var array<string, mixed> Loaded config snapshot. */
 	private array $config = [];
-
-	/** @var array<int, \Newspack_Nodes\Partition_Node> Cached Partition instances per index. */
-	private array $partition_cache = [];
 
 	/**
 	 * When true (production default), __invoke drains all plugin-installed
@@ -281,11 +272,11 @@ class Reqgrep_Command {
 	 * Output a completed request — either the raw JSON lines (raw mode) or the
 	 * formatted indented tree.
 	 *
-	 * Raw mode echoes spooled lines verbatim: whatever shape came in is what
-	 * goes out (wire-format envelope for disk reads, entry-shape JSON for
-	 * stdin pipes). Formatted mode decodes each line and unwraps envelopes.
+	 * Raw mode echoes spooled lines verbatim (the packed Message envelope).
+	 * Formatted mode unpacks each envelope and renders its VALUE (the entry hash);
+	 * a line that isn't a packed Message passes through verbatim.
 	 *
-	 * @param array<string> $lines JSON lines for the request.
+	 * @param array<string> $lines Packed Message envelopes for the request.
 	 * @param string        $rid   Request id, used for the formatted header.
 	 */
 	private function output_request( array $lines, string $rid ): void {
@@ -306,18 +297,13 @@ class Reqgrep_Command {
 		}
 
 		foreach ( $lines as $line ) {
-			$decoded = \json_decode( $line, true, 64 );
-			if ( ! \is_array( $decoded ) ) {
+			try {
+				$message = Message::unpacked( $line );
+			} catch ( \InvalidArgumentException $e ) {
 				echo $line . "\n";
 				continue;
 			}
-			// Unwrap envelope (positional list with VALUE at index 6) vs entry
-			// (hash). Mirrors the detection in process_line().
-			if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
-				$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			} else {
-				$entry = $decoded;
-			}
+			$entry = $message[ Message::VALUE ];
 			if ( ! \is_array( $entry ) ) {
 				echo $line . "\n";
 				continue;
@@ -516,12 +502,13 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Stdin pipe mode: read line-by-line from `$stream`, run each through
-	 * process_line, then flush incomplete requests so the operator can see
-	 * partial state.
+	 * Stdin pipe mode: read line-by-line from `$stream`, unpack each packed
+	 * Message envelope, run it through process_message, then flush incomplete
+	 * requests so the operator can see partial state.
 	 *
 	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled
-	 * with fixture lines to drive the loop deterministically.
+	 * with fixture lines to drive the loop deterministically. (A shared
+	 * `Stdin_Node` primitive is future work — this stays minimal.)
 	 *
 	 * @param resource|null $stream Source stream (defaults to STDIN).
 	 */
@@ -533,49 +520,49 @@ class Reqgrep_Command {
 			}
 		}
 		while ( ( $line = \fgets( $stream ) ) !== false ) {
-			$this->process_line( $line );
+			$line = \trim( $line );
+			if ( '' === $line ) {
+				continue;
+			}
+			try {
+				$message = Message::unpacked( $line );
+			} catch ( \InvalidArgumentException $e ) {
+				continue; // Not a packed Message envelope — skip.
+			}
+			$this->process_message( $message );
 		}
 		$this->output_remaining();
 	}
 
 	/**
-	 * Process a single firehose JSONL line.
+	 * Process one unpacked firehose Message: the entry hash sits at
+	 * Message::VALUE, the routing rid at Message::KEY. Spool the re-packed
+	 * envelope (the accepted minimal bridge — raw mode echoes it, formatted mode
+	 * unpacks it) and hand off to the rid-grouping state machine.
 	 *
-	 * State machine:
-	 *  - Already-tracked rid: append; print on `process (complete)`.
-	 *  - New rid + line matches pattern: pull history, append, start tracking.
-	 *  - No match: stash in history (bounded by num_buckets × bucket_size).
-	 *
-	 * @param string $line Raw log line (with or without trailing newline).
+	 * @param array<int, mixed> $message The 7-field positional Message array.
 	 */
-	private function process_line( string $line ): void {
-		$line = \trim( $line );
-		if ( '' === $line ) {
-			return;
-		}
-
-		// Lines on disk are 7-element positional Message envelopes (the firehose
-		// writes packed Messages); stdin pipes and legacy callers may pass
-		// entry-shape JSON directly. Detect either: a list-shaped decode is the
-		// envelope (entry payload at Message::VALUE; rid at Message::KEY); a
-		// hash carries rid inside. We decode once for control flow but spool
-		// $line verbatim — raw mode echoes whatever came in, and formatted
-		// mode decodes again at output time.
-		$decoded = \json_decode( $line, true, 64 );
-		if ( ! \is_array( $decoded ) ) {
-			return;
-		}
-		if ( \array_is_list( $decoded ) && isset( $decoded[ \Newspack_Nodes\Message::VALUE ] ) ) {
-			$entry = $decoded[ \Newspack_Nodes\Message::VALUE ];
-			$rid   = self::to_str( $decoded[ \Newspack_Nodes\Message::KEY ] ?? '' );
-		} else {
-			$entry = $decoded;
-			$rid   = self::to_str( $entry['rid'] ?? '' );
-		}
+	private function process_message( array $message ): void {
+		$entry = $message[ Message::VALUE ];
+		$rid   = self::to_str( $message[ Message::KEY ] ?? '' );
 		if ( ! \is_array( $entry ) || '' === $rid ) {
 			return;
 		}
+		$this->group_and_output( $entry, $rid, Message::packed( $message ) );
+	}
 
+	/**
+	 * Rid-grouping state machine — the shared tail of the read paths.
+	 *
+	 *  - Already-tracked rid: append; print on `process (complete)`.
+	 *  - New rid + envelope matches pattern: pull history, append, start tracking.
+	 *  - No match: stash in history (bounded by num_buckets × bucket_size).
+	 *
+	 * @param array<int|string, mixed> $entry Decoded entry hash (the Message VALUE).
+	 * @param string                   $rid   Request id (the Message KEY).
+	 * @param string                   $line  Packed Message envelope (spooled + grepped).
+	 */
+	private function group_and_output( array $entry, string $rid, string $line ): void {
 		$key = self::to_str( $entry['k'] ?? '' );
 
 		$inflight = $this->require_inflight();
@@ -700,194 +687,64 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Follow mode: open a cursor per partition pointing at the tail of the
-	 * newest segment, then loop polling each partition for new bytes. Mirrors
-	 * the legacy FirehoseReader('end') behavior.
+	 * Follow mode: one Consumer per partition seeded at the tail (no history
+	 * replay), then run under the Event_Framework drain loop — each Consumer's
+	 * fire_cb polls its source for new bytes and forwards them to
+	 * process_message. Mirrors the legacy FirehoseReader('end') behavior.
 	 *
-	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever
-	 * until SIGINT). Tests pass a small number to drive a bounded number of
-	 * polls and assert on output without an infinite loop.
+	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever until
+	 * SIGINT). Tests pass a small number to bound the drain loop.
 	 */
 	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
-		$cursors = $this->seed_follow_cursors();
+		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
+			$consumer = $this->build_consumer( $p );
+			$consumer->next_offset( 'end' ); // Tail — don't replay history on attach.
+		}
 
 		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
 		\WP_CLI::log( 'Following ' . $this->num_partitions . ' partition(s)... (Ctrl+C to stop)' );
 
-		for ( $i = 0; $i < $max_iterations; $i++ ) {
-			$had_data = $this->follow_tick( $cursors );
-			if ( ! $had_data ) {
-				\usleep( self::FOLLOW_IDLE_USLEEP );
+		$framework = Event_Framework::instance();
+		$framework->install_signal_handlers();
+		$iterations = 0;
+		$framework->drain(
+			static function () use ( &$iterations, $max_iterations ): bool {
+				return $iterations++ < $max_iterations;
 			}
-		}
+		);
 	}
 
 	/**
-	 * Build the initial follow-mode cursor map: each partition starts at the
-	 * tail of its newest segment so we don't replay history on attach.
-	 *
-	 * @return array<int,array{seg:int,off:int}>
-	 */
-	private function seed_follow_cursors(): array {
-		$cursors = [];
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$partition = $this->get_partition( $p );
-			$segments  = $partition->get_segments( true );
-			if ( empty( $segments ) ) {
-				$cursors[ $p ] = [ 'seg' => 0, 'off' => 0 ];
-				continue;
-			}
-			$newest        = \end( $segments );
-			$cursors[ $p ] = [
-				'seg' => $newest['id'],
-				'off' => $newest['size'],
-			];
-		}
-		return $cursors;
-	}
-
-	/**
-	 * Lazily resolve a Partition for a given partition index.
-	 *
-	 * @param int $partition Partition index.
-	 * @return Partition_Node
-	 */
-	private function get_partition( int $partition ): Partition_Node {
-		if ( ! isset( $this->partition_cache[ $partition ] ) ) {
-			// Name the sibling after the firehose log basename; suffix with a
-			// process+object-id token so a second command run doesn't clash with
-			// stale Core registrations.
-			$role           = \pathinfo( $this->base_dir, PATHINFO_FILENAME ) ?: 'firehose';
-			$instance_token = \getmypid() . '-' . \spl_object_id( $this );
-			$p              = new Partition_Node();
-			$p->name( "{$role}.{$instance_token}.p{$partition}" );
-			// Sibling plumbing: patron-link so dump_metadata hides it from the canvas.
-			$p->patron( $p );
-			// Rule 4: sink into the interpreter only when one is in scope.
-			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-			if ( null === $p->sink() && null !== $ci ) {
-				$p->sink( $ci );
-			}
-			$flat_dir = \preg_replace( '/\.log$/', '', $this->base_dir );
-			$p->arguments( "{$flat_dir}.p{$partition}" );
-			$this->partition_cache[ $partition ] = $p;
-		}
-		return $this->partition_cache[ $partition ];
-	}
-
-	/**
-	 * One iteration of the follow-mode poll. Mutates `$cursors` in place,
-	 * returns true iff any partition yielded new bytes this tick. Extracted
-	 * so tests can drive a known number of ticks without a while(true).
-	 *
-	 * @param array<int,array{seg:int,off:int}> $cursors Per-partition cursor state.
-	 */
-	private function follow_tick( array &$cursors ): bool {
-		$had_data = false;
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$partition = $this->get_partition( $p );
-			$segments  = $partition->get_segments( true );
-			if ( empty( $segments ) ) {
-				continue;
-			}
-
-			$cursor = $cursors[ $p ];
-
-			// Walk every segment ≥ cursor.seg; advance cursor as bytes consumed.
-			foreach ( $segments as $s ) {
-				if ( $s['id'] < $cursor['seg'] ) {
-					continue;
-				}
-				$start = ( $s['id'] === $cursor['seg'] ) ? $cursor['off'] : 0;
-				$len   = $s['size'] - $start;
-				if ( $len <= 0 ) {
-					// Move the cursor forward to the start of the next segment so
-					// we don't restart at this seg's tail next iteration.
-					if ( $s['id'] > $cursor['seg'] ) {
-						$cursor['seg'] = $s['id'];
-						$cursor['off'] = 0;
-					}
-					continue;
-				}
-				$consumed      = $this->stream_segment_lines( $partition, $s['id'], $start, $len );
-				$cursor['seg'] = $s['id'];
-				$cursor['off'] = $start + $consumed;
-				if ( $consumed > 0 ) {
-					$had_data = true;
-				}
-			}
-
-			$cursors[ $p ] = $cursor;
-		}
-		return $had_data;
-	}
-
-	/**
-	 * Read a contiguous byte range from a segment, split into lines, and feed
-	 * each to process_line. Returns the number of complete-line bytes consumed
-	 * (so callers can advance their cursor).
-	 *
-	 * Trailing partial lines are NOT consumed — the caller's next poll will
-	 * pick them up once the writer flushes a newline.
-	 *
-	 * @param Partition_Node $partition Partition instance.
-	 * @param int       $seg       Segment id.
-	 * @param int       $offset    Start offset within segment.
-	 * @param int       $length    Bytes to read.
-	 * @return int Bytes consumed (offset advance).
-	 */
-	private function stream_segment_lines( Partition_Node $partition, int $seg, int $offset, int $length ): int {
-		if ( $length <= 0 ) {
-			return 0;
-		}
-		// Chunk large ranges to keep memory peak bounded — `read_at` itself
-		// is uncapped, but a single fread of an entire multi-GB segment
-		// would balloon the CLI process.
-		$consumed = 0;
-		$pending  = '';
-		$max      = self::READ_CHUNK_BYTES;
-		while ( $consumed < $length ) {
-			$want  = \min( $max, $length - $consumed );
-			$bytes = $partition->read_at( $seg, $offset + $consumed, $want );
-			if ( '' === $bytes ) {
-				break;
-			}
-			$buffer    = $pending . $bytes;
-			$lines     = \explode( "\n", $buffer );
-			$pending   = \array_pop( $lines );
-			foreach ( $lines as $line ) {
-				$this->process_line( $line . "\n" );
-			}
-			$consumed += \strlen( $bytes );
-		}
-		// Tell the caller how many bytes lived inside complete lines.
-		return $consumed - \strlen( $pending );
-	}
-
-	/**
-	 * Cat mode: walk each partition's segments oldest-first, stream every line
-	 * through process_line, then flush incomplete requests.
+	 * Cat mode: one Consumer per partition, drained synchronously to EOF. `--recent`
+	 * seeds the Consumer at the second-to-last segment; the default reads from the
+	 * start. Flush incomplete requests once every partition is exhausted.
 	 */
 	private function cat_mode(): void {
 		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$partition = $this->get_partition( $p );
-			$segments  = $partition->get_segments( true );
-			if ( empty( $segments ) ) {
-				continue;
+			$consumer = $this->build_consumer( $p );
+			if ( 'recent' === $this->cat_offset ) {
+				$consumer->next_offset( 'recent' );
 			}
-
-			// Resolve cat-offset starting segment.
-			$start_seg = ( 'recent' === $this->cat_offset && \count( $segments ) >= 2 )
-				? $segments[ \count( $segments ) - 2 ]['id']
-				: $segments[0]['id'];
-
-			foreach ( $segments as $s ) {
-				if ( $s['id'] < $start_seg ) {
-					continue;
-				}
-				$this->stream_segment_lines( $partition, $s['id'], 0, $s['size'] );
-			}
+			$consumer->drain();
 		}
 		$this->output_remaining();
+	}
+
+	/**
+	 * Build an ephemeral Consumer over one firehose partition. The partition dir
+	 * is the log basename with `.log` stripped plus `.p{N}` (matching the
+	 * firehose layout); the sink is a Callback_Node that routes each unpacked
+	 * Message to process_message. No offsetlog — a reqgrep run keeps no durable
+	 * cursor.
+	 *
+	 * @param int $partition Partition index.
+	 */
+	private function build_consumer( int $partition ): Consumer_Node {
+		$source_dir = \preg_replace( '/\.log$/', '', $this->base_dir ) . ".p{$partition}";
+		$sink       = new Callback_Node( $this->process_message( ... ) );
+		$consumer = new Consumer_Node();
+		$consumer->sink( $sink );
+		$consumer->arguments( $source_dir );
+		return $consumer;
 	}
 }

@@ -700,13 +700,12 @@ class FlameBuilderTest extends TestCase {
 	// --- Index format -----------------------------------------------------
 
 	public function test_format_and_parse_flame_index_round_trip(): void {
-		// $line is the packed Message wire format (positional JSON); VALUE at index 6.
+		// The formatter receives the unpacked message array; VALUE at index 6.
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
-		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
-		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
+		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 68, \strlen( $entry ) );
 
@@ -722,18 +721,17 @@ class FlameBuilderTest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
-		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( Flame_Builder_Node::format_index_entry( $line, $position ) );
+		$this->assertNull( Flame_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
 	public function test_parse_flame_index_returns_null_for_short_lines(): void {
 		$this->assertNull( Flame_Builder_Node::parse_flame_index( 'too-short' ) );
 	}
 
-	public function test_format_index_entry_decodes_flame_at_max_stack_depth(): void {
-		// A MAX_STACK_DEPTH (50) flame nests ~2 JSON levels per span; the old
-		// depth-64 decode returned null, silently skipping the index entry.
+	public function test_format_index_entry_handles_deeply_nested_flame(): void {
+		// A MAX_STACK_DEPTH (50) deeply-nested flame VALUE: the formatter reads the
+		// already-unpacked message array, so there is no json_decode depth to exceed.
 		$flame = [ 'name' => 'leaf', 'value' => 1, 'children' => [] ];
 		for ( $i = 0; $i < 49; $i++ ) {
 			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
@@ -744,10 +742,9 @@ class FlameBuilderTest extends TestCase {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::VALUE ] = $flame;
-		$line                  = Message::packed( $message );
 
-		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => \strlen( $line ) ];
-		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
+		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 100 ];
+		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 'deep-rid', Flame_Builder_Node::parse_flame_index( $entry )['rid'] );
 	}
@@ -1650,19 +1647,6 @@ class FlameBuilderTest extends TestCase {
 
 	// --- format/parse index edge cases ------------------------------------
 
-	public function test_format_index_entry_handles_pre_decoded_data(): void {
-		// The signature accepts pre-decoded $data ref; even if null is passed, function works.
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = [ 'rid' => 'predec', 'url_hash' => 'hashpredec01' ];
-		$line                  = Message::packed( $message );
-		$position              = [ 'segment_id' => 1, 'offset' => 0, 'length' => 50 ];
-		$pre                   = null;
-		$entry                 = Flame_Builder_Node::format_index_entry( $line, $position, $pre );
-		$this->assertNotNull( $entry );
-		$this->assertSame( 68, \strlen( $entry ) );
-	}
-
 	public function test_format_index_entry_truncates_long_rid_and_hash(): void {
 		// Long rid + hash should be truncated to 32 and 12 bytes respectively.
 		$message                   = Message::new_message();
@@ -1671,9 +1655,8 @@ class FlameBuilderTest extends TestCase {
 			'rid'      => \str_repeat( 'a', 50 ),
 			'url_hash' => \str_repeat( 'b', 30 ),
 		];
-		$line     = Message::packed( $message );
 		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$entry    = Flame_Builder_Node::format_index_entry( $line, $position );
+		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$parsed   = Flame_Builder_Node::parse_flame_index( $entry );
 		$this->assertSame( 32, \strlen( $parsed['rid'] ) );
@@ -1684,9 +1667,8 @@ class FlameBuilderTest extends TestCase {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
 		$message[ Message::VALUE ] = 'just-a-string';
-		$line                  = Message::packed( $message );
 		$position              = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( Flame_Builder_Node::format_index_entry( $line, $position ) );
+		$this->assertNull( Flame_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
 	// --- handle_request payload includes auto-tune queue depth ------------

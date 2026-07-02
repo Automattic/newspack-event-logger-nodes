@@ -131,7 +131,7 @@ class PerformanceCITest extends TestCase {
 			'offset'     => $offset,
 			'length'     => \strlen( $packed ),
 		];
-		$index_line = Request_Builder_Node::format_index_entry( $packed, $position );
+		$index_line = Request_Builder_Node::format_index_entry( $message, $position );
 		if ( null !== $index_line && '' !== $index_line ) {
 			\file_put_contents( "{$segment_dir}/0.idx", $index_line . "\n", FILE_APPEND | LOCK_EX );
 		}
@@ -161,7 +161,7 @@ class PerformanceCITest extends TestCase {
 			'offset'     => $offset,
 			'length'     => \strlen( $packed ),
 		];
-		$index_line = Flame_Builder_Node::format_index_entry( $packed, $position );
+		$index_line = Flame_Builder_Node::format_index_entry( $message, $position );
 		if ( null !== $index_line && '' !== $index_line ) {
 			\file_put_contents( "{$segment_dir}/0.idx", $index_line . "\n", FILE_APPEND | LOCK_EX );
 		}

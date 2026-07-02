@@ -95,9 +95,9 @@ Inherited from substrate: array VALUE → `TM_STRUCT`. String VALUE → `TM_BYTE
 
 LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobIntake all use TM_STRUCT. Hub fan-in is the substrate `\Newspack_Nodes\Remote_Source_Node` (it forwards the remote envelope's TYPE); ELN's `Remote_Job_Rewrite_Node` reads array VALUE (gated on it being an array) and forwards in place. The old ELN `Stream_Merger_Node` / `Remote_Source_Node` were deleted in the pull-side cutover.
 
-### 13. Flame JSON decode-depth invariant (v0.13.1)
+### 13. Index formatters receive the unpacked message array — they never json_decode
 
-`Flame_Builder_Node::FLAME_JSON_DEPTH` (= `2 * MAX_STACK_DEPTH + 8`) MUST be the `json_decode` depth for packed flame lines on BOTH sides — write (`Flame_Builder_Node`) and read (`Performance_CI_Node::find_flame_for_rid`). A diff that hardcodes a literal `64` (or any other depth) for flame-line decode silently drops deep flames — that was a real shipped bug. Use the constant.
+`Request_Builder_Node::format_index_entry` and `Flame_Builder_Node::format_index_entry` (the `Partition::with_index()` formatters) receive the unpacked message ARRAY, not the serialized JSONL line: `format_index_entry( array $message, array $position )`, reading `$message[ Message::VALUE ]` directly. A diff that reintroduces a `json_decode` (with a `FLAME_JSON_DEPTH`/`64`/any depth) inside a formatter, or restores the old `string $line` / by-ref `$data` signature, is reverting that cutover — the substrate no longer passes a line, so a decode there operates on the wrong type. Push back.
 
 ### 14. Spoke credentials live in the substrate Vault
 

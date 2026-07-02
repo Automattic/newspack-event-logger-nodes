@@ -897,15 +897,12 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Format index entry callback for Partition::with_index().
 	 *
-	 * @param string            $line     The JSON line written.
+	 * @param array<int, mixed>  $message  The unpacked message array; VALUE is index 6.
 	 * @param array<string, int> $position Position array.
-	 * @param \stdClass|array<string, mixed>|null $data  Pre-decoded data (avoids re-parsing $line).
 	 * @return string|null Index entry or null.
 	 */
-	public static function format_index_entry( string $line, array $position, &$data = null ): ?string {
-		// $line is the packed Message (positional JSON); VALUE is index 6.
-		$decoded = \json_decode( $line, true, 64 );
-		$value   = \is_array( $decoded ) ? ( $decoded[ Message::VALUE ] ?? null ) : null;
+	public static function format_index_entry( array $message, array $position ): ?string {
+		$value = $message[ Message::VALUE ] ?? null;
 		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
 			return null;
 		}
