@@ -362,6 +362,23 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'tags the y-axis title with the themable y-label class', () => {
+		const bk = bucketKeyNow();
+		const data = { [ bk ]: { count: 50, sum_ms: 500 } };
+		const { unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				data,
+				breakdownData: null,
+				metric: 'volume',
+			} )
+		);
+		expect( d3Mock.attr.mock.calls ).toContainEqual( [
+			'class',
+			'y-label',
+		] );
+		unmount();
+	} );
+
 	it( 'renderFn no-ops on null container', () => {
 		const bk = bucketKeyNow();
 		const data = { [ bk ]: { count: 1, sum_ms: 1 } };

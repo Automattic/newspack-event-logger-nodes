@@ -4,6 +4,27 @@
  * Response chart, aggregate time chart.
  */
 
+@use "base";
+
+// D3 renders axis ticks/titles with a default black fill and black axis lines,
+// which vanish under dark skins. Repoint them at the skin ink so the labels
+// (tick text + rotated y-axis titles) read in every theme.
+.event-logger-performance-dashboard,
+.event-logger-performance-modal {
+	.tick text {
+		fill: base.$ink-3;
+	}
+
+	.y-label {
+		fill: base.$ink;
+	}
+
+	.tick line,
+	.domain {
+		stroke: base.$border;
+	}
+}
+
 // Unified section heading style
 .event-logger-response-chart,
 .event-logger-aggregate-time-chart,
