@@ -300,11 +300,11 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useRequestLogGraph() );
-		// Stream a real tailed record: the server stamps a `seg:off` breadcrumb in
+		// Stream a real tailed record: the server stamps a `segment:offset:length` breadcrumb in
 		// ID and the partition dir in FROM — that is what the SseIn tracks.
 		const rec = completedEnvelope( { rid: 'r1', url: '/a' } );
 		rec[ FROM ] = 'completed.p0';
-		rec[ ID ] = '2:8800';
+		rec[ ID ] = '2:8800:120';
 		act( () => {
 			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
 		} );
@@ -322,7 +322,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 			)
 		);
 		expect( positions ).toEqual( {
-			'completed.p0': { seg: 2, off: 8800 },
+			'completed.p0': { segment: 2, offset: 8800 + 120 },
 		} );
 	} );
 

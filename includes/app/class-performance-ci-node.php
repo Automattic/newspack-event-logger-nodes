@@ -774,7 +774,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 			);
 			$partition->scan_index(
-				static function ( string $line, int $segment_id ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
+				static function ( string $line, int $segment ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
 					++$entries_count;
 					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
 						return false;
@@ -791,7 +791,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						'peak_mb'      => $entry['peak_mb'] ?? 0,
 						'method'       => $entry['method'] ?? '',
 						'error_status' => $entry['error_status'] ?? null,
-						'segment_id'   => $entry['segment_id'] ?? $segment_id,
+						'segment'   => $entry['segment'] ?? $segment,
 						'offset'       => $entry['offset'] ?? 0,
 						'length'       => $entry['length'] ?? 0,
 						'partition'    => $p,
@@ -887,7 +887,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					return null;
 				}
 				$message = $requests->read_message_at(
-					self::to_int( $entry['segment_id'] ?? 0 ),
+					self::to_int( $entry['segment'] ?? 0 ),
 					self::to_int( $entry['offset'] ?? 0 ),
 					self::to_int( $entry['length'] ?? 0 )
 				);
@@ -967,7 +967,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						return null;
 					}
 					$message = $flames->read_message_at(
-						$entry['segment_id'],
+						$entry['segment'],
 						$entry['offset'],
 						$entry['length']
 					);

@@ -715,22 +715,6 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Cat mode: one Consumer per partition, drained synchronously to EOF. `--recent`
-	 * seeds the Consumer at the second-to-last segment; the default reads from the
-	 * start. Flush incomplete requests once every partition is exhausted.
-	 */
-	private function cat_mode(): void {
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$consumer = $this->build_consumer( $p );
-			if ( 'recent' === $this->cat_offset ) {
-				$consumer->next_offset( 'recent' );
-			}
-			$consumer->drain();
-		}
-		$this->output_remaining();
-	}
-
-	/**
 	 * Build an ephemeral Consumer over one firehose partition. The partition dir
 	 * is the log basename with `.log` stripped plus `.p{N}` (matching the
 	 * firehose layout); the sink is a Callback_Node that routes each unpacked
@@ -746,5 +730,21 @@ class Reqgrep_Command {
 		$consumer->sink( $sink );
 		$consumer->arguments( $source_dir );
 		return $consumer;
+	}
+
+	/**
+	 * Cat mode: one Consumer per partition, drained synchronously to EOF. `--recent`
+	 * seeds the Consumer at the second-to-last segment; the default reads from the
+	 * start. Flush incomplete requests once every partition is exhausted.
+	 */
+	private function cat_mode(): void {
+		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
+			$consumer = $this->build_consumer( $p );
+			if ( 'recent' === $this->cat_offset ) {
+				$consumer->next_offset( 'recent' );
+			}
+			$consumer->drain();
+		}
+		$this->output_remaining();
 	}
 }

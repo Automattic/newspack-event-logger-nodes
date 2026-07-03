@@ -704,7 +704,7 @@ class FlameBuilderTest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
-		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
+		$position = [ 'segment' => 5, 'offset' => 1024, 'length' => 100 ];
 		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 68, \strlen( $entry ) );
@@ -712,7 +712,7 @@ class FlameBuilderTest extends TestCase {
 		$parsed = Flame_Builder_Node::parse_flame_index( $entry );
 		$this->assertSame( 'abc', $parsed['rid'] );
 		$this->assertSame( 'deadbeef0001', $parsed['url_hash'] );
-		$this->assertSame( 5, $parsed['segment_id'] );
+		$this->assertSame( 5, $parsed['segment'] );
 		$this->assertSame( 1024, $parsed['offset'] );
 		$this->assertSame( 100, $parsed['length'] );
 	}
@@ -721,7 +721,7 @@ class FlameBuilderTest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
-		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
+		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( Flame_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
@@ -743,7 +743,7 @@ class FlameBuilderTest extends TestCase {
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::VALUE ] = $flame;
 
-		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 100 ];
+		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 100 ];
 		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 'deep-rid', Flame_Builder_Node::parse_flame_index( $entry )['rid'] );
@@ -1655,7 +1655,7 @@ class FlameBuilderTest extends TestCase {
 			'rid'      => \str_repeat( 'a', 50 ),
 			'url_hash' => \str_repeat( 'b', 30 ),
 		];
-		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
+		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
 		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
 		$parsed   = Flame_Builder_Node::parse_flame_index( $entry );
@@ -1667,7 +1667,7 @@ class FlameBuilderTest extends TestCase {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
 		$message[ Message::VALUE ] = 'just-a-string';
-		$position              = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
+		$position              = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( Flame_Builder_Node::format_index_entry( $message, $position ) );
 	}
 

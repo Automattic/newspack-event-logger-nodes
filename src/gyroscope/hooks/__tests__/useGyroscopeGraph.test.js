@@ -317,10 +317,10 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useGyroscopeGraph() );
-		// A real tailed record: seg:off breadcrumb in ID, partition dir in FROM.
+		// A real tailed record: segment:offset:length breadcrumb in ID, partition dir in FROM.
 		const rec = inflightEnvelope( [ { rid: 'r1' } ] );
 		rec[ FROM ] = 'gyroscope.p0';
-		rec[ ID ] = '1:64';
+		rec[ ID ] = '1:64:20';
 		act( () => {
 			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
 		} );
@@ -335,7 +335,9 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
 			)
 		);
-		expect( positions ).toEqual( { 'gyroscope.p0': { seg: 1, off: 64 } } );
+		expect( positions ).toEqual( {
+			'gyroscope.p0': { segment: 1, offset: 64 + 20 },
+		} );
 	} );
 
 	test( 'resets the view map on (re)connect', () => {

@@ -1907,7 +1907,7 @@ class Flame_Builder_Node extends Node {
 	 * Format index entry callback for Partition::with_index().
 	 *
 	 * @param array<int, mixed>  $message  The unpacked message array; VALUE is index 6.
-	 * @param array<string, int> $position Position array with segment_id, offset, length.
+	 * @param array<string, int> $position Position array with segment, offset, length.
 	 * @return string|null Index entry or null to skip.
 	 */
 	public static function format_index_entry( array $message, array $position ): ?string {
@@ -1920,7 +1920,7 @@ class Flame_Builder_Node extends Node {
 
 		return \str_pad( \substr( $rid_str, 0, 32 ), 32 )
 			. \str_pad( \substr( $url_hash_str, 0, 12 ), 12 )
-			. \str_pad( (string) $position['segment_id'], 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['segment'], 6, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT );
 	}
@@ -1929,7 +1929,7 @@ class Flame_Builder_Node extends Node {
 	 * Parse flame index entry.
 	 *
 	 * @param string $line Index line.
-	 * @return array{rid: string, url_hash: string, segment_id: int, offset: int, length: int}|null
+	 * @return array{rid: string, url_hash: string, segment: int, offset: int, length: int}|null
 	 */
 	public static function parse_flame_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
@@ -1939,7 +1939,7 @@ class Flame_Builder_Node extends Node {
 		return [
 			'rid'        => \trim( \substr( $line, 0, 32 ) ),
 			'url_hash'   => \trim( \substr( $line, 32, 12 ) ),
-			'segment_id' => (int) \substr( $line, 44, 6 ),
+			'segment' => (int) \substr( $line, 44, 6 ),
 			'offset'     => (int) \substr( $line, 50, 10 ),
 			'length'     => (int) \substr( $line, 60, 8 ),
 		];
