@@ -302,10 +302,10 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
-		// A real tailed record: seg:off breadcrumb in ID, partition dir in FROM.
+		// A real tailed record: segment:offset:length breadcrumb in ID, partition dir in FROM.
 		const rec = errorEnvelope( 'r1', { ts: 1, k: 'error', m: 'x' } );
 		rec[ FROM ] = 'errors.p0';
-		rec[ ID ] = '4:512';
+		rec[ ID ] = '4:512:100';
 		act( () => {
 			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
 		} );
@@ -320,7 +320,9 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
 			)
 		);
-		expect( positions ).toEqual( { 'errors.p0': { seg: 4, off: 512 } } );
+		expect( positions ).toEqual( {
+			'errors.p0': { segment: 4, offset: 512 + 100 },
+		} );
 	} );
 
 	test( 'setPaused(true) closes the EventSource and clears the heartbeat slot', () => {

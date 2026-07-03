@@ -928,13 +928,13 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var int|float|string $peak_raw */
 		$peak_raw     = $request->peak_mb ?? 0;
 		$peak_mb      = (float) $peak_raw;
-		$segment_id   = $position['segment_id'];
+		$segment   = $position['segment'];
 		$offset       = $position['offset'];
 		$length       = $position['length'];
 		$es_raw       = $request->error_status ?? '-';
 		$error_status = \is_string( $es_raw ) ? $es_raw : '-';
 
-		if ( $offset > 9999999999 || $length > 99999999 || $segment_id > 999999 ) {
+		if ( $offset > 9999999999 || $length > 99999999 || $segment > 999999 ) {
 			return '';
 		}
 
@@ -961,7 +961,7 @@ class Request_Builder_Node extends Timer_Node {
 			. \str_pad( (string) $timestamp, 10, '0', STR_PAD_LEFT )
 			. \str_pad( (string) \min( $duration_ms, 99999999 ), 8, '0', STR_PAD_LEFT )
 			. \str_pad( (string) \min( $status_code, 999 ), 3, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $segment_id, 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $segment, 6, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $offset, 10, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $length, 8, '0', STR_PAD_LEFT )
 			. \str_pad( (string) $peak_mb_int, 6, '0', STR_PAD_LEFT )
@@ -1206,7 +1206,7 @@ class Request_Builder_Node extends Timer_Node {
 				'timestamp'   => (int) \substr( $line, 44, 10 ),
 				'duration_ms' => (int) \substr( $line, 54, 8 ),
 				'status_code' => (int) \substr( $line, 62, 3 ),
-				'segment_id'  => (int) \substr( $line, 65, 6 ),
+				'segment'  => (int) \substr( $line, 65, 6 ),
 				'offset'      => (int) \substr( $line, 71, 10 ),
 				'length'      => (int) \substr( $line, 81, 8 ),
 			];

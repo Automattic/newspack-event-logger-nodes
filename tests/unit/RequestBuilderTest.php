@@ -755,7 +755,7 @@ class RequestBuilderTest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = $req;
-		$position = [ 'segment_id' => 5, 'offset' => 1024, 'length' => 100 ];
+		$position = [ 'segment' => 5, 'offset' => 1024, 'length' => 100 ];
 
 		$entry = Request_Builder_Node::format_index_entry( $message, $position );
 		$this->assertNotNull( $entry );
@@ -766,7 +766,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1_700_000_000, $parsed['timestamp'] );
 		$this->assertSame( 50, $parsed['duration_ms'] );
 		$this->assertSame( 200, $parsed['status_code'] );
-		$this->assertSame( 5, $parsed['segment_id'] );
+		$this->assertSame( 5, $parsed['segment'] );
 		$this->assertSame( 1024, $parsed['offset'] );
 		$this->assertSame( 100, $parsed['length'] );
 		$this->assertSame( 32, $parsed['peak_mb'] );
@@ -777,7 +777,7 @@ class RequestBuilderTest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::VALUE ]     = [ 'rid' => 'x' ];
-		$position = [ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ];
+		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
 		$this->assertNull( Request_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
@@ -1370,7 +1370,7 @@ class RequestBuilderTest extends TestCase {
 		$out = $this->format_index_for(
 			[ 'rid' => 'r1', 'url' => '/x' ],
 			// 10_000_000_000 > 9_999_999_999 ceiling.
-			[ 'segment_id' => 0, 'offset' => 10_000_000_000, 'length' => 100 ]
+			[ 'segment' => 0, 'offset' => 10_000_000_000, 'length' => 100 ]
 		);
 		$this->assertSame( '', $out );
 	}
@@ -1379,7 +1379,7 @@ class RequestBuilderTest extends TestCase {
 		$out = $this->format_index_for(
 			[ 'rid' => 'r1', 'url' => '/x' ],
 			// 100_000_000 > 99_999_999 ceiling.
-			[ 'segment_id' => 0, 'offset' => 0, 'length' => 100_000_000 ]
+			[ 'segment' => 0, 'offset' => 0, 'length' => 100_000_000 ]
 		);
 		$this->assertSame( '', $out );
 	}
@@ -1388,7 +1388,7 @@ class RequestBuilderTest extends TestCase {
 		$out = $this->format_index_for(
 			[ 'rid' => 'r1', 'url' => '/x' ],
 			// 1_000_000 > 999_999 ceiling.
-			[ 'segment_id' => 1_000_000, 'offset' => 0, 'length' => 100 ]
+			[ 'segment' => 1_000_000, 'offset' => 0, 'length' => 100 ]
 		);
 		$this->assertSame( '', $out );
 	}
@@ -1401,7 +1401,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNull(
 			Request_Builder_Node::format_index_entry(
 				$message,
-				[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+				[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
 			)
 		);
 	}
@@ -1409,7 +1409,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_format_index_entry_clamps_peak_mb_at_999999(): void {
 		$line = $this->format_index_for(
 			[ 'rid' => 'big', 'url' => '/x', 'peak_mb' => 5_000_000.0 ],
-			[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+			[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
 		);
 		$this->assertNotNull( $line );
 		$this->assertNotSame( '', $line );
@@ -1432,7 +1432,7 @@ class RequestBuilderTest extends TestCase {
 		foreach ( $cases as $method => $code ) {
 			$line = $this->format_index_for(
 				[ 'rid' => 'r1', 'url' => '/x', 'request_method' => $method ],
-				[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+				[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
 			);
 			$this->assertNotNull( $line, "method=$method produces a line" );
 			$this->assertNotSame( '', $line );
@@ -1444,7 +1444,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_format_index_entry_unknown_method_falls_back_to_get_code(): void {
 		$line = $this->format_index_for(
 			[ 'rid' => 'r1', 'url' => '/x', 'request_method' => 'WEIRDVERB' ],
-			[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+			[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
 		);
 		$this->assertNotNull( $line );
 		$this->assertSame( 'G', \substr( $line, 95, 1 ) );
@@ -1453,7 +1453,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_format_index_entry_writes_error_status_t_when_timed_out(): void {
 		$line = $this->format_index_for(
 			[ 'rid' => 'r1', 'url' => '/x', 'error_status' => 'T' ],
-			[ 'segment_id' => 0, 'offset' => 0, 'length' => 0 ]
+			[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
 		);
 		$this->assertNotNull( $line );
 		// error_status: 1 char at position 96.

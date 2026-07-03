@@ -127,7 +127,7 @@ class PerformanceCITest extends TestCase {
 		\file_put_contents( $seg_path, $existing . $packed, LOCK_EX );
 
 		$position   = [
-			'segment_id' => 0,
+			'segment' => 0,
 			'offset'     => $offset,
 			'length'     => \strlen( $packed ),
 		];
@@ -157,7 +157,7 @@ class PerformanceCITest extends TestCase {
 		\file_put_contents( $seg_path, $existing . $packed, LOCK_EX );
 
 		$position   = [
-			'segment_id' => 0,
+			'segment' => 0,
 			'offset'     => $offset,
 			'length'     => \strlen( $packed ),
 		];
