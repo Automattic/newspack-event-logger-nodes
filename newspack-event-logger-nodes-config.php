@@ -50,6 +50,12 @@ return [
 	'auto_protect_time_threshold' => 0,
 	'significant_events'          => [],
 
+	// Mirror Stats_Store writes to a durable partition + reload memcache from it
+	// on cold boot. Off by default (Atomic has durable memcache). Non-Atomic
+	// (local/docker) opts in by setting this to the stats partition node name
+	// ('flame-stats:partition', wired by the flame-builder topology).
+	'stats_mirror_node'           => '',
+
 	// Debug.
 	'log_memory'                  => false,
 	'flush_every_line'            => false,

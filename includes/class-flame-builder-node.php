@@ -124,6 +124,25 @@ class Flame_Builder_Node extends Node {
 	/** @var Stats_Store|null Memcache-backed stats store. */
 	private $stats_store = null;
 
+	/** @var \Newspack_Nodes\Partition_Node|null Durable shadow of the stats store (non-Atomic cold-boot replay). */
+	private ?\Newspack_Nodes\Partition_Node $stats_partition = null;
+
+	/** Per-URL namespaces bounded to top-N by traffic when mirrored. */
+	private const STATS_MIRROR_TOPN = [
+		Stats_Store::NS_URL     => 10,   // flame profiles — profiled requests only
+		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional
+		Stats_Store::NS_URL_CAT => 100,  // per-URL categories
+	];
+
+	/** @var array<string, array{0: array<array-key, mixed>, 1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
+	private array $stats_mirror_buffer = [];
+
+	/** @var array<string, array<string, array{0: array<array-key, mixed>, 1: int, 2: int}>> Per-URL top-N: ns => key => [data, ttl, rank]. */
+	private array $stats_mirror_topn = [];
+
+	/** Guards reload_stats_from_partition() to a single cold-boot replay per process. */
+	private bool $stats_reloaded = false;
+
 
 	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
@@ -1782,6 +1801,173 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Wire a durable Partition to shadow stats writes (via the store's mirror
+	 * seam) and reload memcache from it on cold boot. For non-Atomic deployments
+	 * where memcache is volatile; a no-op unless a Stats_Store is already set.
+	 *
+	 * The mirror buffers writes in memory and flushes them to the partition once
+	 * per save_state() checkpoint (flush_stats_mirror). Writes made after the last
+	 * checkpoint die with a crash — every partition frame is already committed, so
+	 * recovery replays them exactly once with no double-count.
+	 */
+	public function set_stats_partition( ?\Newspack_Nodes\Partition_Node $partition ): void {
+		if ( null === $partition ) {
+			return; // Disabled (empty <eln:stats_mirror_node>).
+		}
+		$store = $this->stats_store;
+		if ( null === $store ) {
+			Core::stderr( 'flame-builder: set_stats_partition ran before configure_stats — stats mirror NOT wired' );
+			return;
+		}
+		$partition->void_warranty(); // Single-writer mirror: lift the 4KB PIPE_BUF cap so url_stats blobs aren't silently dropped.
+		$this->stats_partition = $partition;
+		$store->mirror         = function ( string $key, array $data, int $ttl, string $ns ): void {
+			$this->buffer_mirror_write( $key, $data, $ttl, $ns );
+		};
+		$this->reload_stats_from_partition();
+	}
+
+	/**
+	 * Buffer a mirrored write. Aggregates are kept in full; the per-URL namespaces
+	 * are bounded to top-N by traffic (STATS_MIRROR_TOPN).
+	 *
+	 * @param array<array-key, mixed> $data
+	 */
+	private function buffer_mirror_write( string $key, array $data, int $ttl, string $ns ): void {
+		if ( ! isset( self::STATS_MIRROR_TOPN[ $ns ] ) ) {
+			$this->stats_mirror_buffer[ $key ] = [ $data, $ttl ]; // aggregate: keep all
+			return;
+		}
+		// Forward-compat for selective profiling: rank the flame top-N only among URLs
+		// that actually carry profiling detail — a hot URL may not be profiled.
+		if ( Stats_Store::NS_URL === $ns && ! $this->has_profiling_detail( $data ) ) {
+			return;
+		}
+		$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl, $this->mirror_traffic_rank( $data, $ns ) ];
+		if ( \count( $this->stats_mirror_topn[ $ns ] ) > self::STATS_MIRROR_TOPN[ $ns ] ) {
+			$this->evict_lowest_rank( $ns );
+		}
+	}
+
+	/**
+	 * @param array<array-key, mixed> $data
+	 */
+	private function has_profiling_detail( array $data ): bool {
+		$flame = $data['flame'] ?? null;
+		return \is_array( $flame ) && ( \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0 ) > 0;
+	}
+
+	/**
+	 * Traffic rank (~request count) for the per-URL namespaces.
+	 *
+	 * @param array<array-key, mixed> $data
+	 */
+	private function mirror_traffic_rank( array $data, string $ns ): int {
+		if ( Stats_Store::NS_URL === $ns ) {
+			$flame = $data['flame'] ?? null;
+			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
+		}
+		if ( Stats_Store::NS_URL_CAT === $ns ) {
+			// { bucket => { category => {t,c,n}, total => {t,c,n} } } — sum the per-bucket totals.
+			$sum = 0;
+			foreach ( $data as $bucket ) {
+				$total = \is_array( $bucket ) ? ( $bucket['total'] ?? null ) : null;
+				$sum  += \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
+			}
+			return $sum;
+		}
+		// NS_URL_DIM: { dim => { bucket => { val => {c,s,m} } } } — sum the first dimension's request counts.
+		$sum   = 0;
+		$first = \reset( $data );
+		if ( \is_array( $first ) ) {
+			foreach ( $first as $bucket ) {
+				if ( ! \is_array( $bucket ) ) {
+					continue;
+				}
+				foreach ( $bucket as $vd ) {
+					$sum += \is_array( $vd ) && \is_numeric( $vd['c'] ?? null ) ? (int) $vd['c'] : 0;
+				}
+			}
+		}
+		return $sum;
+	}
+
+	private function evict_lowest_rank( string $ns ): void {
+		$min_key  = null;
+		$min_rank = \PHP_INT_MAX;
+		foreach ( $this->stats_mirror_topn[ $ns ] as $k => [ , , $rank ] ) {
+			if ( $rank < $min_rank ) {
+				$min_rank = $rank;
+				$min_key  = $k;
+			}
+		}
+		if ( null !== $min_key ) {
+			unset( $this->stats_mirror_topn[ $ns ][ $min_key ] );
+		}
+	}
+
+	/**
+	 * Cold-boot replay: when memcache hourly is empty, read every mirrored write
+	 * from the partition oldest→newest, collapse to the latest frame per key
+	 * (frames are append-ordered, so last-wins), then restore each key ONCE under
+	 * a TTL decayed by its age. O(unique keys) memcache sets instead of O(all
+	 * appends). Core::$now is stale during the config phase, so \microtime(true)
+	 * is the "now" reference.
+	 *
+	 * Every partition frame is committed — the un-committed buffer is never written
+	 * (it dies with a crash) — so recovery counts each request exactly once.
+	 */
+	private function reload_stats_from_partition(): void {
+		if ( $this->stats_reloaded ) {
+			return;
+		}
+		$this->stats_reloaded = true;
+		$store                = $this->stats_store;
+		$partition            = $this->stats_partition;
+		if ( null === $store || null === $partition ) {
+			return;
+		}
+		if ( ! empty( $store->get_hourly() ) ) {
+			return; // Warm — skip replay.
+		}
+		/** @var array<string, array{0: array<string, mixed>, 1: int, 2: float}> $latest */
+		$latest = [];
+		foreach ( $partition->get_segments() as $seg ) {
+			$bytes = $partition->read_at( $seg['id'], 0, $seg['size'] );
+			foreach ( \explode( "\n", $bytes ) as $line ) {
+				if ( '' === $line ) {
+					continue;
+				}
+				try {
+					$msg = Message::unpacked( $line );
+				} catch ( \Throwable ) {
+					continue; // Torn/corrupt frame — skip, don't crash the cold-boot replay.
+				}
+				$value = $msg[ Message::VALUE ] ?? null;
+				if ( ! \is_array( $value ) ) {
+					continue;
+				}
+				$key  = $value['key'] ?? null;
+				$data = $value['data'] ?? null;
+				$ttl  = $value['ttl'] ?? null;
+				if ( ! \is_string( $key ) || ! \is_array( $data ) || ! \is_int( $ttl ) ) {
+					continue;
+				}
+				$typed = [];
+				foreach ( $data as $dk => $dv ) {
+					$typed[ (string) $dk ] = $dv;
+				}
+				$ts             = $msg[ Message::TIMESTAMP ] ?? 0;
+				$latest[ $key ] = [ $typed, $ttl, \is_numeric( $ts ) ? (float) $ts : 0.0 ]; // last-wins
+			}
+		}
+		$now = \microtime( true );
+		foreach ( $latest as $key => [ $data, $ttl, $ts ] ) {
+			$store->restore( $key, $data, $ttl - (int) ( $now - $ts ) );
+		}
+	}
+
+	/**
 	 * Toggle hub mode (per-server tracking).
 	 */
 	public function set_is_hub( bool $is_hub ): void {
@@ -1855,10 +2041,50 @@ class Flame_Builder_Node extends Node {
 	 * @return array<string, mixed>
 	 */
 	public function save_state(): array {
+		$this->flush_stats_mirror();
 		return [
 			'pending_bucket' => $this->pending_bucket,
 			'pending'        => $this->pending,
 		];
+	}
+
+	/**
+	 * Flush the buffered mirror writes to the durable partition as one checkpoint.
+	 * save_state() is co-committed with the requests-Consumer's durable offset, so
+	 * every frame written here is committed: writes made after this die with a
+	 * crash and get reprocessed cleanly (no double-count). Aggregates flush in full;
+	 * the per-URL namespaces flush their bounded top-N. Both buffers reset after.
+	 */
+	private function flush_stats_mirror(): void {
+		$partition = $this->stats_partition;
+		if ( null === $partition ) {
+			return;
+		}
+		foreach ( $this->stats_mirror_buffer as $key => [ $data, $ttl ] ) {
+			$this->write_mirror_frame( $partition, $key, $data, $ttl );
+		}
+		foreach ( $this->stats_mirror_topn as $entries ) {
+			foreach ( $entries as $key => [ $data, $ttl ] ) {
+				$this->write_mirror_frame( $partition, $key, $data, $ttl );
+			}
+		}
+		$this->stats_mirror_buffer = [];
+		$this->stats_mirror_topn   = [];
+	}
+
+	/**
+	 * Write one mirror frame (TM_STRUCT {key,data,ttl}) to the partition.
+	 *
+	 * @param array<array-key, mixed> $data
+	 */
+	private function write_mirror_frame( \Newspack_Nodes\Partition_Node $partition, string $key, array $data, int $ttl ): void {
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::KEY ]       = $key;
+		$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
+		$partition->fill( $msg );
 	}
 
 	/**
@@ -1899,6 +2125,9 @@ class Flame_Builder_Node extends Node {
 		}
 		if ( null !== $this->stats_store ) {
 			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
+		}
+		if ( null !== $this->stats_partition ) {
+			$out .= "cmd {$this->name}:config set_stats_partition {$this->stats_partition->name()}\n";
 		}
 		return $out;
 	}
@@ -2030,6 +2259,25 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_stats_store( $stats_store );
+						return 'ok';
+					},
+				],
+				[
+					'name'        => 'set_stats_partition',
+					'description' => 'Mirror stats writes to a durable Partition and reload from it on cold boot (non-Atomic deployments).',
+					'args'        => [ [ 'name' => 'node', 'type' => 'string', 'required' => true ] ],
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+						$name = \trim( $args );
+						if ( '' === $name ) {
+							return 'ok'; // Empty = disabled: stock topology passes an empty <eln:stats_mirror_node> unless the deployment opts in (non-Atomic).
+						}
+						$node = \Newspack_Nodes\Core::node( $name );
+						if ( ! $node instanceof \Newspack_Nodes\Partition_Node ) {
+							return "error: no partition node '{$name}'";
+						}
+						/** @var self $patron */
+						$patron = $interpreter->patron();
+						$patron->set_stats_partition( $node );
 						return 'ok';
 					},
 				],

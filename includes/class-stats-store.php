@@ -45,6 +45,17 @@ class Stats_Store {
 	private int $max_lifespan;
 	private string $prefix;
 
+	/**
+	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
+	 * AFTER each memcache write so a durable partition can shadow stats for
+	 * cold-boot replay. The namespace lets the mirror route aggregates vs. the
+	 * bounded per-URL namespaces. Null (default) = zero overhead. Signature:
+	 * `function(string $key, array $data, int $ttl, string $ns): void`.
+	 *
+	 * @var \Closure|null
+	 */
+	public ?\Closure $mirror = null;
+
 	public function __construct(
 		int $partition = 0,
 		int $max_lifespan = 86400
@@ -52,6 +63,36 @@ class Stats_Store {
 		$this->partition    = $partition;
 		$this->max_lifespan = \max( self::PREFIX_FLOOR, $max_lifespan );
 		$this->prefix       = $this->compute_prefix();
+	}
+
+	/**
+	 * Write to memcache, then (if wired AND the set landed) shadow the same write
+	 * to the mirror seam — a rejected/failed set must not be durably recorded and
+	 * resurrected on cold boot.
+	 *
+	 * @param array<string, mixed> $data
+	 * @param string               $ns   Namespace routing hint for the mirror.
+	 */
+	private function store( string $key, array $data, int $ttl, string $ns ): bool {
+		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
+		if ( $ok && null !== $this->mirror ) {
+			( $this->mirror )( $key, $data, $ttl, $ns );
+		}
+		return $ok;
+	}
+
+	/**
+	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
+	 * ttl>0 and the current prefix (a rotated salt orphans the mirror, like it
+	 * orphans memcache).
+	 *
+	 * @param array<string, mixed> $data
+	 */
+	public function restore( string $key, array $data, int $ttl ): bool {
+		if ( $ttl <= 0 || ! \str_starts_with( $key, $this->prefix . ':' ) ) {
+			return false;
+		}
+		return (bool) Core::$memd?->set( $key, $data, $ttl );
 	}
 
 	private function compute_prefix(): string {
@@ -221,7 +262,7 @@ class Stats_Store {
 	 * @param array<string, mixed> $data
 	 */
 	public function set_hourly( array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_HOURLY ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_HOURLY ), $data, $this->ttl(), self::NS_HOURLY );
 	}
 
 	public function ttl(): int {
@@ -260,7 +301,7 @@ class Stats_Store {
 	 * @param array<string, mixed> $data
 	 */
 	public function set_url_index_hourly( string $bucket, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl(), self::NS_URLS );
 	}
 
 	// -------------------------------------------------------------------------
@@ -280,7 +321,7 @@ class Stats_Store {
 	 * @param array<string, mixed> $data
 	 */
 	public function set_url_stats( string $url_hash, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats() );
+		return $this->store( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats(), self::NS_URL );
 	}
 
 	public function ttl_url_stats(): int {
@@ -291,14 +332,14 @@ class Stats_Store {
 	 * @param array<string, mixed> $data
 	 */
 	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_LB, $bucket ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_LB, $bucket ), $data, $this->ttl(), self::NS_LB );
 	}
 
 	/**
 	 * @param array<string, mixed> $data
 	 */
 	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl(), self::NS_LB_S );
 	}
 
 	/**
@@ -309,21 +350,21 @@ class Stats_Store {
 		if ( '' !== $server ) {
 			$parts[] = self::server_key( $server );
 		}
-		return (bool) Core::$memd?->set( $this->key( ...$parts ), $data, $this->ttl() );
+		return $this->store( $this->key( ...$parts ), $data, $this->ttl(), self::NS_DIM );
 	}
 
 	/**
 	 * @param array<string, mixed> $data
 	 */
 	public function set_url_dimensional( string $url_hash, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl(), self::NS_URL_DIM );
 	}
 
 	/**
 	 * @param array<string, mixed> $data
 	 */
 	public function set_categories( array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_CATEGORIES ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_CATEGORIES ), $data, $this->ttl(), self::NS_CATEGORIES );
 	}
 
 	/**
@@ -338,14 +379,14 @@ class Stats_Store {
 	 * @param array<string, mixed> $data
 	 */
 	public function set_server_categories( string $server, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl(), self::NS_CATEGORIES );
 	}
 
 	/**
 	 * @param array<string, mixed> $data
 	 */
 	public function set_url_categories( string $url_hash, array $data ): bool {
-		return (bool) Core::$memd?->set( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl() );
+		return $this->store( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl(), self::NS_URL_CAT );
 	}
 
 	public function partition(): int {

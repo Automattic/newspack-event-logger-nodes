@@ -313,6 +313,7 @@ class Config {
 			'auto_disable_threshold'     => true,
 			'auto_protect_time_threshold' => true,
 			'significant_events_csv'     => true,
+			'stats_mirror_node' => true,
 		];
 		if ( ! isset( $own[ $key ] ) ) {
 			return null;
