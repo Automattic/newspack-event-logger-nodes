@@ -273,6 +273,116 @@ class StatsStoreTest extends TestCase {
 		$this->assertEqualsWithDelta( 0.3, $dst['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
 	}
 
+	// --- Mirror seam + restore() ------------------------------------------
+
+	public function test_set_hourly_invokes_mirror_with_key_data_ttl_ns(): void {
+		$store    = $this->make_store();
+		$captured = [];
+		$store->mirror = static function ( string $key, array $data, int $ttl, string $ns ) use ( &$captured ): void {
+			$captured[] = [ $key, $data, $ttl, $ns ];
+		};
+
+		$data = [ '2026-01-01-00' => [ 'count' => 5 ] ];
+		$store->set_hourly( $data );
+
+		$this->assertCount( 1, $captured );
+		$this->assertSame( 'evlog:p0:hourly', $captured[0][0] );
+		$this->assertSame( $data, $captured[0][1] );
+		$this->assertSame( 86400, $captured[0][2] );
+		$this->assertSame( Stats_Store::NS_HOURLY, $captured[0][3] );
+	}
+
+	public function test_set_url_stats_mirrors_with_url_key_url_ttl_and_ns(): void {
+		$store    = $this->make_store();
+		$captured = [];
+		$store->mirror = static function ( string $key, array $data, int $ttl, string $ns ) use ( &$captured ): void {
+			$captured[] = [ $key, $data, $ttl, $ns ];
+		};
+
+		$data = [ 'flame' => [ 1, 2, 3 ] ];
+		$store->set_url_stats( 'abc', $data );
+
+		$this->assertCount( 1, $captured );
+		$this->assertSame( 'evlog:p0:url:abc', $captured[0][0] );
+		$this->assertSame( $data, $captured[0][1] );
+		$this->assertSame( $store->ttl_url_stats(), $captured[0][2] );
+		$this->assertSame( Stats_Store::NS_URL, $captured[0][3] );
+	}
+
+	public function test_every_setter_passes_its_namespace_to_mirror(): void {
+		$store    = $this->make_store();
+		$captured = [];
+		$store->mirror = static function ( string $key, array $data, int $ttl, string $ns ) use ( &$captured ): void {
+			$captured[] = $ns;
+		};
+
+		$store->set_hourly( [ 'x' => [ 'count' => 1 ] ] );
+		$store->set_url_index_hourly( 'b', [ 'x' => [ 'url' => '/x' ] ] );
+		$store->set_url_stats( 'h', [ 'flame' => [ 'count' => 1 ] ] );
+		$store->set_leaderboard_bucket( 'b', [ 'count' => 1 ] );
+		$store->set_server_leaderboard_bucket( 'srv', 'b', [ 'count' => 1 ] );
+		$store->set_dimensional( 'status', [ '200' => [ 'c' => 1 ] ] );
+		$store->set_url_dimensional( 'h', [ 'status' => [ '200' => [ 'c' => 1 ] ] ] );
+		$store->set_categories( [ 'total' => [ 'n' => 1 ] ] );
+		$store->set_server_categories( 'srv', [ 'total' => [ 'n' => 1 ] ] );
+		$store->set_url_categories( 'h', [ 'total' => [ 'n' => 1 ] ] );
+
+		$this->assertSame(
+			[
+				Stats_Store::NS_HOURLY,
+				Stats_Store::NS_URLS,
+				Stats_Store::NS_URL,
+				Stats_Store::NS_LB,
+				Stats_Store::NS_LB_S,
+				Stats_Store::NS_DIM,
+				Stats_Store::NS_URL_DIM,
+				Stats_Store::NS_CATEGORIES,
+				Stats_Store::NS_CATEGORIES,
+				Stats_Store::NS_URL_CAT,
+			],
+			$captured
+		);
+	}
+
+	public function test_set_hourly_returns_true_with_null_mirror(): void {
+		$store = $this->make_store();
+		$this->assertNull( $store->mirror );
+		$this->assertTrue( $store->set_hourly( [ 'x' => [ 'count' => 1 ] ] ) );
+	}
+
+	public function test_store_skips_mirror_when_memcache_set_fails(): void {
+		Core::$memd = new class() extends InMemoryMemcached {
+			public function set( string $key, mixed $value, int $expiration = 0 ): bool {
+				return false;
+			}
+		};
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$invoked = false;
+		$store->mirror = static function ( string $key, array $data, int $ttl, string $ns ) use ( &$invoked ): void {
+			$invoked = true;
+		};
+		$this->assertFalse( $store->set_hourly( [ 'x' => [ 'count' => 1 ] ] ) );
+		$this->assertFalse( $invoked, 'mirror must not fire when the memcache set failed' );
+	}
+
+	public function test_restore_writes_into_memcache_under_positive_ttl(): void {
+		$store = $this->make_store();
+		$data  = [ '2026-01-01-00' => [ 'count' => 9 ] ];
+		$this->assertTrue( $store->restore( 'evlog:p0:hourly', $data, 100 ) );
+		$this->assertSame( $data, $store->get_hourly() );
+	}
+
+	public function test_restore_returns_false_for_non_positive_ttl(): void {
+		$store = $this->make_store();
+		$this->assertFalse( $store->restore( 'evlog:p0:hourly', [ 'x' => 1 ], 0 ) );
+		$this->assertSame( [], $store->get_hourly() );
+	}
+
+	public function test_restore_returns_false_for_foreign_prefix(): void {
+		$store = $this->make_store();
+		$this->assertFalse( $store->restore( 'other:p0:hourly', [ 'x' => 1 ], 100 ) );
+	}
+
 	public function test_sums_to_display_converts_running_sums_to_avg(): void {
 		$sums = [
 			'wpdb' => [

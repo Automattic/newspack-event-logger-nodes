@@ -30,6 +30,77 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Flame_Builder_Node::class )]
 class FlameBuilderTest extends TestCase {
 
+	/** @var list<string> Temp partition dirs created during a test, removed in tearDown. */
+	private array $temp_dirs = [];
+
+	protected function tearDown(): void {
+		foreach ( $this->temp_dirs as $dir ) {
+			$this->rrmdir( $dir );
+		}
+		$this->temp_dirs = [];
+		parent::tearDown();
+	}
+
+	private function rrmdir( string $dir ): void {
+		if ( ! \is_dir( $dir ) ) {
+			return;
+		}
+		foreach ( (array) \scandir( $dir ) as $f ) {
+			if ( '.' === $f || '..' === $f ) {
+				continue;
+			}
+			$path = "{$dir}/{$f}";
+			if ( \is_dir( $path ) ) {
+				$this->rrmdir( $path );
+			} else {
+				@\unlink( $path );
+			}
+		}
+		@\rmdir( $dir );
+	}
+
+	private function make_partition( string $name ): \Newspack_Nodes\Partition_Node {
+		$dir               = \sys_get_temp_dir() . '/flamestats_' . \uniqid();
+		$this->temp_dirs[] = $dir;
+		$p = new \Newspack_Nodes\Partition_Node();
+		$p->arguments( $dir );
+		$p->name( $name );
+		$p->void_warranty();
+		return $p;
+	}
+
+	private function fill_partition_entry( \Newspack_Nodes\Partition_Node $p, string $key, array $data, int $ttl, int $timestamp ): void {
+		$msg                         = Message::new_message();
+		$msg[ Message::TYPE ]        = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ]   = $timestamp;
+		$msg[ Message::KEY ]         = $key;
+		$msg[ Message::VALUE ]       = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
+		$p->fill( $msg );
+	}
+
+	/**
+	 * Read all mirror frames from a flushed partition, collapsed last-wins to
+	 * the latest VALUE per key.
+	 *
+	 * @return array<string, array<string, mixed>>
+	 */
+	private function read_mirror_frames( \Newspack_Nodes\Partition_Node $p ): array {
+		$out = [];
+		foreach ( $p->get_segments( true ) as $seg ) {
+			$bytes = $p->read_at( (int) $seg['id'], 0, (int) $seg['size'] );
+			foreach ( \explode( "\n", $bytes ) as $line ) {
+				if ( '' === $line ) {
+					continue;
+				}
+				$val = Message::unpacked( $line )[ Message::VALUE ];
+				if ( \is_array( $val ) && \is_string( $val['key'] ?? null ) ) {
+					$out[ $val['key'] ] = $val;
+				}
+			}
+		}
+		return $out;
+	}
+
 	/**
 	 * Build a completed-request payload for FlameBuilder. Defaults are
 	 * production-shaped; tests override only the fields they assert on.
@@ -1778,5 +1849,272 @@ class FlameBuilderTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$fb->sink( $capture );
 		$this->assertSame( $capture, $fb->sink() );
+	}
+
+	// --- Durable stats-partition mirror + cold-boot reload ----------------
+
+	public function test_aggregates_buffered_in_full(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
+
+		$fb->save_state();
+		$p->flush();
+
+		$frames = $this->read_mirror_frames( $p );
+		$this->assertArrayHasKey( 'evlog:p0:hourly', $frames, 'hourly aggregate landed' );
+		$this->assertSame( [ '2026-01-01-00' => [ 'count' => 7 ] ], $frames['evlog:p0:hourly']['data'] );
+		$this->assertSame( 86400, $frames['evlog:p0:hourly']['ttl'] );
+		$this->assertArrayHasKey( 'evlog:p0:lb:2026-01-01-00-05', $frames, 'leaderboard aggregate landed' );
+	}
+
+	public function test_mirror_buffers_until_save_state(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$p->flush();
+		$this->assertArrayNotHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'not flushed before save_state' );
+
+		$fb->save_state();
+		$p->flush();
+		$this->assertArrayHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'flushed on save_state' );
+	}
+
+	public function test_uncommitted_writes_absent_from_partition(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		// Buffer writes but never checkpoint — a crash loses them, no double-count.
+		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$store->set_leaderboard_bucket( 'b', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$p->flush();
+
+		$this->assertSame( [], $this->read_mirror_frames( $p ), 'nothing written until save_state' );
+		foreach ( $p->get_segments( true ) as $seg ) {
+			$this->assertSame( 0, (int) $seg['size'], 'nothing written until save_state' );
+		}
+	}
+
+	public function test_url_stats_bounded_to_top_10_by_traffic(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		// 15 distinct URLs with ascending flame.count — only the top 10 survive.
+		for ( $i = 1; $i <= 15; $i++ ) {
+			$store->set_url_stats( "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
+		}
+
+		$fb->save_state();
+		$p->flush();
+
+		$frames    = $this->read_mirror_frames( $p );
+		$url_keys  = \array_filter( \array_keys( $frames ), static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url:' ) );
+		$this->assertCount( 10, $url_keys, 'top-10 flame profiles retained' );
+		for ( $i = 6; $i <= 15; $i++ ) {
+			$this->assertContains( "evlog:p0:url:h{$i}", $url_keys );
+		}
+		$this->assertNotContains( 'evlog:p0:url:h5', $url_keys, 'lowest-traffic URL evicted' );
+	}
+
+	public function test_url_dim_and_url_cat_bounded_to_top_100(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		// 105 distinct URLs, highest-traffic inserted FIRST (rank DESCENDING) so eviction
+		// order != insertion order — a rank that misreads the value shape would fall back to
+		// evict-by-insertion and keep the wrong 100. Real persisted shapes: url_dim is
+		// { dim => { bucket => { val => {c,s,m} } } }; url_cat is { bucket => { category => {t,c,n}, total => {t,c,n} } }.
+		for ( $i = 1; $i <= 105; $i++ ) {
+			$rank = 106 - $i; // h1 busiest (105), h105 quietest (1).
+			$store->set_url_dimensional( "h{$i}", [ 'status' => [ '1700000000' => [ '200' => [ 'c' => $rank, 's' => 0, 'm' => 0 ] ] ] ] );
+			$store->set_url_categories( "h{$i}", [ '1700000000' => [ 'db' => [ 't' => 0, 'c' => 0, 'n' => $rank ], 'total' => [ 't' => 0, 'c' => 0, 'n' => $rank ] ] ] );
+		}
+
+		$fb->save_state();
+		$p->flush();
+
+		$frames    = \array_keys( $this->read_mirror_frames( $p ) );
+		$dim_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url_dim:' ) );
+		$cat_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url_cat:' ) );
+		$this->assertCount( 100, $dim_keys, 'top-100 url_dim retained' );
+		$this->assertCount( 100, $cat_keys, 'top-100 url_cat retained' );
+		$this->assertContains( 'evlog:p0:url_dim:h1', $dim_keys, 'busiest url_dim retained' );
+		$this->assertNotContains( 'evlog:p0:url_dim:h105', $dim_keys, 'quietest url_dim evicted' );
+		$this->assertContains( 'evlog:p0:url_cat:h1', $cat_keys, 'busiest url_cat retained' );
+		$this->assertNotContains( 'evlog:p0:url_cat:h105', $cat_keys, 'quietest url_cat evicted' );
+	}
+
+	public function test_flame_requires_profiling_detail(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		$store->set_url_stats( 'empty', [ 'flame' => [ 'count' => 0 ] ] );
+		$store->set_url_stats( 'filled', [ 'flame' => [ 'count' => 3 ] ] );
+
+		$fb->save_state();
+		$p->flush();
+
+		$frames = $this->read_mirror_frames( $p );
+		$this->assertArrayNotHasKey( 'evlog:p0:url:empty', $frames, 'un-profiled URL not mirrored' );
+		$this->assertArrayHasKey( 'evlog:p0:url:filled', $frames, 'profiled URL mirrored' );
+	}
+
+	public function test_warm_memcache_skips_partition_reload(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$now = \time();
+		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'from-partition' => [ 'count' => 99 ] ], 100, $now );
+		$p->flush();
+
+		// Memcache already warm — reload must not clobber it.
+		$store->set_hourly( [ 'from-memcache' => [ 'count' => 1 ] ] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		$this->assertSame( [ 'from-memcache' => [ 'count' => 1 ] ], $store->get_hourly(), 'warm memcache preserved' );
+	}
+
+	public function test_decayed_out_partition_entry_not_restored(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		// ttl=100 but the entry is 200s old → age >= ttl → decayed out.
+		$old = \time() - 200;
+		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'x' => [ 'count' => 5 ] ], 100, $old );
+		$p->flush();
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		$this->assertSame( [], $store->get_hourly(), 'decayed-out entry not restored' );
+	}
+
+	public function test_set_stats_partition_before_store_does_not_advertise_partition(): void {
+		$p  = $this->make_partition( 'flames-stats' );
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		// Misordered topology: no set_stats_store first — must NOT wire or advertise.
+		$fb->set_stats_partition( $p );
+		$this->fill_request( $fb, $this->completed_request() );
+		$p->flush();
+		foreach ( $p->get_segments( true ) as $seg ) {
+			$this->assertSame( 0, (int) $seg['size'], 'partition stays empty when store unset' );
+		}
+		$this->assertStringNotContainsString( 'set_stats_partition', $fb->dump_config() );
+	}
+
+	public function test_set_stats_partition_lifts_size_cap_so_large_writes_land(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+
+		// Partition WITHOUT void_warranty — 4KB PIPE_BUF cap in force unless the
+		// setter lifts it in-method.
+		$dir               = \sys_get_temp_dir() . '/flamestats_' . \uniqid();
+		$this->temp_dirs[] = $dir;
+		$p = new \Newspack_Nodes\Partition_Node();
+		$p->arguments( $dir );
+		$p->name( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		// >4KB and carries profiling detail so it survives the top-N gate.
+		$data = [ 'flame' => [ 'count' => 1 ], 'blob' => \str_repeat( 'x', 5000 ) ];
+		$store->set_url_stats( 'abc', $data );
+		$fb->save_state();
+		$p->flush();
+
+		$frames = $this->read_mirror_frames( $p );
+		$this->assertArrayHasKey( 'evlog:p0:url:abc', $frames, 'large mirror write survived (cap lifted in-method)' );
+		$this->assertSame( $data, $frames['evlog:p0:url:abc']['data'] );
+	}
+
+	public function test_save_state_without_partition_does_not_throw(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$this->assertIsArray( $fb->save_state() );
+	}
+
+	public function test_reload_restores_all_committed_frames_last_wins(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$now = \time();
+		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'v1' => [ 'count' => 1 ] ], 100, $now );
+		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'v2' => [ 'count' => 2 ] ], 100, $now );
+		$p->flush();
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p );
+
+		$this->assertSame( [ 'v2' => [ 'count' => 2 ] ], $store->get_hourly(), 'last frame for a key wins; every frame is committed' );
+	}
+
+	public function test_node_schema_declares_set_stats_partition_verb(): void {
+		$verb_names = \array_column( Flame_Builder_Node::node_schema()['commands'], 'name' );
+		$this->assertContains( 'set_stats_partition', $verb_names );
+	}
+
+	public function test_flame_builder_set_stats_partition_verb_round_trips(): void {
+		Core::$memd = new InMemoryMemcached();
+		$p  = $this->make_partition( 'flames-stats' );
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
+		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_partition', 'flames-stats' ) );
+		$dump = $fb->dump_config();
+		$this->assertStringContainsString( 'cmd fb:config set_stats_partition flames-stats', $dump );
 	}
 }
