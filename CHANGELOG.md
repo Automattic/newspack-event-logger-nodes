@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-04
+
 ### Changed
 
 - **`wp nodes reqgrep` consumes Messages through `Consumer_Node::drain()`** instead of hand-rolling `read_at` + `json_decode` + segment/follow bookkeeping. cat/recent modes drain synchronously; follow rides the event loop; stdin unpacks each line via `Message::unpacked`. Drops the dual-shape "legacy entry-hash" stdin path (there is no legacy entry-hash format) and the private `read_at`/`stream_segment_lines`/`follow_tick`/`seed_follow_cursors`/`get_partition` machinery — a non-envelope stdin line is now skipped rather than decoded.
