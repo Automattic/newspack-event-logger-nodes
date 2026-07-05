@@ -9,28 +9,13 @@
 
 \defined( 'ABSPATH' ) || exit;
 
-// Surface SSE rate-limit rejects (429s) in PHP error_log so operators can
-// see when the slot pool is saturated. Cheap default — site-specific
-// observability without forcing every deployment to remember to wire it up.
-\add_action( 'newspack_event_logger_nodes/sse_rate_limited', function ( $user_id, $class ) {
-	// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-	\error_log( "[EventLoggerNodes] SSE 429: user={$user_id} controller={$class}" );
-}, 10, 2 );
-
 return [
 	// Deployment override: restrict admin UI to these usernames.
 	'allowed_users'               => [],
 
-	// Logging on/off. Application-level — distinct from the
-	// substrate `topologies` list, which decides which worker
-	// fleets run.
+	// Logging on/off (application-level — distinct from substrate's
+	// `topologies` list which decides which worker fleets run).
 	'enable_logging'              => true,
-
-	// Remote-server (hub fan-in) settings; hub-mode is derived from whether
-	// the `aggregator` topology is in the substrate `topologies` list.
-	'remote_num_segments'         => 2,
-	'remote_segment_size'         => 10 * 1024 * 1024,
-	'remote_max_lifespan'         => 3600,
 
 	// URL filtering — skip_urls always wins over log_urls.
 	'log_urls'                    => [],
