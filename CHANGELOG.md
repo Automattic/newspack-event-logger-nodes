@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`wp nodes ruleset-bench`** — Phase-0 measurement command for the upcoming per-URL logging ruleset ([54]): sweeps hook-count × rule-count and reports the median/p95 cost of autoloaded-inline vs memcache-pointer hook storage, to fix the inline↔pointer crossover threshold empirically. Dev tooling; off the request hot path.
+
 ## [0.25.1] - 2026-07-04
 
 ### Fixed
