@@ -171,3 +171,71 @@
 		font-size: 10px;
 	}
 }
+
+// =============================================================================
+// Dashboard skin — the picker portals with the console skin classes (forwarded
+// from RuleEditModal). Re-theme the light-mode surfaces onto the skin tokens.
+// Scoped to `.topology-app`, which only the dashboard passes.
+// =============================================================================
+
+.event-logger-hook-selector-modal.topology-app {
+	.hook-selector-header {
+		background: transparent;
+		border-color: var(--paper-shadow);
+	}
+
+	.hook-selector-categories {
+		background: transparent;
+	}
+
+	.hook-selector-category {
+		border-color: var(--paper-shadow);
+	}
+
+	.hook-selector-category-header {
+		background: transparent;
+
+		&:hover {
+			background: var(--paper-2);
+		}
+	}
+
+	.hook-selector-hooks {
+		background: transparent;
+		border-color: var(--paper-shadow);
+	}
+
+	.hook-selector-hook:hover {
+		background: var(--paper-2);
+	}
+
+	.hook-selector-category-count {
+		background: var(--paper-2);
+		color: var(--ink-3);
+	}
+
+	.hook-selector-expand,
+	.hook-selector-category-desc {
+		color: var(--ink-3);
+	}
+
+	.hook-selector-hook-name {
+		color: var(--ink);
+	}
+
+	.hook-selector-category.hook-selector-category-discovered {
+		background: var(--paper-2);
+
+		.hook-selector-category-header {
+			background: var(--paper-2);
+
+			&:hover {
+				background: var(--paper-3);
+			}
+		}
+
+		.hook-selector-hooks {
+			background: var(--paper-3);
+		}
+	}
+}
