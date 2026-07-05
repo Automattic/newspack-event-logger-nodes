@@ -223,39 +223,41 @@ export default function RuleEditModal( {
 							</p>
 						</div>
 
-						<TextControl
-							__next40pxDefaultSize
-							__nextHasNoMarginBottom
-							type="number"
-							label={ __(
-								'Auto-disable threshold',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Occurrence count before an event auto-disables. 0 = off.',
-								'newspack-event-logger-nodes'
-							) }
-							name="rule-auto-disable-threshold"
-							value={ autoDisable }
-							onChange={ setAutoDisable }
-						/>
+						<div className="rule-edit-threshold-row">
+							<TextControl
+								__next40pxDefaultSize
+								__nextHasNoMarginBottom
+								type="number"
+								label={ __(
+									'Auto-disable threshold',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									'Occurrence count before an event auto-disables. 0 = off.',
+									'newspack-event-logger-nodes'
+								) }
+								name="rule-auto-disable-threshold"
+								value={ autoDisable }
+								onChange={ setAutoDisable }
+							/>
 
-						<TextControl
-							__next40pxDefaultSize
-							__nextHasNoMarginBottom
-							type="number"
-							label={ __(
-								'Auto-protect time threshold (ms)',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Duration in ms above which a slow event is protected. 0 = off.',
-								'newspack-event-logger-nodes'
-							) }
-							name="rule-auto-protect-time-threshold"
-							value={ autoProtect }
-							onChange={ setAutoProtect }
-						/>
+							<TextControl
+								__next40pxDefaultSize
+								__nextHasNoMarginBottom
+								type="number"
+								label={ __(
+									'Auto-protect time threshold (ms)',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									'Duration in ms above which a slow event is protected. 0 = off.',
+									'newspack-event-logger-nodes'
+								) }
+								name="rule-auto-protect-time-threshold"
+								value={ autoProtect }
+								onChange={ setAutoProtect }
+							/>
+						</div>
 					</>
 				) }
 

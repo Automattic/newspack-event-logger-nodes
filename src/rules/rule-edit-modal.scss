@@ -45,6 +45,18 @@
 		margin: 8px 0 0;
 	}
 
+	// The two numeric thresholds are narrow; sit them side by side on one row.
+	.rule-edit-threshold-row {
+		display: flex;
+		gap: 16px;
+		margin: 0 0 18px;
+
+		.components-base-control {
+			flex: 1;
+			margin: 0;
+		}
+	}
+
 	.rule-edit-actions {
 		display: flex;
 		justify-content: flex-end;
@@ -129,20 +141,15 @@
 	textarea {
 		background: transparent !important;
 		color: var( --ink ) !important;
+		border-color: var( --paper-shadow ) !important;
 		font-family: var( --font-mono, inherit );
 	}
 
-	// Native number-input spinners paint an opaque white box on the dark frame
-	// and are UA pseudo-elements that can't be recoloured — hide them (the
-	// threshold fields are typed).
+	// The native number spinner renders in the browser's light UA colours (an
+	// opaque white box on the dark frame). `color-scheme: dark` makes the UA
+	// paint the spinner dark to match the skin, instead of hiding it.
 	input[type="number"] {
-		appearance: textfield;
-	}
-
-	input[type="number"]::-webkit-inner-spin-button,
-	input[type="number"]::-webkit-outer-spin-button {
-		appearance: none;
-		margin: 0;
+		color-scheme: dark;
 	}
 
 	// Labels — including SelectControl's, which renders as a bare flex-item — and
