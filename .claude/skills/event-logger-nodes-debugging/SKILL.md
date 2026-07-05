@@ -123,7 +123,7 @@ The SSE slot pool is substrate-internal — this plugin does NOT call `SSE_Slot_
 
 On the client side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`) — `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI (which internally calls `SSE_Slot_Pool::touch`). Per-line shape-mapping moved from server PHP to the browser, inlined into each dashboard view node's `fill()` (`request-log-view-node.js`, etc.) — the standalone transform helpers were deleted, so the view is now the single place that knows the envelope → render-entry mapping.
 
-If you're getting unexpected 429s: the slot pool is exhausted. Inspect `evlog:sse:*` keys in memcache. The `newspack_event_logger_nodes/sse_rate_limited` action fires on every reject (logged to PHP `error_log` by default).
+If you're getting unexpected 429s: the slot pool is exhausted. Inspect `evlog:sse:*` keys in memcache.
 
 If clients reconnect every few seconds: the SSE slot might be expiring. The slot TTL must outlive the client's heartbeat interval (server `check_slot` is check-only, NEVER refresh-on-check).
 
