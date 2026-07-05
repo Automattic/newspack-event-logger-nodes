@@ -22,31 +22,31 @@ class SettingsSyncResolverTest extends TestCase {
 		}
 	}
 
-	/** A blank PERF option resolves to its file-backed default (log_urls => []). */
+	/** A blank synced APP option resolves to its file-backed default (rules => []). */
 	public function test_blank_perf_option_resolves_to_file_default(): void {
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
 			'',
-			'newspack_event_logger_nodes_log_urls'
+			'newspack_event_logger_nodes_rules'
 		);
-		$this->assertSame( Config::load_config_defaults()['log_urls'], $resolved );
+		$this->assertSame( Config::load_config_defaults()['rules'], $resolved );
 	}
 
-	/** A `false` PERF option (option absent) also resolves to the file default. */
+	/** A `false` APP option (option absent) also resolves to the file default. */
 	public function test_false_perf_option_resolves_to_file_default(): void {
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
 			false,
-			'newspack_event_logger_nodes_significant_events'
+			'newspack_event_logger_nodes_rules'
 		);
-		$this->assertSame( Config::load_config_defaults()['significant_events'], $resolved );
+		$this->assertSame( Config::load_config_defaults()['rules'], $resolved );
 	}
 
 	/** A non-blank value passes through unchanged for a synced option. */
 	public function test_non_blank_synced_value_passes_through(): void {
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
-			[ '/foo', '/bar' ],
-			'newspack_event_logger_nodes_log_urls'
+			[ [ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ] ],
+			'newspack_event_logger_nodes_rules'
 		);
-		$this->assertSame( [ '/foo', '/bar' ], $resolved );
+		$this->assertSame( [ [ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ] ], $resolved );
 	}
 
 	/** A blank value for a NON-synced option passes through unchanged (no resolution). */

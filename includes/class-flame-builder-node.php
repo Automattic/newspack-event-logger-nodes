@@ -85,19 +85,20 @@ class Flame_Builder_Node extends Node {
 
 	/** Per-URL aggregate state. */
 	private float $last_flush_time             = 0.0;
-	private int $auto_disable_threshold        = 0;
-	private float $auto_protect_time_threshold = 0.0;
-	/** @var array<string, mixed> Disable decisions keyed by hook name. */
-	private $hooks_to_disable            = [];
-	/** @var array<string, mixed> Disable decisions keyed by event name. */
-	private $custom_events_to_disable    = [];
-	/** @var array<string, bool> Significant-event set ({name => true}). */
-	private $significant_events          = [];
-	/** @var array<string, mixed> Newly-significant events keyed by name. */
-	private $new_significant_events      = [];
+	/** @var array<string, array<string, bool>> rule_id => {hook => true} disable decisions. */
+	private array $hooks_to_disable         = [];
+	/** @var array<string, array<string, bool>> rule_id => {event => true} disable decisions. */
+	private array $custom_events_to_disable = [];
+	/** @var array<string, array<string, bool>> rule_id => {event => true} known-significant dedupe cache. */
+	private array $significant_events       = [];
+	/** @var array<string, array<string, bool>> rule_id => {event => true} newly promoted. */
+	private array $new_significant_events   = [];
 	/** @var array<string, bool> Custom-event-name set ({name => true}). */
 	private $custom_event_names          = [];
 	private bool $is_hub                 = false;
+
+	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
+	private ?Rule_Set $rule_set = null;
 
 	/** Pending stats for the current (incomplete) 5-minute bucket. */
 	private string $pending_bucket = '';
@@ -241,9 +242,9 @@ class Flame_Builder_Node extends Node {
 				'pending_url_count'        => \count( $this->pending ),
 				'pending_bucket'           => $this->pending_bucket,
 				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
-				'auto_tune_pending_count'  => \count( $this->hooks_to_disable ) + \count( $this->custom_events_to_disable ) + \count( $this->new_significant_events ),
+				'auto_tune_pending_count'  => self::map_total( $this->hooks_to_disable ) + self::map_total( $this->custom_events_to_disable ) + self::map_total( $this->new_significant_events ),
 				'is_hub'                   => $this->is_hub,
-				'significant_events_count' => \count( $this->significant_events ),
+				'significant_events_count' => self::map_total( $this->significant_events ),
 			];
 		} else {
 			$payload = [ 'error' => "unknown request verb: {$verb}" ];
@@ -462,6 +463,47 @@ class Flame_Builder_Node extends Node {
 	// hourly, URL stats — all into the pending bucket + LRU.
 	// -------------------------------------------------------------------------
 
+	/** Lazily-loaded ruleset, cached for this worker's lifetime. */
+	private function rule_set(): Rule_Set {
+		return $this->rule_set ??= Rule_Set::load();
+	}
+
+	/**
+	 * Resolve the rule that governed a request: by stamped id, else url-rematch,
+	 * else null.
+	 *
+	 * @param array<array-key, mixed> $request Full request record.
+	 */
+	private function rule_for_request( array $request ): ?Rule {
+		$id = \is_string( $request['rule_id'] ?? null ) ? $request['rule_id'] : '';
+		if ( '' !== $id ) {
+			$rule = $this->rule_set()->rule_by_id( $id );
+			if ( null !== $rule ) {
+				return $rule;
+			}
+		}
+		$url = \is_string( $request['url'] ?? null ) ? $request['url'] : '';
+		return '' !== $url ? $this->rule_set()->matcher()->match( $url ) : null;
+	}
+
+	/** Whether a name is already a rule-declared significant event. */
+	private function rule_significant( ?Rule $rule, string $name ): bool {
+		return null !== $rule && \in_array( $name, $rule->significant_events, true );
+	}
+
+	/**
+	 * Total leaf entries across a per-rule-id keyed map.
+	 *
+	 * @param array<string, array<string, bool>> $map
+	 */
+	private static function map_total( array $map ): int {
+		$total = 0;
+		foreach ( $map as $inner ) {
+			$total += \count( $inner );
+		}
+		return $total;
+	}
+
 	/**
 	 * Accumulate all per-request stats from a completed request.
 	 *
@@ -471,6 +513,15 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key, mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
+		// Auto-tune thresholds are per-rule: resolve this request's governing
+		// rule once. A url-rematch that finds no rule (or the baseline id '')
+		// leaves auto-tune inert for the request.
+		$rule             = $this->rule_for_request( $request );
+		$count_threshold  = null !== $rule ? $rule->auto_disable_threshold : 0;
+		$time_threshold   = null !== $rule ? $rule->auto_protect_time_threshold : 0.0;
+		$rule_id          = null !== $rule ? $rule->id : '';
+		$auto_tune_active = null !== $rule && $rule->is_log() && '' !== $rule_id;
+
 		$duration_val = $flame_data['value'] ?? 0;
 		$duration_ms  = \is_numeric( $duration_val ) ? (float) $duration_val : 0.0;
 		$error_status = $request['error_status'] ?? '-';
@@ -691,8 +742,7 @@ class Flame_Builder_Node extends Node {
 			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $lb */
 			$lb   = &$this->pending['leaderboard'];
 
-			$req_time        = 0.0;
-			$count_threshold = $this->auto_disable_threshold;
+			$req_time = 0.0;
 
 			// Global: workers excluded from the "total" pseudo-category.
 			if ( $count_global ) {
@@ -861,16 +911,16 @@ class Flame_Builder_Node extends Node {
 				++$this->pending['cat_by_url'][ $url_hash ][ $category ]['n'];
 				$this->pending['cat_by_url'][ $url_hash ]['total']['c'] += $cat_count;
 
-				// Significant event detection (avg time per call exceeds threshold).
-				// Global signal — skipped for workers, whose global category ref stays null.
-				$time_threshold = $this->auto_protect_time_threshold;
-				if ( null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
+				// Significant event detection (avg time per call exceeds the rule's
+				// threshold). Global signal — skipped for workers, whose global
+				// category ref stays null. Promotions dedupe per rule id.
+				if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
 					$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
 					if ( $avg_per_call >= $time_threshold ) {
 						$base_name = \explode( ' ', $category, 2 )[0];
-						if ( ! isset( $this->significant_events[ $base_name ] ) ) {
-							$this->significant_events[ $base_name ]     = true;
-							$this->new_significant_events[ $base_name ] = true;
+						if ( ! isset( $this->significant_events[ $rule_id ][ $base_name ] ) && ! $this->rule_significant( $rule, $base_name ) ) {
+							$this->significant_events[ $rule_id ][ $base_name ]     = true;
+							$this->new_significant_events[ $rule_id ][ $base_name ] = true;
 						}
 					}
 				}
@@ -917,12 +967,12 @@ class Flame_Builder_Node extends Node {
 				// Noisy detection. Global auto-tune signal — workers excluded, like
 				// every other global aggregate. Significant-event filtering is
 				// performed at apply_auto_tune time (matching upstream), not here.
-				if ( $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
+				if ( $auto_tune_active && $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
 					$base_name = \explode( ' ', $category, 2 )[0];
 					if ( isset( $this->custom_event_names[ $base_name ] ) ) {
-						$this->custom_events_to_disable[ $base_name ] = true;
+						$this->custom_events_to_disable[ $rule_id ][ $base_name ] = true;
 					} else {
-						$this->hooks_to_disable[ $base_name ] = true;
+						$this->hooks_to_disable[ $rule_id ][ $base_name ] = true;
 					}
 				}
 				unset( $pcat );
@@ -1695,9 +1745,16 @@ class Flame_Builder_Node extends Node {
 	}
 
 	private function fire_auto_tune_actions(): void {
-		$this->emit_auto_tune( 'disable_hooks',          \array_keys( $this->hooks_to_disable ) );
-		$this->emit_auto_tune( 'disable_custom_events',  \array_keys( $this->custom_events_to_disable ) );
-		$this->emit_auto_tune( 'add_significant_events', \array_keys( $this->new_significant_events ) );
+		$rule_ids = \array_unique( \array_merge(
+			\array_keys( $this->hooks_to_disable ),
+			\array_keys( $this->custom_events_to_disable ),
+			\array_keys( $this->new_significant_events )
+		) );
+		foreach ( $rule_ids as $rule_id ) {
+			$this->emit_auto_tune( 'disable_hooks',          $rule_id, \array_keys( $this->hooks_to_disable[ $rule_id ] ?? [] ) );
+			$this->emit_auto_tune( 'disable_custom_events',  $rule_id, \array_keys( $this->custom_events_to_disable[ $rule_id ] ?? [] ) );
+			$this->emit_auto_tune( 'add_significant_events', $rule_id, \array_keys( $this->new_significant_events[ $rule_id ] ?? [] ) );
+		}
 
 		$this->hooks_to_disable         = [];
 		$this->custom_events_to_disable = [];
@@ -1706,13 +1763,15 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Send an auto-tune decision downstream as a Message. The Router (primary
-	 * sink) delivers it to the AutoTuner Node named 'auto-tuner', which
-	 * applies it locally and (on hubs) fans out via JobIntake.
+	 * sink) delivers it to the AutoTuner Node named 'auto-tuner', which applies
+	 * it locally and (on hubs) fans out via JobIntake. VALUE carries the rule id
+	 * the decision belongs to alongside the items.
 	 *
-	 * @param string             $key   'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
-	 * @param array<int, string> $items Hook/event names — already deduped at the caller.
+	 * @param string             $key     'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
+	 * @param string             $rule_id The rule these items were proposed under.
+	 * @param array<int, string> $items   Hook/event names — already deduped at the caller.
 	 */
-	private function emit_auto_tune( string $key, array $items ): void {
+	private function emit_auto_tune( string $key, string $rule_id, array $items ): void {
 		$sink = $this->sink;
 		if ( empty( $items ) || null === $sink ) {
 			return;
@@ -1721,7 +1780,7 @@ class Flame_Builder_Node extends Node {
 		// debug_state on flame-builder surfaces every fire.
 		$this->set_state(
 			'AUTO_TUNE_FIRED',
-			\implode( ' ', [ 'KEY', $key, 'COUNT', \count( $items ) ] )
+			\implode( ' ', [ 'KEY', $key, 'RULE', $rule_id, 'COUNT', \count( $items ) ] )
 		);
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -1730,8 +1789,8 @@ class Flame_Builder_Node extends Node {
 		$message[ Message::TO ]        = $this->name . ':auto-tuner';
 		$message[ Message::KEY ]       = $key;
 		$message[ Message::VALUE ]     = [
+			'rule_id' => $rule_id,
 			'items'   => $items,
-			'context' => [ 'significant_events' => $this->significant_events ],
 		];
 		$sink->fill( $message );
 	}
@@ -2069,29 +2128,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Inject the persisted significant-events set.
-	 *
-	 * @param array<int, string> $events
-	 */
-	public function set_significant_events( array $events ): void {
-		$this->significant_events = [];
-		foreach ( $events as $e ) {
-			$this->significant_events[ $e ] = true;
-		}
-	}
-
-	/**
-	 * Configure auto-tune thresholds.
-	 *
-	 * @param int   $count_threshold Disable check threshold (0 = disabled).
-	 * @param float $time_threshold  Significant-event threshold (0 = disabled).
-	 */
-	public function set_auto_tune( int $count_threshold, float $time_threshold ): void {
-		$this->auto_disable_threshold      = $count_threshold;
-		$this->auto_protect_time_threshold = $time_threshold;
-	}
-
-	/**
 	 * Replace the clock used for bucket-key derivation (testing seam).
 	 *
 	 * @api Used by tests.
@@ -2102,16 +2138,17 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Accessor for the auto-tune state.
+	 * Accessor for the auto-tune state, keyed per rule id.
 	 *
 	 * @api Used by tests.
-	 * @return array<string, list<string>>
+	 * @return array<string, array<string, list<string>>>
 	 */
 	public function get_auto_tune_state(): array {
+		$names = static fn( array $set ): array => \array_keys( $set );
 		return [
-			'hooks'           => \array_keys( $this->hooks_to_disable ),
-			'custom_events'   => \array_keys( $this->custom_events_to_disable ),
-			'new_significant' => \array_keys( $this->new_significant_events ),
+			'hooks'           => \array_map( $names, $this->hooks_to_disable ),
+			'custom_events'   => \array_map( $names, $this->custom_events_to_disable ),
+			'new_significant' => \array_map( $names, $this->new_significant_events ),
 		];
 	}
 
@@ -2178,13 +2215,6 @@ class Flame_Builder_Node extends Node {
 		$out = parent::dump_config();
 		if ( $this->is_hub ) {
 			$out .= "cmd {$this->name}:config set_is_hub true\n";
-		}
-		if ( 0 !== $this->auto_disable_threshold || 0.0 !== $this->auto_protect_time_threshold ) {
-			$out .= "cmd {$this->name}:config set_auto_tune {$this->auto_disable_threshold} {$this->auto_protect_time_threshold}\n";
-		}
-		if ( ! empty( $this->significant_events ) ) {
-			$csv  = \implode( ',', \array_keys( $this->significant_events ) );
-			$out .= "cmd {$this->name}:config set_significant_events {$csv}\n";
 		}
 		if ( null !== $this->stats_store ) {
 			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
@@ -2256,43 +2286,6 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_is_hub( $bool );
-						return 'ok';
-					},
-				],
-				[
-					'name'        => 'set_auto_tune',
-					'description' => 'Auto-disable / auto-protect thresholds.',
-					'args'        => [
-						[ 'name' => 'count_threshold', 'type' => 'int',   'required' => true, 'default' => '<config:auto_disable_threshold>' ],
-						[ 'name' => 'time_threshold',  'type' => 'float', 'required' => true, 'default' => '<config:auto_protect_time_threshold>' ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						// Constant valid pattern: preg_split never returns false here.
-						/** @var list<string> $parts */
-						$parts = \preg_split( '/\s+/', \trim( $args ) );
-						if ( \count( $parts ) < 2 ) {
-							return 'usage: set_auto_tune <count_threshold> <time_threshold>';
-						}
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->set_auto_tune( (int) $parts[0], (float) $parts[1] );
-						return 'ok';
-					},
-				],
-				[
-					'name'        => 'set_significant_events',
-					'description' => 'Comma-separated list of event names to always preserve.',
-					'args'        => [
-						[ 'name' => 'names', 'type' => 'string', 'required' => false, 'default' => '<config:significant_events_csv>' ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$args = \trim( $args );
-						$list = '' === $args
-							? []
-							: \array_values( \array_filter( \array_map( 'trim', \explode( ',', $args ) ), static fn ( $v ) => (bool) $v ) );
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->set_significant_events( $list );
 						return 'ok';
 					},
 				],

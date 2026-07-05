@@ -17,23 +17,14 @@ return [
 	// `topologies` list which decides which worker fleets run).
 	'enable_logging'              => true,
 
-	// URL filtering — skip_urls always wins over log_urls.
-	'log_urls'                    => [],
-	'skip_urls'                   => [
-		'/wp-json/newspack-nodes/v1/command',
-		'/wp-json/newspack-nodes/v1/messages/stream',
-		'/wp-json/newspack-nodes/v1/workers/spawn',
-	],
+	// Per-URL logging ruleset. URL filters, instrumented-hook lists, custom
+	// events, significant events, and auto-tune thresholds are per-RULE fields
+	// here now — NOT global settings (Task 10). Empty = the minimal log-all
+	// baseline (Rule_Set::load() falls back to it when the option is absent).
+	'rules'                       => [],
 
-	// Hooks instrumentation.
+	// Hook categorization colors.
 	'custom_colors'               => [],
-	'custom_events'               => [],
-	'log_events'                  => [],
-
-	// Auto-tune (0 = disabled).
-	'auto_disable_threshold'      => 0,
-	'auto_protect_time_threshold' => 0,
-	'significant_events'          => [],
 
 	// Mirror Stats_Store writes to a durable partition + reload memcache from it
 	// on cold boot. Off by default (Atomic has durable memcache). Non-Atomic

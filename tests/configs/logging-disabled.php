@@ -8,6 +8,4 @@ return [
 	'enable_logging'   => false,
 	'memcache_servers' => [],
 	'allowed_users'    => [],
-	'skip_urls'        => [],
-	'log_urls'         => [],
 ];

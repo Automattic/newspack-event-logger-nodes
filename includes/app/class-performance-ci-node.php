@@ -125,15 +125,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @var array<string,string>
 	 */
 	private const SETTINGS_OPTIONS = [
-		'newspack_event_logger_nodes_log_urls'                    => 'array',
-		'newspack_event_logger_nodes_skip_urls'                   => 'array',
-		'newspack_event_logger_nodes_log_events'                  => 'array',
-		'newspack_event_logger_nodes_custom_events'               => 'array',
-		'newspack_event_logger_nodes_auto_disable_threshold'      => 'int',
-		'newspack_event_logger_nodes_auto_protect_time_threshold' => 'float',
-		'newspack_event_logger_nodes_significant_events'          => 'array',
-		'newspack_event_logger_nodes_log_memory'                  => 'bool',
-		'newspack_event_logger_nodes_flush_every_line'            => 'bool',
+		'newspack_event_logger_nodes_rules'            => 'array',
+		'newspack_event_logger_nodes_log_memory'       => 'bool',
+		'newspack_event_logger_nodes_flush_every_line' => 'bool',
 	];
 
 	/**

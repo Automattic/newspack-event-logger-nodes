@@ -154,6 +154,32 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
+	public function test_rule_id_from_start_frame_lands_on_request(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on h', 'rule' => 'shop' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /shop/cart' ] );
+		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 10.0, 'status_code' => 200 ] );
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 'shop', $req['rule_id'] );
+	}
+
+	public function test_rule_id_defaults_to_empty_string_when_absent(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on h' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /shop/cart' ] );
+		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 10.0, 'status_code' => 200 ] );
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( '', $req['rule_id'] );
+	}
+
 	public function test_non_array_value_silently_dropped(): void {
 		$rb                    = new Request_Builder_Node();
 		$message                   = Message::new_message();

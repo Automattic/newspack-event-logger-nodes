@@ -21,7 +21,24 @@ class RetiredConfigKeysTest extends TestCase {
 	private const RETIRED_KEYS = [
 		'enable_workers',
 		'enable_aggregator',
+		// The seven global settings the per-URL ruleset absorbed (Task 10):
+		// they are now per-RULE fields inside the `newspack_event_logger_nodes_rules`
+		// option, NOT global options.
+		'log_urls',
+		'skip_urls',
+		'log_events',
+		'custom_events',
+		'significant_events',
+		'auto_disable_threshold',
+		'auto_protect_time_threshold',
 	];
+
+	public function test_schema_no_longer_defines_the_retired_ruleset_fields(): void {
+		$names = \Newspack_Event_Logger_Nodes\Settings_Schema::get()->setting_option_names();
+		foreach ( [ 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events', 'auto_disable_threshold', 'auto_protect_time_threshold' ] as $short ) {
+			$this->assertNotContains( 'newspack_event_logger_nodes_' . $short, $names, "retired field '$short' must be gone from the schema" );
+		}
+	}
 
 	public function test_baseline_test_config_does_not_reference_retired_keys(): void {
 		$config = include \dirname( __DIR__ ) . '/newspack-event-logger-nodes-test-config.php';

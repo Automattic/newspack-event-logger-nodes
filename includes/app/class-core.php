@@ -2,10 +2,11 @@
 /**
  * Application Core - Tracks request lifecycle, hook timing, plugin performance.
  *
- * Binds configured hooks individually at priority 1 (start) and PHP_INT_MAX-1 (complete)
- * to measure actual execution time of callbacks registered between those priorities,
- * plus a sacrificial spacer at PHP_INT_MAX-2 (see hook_spacer) so a self-removing
- * callback can't make WP_Hook's iteration skip the complete.
+ * Binds only the current request's governing rule's hooks (Log_Manager::governing_rule())
+ * individually at priority 1 (start) and PHP_INT_MAX-1 (complete) to measure actual
+ * execution time of callbacks registered between those priorities, plus a sacrificial
+ * spacer at PHP_INT_MAX-2 (see hook_spacer) so a self-removing callback can't make
+ * WP_Hook's iteration skip the complete. A skip rule or no match binds zero hooks.
  *
  * For significant events, wraps each individual callback with timing so the log shows
  * exactly which callback is slow (e.g. "photon_subsizes_filter_the_content (complete): 5000ms"
@@ -19,6 +20,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -79,6 +81,9 @@ class Core {
 	/** @var int Priority used for hook_start registration. */
 	private int $start_priority = 1;
 
+	/** @var string[] Hook names currently bound (tracked for rebind_for_current_scope). */
+	private array $bound_hooks = [];
+
 	public function __construct() {
 		// Hooks are registered unconditionally. The enabled check happens
 		// inside each callback against LogManager::instance() — when JobWorker
@@ -88,41 +93,63 @@ class Core {
 		// at construction would silently disable all hook instrumentation
 		// inside the job too. Hence: no $log_manager property.
 
-		// Load event filters from config.
-		$config            = Config::load_config();
-		$log_events_cfg    = $config['log_events'] ?? [];
-		$config_log_events = \is_array( $log_events_cfg ) ? $log_events_cfg : [];
-
+		$config               = Config::load_config();
 		$start_priority       = $config['hook_start_priority'] ?? 1;
 		$this->start_priority = \is_numeric( $start_priority ) ? (int) $start_priority : 1;
 
-		// Significant events get per-callback profiling.
-		// Also ensure real hooks are in log_events so they get instrumented.
+		$this->bind_current_scope();
+		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
+	}
+
+	/**
+	 * Remove the currently-bound hook filters and bind the current request's
+	 * governing rule afresh. Used when a job context switch changes which
+	 * rule governs mid-request (JobWorker's begin/end_job_context).
+	 */
+	public function rebind_for_current_scope(): void {
+		foreach ( $this->bound_hooks as $hook_name ) {
+			\remove_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
+			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+		}
+		$this->bound_hooks = [];
+		$this->significant = [];
+		$this->bind_current_scope();
+	}
+
+	/**
+	 * Bind hook_start/hook_spacer/hook_complete for only the current
+	 * request's governing rule — the hot-path win: skip/no-match binds
+	 * zero hooks instead of the entire global log_events list.
+	 */
+	private function bind_current_scope(): void {
+		$rule = Log_Manager::instance()->governing_rule();
+		if ( null === $rule || ! $rule->is_log() ) {
+			return;
+		}
+
+		// Also ensure real hooks are in the hook list so they get instrumented.
 		// Custom events (logged via LogManager::message, not do_action) are excluded
 		// — instrumenting them with add_filter is pointless and pollutes the hook selector.
-		$sig             = $config['significant_events'] ?? [];
-		$custom_events   = $config['custom_events'] ?? [];
-		$custom_set      = \is_array( $custom_events ) ? $custom_events : [];
-		$log_events_set  = \array_flip( \array_filter( $config_log_events, 'is_string' ) );
-		if ( \is_array( $sig ) ) {
-			foreach ( $sig as $event ) {
-				if ( ! \is_string( $event ) ) {
-					continue;
-				}
-				$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
-				$this->significant[ $hook ] = true;
-				if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
-					$config_log_events[] = $hook;
-				}
+		$hooks          = Rule_Set::hooks_for( $rule );
+		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
+		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
+
+		// Significant events get per-callback profiling.
+		foreach ( $rule->significant_events as $event ) {
+			$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
+			$this->significant[ $hook ] = true;
+			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
+				$hooks[] = $hook;
 			}
 		}
 
 		// Plugin load timing is handled by the 00-newspack-profiler mu-plugin
 		// which loads early enough to capture all plugins. See: mu-plugins/00-newspack-profiler.php
 
-		// Bind each configured hook individually for proper timing.
-		foreach ( $config_log_events as $hook_name ) {
-			if ( ! \is_string( $hook_name ) || '' === $hook_name ) {
+		// Bind each hook individually for proper timing.
+		foreach ( $hooks as $hook_name ) {
+			if ( '' === $hook_name ) {
 				continue;
 			}
 			if ( 'plugin_loaded' === $hook_name ) {
@@ -138,6 +165,7 @@ class Core {
 			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
 			\add_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
 			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+			$this->bound_hooks[] = $hook_name;
 		}
 	}
 

@@ -15,6 +15,23 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Log_Manager::class )]
 class LogManagerJobContextTest extends TestCase {
 
+	protected function tearDown(): void {
+		// Listeners registered via `\add_action` in a test leak across tests
+		// through the bootstrap's global `_wp_actions` shim otherwise.
+		$GLOBALS['_wp_actions'] = [];
+		parent::tearDown();
+	}
+
+	public function test_scope_change_action_fires_on_begin_and_end_job_context(): void {
+		$fired = 0;
+		\add_action( 'newspack_event_logger_nodes_scope_changed', function () use ( &$fired ): void {
+			$fired++;
+		} );
+		Log_Manager::begin_job_context( 'my_handler' );
+		Log_Manager::end_job_context();
+		$this->assertSame( 2, $fired );
+	}
+
 	public function test_begin_rewrites_server_and_end_restores(): void {
 		$_SERVER['ORIGINAL_KEY'] = 'original';
 		$_SERVER['REQUEST_URI']  = '/original';

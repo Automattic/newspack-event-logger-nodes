@@ -9,7 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`wp nodes ruleset-bench`** — Phase-0 measurement command for the upcoming per-URL logging ruleset ([54]): sweeps hook-count × rule-count and reports the median/p95 cost of autoloaded-inline vs memcache-pointer hook storage, to fix the inline↔pointer crossover threshold empirically. Dev tooling; off the request hot path.
+- **Per-URL logging ruleset** ([54]) — replaces the four global logging settings (`log_urls` / `skip_urls` / `log_events` / `custom_events`) and the three global auto-tune settings with a per-URL **ruleset**: an ordered list of rules, each a URL pattern (prefix `/x` or exact `/x?`) with a `log`/`skip` action and — for `log` rules — its own hooks, custom events, significant events, and auto-tune thresholds. Matching is **longest-prefix wins** (an exact `/x?` beats an equal-length prefix); no rule matches ⇒ skip. A rule's hooks ride inline in the autoloaded rule list when small, or — past `Rule_Set::INLINE_HOOK_LIMIT` — behind a per-rule non-autoloaded durable option mirrored into memcache (warmed on miss), so the standard hook set never pays a memcache hop and heavy rules don't bloat autoload. New classes: `Rule`, `Rule_Matcher`, `Rule_Set`.
+  - **Per-request hot-path win:** `Log_Manager` resolves the one governing rule per request; a `skip` rule or no match binds **zero** hooks and touches no memcache, and `App\Core` binds only the governing rule's hooks — a "cheap" URL is finally cheap (a `log`-with-no-hooks rule is a pure access-log line: process start / URL / complete).
+  - **Per-rule auto-tune:** the governing rule id is stamped into the process-start firehose frame; the worker's `Flame_Builder_Node` applies **that rule's** thresholds and `Auto_Tuner_Node` writes disabled hooks / promoted significant events back into **that rule**, not the retired global options.
+  - **Job scope:** a JobWorker's `/jobs/{handler}` scope re-resolves its own rule and rebinds hooks (via a `newspack_event_logger_nodes_scope_changed` action), restoring the parent scope on exit.
+  - **Migration:** a one-time, idempotent, behavior-preserving migration synthesizes an equivalent rule set from existing config (skip patterns → skip rules; empty `log_urls` → a `/` log rule carrying the global bundle; non-empty `log_urls` → one log rule per pattern with no `/` baseline), deletes the old option rows, and raises an admin notice when a skip/log prefix overlap means the new most-specific-wins model changed behavior for some URLs.
+- **`wp nodes ruleset-bench`** — Phase-0 measurement command: sweeps hook-count × rule-count and reports the median/p95 cost of autoloaded-inline vs memcache-pointer hook storage, used to fix `INLINE_HOOK_LIMIT` empirically. Dev tooling; off the request hot path.
+
+### Removed
+
+- **The seven global logging settings** `log_urls`, `skip_urls`, `log_events`, `custom_events`, `significant_events`, `auto_disable_threshold`, `auto_protect_time_threshold` ([54]) — absorbed into per-rule fields on the ruleset. Their admin UI is retired pending a dedicated rules editor (follow-up); `enable_logging`, `log_memory`, `flush_every_line`, `allowed_users`, `hook_start_priority` stay global. Discovery / `Hook_Categorizer` now advertise the union of hooks/custom-events across all log rules.
 
 ## [0.25.1] - 2026-07-04
 

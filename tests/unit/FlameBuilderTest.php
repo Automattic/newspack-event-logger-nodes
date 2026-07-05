@@ -113,6 +113,7 @@ class FlameBuilderTest extends TestCase {
 		$base = [
 			'rid'            => 'r' . \uniqid(),
 			'url'            => '/post/123',
+			'rule_id'        => 'r',
 			'duration_ms'    => 100.0,
 			'status_code'    => 200,
 			'error_status'   => '-',
@@ -129,6 +130,19 @@ class FlameBuilderTest extends TestCase {
 			'profiles'       => [],
 		];
 		return \array_replace( $base, $overrides );
+	}
+
+	/**
+	 * Seed the durable ruleset option with a single rule. Defaults to a
+	 * log-all rule id 'r' at prefix '/'; overrides customize id/pattern/
+	 * thresholds so the request's stamped rule_id resolves to it.
+	 *
+	 * @param array<string, mixed> $overrides
+	 */
+	private function set_rule( array $overrides = [] ): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] = [
+			\array_replace( [ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ], $overrides ),
+		];
 	}
 
 	private function bucket_key_for( int $timestamp ): string {
@@ -691,10 +705,39 @@ class FlameBuilderTest extends TestCase {
 
 	// --- Auto-tune --------------------------------------------------------
 
+	public function test_disable_uses_the_stamped_rules_threshold(): void {
+		// The governing rule's threshold — resolved by the request's stamped
+		// rule_id — decides, and the proposal is keyed under that rule id.
+		$this->set_rule( [ 'id' => 'loud', 'pattern' => '/loud/', 'auto_disable_threshold' => 100 ] );
+		$fb  = new Flame_Builder_Node();
+		$req = $this->completed_request( [
+			'rule_id'  => 'loud',
+			'url'      => '/loud/x',
+			'profiles' => [ 'noisy_hook hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'noisy_hook' ], $state['hooks']['loud'] );
+	}
+
+	public function test_no_stamped_rule_applies_no_auto_tune(): void {
+		// Stale stamped id + a url that matches no rule ⇒ null rule ⇒ no tuning.
+		$this->set_rule( [ 'id' => 'quiet', 'pattern' => '/q/' ] );
+		$fb  = new Flame_Builder_Node();
+		$req = $this->completed_request( [
+			'rule_id'  => 'ghost',
+			'url'      => '/unmatched',
+			'profiles' => [ 'h hook' => [ 'time' => 0.1, 'count' => 999, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertEmpty( $state['hooks'] );
+	}
+
 	public function test_noisy_hook_detection_threshold_zero_disables_check(): void {
 		// With threshold 0, no hook ever gets proposed.
+		$this->set_rule( [ 'auto_disable_threshold' => 0 ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 0, 0.0 );
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -707,8 +750,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_noisy_hook_detection_proposes_when_count_exceeds_threshold(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 100, 0.0 );
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -718,14 +761,14 @@ class FlameBuilderTest extends TestCase {
 		] );
 		$this->fill_request( $fb, $req );
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'wpdb' ], $state['hooks'] );
+		$this->assertSame( [ 'wpdb' ], $state['hooks']['r'] );
 	}
 
 	public function test_noisy_hook_detection_excludes_worker_requests(): void {
 		// Auto-disable is a global signal: worker traffic feeds only its own
 		// per-URL row, never the plugin-wide hooks_to_disable decision.
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 100, 0.0 );
 
 		$req = $this->completed_request( [
 			'is_worker' => true,
@@ -739,8 +782,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_callback_categories_skipped_from_auto_tune(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 100, 0.0 );
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -754,8 +797,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_significant_event_detection_picks_up_slow_avg(): void {
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] ); // 50ms threshold
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 0, 0.05 ); // 50ms threshold
 
 		// avg_per_call = sum_time / sum_count = 0.4/2 = 0.2 ≥ 0.05 → significant.
 		$req = $this->completed_request( [
@@ -765,7 +808,7 @@ class FlameBuilderTest extends TestCase {
 		] );
 		$this->fill_request( $fb, $req );
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'slow_hook' ], $state['new_significant'] );
+		$this->assertSame( [ 'slow_hook' ], $state['new_significant']['r'] );
 	}
 
 	// --- Index format -----------------------------------------------------
@@ -897,30 +940,15 @@ class FlameBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'cmd fb:config set_is_hub true', $dump );
 	}
 
-	public function test_flame_builder_set_auto_tune_verb_round_trips(): void {
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_auto_tune', '100 0.5' ) );
-		$dump = $fb->dump_config();
-		$this->assertStringContainsString( 'cmd fb:config set_auto_tune 100 0.5', $dump );
-	}
-
-	public function test_flame_builder_set_significant_events_verb_round_trips(): void {
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_significant_events', 'init,wp_loaded,shutdown' ) );
-		$dump = $fb->dump_config();
-		$this->assertStringContainsString( 'cmd fb:config set_significant_events init,wp_loaded,shutdown', $dump );
-	}
-
 	public function test_flame_builder_node_schema_declares_verbs(): void {
 		$schema = Flame_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
 		$verb_names = \array_column( $schema['commands'], 'name' );
 		$this->assertContains( 'set_is_hub', $verb_names );
-		$this->assertContains( 'set_auto_tune', $verb_names );
-		$this->assertContains( 'set_significant_events', $verb_names );
 		$this->assertContains( 'configure_stats', $verb_names );
+		// Node-wide auto-tune verbs were removed in favor of per-rule thresholds.
+		$this->assertNotContains( 'set_auto_tune', $verb_names );
+		$this->assertNotContains( 'set_significant_events', $verb_names );
 	}
 
 	// --- Clock seam / maintenance / non-stats setters ---------------------
@@ -977,8 +1005,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_set_custom_event_names_dispatches_to_custom_events(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 50 ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 50, 0.0 );
 		$fb->set_custom_event_names( [ 'mything', 'other' ] );
 
 		$req = $this->completed_request( [
@@ -992,16 +1020,15 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'mything' ], $state['custom_events'] );
-		$this->assertSame( [ 'wp_init' ], $state['hooks'] );
+		$this->assertSame( [ 'mything' ], $state['custom_events']['r'] );
+		$this->assertSame( [ 'wp_init' ], $state['hooks']['r'] );
 	}
 
-	public function test_set_significant_events_suppresses_redundant_proposals(): void {
-		// Significant events should still appear in `significant_events` set;
-		// once present in $significant_events, repeated detection is suppressed.
+	public function test_rule_significant_events_suppress_redundant_proposals(): void {
+		// An event already declared significant on the governing rule is not
+		// re-flagged when its avg-time detection would otherwise promote it.
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05, 'significant_events' => [ 'wpdb' ] ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 0, 0.05 );
-		$fb->set_significant_events( [ 'wpdb' ] );
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1051,17 +1078,22 @@ class FlameBuilderTest extends TestCase {
 	// --- handle_request (TM_REQUEST GET_STATS) ----------------------------
 
 	public function test_handle_request_get_stats_returns_payload(): void {
+		// A low per-rule time threshold promotes both seeded hooks so
+		// significant_events_count (now summed across the per-rule cache) is 2.
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
 		$fb      = new Flame_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_is_hub( true );
-		$fb->set_significant_events( [ 'init', 'wp_loaded' ] );
 
-		// Seed some state.
+		// Seed some state; two distinct slow hooks → two significant promotions.
 		$this->fill_request( $fb, $this->completed_request( [
 			'duration_ms' => 30.0,
-			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
+			'profiles'    => [
+				'init'      => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ],
+				'wp_loaded' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ],
+			],
 		] ) );
 
 		$message                       = Message::new_message();
@@ -1125,11 +1157,11 @@ class FlameBuilderTest extends TestCase {
 	// --- Auto-tune fire actions + memcache lock ---------------------------
 
 	public function test_apply_auto_tune_emits_messages_via_sink(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 		$fb      = new Flame_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
-		$fb->set_auto_tune( 100, 0.0 );
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1152,7 +1184,7 @@ class FlameBuilderTest extends TestCase {
 		$first = \array_values( $auto_tune_msgs )[0];
 		$this->assertSame( 'fb:auto-tuner', $first[ Message::TO ] );
 		$this->assertSame( [ 'noisy' ], $first[ Message::VALUE ]['items'] );
-		$this->assertArrayHasKey( 'context', $first[ Message::VALUE ] );
+		$this->assertSame( 'r', $first[ Message::VALUE ]['rule_id'] );
 	}
 
 	public function test_apply_auto_tune_with_store_uses_memcache_lock(): void {
@@ -1165,7 +1197,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_stats_store( $store );
-		$fb->set_auto_tune( 100, 0.0 );
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 
 		$this->fill_request( $fb, $this->completed_request( [
 			'profiles' => [
@@ -1197,7 +1229,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
 		$fb->set_stats_store( $store );
-		$fb->set_auto_tune( 100, 0.0 );
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 
 		$this->fill_request( $fb, $this->completed_request( [
 			'profiles' => [ 'spammy hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
@@ -1213,7 +1245,7 @@ class FlameBuilderTest extends TestCase {
 
 		// And the pending queue is still loaded — proves we early-returned, not consumed.
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'spammy' ], $state['hooks'] );
+		$this->assertSame( [ 'spammy' ], $state['hooks']['r'] );
 	}
 
 	public function test_apply_auto_tune_no_op_when_queues_empty(): void {
@@ -1240,10 +1272,10 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_emit_auto_tune_no_op_when_no_sink(): void {
 		// Sink-less FlameBuilder still completes flush without crashing.
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		// No sink attached.
-		$fb->set_auto_tune( 100, 0.0 );
 		$this->fill_request( $fb, $this->completed_request( [
 			'profiles' => [ 'a hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
 		] ) );
@@ -1676,8 +1708,8 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_plugin_suffix_categories_skipped_from_auto_tune(): void {
 		// Categories ending with " plugin" are not eligible for auto-tune.
+		$this->set_rule( [ 'auto_disable_threshold' => 100, 'auto_protect_time_threshold' => 0.05 ] );
 		$fb = new Flame_Builder_Node();
-		$fb->set_auto_tune( 100, 0.05 );
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1745,11 +1777,11 @@ class FlameBuilderTest extends TestCase {
 	// --- handle_request payload includes auto-tune queue depth ------------
 
 	public function test_handle_request_auto_tune_count_reflects_queue(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100, 'auto_protect_time_threshold' => 0.05 ] );
 		$fb      = new Flame_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
-		$fb->set_auto_tune( 100, 0.05 );
 
 		// Drive both noisy + significant events to populate three queues.
 		$req = $this->completed_request( [

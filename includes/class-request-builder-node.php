@@ -648,6 +648,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->entries     = [];
 			$request->state       = 'process';
 			$request->initialized = true;
+			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
 		$s['process (complete)'] = function ( \stdClass $request, array $entry ): void {

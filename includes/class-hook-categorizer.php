@@ -104,18 +104,26 @@ class Hook_Categorizer {
 
 		// Include already-selected hooks so they appear in the browse modal
 		// even if not registered on the current page (e.g. worker-only hooks).
-		$selected = \get_option( 'newspack_event_logger_nodes_log_events', [] );
-		if ( \is_array( $selected ) ) {
-			foreach ( $selected as $hook ) {
-				if ( \is_string( $hook ) && '' !== $hook ) {
-					$hooks[ $hook ] = true;
-				}
+		foreach ( self::selected_hooks() as $hook ) {
+			if ( '' !== $hook ) {
+				$hooks[ $hook ] = true;
 			}
 		}
 
 		$result = \array_keys( $hooks );
 		\sort( $result );
 		return $result;
+	}
+
+	/**
+	 * The instrumented-hook set the operator has selected: the union of hooks
+	 * across every LOG rule in the durable ruleset. Replaces the retired global
+	 * `newspack_event_logger_nodes_log_events` option.
+	 *
+	 * @return string[]
+	 */
+	public static function selected_hooks(): array {
+		return Rule_Set::load()->instrumented_union()['hooks'];
 	}
 
 	/**

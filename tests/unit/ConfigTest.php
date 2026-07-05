@@ -89,15 +89,14 @@ class ConfigTest extends TestCase {
 
 	public function test_correct_option_autoload_applies_policy(): void {
 		// One-time sweep flips existing installs to match autoload_for():
-		// hot-path scalars autoloaded; large lists (log_events/custom_events)
-		// and admin-only discovered_events kept off autoload.
+		// hot-path scalars autoloaded; the admin-only discovered_events staging
+		// list kept off autoload.
 		$GLOBALS['_wp_set_option_autoload'] = [];
 		$GLOBALS['_wp_options']             = [];
 
 		Config::correct_option_autoload();
 
 		$this->assertTrue( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_enable_logging'] );
-		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_log_events'] );
 		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_discovered_events'] );
 	}
 
@@ -168,17 +167,17 @@ class ConfigTest extends TestCase {
 		// option must be deleted (see the absence test below), which is what the
 		// admin "reset to defaults" / blank-save path does.
 		Config::reset();
-		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', '' );
+		\update_option( 'newspack_event_logger_nodes_hook_start_priority', '' );
 		$config = Config::load_config();
-		$this->assertSame( '', $config['auto_disable_threshold'] );
+		$this->assertSame( '', $config['hook_start_priority'] );
 	}
 
 	public function test_absent_wp_option_uses_file_default(): void {
 		// Only true absence (no stored row) falls back to the file default.
 		Config::reset();
-		\delete_option( 'newspack_event_logger_nodes_auto_disable_threshold' );
+		\delete_option( 'newspack_event_logger_nodes_hook_start_priority' );
 		$config = Config::load_config();
-		$this->assertSame( 0, $config['auto_disable_threshold'] );
+		$this->assertSame( -10000, $config['hook_start_priority'] );
 	}
 
 	// ── Path/directory accessors ───────────────────────────────────────────

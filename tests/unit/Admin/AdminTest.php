@@ -283,13 +283,6 @@ class AdminTest extends TestCase {
 		// live on `\Newspack_Nodes\Admin\Admin`.
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
-			'newspack_event_logger_nodes_log_urls',
-			'newspack_event_logger_nodes_skip_urls',
-			'newspack_event_logger_nodes_log_events',
-			'newspack_event_logger_nodes_custom_events',
-			'newspack_event_logger_nodes_significant_events',
-			'newspack_event_logger_nodes_auto_disable_threshold',
-			'newspack_event_logger_nodes_auto_protect_time_threshold',
 			'newspack_event_logger_nodes_log_memory',
 			'newspack_event_logger_nodes_flush_every_line',
 		];
@@ -330,35 +323,16 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_register_settings_uses_sanitize_int_or_empty_for_int_options(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-
-		// Application-side int options. Substrate ints (num_partitions etc.)
-		// are owned by the substrate Admin; not asserted here.
-		$int_options = [
-			'newspack_event_logger_nodes_auto_disable_threshold',
-		];
-		foreach ( $int_options as $option ) {
-			$cb = $GLOBALS['_registered_settings'][ $option ]['args']['sanitize_callback'];
-			$this->assertIsArray( $cb );
-			$this->assertSame( 'sanitize_int_or_empty', $cb[1] );
-			// Empty stays empty.
-			$this->assertSame( '', \call_user_func( $cb, '' ) );
-			// Coerces numeric.
-			$this->assertSame( 42, \call_user_func( $cb, '42' ) );
-		}
-	}
-
 	public function test_register_settings_adds_general_section(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
 		$this->assertArrayHasKey( 'newspack_event_logger_nodes_general_section', $GLOBALS['_registered_sections'] );
 
-		// Application-side fields populated under the right page. Storage
-		// fields (substrate) are NOT asserted here.
-		foreach ( [ 'enable_logging', 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events' ] as $field ) {
+		// The surviving application settings fields (the seven ruleset-absorbed
+		// fields were retired in Task 10). Storage fields (substrate) are NOT
+		// asserted here.
+		foreach ( [ 'enable_logging', 'log_memory', 'flush_every_line' ] as $field ) {
 			$this->assertArrayHasKey( $field, $GLOBALS['_registered_fields'], "field $field not registered" );
 			$this->assertSame( Admin::SETTINGS_PAGE, $GLOBALS['_registered_fields'][ $field ]['page'] );
 		}
@@ -453,7 +427,7 @@ class AdminTest extends TestCase {
 		// num_partitions) are now owned by `\Newspack_Nodes\Admin` and reset
 		// via its own handler.
 		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
-		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 1234 );
+		\update_option( 'newspack_event_logger_nodes_log_memory', 1 );
 		\update_option( 'unrelated_option', 'survives' );
 
 		$admin = new Admin();
@@ -465,7 +439,7 @@ class AdminTest extends TestCase {
 		}
 
 		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_auto_disable_threshold' ) );
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_log_memory' ) );
 		$this->assertSame( 'survives', \get_option( 'unrelated_option' ) ); // unrelated options untouched
 		$this->assertNotNull( $GLOBALS['_last_redirect'] );
 		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
@@ -506,7 +480,7 @@ class AdminTest extends TestCase {
 		$this->assertRestartFlagged( 'aggregator', 0 );
 	}
 
-	public function test_maybe_request_worker_restart_significant_events_restarts_all_live_topologies(): void {
+	public function test_maybe_request_worker_restart_all_class_restarts_all_live_topologies(): void {
 		$this->register_topologies();
 		$this->prepare_topology_lock_dir( 'combined', 0 );
 		$this->prepare_topology_lock_dir( 'aggregator', 0 );
@@ -515,44 +489,14 @@ class AdminTest extends TestCase {
 		$this->prepare_lock_dir( 'request-workers', 0 );
 
 		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		// log_memory is cached in the Log_Manager per-process singleton (every
+		// worker) → 'all' → restart every live topology, combined included.
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
 
-		// significant_events is cached at construction by App\Core (built in
-		// EVERY worker) → 'all' → restart every live topology, Flame_Builder's
-		// combined included.
 		$this->assertRestartFlagged( 'combined', 0 );
 		$this->assertRestartFlagged( 'aggregator', 0 );
 		// The phantom worker-group dir must NOT be touched.
 		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/' . Lock_Node::RESTART_FLAG );
-	}
-
-	public function test_maybe_request_worker_restart_log_events_restarts_all_live_topologies(): void {
-		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'hub-control', 0 );
-		$this->prepare_topology_lock_dir( 'job-router', 0 );
-
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_events' );
-
-		// App\Core binds the log_events hook set at construction in every worker → 'all'.
-		$this->assertRestartFlagged( 'combined', 0 );
-		$this->assertRestartFlagged( 'hub-control', 0 );
-		$this->assertRestartFlagged( 'job-router', 0 );
-	}
-
-	public function test_maybe_request_worker_restart_log_events_flags_combined_on_combined_only_deployment(): void {
-		// Regression for the under-restart bug: a combined-ONLY active set used to
-		// resolve log_events to Discovery_Collector (only in the inactive
-		// hub-control) and restart NOTHING. App\Core caches log_events in the
-		// combined worker too, so 'all' must flag combined here.
-		$this->register_topologies( [ 'combined' ] );
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_events' );
-
-		$this->assertRestartFlagged( 'combined', 0 );
 	}
 
 	public function test_maybe_request_worker_restart_iterates_all_partitions(): void {
@@ -567,7 +511,7 @@ class AdminTest extends TestCase {
 		}
 
 		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
 
 		for ( $p = 0; $p < 4; $p++ ) {
 			$this->assertRestartFlagged( 'flame-builder', $p );
@@ -657,119 +601,6 @@ class AdminTest extends TestCase {
 		$this->assertArrayNotHasKey( Admin::MENU_SLUG, $GLOBALS['_options_pages'] );
 	}
 
-	// ---- Sanitizers -------------------------------------------------------
-
-	public function test_sanitize_int_or_empty_handles_empty_and_null(): void {
-		$admin = new Admin();
-		$this->assertSame( '', $admin->sanitize_int_or_empty( '' ) );
-		$this->assertSame( '', $admin->sanitize_int_or_empty( null ) );
-	}
-
-	public function test_sanitize_int_or_empty_coerces_numeric(): void {
-		$admin = new Admin();
-		$this->assertSame( 42, $admin->sanitize_int_or_empty( '42' ) );
-		$this->assertSame( 42, $admin->sanitize_int_or_empty( 42 ) );
-		// absint coerces negatives to abs.
-		$this->assertSame( 42, $admin->sanitize_int_or_empty( '-42' ) );
-	}
-
-	public function test_sanitize_float_or_empty_handles_empty_and_null(): void {
-		$admin = new Admin();
-		$this->assertSame( '', $admin->sanitize_float_or_empty( '' ) );
-		$this->assertSame( '', $admin->sanitize_float_or_empty( null ) );
-	}
-
-	public function test_sanitize_float_or_empty_returns_empty_for_non_numeric(): void {
-		$admin = new Admin();
-		$this->assertSame( '', $admin->sanitize_float_or_empty( 'abc' ) );
-		$this->assertSame( '', $admin->sanitize_float_or_empty( 'not-a-number' ) );
-	}
-
-	public function test_sanitize_float_or_empty_returns_empty_for_negative(): void {
-		$admin = new Admin();
-		// Negative floats are normalized to empty (use-default).
-		$this->assertSame( '', $admin->sanitize_float_or_empty( '-2.5' ) );
-		$this->assertSame( '', $admin->sanitize_float_or_empty( -10 ) );
-	}
-
-	public function test_sanitize_float_or_empty_accepts_positive(): void {
-		$admin = new Admin();
-		$this->assertSame( 1.5, $admin->sanitize_float_or_empty( '1.5' ) );
-		$this->assertSame( 100.0, $admin->sanitize_float_or_empty( 100 ) );
-		$this->assertSame( 0.0, $admin->sanitize_float_or_empty( '0' ) );
-	}
-
-	public function test_sanitize_array_strings_decodes_json_input(): void {
-		$admin = new Admin();
-		$result = $admin->sanitize_array_strings( '["init","shutdown"]' );
-		$this->assertSame( [ 'init', 'shutdown' ], $result );
-	}
-
-	public function test_sanitize_array_strings_handles_array_input(): void {
-		$admin = new Admin();
-		$result = $admin->sanitize_array_strings( [ 'a', 'b', 'c' ] );
-		$this->assertSame( [ 'a', 'b', 'c' ], $result );
-	}
-
-	public function test_sanitize_array_strings_returns_empty_for_empty_string(): void {
-		$admin = new Admin();
-		$this->assertSame( [], $admin->sanitize_array_strings( '' ) );
-		$this->assertSame( [], $admin->sanitize_array_strings( '   ' ) );
-	}
-
-	public function test_sanitize_array_strings_returns_empty_for_non_array(): void {
-		$admin = new Admin();
-		$this->assertSame( [], $admin->sanitize_array_strings( 42 ) );
-		$this->assertSame( [], $admin->sanitize_array_strings( null ) );
-		$this->assertSame( [], $admin->sanitize_array_strings( true ) );
-	}
-
-	public function test_sanitize_array_strings_falls_back_to_newline_split(): void {
-		$admin = new Admin();
-		// Not JSON — falls back to newline-separated parsing.
-		$result = $admin->sanitize_array_strings( "first\nsecond\nthird" );
-		$this->assertSame( [ 'first', 'second', 'third' ], $result );
-	}
-
-	public function test_sanitize_array_strings_drops_non_scalar_values(): void {
-		$admin = new Admin();
-		$result = $admin->sanitize_array_strings( [ 'good', [ 'nested' ], 'fine', null, 42 ] );
-		// Non-scalar dropped; numbers coerce to strings.
-		$this->assertSame( [ 'good', 'fine', '42' ], $result );
-	}
-
-	public function test_sanitize_array_strings_dedupes_and_drops_empty(): void {
-		$admin = new Admin();
-		$result = $admin->sanitize_array_strings( [ 'a', '', 'a', '   ', 'b' ] );
-		$this->assertSame( [ 'a', 'b' ], $result );
-	}
-
-	public function test_sanitize_custom_events_converts_list_to_assoc(): void {
-		$admin = new Admin();
-		$result = $admin->sanitize_custom_events( [ 'evt_a', 'evt_b' ] );
-		$this->assertSame( [ 'evt_a' => true, 'evt_b' => true ], $result );
-	}
-
-	public function test_sanitize_custom_events_decodes_json(): void {
-		$admin = new Admin();
-		$result = $admin->sanitize_custom_events( '["evt_x","evt_y"]' );
-		$this->assertSame( [ 'evt_x' => true, 'evt_y' => true ], $result );
-	}
-
-	public function test_sanitize_custom_events_preserves_assoc_idempotently(): void {
-		$admin = new Admin();
-		// Already-assoc input → preserved (idempotent re-save).
-		$input  = [ 'foo' => true, 'bar' => true ];
-		$result = $admin->sanitize_custom_events( $input );
-		$this->assertSame( [ 'foo' => true, 'bar' => true ], $result );
-	}
-
-	public function test_sanitize_custom_events_empty_returns_empty(): void {
-		$admin = new Admin();
-		$this->assertSame( [], $admin->sanitize_custom_events( '' ) );
-		$this->assertSame( [], $admin->sanitize_custom_events( [] ) );
-	}
-
 	// ---- Section callbacks (output structured help text) ------------------
 
 	public function test_general_section_callback_renders_explainer(): void {
@@ -852,149 +683,6 @@ class AdminTest extends TestCase {
 				"registered settings-form option $registered is missing from the bulk-reset list"
 			);
 		}
-	}
-
-	// ---- Field callbacks: array fields (log_urls, skip_urls, etc.) -------
-
-	public function test_log_urls_callback_renders_tag_input_field_markup(): void {
-		\update_option( 'newspack_event_logger_nodes_log_urls', [ '/calendar', '/events' ] );
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_urls_callback();
-		$out = \ob_get_clean();
-		// React mount marker.
-		$this->assertStringContainsString( 'event-logger-log_urls', $out );
-		$this->assertStringContainsString( 'event-logger-tag-input', $out );
-		// Hidden JSON value carrying the current values.
-		$this->assertStringContainsString( '/calendar', $out );
-		$this->assertStringContainsString( '/events', $out );
-	}
-
-	public function test_log_urls_callback_with_empty_default(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_urls_callback();
-		$out = \ob_get_clean();
-		// Even with no values, the mount and per-field reset toggle should render.
-		$this->assertStringContainsString( 'event-logger-log_urls', $out );
-		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_log_urls]"', $out );
-		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
-	}
-
-	public function test_skip_urls_callback_uses_config_default_when_unset(): void {
-		// Inject default skip_urls via per-test config file.
-		$this->use_base_dir( $this->base_dir, [ 'skip_urls' => [ '/wp-cron.php' ] ] );
-
-		$admin = new Admin();
-		\ob_start();
-		$admin->skip_urls_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'skip_urls', $out );
-	}
-
-	public function test_log_events_callback_renders_field(): void {
-		\update_option( 'newspack_event_logger_nodes_log_events', [ 'init', 'wp_loaded' ] );
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_events_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'event-logger-log_events', $out );
-		$this->assertStringContainsString( 'init', $out );
-	}
-
-	public function test_custom_events_callback_renders_keys_as_list(): void {
-		\update_option(
-			'newspack_event_logger_nodes_custom_events',
-			[ 'event_a' => true, 'event_b' => true ]
-		);
-		$admin = new Admin();
-		\ob_start();
-		$admin->custom_events_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'event-logger-custom_events', $out );
-		$this->assertStringContainsString( 'event_a', $out );
-		$this->assertStringContainsString( 'event_b', $out );
-	}
-
-	public function test_custom_events_callback_handles_non_array(): void {
-		\update_option( 'newspack_event_logger_nodes_custom_events', 'not-an-array' );
-		$admin = new Admin();
-		\ob_start();
-		$admin->custom_events_callback();
-		$out = \ob_get_clean();
-		// Non-array option: treated as empty list.
-		$this->assertStringContainsString( 'event-logger-custom_events', $out );
-	}
-
-	public function test_significant_events_callback_sorts_alphabetically(): void {
-		\update_option(
-			'newspack_event_logger_nodes_significant_events',
-			[ 'zhook', 'a_hook', 'middle' ]
-		);
-		$admin = new Admin();
-		\ob_start();
-		$admin->significant_events_callback();
-		$out = \ob_get_clean();
-		// All names appear, and they should be in sorted order in the JSON.
-		$this->assertStringContainsString( 'a_hook', $out );
-		$this->assertStringContainsString( 'middle', $out );
-		$this->assertStringContainsString( 'zhook', $out );
-		// Position check: a_hook precedes zhook in the rendered JSON.
-		$pos_a = \strpos( $out, 'a_hook' );
-		$pos_z = \strpos( $out, 'zhook' );
-		$this->assertNotFalse( $pos_a );
-		$this->assertNotFalse( $pos_z );
-		$this->assertLessThan( $pos_z, $pos_a, 'sort failed' );
-	}
-
-	// ---- Field callback: Auto-Tune (combined number inputs) --------------
-
-	public function test_auto_tune_callback_renders_both_threshold_inputs(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->auto_tune_callback();
-		$out = \ob_get_clean();
-		// Both inputs on one row, mirroring the legacy plugin's combined UI.
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_auto_disable_threshold"', $out );
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_auto_protect_time_threshold"', $out );
-		$this->assertStringContainsString( 'max="10000"', $out );  // count cap
-		$this->assertStringContainsString( 'max="1000"', $out );   // ms cap (matches legacy)
-		$this->assertStringContainsString( 'step="0.1"', $out );   // ms granularity
-		$this->assertStringContainsString( 'event-logger-auto-disable-row', $out );
-		$this->assertStringContainsString( 'event-logger-auto-disable-label', $out );
-		// Combined description + reset button covering both fields.
-		$this->assertStringContainsString( 'Noisy events', $out );
-		$this->assertStringContainsString( 'Significant events', $out );
-		// Per-field reset toggle wraps both threshold inputs (marker deletes the
-		// count option; the blanked time option deletes via the shared Reset_Gate).
-		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_auto_disable_threshold]"', $out );
-		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
-	}
-
-	public function test_auto_tune_callback_renders_stored_values(): void {
-		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 7777 );
-		\update_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '12.5' );
-		$admin = new Admin();
-		\ob_start();
-		$admin->auto_tune_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'value="7777"', $out );
-		$this->assertStringContainsString( '12.5', $out );
-	}
-
-	public function test_auto_tune_callback_blanks_zero_values(): void {
-		// Both options stored as 0 → both inputs render empty (placeholder
-		// shows through) so operators don't see "0" as an active threshold.
-		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 0 );
-		\update_option( 'newspack_event_logger_nodes_auto_protect_time_threshold', '0' );
-		$admin = new Admin();
-		\ob_start();
-		$admin->auto_tune_callback();
-		$out = \ob_get_clean();
-		// Both inputs end up empty; we can't easily assert per-input emptiness
-		// since both share placeholder="0", so check that neither has a
-		// non-empty value attribute.
-		$this->assertStringNotContainsString( 'value="0"', $out );
 	}
 
 	public function test_log_memory_callback_renders_checkbox(): void {
@@ -1104,38 +792,6 @@ class AdminTest extends TestCase {
 	}
 
 	// ---- maybe_request_worker_restart additional branches ---------------
-
-	public function test_maybe_request_worker_restart_auto_disable_threshold_targets_flame_builder(): void {
-		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_auto_disable_threshold' );
-		$this->assertRestartFlagged( 'combined', 0 );
-		$this->assertRestartNotFlagged( 'aggregator', 0 );
-	}
-
-	public function test_maybe_request_worker_restart_auto_protect_time_threshold_targets_flame_builder(): void {
-		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_auto_protect_time_threshold' );
-		$this->assertRestartFlagged( 'combined', 0 );
-	}
-
-	public function test_maybe_request_worker_restart_custom_events_restarts_all_live_topologies(): void {
-		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'hub-control', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
-		$admin = new Admin();
-		// custom_events is cached at construction by App\Core (built in every
-		// worker) → 'all' → restart every live topology, aggregator included.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_custom_events' );
-		$this->assertRestartFlagged( 'combined', 0 );
-		$this->assertRestartFlagged( 'hub-control', 0 );
-		$this->assertRestartFlagged( 'aggregator', 0 );
-	}
 
 	public function test_maybe_request_worker_restart_log_memory_restarts_all_live_topologies(): void {
 		$this->register_topologies();
@@ -1256,45 +912,6 @@ class AdminTest extends TestCase {
 
 	// ---- delete_on_blank (blank text-like saves delete the row) ----------
 
-	public function test_blank_text_like_option_save_deletes_row_instead_of_storing_empty(): void {
-		// A blank submission for a text-like key means "use the file default",
-		// which under presence-based Config means DELETE the row — not store ''
-		// (which would override the default).
-		$admin = new Admin();
-		$admin->register_settings();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] = 100;
-
-		$result = \apply_filters(
-			'pre_update_option_newspack_event_logger_nodes_auto_disable_threshold',
-			'',
-			100,
-			'newspack_event_logger_nodes_auto_disable_threshold'
-		);
-
-		$this->assertArrayNotHasKey(
-			'newspack_event_logger_nodes_auto_disable_threshold',
-			$GLOBALS['_wp_options'],
-			'blank save must delete the row so the file default resurfaces'
-		);
-		$this->assertSame( 100, $result, 'returns old value so update_option skips the write' );
-	}
-
-	public function test_blank_float_threshold_save_deletes_row(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'] = 1.5;
-
-		$result = \apply_filters(
-			'pre_update_option_newspack_event_logger_nodes_auto_protect_time_threshold',
-			'',
-			1.5,
-			'newspack_event_logger_nodes_auto_protect_time_threshold'
-		);
-
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_auto_protect_time_threshold', $GLOBALS['_wp_options'] );
-		$this->assertSame( 1.5, $result );
-	}
-
 	public function test_nonblank_text_like_option_save_passes_through(): void {
 		$admin = new Admin();
 		$admin->register_settings();
@@ -1370,50 +987,6 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_reset_marked_selection_field_is_deleted(): void {
-		// Selection key (log_events) is excluded from delete-on-blank, but a
-		// reset mark deletes it anyway via the full-list gate.
-		$admin = new Admin();
-		$admin->register_settings();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
-		$_POST[ Admin::RESET_MARK_FIELD ]                                = [ 'newspack_event_logger_nodes_log_events' => '1' ];
-
-		try {
-			$result = \apply_filters(
-				'pre_update_option_newspack_event_logger_nodes_log_events',
-				[ 'init' ],
-				[ 'init' ],
-				'newspack_event_logger_nodes_log_events'
-			);
-			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_events', $GLOBALS['_wp_options'] );
-			$this->assertSame( [ 'init' ], $result );
-		} finally {
-			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
-		}
-	}
-
-	public function test_reset_marked_text_field_is_deleted_even_when_value_nonblank(): void {
-		// Reset wins over a non-blank submitted value (toggle marked, field not
-		// yet cleared on the server side).
-		$admin = new Admin();
-		$admin->register_settings();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] = 100;
-		$_POST[ Admin::RESET_MARK_FIELD ]                                            = [ 'newspack_event_logger_nodes_auto_disable_threshold' => '1' ];
-
-		try {
-			$result = \apply_filters(
-				'pre_update_option_newspack_event_logger_nodes_auto_disable_threshold',
-				250,
-				100,
-				'newspack_event_logger_nodes_auto_disable_threshold'
-			);
-			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_auto_disable_threshold', $GLOBALS['_wp_options'] );
-			$this->assertSame( 100, $result );
-		} finally {
-			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
-		}
-	}
-
 	public function test_unmarked_empty_checkbox_is_not_deleted(): void {
 		// No reset mark + a checkbox bool is not text-like: the unchecked (0)
 		// value must persist as a real override, not be deleted.
@@ -1444,13 +1017,6 @@ class AdminTest extends TestCase {
 
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
-			'newspack_event_logger_nodes_log_urls',
-			'newspack_event_logger_nodes_skip_urls',
-			'newspack_event_logger_nodes_log_events',
-			'newspack_event_logger_nodes_custom_events',
-			'newspack_event_logger_nodes_significant_events',
-			'newspack_event_logger_nodes_auto_disable_threshold',
-			'newspack_event_logger_nodes_auto_protect_time_threshold',
 			'newspack_event_logger_nodes_log_memory',
 			'newspack_event_logger_nodes_flush_every_line',
 		];
@@ -1459,28 +1025,6 @@ class AdminTest extends TestCase {
 				$GLOBALS['_wp_actions'][ "pre_update_option_{$option}" ] ?? [],
 				"Reset_Gate must register a pre_update_option gate for {$option}"
 			);
-		}
-	}
-
-	public function test_reset_marked_multiselect_field_is_deleted_via_shared_gate(): void {
-		// A reset-marked multi-select (log_urls) — excluded from delete-on-blank —
-		// must still be deleted by the shared Reset_Gate.
-		$admin = new Admin();
-		$admin->register_settings();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] = [ '/foo' ];
-		$_POST[ Admin::RESET_MARK_FIELD ]                              = [ 'newspack_event_logger_nodes_log_urls' => '1' ];
-
-		try {
-			$result = \apply_filters(
-				'pre_update_option_newspack_event_logger_nodes_log_urls',
-				[ '/foo' ],
-				[ '/foo' ],
-				'newspack_event_logger_nodes_log_urls'
-			);
-			$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_urls', $GLOBALS['_wp_options'] );
-			$this->assertSame( [ '/foo' ], $result );
-		} finally {
-			unset( $_POST[ Admin::RESET_MARK_FIELD ] );
 		}
 	}
 
@@ -1653,91 +1197,6 @@ class AdminTest extends TestCase {
 		$this->assertSame( [ 'init', 'other' ], $result );
 	}
 
-	public function test_sanitize_array_strings_handles_unicode(): void {
-		// Defensive: unicode characters in the input list survive
-		// sanitize_text_field (which strips control chars but not unicode).
-		$admin = new Admin();
-		$result = $admin->sanitize_array_strings( [ 'café', 'éclair', 'plain' ] );
-		$this->assertContains( 'café', $result );
-		$this->assertContains( 'éclair', $result );
-		$this->assertContains( 'plain', $result );
-	}
-
-	public function test_sanitize_array_strings_strips_control_chars(): void {
-		// Control characters are stripped by sanitize_text_field.
-		$admin = new Admin();
-		$result = $admin->sanitize_array_strings( [ "with\x00null", 'normal' ] );
-		// Control chars stripped → 'withnull' remains.
-		$this->assertContains( 'withnull', $result );
-		$this->assertContains( 'normal', $result );
-	}
-
-	public function test_sanitize_custom_events_drops_empty_keys_in_assoc(): void {
-		// Assoc input with empty keys → those entries dropped.
-		$admin = new Admin();
-		$result = $admin->sanitize_custom_events(
-			[ '' => true, 'valid_hook' => true ]
-		);
-		$this->assertArrayHasKey( 'valid_hook', $result );
-		$this->assertArrayNotHasKey( '', $result );
-	}
-
-	public function test_log_urls_callback_handles_assoc_input(): void {
-		// `normalize_string_list` accepts both flat lists and assoc maps;
-		// when stored as assoc, keys become the values.
-		\update_option(
-			'newspack_event_logger_nodes_log_urls',
-			[ '/calendar' => true, '/events' => true ]
-		);
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_urls_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '/calendar', $out );
-		$this->assertStringContainsString( '/events', $out );
-	}
-
-	public function test_log_urls_callback_handles_non_array_option(): void {
-		// `normalize_string_list` returns [] for non-array; renders empty mount.
-		\update_option( 'newspack_event_logger_nodes_log_urls', 'not-an-array' );
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_urls_callback();
-		$out = \ob_get_clean();
-		// Mount marker still present even with empty values.
-		$this->assertStringContainsString( 'event-logger-log_urls', $out );
-	}
-
-	public function test_log_events_callback_handles_empty_default(): void {
-		// When defaults `log_events` is empty array, the reset chip's data-default
-		// is `[]`.
-		$this->use_base_dir( $this->base_dir, [ 'log_events' => [] ] );
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_events_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'event-logger-log_events', $out );
-	}
-
-	public function test_significant_events_callback_empty_renders_mount(): void {
-		// No stored option → no values → mount still renders.
-		$admin = new Admin();
-		\ob_start();
-		$admin->significant_events_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'event-logger-significant_events', $out );
-	}
-
-	public function test_auto_tune_callback_renders_when_only_count_set(): void {
-		// One option set, one unset — verify both inputs render correctly.
-		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', 100 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->auto_tune_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'value="100"', $out );
-	}
-
 	public function test_handle_flush_stats_with_default_memcache_when_unset(): void {
 		// No memcache_servers configured — handler falls back to DEFAULT_SERVERS.
 		$this->use_base_dir( $this->base_dir, [] );
@@ -1768,17 +1227,6 @@ class AdminTest extends TestCase {
 			$GLOBALS['_wp_actions']['pre_update_option'] ?? [],
 			'pre_update_option filter must be wired (skip_default_writes)'
 		);
-	}
-
-	public function test_skip_urls_callback_renders_with_stored_value(): void {
-		// Stored value overrides defaults.
-		\update_option( 'newspack_event_logger_nodes_skip_urls', [ '/admin-ajax', '/heartbeat' ] );
-		$admin = new Admin();
-		\ob_start();
-		$admin->skip_urls_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '/admin-ajax', $out );
-		$this->assertStringContainsString( '/heartbeat', $out );
 	}
 
 	public function test_render_maintenance_section_contains_flush_button(): void {

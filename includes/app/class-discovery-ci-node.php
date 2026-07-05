@@ -11,18 +11,18 @@
  * Verbs:
  *   get — return registered_hooks + custom_events for this spoke.
  *
- * Reads `log_events` / `custom_events` from the substrate Config and
- * filters custom event names out of registered_hooks to match the legacy
- * payload exactly. No service dependencies — the substrate Config is a
- * global accessed directly.
+ * Sources the union of instrumented hooks + custom events across every LOG
+ * rule in the durable ruleset (`Rule_Set::instrumented_union()`) and filters
+ * custom event names out of registered_hooks to match the legacy payload
+ * exactly. The retired global `log_events` / `custom_events` options are gone.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Command_Interpreter_Node;
-use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -64,9 +64,9 @@ class Discovery_CI_Node extends Service_CI_Node {
 					'description' => 'Return registered_hooks + custom_events for this spoke.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						$config           = RuntimeConfig::load_config();
-						$registered_hooks = self::extract_string_list( $config['log_events']    ?? [] );
-						$custom_events    = self::extract_string_list( $config['custom_events'] ?? [] );
+						$union            = Rule_Set::load()->instrumented_union();
+						$registered_hooks = self::extract_string_list( $union['hooks'] );
+						$custom_events    = self::extract_string_list( $union['custom_events'] );
 
 						// Filter custom event names out of registered_hooks to prevent
 						// cross-contamination (matches legacy DiscoveryController behavior).

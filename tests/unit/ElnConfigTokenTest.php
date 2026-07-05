@@ -4,11 +4,12 @@
  *
  * The substrate resolves `<ns:key>` tokens via per-namespace resolvers
  * (Core::register_config_namespace / resolve_config_token). This plugin
- * registers an `eln` namespace for its four app-specific tokens
- * (is_hub, auto_disable_threshold, auto_protect_time_threshold,
- * significant_events_csv)
- * so `<eln:KEY>` resolves to the same value the old merged-config
- * `<config:KEY>` produced. Keys it does not own resolve to ''.
+ * registers an `eln` namespace for its app-specific tokens (is_hub,
+ * stats_mirror_node) so `<eln:KEY>` resolves to the same value the old
+ * merged-config `<config:KEY>` produced. The auto_disable_threshold /
+ * auto_protect_time_threshold / significant_events_csv tokens were retired
+ * with the seven global settings the per-URL ruleset absorbed (Task 10).
+ * Keys it does not own resolve to ''.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -45,14 +46,6 @@ class ElnConfigTokenTest extends TestCase {
 		parent::tearDown();
 	}
 
-	public function test_eln_namespace_resolves_owned_schema_key_from_wp_option(): void {
-		// auto_disable_threshold is a real load_config() schema key (int); the
-		// WP option overlays the file default and the `eln` resolver returns it.
-		\update_option( 'newspack_event_logger_nodes_auto_disable_threshold', '17' );
-		Config::reset();
-		$this->assertSame( '17', Core::resolve_config_token( 'eln', 'auto_disable_threshold' ) );
-	}
-
 	public function test_eln_namespace_does_not_own_substrate_key(): void {
 		// logs_dir is substrate-owned (the `config` namespace), not ELN's —
 		// resolving it through the `eln` namespace yields ''.
@@ -75,32 +68,5 @@ class ElnConfigTokenTest extends TestCase {
 		\Newspack_Nodes\Config::reset();
 		Config::reset();
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	// --- significant_events_csv resolver -----------------------------------
-
-	public function test_significant_events_csv_imploded_from_array(): void {
-		// The schema stores significant_events as a string array; the topology
-		// token MUST expose the comma-joined CSV the flame builder expects.
-		\update_option(
-			'newspack_event_logger_nodes_significant_events',
-			[ 'foo', 'bar', 'baz' ]
-		);
-		Config::reset();
-		$this->assertSame(
-			'foo,bar,baz',
-			Core::resolve_config_token( 'eln', 'significant_events_csv' )
-		);
-	}
-
-	public function test_significant_events_csv_empty_when_no_events(): void {
-		// Empty array → empty string (NOT null — the substrate command
-		// argument must be a string for the worker to receive it).
-		\update_option( 'newspack_event_logger_nodes_significant_events', [] );
-		Config::reset();
-		$this->assertSame(
-			'',
-			Core::resolve_config_token( 'eln', 'significant_events_csv' )
-		);
 	}
 }

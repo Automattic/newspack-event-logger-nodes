@@ -102,13 +102,17 @@ class HubControlTopologyTest extends TestCase {
 		$this->assertSame( 'spokes:tee', Core::node( 'discovery-collector' )->target() );
 	}
 
-	public function test_settings_sync_registers_all_thirteen_settings(): void {
+	public function test_settings_sync_registers_all_seven_settings(): void {
 		$this->load_hub_control();
 
 		$registry = ( new \ReflectionProperty( Settings_Sync_Node::class, 'registry' ) );
 		$map = $registry->getValue( Core::node( 'settings-sync' ) );
 
-		$this->assertCount( 13, $map );
+		// Four substrate keys (num_segments, segment_size, max_lifespan,
+		// num_partitions) + three ELN app keys (rules, log_memory,
+		// flush_every_line). The seven ruleset-absorbed settings were retired
+		// (Task 10) and the single `rules` option is fanned out in their place.
+		$this->assertCount( 7, $map );
 		// Substrate-remap (TO=settings). The remote-spoke geometry options live
 		// under `newspack_nodes_remote_*` and each maps TWICE: to the spoke's
 		// stripped option AND to its own remote_* copy, so a spoke propagates the
@@ -126,8 +130,8 @@ class HubControlTopologyTest extends TestCase {
 		);
 		// Perf (TO=performance, remote = same full option name).
 		$this->assertSame(
-			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_log_urls' ] ],
-			$map['newspack_event_logger_nodes_log_urls']
+			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_rules' ] ],
+			$map['newspack_event_logger_nodes_rules']
 		);
 		$this->assertSame(
 			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_flush_every_line' ] ],
