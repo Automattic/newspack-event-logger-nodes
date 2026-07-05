@@ -25,6 +25,7 @@ import {
 	CardBody,
 	CardHeader,
 	Modal,
+	Button,
 } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -37,6 +38,8 @@ import useUrlNavigation from './hooks/useUrlNavigation';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
+import RuleEditModal from '../rules/RuleEditModal';
+import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
 
@@ -176,18 +179,23 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	setRequestPartitionRef.current = setRequestPartition;
 
 	// Mount the data graph + own all fetching.
-	const { handleUrlParamsChange, resolveRequest, fetchUrlBreakdown } =
-		usePerformanceGraph( {
-			serverFilter,
-			chartBreakdown,
-			refreshInterval,
-			requestPartition,
-			selectedUrl,
-			selectedRequest,
-			urlDetailData: urlDetail,
-			onError,
-			commandClient,
-		} );
+	const {
+		handleUrlParamsChange,
+		resolveRequest,
+		fetchUrlBreakdown,
+		listRules,
+		upsertRule,
+	} = usePerformanceGraph( {
+		serverFilter,
+		chartBreakdown,
+		refreshInterval,
+		requestPartition,
+		selectedUrl,
+		selectedRequest,
+		urlDetailData: urlDetail,
+		onError,
+		commandClient,
+	} );
 	commandResolveRef.current = resolveRequest;
 
 	// Reset the search-sourced partition when leaving request detail (the old
@@ -393,6 +401,102 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return total / ( complete.length * 300 );
 	}, [ urlDetail?.stats?.time_series ] );
 
+	// Inline "Log this URL" affordance state. `ruleDraft` is the rule open in the
+	// shared RuleEditModal (null = closed); `existingRule` drives the button label
+	// (an exact rule already logs this URL); the confirmation / error banners show
+	// inline in the URL modal without closing it.
+	const [ ruleDraft, setRuleDraft ] = useState( null );
+	const [ existingRule, setExistingRule ] = useState( null );
+	const [ ruleConfirmation, setRuleConfirmation ] = useState( null );
+	const [ ruleError, setRuleError ] = useState( null );
+
+	const ruleUrl = selectedUrl?.url;
+	const canLogUrl =
+		!! ruleUrl &&
+		__( 'Unknown URL', 'newspack-event-logger-nodes' ) !== ruleUrl;
+
+	// On URL-modal open, look up the current ruleset once to detect an existing
+	// exact rule (`<url>?`) — sets the button label and the prefill source. Reset
+	// the inline banners; skip while a request is drilled in (button hidden).
+	useEffect( () => {
+		setRuleConfirmation( null );
+		setRuleError( null );
+		if ( ! canLogUrl || selectedRequest ) {
+			setExistingRule( null );
+			return undefined;
+		}
+		let cancelled = false;
+		const pattern = `${ ruleUrl }?`;
+		listRules()
+			.then( ( res ) => {
+				if ( cancelled ) {
+					return;
+				}
+				const found = ( res?.rules ?? [] ).find(
+					( r ) => r.pattern === pattern
+				);
+				setExistingRule( found ?? null );
+			} )
+			.catch( () => {
+				if ( ! cancelled ) {
+					setExistingRule( null );
+				}
+			} );
+		return () => {
+			cancelled = true;
+		};
+	}, [ ruleUrl, canLogUrl, selectedRequest, listRules ] );
+
+	// Open RuleEditModal on the existing exact rule (edit) or a blank log rule
+	// seeded with the exact pattern (add).
+	const openRuleEditor = useCallback( () => {
+		if ( ! canLogUrl ) {
+			return;
+		}
+		setRuleConfirmation( null );
+		setRuleError( null );
+		setRuleDraft(
+			existingRule ?? {
+				...BLANK_RULE,
+				pattern: `${ ruleUrl }?`,
+				action: 'log',
+			}
+		);
+	}, [ canLogUrl, existingRule, ruleUrl ] );
+
+	// Save: upsert the exact rule, close ONLY the RuleEditModal, and surface an
+	// inline confirmation (or error) in the URL modal — never crash.
+	const saveRule = useCallback(
+		async ( draft ) => {
+			const isEdit = !! draft.id;
+			const res = await upsertRule( draft );
+			setRuleDraft( null );
+			if ( ! res ) {
+				setRuleError(
+					__(
+						'Could not save the logging rule.',
+						'newspack-event-logger-nodes'
+					)
+				);
+				return;
+			}
+			setExistingRule( res.rule ?? draft );
+			setRuleConfirmation(
+				isEdit
+					? __( 'Rule updated.', 'newspack-event-logger-nodes' )
+					: sprintf(
+							// translators: %s: the URL now being logged.
+							__(
+								'Now logging %s',
+								'newspack-event-logger-nodes'
+							),
+							ruleUrl ?? draft.pattern
+					  )
+			);
+		},
+		[ upsertRule, ruleUrl ]
+	);
+
 	// Handle initial search query from URL parameter.
 	useEffect( () => {
 		if ( initialSearchQuery ) {
@@ -516,45 +620,83 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					className={ `topology-app newspack-nodes-theme theme-${ getStoredTheme() } event-logger-performance-modal` }
 					headerActions={
 						! selectedRequest && (
-							<div className="event-logger-header-stats">
-								<span>
-									{ urlRequestsPerSecond.toFixed( 2 ) }
-									<small>req/s</small>
-								</span>
-								<span>
-									{ urlDetail.stats?.avg_ms?.toFixed( 0 ) ||
-										0 }
-									ms
-									<small>avg</small>
-								</span>
-								<span>
-									{ urlDetail.stats?.p50_ms?.toFixed( 0 ) ||
-										0 }
-									ms
-									<small>p50</small>
-								</span>
-								<span>
-									{ urlDetail.stats?.p95_ms?.toFixed( 0 ) ||
-										0 }
-									ms
-									<small>p95</small>
-								</span>
-								<span>
-									{ urlDetail.stats?.p99_ms?.toFixed( 0 ) ||
-										0 }
-									ms
-									<small>p99</small>
-								</span>
-								{ ( urlDetail.stats?.avg_peak_mb || 0 ) > 0 && (
+							<>
+								<div className="event-logger-header-stats">
 									<span>
-										{ urlDetail.stats?.avg_peak_mb?.toFixed(
-											1
-										) || 0 }
-										MB
-										<small>mem</small>
+										{ urlRequestsPerSecond.toFixed( 2 ) }
+										<small>req/s</small>
 									</span>
-								) }
-							</div>
+									<span>
+										{ urlDetail.stats?.avg_ms?.toFixed(
+											0
+										) || 0 }
+										ms
+										<small>avg</small>
+									</span>
+									<span>
+										{ urlDetail.stats?.p50_ms?.toFixed(
+											0
+										) || 0 }
+										ms
+										<small>p50</small>
+									</span>
+									<span>
+										{ urlDetail.stats?.p95_ms?.toFixed(
+											0
+										) || 0 }
+										ms
+										<small>p95</small>
+									</span>
+									<span>
+										{ urlDetail.stats?.p99_ms?.toFixed(
+											0
+										) || 0 }
+										ms
+										<small>p99</small>
+									</span>
+									{ ( urlDetail.stats?.avg_peak_mb || 0 ) >
+										0 && (
+										<span>
+											{ urlDetail.stats?.avg_peak_mb?.toFixed(
+												1
+											) || 0 }
+											MB
+											<small>mem</small>
+										</span>
+									) }
+								</div>
+								<div className="event-logger-rule-control">
+									<Button
+										variant="secondary"
+										className="event-logger-log-url-button"
+										disabled={ ! canLogUrl }
+										onClick={ openRuleEditor }
+									>
+										{ existingRule
+											? __(
+													'Edit logging rule',
+													'newspack-event-logger-nodes'
+											  )
+											: __(
+													'Log this URL',
+													'newspack-event-logger-nodes'
+											  ) }
+									</Button>
+									{ ruleConfirmation && (
+										<span className="event-logger-rule-confirmation">
+											{ ruleConfirmation }
+										</span>
+									) }
+									{ ruleError && (
+										<span
+											className="event-logger-rule-error"
+											style={ { color: '#d63638' } }
+										>
+											{ ruleError }
+										</span>
+									) }
+								</div>
+							</>
 						)
 					}
 				>
@@ -596,6 +738,16 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 						/>
 					) }
 				</Modal>
+			) }
+
+			{ /* Inline rule editor for the "Log this URL" affordance. Scoped to
+			     the URL-detail view — never over the request-detail drill-in. */ }
+			{ selectedUrl && ! selectedRequest && ruleDraft && (
+				<RuleEditModal
+					rule={ ruleDraft }
+					onSave={ saveRule }
+					onCancel={ () => setRuleDraft( null ) }
+				/>
 			) }
 		</div>
 	);

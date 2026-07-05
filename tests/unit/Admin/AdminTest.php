@@ -601,6 +601,28 @@ class AdminTest extends TestCase {
 		$this->assertArrayNotHasKey( Admin::MENU_SLUG, $GLOBALS['_options_pages'] );
 	}
 
+	// ---- Rules editor mount ----------------------------------------------
+
+	public function test_render_rules_editor_section_outputs_react_container(): void {
+		$admin = new Admin();
+		\ob_start();
+		$admin->render_rules_editor_section();
+		$out = \ob_get_clean();
+		$this->assertStringContainsString( 'id="event-logger-rules-editor"', $out );
+		$this->assertStringContainsString( 'Logging Rules', $out );
+	}
+
+	public function test_render_settings_page_renders_rules_editor_container(): void {
+		$admin = new Admin();
+		$admin->register_settings();
+		\ob_start();
+		$admin->render_settings_page();
+		$html = \ob_get_clean();
+		// The rules editor container must land on the settings page so the
+		// `settings` React bundle can mount RulesAdmin into it.
+		$this->assertStringContainsString( 'id="event-logger-rules-editor"', $html );
+	}
+
 	// ---- Section callbacks (output structured help text) ------------------
 
 	public function test_general_section_callback_renders_explainer(): void {

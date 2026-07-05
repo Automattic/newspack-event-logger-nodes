@@ -121,12 +121,19 @@ final class Rule_Set {
 		$memd          = Core::$memd ?? null;
 
 		foreach ( $rules as $rule ) {
-			$hooks = $rule->hooks ?? [];
 			if ( $rule->is_skip() ) {
 				$tiered[] = $rule;
 				$stored[] = $rule->to_array();
 				continue;
 			}
+			$hooks = $rule->hooks;
+			if ( null === $hooks && Rule::HOOKS_MC === $rule->hooks_in ) {
+				// Unchanged pointer rule loaded with hooks=null: rehydrate the real
+				// list so tiering below doesn't mistake it for an empty rule and
+				// re-inline it to [], wiping its durable option.
+				$hooks = self::hooks_for( $rule );
+			}
+			$hooks = $hooks ?? [];
 			if ( \count( $hooks ) <= self::INLINE_HOOK_LIMIT ) {
 				// Inline: strip any prior durable/mc footprint.
 				\delete_option( self::hooks_option_name( $rule->id ) );
@@ -254,15 +261,19 @@ final class Rule_Set {
 			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
 		];
 
-		$rules = [];
-		$n     = 0;
+		$rules        = [];
+		$existing_ids = [];
 		foreach ( $skip as $pattern ) {
-			$rules[] = new Rule( self::gen_id( ++$n ), $pattern, Rule::ACTION_SKIP );
+			$id             = self::generate_rule_id( $existing_ids );
+			$existing_ids[] = $id;
+			$rules[]        = new Rule( $id, $pattern, Rule::ACTION_SKIP );
 		}
 		$log_patterns = empty( $log_urls ) ? [ '/' ] : $log_urls;
 		foreach ( $log_patterns as $pattern ) {
-			$rules[] = new Rule(
-				self::gen_id( ++$n ),
+			$id             = self::generate_rule_id( $existing_ids );
+			$existing_ids[] = $id;
+			$rules[]        = new Rule(
+				$id,
 				$pattern,
 				Rule::ACTION_LOG,
 				$bundle['auto_disable_threshold'],
@@ -306,6 +317,22 @@ final class Rule_Set {
 
 	private static function gen_id( int $n ): string {
 		return \substr( \md5( 'eln_rule_' . $n ), 0, 8 );
+	}
+
+	/**
+	 * Mint a short id not already present in $existing_ids. Walks the same
+	 * deterministic md5-substr scheme migrate_from_legacy seeded with, skipping
+	 * any candidate that collides with an id already in use.
+	 *
+	 * @param string[] $existing_ids Ids already assigned in the set being built.
+	 */
+	public static function generate_rule_id( array $existing_ids ): string {
+		$n = 1;
+		do {
+			$id = self::gen_id( $n );
+			++$n;
+		} while ( \in_array( $id, $existing_ids, true ) );
+		return $id;
 	}
 
 	/**
