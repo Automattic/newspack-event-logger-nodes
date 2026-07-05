@@ -12,9 +12,15 @@
 // =============================================================================
 
 .event-logger-custom-event-modal.event-logger-custom-event-modal {
+	// Fit content up to a max-height, THEN the grid (not the modal) scrolls:
+	// flex-column frame + static header + flex-growing scroll area below it.
 	&.components-modal__frame {
 		width: 680px;
 		max-width: 95vw;
+		height: auto;
+		max-height: 85vh;
+		display: flex;
+		flex-direction: column;
 		border-radius: base.$border-radius-lg;
 		box-shadow:
 			0 4px 6px rgba(0, 0, 0, 0.07),
@@ -33,7 +39,12 @@
 	}
 
 	.components-modal__content {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
 		padding: 0;
+		overflow: hidden;
 	}
 }
 
@@ -42,6 +53,7 @@
 // =============================================================================
 
 .custom-event-header {
+	flex: 0 0 auto;
 	padding: 16px 20px;
 	background: base.$light-surface-alt;
 	border-bottom: 1px solid base.$light-border-faint;
@@ -98,7 +110,8 @@
 	grid-template-columns: repeat(2, 1fr);
 	gap: 2px;
 	padding: 8px;
-	max-height: 420px;
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow-y: auto;
 	background: base.$light-border-faint;
 
@@ -249,6 +262,7 @@
 // =============================================================================
 
 .custom-event-footer {
+	flex: 0 0 auto;
 	padding: 12px 20px;
 	border-top: 1px solid base.$light-border-faint;
 	background: base.$light-surface-alt;
