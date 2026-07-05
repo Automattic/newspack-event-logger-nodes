@@ -155,23 +155,10 @@
 		border-color: var(--paper-shadow);
 	}
 
-	.components-input-control__container {
-		background: var(--paper-3);
-	}
-
-	.components-input-control__backdrop {
-		background: transparent !important;
-		border-color: var(--paper-shadow) !important;
-		box-shadow: none !important;
-	}
-
-	.components-input-control__input,
-	.components-select-control__input,
-	.components-text-control__input,
-	.components-search-control__input {
-		background: transparent !important;
-		color: var(--ink) !important;
-	}
+	// Form-control chrome (select / input / textarea + the @wordpress InputControl
+	// wrappers) is owned by the shared `@newspack-nodes/shared/styles/controls`
+	// partial (@use'd via the dashboard base), so dashboard menus match the
+	// console's canonical look — no per-plugin !important overrides.
 
 	.components-base-control__label,
 	.components-input-control__label {
