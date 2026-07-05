@@ -38,7 +38,8 @@
 		color: base.$light-text;
 	}
 
-	.components-modal__content {
+	.components-modal__content,
+	.components-modal__children-container {
 		display: flex;
 		flex-direction: column;
 		flex: 1 1 auto;
@@ -173,52 +174,11 @@
 // Custom Checkbox
 // =============================================================================
 
+// A visible native checkbox (themed by the shared controls partial, matching the
+// hook picker) — not a hidden input with a CSS-drawn box.
 .custom-event-checkbox {
-	// Hide native checkbox
-	position: absolute;
-	opacity: 0;
-	width: 0;
-	height: 0;
-
-	// Custom checkbox via sibling
-	+ .custom-event-swatch::before {
-		content: "";
-		position: absolute;
-		left: -24px;
-		top: 50%;
-		transform: translateY(-50%);
-		width: 16px;
-		height: 16px;
-		border: 1.5px solid base.$light-border;
-		border-radius: 3px;
-		background: base.$white;
-		transition: all 0.15s ease;
-	}
-
-	&:checked + .custom-event-swatch::before {
-		background: base.$focus-color;
-		border-color: base.$focus-color;
-	}
-
-	// Checkmark
-	&:checked + .custom-event-swatch::after {
-		content: "";
-		position: absolute;
-		left: -20px;
-		top: 50%;
-		transform: translateY(-60%) rotate(45deg);
-		width: 4px;
-		height: 8px;
-		border: solid base.$white;
-		border-width: 0 2px 2px 0;
-	}
-
-	// Focus state
-	&:focus-visible + .custom-event-swatch::before {
-		// Cobalt focus glow. Literal rgba — $focus-color is now a CSS custom
-		// property, which Sass's rgba() can't consume at compile time.
-		box-shadow: 0 0 0 2px rgba(0, 61, 165, 0.25);
-	}
+	margin: 0;
+	flex-shrink: 0;
 }
 
 // =============================================================================
@@ -230,7 +190,6 @@
 	position: relative;
 	width: 14px;
 	height: 14px;
-	margin-left: 24px; // Space for custom checkbox
 	background: var(--event-color, #ffa726);
 	border-radius: 3px;
 	flex-shrink: 0;

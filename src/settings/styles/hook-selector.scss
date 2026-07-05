@@ -21,7 +21,8 @@
 		flex-direction: column;
 	}
 
-	.components-modal__content {
+	.components-modal__content,
+	.components-modal__children-container {
 		display: flex;
 		flex-direction: column;
 		flex: 1 1 auto;
