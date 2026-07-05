@@ -315,9 +315,12 @@ final class Rule_Set {
 	 * @param string[] $log
 	 */
 	private static function detect_prefix_overlap( array $skip, array $log ): bool {
+		// Case-insensitive to match Rule_Matcher (a case-differing overlap still flips a decision).
 		foreach ( $skip as $s ) {
+			$sl = \strtolower( $s );
 			foreach ( $log as $l ) {
-				if ( $s !== $l && ( \str_starts_with( $l, $s ) || \str_starts_with( $s, $l ) ) ) {
+				$ll = \strtolower( $l );
+				if ( $sl !== $ll && ( \str_starts_with( $ll, $sl ) || \str_starts_with( $sl, $ll ) ) ) {
 					return true;
 				}
 			}
