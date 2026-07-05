@@ -121,36 +121,11 @@
 		color: var( --ink );
 	}
 
-	// @wordpress form controls paint white/dark-text from their own emotion CSS.
-	.components-input-control__container {
-		background: var( --paper-3 );
-	}
-
-	.components-input-control__backdrop {
-		background: transparent !important;
-		border-color: var( --paper-shadow ) !important;
-		box-shadow: none !important;
-	}
-
-	.components-input-control__input,
-	.components-select-control__input,
-	.components-text-control__input,
-	.components-search-control__input,
-	input,
-	select,
-	textarea {
-		background: transparent !important;
-		color: var( --ink ) !important;
-		border-color: var( --paper-shadow ) !important;
-		font-family: var( --font-mono, inherit );
-	}
-
-	// The native number spinner renders in the browser's light UA colours (an
-	// opaque white box on the dark frame). `color-scheme: dark` makes the UA
-	// paint the spinner dark to match the skin, instead of hiding it.
-	input[type="number"] {
-		color-scheme: dark;
-	}
+	// Form-control chrome (select / input / textarea / checkbox, incl. the
+	// @wordpress InputControl wrappers + number spinner) is owned by the shared
+	// `@newspack-nodes/shared/styles/controls` partial (@use'd via the dashboard
+	// base), so every menu matches the console's canonical look. Only
+	// modal-specific chrome stays below.
 
 	// Labels — including SelectControl's, which renders as a bare flex-item — and
 	// the per-field help text (WP defaults it to a low-contrast grey).
