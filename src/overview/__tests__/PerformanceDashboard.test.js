@@ -994,7 +994,7 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
-		it( 'saving upserts the exact rule and shows an inline confirmation without closing the URL modal', async () => {
+		it( 'saving upserts the exact rule and flips the button label without closing the URL modal', async () => {
 			mockGraph.listRules.mockResolvedValue( { rules: [] } );
 			mockGraph.upsertRule.mockResolvedValue( {
 				rule: { id: 'new-1', pattern: '/foo?', action: 'log' },
@@ -1027,7 +1027,8 @@ describe( 'PerformanceDashboard', () => {
 			expect(
 				container.querySelector( '[data-testid="rule-edit-modal"]' )
 			).toBeNull();
-			expect( container.textContent ).toContain( 'Now logging /foo' );
+			// Success is signalled by the button label flipping (no status banner).
+			expect( container.textContent ).toContain( 'Edit logging rule' );
 			unmount();
 		} );
 
