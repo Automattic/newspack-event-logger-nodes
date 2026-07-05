@@ -16,6 +16,11 @@
 @use "tokens" as *;
 @forward "tokens";
 
+// Canonical themed form controls (select / input / textarea / checkbox), shared
+// with the substrate console + overlay so every menu looks identical. One source
+// in newspack-nodes; nothing per-dashboard to keep in sync.
+@use "@newspack-nodes/shared/styles/controls";
+
 // Shared mixin bodies, configured with the dashboard color tokens so the
 // compiled CSS matches the old inline definitions. `@forward` re-exports them so
 // dashboards + their siblings keep calling `base.<mixin>`.
