@@ -414,6 +414,11 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const canLogUrl =
 		!! ruleUrl &&
 		__( 'Unknown URL', 'newspack-event-logger-nodes' ) !== ruleUrl;
+	// Rules match the REQUEST_URI path, not the dashboard's display URL (which
+	// carries scheme + host); strip the origin so the exact rule actually matches.
+	const exactPattern = ruleUrl
+		? `${ ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) }?`
+		: '';
 
 	// On URL-modal open, look up the current ruleset once to detect an existing
 	// exact rule (`<url>?`) — sets the button label and the prefill source. Reset
@@ -421,12 +426,13 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	useEffect( () => {
 		setRuleConfirmation( null );
 		setRuleError( null );
+		setRuleDraft( null );
 		if ( ! canLogUrl || selectedRequest ) {
 			setExistingRule( null );
 			return undefined;
 		}
 		let cancelled = false;
-		const pattern = `${ ruleUrl }?`;
+		const pattern = exactPattern;
 		listRules()
 			.then( ( res ) => {
 				if ( cancelled ) {
@@ -445,7 +451,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return () => {
 			cancelled = true;
 		};
-	}, [ ruleUrl, canLogUrl, selectedRequest, listRules ] );
+	}, [ ruleUrl, exactPattern, canLogUrl, selectedRequest, listRules ] );
 
 	// Open RuleEditModal on the existing exact rule (edit) or a blank log rule
 	// seeded with the exact pattern (add).
@@ -458,11 +464,11 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		setRuleDraft(
 			existingRule ?? {
 				...BLANK_RULE,
-				pattern: `${ ruleUrl }?`,
+				pattern: exactPattern,
 				action: 'log',
 			}
 		);
-	}, [ canLogUrl, existingRule, ruleUrl ] );
+	}, [ canLogUrl, existingRule, exactPattern ] );
 
 	// Save: upsert the exact rule, close ONLY the RuleEditModal, and surface an
 	// inline confirmation (or error) in the URL modal — never crash.
@@ -614,6 +620,13 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 							: selectedUrl.url
 					}
 					onRequestClose={ () => {
+						// The nested RuleEditModal steals focus, which fires this
+						// modal's focus-outside close; don't tear down the URL modal
+						// (and the shared selectedUrl both modals depend on) while
+						// the editor is open — the editor owns its own dismiss.
+						if ( ruleDraft ) {
+							return;
+						}
 						selectUrl( null );
 						selectRequest( null );
 					} }
@@ -747,6 +760,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					rule={ ruleDraft }
 					onSave={ saveRule }
 					onCancel={ () => setRuleDraft( null ) }
+					className={ `topology-app theme-${ getStoredTheme() }` }
 				/>
 			) }
 		</div>

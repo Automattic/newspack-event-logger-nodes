@@ -51,29 +51,5 @@
 	}
 }
 
-.event-logger-rule-edit-modal {
-	.rule-edit-hooks-field,
-	.rule-edit-custom-field {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		margin: 12px 0;
-	}
-
-	.rule-edit-field-label {
-		min-width: 120px;
-		font-weight: 600;
-	}
-
-	.rule-edit-field-count {
-		color: #757575;
-		font-size: 12px;
-	}
-
-	.rule-edit-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-		margin-top: 20px;
-	}
-}
+// RuleEditModal's own field layout moved to src/rules/rule-edit-modal.scss
+// (imported by the component) so the performance-dashboard bundle gets it too.

@@ -1,0 +1,145 @@
+/**
+ * RuleEditModal field layout + (in the dashboard) skin-token theming.
+ * Imported by the component itself so EVERY bundle that renders the modal (the
+ * settings rules editor AND the performance dashboard's "Log this URL") gets it.
+ */
+
+.event-logger-rule-edit-modal {
+	.rule-edit-field {
+		margin: 14px 0;
+	}
+
+	.rule-edit-hooks-field,
+	.rule-edit-custom-field {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin: 14px 0;
+	}
+
+	.rule-edit-field-label {
+		min-width: 130px;
+		font-weight: 600;
+	}
+
+	// Equal-width Hooks / Custom-events buttons read tidier than auto-sized ones.
+	.rule-edit-hooks-field button,
+	.rule-edit-custom-field button {
+		min-width: 140px;
+		justify-content: center;
+	}
+
+	.rule-edit-field-count {
+		color: #757575;
+		font-size: 12px;
+	}
+
+	.rule-edit-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 20px;
+	}
+
+	// On the light settings page a comfortable minimum keeps fields from cramping.
+	&.components-modal__frame {
+		min-width: 420px;
+	}
+}
+
+// In the performance dashboard these modals portal to <body> carrying the skin
+// classes (`topology-app theme-*`), so the skin tokens (--paper/--ink/…) are in
+// scope. Theme the frame + @wordpress controls with those tokens — the same
+// mechanism ThemedRoot uses for the dashboard root and the detail modal, so it's
+// skin-adaptive. Scoped to `.topology-app`, which only the dashboard passes, so
+// the light settings page is untouched.
+
+// Layout: the dashboard's global `.topology-app` CSS leaks `display: grid` onto
+// the portaled frame, squishing the content to a min-content column. Restore the
+// Modal's flex-column stacking (tokens are custom props, unaffected by display).
+.event-logger-rule-edit-modal.topology-app.components-modal__frame {
+	display: flex;
+	flex-direction: column;
+	grid-template: none;
+	gap: 0;
+	width: 480px;
+	max-width: calc( 100% - 32px );
+	height: auto;
+	min-height: 0;
+	max-height: calc( 100vh - 64px );
+
+	.components-modal__content {
+		width: 100%;
+		box-sizing: border-box;
+		overflow-y: auto;
+	}
+
+	.components-modal__children-container {
+		width: 100%;
+	}
+}
+
+.event-logger-rule-edit-modal.topology-app.components-modal__frame,
+.event-logger-hook-selector-modal.topology-app.components-modal__frame,
+.event-logger-custom-event-modal.topology-app.components-modal__frame {
+	background: var( --paper );
+	color: var( --ink );
+	border: 1px solid var( --paper-shadow );
+
+	// Undo the leaked console grid on the picker frames too.
+	display: flex;
+	flex-direction: column;
+	grid-template: none;
+	gap: 0;
+
+	.components-modal__header .components-modal__header-heading,
+	.components-modal__header button {
+		color: var( --ink );
+	}
+
+	// @wordpress form controls paint white/dark-text from their own emotion CSS.
+	.components-input-control__container {
+		background: var( --paper-3 );
+	}
+
+	.components-input-control__backdrop {
+		background: transparent !important;
+		border-color: var( --paper-shadow ) !important;
+		box-shadow: none !important;
+	}
+
+	.components-input-control__input,
+	.components-select-control__input,
+	.components-text-control__input,
+	.components-search-control__input,
+	input,
+	select,
+	textarea {
+		background: transparent !important;
+		color: var( --ink ) !important;
+		font-family: var( --font-mono, inherit );
+	}
+
+	// Labels — including SelectControl's, which renders as a bare flex-item.
+	.components-base-control__label,
+	.components-input-control__label,
+	.components-flex-item {
+		color: var( --ink-3 );
+	}
+
+	.components-button.is-secondary,
+	.components-button.is-tertiary {
+		background: var( --paper-2 );
+		color: var( --ink );
+		box-shadow: inset 0 0 0 1px var( --paper-shadow );
+	}
+
+	.components-button.is-primary {
+		background: var( --cyan );
+		color: var( --paper );
+	}
+
+	::placeholder {
+		color: var( --ink-3 );
+	}
+}
