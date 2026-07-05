@@ -79,6 +79,21 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();
 		\Newspack_Event_Logger_Nodes\Current_Request_Overlay::init();
 	}
+
+	// One-time migration from the seven retired options; the version gate makes
+	// this a single option-read after the first run. Admin/CLI only — never on
+	// the front-end hot path.
+	if ( ( \function_exists( 'is_admin' ) && \is_admin() ) || ( \defined( 'WP_CLI' ) && \WP_CLI ) ) {
+		$newspack_event_logger_nodes_migration = \Newspack_Event_Logger_Nodes\Rule_Set::migrate_from_legacy();
+		if ( $newspack_event_logger_nodes_migration['overlap'] ) {
+			\add_action(
+				'admin_notices',
+				static function (): void {
+					echo '<div class="notice notice-warning"><p>' . \esc_html__( 'Event Logger: your skip/log URL lists had overlapping prefixes. Under the new most-specific-wins ruleset, behavior for the more-specific URLs may have changed — review your logging rules.', 'newspack-event-logger-nodes' ) . '</p></div>';
+				}
+			);
+		}
+	}
 };
 
 $_newspack_event_logger_nodes_bootstrap = static function () use (

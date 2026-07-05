@@ -69,92 +69,12 @@ class Settings_Schema {
 					register_args: [],
 				),
 
-				// -- Instrumentation ----------------------------------------
-				new Field(
-					key: 'log_urls',
-					type: 'array_strings',
-					label: static fn(): string => \__( 'Log URLs', 'newspack-event-logger-nodes' ),
-					section: $instrumentation,
-					delete_on_blank: false,
-					// Runtime-only filter; no worker restart.
-					restart: [],
-					sanitize: [ Admin::class, 'sanitize_array_strings' ],
-					render: [ Admin::class, 'log_urls_callback' ],
-				),
-				new Field(
-					key: 'skip_urls',
-					type: 'array_strings',
-					label: static fn(): string => \__( 'Skip URLs', 'newspack-event-logger-nodes' ),
-					section: $instrumentation,
-					delete_on_blank: false,
-					restart: [],
-					sanitize: [ Admin::class, 'sanitize_array_strings' ],
-					render: [ Admin::class, 'skip_urls_callback' ],
-				),
-				new Field(
-					key: 'log_events',
-					type: 'array_strings',
-					label: static fn(): string => \__( 'Log Events', 'newspack-event-logger-nodes' ),
-					section: $instrumentation,
-					delete_on_blank: false,
-					// App\Core in every worker binds these hooks via add_filter at construction — frozen per-process.
-					restart: 'all',
-					sanitize: [ Admin::class, 'sanitize_array_strings' ],
-					render: [ Admin::class, 'log_events_callback' ],
-					register_args: [ 'autoload' => false ],
-				),
-				new Field(
-					key: 'custom_events',
-					type: 'array_strings',
-					label: static fn(): string => \__( 'Custom Events', 'newspack-event-logger-nodes' ),
-					section: $instrumentation,
-					delete_on_blank: false,
-					// Folded into App\Core's instrumented hook set at construction in every worker.
-					restart: 'all',
-					sanitize: [ Admin::class, 'sanitize_custom_events' ],
-					render: [ Admin::class, 'custom_events_callback' ],
-					register_args: [ 'autoload' => false ],
-				),
-
-				// -- Performance Workers ------------------------------------
-				// auto_disable_threshold renders the combined Auto-Tune row
-				// (id='auto_tune') for BOTH threshold inputs.
-				new Field(
-					key: 'auto_disable_threshold',
-					type: 'int',
-					label: static fn(): string => \__( 'Auto-Tune', 'newspack-event-logger-nodes' ),
-					section: $workers,
-					id: 'auto_tune',
-					// Consumed by Flame_Builder via `cmd flame-builder:config set_auto_tune`.
-					restart: [ 'Flame_Builder' ],
-					sanitize: [ Admin::class, 'sanitize_int_or_empty' ],
-					render: [ Admin::class, 'auto_tune_callback' ],
-					register_args: [ 'autoload' => false ],
-				),
-				// auto_protect_time_threshold IS a registered setting but renders
-				// inside the Auto-Tune row above — no own render callback.
-				new Field(
-					key: 'auto_protect_time_threshold',
-					type: 'float',
-					section: $workers,
-					// Consumed by Flame_Builder via `cmd flame-builder:config set_auto_tune`.
-					restart: [ 'Flame_Builder' ],
-					sanitize: [ Admin::class, 'sanitize_float_or_empty' ],
-					render: null,
-					register_args: [ 'autoload' => false ],
-				),
-				new Field(
-					key: 'significant_events',
-					type: 'array_strings',
-					label: static fn(): string => \__( 'Significant Events', 'newspack-event-logger-nodes' ),
-					section: $workers,
-					delete_on_blank: false,
-					// Cached by App\Core (every worker) AND Flame_Builder — 'all' is the honest superset.
-					restart: 'all',
-					sanitize: [ Admin::class, 'sanitize_array_strings' ],
-					render: [ Admin::class, 'significant_events_callback' ],
-					register_args: [ 'autoload' => false ],
-				),
+				// -- Instrumentation / Performance Workers ------------------
+				// The former URL filters (log_urls/skip_urls), hook lists
+				// (log_events/custom_events/significant_events) and auto-tune
+				// thresholds are no longer global settings — they are per-RULE
+				// fields inside the `newspack_event_logger_nodes_rules` option
+				// (Task 10). No Fields remain in those sections.
 
 				// -- Debugging ----------------------------------------------
 				new Field(

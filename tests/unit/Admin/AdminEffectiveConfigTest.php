@@ -5,9 +5,9 @@
  * ELN's settings page delegates the panel to the shared substrate
  * `Settings_Renderer`, passing ELN's own Schema, option prefix, and effective
  * config. This file asserts the panel reports the right restart impact for an
- * ELN field (`significant_events`, classified `'all'`, restarts every active
- * topology — so `combined` appears when active) and that the section is hooked
- * to ELN's `settings_after_form` action and echoes a `widefat` table.
+ * ELN field (`log_memory`, classified `'all'`, restarts every active topology —
+ * so `combined` appears when active) and that the section is hooked to ELN's
+ * `settings_after_form` action and echoes a `widefat` table.
  *
  * Defines defensive i18n/esc stubs in a global block (AdminTest.php defines the
  * full set, but test-file load order isn't guaranteed).
@@ -59,7 +59,7 @@ class AdminEffectiveConfigTest extends TestCase {
 		$this->use_base_dir( $this->base_dir );
 
 		// Active set including `combined`, which instantiates a Flame_Builder. ELN's
-		// significant_events is classified 'all' → restarts every active topology.
+		// log_memory is classified 'all' → restarts every active topology.
 		Topology_Registry::reset();
 		$this->tsl_dir = $this->make_temp_dir( 'eln-effective-config-topologies-' );
 		Topology_Registry::register_stock_dir( $this->tsl_dir );
@@ -93,28 +93,10 @@ class AdminEffectiveConfigTest extends TestCase {
 		return \array_column( $rows, null, 'key' );
 	}
 
-	public function test_significant_events_restart_impact_includes_active_combined(): void {
+	public function test_log_memory_restart_impact_includes_active_combined(): void {
 		$rows = $this->rows_by_key();
-		$this->assertArrayHasKey( 'significant_events', $rows );
-		$this->assertStringContainsString( 'combined', $rows['significant_events']['restart'] );
-	}
-
-	public function test_large_array_field_value_collapses_to_count_and_sample(): void {
-		// ELN's `array_strings` fields (skip_urls/log_urls/…) render through the
-		// shared Settings_Renderer; a >6-entry list must collapse to a count +
-		// first-6 sample + remainder, so a long skip-list can't dominate the row.
-		$urls = [];
-		for ( $i = 1; $i <= 10; $i++ ) {
-			$urls[] = "/skip/{$i}";
-		}
-		\update_option( Admin::OPTION_PREFIX . 'skip_urls', $urls );
-		Config::reset();
-		$rows = $this->rows_by_key();
-		$this->assertArrayHasKey( 'skip_urls', $rows );
-		$this->assertSame(
-			'10 values: /skip/1, /skip/2, /skip/3, /skip/4, /skip/5, /skip/6, … (+4 more)',
-			$rows['skip_urls']['effective']
-		);
+		$this->assertArrayHasKey( 'log_memory', $rows );
+		$this->assertStringContainsString( 'combined', $rows['log_memory']['restart'] );
 	}
 
 	public function test_admin_render_section_is_hooked_and_echoes_widefat_table(): void {

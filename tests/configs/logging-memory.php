@@ -8,11 +8,7 @@ return [
 	'enable_logging'   => true,
 	'memcache_servers' => [],
 	'allowed_users'    => [],
-	'skip_urls'        => [],
-	'log_urls'         => [],
 	'custom_colors'    => [],
-	'custom_events'    => [],
-	'log_events'       => [],
 	'log_memory'       => true,
 	'flush_every_line' => true,
 ];

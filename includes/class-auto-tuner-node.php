@@ -3,9 +3,8 @@
  * Auto Tuner Node
  *
  * Receives FlameBuilder's auto-tune decisions as messages and applies them by
- * updating the local option. The write fires Settings_Event_Writer's
- * option-change listener so the tuned value propagates to spokes through the
- * settings-sync node graph (Settings_Sync_Node), exactly as an admin edit would.
+ * mutating the rule identified by `rule_id` and persisting via `Rule_Set::save()`,
+ * which handles the inline<->pointer tiering + orphan reconciliation.
  *
  * Replaces the legacy AutoTuneHandlers static action listeners. FlameBuilder
  * used to fire three `do_action()` calls and AutoTuneHandlers wired six
@@ -16,7 +15,7 @@
  *
  * Message shape:
  *   KEY   = 'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
- *   VALUE = [ 'items' => string[], 'context' => array ]
+ *   VALUE = [ 'rule_id' => string, 'items' => string[] ]
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -43,31 +42,23 @@ class Auto_Tuner_Node extends Node {
 			return;
 		}
 
-		/** @var array<string, mixed> $items dynamic message VALUE['items'] (string[]). */
+		$rule_id = \is_string( $value['rule_id'] ?? null ) ? $value['rule_id'] : '';
+		/** @var string[] $items dynamic message VALUE['items']. */
 		$items = \is_array( $value['items'] ?? null ) ? $value['items'] : [];
-		/** @var array<string, mixed> $context dynamic message VALUE['context']. */
-		$context = \is_array( $value['context'] ?? null ) ? $value['context'] : [];
 
-		if ( empty( $items ) || ! $this->authorized() ) {
+		if ( empty( $items ) || '' === $rule_id || ! $this->authorized() ) {
 			return;
 		}
 
-		// AutoTuner runs inside a long-lived request-workers process,
-		// and each apply_* method below does read-modify-write on a WP
-		// option. Without invalidating the alloptions snapshot, the
-		// RMW would clobber writes made by other workers / SettingsSync
-		// fanouts / admin edits since this worker spawned.
-		\Newspack_Nodes\Config::invalidate_options_cache();
-
 		switch ( $message[ Message::KEY ] ?? '' ) {
 			case 'disable_hooks':
-				$this->apply_disable_hooks( $items, $context );
+				$this->apply_disable_hooks( $items, $rule_id );
 				break;
 			case 'disable_custom_events':
-				$this->apply_disable_custom_events( $items, $context );
+				$this->apply_disable_custom_events( $items, $rule_id );
 				break;
 			case 'add_significant_events':
-				$this->apply_add_significant_events( $items );
+				$this->apply_add_significant_events( $items, $rule_id );
 				break;
 		}
 	}
@@ -92,89 +83,109 @@ class Auto_Tuner_Node extends Node {
 	// --- Apply -----------------------------------------------------------------
 
 	/**
-	 * @param array<string, mixed> $context
-	 * @param array<string, mixed> $hooks
-	 */
-	private function apply_disable_hooks( array $hooks, array $context ): void {
-		if ( ! \function_exists( 'get_option' ) ) {
-			return;
-		}
-		$existing = \get_option( 'newspack_event_logger_nodes_log_events', [] );
-		if ( ! \is_array( $existing ) ) {
-			$existing = [];
-		}
-		$significant = \is_array( $context['significant_events'] ?? null ) ? $context['significant_events'] : [];
-		$to_remove   = [];
-		/** @var string $hook */
-		foreach ( $hooks as $hook ) {
-			if ( ! isset( $significant[ $hook ] ) ) {
-				$to_remove[ $hook ] = true;
-			}
-		}
-		/** @var array<int|string, string> $existing */
-		$updated = \array_values( \array_filter( $existing, static fn( $v ) => ! isset( $to_remove[ $v ] ) ) );
-
-		$this->persist( 'newspack_event_logger_nodes_log_events', $updated );
-	}
-
-	/**
-	 * @param array<string, mixed> $context
-	 * @param array<string, mixed> $events
-	 */
-	private function apply_disable_custom_events( array $events, array $context ): void {
-		if ( ! \function_exists( 'get_option' ) ) {
-			return;
-		}
-		$existing = \get_option( 'newspack_event_logger_nodes_custom_events', [] );
-		if ( ! \is_array( $existing ) ) {
-			$existing = [];
-		}
-		$significant = \is_array( $context['significant_events'] ?? null ) ? $context['significant_events'] : [];
-		/** @var string $event */
-		foreach ( $events as $event ) {
-			if ( isset( $significant[ $event ] ) ) {
-				continue;
-			}
-			unset( $existing[ $event ] );
-		}
-
-		$this->persist( 'newspack_event_logger_nodes_custom_events', $existing );
-	}
-
-	/**
-	 * @param array<string, mixed> $events
-	 */
-	private function apply_add_significant_events( array $events ): void {
-		if ( ! \function_exists( 'get_option' ) ) {
-			return;
-		}
-		$existing = \get_option( 'newspack_event_logger_nodes_significant_events', [] );
-		if ( ! \is_array( $existing ) ) {
-			$existing = [];
-		}
-		/** @var array<int|string, string> $combined */
-		$combined = \array_merge( $existing, $events );
-		$merged   = \array_values( \array_unique( $combined ) );
-
-		$this->persist( 'newspack_event_logger_nodes_significant_events', $merged );
-	}
-
-	// --- Persist + fan-out -----------------------------------------------------
-
-	/**
-	 * Local update_option. Auto-tuning is an ORIGINATING setting change: the
-	 * write fires Settings_Event_Writer's option-change listener, which
-	 * propagates the tuned value to spokes immediately through the settings-sync
-	 * node graph (Settings_Sync_Node) — exactly as an admin edit would; the
-	 * periodic Settings_Sync_Node tick is the backstop.
+	 * Load the rule set, mutate the rule identified by `$rule_id`, and save it
+	 * back. A `null` from `$mutate` (rule missing, or the mutation itself
+	 * opting out) is a no-op — nothing is written.
 	 *
-	 * @param mixed $value New option value to persist.
+	 * @param callable(Rule): ?Rule $mutate
 	 */
-	private function persist( string $option, $value ): void {
-		if ( ! \function_exists( 'update_option' ) ) {
+	private function mutate_rule( string $rule_id, callable $mutate ): void {
+		// AutoTuner runs inside a long-lived request-workers process, and
+		// mutate_rule below does read-modify-write on the rules option.
+		// Without invalidating the alloptions snapshot, the RMW would
+		// clobber writes made by other workers / SettingsSync fanouts /
+		// admin edits since this worker spawned.
+		\Newspack_Nodes\Config::invalidate_options_cache();
+
+		$set  = Rule_Set::load();
+		$rule = $set->rule_by_id( $rule_id );
+		if ( null === $rule ) {
 			return;
 		}
-		\update_option( $option, $value, Config::autoload_for( $option ) );
+		$updated = $mutate( $rule );
+		if ( null === $updated || self::unchanged( $rule, $updated ) ) {
+			return;
+		}
+		$rules = \array_map(
+			static fn( Rule $r ) => $r->id === $rule_id ? $updated : $r,
+			$set->rules()
+		);
+		$set->save( $rules );
+	}
+
+	/**
+	 * True when $updated equals $original once both hook lists are resolved to
+	 * concrete form. A pointer-tier rule stores hooks=null, so a raw to_array()
+	 * comparison would always differ — this lets a no-op action (e.g. a hook a
+	 * concurrent worker already removed) skip the write entirely.
+	 */
+	private static function unchanged( Rule $original, Rule $updated ): bool {
+		return self::resolved_shape( $original ) === self::resolved_shape( $updated );
+	}
+
+	/**
+	 * The rule's to_array() with hooks resolved to their concrete list (a pointer
+	 * rule's null replaced by Rule_Set::hooks_for) so two rules are comparable
+	 * regardless of storage tier.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private static function resolved_shape( Rule $rule ): array {
+		$shape             = $rule->to_array();
+		$shape['hooks']    = Rule_Set::hooks_for( $rule );
+		$shape['hooks_in'] = Rule::HOOKS_INLINE;
+		return $shape;
+	}
+
+	/**
+	 * @param string[] $items Hooks to disable, unless protected by the rule's significant_events.
+	 */
+	private function apply_disable_hooks( array $items, string $rule_id ): void {
+		$this->mutate_rule(
+			$rule_id,
+			static function ( Rule $rule ) use ( $items ): Rule {
+				$significant = $rule->significant_events;
+				// Resolve the REAL hook list: a pointer rule's ->hooks is null.
+				$hooks = Rule_Set::hooks_for( $rule );
+				$kept  = \array_values( \array_filter(
+					$hooks,
+					static fn( $hook ) => \in_array( $hook, $significant, true ) || ! \in_array( $hook, $items, true )
+				) );
+				// Hand save() the resolved list + inline marker; it re-tiers by count.
+				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $rule->custom_events, $kept, Rule::HOOKS_INLINE );
+			}
+		);
+	}
+
+	/**
+	 * @param string[] $items Custom-event categories to disable, unless protected by the rule's significant_events.
+	 */
+	private function apply_disable_custom_events( array $items, string $rule_id ): void {
+		$this->mutate_rule(
+			$rule_id,
+			static function ( Rule $rule ) use ( $items ): Rule {
+				$significant = $rule->significant_events;
+				$disable     = \array_flip( \array_filter( $items, static fn( $event ) => ! \in_array( $event, $significant, true ) ) );
+				$kept        = \array_values( \array_filter( $rule->custom_events, static fn( $event ) => ! isset( $disable[ $event ] ) ) );
+				// Hooks are untouched but MUST be the resolved list, not the pointer's
+				// null — otherwise save() re-inlines the rule to hooks=[] and drops it.
+				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $kept, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
+			}
+		);
+	}
+
+	/**
+	 * @param string[] $items Newly-promoted significant-event tags to append.
+	 */
+	private function apply_add_significant_events( array $items, string $rule_id ): void {
+		$this->mutate_rule(
+			$rule_id,
+			static function ( Rule $rule ) use ( $items ): Rule {
+				$merged = \array_values( \array_unique( \array_merge( $rule->significant_events, $items ) ) );
+				// Resolve hooks (pointer ->hooks is null) so save() re-tiers instead of dropping.
+				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $merged, $rule->custom_events, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
+			}
+		);
 	}
 
 	/** @api Used by the substrate to provide UI etc. */
@@ -185,7 +196,7 @@ class Auto_Tuner_Node extends Node {
 		// wiring up a second instance that nothing routes messages to.
 		return [
 			'category'    => 'Hidden',
-			'description' => 'Receives FlameBuilder auto-tune decisions and applies them via WP options.',
+			'description' => 'Receives FlameBuilder auto-tune decisions and applies them to the identified rule.',
 			'arguments'        => [],
 			'commands'       => [],
 		];

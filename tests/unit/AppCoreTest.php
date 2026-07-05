@@ -14,6 +14,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\App\Core;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Rule;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -124,6 +126,36 @@ class AppCoreTest extends TestCase {
 		Log_Manager::reset();
 	}
 
+	/**
+	 * Stub the governing rule App\Core's constructor will see. Sets the
+	 * durable rules option (Rule_Set::load()'s source of truth) plus a
+	 * REQUEST_URI that matches the rule's pattern, then resets Log_Manager
+	 * so the next lazy Log_Manager::instance() call re-derives the match.
+	 * $rule = null models "nothing matched" (skip — zero hooks bound).
+	 *
+	 * @param array<string, mixed> $config Extra global config (e.g. hook_start_priority).
+	 */
+	private function set_governing_rule( ?Rule $rule, array $config = [] ): void {
+		$this->use_config( \array_merge( [ 'enable_logging' => true ], $config ) );
+		if ( null === $rule ) {
+			$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [];
+			return;
+		}
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [ $rule->to_array() ];
+		$_SERVER['REQUEST_URI'] = $rule->is_exact() ? \rtrim( $rule->pattern, '?' ) : $rule->pattern . 'cart';
+	}
+
+	/**
+	 * Run $body and return the hook names bound via add_filter during it.
+	 *
+	 * @return string[]
+	 */
+	private function capture_added_filters( \Closure $body ): array {
+		$GLOBALS['_wp_test_filters'] = [];
+		$body();
+		return \array_keys( $GLOBALS['_wp_test_filters'] );
+	}
+
 	// ── short_name tests via reflection ─────────────────────────────────
 
 	public function test_short_name_string_function(): void {
@@ -198,12 +230,10 @@ class AppCoreTest extends TestCase {
 
 	public function test_constructor_registers_hook_filters(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'      => true,
-			'log_events'          => [ 'the_content', 'wp_head' ],
-			'significant_events'  => [ 'the_content hook' ],
-			'hook_start_priority' => 1,
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content', 'wp_head' ], significant_events: [ 'the_content hook' ] ),
+			[ 'hook_start_priority' => 1 ]
+		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
@@ -217,12 +247,28 @@ class AppCoreTest extends TestCase {
 		$this->assertContains( PHP_INT_MAX - 1, $priorities );
 	}
 
+	public function test_binds_only_the_governing_rules_hooks(): void {
+		$this->set_governing_rule( new Rule(
+			'shop', '/shop/', Rule::ACTION_LOG,
+			hooks: [ 'wp', 'template_redirect' ]
+		) );
+		$bound = $this->capture_added_filters( fn() => new Core() );
+		$this->assertContains( 'wp', $bound );
+		$this->assertContains( 'template_redirect', $bound );
+		$this->assertNotContains( 'init', $bound ); // not in the rule.
+	}
+
+	public function test_skip_or_no_rule_binds_nothing(): void {
+		$this->set_governing_rule( null );
+		$bound = $this->capture_added_filters( fn() => new Core() );
+		$this->assertSame( [], $bound );
+	}
+
 	public function test_constructor_skips_plugin_loaded(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging' => true,
-			'log_events'     => [ 'plugin_loaded', 'init' ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'plugin_loaded', 'init' ] )
+		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
@@ -233,10 +279,9 @@ class AppCoreTest extends TestCase {
 
 	public function test_constructor_skips_empty_hook_names(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging' => true,
-			'log_events'     => [ '', 'init', 42 ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ '', 'init', 42 ] )
+		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
@@ -247,9 +292,8 @@ class AppCoreTest extends TestCase {
 
 	public function test_constructor_skips_internal_namespace_hooks(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging' => true,
-			'log_events'     => [
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [
 				// Underscore-style.
 				'newspack_event_logger_nodes_option_schema_core',
 				'newspack_nodes_option_schema_core',
@@ -258,8 +302,8 @@ class AppCoreTest extends TestCase {
 				'newspack_nodes/spawn_worker',
 				// Real WP hook — must be instrumented.
 				'init',
-			],
-		] );
+			] )
+		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
@@ -351,11 +395,9 @@ class AppCoreTest extends TestCase {
 
 	public function test_constructor_parses_significant_events(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'     => true,
-			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook', 'wp_head' ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content hook', 'wp_head' ] )
+		);
 
 		$core = new Core();
 
@@ -384,11 +426,9 @@ class AppCoreTest extends TestCase {
 
 	public function test_wrap_callbacks_wraps_eligible_callbacks(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'     => true,
-			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content hook' ] )
+		);
 
 		$core = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';
@@ -661,12 +701,9 @@ class AppCoreTest extends TestCase {
 		// must auto-register so the hook actually gets instrumented.
 		// Custom events (registered via custom_events) should be excluded.
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'     => true,
-			'log_events'         => [ 'init' ],
-			'significant_events' => [ 'the_content hook', 'wp_head' ],
-			'custom_events'      => [],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'the_content hook', 'wp_head' ], custom_events: [] )
+		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
@@ -684,12 +721,9 @@ class AppCoreTest extends TestCase {
 		// so instrumenting them with add_filter is pointless. The constructor
 		// must skip injection when the significant event name is in custom_events.
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'     => true,
-			'log_events'         => [ 'init' ],
-			'significant_events' => [ 'my_custom_event' ],
-			'custom_events'      => [ 'my_custom_event' => true ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'my_custom_event' ], custom_events: [ 'my_custom_event' ] )
+		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
@@ -707,11 +741,9 @@ class AppCoreTest extends TestCase {
 		// significant set. Verify both forms (with/without suffix) are
 		// registered correctly.
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'     => true,
-			'log_events'         => [ 'the_content', 'init' ],
-			'significant_events' => [ 'the_content hook', 'init' ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content', 'init' ], significant_events: [ 'the_content hook', 'init' ] )
+		);
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'significant' );
@@ -727,10 +759,9 @@ class AppCoreTest extends TestCase {
 
 	public function test_hook_start_priority_default_is_1(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging' => true,
-			'log_events'     => [ 'init' ],
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ] )
+		);
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );
@@ -742,11 +773,10 @@ class AppCoreTest extends TestCase {
 
 	public function test_hook_start_priority_custom(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->use_config( [
-			'enable_logging'      => true,
-			'log_events'          => [ 'init' ],
-			'hook_start_priority' => 7,
-		] );
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ] ),
+			[ 'hook_start_priority' => 7 ]
+		);
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );

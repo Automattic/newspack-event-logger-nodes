@@ -21,41 +21,32 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Settings_Schema::class )]
 class SettingsSchemaTest extends TestCase {
 
-	/** The exact unprefixed overlay key-set the old Config::$option_schema carried (12 keys). */
+	/**
+	 * The unprefixed overlay key-set after the seven ruleset-absorbed settings
+	 * (log_urls/skip_urls/log_events/custom_events/significant_events/
+	 * auto_disable_threshold/auto_protect_time_threshold) were retired to
+	 * per-rule fields in Task 10.
+	 */
 	private const OVERLAY_KEYS = [
 		'allowed_users',
 		'enable_logging',
-		'skip_urls',
-		'log_urls',
-		'log_events',
-		'custom_events',
-		'significant_events',
-		'auto_disable_threshold',
-		'auto_protect_time_threshold',
 		'log_memory',
 		'flush_every_line',
 		'hook_start_priority',
 	];
 
-	/** The prefixed settings-form option names (the three remote_* moved to the substrate). */
+	/** The prefixed settings-form option names surviving the Task 10 retirement. */
 	private const OPTION_NAMES = [
 		'newspack_event_logger_nodes_enable_logging',
-		'newspack_event_logger_nodes_log_urls',
-		'newspack_event_logger_nodes_skip_urls',
-		'newspack_event_logger_nodes_log_events',
-		'newspack_event_logger_nodes_custom_events',
-		'newspack_event_logger_nodes_significant_events',
-		'newspack_event_logger_nodes_auto_disable_threshold',
-		'newspack_event_logger_nodes_auto_protect_time_threshold',
 		'newspack_event_logger_nodes_log_memory',
 		'newspack_event_logger_nodes_flush_every_line',
 	];
 
-	/** The prefixed delete-on-blank subset (the three remote_* moved to the substrate). */
-	private const DELETE_ON_BLANK = [
-		'newspack_event_logger_nodes_auto_disable_threshold',
-		'newspack_event_logger_nodes_auto_protect_time_threshold',
-	];
+	/**
+	 * The prefixed delete-on-blank subset. The two auto-tune thresholds were the
+	 * only members and are retired, so no settings Field is delete-on-blank now.
+	 */
+	private const DELETE_ON_BLANK = [];
 
 	protected function setUp(): void {
 		parent::setUp();

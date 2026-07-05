@@ -66,4 +66,29 @@ final class UninstallCleanupTest extends TestCase {
 		$this->assertSame( 0, \Newspack_Event_Logger_Nodes\delete_prefixed_options( $this->wpdb(), 'newspack_event_logger_nodes_' ) );
 		$this->assertSame( 'https://example.test', $GLOBALS['_wp_options']['siteurl'] );
 	}
+
+	/**
+	 * The ruleset ([54]) storage — the autoloaded rule list, every per-heavy-rule
+	 * durable hooks option, and the migration version marker — must all be swept on
+	 * uninstall. They ride the shared `newspack_event_logger_nodes_` prefix, so the
+	 * existing sweep already covers them; this pins that so a future prefix change
+	 * can't orphan the distinctive `_rule_hooks_*` rows.
+	 */
+	public function test_deletes_ruleset_and_pointer_hook_options(): void {
+		$GLOBALS['_wp_options'] = [
+			\Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES              => [ [ 'id' => 'a', 'pattern' => '/', 'action' => 'log' ] ],
+			\Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'a' )  => [ 'init' ],
+			\Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'b2' ) => [ 'wp' ],
+			\Newspack_Event_Logger_Nodes\Rule_Set::OPTION_SCHEMA_VERSION     => 1,
+			'other_plugin_option'                                           => 'keep',
+		];
+
+		\Newspack_Event_Logger_Nodes\delete_prefixed_options( $this->wpdb(), 'newspack_event_logger_nodes_' );
+
+		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'] );
+		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'a' ), $GLOBALS['_wp_options'] );
+		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'b2' ), $GLOBALS['_wp_options'] );
+		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_SCHEMA_VERSION, $GLOBALS['_wp_options'] );
+		$this->assertSame( 'keep', $GLOBALS['_wp_options']['other_plugin_option'] );
+	}
 }

@@ -1085,28 +1085,29 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_set_verb_writes_array_option_csv_split(): void {
+		// The per-URL ruleset is now the synced array option (Task 10). A bare
+		// csv value that is not JSON falls back to the csv split.
 		$interpreter = new Performance_CI_Node();
 		VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'set',
-			'newspack_event_logger_nodes_log_urls "a.com,b.com"'
+			'newspack_event_logger_nodes_rules "a.com,b.com"'
 		);
 
 		$this->assertSame(
 			[ 'a.com', 'b.com' ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls']
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules']
 		);
 	}
 
 	public function test_set_verb_preserves_associative_array_via_json(): void {
-		// custom_events is an associative map (event_name => true). Settings_Sync_Node
-		// now ships array options as JSON (built through Command_Args::format, so the
+		// The rules option ships as JSON (built through Command_Args::format, so the
 		// quotes are escaped on the wire); the receiver must json_decode it and keep
 		// the keys — the old csv-split flattened it to a meaningless list of "1"s.
 		$args = \Newspack_Nodes\Command_Args::format(
 			[
-				'newspack_event_logger_nodes_custom_events',
+				'newspack_event_logger_nodes_rules',
 				(string) \json_encode( [ 'advancedemail' => true, 'amazons3' => true ] ),
 			],
 			[]
@@ -1117,24 +1118,31 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame(
 			[ 'advancedemail' => true, 'amazons3' => true ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules']
 		);
 	}
 
-	public function test_set_verb_writes_float_option(): void {
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_protect_time_threshold 1.5'
-		);
+	public function test_sanitize_settings_value_float_bounds(): void {
+		// The `set` whitelist no longer maps any option to int/float (the
+		// auto-tune thresholds moved to per-rule fields), so the sanitizer's
+		// float branch is exercised directly.
+		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$ref->setAccessible( true );
 
-		$this->assertEqualsWithDelta(
-			1.5,
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_protect_time_threshold'],
-			0.001
-		);
+		$this->assertEqualsWithDelta( 1.5, $ref->invoke( null, '1.5', 'float' ), 0.001 );
+		$this->assertNull( $ref->invoke( null, 'notafloat', 'float' ) );
+		// > SETTINGS_FLOAT_MAX (86400s) → rejected.
+		$this->assertNull( $ref->invoke( null, 99999, 'float' ) );
+	}
+
+	public function test_sanitize_settings_value_int_bounds(): void {
+		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$ref->setAccessible( true );
+
+		$this->assertSame( 42, $ref->invoke( null, '42', 'int' ) );
+		$this->assertNull( $ref->invoke( null, 'notanumber', 'int' ) );
+		// > SETTINGS_INT_MAX (2^30) → rejected.
+		$this->assertNull( $ref->invoke( null, 2000000000, 'int' ) );
 	}
 
 	public function test_set_verb_rejects_unknown_option(): void {
@@ -1149,73 +1157,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'unknown', \strtolower( $result ) );
 		$this->assertArrayNotHasKey( 'arbitrary_option', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_set_verb_writes_valid_int_option(): void {
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_disable_threshold 42'
-		);
-
-		$this->assertSame( 42, $GLOBALS['_wp_options']['newspack_event_logger_nodes_auto_disable_threshold'] );
-	}
-
-	public function test_set_verb_rejects_non_numeric_int(): void {
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_disable_threshold notanumber'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
-		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_auto_disable_threshold', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_set_verb_rejects_out_of_range_int(): void {
-		// > SETTINGS_INT_MAX (2^30) → rejected.
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_disable_threshold 2000000000'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
-	}
-
-	public function test_set_verb_rejects_non_numeric_float(): void {
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_protect_time_threshold notafloat'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
-	}
-
-	public function test_set_verb_rejects_out_of_range_float(): void {
-		// > SETTINGS_FLOAT_MAX (86400s) → rejected.
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_auto_protect_time_threshold 99999'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value', \strtolower( $result ) );
 	}
 
 	public function test_set_verb_coerces_bool_option(): void {
@@ -1235,7 +1176,7 @@ class PerformanceCITest extends TestCase {
 		// recursion branch), not flatten or reject it.
 		$args = \Newspack_Nodes\Command_Args::format(
 			[
-				'newspack_event_logger_nodes_custom_events',
+				'newspack_event_logger_nodes_rules',
 				(string) \json_encode( [ 'group' => [ 'inner' => 'val' ] ] ),
 			],
 			[]
@@ -1246,7 +1187,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame(
 			[ 'group' => [ 'inner' => 'val' ] ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events']
+			$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules']
 		);
 	}
 
@@ -1258,7 +1199,7 @@ class PerformanceCITest extends TestCase {
 			$deep = [ 'n' => $deep ];
 		}
 		$args = \Newspack_Nodes\Command_Args::format(
-			[ 'newspack_event_logger_nodes_custom_events', (string) \json_encode( $deep ) ],
+			[ 'newspack_event_logger_nodes_rules', (string) \json_encode( $deep ) ],
 			[]
 		);
 
@@ -1285,10 +1226,10 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'set',
-			'newspack_event_logger_nodes_log_urls ""'
+			'newspack_event_logger_nodes_rules ""'
 		);
 
-		$this->assertSame( [], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_urls'] );
+		$this->assertSame( [], $GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] );
 	}
 
 	public function test_sanitize_settings_value_rejects_non_array_and_unknown_type(): void {

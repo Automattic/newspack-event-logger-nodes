@@ -233,10 +233,41 @@ class HookCategorizerTest extends TestCase {
 		global $wp_filter;
 		$wp_filter = [];
 
-		\update_option( 'newspack_event_logger_nodes_log_events', [ 'my_custom_hook' ] );
+		$this->set_rules_option( [
+			[ 'id' => 'a', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'my_custom_hook' ] ],
+		] );
 
 		$hooks = Hook_Categorizer::get_registered_hooks();
 		$this->assertContains( 'my_custom_hook', $hooks );
+	}
+
+	public function test_selected_hooks_come_from_the_rule_union(): void {
+		$this->set_rules_option( [
+			[ 'id' => 'a', 'pattern' => '/a/', 'action' => 'log', 'hooks' => [ 'init' ] ],
+			[ 'id' => 'b', 'pattern' => '/b/', 'action' => 'log', 'hooks' => [ 'wp', 'init' ] ],
+		] );
+
+		$selected = Hook_Categorizer::selected_hooks(); // union, deduped.
+		\sort( $selected );
+		$this->assertSame( [ 'init', 'wp' ], $selected );
+	}
+
+	public function test_selected_hooks_ignores_skip_rules(): void {
+		$this->set_rules_option( [
+			[ 'id' => 'a', 'pattern' => '/a/', 'action' => 'log', 'hooks' => [ 'init' ] ],
+			[ 'id' => 'b', 'pattern' => '/b/', 'action' => 'skip', 'hooks' => [ 'wp_head' ] ],
+		] );
+
+		$this->assertSame( [ 'init' ], Hook_Categorizer::selected_hooks() );
+	}
+
+	/**
+	 * Seed the durable ruleset option the union reads (inline hooks only).
+	 *
+	 * @param array<int,array<string,mixed>> $rules Stored rule shapes.
+	 */
+	private function set_rules_option( array $rules ): void {
+		\update_option( \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES, $rules );
 	}
 
 	// ── get_registered_hooks_by_category — internal-prefix skip-list ────────

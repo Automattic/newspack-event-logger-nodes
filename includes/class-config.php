@@ -2,8 +2,8 @@
 /**
  * Event Logger Configuration
  *
- * Owns application-level keys (logging toggles, URL filters, hook lists, etc.).
- * Substrate keys (base_directory, partitioning, memcache_servers)
+ * Owns application-level keys (logging toggles, debugging flags, the per-URL
+ * ruleset, etc.). Substrate keys (base_directory, partitioning, memcache_servers)
  * live on `\Newspack_Nodes\Config`.
  *
  * `load_config()` merges substrate values into the returned array so existing
@@ -56,8 +56,6 @@ class Config {
 	 * @var array<string, bool>
 	 */
 	private static $non_autoloaded_options = [
-		'newspack_event_logger_nodes_log_events'        => true,
-		'newspack_event_logger_nodes_custom_events'     => true,
 		'newspack_event_logger_nodes_discovered_events' => true,
 	];
 
@@ -309,10 +307,7 @@ class Config {
 	public static function resolve_eln_token( string $key ) {
 		/** @var array<string, bool> $own */
 		static $own = [
-			'is_hub'                     => true,
-			'auto_disable_threshold'     => true,
-			'auto_protect_time_threshold' => true,
-			'significant_events_csv'     => true,
+			'is_hub'            => true,
 			'stats_mirror_node' => true,
 		];
 		if ( ! isset( $own[ $key ] ) ) {
@@ -324,16 +319,6 @@ class Config {
 			// A hub is a site whose active topologies include `aggregator`;
 			// the substrate's `(string)` wrap surfaces the bool as '1' / ''.
 			return \in_array( 'aggregator', \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ), true );
-		}
-
-		if ( 'significant_events_csv' === $key ) {
-			// Schema key is `significant_events` (string array); the flame
-			// builder consumes the CSV form.
-			$events = $config['significant_events'] ?? [];
-			if ( ! \is_array( $events ) ) {
-				return '';
-			}
-			return \implode( ',', \array_map( '\strval', $events ) );
 		}
 
 		return $config[ $key ] ?? null;

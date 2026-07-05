@@ -16,6 +16,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -68,7 +69,30 @@ class LogManagerTest extends TestCase {
 
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
 		$this->rmdir_recursive( self::TEST_DIR );
+		// Rules option is a fake-store global, not scoped to $_SERVER — drain it
+		// so it doesn't leak into other tests/suites.
+		unset( $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );
 		parent::tearDown();
+	}
+
+	/**
+	 * Seed the durable rules option in the fake option store.
+	 *
+	 * @param array<int, array<string, mixed>> $rules Rule shapes (Rule::from_array()).
+	 */
+	private function set_rules_option( array $rules ): void {
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = $rules;
+	}
+
+	/**
+	 * Load the `logging-enabled` config (enable_logging=true) and construct a
+	 * fresh Log_Manager against the current REQUEST_URI + rules option.
+	 */
+	private function fresh_log_manager(): Log_Manager {
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+		return Log_Manager::instance();
 	}
 
 	// rmdir_recursive() is inherited from RuntimeTestCase (newspack-nodes/tests/Helpers/TestCase.php).
@@ -313,153 +337,193 @@ class LogManagerTest extends TestCase {
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 	}
 
+	// ── Governing rule resolution ────────────────────────────────────────────
+
+	public function test_governing_rule_is_the_matched_log_rule_and_enables_logging(): void {
+		$this->require_config_or_skip();
+		$this->set_rules_option( [
+			[ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ],
+			[ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log', 'hooks' => [ 'wp' ] ],
+		] );
+		$_SERVER['REQUEST_URI'] = '/shop/cart';
+		$lm = $this->fresh_log_manager();
+		$this->assertTrue( $lm->enabled );
+		$this->assertSame( 'shop', $lm->governing_rule()->id );
+		$this->assertSame( 'shop', $lm->governing_rule_id() );
+	}
+
+	public function test_skip_rule_disables_logging_and_yields_a_skip_governing_rule(): void {
+		$this->require_config_or_skip();
+		$this->set_rules_option( [
+			[ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ],
+			[ 'id' => 'cron', 'pattern' => '/wp-cron', 'action' => 'skip' ],
+		] );
+		$_SERVER['REQUEST_URI'] = '/wp-cron.php';
+		$lm = $this->fresh_log_manager();
+		$this->assertFalse( $lm->enabled );
+		$this->assertTrue( $lm->governing_rule()->is_skip() );
+	}
+
+	public function test_no_matching_rule_disables_logging_with_null_governing_rule(): void {
+		$this->require_config_or_skip();
+		$this->set_rules_option( [ [ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log' ] ] );
+		$_SERVER['REQUEST_URI'] = '/about';
+		$lm = $this->fresh_log_manager();
+		$this->assertFalse( $lm->enabled );
+		$this->assertNull( $lm->governing_rule() );
+		$this->assertSame( '', $lm->governing_rule_id() );
+	}
+
+	/**
+	 * The process (start) firehose frame must carry the governing rule id so
+	 * downstream consumers (Flame_Builder) can apply that rule's thresholds by id.
+	 */
+	public function test_process_start_frame_carries_the_governing_rule_id(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI'] = '/shop/cart';
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'process (start)' );
+		$this->assertNotNull( $entry, 'Should have a process (start) entry' );
+		$this->assertSame( 'shop', $entry['rule'] );
+	}
+
 	// ── URL filter ─────────────────────────────────────────────────────────
 
 	public function test_matches_url_filter_with_skip_urls(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'skip-urls' ) );
-		Config::reset();
+		$this->set_rules_option( [
+			[ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ],
+			[ 'id' => 'health', 'pattern' => '/health', 'action' => 'skip' ],
+			[ 'id' => 'cron', 'pattern' => '/wp-cron', 'action' => 'skip' ],
+		] );
 
 		$_SERVER['REQUEST_URI'] = '/health';
-		$lm = Log_Manager::instance();
-		$this->assertFalse( $lm->enabled, 'Skip URL should disable logging' );
+		$lm = $this->fresh_log_manager();
+		$this->assertFalse( $lm->enabled, 'Skip rule should disable logging' );
 
-		// skip_urls patterns are prefixes (no trailing '?'), so a sub-path is skipped too.
-		Log_Manager::reset();
+		// Skip rule patterns are prefixes (no trailing '?'), so a sub-path is skipped too.
 		$_SERVER['REQUEST_URI'] = '/health/check';
-		$this->assertFalse( Log_Manager::instance()->enabled, 'a sub-path of a skip prefix is skipped' );
+		$this->assertFalse( $this->fresh_log_manager()->enabled, 'a sub-path of a skip prefix is skipped' );
 	}
 
 	public function test_matches_url_filter_with_log_urls(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'api', 'pattern' => '/api/', 'action' => 'log' ] ] );
 
 		$_SERVER['REQUEST_URI'] = '/other/page';
-		$lm = Log_Manager::instance();
-		$this->assertFalse( $lm->enabled, 'Non-matching URL should be disabled when log_urls is set' );
+		$lm = $this->fresh_log_manager();
+		$this->assertFalse( $lm->enabled, 'Non-matching URL should be disabled when a log rule is set' );
 	}
 
 	public function test_matches_url_filter_accepts_matching_url(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'api', 'pattern' => '/api/', 'action' => 'log' ] ] );
 
-		// log_urls = ['/api/'] (a prefix, no trailing '?'); a matching path enables logging.
+		// A prefix rule (no trailing '?'); a matching path enables logging.
 		$_SERVER['REQUEST_URI'] = '/api/';
-		$lm = Log_Manager::instance();
+		$lm = $this->fresh_log_manager();
 		$this->assertTrue( $lm->enabled, 'Matching URL should be enabled' );
 	}
 
 	public function test_matches_url_filter_directly(): void {
 		$this->require_config_or_skip();
-		// Exercises the public method against a freshly constructed instance
-		// that has no compiled regex.
+		// No rules option set: Rule_Set::load() falls back to the synthetic
+		// '/' log-all rule.
 		$lm = Log_Manager::instance();
 		$this->assertTrue( $lm->matches_url_filter( '/anything' ), 'No filter = log all' );
 	}
 
 	// ── URL filter: prefix match with a '?' terminator ─────────────────────
-	// Both skip_urls and log_urls prefix-match the request path (query string
-	// removed) with a '?' appended, so a pattern ending in '?' is an EXACT match
-	// and one without is a PREFIX: ['/?'] = home page only, ['/news?'] = exactly
-	// /news, ['/news'] = anything under /news. (see Log_Manager::compile_url_filter)
+	// Rule patterns prefix-match the request path (query string removed) with
+	// a '?' appended, so a pattern ending in '?' is an EXACT match and one
+	// without is a PREFIX: '/?' = home page only, '/news?' = exactly /news,
+	// '/news' = anything under /news. (see Rule_Matcher::normalize/match)
 
 	public function test_matches_url_filter_log_urls_prefix(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'api', 'pattern' => '/api/', 'action' => 'log' ] ] );
 
-		// log_urls = ['/api/'] (no trailing '?') matches anything starting with it.
+		// A rule pattern (no trailing '?') matches anything starting with it.
 		$_SERVER['REQUEST_URI'] = '/api/data';
-		$this->assertTrue( Log_Manager::instance()->enabled, 'a path under the prefix matches' );
+		$this->assertTrue( $this->fresh_log_manager()->enabled, 'a path under the prefix matches' );
 
 		// ...but only at the START, not a pattern appearing mid-URL.
-		Log_Manager::reset();
 		$_SERVER['REQUEST_URI'] = '/v2/api/';
-		$this->assertFalse( Log_Manager::instance()->enabled, 'the prefix must match at the start, not mid-URL' );
+		$this->assertFalse( $this->fresh_log_manager()->enabled, 'the prefix must match at the start, not mid-URL' );
 	}
 
 	public function test_matches_url_filter_log_urls_trailing_question_mark_is_exact(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-exact' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'news', 'pattern' => '/news?', 'action' => 'log' ] ] );
 
-		// log_urls = ['/news?']: the trailing '?' makes it match ONLY '/news'.
+		// The trailing '?' makes the pattern match ONLY '/news'.
 		$_SERVER['REQUEST_URI'] = '/news';
-		$this->assertTrue( Log_Manager::instance()->enabled, "'/news?' matches '/news' exactly" );
+		$this->assertTrue( $this->fresh_log_manager()->enabled, "'/news?' matches '/news' exactly" );
 
-		Log_Manager::reset();
 		$_SERVER['REQUEST_URI'] = '/news/123';
-		$this->assertFalse( Log_Manager::instance()->enabled, "'/news?' must not match a sub-path" );
+		$this->assertFalse( $this->fresh_log_manager()->enabled, "'/news?' must not match a sub-path" );
 
-		Log_Manager::reset();
 		$_SERVER['REQUEST_URI'] = '/newsletter';
-		$this->assertFalse( Log_Manager::instance()->enabled, "'/news?' must not match a longer sibling" );
+		$this->assertFalse( $this->fresh_log_manager()->enabled, "'/news?' must not match a longer sibling" );
 	}
 
 	public function test_matches_url_filter_log_urls_home_page(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-home' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'home', 'pattern' => '/?', 'action' => 'log' ] ] );
 
-		// log_urls = ['/?'] logs ONLY the home page.
+		// '/?' logs ONLY the home page.
 		$_SERVER['REQUEST_URI'] = '/';
-		$this->assertTrue( Log_Manager::instance()->enabled, "['/?'] matches the home page" );
+		$this->assertTrue( $this->fresh_log_manager()->enabled, "'/?' matches the home page" );
 
-		Log_Manager::reset();
 		$_SERVER['REQUEST_URI'] = '/about';
-		$this->assertFalse( Log_Manager::instance()->enabled, "['/?'] must not match any other page" );
+		$this->assertFalse( $this->fresh_log_manager()->enabled, "'/?' must not match any other page" );
 	}
 
 	public function test_matches_url_filter_log_urls_strips_query_string(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-exact' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'news', 'pattern' => '/news?', 'action' => 'log' ] ] );
 
-		// The query string is removed before matching, so '/news?…' still matches ['/news?'].
+		// The query string is removed before matching, so '/news?…' still matches '/news?'.
 		$_SERVER['REQUEST_URI'] = '/news?ref=newsletter';
-		$this->assertTrue( Log_Manager::instance()->enabled, 'the query string is stripped before matching' );
+		$this->assertTrue( $this->fresh_log_manager()->enabled, 'the query string is stripped before matching' );
 	}
 
 	public function test_matches_url_filter_log_urls_multi_pattern_grouped(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls-multi' ) );
-		Config::reset();
+		$this->set_rules_option( [
+			[ 'id' => 'foo', 'pattern' => '/foo/', 'action' => 'log' ],
+			[ 'id' => 'bar', 'pattern' => '/bar/', 'action' => 'log' ],
+		] );
 
-		// log_urls = ['/foo/','/bar/']; the (?:) group anchors EVERY alternative at
-		// the start — the second alternative matches as a prefix...
+		$_SERVER['REQUEST_URI'] = '/foo/x';
+		$this->assertTrue( $this->fresh_log_manager()->enabled, 'the first rule matches' );
+
 		$_SERVER['REQUEST_URI'] = '/bar/x';
-		$this->assertTrue( Log_Manager::instance()->enabled, 'a grouped alternative matches at the start' );
+		$this->assertTrue( $this->fresh_log_manager()->enabled, 'the second rule matches' );
 
-		// ...but not mid-URL (the un-grouped `^/foo/|/bar/` bug would match here).
-		Log_Manager::reset();
-		$_SERVER['REQUEST_URI'] = '/x/bar/';
-		$this->assertFalse( Log_Manager::instance()->enabled, 'an alternative mid-URL must not match (grouped anchor)' );
+		$_SERVER['REQUEST_URI'] = '/other';
+		$this->assertFalse( $this->fresh_log_manager()->enabled, 'a non-matching URL is disabled' );
 	}
 
 	public function test_matches_url_filter_skip_urls_use_the_same_scheme(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'skip-urls-exact' ) );
-		Config::reset();
+		$this->set_rules_option( [
+			[ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ],
+			[ 'id' => 'health', 'pattern' => '/health?', 'action' => 'skip' ],
+		] );
 
-		// skip_urls obey the same '?'-terminator rule: ['/health?'] skips ONLY '/health'.
+		// The trailing '?' skip rule matches ONLY '/health' exactly.
 		$_SERVER['REQUEST_URI'] = '/health';
-		$this->assertFalse( Log_Manager::instance()->enabled, "skip ['/health?'] skips '/health' exactly" );
+		$this->assertFalse( $this->fresh_log_manager()->enabled, "skip '/health?' skips '/health' exactly" );
 
-		// A sub-path is NOT skipped (and with no log_urls set, logging stays enabled).
-		Log_Manager::reset();
+		// A sub-path is NOT matched by the exact skip rule, so the '/' log rule governs.
 		$_SERVER['REQUEST_URI'] = '/health/check';
-		$this->assertTrue( Log_Manager::instance()->enabled, "skip ['/health?'] must not skip a sub-path" );
+		$this->assertTrue( $this->fresh_log_manager()->enabled, "skip '/health?' must not skip a sub-path" );
 	}
 
 	// ── Line limiting ──────────────────────────────────────────────────────
@@ -1483,60 +1547,50 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 	}
 
-	// ── matches_url_filter: skip URL also short-circuits ────────────────────
+	// ── matches_url_filter: most-specific-rule-wins composition ─────────────
 
 	/**
-	 * The two regex tiers (skip then log) compose: a URL that matches BOTH
-	 * patterns still gets skipped because the skip check runs first.
-	 * Confirms the early-return at the top of `matches_url_filter`.
-	 *
-	 * Verified by directly invoking the public `matches_url_filter` method on
-	 * an instance whose skip + log regexes are seeded via reflection — avoids
-	 * the round trip through disk config files (and the allowed-config-dirs
-	 * gating that goes with it).
+	 * The ruleset matcher is longest-prefix / most-specific-wins, NOT global
+	 * skip-priority: whichever rule's pattern is the more specific match
+	 * governs, regardless of whether it's a log or a skip rule. Verifies both
+	 * directions of that composition.
 	 */
-	public function test_matches_url_filter_skip_wins_over_log(): void {
+	public function test_most_specific_rule_wins_between_skip_and_log(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		Config::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
-		Config::reset();
 
-		$lm = Log_Manager::instance();
-
-		// Force-set both regex sources via reflection so we exercise the
-		// skip-then-log composition without touching disk.
-		$skip = new \ReflectionProperty( Log_Manager::class, 'skip_regex' );
-		$skip->setValue( $lm, '/\/health/i' );
-
-		$log = new \ReflectionProperty( Log_Manager::class, 'log_regex' );
-		$log->setValue( $lm, '/\/health/i' );
-
-		// Both patterns match /health — but skip beats log.
+		// A skip rule more specific than the '/' log baseline wins.
+		$this->set_rules_option( [
+			[ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ],
+			[ 'id' => 'health', 'pattern' => '/health', 'action' => 'skip' ],
+		] );
+		$_SERVER['REQUEST_URI'] = '/health';
 		$this->assertFalse(
-			$lm->matches_url_filter( '/health' ),
-			'skip_urls beats log_urls when both match'
+			$this->fresh_log_manager()->enabled,
+			'the more specific skip rule wins over the shorter log rule'
 		);
-		$this->assertFalse( $lm->enabled );
 
-		// Cleanup.
-		$skip->setValue( $lm, null );
-		$log->setValue( $lm, null );
+		// A log rule more specific than a shorter skip rule wins.
+		$this->set_rules_option( [
+			[ 'id' => 'wp', 'pattern' => '/wp', 'action' => 'skip' ],
+			[ 'id' => 'wp-admin', 'pattern' => '/wp-admin/', 'action' => 'log' ],
+		] );
+		$_SERVER['REQUEST_URI'] = '/wp-admin/edit';
+		$this->assertTrue(
+			$this->fresh_log_manager()->enabled,
+			'the more specific log rule wins over the shorter skip rule'
+		);
 	}
 
 	/**
-	 * URL with explicit log_urls and a NON-matching request — `matches_url_filter`
-	 * returns false AND sets enabled=false (the "log_urls is opt-in" semantics).
-	 * Exercises the false-return branch of the log_regex match.
+	 * URL with an explicit log rule and a NON-matching request —
+	 * `matches_url_filter` returns false AND sets enabled=false (no rule
+	 * matches ⇒ skip).
 	 */
-	public function test_matches_url_filter_returns_false_when_log_regex_set_and_no_match(): void {
+	public function test_matches_url_filter_returns_false_when_no_rule_matches(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'log-urls' ) );
-		Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'api', 'pattern' => '/api/', 'action' => 'log' ] ] );
 
-		$lm = Log_Manager::instance();
-		// log-urls config has log_urls = [ '/api/' ]; pass a non-match.
+		$lm     = $this->fresh_log_manager();
 		$result = $lm->matches_url_filter( '/totally/not/matching' );
 		$this->assertFalse( $result );
 		$this->assertFalse( $lm->enabled );

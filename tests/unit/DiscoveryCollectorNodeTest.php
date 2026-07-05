@@ -9,6 +9,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Discovery_Collector_Node;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Settings_Event_Writer;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
@@ -66,6 +67,31 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		return $msg;
 	}
 
+	/**
+	 * Seed the ruleset with a baseline `/` LOG rule carrying the given hooks —
+	 * the merge target now that the retired global log_events option is gone.
+	 * Direct-assigned (not update_option) so it fires no settings event.
+	 *
+	 * @param string[] $hooks  Inline instrumented-hook list.
+	 * @param string[] $custom Rule custom-event list.
+	 */
+	private function seed_baseline( array $hooks, array $custom = [] ): void {
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'hooks' => $hooks, 'custom_events' => $custom ],
+		];
+	}
+
+	/** The baseline `/` LOG rule's current instrumented-hook list. */
+	private function baseline_hooks(): array {
+		$set = Rule_Set::load();
+		foreach ( $set->rules() as $rule ) {
+			if ( $rule->is_log() && '/' === $rule->pattern ) {
+				return Rule_Set::hooks_for( $rule );
+			}
+		}
+		return [];
+	}
+
 	public function test_fire_emits_one_discovery_get_command_to_tee(): void {
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
@@ -109,20 +135,19 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertFalse( $node->oneshot );
 	}
 
-	public function test_fill_unions_registered_hooks_into_log_events(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+	public function test_fill_unions_registered_hooks_into_the_baseline_rule(): void {
+		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
 		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded', 'shutdown' ] ] );
 		$node->fill( $msg );
 
-		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
-		$this->assertSame( [ 'init', 'wp_loaded', 'shutdown' ], $result );
+		$this->assertSame( [ 'init', 'wp_loaded', 'shutdown' ], $this->baseline_hooks() );
 	}
 
 	public function test_fill_two_partial_replies_converge_to_union(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
@@ -132,14 +157,13 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$node->fill( $first );
 		$node->fill( $second );
 
-		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
+		$result = $this->baseline_hooks();
 		\sort( $result );
 		$this->assertSame( [ 'init', 'shutdown', 'wp_loaded' ], $result );
 	}
 
-	public function test_fill_excludes_custom_events_from_log_events(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events']    = [ 'init' ];
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_custom_events'] = [ 'my_custom' => true ];
+	public function test_fill_excludes_custom_events_from_the_baseline_rule(): void {
+		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
@@ -149,51 +173,50 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		] );
 		$node->fill( $msg );
 
-		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
+		$result = $this->baseline_hooks();
 		$this->assertContains( 'wp_footer', $result );
-		$this->assertNotContains( 'my_custom', $result, 'custom events must not pollute log_events' );
+		$this->assertNotContains( 'my_custom', $result, 'custom events must not pollute the rule hooks' );
 
 		$discovered = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
 		$this->assertArrayHasKey( 'my_custom', $discovered );
 	}
 
-	public function test_fill_caps_log_events_at_max(): void {
+	public function test_fill_caps_rule_hooks_at_max(): void {
 		$max_events = ( new \ReflectionClassConstant( Discovery_Collector_Node::class, 'MAX_EVENTS' ) )->getValue();
 		$existing   = [];
 		for ( $i = 0; $i < $max_events; $i++ ) {
 			$existing[] = "existing_{$i}";
 		}
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = $existing;
+		$this->seed_baseline( $existing );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
 		$msg = $this->reply( [ 'registered_hooks' => [ 'new_one', 'new_two' ] ] );
 		$node->fill( $msg );
 
-		$result = $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'];
-		$this->assertSame( $max_events, \count( $result ), 'cap must hold' );
+		$this->assertSame( $max_events, \count( $this->baseline_hooks() ), 'cap must hold' );
 	}
 
-	public function test_fill_emits_a_settings_event_for_the_merged_option(): void {
+	public function test_fill_emits_a_settings_event_for_the_merged_rules_option(): void {
 		$this->wire_option_watcher();
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
 		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] );
 		$node->fill( $msg );
 
-		// The merge writes log_events like any other option change; the watcher
-		// fires a name-only settings event for it (no suppress guard).
-		$this->assertCount( 1, $this->settings_events, 'merge emits a settings event for the option it writes' );
+		// Rule_Set::save() writes the rules option like any other option change;
+		// the watcher fires a name-only settings event for it (no suppress guard).
+		$this->assertCount( 1, $this->settings_events, 'merge emits a settings event for the rules option it writes' );
 		$this->assertSame(
-			[ 'option' => 'newspack_event_logger_nodes_log_events' ],
+			[ 'option' => Rule_Set::OPTION_RULES ],
 			$this->settings_events[0][ Message::VALUE ]
 		);
 	}
 
 	public function test_fill_ignores_non_struct_message(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
@@ -202,7 +225,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$msg[ Message::VALUE ] = 'not an array';
 		$node->fill( $msg );
 
-		$this->assertSame( [ 'init' ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] );
+		$this->assertSame( [ 'init' ], $this->baseline_hooks() );
 	}
 
 	public function test_node_schema_is_monitor(): void {

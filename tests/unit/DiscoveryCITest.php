@@ -16,6 +16,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Discovery_CI_Node;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -29,6 +30,7 @@ class DiscoveryCITest extends TestCase {
 		// Service CI verbs are gate-by-default (manage_options) in the substrate;
 		// these happy-path verbs run as an authorized admin (deny-path is its own test).
 		$GLOBALS['_current_user_can'] = true;
+		$GLOBALS['_wp_options']       = [];
 		// /tmp directly to dodge symlink-resolved sys_get_temp_dir on macOS,
 		// matching DiscoveryControllerTest.
 		$this->tmp = '/tmp/discovery-ci-test-' . \uniqid();
@@ -38,15 +40,27 @@ class DiscoveryCITest extends TestCase {
 
 	protected function tearDown(): void {
 		VerbHarness::reset();
+		$GLOBALS['_wp_options'] = [];
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
 
-	public function test_get_verb_returns_registered_hooks_and_custom_events(): void {
-		$this->use_base_dir( $this->tmp, [
-			'log_events'    => [ 'init', 'wp_loaded', 'shutdown' ],
-			'custom_events' => [ 'my_event' => true ],
+	/**
+	 * Seed the durable ruleset the discovery union reads. `get` now sources its
+	 * payload from the LOG rules' instrumented hooks + custom events, not the
+	 * retired global log_events / custom_events options.
+	 *
+	 * @param string[] $hooks  Inline instrumented-hook list.
+	 * @param string[] $custom Custom-event list.
+	 */
+	private function set_rule( array $hooks, array $custom ): void {
+		\update_option( Rule_Set::OPTION_RULES, [
+			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'hooks' => $hooks, 'custom_events' => $custom ],
 		] );
+	}
+
+	public function test_get_verb_returns_registered_hooks_and_custom_events(): void {
+		$this->set_rule( [ 'init', 'wp_loaded', 'shutdown' ], [ 'my_event' ] );
 		$interpreter = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
@@ -59,10 +73,8 @@ class DiscoveryCITest extends TestCase {
 	}
 
 	public function test_custom_events_filtered_out_of_registered_hooks(): void {
-		$this->use_base_dir( $this->tmp, [
-			'log_events'    => [ 'my_event', 'init' ],
-			'custom_events' => [ 'my_event' ],
-		] );
+		// A hook that is ALSO a custom event must not leak into registered_hooks.
+		$this->set_rule( [ 'my_event', 'init' ], [ 'my_event' ] );
 		$interpreter = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
@@ -71,11 +83,11 @@ class DiscoveryCITest extends TestCase {
 		$this->assertSame( [ 'my_event' ], $result['custom_events'] );
 	}
 
-	public function test_get_verb_handles_indexed_and_assoc_arrays(): void {
-		$this->use_base_dir( $this->tmp, [
-			// Mixed shape: log_events as assoc[name=>true], custom_events as indexed.
-			'log_events'    => [ 'init' => true, 'shutdown' => true ],
-			'custom_events' => [ 'a', 'b' ],
+	public function test_get_verb_unions_hooks_and_custom_events_across_rules(): void {
+		// The payload is the union across every LOG rule.
+		\update_option( Rule_Set::OPTION_RULES, [
+			[ 'id' => 'a', 'pattern' => '/a/', 'action' => 'log', 'hooks' => [ 'init' ], 'custom_events' => [ 'a' ] ],
+			[ 'id' => 'b', 'pattern' => '/b/', 'action' => 'log', 'hooks' => [ 'shutdown' ], 'custom_events' => [ 'b' ] ],
 		] );
 		$interpreter = new Discovery_CI_Node();
 
@@ -87,10 +99,7 @@ class DiscoveryCITest extends TestCase {
 	}
 
 	public function test_get_verb_dedupes_and_drops_empty_strings(): void {
-		$this->use_base_dir( $this->tmp, [
-			'log_events'    => [ '', 'init', '', 'init' ],
-			'custom_events' => [],
-		] );
+		$this->set_rule( [ '', 'init', '', 'init' ], [] );
 		$interpreter = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );
@@ -99,11 +108,9 @@ class DiscoveryCITest extends TestCase {
 		$this->assertSame( [], $result['custom_events'] );
 	}
 
-	public function test_get_verb_returns_empty_lists_for_non_array_config_values(): void {
-		$this->use_base_dir( $this->tmp, [
-			'log_events'    => 'not-an-array',
-			'custom_events' => 42,
-		] );
+	public function test_get_verb_returns_empty_lists_when_no_log_rules_instrument_anything(): void {
+		// The minimal log-all baseline instruments no hooks / custom events.
+		$this->set_rule( [], [] );
 		$interpreter = new Discovery_CI_Node();
 
 		$result = VerbHarness::fire( $interpreter, 'discovery', 'get' );

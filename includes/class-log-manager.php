@@ -72,11 +72,11 @@ class Log_Manager {
 	/** Saved UNIQUE_ID for suspend/resume. */
 	private ?string $saved_unique_id = null;
 
-	/** @var string|null Compiled regex for skip URL patterns. */
-	private $skip_regex = null;
+	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
+	private ?Rule_Matcher $matcher = null;
 
-	/** @var string|null Compiled regex for log URL patterns. */
-	private $log_regex = null;
+	/** @var Rule|null The rule governing this request (null ⇒ no match ⇒ skip). */
+	private ?Rule $matched_rule = null;
 
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
 	private const MAX_TIMER_DEPTH = 100;
@@ -153,8 +153,7 @@ class Log_Manager {
 		if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
 			return;
 		}
-		$this->skip_regex = self::compile_url_filter( $this->config['skip_urls'] ?? [] );
-		$this->log_regex  = self::compile_url_filter( $this->config['log_urls'] ?? [] );
+		$this->matcher = Rule_Set::load()->matcher();
 
 		/** @var array{request_time?: float, request_ts?: int|float}|null $newspack_profiler */
 		global $newspack_profiler;
@@ -170,27 +169,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Compile a URL-filter pattern list into a start-anchored regex, or null.
-	 *
-	 * Patterns prefix-match the request path with a '?' terminator appended
-	 * (see matches_url_filter), so a pattern ending in '?' matches exactly.
-	 *
-	 * @param mixed $urls Config value, expected to be an array of pattern strings.
-	 * @return string|null Compiled regex, or null when there are no patterns.
-	 */
-	private static function compile_url_filter( $urls ): ?string {
-		if ( ! \is_array( $urls ) || empty( $urls ) ) {
-			return null;
-		}
-		$patterns = \array_filter( \array_map( static fn( $u ) => \trim( self::to_string( $u ) ), $urls ), static fn ( $v ) => (bool) $v );
-		if ( empty( $patterns ) ) {
-			return null;
-		}
-		// `/^(?:a|b)/i` — start-anchored; the (?:) group anchors EVERY alternative.
-		return '/^(?:' . \implode( '|', \array_map( fn( $p ) => \preg_quote( $p, '/' ), $patterns ) ) . ')/i';
-	}
-
-	/**
 	 * Narrow a mixed $_SERVER / config value to a string, reproducing the
 	 * `(string)` coercion the surrounding code already applies to scalars
 	 * (these values are always scalar strings in practice).
@@ -202,27 +180,33 @@ class Log_Manager {
 	}
 
 	/**
-	 * Check if URL matches the configured filter patterns.
+	 * Resolve the governing rule for a URL and set enabled accordingly.
 	 *
 	 * @param string $url URL to check.
 	 * @return bool True if URL should be logged.
 	 */
 	public function matches_url_filter( string $url ): bool {
-		$target = \explode( '?', $url, 2 )[0] . '?';
-		if ( null !== $this->skip_regex && \preg_match( $this->skip_regex, $target ) ) {
-			$this->enabled = false;
-			return false;
-		}
-		if ( null === $this->log_regex ) {
-			$this->enabled = true;
-			return true;  // No filter = log all.
-		}
-		if ( \preg_match( $this->log_regex, $target ) ) {
-			$this->enabled = true;
-			return true;
-		}
-		$this->enabled = false;
-		return false;
+		$this->matched_rule = $this->matcher?->match( $url );
+		$this->enabled      = null !== $this->matched_rule && $this->matched_rule->is_log();
+		return $this->enabled;
+	}
+
+	/**
+	 * The rule governing this request (null ⇒ no match ⇒ skip).
+	 *
+	 * @api Used by external plugins.
+	 */
+	public function governing_rule(): ?Rule {
+		return $this->matched_rule;
+	}
+
+	/**
+	 * The governing rule's id, or '' when nothing matched.
+	 *
+	 * @api Used by external plugins.
+	 */
+	public function governing_rule_id(): string {
+		return $this->matched_rule->id ?? '';
 	}
 
 	/**
@@ -423,6 +407,7 @@ class Log_Manager {
 		if ( null !== $this->request_ts ) {
 			$process_data['ts'] = $this->request_ts;
 		}
+		$process_data['rule'] = $this->governing_rule_id();
 
 		$this->message( 'process (start)', $process_data );
 		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
@@ -644,6 +629,7 @@ class Log_Manager {
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
 			$_SERVER = \array_pop( self::$job_server_stack );
 		}
+		\do_action( 'newspack_event_logger_nodes_scope_changed' );
 	}
 
 	/**
@@ -708,6 +694,7 @@ class Log_Manager {
 			$_SERVER['CONTENT_LENGTH'],
 			$_SERVER['HTTP_X_A8C_REQUEST_ID']
 		);
+		\do_action( 'newspack_event_logger_nodes_scope_changed' );
 	}
 
 	/**
