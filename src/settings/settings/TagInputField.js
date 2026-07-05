@@ -21,18 +21,20 @@ import { Button } from '@wordpress/components';
 import { closeSmall } from '@wordpress/icons';
 import HookSelectorModal from './HookSelectorModal';
 import CustomEventSelectorModal from './CustomEventSelectorModal';
+import '../styles/tag-input.scss';
 
 /**
  * Tag Input Field component.
  *
- * @param {Object}  props                    Component props.
- * @param {string}  props.fieldName          The field name (used for hidden input ID).
- * @param {Array}   props.initialValues      Initial values array.
- * @param {Array}   props.defaultValues      Default values for reset.
- * @param {boolean} props.horizontal         If true, tags flow horizontally (for short values).
- * @param {boolean} props.showHookSelector   If true, show hook selector button (for events fields).
- * @param {string}  props.hookSelectorMode   'include' or 'exclude' for hook selector.
- * @param {boolean} props.showCustomSelector If true, show custom event selector button.
+ * @param {Object}   props                    Component props.
+ * @param {string}   props.fieldName          The field name (used for hidden input ID).
+ * @param {Array}    props.initialValues      Initial values array.
+ * @param {Array}    props.defaultValues      Default values for reset.
+ * @param {boolean}  props.horizontal         If true, tags flow horizontally (for short values).
+ * @param {boolean}  props.showHookSelector   If true, show hook selector button (for events fields).
+ * @param {string}   props.hookSelectorMode   'include' or 'exclude' for hook selector.
+ * @param {boolean}  props.showCustomSelector If true, show custom event selector button.
+ * @param {Function} [props.onChange]         Controlled-use callback fired with the values array on change.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function TagInputField( {
@@ -43,6 +45,7 @@ export default function TagInputField( {
 	showHookSelector = false,
 	hookSelectorMode = 'exclude',
 	showCustomSelector = false,
+	onChange,
 } ) {
 	const [ values, setValues ] = useState( initialValues );
 	const [ inputValue, setInputValue ] = useState( '' );
@@ -69,6 +72,11 @@ export default function TagInputField( {
 		if ( hiddenInput ) {
 			hiddenInput.value = JSON.stringify( values );
 		}
+		// Controlled use (e.g. RuleEditModal): observe the tag list directly
+		// instead of the hidden form-POST carrier.
+		if ( onChange ) {
+			onChange( values );
+		}
 		if ( ! didMountRef.current ) {
 			didMountRef.current = true;
 			return;
@@ -78,7 +86,7 @@ export default function TagInputField( {
 			wrapper.classList.remove( 'is-marked' );
 			wrapper.querySelector( '[data-nn-reset-marker]' )?.remove();
 		}
-	}, [ values, fieldName ] );
+	}, [ values, fieldName, onChange ] );
 
 	/**
 	 * Remove a value by index.

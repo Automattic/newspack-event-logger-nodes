@@ -1,0 +1,149 @@
+/**
+ * TagInputField styles. Imported by the component itself so EVERY bundle that
+ * renders it (the settings rules editor AND the performance dashboard's "Log
+ * this URL" modal, via RuleEditModal's Significant Events field) gets them —
+ * these were previously inlined in settings.scss, which only the settings
+ * bundle loads.
+ */
+
+@use "base";
+
+.event-logger-tag-input {
+	max-width: 60em;
+}
+
+.event-logger-tag-container {
+	margin-bottom: 8px;
+
+	&.horizontal {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	&.vertical {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 4px;
+	}
+}
+
+.event-logger-tag-token {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 6px 4px 10px;
+	border-radius: base.$border-radius-sm;
+	font-size: 13px;
+	line-height: 1.4;
+	max-width: 100%;
+
+	// Default values - subtle gray
+	&.is-default {
+		background: base.$light-border-light;
+		border: 2px solid base.$light-border;
+		color: base.$light-text;
+	}
+
+	// Custom/user-added values — Cobalt highlight.
+	&.is-custom {
+		background: var(--np-primary-subtle);
+		border: 2px solid var(--np-primary);
+		color: base.$light-text;
+	}
+}
+
+.event-logger-tag-text {
+	word-break: break-all;
+	overflow-wrap: break-word;
+}
+
+// Override WordPress Button component styles for tag remove button
+button.components-button.event-logger-tag-remove {
+	flex-shrink: 0;
+	width: 18px;
+	height: 18px;
+	min-width: 18px;
+	max-width: 18px;
+	min-height: 18px;
+	max-height: 18px;
+	padding: 0;
+	margin-left: 2px;
+	background: transparent;
+	border: none;
+	border-radius: 50%;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: base.$light-text-secondary;
+	transition: all 0.15s ease;
+
+	&:hover {
+		background: rgba(0, 0, 0, 0.1);
+		color: base.$light-text;
+	}
+
+	svg {
+		width: 14px;
+		height: 14px;
+	}
+}
+
+.event-logger-tag-input-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+// =============================================================================
+// Hook/Event Selector
+// =============================================================================
+
+.event-logger-selector-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.event-logger-selector-count {
+	color: base.$light-text-secondary;
+	font-size: 13px;
+}
+
+// =============================================================================
+// Dashboard skin — when the field renders inside a dashboard-portaled modal it
+// carries the console skin classes; re-theme the light-mode tag pills onto the
+// skin tokens (the bare <input> is themed by rule-edit-modal.scss's control
+// rules). Scoped to `.topology-app`, which only the dashboard passes.
+// =============================================================================
+
+.topology-app {
+	.event-logger-tag-token {
+		&.is-default {
+			background: var(--paper-2);
+			border-color: var(--paper-shadow);
+			color: var(--ink);
+		}
+
+		&.is-custom {
+			background: var(--paper-2);
+			border-color: var(--cyan);
+			color: var(--ink);
+		}
+	}
+
+	button.components-button.event-logger-tag-remove {
+		color: var(--ink-3);
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.1);
+			color: var(--ink);
+		}
+	}
+
+	.event-logger-selector-count {
+		color: var(--ink-3);
+	}
+}
