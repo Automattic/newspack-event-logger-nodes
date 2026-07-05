@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-07-04
+
+### Fixed
+
+- **Stats mirror never flushed on the `combined` topology.** The durable stats mirror (0.25.0) drains its in-memory buffer to the partition once per `Flame_Builder_Node::save_state()`, which only runs when the feeding `Consumer` names it as its `snapshot_node`. `combined.tsl` wired `firehose:consumer`'s snapshot but was missing `cmd requests:consumer:config set_snapshot_node flame-builder` — so on the topology most deployments run, `save_state()` never fired: the mirror never flushed (`flame-stats:partition` stayed empty) and flame-builder's in-flight leaderboard `pending` state never resumed on respawn. Added the wire (`flame-builder` / `performance` already had it).
+- **`set_stats_partition` late-binds by node name.** It stored the resolved `Partition_Node` object and failed — silently, at boot with `want_reply=false` — when the config verb ran before the partition's `make_node`, the ordering a console-serialized topology override produces; that disabled the mirror. It now stores the node *name* and resolves it via `Core::node()` lazily at flush/reload (like `set_snapshot_node`), so graph construction is order-independent (and cycle-safe). The 4KB PIPE_BUF cap-lift moved from the setter into each topology (`cmd flame-stats:partition:config void_warranty`, beside the partition's `make_node`). The mirror also re-arms on a `configure_stats` re-run — `set_stats_store()` arms it too, so store and partition can be configured in either order.
+
+### Added
+
+- **`TopologyShapeTest` structural guard suite** over the stock topologies: every `Consumer` snapshots the stateful node it feeds (and at most one); the stats-mirror partition carries `void_warranty`; `configure_stats` precedes `set_stats_partition`; `set_stats_partition` uses the config token; request-builder output targets are set; no directive references an undeclared node; and each snapshot target matches its consumer's offset-filename convention.
+- **Flame_Builder exposes its stats-mirror partition as a console target**, so the `flame-builder → flame-stats:partition` edge renders on the topology console — the mirror writes bypass the sink and would otherwise leave the partition drawn as disconnected. Display only; it does not affect what gets mirrored.
+
 ## [0.25.0] - 2026-07-04
 
 ### Added

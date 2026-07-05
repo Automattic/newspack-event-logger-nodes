@@ -65,36 +65,6 @@ class Stats_Store {
 		$this->prefix       = $this->compute_prefix();
 	}
 
-	/**
-	 * Write to memcache, then (if wired AND the set landed) shadow the same write
-	 * to the mirror seam — a rejected/failed set must not be durably recorded and
-	 * resurrected on cold boot.
-	 *
-	 * @param array<string, mixed> $data
-	 * @param string               $ns   Namespace routing hint for the mirror.
-	 */
-	private function store( string $key, array $data, int $ttl, string $ns ): bool {
-		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
-		if ( $ok && null !== $this->mirror ) {
-			( $this->mirror )( $key, $data, $ttl, $ns );
-		}
-		return $ok;
-	}
-
-	/**
-	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
-	 * ttl>0 and the current prefix (a rotated salt orphans the mirror, like it
-	 * orphans memcache).
-	 *
-	 * @param array<string, mixed> $data
-	 */
-	public function restore( string $key, array $data, int $ttl ): bool {
-		if ( $ttl <= 0 || ! \str_starts_with( $key, $this->prefix . ':' ) ) {
-			return false;
-		}
-		return (bool) Core::$memd?->set( $key, $data, $ttl );
-	}
-
 	private function compute_prefix(): string {
 		$salt = '';
 		if ( \function_exists( 'get_option' ) ) {
@@ -265,6 +235,22 @@ class Stats_Store {
 		return $this->store( $this->key( self::NS_HOURLY ), $data, $this->ttl(), self::NS_HOURLY );
 	}
 
+	/**
+	 * Write to memcache, then (if wired AND the set landed) shadow the same write
+	 * to the mirror seam — a rejected/failed set must not be durably recorded and
+	 * resurrected on cold boot.
+	 *
+	 * @param array<string, mixed> $data
+	 * @param string               $ns   Namespace routing hint for the mirror.
+	 */
+	private function store( string $key, array $data, int $ttl, string $ns ): bool {
+		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
+		if ( $ok && null !== $this->mirror ) {
+			( $this->mirror )( $key, $data, $ttl, $ns );
+		}
+		return $ok;
+	}
+
 	public function ttl(): int {
 		return $this->max_lifespan;
 	}
@@ -387,6 +373,20 @@ class Stats_Store {
 	 */
 	public function set_url_categories( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl(), self::NS_URL_CAT );
+	}
+
+	/**
+	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
+	 * ttl>0 and the current prefix (a rotated salt orphans the mirror, like it
+	 * orphans memcache).
+	 *
+	 * @param array<string, mixed> $data
+	 */
+	public function restore( string $key, array $data, int $ttl ): bool {
+		if ( $ttl <= 0 || ! \str_starts_with( $key, $this->prefix . ':' ) ) {
+			return false;
+		}
+		return (bool) Core::$memd?->set( $key, $data, $ttl );
 	}
 
 	public function partition(): int {

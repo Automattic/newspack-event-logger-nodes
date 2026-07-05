@@ -21,6 +21,7 @@ cmd request-builder:config set_errors_target errors:partition
 cmd request-builder:config set_inflight_target gyroscope:partition
 cmd firehose:consumer:config set_snapshot_node request-builder
 cmd firehose:consumer:config set_multi_writer true
+cmd requests:consumer:config set_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_stats_partition <eln:stats_mirror_node>
 cmd flame-builder:config set_auto_tune <eln:auto_disable_threshold> <eln:auto_protect_time_threshold>
@@ -30,6 +31,7 @@ cmd requests:partition:config void_warranty
 cmd requests:partition:config with_index request-index
 cmd flames:partition:config void_warranty
 cmd flames:partition:config with_index flame-index
+cmd flame-stats:partition:config void_warranty
 cmd jobs:partition:config void_warranty
 connect_node firehose:consumer firehose:tee
 connect_node firehose:tee request-builder

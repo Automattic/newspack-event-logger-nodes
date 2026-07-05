@@ -124,8 +124,8 @@ class Flame_Builder_Node extends Node {
 	/** @var Stats_Store|null Memcache-backed stats store. */
 	private $stats_store = null;
 
-	/** @var \Newspack_Nodes\Partition_Node|null Durable shadow of the stats store (non-Atomic cold-boot replay). */
-	private ?\Newspack_Nodes\Partition_Node $stats_partition = null;
+	/** Name of the durable Partition shadowing the stats store (non-Atomic cold-boot replay); '' = disabled. Resolved by name lazily at use. */
+	private string $stats_partition = '';
 
 	/** Per-URL namespaces bounded to top-N by traffic when mirrored. */
 	private const STATS_MIRROR_TOPN = [
@@ -176,6 +176,7 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function fill( array &$message ): void {
 		++$this->counter;
+		$this->reload_stats_from_partition(); // Lazy cold-boot warm once the partition node exists.
 		$type_raw = $message[ Message::TYPE ];
 		$type     = \is_int( $type_raw ) ? $type_raw : 0;
 		if ( $type & Message::TM_REQUEST ) {
@@ -1736,95 +1737,50 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
-	 * alongside the base's own-name + `:config` checks. Chains parent::.
-	 * 
-	 * @api Used by substrate.
-	 * @param string $name
-	 */
-	protected function check_name_availability( string $name ): void {
-		if ( null !== $this->auto_tuner && null !== \Newspack_Nodes\Core::node( "{$name}:auto-tuner" ) ) {
-			throw new \RuntimeException( \esc_html( "node name collision: {$name}:auto-tuner already registered" ) );
-		}
-		parent::check_name_availability( $name );
-	}
-
-	/**
-	 * Track the owned auto-tuner sibling as `{name}:auto-tuner`. Only called from
-	 * name() with a non-empty $name; sibling teardown lives in remove_node().
-	 * Chains parent::.
-	 * 
-	 * @api Used by substrate.
-	 * @param string|null $name
-	 */
-	protected function set_sibling_names( ?string $name = null ): void {
-		$this->auto_tuner?->name( "{$name}:auto-tuner" );
-		parent::set_sibling_names( $name );
-	}
-
-	/**
-	 * Cascade-remove the owned auto-tuner sibling alongside the patron. Full
-	 * remove_node (not a bare unregister) so the auto-tuner's own `:config`
-	 * interpreter sibling unregisters too and a same-name respawn doesn't collide.
-	 *
-	 * @api Used by substrate.
-	 */
-	public function remove_node(): void {
-		if ( null !== $this->auto_tuner ) {
-			$this->auto_tuner->remove_node();
-			$this->auto_tuner = null;
-		}
-		parent::remove_node();
-	}
-
-	/**
-	 * Propagate the make_node auto-sink down to the owned auto-tuner sibling so
-	 * it's sunk into _command_interpreter like any other sibling (Rule 2c).
-	 * 
-	 * @api Used by substrate.
-	 * @param Node|null $node
-	 * @return Node|null
-	 */
-	public function sink( ?Node $node = null ): ?Node {
-		if ( \func_num_args() > 0 ) {
-			$this->auto_tuner?->sink( $node );
-			return parent::sink( $node );
-		}
-		return parent::sink();
-	}
-
-	/**
 	 * Inject the Stats_Store.
 	 */
 	public function set_stats_store( ?Stats_Store $store ): void {
 		$this->stats_store = $store;
+		$this->arm_stats_mirror();
 	}
 
 	/**
-	 * Wire a durable Partition to shadow stats writes (via the store's mirror
-	 * seam) and reload memcache from it on cold boot. For non-Atomic deployments
-	 * where memcache is volatile; a no-op unless a Stats_Store is already set.
+	 * Name the durable Partition that shadows stats writes (via the store's
+	 * mirror seam) and warms memcache on cold boot. For non-Atomic deployments
+	 * where memcache is volatile; disabled when the name is empty.
+	 *
+	 * Stores the name only — the node is resolved by name lazily at flush/reload
+	 * (like set_snapshot_node), so this verb can't fail on a not-yet-built node
+	 * whose make_node comes later in a console-serialized override. The partition
+	 * lifts its own 4KB PIPE_BUF cap via `cmd <name>:config void_warranty` in the
+	 * topology, alongside its make_node.
 	 *
 	 * The mirror buffers writes in memory and flushes them to the partition once
 	 * per save_state() checkpoint (flush_stats_mirror). Writes made after the last
 	 * checkpoint die with a crash — every partition frame is already committed, so
 	 * recovery replays them exactly once with no double-count.
 	 */
-	public function set_stats_partition( ?\Newspack_Nodes\Partition_Node $partition ): void {
-		if ( null === $partition ) {
-			return; // Disabled (empty <eln:stats_mirror_node>).
-		}
+	public function set_stats_partition( string $name ): void {
+		$this->stats_partition = \trim( $name );
+		$this->arm_stats_mirror();
+	}
+
+	/**
+	 * Arm (or disarm) the store's mirror seam from the current store + partition
+	 * name. Called from BOTH setters so store and partition can be configured in
+	 * either order and a configure_stats re-run re-arms the fresh store. Needs
+	 * only the store — the partition node is resolved by name lazily at use.
+	 */
+	private function arm_stats_mirror(): void {
 		$store = $this->stats_store;
 		if ( null === $store ) {
-			Core::stderr( 'flame-builder: set_stats_partition ran before configure_stats — stats mirror NOT wired' );
 			return;
 		}
-		$partition->void_warranty(); // Single-writer mirror: lift the 4KB PIPE_BUF cap so url_stats blobs aren't silently dropped.
-		$this->stats_partition = $partition;
-		$store->mirror         = function ( string $key, array $data, int $ttl, string $ns ): void {
-			$this->buffer_mirror_write( $key, $data, $ttl, $ns );
-		};
-		$this->reload_stats_from_partition();
+		$store->mirror = '' === $this->stats_partition
+			? null
+			: function ( string $key, array $data, int $ttl, string $ns ): void {
+				$this->buffer_mirror_write( $key, $data, $ttl, $ns );
+			};
 	}
 
 	/**
@@ -1907,6 +1863,49 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Save state for persistence.
+	 *
+	 * @api Used by substrate.
+	 * @return array<string, mixed>
+	 */
+	public function save_state(): array {
+		$this->flush_stats_mirror();
+		return [
+			'pending_bucket' => $this->pending_bucket,
+			'pending'        => $this->pending,
+		];
+	}
+
+	/**
+	 * Flush the buffered mirror writes to the durable partition as one checkpoint.
+	 * save_state() is co-committed with the requests-Consumer's durable offset, so
+	 * every frame written here is committed: writes made after this die with a
+	 * crash and get reprocessed cleanly (no double-count). Aggregates flush in full;
+	 * the per-URL namespaces flush their bounded top-N. Both buffers reset after.
+	 */
+	private function flush_stats_mirror(): void {
+		if ( '' === $this->stats_partition ) {
+			return;
+		}
+		$this->reload_stats_from_partition(); // Cold-boot warm before the first write, if not already.
+		$partition = $this->resolve_stats_partition();
+		if ( null === $partition ) {
+			$this->print_less_often( "flame-builder: stats_partition '{$this->stats_partition}' not found at flush" );
+			return; // Keep the buffer; retry next checkpoint once the node exists.
+		}
+		foreach ( $this->stats_mirror_buffer as $key => [ $data, $ttl ] ) {
+			$this->write_mirror_frame( $partition, $key, $data, $ttl );
+		}
+		foreach ( $this->stats_mirror_topn as $entries ) {
+			foreach ( $entries as $key => [ $data, $ttl ] ) {
+				$this->write_mirror_frame( $partition, $key, $data, $ttl );
+			}
+		}
+		$this->stats_mirror_buffer = [];
+		$this->stats_mirror_topn   = [];
+	}
+
+	/**
 	 * Cold-boot replay: when memcache hourly is empty, read every mirrored write
 	 * from the partition oldest→newest, collapse to the latest frame per key
 	 * (frames are append-ordered, so last-wins), then restore each key ONCE under
@@ -1921,12 +1920,12 @@ class Flame_Builder_Node extends Node {
 		if ( $this->stats_reloaded ) {
 			return;
 		}
-		$this->stats_reloaded = true;
-		$store                = $this->stats_store;
-		$partition            = $this->stats_partition;
+		$store     = $this->stats_store;
+		$partition = $this->resolve_stats_partition();
 		if ( null === $store || null === $partition ) {
-			return;
+			return; // Disabled or not built yet — retry on a later fill/flush; don't mark reloaded.
 		}
+		$this->stats_reloaded = true;
 		if ( ! empty( $store->get_hourly() ) ) {
 			return; // Warm — skip replay.
 		}
@@ -1965,6 +1964,88 @@ class Flame_Builder_Node extends Node {
 		foreach ( $latest as $key => [ $data, $ttl, $ts ] ) {
 			$store->restore( $key, $data, $ttl - (int) ( $now - $ts ) );
 		}
+	}
+
+	/** Resolve the named stats partition to its live node, or null when disabled / not-yet-built. */
+	private function resolve_stats_partition(): ?\Newspack_Nodes\Partition_Node {
+		if ( '' === $this->stats_partition ) {
+			return null;
+		}
+		$node = Core::node( $this->stats_partition );
+		return $node instanceof \Newspack_Nodes\Partition_Node ? $node : null;
+	}
+
+	/**
+	 * Write one mirror frame (TM_STRUCT {key,data,ttl}) to the partition.
+	 *
+	 * @param array<array-key, mixed> $data
+	 */
+	private function write_mirror_frame( \Newspack_Nodes\Partition_Node $partition, string $key, array $data, int $ttl ): void {
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ] = Core::$now;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::KEY ]       = $key;
+		$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
+		$partition->fill( $msg );
+	}
+
+	/**
+	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
+	 * alongside the base's own-name + `:config` checks. Chains parent::.
+	 * 
+	 * @api Used by substrate.
+	 * @param string $name
+	 */
+	protected function check_name_availability( string $name ): void {
+		if ( null !== $this->auto_tuner && null !== \Newspack_Nodes\Core::node( "{$name}:auto-tuner" ) ) {
+			throw new \RuntimeException( \esc_html( "node name collision: {$name}:auto-tuner already registered" ) );
+		}
+		parent::check_name_availability( $name );
+	}
+
+	/**
+	 * Track the owned auto-tuner sibling as `{name}:auto-tuner`. Only called from
+	 * name() with a non-empty $name; sibling teardown lives in remove_node().
+	 * Chains parent::.
+	 * 
+	 * @api Used by substrate.
+	 * @param string|null $name
+	 */
+	protected function set_sibling_names( ?string $name = null ): void {
+		$this->auto_tuner?->name( "{$name}:auto-tuner" );
+		parent::set_sibling_names( $name );
+	}
+
+	/**
+	 * Cascade-remove the owned auto-tuner sibling alongside the patron. Full
+	 * remove_node (not a bare unregister) so the auto-tuner's own `:config`
+	 * interpreter sibling unregisters too and a same-name respawn doesn't collide.
+	 *
+	 * @api Used by substrate.
+	 */
+	public function remove_node(): void {
+		if ( null !== $this->auto_tuner ) {
+			$this->auto_tuner->remove_node();
+			$this->auto_tuner = null;
+		}
+		parent::remove_node();
+	}
+
+	/**
+	 * Propagate the make_node auto-sink down to the owned auto-tuner sibling so
+	 * it's sunk into _command_interpreter like any other sibling (Rule 2c).
+	 * 
+	 * @api Used by substrate.
+	 * @param Node|null $node
+	 * @return Node|null
+	 */
+	public function sink( ?Node $node = null ): ?Node {
+		if ( \func_num_args() > 0 ) {
+			$this->auto_tuner?->sink( $node );
+			return parent::sink( $node );
+		}
+		return parent::sink();
 	}
 
 	/**
@@ -2035,59 +2116,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Save state for persistence.
-	 *
-	 * @api Used by substrate.
-	 * @return array<string, mixed>
-	 */
-	public function save_state(): array {
-		$this->flush_stats_mirror();
-		return [
-			'pending_bucket' => $this->pending_bucket,
-			'pending'        => $this->pending,
-		];
-	}
-
-	/**
-	 * Flush the buffered mirror writes to the durable partition as one checkpoint.
-	 * save_state() is co-committed with the requests-Consumer's durable offset, so
-	 * every frame written here is committed: writes made after this die with a
-	 * crash and get reprocessed cleanly (no double-count). Aggregates flush in full;
-	 * the per-URL namespaces flush their bounded top-N. Both buffers reset after.
-	 */
-	private function flush_stats_mirror(): void {
-		$partition = $this->stats_partition;
-		if ( null === $partition ) {
-			return;
-		}
-		foreach ( $this->stats_mirror_buffer as $key => [ $data, $ttl ] ) {
-			$this->write_mirror_frame( $partition, $key, $data, $ttl );
-		}
-		foreach ( $this->stats_mirror_topn as $entries ) {
-			foreach ( $entries as $key => [ $data, $ttl ] ) {
-				$this->write_mirror_frame( $partition, $key, $data, $ttl );
-			}
-		}
-		$this->stats_mirror_buffer = [];
-		$this->stats_mirror_topn   = [];
-	}
-
-	/**
-	 * Write one mirror frame (TM_STRUCT {key,data,ttl}) to the partition.
-	 *
-	 * @param array<array-key, mixed> $data
-	 */
-	private function write_mirror_frame( \Newspack_Nodes\Partition_Node $partition, string $key, array $data, int $ttl ): void {
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ] = Core::$now;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::KEY ]       = $key;
-		$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
-		$partition->fill( $msg );
-	}
-
-	/**
 	 * Restore state from save_state().
 	 *
 	 * @api Used by substrate.
@@ -2102,6 +2130,41 @@ class Flame_Builder_Node extends Node {
 			/** @var array{hourly?: array<string, mixed>, dim?: array<string, array<string, array{c: int, s: float|int, m: float|int}>>, dim_by_server?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>, url_dim?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>, url_stats?: array<string, mixed>, cat?: array<string, array{t: float|int, c: float|int, n: int}>, cat_by_server?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>, cat_by_url?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>, leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}, leaderboard_by_server?: array<string, array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}>} $merged */
 			$this->pending = $merged;
 		}
+	}
+
+	/**
+	 * Surface the stats-mirror partition as a named target so the console draws
+	 * the flame-builder → flame-stats:partition edge. Display only: the mirror
+	 * writes go straight to the partition at flush (bypassing the sink), so
+	 * without this override the partition renders disconnected even while it
+	 * fills. What actually gets mirrored is driven by set_snapshot_node +
+	 * set_stats_partition, not by this method.
+	 *
+	 * @api Used by substrate.
+	 * @param array<int, string>|string|null $value New primary target or null to get current target.
+	 * @return array<int, string>|string
+	 */
+	public function target( $value = null ) {
+		if ( null !== $value ) {
+			return parent::target( $value );
+		}
+		$primary = parent::target();
+		$extras  = [];
+		if ( '' !== $this->stats_partition ) {
+			$extras[] = $this->stats_partition;
+		}
+		if ( ! $extras ) {
+			return $primary;
+		}
+		$all = \is_array( $primary )
+			? $primary
+			: ( '' !== $primary ? [ $primary ] : [] );
+		foreach ( $extras as $e ) {
+			if ( ! \in_array( $e, $all, true ) ) {
+				$all[] = $e;
+			}
+		}
+		return $all;
 	}
 
 	/**
@@ -2126,8 +2189,8 @@ class Flame_Builder_Node extends Node {
 		if ( null !== $this->stats_store ) {
 			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
 		}
-		if ( null !== $this->stats_partition ) {
-			$out .= "cmd {$this->name}:config set_stats_partition {$this->stats_partition->name()}\n";
+		if ( '' !== $this->stats_partition ) {
+			$out .= "cmd {$this->name}:config set_stats_partition {$this->stats_partition}\n";
 		}
 		return $out;
 	}
@@ -2265,19 +2328,12 @@ class Flame_Builder_Node extends Node {
 				[
 					'name'        => 'set_stats_partition',
 					'description' => 'Mirror stats writes to a durable Partition and reload from it on cold boot (non-Atomic deployments).',
-					'args'        => [ [ 'name' => 'node', 'type' => 'string', 'required' => true ] ],
+					'args'        => [ [ 'name' => 'node', 'type' => 'string', 'required' => false, 'default' => '' ] ],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$name = \trim( $args );
-						if ( '' === $name ) {
-							return 'ok'; // Empty = disabled: stock topology passes an empty <eln:stats_mirror_node> unless the deployment opts in (non-Atomic).
-						}
-						$node = \Newspack_Nodes\Core::node( $name );
-						if ( ! $node instanceof \Newspack_Nodes\Partition_Node ) {
-							return "error: no partition node '{$name}'";
-						}
+						// Store the name; resolved lazily at flush/reload (empty = disabled).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_stats_partition( $node );
+						$patron->set_stats_partition( \trim( $args ) );
 						return 'ok';
 					},
 				],
