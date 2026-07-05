@@ -4,7 +4,7 @@
  * Fields: pattern (TextControl), action (log/skip SelectControl), and — only for
  * `log` rules — a Hooks field (opens the reused HookSelectorModal, shows a
  * count), a Custom Events field (opens the reused CustomEventSelectorModal), a
- * Significant Events comma/enter tag input, and two number inputs
+ * Significant Events tag-pill input (TagInputField), and two number inputs
  * (auto_disable_threshold int, auto_protect_time_threshold float ms). Skip rules
  * hide the log-only fields entirely.
  *
@@ -30,6 +30,7 @@ import {
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
 import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
+import TagInputField from '../settings/settings/TagInputField';
 
 import './rule-edit-modal.scss';
 
@@ -57,9 +58,7 @@ export default function RuleEditModal( {
 		Array.isArray( rule?.custom_events ) ? rule.custom_events : []
 	);
 	const [ significant, setSignificant ] = useState(
-		Array.isArray( rule?.significant_events )
-			? rule.significant_events.join( ', ' )
-			: ''
+		Array.isArray( rule?.significant_events ) ? rule.significant_events : []
 	);
 	const [ autoDisable, setAutoDisable ] = useState(
 		String( rule?.auto_disable_threshold ?? 0 )
@@ -93,12 +92,7 @@ export default function RuleEditModal( {
 			auto_protect_time_threshold: isLog
 				? toNumber( autoProtect, parseFloat )
 				: 0,
-			significant_events: isLog
-				? significant
-						.split( ',' )
-						.map( ( s ) => s.trim() )
-						.filter( Boolean )
-				: [],
+			significant_events: isLog ? significant : [],
 			custom_events: isLog ? customEvents : [],
 			hooks: isLog ? hooks : [],
 			hooks_in: 'inline',
@@ -208,21 +202,26 @@ export default function RuleEditModal( {
 							</span>
 						</div>
 
-						<TextControl
-							__next40pxDefaultSize
-							__nextHasNoMarginBottom
-							label={ __(
-								'Significant events',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Comma-separated tag list.',
-								'newspack-event-logger-nodes'
-							) }
-							name="rule-significant"
-							value={ significant }
-							onChange={ setSignificant }
-						/>
+						<div className="rule-edit-tag-field components-base-control">
+							<span className="components-base-control__label">
+								{ __(
+									'Significant events',
+									'newspack-event-logger-nodes'
+								) }
+							</span>
+							<TagInputField
+								fieldName="rule-significant"
+								initialValues={ significant }
+								onChange={ setSignificant }
+								horizontal
+							/>
+							<p className="components-base-control__help">
+								{ __(
+									'Events/hooks protected from auto-disable. Type a value and press Enter.',
+									'newspack-event-logger-nodes'
+								) }
+							</p>
+						</div>
 
 						<TextControl
 							__next40pxDefaultSize

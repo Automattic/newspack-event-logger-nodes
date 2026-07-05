@@ -5,8 +5,15 @@
  */
 
 .event-logger-rule-edit-modal {
-	.rule-edit-field {
-		margin: 14px 0;
+	// The @wordpress controls carry `__nextHasNoMarginBottom` (which zeroes their
+	// margin), so add a comfortable gap between one field's help text and the next
+	// field's label.
+	.rule-edit-body .components-base-control,
+	.rule-edit-field,
+	.rule-edit-hooks-field,
+	.rule-edit-custom-field,
+	.rule-edit-tag-field {
+		margin: 0 0 18px;
 	}
 
 	.rule-edit-hooks-field,
@@ -14,7 +21,6 @@
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		margin: 14px 0;
 	}
 
 	.rule-edit-field-label {
@@ -34,6 +40,11 @@
 		font-size: 12px;
 	}
 
+	// Significant-events tag field: label above, tags + input, help below.
+	.rule-edit-tag-field .components-base-control__help {
+		margin: 8px 0 0;
+	}
+
 	.rule-edit-actions {
 		display: flex;
 		justify-content: flex-end;
@@ -41,9 +52,10 @@
 		margin-top: 20px;
 	}
 
-	// On the light settings page a comfortable minimum keeps fields from cramping.
+	// The tag pills need horizontal room; a wider minimum keeps them from wrapping
+	// every value onto its own line on the light settings page.
 	&.components-modal__frame {
-		min-width: 420px;
+		min-width: 560px;
 	}
 }
 
@@ -62,7 +74,7 @@
 	flex-direction: column;
 	grid-template: none;
 	gap: 0;
-	width: 480px;
+	width: 600px;
 	max-width: calc( 100% - 32px );
 	height: auto;
 	min-height: 0;

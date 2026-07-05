@@ -137,7 +137,10 @@ describe( 'RuleEditModal — log rule fields', () => {
 		mount( LOG_RULE );
 		expect( inDialog( '.rule-edit-hooks-field' ) ).toBeTruthy();
 		expect( inDialog( '.rule-edit-custom-field' ) ).toBeTruthy();
-		expect( inDialog( 'input[name="rule-significant"]' ) ).toBeTruthy();
+		// Significant events is a TagInputField (pill input), not a plain control.
+		expect(
+			inDialog( '.rule-edit-tag-field .event-logger-tag-input' )
+		).toBeTruthy();
 		expect(
 			inDialog( 'input[name="rule-auto-disable-threshold"]' )
 		).toBeTruthy();
@@ -246,7 +249,7 @@ describe( 'RuleEditModal — skip rule hides log-only fields', () => {
 		mount( SKIP_RULE );
 		expect( inDialog( '.rule-edit-hooks-field' ) ).toBeNull();
 		expect( inDialog( '.rule-edit-custom-field' ) ).toBeNull();
-		expect( inDialog( 'input[name="rule-significant"]' ) ).toBeNull();
+		expect( inDialog( '.rule-edit-tag-field' ) ).toBeNull();
 		expect(
 			inDialog( 'input[name="rule-auto-disable-threshold"]' )
 		).toBeNull();
