@@ -270,3 +270,53 @@
 		grid-template-columns: 1fr;
 	}
 }
+
+// =============================================================================
+// Dashboard skin — the picker portals with the console skin classes (forwarded
+// from RuleEditModal). Re-theme the light-mode surfaces onto the skin tokens and
+// let the frame fit its content up to a max-height (no full-viewport empty gap).
+// Scoped to `.topology-app`, which only the dashboard passes.
+// =============================================================================
+
+.event-logger-custom-event-modal.topology-app {
+	&.components-modal__frame {
+		height: auto;
+		max-height: 85vh;
+	}
+
+	.custom-event-header,
+	.custom-event-footer {
+		background: transparent;
+		border-color: var(--paper-shadow);
+	}
+
+	.custom-event-grid {
+		background: transparent;
+	}
+
+	.custom-event-item {
+		background: var(--paper-2);
+
+		&:hover,
+		&.is-selected {
+			background: var(--paper-3);
+		}
+	}
+
+	.custom-event-name {
+		color: var(--ink);
+	}
+
+	.custom-event-count {
+		color: var(--ink-3);
+	}
+
+	.custom-event-btn:hover {
+		background: var(--paper-3) !important;
+	}
+
+	.custom-event-checkbox + .custom-event-swatch::before {
+		background: transparent;
+		border-color: var(--paper-shadow);
+	}
+}
