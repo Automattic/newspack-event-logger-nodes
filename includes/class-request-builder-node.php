@@ -1079,18 +1079,11 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Expose every named destination this node actually writes to so
-	 * `ls -al`'s TARGET column reflects the full fan-out. Mirrors the
-	 * Perl Tachikoma RegexTee::owner pattern: walk the primary target
-	 * (which Node::target stores in $this->target) plus the
-	 * conditional errors_target / completed_target the topology may have
-	 * wired, plus the flight sibling's own target (the periodic in-flight
-	 * snapshot stream, typically wired to `gyroscope:partition`).
-	 *
-	 * Without this override `errors:partition`, `completed:tee`, and the
-	 * flight sibling's target would orphan on the topology console (nodes
-	 * with `0` count, no inbound edges) even though RequestBuilder /
-	 * RequestFlight writes to them.
+	 * Expose every named destination this node actually writes to so the
+	 * console's TARGET column reflects the full fan-out: the primary target plus
+	 * the conditional errors_target / completed_target and the flight sibling's
+	 * target. Without this override those partitions render disconnected on the
+	 * topology console (no inbound edge) despite being written to.
 	 *
 	 * @api Used by substrate.
 	 * @param array<int, string>|string|null $value New primary target or null to get current target.

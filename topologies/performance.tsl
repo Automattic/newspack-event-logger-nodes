@@ -27,6 +27,7 @@ cmd requests:partition:config void_warranty
 cmd requests:partition:config with_index request-index
 cmd flames:partition:config void_warranty
 cmd flames:partition:config with_index flame-index
+cmd flame-stats:partition:config void_warranty
 connect_node firehose:consumer request-builder
 connect_node request-builder requests:partition
 connect_node completed:tee completed:partition
