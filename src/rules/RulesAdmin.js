@@ -1,8 +1,8 @@
 /**
  * RulesAdmin — the thin React view over the per-URL logging-ruleset editor node
  * graph. useRulesGraph owns the data + CRUD transport; this component reads the
- * model and renders a wp-list-table (Pattern, Action, Hooks count, Auto-tune
- * summary) with a "+ Add Rule" button and per-row Edit / Delete.
+ * model and renders a wp-list-table (Pattern, Action, Hooks count, Events count,
+ * Auto-tune summary) with a "+ Add Rule" button and per-row Edit / Delete.
  *
  * Add / Edit open RuleEditModal (add = a blank log rule); Save → `upsert` (single
  * rule, so the editor never ships the whole list) and the table re-lists. Delete
@@ -127,6 +127,20 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 					  )
 					: '—' }
 			</td>
+			<td>
+				{ 'log' === rule.action
+					? sprintf(
+							// translators: %d: number of custom events on the rule.
+							_n(
+								'%d event',
+								'%d events',
+								( rule.custom_events || [] ).length,
+								'newspack-event-logger-nodes'
+							),
+							( rule.custom_events || [] ).length
+					  )
+					: '—' }
+			</td>
 			<td>{ 'log' === rule.action ? autoTuneSummary( rule ) : '—' }</td>
 			<td>
 				<Button
@@ -176,7 +190,7 @@ export default function RulesAdmin() {
 	if ( loading ) {
 		tableBody = (
 			<tr>
-				<td colSpan="5">
+				<td colSpan="6">
 					{ __( 'Loading rules…', 'newspack-event-logger-nodes' ) }
 				</td>
 			</tr>
@@ -193,7 +207,7 @@ export default function RulesAdmin() {
 	} else {
 		tableBody = (
 			<tr>
-				<td colSpan="5">
+				<td colSpan="6">
 					{ __(
 						'No rules configured.',
 						'newspack-event-logger-nodes'
@@ -224,19 +238,22 @@ export default function RulesAdmin() {
 			<table className="wp-list-table widefat fixed striped">
 				<thead>
 					<tr>
-						<th style={ { width: '38%' } }>
+						<th style={ { width: '32%' } }>
 							{ __( 'Pattern', 'newspack-event-logger-nodes' ) }
 						</th>
 						<th style={ { width: '10%' } }>
 							{ __( 'Action', 'newspack-event-logger-nodes' ) }
 						</th>
-						<th style={ { width: '14%' } }>
+						<th style={ { width: '12%' } }>
 							{ __( 'Hooks', 'newspack-event-logger-nodes' ) }
 						</th>
-						<th style={ { width: '22%' } }>
+						<th style={ { width: '12%' } }>
+							{ __( 'Events', 'newspack-event-logger-nodes' ) }
+						</th>
+						<th style={ { width: '20%' } }>
 							{ __( 'Auto-tune', 'newspack-event-logger-nodes' ) }
 						</th>
-						<th style={ { width: '16%' } }>
+						<th style={ { width: '14%' } }>
 							{ __( 'Actions', 'newspack-event-logger-nodes' ) }
 						</th>
 					</tr>
