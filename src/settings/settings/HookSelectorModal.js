@@ -143,12 +143,13 @@ const CATEGORY_META = {
 /**
  * Hook Selector Modal component.
  *
- * @param {Object}   props          Component props.
- * @param {boolean}  props.isOpen   Whether the modal is open.
- * @param {Function} props.onClose  Close callback.
- * @param {Array}    props.selected Currently selected hooks.
- * @param {Function} props.onSelect Callback when hooks are selected.
- * @param {string}   props.mode     'include' or 'exclude' mode.
+ * @param {Object}   props             Component props.
+ * @param {boolean}  props.isOpen      Whether the modal is open.
+ * @param {Function} props.onClose     Close callback.
+ * @param {Array}    props.selected    Currently selected hooks.
+ * @param {Function} props.onSelect    Callback when hooks are selected.
+ * @param {string}   props.mode        'include' or 'exclude' mode.
+ * @param {string}   [props.className] Extra classes for the modal frame (skin theming).
  * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function HookSelectorModal( {
@@ -157,6 +158,7 @@ export default function HookSelectorModal( {
 	selected = [],
 	onSelect,
 	mode = 'exclude',
+	className = '',
 } ) {
 	const [ search, setSearch ] = useState( '' );
 	const [ expandedCategories, setExpandedCategories ] = useState( new Set() );
@@ -332,7 +334,7 @@ export default function HookSelectorModal( {
 					: __( 'Select Hooks to Log', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onClose }
-			className="event-logger-hook-selector-modal newspack-nodes-theme"
+			className={ `event-logger-hook-selector-modal newspack-nodes-theme ${ className }`.trim() }
 			style={ { width: '800px', maxWidth: '90vw' } }
 		>
 			<div className="hook-selector-header">

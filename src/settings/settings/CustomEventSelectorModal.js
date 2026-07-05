@@ -18,11 +18,12 @@ const CUSTOM_COLORS = window.newspackNodesCustomColors || {};
 /**
  * Custom Event Selector Modal component.
  *
- * @param {Object}   props          Component props.
- * @param {boolean}  props.isOpen   Whether the modal is open.
- * @param {Function} props.onClose  Close callback.
- * @param {Array}    props.selected Currently selected events.
- * @param {Function} props.onSelect Callback when events are selected.
+ * @param {Object}   props             Component props.
+ * @param {boolean}  props.isOpen      Whether the modal is open.
+ * @param {Function} props.onClose     Close callback.
+ * @param {Array}    props.selected    Currently selected events.
+ * @param {Function} props.onSelect    Callback when events are selected.
+ * @param {string}   [props.className] Extra classes for the modal frame (skin theming).
  * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function CustomEventSelectorModal( {
@@ -30,6 +31,7 @@ export default function CustomEventSelectorModal( {
 	onClose,
 	selected = [],
 	onSelect,
+	className = '',
 } ) {
 	const [ search, setSearch ] = useState( '' );
 	const [ localSelected, setLocalSelected ] = useState( new Set( selected ) );
@@ -105,7 +107,7 @@ export default function CustomEventSelectorModal( {
 				'newspack-event-logger-nodes'
 			) }
 			onRequestClose={ onClose }
-			className="event-logger-custom-event-modal newspack-nodes-theme"
+			className={ `event-logger-custom-event-modal newspack-nodes-theme ${ className }`.trim() }
 		>
 			<div className="custom-event-header">
 				<SearchControl

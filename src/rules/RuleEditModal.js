@@ -31,6 +31,8 @@ import {
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
 import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
 
+import './rule-edit-modal.scss';
+
 // A number input coerced through `parse`; blank/invalid falls back to 0. Kept
 // as a controlled string so a half-typed value ("2.") doesn't fight the caret.
 function toNumber( value, parse ) {
@@ -38,7 +40,12 @@ function toNumber( value, parse ) {
 	return Number.isFinite( n ) ? n : 0;
 }
 
-export default function RuleEditModal( { rule, onSave, onCancel } ) {
+export default function RuleEditModal( {
+	rule,
+	onSave,
+	onCancel,
+	className = '',
+} ) {
 	const [ pattern, setPattern ] = useState( rule?.pattern ?? '' );
 	const [ action, setAction ] = useState(
 		'skip' === rule?.action ? 'skip' : 'log'
@@ -107,7 +114,7 @@ export default function RuleEditModal( { rule, onSave, onCancel } ) {
 					: __( 'Add rule', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onCancel }
-			className="event-logger-rule-edit-modal newspack-nodes-theme"
+			className={ `event-logger-rule-edit-modal newspack-nodes-theme ${ className }`.trim() }
 		>
 			<div className="rule-edit-body">
 				<TextControl
@@ -278,12 +285,14 @@ export default function RuleEditModal( { rule, onSave, onCancel } ) {
 				selected={ hooks }
 				onSelect={ setHooks }
 				mode="include"
+				className={ className }
 			/>
 			<CustomEventSelectorModal
 				isOpen={ isCustomOpen }
 				onClose={ () => setIsCustomOpen( false ) }
 				selected={ customEvents }
 				onSelect={ setCustomEvents }
+				className={ className }
 			/>
 		</Modal>
 	);

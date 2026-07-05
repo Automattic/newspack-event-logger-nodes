@@ -348,7 +348,10 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			'before'
 		);
 
-		if ( 'settings' === $tree ) {
+		// The rules editor (settings) AND the performance dashboard's "Log this URL"
+		// (overview) both render the Hooks / Custom-Events pickers, which read the
+		// recommended-hooks + custom-event-color lists off `window`.
+		if ( 'settings' === $tree || 'overview' === $tree ) {
 			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config();
 			$recommended         = $cfg['recommended_log_events'] ?? [];
 			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];

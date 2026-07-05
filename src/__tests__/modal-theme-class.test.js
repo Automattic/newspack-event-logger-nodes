@@ -31,9 +31,11 @@ describe( 'dashboard Modal theme class', () => {
 	it.each( [
 		'settings/settings/HookSelectorModal.js',
 		'settings/settings/CustomEventSelectorModal.js',
-	] )( '%s: the settings Modal carries newspack-nodes-theme', ( rel ) => {
+	] )( '%s: the Modal carries newspack-nodes-theme', ( rel ) => {
+		// Static base classes + a forwarded `${ className }` (empty on the settings
+		// page; the dashboard passes its skin classes so the picker gets themed).
 		expect( read( rel ) ).toMatch(
-			/className="event-logger-[\w-]+-modal newspack-nodes-theme"/
+			/event-logger-[\w-]+-modal newspack-nodes-theme \$\{ className \}/
 		);
 	} );
 } );
