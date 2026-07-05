@@ -407,7 +407,6 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	// inline in the URL modal without closing it.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
 	const [ existingRule, setExistingRule ] = useState( null );
-	const [ ruleConfirmation, setRuleConfirmation ] = useState( null );
 	const [ ruleError, setRuleError ] = useState( null );
 
 	const ruleUrl = selectedUrl?.url;
@@ -424,7 +423,6 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	// exact rule (`<url>?`) — sets the button label and the prefill source. Reset
 	// the inline banners; skip while a request is drilled in (button hidden).
 	useEffect( () => {
-		setRuleConfirmation( null );
 		setRuleError( null );
 		setRuleDraft( null );
 		if ( ! canLogUrl || selectedRequest ) {
@@ -459,7 +457,6 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		if ( ! canLogUrl ) {
 			return;
 		}
-		setRuleConfirmation( null );
 		setRuleError( null );
 		setRuleDraft(
 			existingRule ?? {
@@ -470,11 +467,11 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		);
 	}, [ canLogUrl, existingRule, exactPattern ] );
 
-	// Save: upsert the exact rule, close ONLY the RuleEditModal, and surface an
-	// inline confirmation (or error) in the URL modal — never crash.
+	// Save: upsert the exact rule, close ONLY the RuleEditModal, surface an error
+	// inline on failure — never crash. Success is signalled by the button label
+	// flipping to "Edit logging rule" (no separate confirmation banner).
 	const saveRule = useCallback(
 		async ( draft ) => {
-			const isEdit = !! draft.id;
 			const res = await upsertRule( draft );
 			setRuleDraft( null );
 			if ( ! res ) {
@@ -487,20 +484,8 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 				return;
 			}
 			setExistingRule( res.rule ?? draft );
-			setRuleConfirmation(
-				isEdit
-					? __( 'Rule updated.', 'newspack-event-logger-nodes' )
-					: sprintf(
-							// translators: %s: the URL now being logged.
-							__(
-								'Now logging %s',
-								'newspack-event-logger-nodes'
-							),
-							ruleUrl ?? draft.pattern
-					  )
-			);
 		},
-		[ upsertRule, ruleUrl ]
+		[ upsertRule ]
 	);
 
 	// Handle initial search query from URL parameter.
@@ -695,11 +680,6 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 													'newspack-event-logger-nodes'
 											  ) }
 									</Button>
-									{ ruleConfirmation && (
-										<span className="event-logger-rule-confirmation">
-											{ ruleConfirmation }
-										</span>
-									) }
 									{ ruleError && (
 										<span
 											className="event-logger-rule-error"
