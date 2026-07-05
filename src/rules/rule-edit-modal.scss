@@ -132,10 +132,13 @@
 		font-family: var( --font-mono, inherit );
 	}
 
-	// Labels — including SelectControl's, which renders as a bare flex-item.
+	// Labels — including SelectControl's, which renders as a bare flex-item — and
+	// the per-field help text (WP defaults it to a low-contrast grey).
 	.components-base-control__label,
 	.components-input-control__label,
-	.components-flex-item {
+	.components-flex-item,
+	.components-base-control__help,
+	.rule-edit-field-count {
 		color: var( --ink-3 );
 	}
 
