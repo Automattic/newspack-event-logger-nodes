@@ -40,13 +40,15 @@ final class Rule_Matcher {
 	/**
 	 * Normalize exactly as Log_Manager historically did: drop the query string,
 	 * re-append a single '?' terminator so an exact 'pattern?' matches the path.
+	 * Lowercased — the legacy compile_url_filter regex matched case-insensitively.
 	 */
 	public static function normalize( string $url ): string {
-		return \explode( '?', $url, 2 )[0] . '?';
+		return \strtolower( \explode( '?', $url, 2 )[0] ) . '?';
 	}
 
 	/**
 	 * The governing rule for a URL, or null when nothing matches (⇒ skip).
+	 * Matching is case-insensitive (target + patterns are compared lowercased).
 	 */
 	public function match( string $url ): ?Rule {
 		$target = self::normalize( $url );
@@ -55,14 +57,15 @@ final class Rule_Matcher {
 		}
 		$hit = null;
 		foreach ( $this->rules as $rule ) {
+			$pattern = \strtolower( $rule->pattern );
 			if ( $rule->is_exact() ) {
-				if ( $target === $rule->pattern ) {
+				if ( $target === $pattern ) {
 					$hit = $rule;
 					break;
 				}
 				continue;
 			}
-			if ( \str_starts_with( $target, $rule->pattern ) ) {
+			if ( \str_starts_with( $target, $pattern ) ) {
 				$hit = $rule;
 				break;
 			}

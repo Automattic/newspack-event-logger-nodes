@@ -62,4 +62,23 @@ final class RuleMatcherTest extends TestCase {
 		$this->assertSame( '/shop?', Rule_Matcher::normalize( '/shop?x=1' ) );
 		$this->assertSame( '/shop?', Rule_Matcher::normalize( '/shop' ) );
 	}
+
+	public function test_matching_is_case_insensitive(): void {
+		// The legacy compile_url_filter regex was case-insensitive (/i); preserve that
+		// so a mixed-case pattern or a mixed-case request URL matches as before.
+		$matcher = new Rule_Matcher( [
+			new Rule( 'root', '/', Rule::ACTION_LOG ),
+			new Rule( 'cron', '/WP-Cron', Rule::ACTION_SKIP ),
+			new Rule( 'news', '/News?', Rule::ACTION_LOG ),
+		] );
+		$this->assertSame( 'cron', $matcher->match( '/wp-cron.php' )->id, 'lc URL matches mixed-case skip prefix' );
+		$this->assertSame( 'cron', $matcher->match( '/WP-CRON.php' )->id, 'uc URL matches mixed-case skip prefix' );
+		$this->assertSame( 'news', $matcher->match( '/news' )->id, 'lc URL matches mixed-case exact' );
+		$this->assertSame( 'news', $matcher->match( '/NEWS' )->id, 'uc URL matches mixed-case exact' );
+		$this->assertSame( 'root', $matcher->match( '/About' )->id, 'no case-specific rule falls through to /' );
+	}
+
+	public function test_normalize_lowercases_the_path(): void {
+		$this->assertSame( '/shop?', Rule_Matcher::normalize( '/SHOP?x=1' ) );
+	}
 }
