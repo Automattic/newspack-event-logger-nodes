@@ -197,6 +197,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 	$base_interpreter->make_node( 'Logger_CI',      'logger' );
 	$base_interpreter->make_node( 'Events_CI',      'events' );
 	$base_interpreter->make_node( 'Performance_CI', 'performance' );
+	$base_interpreter->make_node( 'Rules_CI',       'rules' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 

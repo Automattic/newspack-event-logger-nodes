@@ -116,6 +116,19 @@ final class RuleSetTest extends TestCase {
 		$this->assertEquals( Rule_Set::load()->rules()[0], $in_memory, 'rules() after save() must match a fresh load from disk' );
 	}
 
+	public function test_save_rehydrates_an_unchanged_pointer_rule_instead_of_wiping_it(): void {
+		$big = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		$GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'ptr' ) ] = $big;
+		// Loaded-from-storage shape: hooks=null, hooks_in=mc (what Rule::from_array yields for a pointer rule).
+		$pointer = new Rule( 'ptr', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
+
+		( new Rule_Set( [ $pointer ] ) )->save( [ $pointer ] );
+
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'ptr' ) ], 'save() must not wipe the durable option for an unchanged pointer rule' );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
+		$this->assertSame( 'mc', $stored['hooks_in'], 'the rule must stay pointer-tier, not get re-inlined to []' );
+	}
+
 	public function test_hooks_for_inline_returns_inline_list(): void {
 		$rule = new Rule( 'd4', '/x/', Rule::ACTION_LOG, hooks: [ 'a', 'b' ] );
 		$this->assertSame( [ 'a', 'b' ], Rule_Set::hooks_for( $rule ) );
@@ -153,5 +166,19 @@ final class RuleSetTest extends TestCase {
 
 		$this->assertSame( [ 'from', 'durable' ], $result );
 		$this->assertSame( [ 'from', 'durable' ], $mc->get( Rule_Set::mc_key( 'h8' ) ) );
+	}
+
+	public function test_generate_rule_id_avoids_a_colliding_existing_id(): void {
+		$first  = Rule_Set::generate_rule_id( [] );
+		$second = Rule_Set::generate_rule_id( [ $first ] );
+
+		$this->assertNotSame( $first, $second );
+		$this->assertNotContains( $second, [ $first ] );
+	}
+
+	public function test_generate_rule_id_returns_the_deterministic_first_candidate_when_unused(): void {
+		// Same deterministic scheme migrate_from_legacy relies on: the first
+		// candidate against an empty existing-id set is stable across calls.
+		$this->assertSame( Rule_Set::generate_rule_id( [] ), Rule_Set::generate_rule_id( [] ) );
 	}
 }

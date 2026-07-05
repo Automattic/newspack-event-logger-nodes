@@ -418,6 +418,105 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	} );
 } );
 
+describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
+	test( 'exposes listRules + upsertRule callbacks', () => {
+		const client = makeFakeClient();
+		const { result } = renderHook( () =>
+			usePerformanceGraph( { commandClient: client } )
+		);
+		expect( typeof result.current.listRules ).toBe( 'function' );
+		expect( typeof result.current.upsertRule ).toBe( 'function' );
+	} );
+
+	test( 'listRules sends the list verb to the rules CI and resolves { rules }', async () => {
+		const rules = [ { id: 'a', pattern: '/x?', action: 'log' } ];
+		const client = makeFakeClient( { list: { rules } } );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		let result;
+		await act( async () => {
+			result = await api.listRules();
+		} );
+		const list = findVerb( client.batches, 'list' );
+		expect( list ).toBeTruthy();
+		expect( list[ TO ] ).toBe( 'rules' );
+		expect( result ).toEqual( { rules } );
+	} );
+
+	test( 'upsertRule sends the upsert verb with the RAW JSON rule as arguments and resolves { rule }', async () => {
+		const saved = { id: 'abc', pattern: '/blog?', action: 'log' };
+		const client = makeFakeClient( { upsert: { rule: saved } } );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		const input = { id: '', pattern: '/blog?', action: 'log' };
+		let result;
+		await act( async () => {
+			result = await api.upsertRule( input );
+		} );
+		const upsert = findVerb( client.batches, 'upsert' );
+		expect( upsert ).toBeTruthy();
+		expect( upsert[ TO ] ).toBe( 'rules' );
+		expect( upsert[ VALUE ].arguments ).toBe( JSON.stringify( input ) );
+		expect( result ).toEqual( { rule: saved } );
+	} );
+
+	test( 'listRules returns null after teardown (no graph)', async () => {
+		const client = makeFakeClient( { list: { rules: [] } } );
+		let api;
+		const { unmount } = renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		unmount();
+		let result;
+		await act( async () => {
+			result = await api.listRules();
+		} );
+		expect( result ).toBeNull();
+	} );
+
+	test( 'upsertRule reports the error and returns null when the reply rejects', async () => {
+		const onError = jest.fn();
+		const client = makeFakeClient(
+			{ upsert: { rule: {} } },
+			{ errorVerbs: [ 'upsert' ] }
+		);
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client, onError } }
+		);
+		await act( async () => {} );
+		let result;
+		await act( async () => {
+			result = await api.upsertRule( { id: '', pattern: '/x?' } );
+		} );
+		expect( result ).toBeNull();
+		expect( onError ).toHaveBeenCalled();
+	} );
+} );
+
 describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
 	test( 'pauses perf:timer while a URL detail is open, re-arms when it closes', async () => {
 		const client = makeFakeClient( {

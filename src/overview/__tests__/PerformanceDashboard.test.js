@@ -49,6 +49,8 @@ const mockGraph = {
 	handleUrlParamsChange: jest.fn(),
 	resolveRequest: jest.fn().mockResolvedValue( null ),
 	fetchUrlBreakdown: jest.fn().mockResolvedValue( null ),
+	listRules: jest.fn().mockResolvedValue( { rules: [] } ),
+	upsertRule: jest.fn().mockResolvedValue( { rule: {} } ),
 };
 jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	__esModule: true,
@@ -137,6 +139,23 @@ jest.mock( '../components/RequestDetailView', () => ( {
 	},
 } ) );
 
+// RuleEditModal is the shared rule editor the "Log this URL" affordance opens.
+// Stub it so the test doesn't pull in the real @wordpress/components widgets;
+// capture props so the tests can assert the prefilled rule + drive onSave.
+jest.mock( '../../rules/RuleEditModal', () => ( {
+	__esModule: true,
+	default: ( props ) => {
+		const React = require( 'react' );
+		globalThis.__ruleEditProps = props;
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'rule-edit-modal' },
+			'RuleEditModal pattern=',
+			props.rule?.pattern
+		);
+	},
+} ) );
+
 // Modal — render its children inline so we can assert on them.
 jest.mock( '@wordpress/components', () => ( {
 	__esModule: true,
@@ -155,6 +174,14 @@ jest.mock( '@wordpress/components', () => ( {
 	CardHeader: ( { children } ) => {
 		const React = require( 'react' );
 		return React.createElement( 'div', null, children );
+	},
+	Button: ( { children, onClick, disabled, className } ) => {
+		const React = require( 'react' );
+		return React.createElement(
+			'button',
+			{ onClick, disabled, className },
+			children
+		);
 	},
 	Modal: ( {
 		children,
@@ -226,6 +253,11 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.resolveRequest.mockReset();
 		mockGraph.resolveRequest.mockResolvedValue( null );
 		mockGraph.fetchUrlBreakdown.mockClear();
+		mockGraph.listRules.mockReset();
+		mockGraph.listRules.mockResolvedValue( { rules: [] } );
+		mockGraph.upsertRule.mockReset();
+		mockGraph.upsertRule.mockResolvedValue( { rule: {} } );
+		globalThis.__ruleEditProps = null;
 		mockNavState.selectedUrl = null;
 		mockNavState.selectedRequest = null;
 		mockNavState.initialSearchQuery = '';
@@ -825,5 +857,209 @@ describe( 'PerformanceDashboard', () => {
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
 		expect( mockNavState.selectUrl ).not.toHaveBeenCalledWith( null );
 		unmount();
+	} );
+
+	// The URL-details modal's inline "Log this URL" affordance (spec section C).
+	describe( 'Log this URL affordance', () => {
+		// A URL-detail-loaded view model with the modal open on `url`.
+		function urlModalView( url = '/foo' ) {
+			mockNavState.selectedUrl = { hash: 'h1', url };
+			mockNavState.selectedRequest = null;
+			return loadedView( {
+				urlDetail: {
+					data: {
+						last_modified: 1,
+						stats: { avg_ms: 50, time_series: {} },
+						requests: [],
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+		}
+
+		it( 'shows an enabled "Log this URL" button in the URL modal header', async () => {
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			const btn = container.querySelector(
+				'.event-logger-log-url-button'
+			);
+			expect( btn ).toBeTruthy();
+			expect( btn.textContent ).toContain( 'Log this URL' );
+			expect( btn.disabled ).toBe( false );
+			unmount();
+		} );
+
+		it( 'disables the button when the URL is unknown', async () => {
+			mockView = urlModalView( 'Unknown URL' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			const btn = container.querySelector(
+				'.event-logger-log-url-button'
+			);
+			expect( btn ).toBeTruthy();
+			expect( btn.disabled ).toBe( true );
+			unmount();
+		} );
+
+		it( 'hides the button when a request is drilled in', async () => {
+			mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+			mockNavState.selectedRequest = 'r1';
+			mockView = loadedView( {
+				urlDetail: {
+					data: {
+						last_modified: 1,
+						stats: { avg_ms: 50, time_series: {} },
+						requests: [],
+					},
+					loading: false,
+					error: null,
+				},
+				requestDetail: {
+					data: { rid: 'r1', entries: [] },
+					loading: false,
+					error: null,
+				},
+			} );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			expect(
+				container.querySelector( '.event-logger-log-url-button' )
+			).toBeNull();
+			unmount();
+		} );
+
+		it( 'looks up rules on open and, when an exact rule exists, labels the button "Edit logging rule" and prefills it', async () => {
+			const existing = {
+				id: 'rule-1',
+				pattern: '/foo?',
+				action: 'log',
+				hooks: [ 'template_redirect' ],
+			};
+			mockGraph.listRules.mockResolvedValue( { rules: [ existing ] } );
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			expect( mockGraph.listRules ).toHaveBeenCalled();
+			const btn = container.querySelector(
+				'.event-logger-log-url-button'
+			);
+			expect( btn.textContent ).toContain( 'Edit logging rule' );
+			await act( async () => {
+				btn.click();
+			} );
+			expect(
+				container.querySelector( '[data-testid="rule-edit-modal"]' )
+			).toBeTruthy();
+			expect( globalThis.__ruleEditProps.rule ).toEqual( existing );
+			unmount();
+		} );
+
+		it( 'opens a blank exact-pattern rule when none exists', async () => {
+			mockGraph.listRules.mockResolvedValue( { rules: [] } );
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			const btn = container.querySelector(
+				'.event-logger-log-url-button'
+			);
+			expect( btn.textContent ).toContain( 'Log this URL' );
+			await act( async () => {
+				btn.click();
+			} );
+			expect( globalThis.__ruleEditProps.rule.pattern ).toBe( '/foo?' );
+			expect( globalThis.__ruleEditProps.rule.action ).toBe( 'log' );
+			expect( globalThis.__ruleEditProps.rule.id ).toBe( '' );
+			unmount();
+		} );
+
+		it( 'saving upserts the exact rule and shows an inline confirmation without closing the URL modal', async () => {
+			mockGraph.listRules.mockResolvedValue( { rules: [] } );
+			mockGraph.upsertRule.mockResolvedValue( {
+				rule: { id: 'new-1', pattern: '/foo?', action: 'log' },
+			} );
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			await act( async () => {
+				container
+					.querySelector( '.event-logger-log-url-button' )
+					.click();
+			} );
+			const draft = {
+				id: '',
+				pattern: '/foo?',
+				action: 'log',
+			};
+			await act( async () => {
+				await globalThis.__ruleEditProps.onSave( draft );
+			} );
+			expect( mockGraph.upsertRule ).toHaveBeenCalledWith( draft );
+			// The URL modal stays open; only the RuleEditModal closed.
+			expect(
+				container.querySelector( '[data-testid="modal"]' )
+			).toBeTruthy();
+			expect(
+				container.querySelector( '[data-testid="rule-edit-modal"]' )
+			).toBeNull();
+			expect( container.textContent ).toContain( 'Now logging /foo' );
+			unmount();
+		} );
+
+		it( 'shows an inline error and keeps the URL modal open when the upsert fails', async () => {
+			mockGraph.listRules.mockResolvedValue( { rules: [] } );
+			mockGraph.upsertRule.mockResolvedValue( null );
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			await act( async () => {
+				container
+					.querySelector( '.event-logger-log-url-button' )
+					.click();
+			} );
+			await act( async () => {
+				await globalThis.__ruleEditProps.onSave( {
+					id: '',
+					pattern: '/foo?',
+					action: 'log',
+				} );
+			} );
+			expect(
+				container.querySelector( '[data-testid="modal"]' )
+			).toBeTruthy();
+			expect(
+				container.querySelector( '.event-logger-rule-error' )
+			).toBeTruthy();
+			unmount();
+		} );
 	} );
 } );

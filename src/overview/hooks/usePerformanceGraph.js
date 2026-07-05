@@ -59,6 +59,11 @@ const SERVER = 'performance';
 const TARGET = `_shell/_http/${ SERVER }`;
 const HTTP = '_http';
 
+// The per-URL logging-ruleset CI, reached through the SAME exospine/correlator —
+// the perf modal's "Log this URL" affordance lists/upserts an exact rule without
+// a second exospine (spec section C).
+const RULES_TARGET = '_shell/_http/rules';
+
 // Slice view + receiver names.
 const OVERVIEW_VIEW = 'overview:view';
 const URLS_VIEW = 'urls:view';
@@ -261,7 +266,7 @@ export function usePerformanceGraph( opts = {} ) {
 	// node the reply pivots back to; the router peels TARGET, HttpOut POSTs, the
 	// server pivots TO=FROM. Batched into the next HttpOut flush.
 	const sendCommand = useCallback(
-		( verb, args, from, id ) => {
+		( verb, args, from, id, target = TARGET ) => {
 			const interpreter = interpreterRef.current;
 			if ( ! interpreter ) {
 				return false;
@@ -269,7 +274,7 @@ export function usePerformanceGraph( opts = {} ) {
 			const m = newMessage();
 			m[ TYPE ] = TM_COMMAND;
 			m[ FROM ] = from;
-			m[ TO ] = TARGET;
+			m[ TO ] = target;
 			if ( id ) {
 				m[ ID ] = id;
 			}
@@ -571,5 +576,65 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, onError, interpreterRef ]
 	);
 
-	return { handleUrlParamsChange, resolveRequest, fetchUrlBreakdown };
+	// Send a correlated command and await the reply the given view settles via its
+	// PendingReplies (the fetchUrlBreakdown/resolveRequest pattern). Resolves the
+	// reply payload; null when the graph is gone or the reply rejects. The rules
+	// commands ride the same URL-detail view — the reply pivots TO=FROM=that view,
+	// where the ID-matched resolver settles WITHOUT touching the modal's slice.
+	const awaitReply = useCallback(
+		async ( viewName, verb, args, target ) => {
+			const view = Core.node( viewName );
+			if ( ! interpreterRef.current || ! view || ! view.replies ) {
+				return null;
+			}
+			const id = makeOpId();
+			const promise = new Promise( ( resolve, reject ) => {
+				view.replies.add( id, resolve, reject );
+			} );
+			const http = Core.node( HTTP );
+			if ( http ) {
+				http.lock();
+			}
+			sendCommand( verb, args, viewName, id, target );
+			if ( http ) {
+				http.flush();
+			}
+			try {
+				return await promise;
+			} catch ( err ) {
+				onError?.( err );
+				return null;
+			}
+		},
+		[ sendCommand, onError, interpreterRef ]
+	);
+
+	// listRules — the current ruleset, for the modal to find an existing exact
+	// rule. Resolves the `{ rules }` payload (null on no-graph / rejection).
+	const listRules = useCallback(
+		() => awaitReply( URLDETAIL_VIEW, 'list', '', RULES_TARGET ),
+		[ awaitReply ]
+	);
+
+	// upsertRule — replace-by-pattern / append one rule. The whole arguments
+	// string is the RAW JSON (Rules_CI json_decodes it verbatim). Resolves the
+	// `{ rule }` payload (null on no-graph / rejection).
+	const upsertRule = useCallback(
+		( ruleObject ) =>
+			awaitReply(
+				URLDETAIL_VIEW,
+				'upsert',
+				JSON.stringify( ruleObject ),
+				RULES_TARGET
+			),
+		[ awaitReply ]
+	);
+
+	return {
+		handleUrlParamsChange,
+		resolveRequest,
+		fetchUrlBreakdown,
+		listRules,
+		upsertRule,
+	};
 }

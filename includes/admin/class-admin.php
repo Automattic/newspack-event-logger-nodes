@@ -137,6 +137,7 @@ class Admin {
 		\add_action( 'admin_init', [ $this, 'register_settings' ] );
 		\add_action( 'admin_post_' . self::RESET_ACTION, [ $this, 'handle_reset_settings' ] );
 		\add_action( 'admin_post_' . self::FLUSH_STATS_ACTION, [ $this, 'handle_flush_stats' ] );
+		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_rules_editor_section' ], 5 );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_effective_config_section' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
 
@@ -567,6 +568,24 @@ class Admin {
 
 	public static function debugging_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
+	}
+
+	/**
+	 * Render the "Logging Rules" section: a heading plus the React mount point
+	 * the `settings` bundle renders RulesAdmin into. Hooked (priority 5) to
+	 * `newspack_event_logger_nodes/settings_after_form` so it renders above the
+	 * effective-config + maintenance panels. The bundle is enqueued on this page
+	 * by the main plugin file's `admin_enqueue_scripts` handler.
+	 */
+	public function render_rules_editor_section(): void {
+		?>
+		<hr style="margin: 30px 0;">
+		<h2><?php \esc_html_e( 'Logging Rules', 'newspack-event-logger-nodes' ); ?></h2>
+		<p class="description">
+			<?php \esc_html_e( 'Per-URL logging rules: which URLs to log or skip, and — for logged URLs — the hooks, custom events, significant events, and auto-tune thresholds.', 'newspack-event-logger-nodes' ); ?>
+		</p>
+		<div id="event-logger-rules-editor"></div>
+		<?php
 	}
 
 	/**

@@ -1,95 +1,35 @@
 /**
- * Performance Logger Settings Entry Point
+ * Event Logger Settings entry point.
  *
- * Settings page UI components for tag input fields.
+ * Mounts the per-URL logging-ruleset editor (RulesAdmin) into the
+ * `#event-logger-rules-editor` container rendered by the "Logging Rules"
+ * settings section (class-admin.php). The old TagInputField DOM-scan mounts died
+ * with Task 10's ruleset migration; the ruleset is now managed here.
  */
 
 import { createRoot } from '@wordpress/element';
 
-import './nodes/register';
-import TagInputField from './settings/TagInputField';
+import '../rules/nodes/register';
+import RulesAdmin from '../rules/RulesAdmin';
 import './styles/base.scss';
 import './styles/settings.scss';
 import './styles/hook-selector.scss';
 import './styles/custom-event-selector.scss';
+import './styles/rules-editor.scss';
 
-// Mount settings components when DOM is ready. Per-field reset is handled by
-// the shared admin-field-reset toggle module (DOM-only, enqueued separately).
-document.addEventListener( 'DOMContentLoaded', () => {
-	initTagInputFields();
-} );
+const RULES_CONTAINER_ID = 'event-logger-rules-editor';
 
 /**
- * Safely parse JSON array from DOM data attribute.
- * Validates result is an array of strings to prevent prototype pollution.
- *
- * @param {string} jsonStr JSON string to parse.
- * @return {string[]} Validated array of strings.
+ * Mount the RulesAdmin React root into the rules-editor container, if present.
  */
-function parseStringArray( jsonStr ) {
-	try {
-		const parsed = JSON.parse( jsonStr || '[]' );
-		if ( Array.isArray( parsed ) ) {
-			return parsed.filter( ( item ) => typeof item === 'string' );
-		}
-	} catch {
-		// Fall through to default
+export function mountRulesEditor() {
+	const container = document.getElementById( RULES_CONTAINER_ID );
+	if ( ! container ) {
+		return;
 	}
-	return [];
+	createRoot( container ).render( <RulesAdmin /> );
 }
 
-/**
- * Initialize tag input fields on the settings page.
- */
-function initTagInputFields() {
-	// Fields with their layout mode and selector support.
-	const tagInputFields = [
-		{ name: 'log_urls', horizontal: false },
-		{ name: 'skip_urls', horizontal: false },
-		{
-			name: 'log_events',
-			horizontal: true,
-			showHookSelector: true,
-			hookSelectorMode: 'include',
-		},
-		{
-			name: 'custom_events',
-			horizontal: true,
-			showCustomSelector: true,
-		},
-		{ name: 'significant_events', horizontal: true },
-	];
-
-	tagInputFields.forEach(
-		( {
-			name: fieldName,
-			horizontal,
-			showHookSelector,
-			hookSelectorMode,
-			showCustomSelector,
-		} ) => {
-			const container = document.getElementById(
-				`event-logger-${ fieldName }`
-			);
-			if ( container ) {
-				const initialValues = parseStringArray(
-					container.dataset.values
-				);
-				const defaultValues = parseStringArray(
-					container.dataset.default
-				);
-				createRoot( container ).render(
-					<TagInputField
-						fieldName={ fieldName }
-						initialValues={ initialValues }
-						defaultValues={ defaultValues }
-						horizontal={ horizontal }
-						showHookSelector={ showHookSelector }
-						hookSelectorMode={ hookSelectorMode }
-						showCustomSelector={ showCustomSelector }
-					/>
-				);
-			}
-		}
-	);
-}
+document.addEventListener( 'DOMContentLoaded', () => {
+	mountRulesEditor();
+} );
