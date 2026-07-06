@@ -142,7 +142,7 @@
 .event-logger-custom-event-modal.topology-app.components-modal__frame {
 	background: var( --paper );
 	color: var( --ink );
-	border: 1px solid var( --paper-shadow );
+	border: 2px solid var( --paper-shadow );
 
 	// Undo the leaked console grid on the picker frames too.
 	display: flex;
