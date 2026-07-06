@@ -155,6 +155,12 @@
 .event-logger-log-entries {
 	@include base.widefat-themed;
 
+	// Drop the mixin's --paper to --paper-2 so it reads as a panel on the
+	// --paper-3 page base rather than the lightest/elevated surface.
+	.widefat {
+		background: var(--paper-2);
+	}
+
 	table {
 		font-size: 12px;
 

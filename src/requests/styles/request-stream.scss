@@ -7,7 +7,7 @@
 @use "base";
 
 .event-logger-request-stream {
-	background: base.$dark-bg;
+	background: var(--paper-3);
 	color: base.$dark-text;
 	padding: 16px 20px;
 	height: 100%;

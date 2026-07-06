@@ -8,7 +8,7 @@
 @use "base";
 
 .event-logger-error-log {
-	background: base.$dark-bg;
+	background: var(--paper-3);
 	color: base.$dark-text;
 	padding: 16px 20px;
 	height: 100%;

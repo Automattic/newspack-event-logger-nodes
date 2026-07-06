@@ -333,7 +333,7 @@ export default function UrlTable( {
 					marginBottom: '10px',
 					display: 'flex',
 					gap: '8px',
-					alignItems: 'flex-end',
+					alignItems: 'center',
 				} }
 			>
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
@@ -350,7 +350,6 @@ export default function UrlTable( {
 				</div>
 				<Button
 					variant={ errorsOnly ? 'primary' : 'secondary' }
-					size="small"
 					onClick={ () => setErrorsOnly( ! errorsOnly ) }
 				>
 					{ errorsOnly

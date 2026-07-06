@@ -99,9 +99,12 @@
 	}
 
 	// The tag pills need horizontal room; a wider minimum keeps them from wrapping
-	// every value onto its own line on the light settings page.
+	// every value onto its own line on the light settings page — but cap it so a
+	// long tag row doesn't stretch the dialog edge-to-edge.
 	&.components-modal__frame {
 		min-width: 560px;
+		width: 640px;
+		max-width: calc( 100% - 32px );
 	}
 }
 
@@ -140,7 +143,7 @@
 .event-logger-rule-edit-modal.topology-app.components-modal__frame,
 .event-logger-hook-selector-modal.topology-app.components-modal__frame,
 .event-logger-custom-event-modal.topology-app.components-modal__frame {
-	background: var( --paper );
+	background: var( --paper-2 );
 	color: var( --ink );
 	border: 2px solid var( --paper-shadow );
 
