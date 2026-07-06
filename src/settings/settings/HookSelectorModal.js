@@ -489,9 +489,9 @@ export default function HookSelectorModal( {
 															: ''
 													}` }
 												>
-													<input
+													<CheckboxControl
 														id={ hookId }
-														type="checkbox"
+														__nextHasNoMarginBottom
 														checked={ localSelected.has(
 															hook
 														) }
