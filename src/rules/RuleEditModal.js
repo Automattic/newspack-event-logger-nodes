@@ -217,7 +217,7 @@ export default function RuleEditModal( {
 							/>
 							<p className="components-base-control__help">
 								{ __(
-									'Events/hooks protected from auto-disable. Type a value and press Enter.',
+									'Events/hooks protected from auto-disable.',
 									'newspack-event-logger-nodes'
 								) }
 							</p>

@@ -5,6 +5,11 @@
  */
 
 .event-logger-rule-edit-modal {
+	// Breathing room below the header divider before the first field.
+	.rule-edit-body {
+		padding-top: 16px;
+	}
+
 	// The @wordpress controls carry `__nextHasNoMarginBottom` (which zeroes their
 	// margin), so add a comfortable gap between one field's help text and the next
 	// field's label.
@@ -23,9 +28,14 @@
 		gap: 10px;
 	}
 
+	// Match the @wordpress control labels (URL PATTERN / ACTION / …): small,
+	// uppercase, normal weight. Colour is themed below (dim in the dashboard).
 	.rule-edit-field-label {
 		min-width: 130px;
-		font-weight: 600;
+		font-size: 11px;
+		font-weight: 400;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
 	}
 
 	// Equal-width Hooks / Custom-events buttons read tidier than auto-sized ones.
@@ -40,9 +50,33 @@
 		font-size: 12px;
 	}
 
-	// Significant-events tag field: label above, tags + input, help below.
+	// Significant-events tag field: label above, tags + input, help below. The
+	// label is a plain <span> (TagInputField isn't a @wordpress control), so give
+	// it the same small/uppercase/spacing treatment the real control labels get.
+	.rule-edit-tag-field .components-base-control__label {
+		display: block;
+		margin-bottom: 8px;
+		font-size: 11px;
+		font-weight: 400;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
 	.rule-edit-tag-field .components-base-control__help {
 		margin: 8px 0 0;
+	}
+
+	// The tag input should span the field, not sit at its natural width.
+	.rule-edit-tag-field {
+		.event-logger-tag-input,
+		.event-logger-tag-input-row {
+			max-width: none;
+			width: 100%;
+		}
+
+		.event-logger-tag-input-row input {
+			width: 100%;
+		}
 	}
 
 	// The two numeric thresholds are narrow; sit them side by side on one row.
@@ -116,6 +150,11 @@
 	grid-template: none;
 	gap: 0;
 
+	// A 1px header divider on every modal (the custom-event picker already had one).
+	.components-modal__header {
+		border-bottom: 1px solid var( --paper-shadow );
+	}
+
 	.components-modal__header .components-modal__header-heading,
 	.components-modal__header button {
 		color: var( --ink );
@@ -129,9 +168,16 @@
 
 	// Labels — including SelectControl's, which renders as a bare flex-item — and
 	// the per-field help text (WP defaults it to a low-contrast grey).
+	// Field labels — one step below full brightness (--ink-2), uppercase, all
+	// consistent (Hooks / Custom events used to be full-bright, the rest dim).
 	.components-base-control__label,
 	.components-input-control__label,
 	.components-flex-item,
+	.rule-edit-field-label {
+		color: var( --ink-2 );
+	}
+
+	// Secondary text (help lines, the hook/event counts) stays muted.
 	.components-base-control__help,
 	.rule-edit-field-count {
 		color: var( --ink-3 );

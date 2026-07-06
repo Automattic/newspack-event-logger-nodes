@@ -129,7 +129,9 @@ button.components-button.event-logger-tag-remove {
 
 		&.is-custom {
 			background: var(--paper-2);
-			border-color: var(--cyan);
+			// Match the console's tee-target chips (`.topology-edit-chip`): quiet
+			// --ink-3 border, not the garish full --cyan.
+			border-color: var(--ink-3);
 			color: var(--ink);
 		}
 	}

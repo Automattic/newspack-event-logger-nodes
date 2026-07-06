@@ -6,7 +6,12 @@
 
 import { useState, useMemo, useEffect } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { Modal, Button, SearchControl } from '@wordpress/components';
+import {
+	Modal,
+	Button,
+	SearchControl,
+	CheckboxControl,
+} from '@wordpress/components';
 import '../styles/custom-event-selector.scss';
 
 /**
@@ -158,7 +163,6 @@ export default function CustomEventSelectorModal( {
 						/[^a-z0-9]/gi,
 						'-'
 					) }`;
-
 					return (
 						<label
 							key={ event }
@@ -167,12 +171,11 @@ export default function CustomEventSelectorModal( {
 								isSelected ? ' is-selected' : ''
 							}` }
 						>
-							<input
+							<CheckboxControl
 								id={ eventId }
-								type="checkbox"
+								__nextHasNoMarginBottom
 								checked={ isSelected }
 								onChange={ () => toggleEvent( event ) }
-								className="custom-event-checkbox"
 							/>
 							<span
 								className="custom-event-swatch"
