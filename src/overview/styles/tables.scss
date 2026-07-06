@@ -108,7 +108,7 @@
 
 .event-logger-table__pagination-btn {
 	padding: 4px 10px;
-	border: 2px solid var(--paper-shadow);
+	border: 1px solid var(--paper-shadow);
 	border-radius: 3px;
 	background: var(--paper);
 	cursor: pointer;
@@ -191,7 +191,7 @@
 
 		&__nav {
 			background: none;
-			border: 2px solid var(--paper-shadow);
+			border: 1px solid var(--paper-shadow);
 			border-radius: 3px;
 			cursor: pointer;
 			font-size: 10px;

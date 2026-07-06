@@ -42,14 +42,14 @@
 	// Default values - subtle gray
 	&.is-default {
 		background: var(--paper-shadow, var(--np-border));
-		border: 2px solid var(--ink-3, var(--np-border-strong));
+		border: 1px solid var(--ink-3, var(--np-border-strong));
 		color: var(--ink, var(--np-text));
 	}
 
 	// Custom/user-added values — Cobalt highlight.
 	&.is-custom {
 		background: var(--np-primary-subtle);
-		border: 2px solid var(--np-primary);
+		border: 1px solid var(--np-primary);
 		color: var(--ink, var(--np-text));
 	}
 }
