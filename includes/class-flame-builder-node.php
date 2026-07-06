@@ -458,39 +458,6 @@ class Flame_Builder_Node extends Node {
 		}
 	}
 
-	// -------------------------------------------------------------------------
-	// Stats accumulation: per-URL flame, dimensional, category, leaderboard,
-	// hourly, URL stats — all into the pending bucket + LRU.
-	// -------------------------------------------------------------------------
-
-	/** Lazily-loaded ruleset, cached for this worker's lifetime. */
-	private function rule_set(): Rule_Set {
-		return $this->rule_set ??= Rule_Set::load();
-	}
-
-	/**
-	 * Resolve the rule that governed a request: by stamped id, else url-rematch,
-	 * else null.
-	 *
-	 * @param array<array-key, mixed> $request Full request record.
-	 */
-	private function rule_for_request( array $request ): ?Rule {
-		$id = \is_string( $request['rule_id'] ?? null ) ? $request['rule_id'] : '';
-		if ( '' !== $id ) {
-			$rule = $this->rule_set()->rule_by_id( $id );
-			if ( null !== $rule ) {
-				return $rule;
-			}
-		}
-		$url = \is_string( $request['url'] ?? null ) ? $request['url'] : '';
-		return '' !== $url ? $this->rule_set()->matcher()->match( $url ) : null;
-	}
-
-	/** Whether a name is already a rule-declared significant event. */
-	private function rule_significant( ?Rule $rule, string $name ): bool {
-		return null !== $rule && \in_array( $name, $rule->significant_events, true );
-	}
-
 	/**
 	 * Total leaf entries across a per-rule-id keyed map.
 	 *
@@ -1005,6 +972,39 @@ class Flame_Builder_Node extends Node {
 		}
 
 		$this->stats_cache->set( $url_hash, $aggregate );
+	}
+
+	/**
+	 * Resolve the rule that governed a request: by stamped id, else url-rematch,
+	 * else null.
+	 *
+	 * @param array<array-key, mixed> $request Full request record.
+	 */
+	private function rule_for_request( array $request ): ?Rule {
+		$id = \is_string( $request['rule_id'] ?? null ) ? $request['rule_id'] : '';
+		if ( '' !== $id ) {
+			$rule = $this->rule_set()->rule_by_id( $id );
+			if ( null !== $rule ) {
+				return $rule;
+			}
+		}
+		$url = \is_string( $request['url'] ?? null ) ? $request['url'] : '';
+		return '' !== $url ? $this->rule_set()->matcher()->match( $url ) : null;
+	}
+
+	// -------------------------------------------------------------------------
+	// Stats accumulation: per-URL flame, dimensional, category, leaderboard,
+	// hourly, URL stats — all into the pending bucket + LRU.
+	// -------------------------------------------------------------------------
+
+	/** Lazily-loaded ruleset, cached for this worker's lifetime. */
+	private function rule_set(): Rule_Set {
+		return $this->rule_set ??= Rule_Set::load();
+	}
+
+	/** Whether a name is already a rule-declared significant event. */
+	private function rule_significant( ?Rule $rule, string $name ): bool {
+		return null !== $rule && \in_array( $name, $rule->significant_events, true );
 	}
 
 	// -------------------------------------------------------------------------

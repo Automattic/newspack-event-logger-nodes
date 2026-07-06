@@ -44,18 +44,6 @@ final class Rule {
 		public readonly string $hooks_in = self::HOOKS_INLINE
 	) {}
 
-	public function is_log(): bool {
-		return self::ACTION_LOG === $this->action;
-	}
-
-	public function is_skip(): bool {
-		return ! $this->is_log();
-	}
-
-	public function is_exact(): bool {
-		return \str_ends_with( $this->pattern, '?' );
-	}
-
 	/**
 	 * @param array<string, mixed> $a Stored rule shape.
 	 */
@@ -95,6 +83,18 @@ final class Rule {
 			return [];
 		}
 		return \array_values( \array_map( static fn ( mixed $item ): string => self::to_str( $item, '' ), $v ) );
+	}
+
+	public function is_skip(): bool {
+		return ! $this->is_log();
+	}
+
+	public function is_log(): bool {
+		return self::ACTION_LOG === $this->action;
+	}
+
+	public function is_exact(): bool {
+		return \str_ends_with( $this->pattern, '?' );
 	}
 
 	/**

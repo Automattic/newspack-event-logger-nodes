@@ -80,6 +80,57 @@ class Auto_Tuner_Node extends Node {
 		return false;
 	}
 
+	/**
+	 * @param string[] $items Hooks to disable, unless protected by the rule's significant_events.
+	 */
+	private function apply_disable_hooks( array $items, string $rule_id ): void {
+		$this->mutate_rule(
+			$rule_id,
+			static function ( Rule $rule ) use ( $items ): Rule {
+				$significant = $rule->significant_events;
+				// Resolve the REAL hook list: a pointer rule's ->hooks is null.
+				$hooks = Rule_Set::hooks_for( $rule );
+				$kept  = \array_values( \array_filter(
+					$hooks,
+					static fn( $hook ) => \in_array( $hook, $significant, true ) || ! \in_array( $hook, $items, true )
+				) );
+				// Hand save() the resolved list + inline marker; it re-tiers by count.
+				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $rule->custom_events, $kept, Rule::HOOKS_INLINE );
+			}
+		);
+	}
+
+	/**
+	 * @param string[] $items Custom-event categories to disable, unless protected by the rule's significant_events.
+	 */
+	private function apply_disable_custom_events( array $items, string $rule_id ): void {
+		$this->mutate_rule(
+			$rule_id,
+			static function ( Rule $rule ) use ( $items ): Rule {
+				$significant = $rule->significant_events;
+				$disable     = \array_flip( \array_filter( $items, static fn( $event ) => ! \in_array( $event, $significant, true ) ) );
+				$kept        = \array_values( \array_filter( $rule->custom_events, static fn( $event ) => ! isset( $disable[ $event ] ) ) );
+				// Hooks are untouched but MUST be the resolved list, not the pointer's
+				// null — otherwise save() re-inlines the rule to hooks=[] and drops it.
+				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $kept, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
+			}
+		);
+	}
+
+	/**
+	 * @param string[] $items Newly-promoted significant-event tags to append.
+	 */
+	private function apply_add_significant_events( array $items, string $rule_id ): void {
+		$this->mutate_rule(
+			$rule_id,
+			static function ( Rule $rule ) use ( $items ): Rule {
+				$merged = \array_values( \array_unique( \array_merge( $rule->significant_events, $items ) ) );
+				// Resolve hooks (pointer ->hooks is null) so save() re-tiers instead of dropping.
+				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $merged, $rule->custom_events, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
+			}
+		);
+	}
+
 	// --- Apply -----------------------------------------------------------------
 
 	/**
@@ -135,57 +186,6 @@ class Auto_Tuner_Node extends Node {
 		$shape['hooks']    = Rule_Set::hooks_for( $rule );
 		$shape['hooks_in'] = Rule::HOOKS_INLINE;
 		return $shape;
-	}
-
-	/**
-	 * @param string[] $items Hooks to disable, unless protected by the rule's significant_events.
-	 */
-	private function apply_disable_hooks( array $items, string $rule_id ): void {
-		$this->mutate_rule(
-			$rule_id,
-			static function ( Rule $rule ) use ( $items ): Rule {
-				$significant = $rule->significant_events;
-				// Resolve the REAL hook list: a pointer rule's ->hooks is null.
-				$hooks = Rule_Set::hooks_for( $rule );
-				$kept  = \array_values( \array_filter(
-					$hooks,
-					static fn( $hook ) => \in_array( $hook, $significant, true ) || ! \in_array( $hook, $items, true )
-				) );
-				// Hand save() the resolved list + inline marker; it re-tiers by count.
-				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $rule->custom_events, $kept, Rule::HOOKS_INLINE );
-			}
-		);
-	}
-
-	/**
-	 * @param string[] $items Custom-event categories to disable, unless protected by the rule's significant_events.
-	 */
-	private function apply_disable_custom_events( array $items, string $rule_id ): void {
-		$this->mutate_rule(
-			$rule_id,
-			static function ( Rule $rule ) use ( $items ): Rule {
-				$significant = $rule->significant_events;
-				$disable     = \array_flip( \array_filter( $items, static fn( $event ) => ! \in_array( $event, $significant, true ) ) );
-				$kept        = \array_values( \array_filter( $rule->custom_events, static fn( $event ) => ! isset( $disable[ $event ] ) ) );
-				// Hooks are untouched but MUST be the resolved list, not the pointer's
-				// null — otherwise save() re-inlines the rule to hooks=[] and drops it.
-				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $kept, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
-			}
-		);
-	}
-
-	/**
-	 * @param string[] $items Newly-promoted significant-event tags to append.
-	 */
-	private function apply_add_significant_events( array $items, string $rule_id ): void {
-		$this->mutate_rule(
-			$rule_id,
-			static function ( Rule $rule ) use ( $items ): Rule {
-				$merged = \array_values( \array_unique( \array_merge( $rule->significant_events, $items ) ) );
-				// Resolve hooks (pointer ->hooks is null) so save() re-tiers instead of dropping.
-				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $merged, $rule->custom_events, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
-			}
-		);
 	}
 
 	/** @api Used by the substrate to provide UI etc. */
