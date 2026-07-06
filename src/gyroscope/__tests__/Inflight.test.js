@@ -151,7 +151,9 @@ describe( 'Inflight', () => {
 		} );
 		const { container } = mount();
 		tickRefresh();
-		const rps = container.querySelector( '.event-logger-inflight-rps' );
+		const rps = container.querySelector(
+			'.newspack-nodes-toolbar-stats__rps'
+		);
 		expect( rps ).not.toBeNull();
 		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
 	} );
@@ -195,7 +197,7 @@ describe( 'Inflight', () => {
 		const { container } = mount();
 		tickRefresh();
 		expect(
-			container.querySelector( '.event-logger-refresh-select' ).value
+			container.querySelector( '.newspack-nodes-select' ).value
 		).toBe( '1' );
 		expect( container.textContent ).toContain( 'r-columns' );
 		expect( container.textContent ).toContain( 'template' );
@@ -275,13 +277,13 @@ describe( 'Inflight', () => {
 			colsBtn.click();
 		} );
 		expect(
-			container.querySelector( '.event-logger-inflight-column-picker' )
+			container.querySelector( '.newspack-nodes-column-picker' )
 		).toBeTruthy();
 		act( () => {
 			colsBtn.click();
 		} );
 		expect(
-			container.querySelector( '.event-logger-inflight-column-picker' )
+			container.querySelector( '.newspack-nodes-column-picker' )
 		).toBeNull();
 	} );
 

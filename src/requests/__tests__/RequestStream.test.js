@@ -154,9 +154,7 @@ describe( 'RequestStream', () => {
 	it( 'pause button reflects the view model and calls setPaused on click', () => {
 		registerViewFixture( { paused: false } );
 		const { container } = mount();
-		const pauseBtn = container.querySelector(
-			'.event-logger-request-stream-btn'
-		);
+		const pauseBtn = container.querySelector( 'button.button' );
 		expect( pauseBtn.textContent ).toContain( '⏸' );
 		act( () => pauseBtn.click() );
 		expect( setPaused ).toHaveBeenCalledWith( true );
@@ -165,9 +163,7 @@ describe( 'RequestStream', () => {
 	it( 'pause button shows ▶ when the view model is paused', () => {
 		registerViewFixture( { paused: true } );
 		const { container } = mount();
-		const pauseBtn = container.querySelector(
-			'.event-logger-request-stream-btn'
-		);
+		const pauseBtn = container.querySelector( 'button.button' );
 		expect( pauseBtn.textContent ).toContain( '▶' );
 		act( () => pauseBtn.click() );
 		expect( setPaused ).toHaveBeenCalledWith( false );
@@ -196,9 +192,7 @@ describe( 'RequestStream', () => {
 		expect( colsBtn ).toBeTruthy();
 		act( () => colsBtn.click() );
 		expect(
-			container.querySelector(
-				'.event-logger-request-stream-column-picker'
-			)
+			container.querySelector( '.newspack-nodes-column-picker' )
 		).toBeTruthy();
 	} );
 
@@ -213,9 +207,7 @@ describe( 'RequestStream', () => {
 		tickFrame();
 		expect( container.textContent ).toContain( 'rA' );
 		expect( container.textContent ).toContain( 'rB' );
-		const input = container.querySelector(
-			'.event-logger-request-stream-search'
-		);
+		const input = container.querySelector( '.newspack-nodes-search-input' );
 		expect( input ).toBeTruthy();
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
@@ -268,7 +260,7 @@ describe( 'RequestStream', () => {
 		const { container } = mount();
 		tickFrame();
 		const rps = container.querySelector(
-			'.event-logger-request-stream-rps'
+			'.newspack-nodes-toolbar-stats__rps'
 		);
 		expect( rps ).not.toBeNull();
 		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
@@ -394,7 +386,7 @@ describe( 'RequestStream', () => {
 		tickFrame();
 		// Find any sibling span inside the stats element whose text matches "Xs ago".
 		const stats = container.querySelector(
-			'.event-logger-request-stream-stats'
+			'.newspack-nodes-toolbar-stats'
 		);
 		expect( stats ).toBeTruthy();
 		expect( stats.textContent ).toMatch( /\d+s ago/ );
@@ -540,9 +532,7 @@ describe( 'RequestStream', () => {
 		} );
 		const { container } = mount();
 		tickFrame();
-		const input = container.querySelector(
-			'.event-logger-request-stream-search'
-		);
+		const input = container.querySelector( '.newspack-nodes-search-input' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
 			'value'
@@ -553,7 +543,7 @@ describe( 'RequestStream', () => {
 		} );
 		tickFrame();
 		const stats = container.querySelector(
-			'.event-logger-request-stream-stats'
+			'.newspack-nodes-toolbar-stats'
 		);
 		expect( stats.textContent ).toMatch( /\d+s ago/ );
 	} );
@@ -570,7 +560,7 @@ describe( 'RequestStream', () => {
 		const { container } = mount();
 		tickFrame();
 		expect(
-			container.querySelector( '.event-logger-request-stream-stats' )
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
 				.textContent
 		).toMatch( /\d+s ago/ );
 		// Clear empties the log; the node buffer empties too.
@@ -581,7 +571,7 @@ describe( 'RequestStream', () => {
 		act( () => clearBtn.click() );
 		tickFrame();
 		expect(
-			container.querySelector( '.event-logger-request-stream-stats' )
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
 				.textContent
 		).toMatch( /\d+s ago/ );
 	} );
@@ -602,7 +592,7 @@ describe( 'RequestStream', () => {
 			jest.advanceTimersByTime( 1000 );
 		} );
 		const stats = container.querySelector(
-			'.event-logger-request-stream-stats'
+			'.newspack-nodes-toolbar-stats'
 		);
 		expect( stats.textContent ).toMatch( /1[123]s ago/ );
 		// A heartbeat advances the connector's lastEventTime to now — "Xs ago"

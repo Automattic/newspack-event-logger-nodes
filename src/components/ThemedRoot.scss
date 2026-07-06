@@ -4,7 +4,7 @@
 // (PerformanceDashboard gives the modal frame the skin classes so the tokens are
 // in scope there too). No --np-* fallback: the skin context is always present.
 
-@use "@newspack-nodes/shared/styles/buttons";
+@use "@newspack-nodes/shared/styles/inputs";
 
 // Page surface — the dashboard root only (the modal has its own frame, below).
 .topology-app > .newspack-nodes-theme {
@@ -104,9 +104,9 @@
 	}
 
 	// Buttons — the shared @wordpress reskin (WP-core .button + is-primary /
-	// is-secondary / is-tertiary). Defined once in _buttons.scss so the modal
+	// is-secondary / is-tertiary). Defined once in _inputs.scss so the modal
 	// frames (which portal out and must re-declare) can't drift from this.
-	@include buttons.wp-reskin;
+	@include inputs.wp-reskin;
 
 	// @wordpress/components surfaces (Card / Surface / InputControl) paint WHITE
 	// from their own emotion CSS — the charts sit inside white Cards otherwise.

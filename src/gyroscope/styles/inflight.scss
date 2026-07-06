@@ -22,59 +22,18 @@
 	gap: 8px;
 }
 
-.event-logger-inflight-meta {
-	display: flex;
-	gap: 8px 16px;
-	align-items: center;
-}
-
-.event-logger-inflight-stats {
-	@include base.dark-stats;
+// The stats readout runs count/rps side-by-side here (vs. the canonical
+// class's default stacked layout) — genuine per-dashboard layout, not look.
+.newspack-nodes-toolbar-stats {
 	flex-direction: row;
 	gap: 8px 16px;
-}
-
-.event-logger-inflight-count {
-	@include base.dark-stats-count;
-}
-
-.event-logger-inflight-rps {
-	@include base.dark-stats-rps;
 }
 
 .event-logger-inflight-error {
 	@include base.dark-error-banner;
 }
 
-// Controls (buttons, dropdowns)
-.event-logger-inflight-btn {
-	@include base.dark-button;
-}
-
-.event-logger-inflight-select {
-	background: var(--paper-3);
-	border: 1px solid var(--paper-shadow);
-	color: var(--ink-3);
-	padding: 6px 12px;
-	border-radius: var(--np-radius-md);
-	font-size: 12px;
-	cursor: pointer;
-	min-width: 60px;
-	min-height: 30px;
-
-	&:hover {
-		background: var(--hover);
-		color: var(--ink);
-	}
-
-	&:focus {
-		outline: none;
-		border-color: var(--cyan);
-	}
-}
-
-.event-logger-inflight-column-picker {
-	@include base.dark-column-picker;
+.newspack-nodes-column-picker {
 	gap: base.$space-md; // Slightly wider gap for this variant
 }
 

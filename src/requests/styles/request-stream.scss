@@ -20,44 +20,12 @@
 	flex-shrink: 0;
 }
 
-.event-logger-request-stream-controls {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-}
-
-input.event-logger-request-stream-search {
-	width: 280px;
-}
-
-.event-logger-request-stream-stats {
-	@include base.dark-stats;
+// The stats readout runs count/rps side-by-side here (vs. the canonical
+// class's default stacked layout) — genuine per-dashboard layout, not look.
+.newspack-nodes-toolbar-stats {
 	flex-direction: row;
 	gap: 8px 16px;
 	min-width: 100px;
-}
-
-.event-logger-request-stream-count {
-	@include base.dark-stats-count;
-}
-
-.event-logger-request-stream-rps {
-	@include base.dark-stats-rps;
-}
-
-.event-logger-request-stream-btn {
-	@include base.dark-button;
-
-	&.paused,
-	&.active {
-		background: base.$success-bg;
-		border-color: base.$success-border;
-		color: base.$white;
-	}
-}
-
-.event-logger-request-stream-column-picker {
-	@include base.dark-column-picker;
 }
 
 .event-logger-request-stream-error {
@@ -171,25 +139,13 @@ input.event-logger-request-stream-search {
 	}
 }
 
-// Responsive adjustments.
+// Responsive adjustments — the search input is flex:1 now (canonical class),
+// and the toolbar already wraps by default, so only the entry spacing needs
+// narrowing.
 @media (max-width: 1200px) {
 	.event-logger-request-stream-entry {
 		gap: 8px;
 		padding: 6px 10px;
-	}
-
-	input.event-logger-request-stream-search {
-		width: 200px !important;
-	}
-}
-
-@media (max-width: 800px) {
-	input.event-logger-request-stream-search {
-		width: 150px !important;
-	}
-
-	.event-logger-request-stream-controls {
-		flex-wrap: wrap;
 	}
 }
 

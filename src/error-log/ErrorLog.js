@@ -438,10 +438,10 @@ export default function ErrorLog() {
 				<h1 className="newspack-dashboard-title">
 					{ __( 'Error Log', 'newspack-event-logger-nodes' ) }
 				</h1>
-				<div className="event-logger-error-log-controls">
+				<div className="newspack-nodes-toolbar">
 					<input
 						type="text"
-						className="event-logger-error-log-search"
+						className="newspack-nodes-search-input"
 						placeholder={ __(
 							'Filter by keyword, message, or request ID…',
 							'newspack-event-logger-nodes'
@@ -449,8 +449,8 @@ export default function ErrorLog() {
 						value={ filter }
 						onChange={ ( e ) => setFilter( e.target.value ) }
 					/>
-					<span className="event-logger-error-log-stats">
-						<span className="event-logger-error-log-count">
+					<span className="newspack-nodes-toolbar-stats">
+						<span className="newspack-nodes-toolbar-stats__count">
 							{ sprintf(
 								// translators: %d: number of error-log entries shown.
 								_n(
@@ -482,9 +482,7 @@ export default function ErrorLog() {
 						) }
 					</span>
 					<button
-						className={ `event-logger-error-log-btn ${
-							isPaused ? 'paused' : ''
-						}` }
+						className={ `button ${ isPaused ? 'is-paused' : '' }` }
 						onClick={ () => setPaused( ! isPaused ) }
 						title={
 							isPaused
@@ -501,7 +499,7 @@ export default function ErrorLog() {
 						{ isPaused ? '▶' : '⏸' }
 					</button>
 					<button
-						className="event-logger-error-log-btn"
+						className="button"
 						onClick={ handleClear }
 						title={ __(
 							'Clear all entries',

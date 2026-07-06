@@ -23,34 +23,8 @@
 	flex-shrink: 0;
 }
 
-.event-logger-error-log-controls {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-}
-
-input.event-logger-error-log-search {
-	width: 400px;
-}
-
-.event-logger-error-log-stats {
-	@include base.dark-stats;
+.newspack-nodes-toolbar-stats {
 	min-width: 80px;
-}
-
-.event-logger-error-log-count {
-	@include base.dark-stats-count;
-}
-
-.event-logger-error-log-btn {
-	@include base.dark-button;
-
-	&.paused,
-	&.active {
-		background: base.$success-bg;
-		border-color: base.$success-border;
-		color: base.$white;
-	}
 }
 
 // The DARK log pane — the scrolling error list. Light chrome sits above it;
