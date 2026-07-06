@@ -84,7 +84,7 @@ class Flame_Builder_Node extends Node {
 	private $url_cat_stats               = [];
 
 	/** Per-URL aggregate state. */
-	private float $last_flush_time             = 0.0;
+	private float $last_flush_time          = 0.0;
 	/** @var array<string, array<string, bool>> rule_id => {hook => true} disable decisions. */
 	private array $hooks_to_disable         = [];
 	/** @var array<string, array<string, bool>> rule_id => {event => true} disable decisions. */
@@ -94,8 +94,8 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string, array<string, bool>> rule_id => {event => true} newly promoted. */
 	private array $new_significant_events   = [];
 	/** @var array<string, bool> Custom-event-name set ({name => true}). */
-	private $custom_event_names          = [];
-	private bool $is_hub                 = false;
+	private array $custom_event_names       = [];
+	private bool $is_hub                    = false;
 
 	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
 	private ?Rule_Set $rule_set = null;
@@ -130,7 +130,7 @@ class Flame_Builder_Node extends Node {
 
 	/** Per-URL namespaces bounded to top-N by traffic when mirrored. */
 	private const STATS_MIRROR_TOPN = [
-		Stats_Store::NS_URL     => 10,   // flame profiles — profiled requests only
+		Stats_Store::NS_URL     => 0,    // flame profiles — profiled requests only
 		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional
 		Stats_Store::NS_URL_CAT => 100,  // per-URL categories
 	];
