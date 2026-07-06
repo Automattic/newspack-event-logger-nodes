@@ -4,6 +4,8 @@
 // (PerformanceDashboard gives the modal frame the skin classes so the tokens are
 // in scope there too). No --np-* fallback: the skin context is always present.
 
+@use "@newspack-nodes/shared/styles/buttons";
+
 // Page surface — the dashboard root only (the modal has its own frame, below).
 .topology-app > .newspack-nodes-theme {
 	// The dashboard's base surface (outermost) — matches the --paper-3 body.
@@ -101,42 +103,10 @@
 		cursor: pointer;
 	}
 
-	// Buttons. WP-core .button uses a light border; @wordpress/components
-	// secondary/tertiary draw theirs as an inset box-shadow that reads as a frame.
-	// The raw WP `.button` (the "Find" button). When DISABLED (empty query) WP's
-	// `.wp-core-ui .button:disabled` paints a light gray border + bg with
-	// `!important` at higher specificity — that's the stray "white border". Match
-	// both states, with the disabled selector specific enough to win.
-	button.button {
-		appearance: none;
-		background: var(--paper) !important;
-		color: var(--ink) !important;
-		border: 1px solid var(--paper-shadow) !important;
-	}
-
-	button.button:disabled {
-		background: var(--paper) !important;
-		color: var(--ink-3) !important;
-		border-color: var(--paper-shadow) !important;
-	}
-
-	.components-button.is-secondary,
-	.components-button.is-tertiary {
-		background: var(--paper);
-		color: var(--ink);
-		box-shadow: inset 0 0 0 1px var(--paper-shadow);
-
-		&:hover:not(:disabled) {
-			background: var(--paper-3);
-			color: var(--cyan);
-			box-shadow: inset 0 0 0 1px var(--cyan);
-		}
-	}
-
-	.components-button.is-primary {
-		background: var(--cyan);
-		color: var(--paper);
-	}
+	// Buttons — the shared @wordpress reskin (WP-core .button + is-primary /
+	// is-secondary / is-tertiary). Defined once in _buttons.scss so the modal
+	// frames (which portal out and must re-declare) can't drift from this.
+	@include buttons.wp-reskin;
 
 	// @wordpress/components surfaces (Card / Surface / InputControl) paint WHITE
 	// from their own emotion CSS — the charts sit inside white Cards otherwise.

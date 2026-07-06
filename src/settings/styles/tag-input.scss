@@ -41,16 +41,16 @@
 
 	// Default values - subtle gray
 	&.is-default {
-		background: base.$light-border-light;
-		border: 2px solid base.$light-border;
-		color: base.$light-text;
+		background: var(--paper-shadow, var(--np-border));
+		border: 2px solid var(--ink-3, var(--np-border-strong));
+		color: var(--ink, var(--np-text));
 	}
 
 	// Custom/user-added values — Cobalt highlight.
 	&.is-custom {
 		background: var(--np-primary-subtle);
 		border: 2px solid var(--np-primary);
-		color: base.$light-text;
+		color: var(--ink, var(--np-text));
 	}
 }
 
@@ -77,12 +77,12 @@ button.components-button.event-logger-tag-remove {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: base.$light-text-secondary;
+	color: var(--ink-3, var(--np-text-secondary));
 	transition: all 0.15s ease;
 
 	&:hover {
 		background: rgba(0, 0, 0, 0.1);
-		color: base.$light-text;
+		color: var(--ink, var(--np-text));
 	}
 
 	svg {
@@ -108,7 +108,7 @@ button.components-button.event-logger-tag-remove {
 }
 
 .event-logger-selector-count {
-	color: base.$light-text-secondary;
+	color: var(--ink-3, var(--np-text-secondary));
 	font-size: 13px;
 }
 

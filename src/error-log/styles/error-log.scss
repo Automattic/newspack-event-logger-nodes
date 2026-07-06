@@ -9,7 +9,7 @@
 
 .event-logger-error-log {
 	background: var(--paper-3);
-	color: base.$dark-text;
+	color: var(--ink);
 	padding: 16px 20px;
 	height: 100%;
 	display: flex;
@@ -60,8 +60,8 @@ input.event-logger-error-log-search {
 	flex: 1;
 	overflow-y: scroll;
 	overflow-x: hidden;
-	background: base.$term-bg;
-	border: 2px solid base.$term-border;
+	background: var(--paper-3);
+	border: 2px solid var(--paper-shadow);
 	border-top: none;
 	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
 	padding: 0;
@@ -74,16 +74,16 @@ input.event-logger-error-log-search {
 	}
 
 	&::-webkit-scrollbar-track {
-		background: base.$term-bg;
+		background: var(--paper-3);
 		border-radius: 4px;
 	}
 
 	&::-webkit-scrollbar-thumb {
-		background: base.$term-border;
+		background: var(--paper-shadow);
 		border-radius: 4px;
 
 		&:hover {
-			background: base.$term-text-dim;
+			background: var(--ink-3);
 		}
 	}
 }
@@ -93,15 +93,15 @@ input.event-logger-error-log-search {
 	display: grid;
 	gap: 12px;
 	padding: 6px 8px;
-	background: base.$term-bg-alt;
-	border: 2px solid base.$term-border;
+	background: var(--paper-2);
+	border: 2px solid var(--paper-shadow);
 	border-bottom: none;
 	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
 	flex-shrink: 0;
 }
 
 .event-logger-error-log-th {
-	color: base.$term-text-dim;
+	color: var(--ink-3);
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
@@ -120,7 +120,7 @@ input.event-logger-error-log-search {
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	color: base.$term-text-dim;
+	color: var(--ink-3);
 	font-size: 14px;
 	font-style: italic;
 }
@@ -140,10 +140,10 @@ input.event-logger-error-log-search {
 
 	// Dark-pane rows.
 	&.row-odd {
-		background: base.$term-bg-alt;
+		background: var(--paper-2);
 
 		&:hover {
-			background: color-mix(in srgb, base.$accent 20%, base.$term-bg-alt);
+			background: color-mix(in srgb, base.$accent 20%, var(--paper-2));
 		}
 	}
 
@@ -151,10 +151,10 @@ input.event-logger-error-log-search {
 		// Surface tiers are nearly identical on dark skins, so tint every other
 		// row toward the ink for visible striping (lighter on dark, darker on
 		// light — it adapts to the skin).
-		background: color-mix(in srgb, base.$ink 8%, base.$term-bg-alt);
+		background: color-mix(in srgb, base.$ink 8%, var(--paper-2));
 
 		&:hover {
-			background: color-mix(in srgb, base.$accent 20%, base.$term-bg-alt);
+			background: color-mix(in srgb, base.$accent 20%, var(--paper-2));
 		}
 	}
 }
@@ -171,14 +171,14 @@ input.event-logger-error-log-search {
 	}
 
 	&--info {
-		color: base.$term-text-dim;
+		color: var(--ink-3);
 	}
 }
 
 .entry-message {
 	// Explicit light ink — this cell sits on the dark pane and otherwise
-	// inherits the chrome's dark $dark-text (invisible dark-on-dark).
-	color: base.$term-text;
+	// inherits the chrome's dark var(--ink) (invisible dark-on-dark).
+	color: var(--ink);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;

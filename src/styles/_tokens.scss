@@ -6,9 +6,9 @@
 // graph-view.scss). No --np-* fallback (ThemedRoot always supplies the skin
 // context), no color-mix lightening, no light/dark/terminal surface split — the
 // dashboard is ONE skinned surface: terminal-mono under decorative skins,
-// Newspack-light under the default. The legacy $dark-*/$light-*/$term-* names
-// are kept as thin aliases onto the surface system so the component rules + the
-// shared mixins keep compiling unchanged while everything reskins.
+// Newspack-light under the default. The legacy $dark-*/$light-*/$term-* aliases
+// were deleted — components read var(--paper*/--ink*/--cyan*) directly; the
+// $surface/$ink/$accent semantic names below are the only indirection kept.
 
 // --- Surface system ---------------------------------------------------------
 $surface: var(--paper); // page
@@ -55,51 +55,8 @@ $space-lg: 16px;
 $space-xl: 24px;
 $focus-shadow: 0 0 0 2px var(--cyan-subtle);
 
-// --- Legacy aliases onto the surface system (repoint, don't rename) ---------
-// The component rules + shared mixins still read these names; they now resolve
-// to the one skinned surface system instead of the old three-way split.
-$term-bg: $surface-3;
-$term-bg-alt: $surface-2;
-$term-text: $ink;
-$term-text-dim: $ink-3;
-$term-border: $border;
-$term-accent: $accent;
-$term-accent-hover: $accent-hover;
-
-$dark-bg: $surface;
-$dark-bg-secondary: $surface-2;
-$dark-bg-tertiary: $surface-3;
-$dark-bg-hover: $selected; // cyan-tint hover, distinct from the resting bg
-$dark-bg-active: $selected;
-$dark-bg-row-even: $surface-2;
-$dark-bg-row-hover: $surface-3;
-$dark-bg-deep: $surface-2;
-$dark-bg-deepest: $surface-3;
-$dark-header-border: $border;
-$dark-text: $ink;
-$dark-text-muted: $ink-3;
-$dark-text-time: $ink-3;
-$dark-text-placeholder: $ink-3;
-$dark-text-dim: $ink-3;
-$dark-border: $border;
-$dark-border-light: $border;
-$dark-accent: $accent;
-$dark-accent-hover: $accent-hover;
-$dark-success: $ok;
-$dark-info: $accent;
-
-$light-text: $ink;
-$light-text-secondary: $ink-3;
-$light-text-muted: $ink-3;
-$light-surface: $surface-2;
-$light-surface-alt: $surface-2;
-$light-surface-hover: $surface-3;
-$light-selected: $selected;
-$light-border: $border;
-$light-border-light: $border;
-$light-border-muted: $border;
-$light-border-faint: $surface-3;
-
+// --- Semantic status/focus (the $dark-*/$light-*/$term-* aliases were deleted;
+//     surfaces/text/borders read var(--paper*/--ink*/--cyan*) at the call site) -
 $status-2xx: $ok;
 $status-3xx: $warn;
 $status-4xx: $err;

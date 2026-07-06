@@ -11,7 +11,7 @@
 	background: var(--paper-3);
 	border-radius: 4px;
 	padding: 16px;
-	color: base.$dark-text;
+	color: var(--ink);
 	font-family: base.$system-font;
 	height: 100%;
 	display: flex;
@@ -52,9 +52,9 @@
 }
 
 .event-logger-inflight-select {
-	background: base.$dark-bg-tertiary;
-	border: 2px solid base.$dark-border;
-	color: base.$dark-text-muted;
+	background: var(--paper-3);
+	border: 2px solid var(--paper-shadow);
+	color: var(--ink-3);
 	padding: 6px 12px;
 	border-radius: var(--np-radius-md);
 	font-size: 12px;
@@ -63,13 +63,13 @@
 	min-height: 30px;
 
 	&:hover {
-		background: base.$dark-bg-hover;
-		color: base.$dark-text;
+		background: var(--hover);
+		color: var(--ink);
 	}
 
 	&:focus {
 		outline: none;
-		border-color: base.$dark-accent;
+		border-color: var(--cyan);
 	}
 }
 

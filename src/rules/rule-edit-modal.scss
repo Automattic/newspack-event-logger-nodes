@@ -4,6 +4,8 @@
  * settings rules editor AND the performance dashboard's "Log this URL") gets it.
  */
 
+@use "@newspack-nodes/shared/styles/buttons";
+
 .event-logger-rule-edit-modal {
 	// Breathing room below the header divider before the first field.
 	.rule-edit-body {
@@ -156,11 +158,23 @@
 	// A 1px header divider on every modal (the custom-event picker already had one).
 	.components-modal__header {
 		border-bottom: 1px solid var( --paper-shadow );
+		padding: 0 18px;
+		height: 64px;
 	}
 
 	.components-modal__header .components-modal__header-heading,
 	.components-modal__header button {
-		color: var( --ink );
+		padding: 0;
+		font-size: 18px;
+		line-height: 1;
+		color: var(--ink);
+		min-width: 24px;
+		height: 24px;
+
+		&:hover {
+			background: var(--oxide);
+			color: var(--paper);
+		}
 	}
 
 	// Form-control chrome (select / input / textarea / checkbox, incl. the
@@ -186,17 +200,9 @@
 		color: var( --ink-3 );
 	}
 
-	.components-button.is-secondary,
-	.components-button.is-tertiary {
-		background: var( --paper-2 );
-		color: var( --ink );
-		box-shadow: inset 0 0 0 1px var( --paper-shadow );
-	}
-
-	.components-button.is-primary {
-		background: var( --cyan );
-		color: var( --paper );
-	}
+	// Portal frames escape ThemedRoot's DOM subtree, so its @wordpress reskin
+	// can't reach here — pull the SAME mixin so the modal buttons never drift.
+	@include buttons.wp-reskin;
 
 	::placeholder {
 		color: var( --ink-3 );

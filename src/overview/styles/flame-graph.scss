@@ -10,8 +10,8 @@
 .event-logger-flame-empty {
 	padding: 24px;
 	text-align: center;
-	color: base.$light-text-secondary;
-	background: base.$light-surface;
+	color: var(--ink-3);
+	background: var(--paper-2);
 	border-radius: 4px;
 }
 

@@ -29,22 +29,7 @@
 	dark-search-input, table-header, table-list, table-row, table-cell,
 	table-cell-numeric, table-empty, sortable-header-button,
 	widefat-themed with (
-		$dark-bg-secondary: $dark-bg-secondary,
-		$dark-bg-tertiary: $dark-bg-tertiary,
-		$dark-bg-hover: $dark-bg-hover,
-		$dark-bg-active: $dark-bg-active,
-		$dark-text: $dark-text,
-		$dark-text-muted: $dark-text-muted,
-		$dark-text-placeholder: $dark-text-placeholder,
-		$dark-border: $dark-border,
-		$dark-accent: $dark-accent,
-		$dark-success: $dark-success,
 		$error-bg: $error-bg,
-		$light-surface: $light-surface,
-		$light-selected: $light-selected,
-		$light-border: $light-border,
-		$light-border-light: $light-border-light,
-		$light-text-muted: $light-text-muted,
 		$wp-link: $wp-link
 	);
 @use "dashboard-mixins" as mix;
@@ -96,9 +81,9 @@
 .event-logger-skeleton {
 	background: linear-gradient(
 		90deg,
-		$light-surface 25%,
-		$light-border-light 50%,
-		$light-surface 75%
+		var(--paper-2) 25%,
+		var(--paper-shadow) 50%,
+		var(--paper-2) 75%
 	);
 	background-size: 200% 100%;
 	animation: skeleton-pulse 1.5s ease-in-out infinite;
@@ -125,12 +110,12 @@
 // Empty states
 .event-logger-empty-state,
 .event-logger-no-selection {
-	color: $light-text-secondary;
+	color: var(--ink-3);
 	text-align: center;
 	padding: $space-xl $space-lg;
-	background: $light-surface;
+	background: var(--paper-2);
 	border-radius: $border-radius-lg;
-	border: 2px dashed $light-border;
+	border: 2px dashed var(--paper-shadow);
 
 	&::before {
 		content: "";
@@ -149,11 +134,11 @@
 	.event-logger-stat-value {
 		font-size: 28px;
 		font-weight: 600;
-		color: $light-text;
+		color: var(--ink);
 	}
 
 	.event-logger-stat-label {
-		color: $light-text-secondary;
+		color: var(--ink-3);
 		font-size: 14px;
 	}
 }
@@ -164,7 +149,7 @@
 	justify-content: space-between;
 	align-items: center;
 	padding: 10px 14px;
-	background: $light-surface;
+	background: var(--paper-2);
 	border-radius: $border-radius-sm;
 	border-left: 3px solid transparent;
 	text-decoration: none;
@@ -176,7 +161,7 @@
 		border-color 0.2s ease;
 
 	&:hover {
-		background: $light-surface-hover;
+		background: var(--hover);
 		text-decoration: none;
 		transform: translateY(-2px);
 		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
@@ -195,11 +180,11 @@
 
 	.event-logger-card-link-name {
 		font-weight: 500;
-		color: $light-text;
+		color: var(--ink);
 	}
 
 	.event-logger-card-link-count {
-		color: $light-text-secondary;
+		color: var(--ink-3);
 		font-size: 12px;
 		margin-left: $space-sm;
 	}
@@ -228,9 +213,9 @@ select.event-logger-refresh-select {
 	-webkit-appearance: none;
 	-moz-appearance: none;
 	appearance: none;
-	background: $dark-bg-tertiary !important;
-	border: 2px solid $dark-border !important;
-	color: $dark-text !important;
+	background: var(--paper-2) !important;
+	border: 2px solid var(--paper-shadow) !important;
+	color: var(--ink) !important;
 	padding: 0 8px !important;
 	border-radius: 4px !important;
 	font-size: 12px !important;
@@ -244,14 +229,14 @@ select.event-logger-refresh-select {
 	vertical-align: middle;
 
 	&:hover {
-		background: $dark-bg-hover !important;
+		background: var(--hover) !important;
 	}
 
 	&:focus {
 		outline: none;
-		border-color: $dark-accent !important;
-		background: $dark-bg-tertiary !important;
-		color: $dark-text !important;
+		border-color: var(--cyan) !important;
+		background: var(--paper-2) !important;
+		color: var(--ink) !important;
 	}
 }
 
@@ -268,14 +253,14 @@ select.event-logger-refresh-select {
 	min-height: 40px;
 	margin-bottom: 12px;
 	padding-bottom: 12px;
-	border-bottom: 1px solid $dark-header-border;
+	border-bottom: 1px solid var(--paper-shadow);
 }
 
 // Shared entry cell styles (used by Request Log, Gyroscope, Error Log) — these
-// ride the DARK log rows, so they read against $term-* (light-on-dark), not the
-// chrome.
+// sit on the log-pane rows and read via skin-adaptive var(--ink*), not the
+// chrome tokens above.
 .entry-time {
-	color: $term-text-dim;
+	color: var(--ink-3);
 	font-size: 11px;
 }
 
@@ -285,7 +270,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-method {
-	color: $term-accent;
+	color: var(--cyan);
 	font-weight: 500;
 	text-transform: uppercase;
 	font-size: 11px;
@@ -313,7 +298,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-url {
-	color: $term-text;
+	color: var(--ink);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -324,17 +309,17 @@ select.event-logger-refresh-select {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: $term-accent;
+	color: var(--cyan);
 	text-decoration: none;
 
 	&:hover {
-		color: $term-accent-hover;
+		color: var(--cyan-dark);
 		text-decoration: underline;
 	}
 }
 
 .entry-url-link {
-	color: $term-text;
+	color: var(--ink);
 	text-decoration: none;
 
 	&:hover {
@@ -344,12 +329,12 @@ select.event-logger-refresh-select {
 }
 
 .entry-ip {
-	color: $term-text-dim;
+	color: var(--ink-3);
 	font-size: 11px;
 }
 
 .entry-ua {
-	color: $term-text-dim;
+	color: var(--ink-3);
 	font-size: 10px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -357,13 +342,13 @@ select.event-logger-refresh-select {
 }
 
 .entry-partition {
-	color: $term-text-dim;
+	color: var(--ink-3);
 	font-size: 10px;
 	text-align: center;
 }
 
 .entry-default {
-	color: $term-text-dim;
+	color: var(--ink-3);
 }
 
 // Shared search input (dark theme)
