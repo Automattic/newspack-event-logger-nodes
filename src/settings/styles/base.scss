@@ -15,7 +15,7 @@
 // so the compiled CSS is byte-identical to the old inline definitions.
 // `dark-button` / `dark-column-picker` are excluded — kept local below.
 @forward "../../styles/dashboard-mixins" show dark-error-banner, dark-stats,
-	dark-stats-count, dark-stats-rps, dark-search-input, table-header,
+	dark-stats-count, dark-stats-rps, table-header,
 	table-list, table-row, table-cell, table-cell-numeric, table-empty,
 	sortable-header-button,
 	widefat-themed with (
@@ -111,7 +111,7 @@
 	padding: $space-xl $space-lg;
 	background: var(--paper-2, var(--np-surface-subtle));
 	border-radius: $border-radius-lg;
-	border: 2px dashed var(--ink-3, var(--np-border-strong));
+	border: 1px dashed var(--ink-3, var(--np-border-strong));
 
 	&::before {
 		content: "";
@@ -216,8 +216,8 @@ select.event-logger-refresh-select {
 	-webkit-appearance: none;
 	-moz-appearance: none;
 	appearance: none;
-	background: var(--paper-2) !important;
-	border: 2px solid var(--paper-shadow) !important;
+	background: var(--paper) !important;
+	border: 1px solid var(--paper-shadow) !important;
 	color: var(--ink) !important;
 	padding: 0 8px !important;
 	border-radius: 4px !important;
@@ -238,7 +238,7 @@ select.event-logger-refresh-select {
 	&:focus {
 		outline: none;
 		border-color: var(--cyan) !important;
-		background: var(--paper-2) !important;
+		background: var(--paper) !important;
 		color: var(--ink) !important;
 	}
 }
@@ -357,7 +357,3 @@ select.event-logger-refresh-select {
 	color: var(--ink-3);
 }
 
-// Shared search input (dark theme)
-input.event-logger-search-input {
-	@include mix.dark-search-input;
-}

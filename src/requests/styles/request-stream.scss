@@ -27,7 +27,6 @@
 }
 
 input.event-logger-request-stream-search {
-	@include base.dark-search-input;
 	width: 280px;
 }
 
@@ -72,7 +71,7 @@ input.event-logger-request-stream-search {
 	overflow-y: scroll;
 	overflow-x: hidden;
 	background: var(--paper-3);
-	border: 2px solid var(--paper-shadow);
+	border: 1px solid var(--paper-shadow);
 	border-top: none;
 	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
 	padding: 0;
@@ -106,7 +105,7 @@ input.event-logger-request-stream-search {
 	gap: 12px;
 	padding: 6px 8px;
 	background: var(--paper-2);
-	border: 2px solid var(--paper-shadow);
+	border: 1px solid var(--paper-shadow);
 	border-bottom: none;
 	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
 	flex-shrink: 0;

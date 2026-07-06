@@ -26,7 +26,7 @@
 // dashboards + their siblings keep calling `base.<mixin>`.
 @forward "dashboard-mixins" show dark-error-banner, dark-button,
 	dark-column-picker, dark-stats, dark-stats-count, dark-stats-rps,
-	dark-search-input, table-header, table-list, table-row, table-cell,
+	table-header, table-list, table-row, table-cell,
 	table-cell-numeric, table-empty, sortable-header-button,
 	widefat-themed with (
 		$error-bg: $error-bg,
@@ -115,7 +115,7 @@
 	padding: $space-xl $space-lg;
 	background: var(--paper-2);
 	border-radius: $border-radius-lg;
-	border: 2px dashed var(--paper-shadow);
+	border: 1px dashed var(--paper-shadow);
 
 	&::before {
 		content: "";
@@ -213,8 +213,8 @@ select.event-logger-refresh-select {
 	-webkit-appearance: none;
 	-moz-appearance: none;
 	appearance: none;
-	background: var(--paper-2) !important;
-	border: 2px solid var(--paper-shadow) !important;
+	background: var(--paper) !important;
+	border: 1px solid var(--paper-shadow) !important;
 	color: var(--ink) !important;
 	padding: 0 8px !important;
 	border-radius: 4px !important;
@@ -235,7 +235,7 @@ select.event-logger-refresh-select {
 	&:focus {
 		outline: none;
 		border-color: var(--cyan) !important;
-		background: var(--paper-2) !important;
+		background: var(--paper) !important;
 		color: var(--ink) !important;
 	}
 }
@@ -351,7 +351,3 @@ select.event-logger-refresh-select {
 	color: var(--ink-3);
 }
 
-// Shared search input (dark theme)
-input.event-logger-search-input {
-	@include mix.dark-search-input;
-}

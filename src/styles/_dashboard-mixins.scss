@@ -43,11 +43,11 @@ $wp-link: null !default;
 	font-size: 12px;
 }
 
-// Toolbar button — rests at the middle surface so the --hover step stays
-// visible (a --paper-3 resting would collapse against --hover in light skins).
+// Toolbar button — the innermost control surface (--paper), lighter than the
+// panel it sits on; --hover reaches away from it so the hover always reads.
 @mixin dark-button {
-	background: var(--paper-2);
-	border: 2px solid var(--paper-shadow);
+	background: var(--paper);
+	border: 1px solid var(--paper-shadow);
 	color: var(--ink);
 	padding: 0 $space-sm;
 	border-radius: $border-radius;
@@ -75,7 +75,7 @@ $wp-link: null !default;
 // Dark theme column picker
 @mixin dark-column-picker {
 	background: var(--paper-2);
-	border: 2px solid var(--paper-shadow);
+	border: 1px solid var(--paper-shadow);
 	border-radius: $border-radius;
 	padding: $space-sm $space-md;
 	margin-bottom: $space-md;
@@ -123,38 +123,8 @@ $wp-link: null !default;
 	font-weight: 700;
 }
 
-// Dark theme search input
-@mixin dark-search-input {
-	-webkit-appearance: none;
-	-moz-appearance: none;
-	appearance: none;
-	background: var(--paper-2) !important;
-	border: 2px solid var(--paper-shadow) !important;
-	color: var(--ink) !important;
-	padding: 0 $space-md !important;
-	border-radius: $border-radius !important;
-	font-size: 13px !important;
-	height: $control-height !important;
-	min-height: $control-height !important;
-	max-height: $control-height !important;
-	box-sizing: border-box !important;
-	line-height: normal !important;
-	transition:
-		border-color 0.2s,
-		box-shadow 0.2s;
-
-	&:focus {
-		outline: none;
-		border-color: var(--cyan) !important;
-		background: var(--paper-2) !important;
-		color: var(--ink) !important;
-		box-shadow: $focus-shadow;
-	}
-
-	&::placeholder {
-		color: var(--ink-3) !important;
-	}
-}
+// (dark-search-input deleted — search inputs are themed by the shared
+// `@newspack-nodes/shared/styles/controls` partial like every other input.)
 
 // =============================================================================
 // Shared Table Mixins
@@ -165,7 +135,7 @@ $wp-link: null !default;
 	gap: 8px;
 	padding: 8px 12px;
 	background: var(--paper-2);
-	border: 2px solid var(--paper-shadow);
+	border: 1px solid var(--paper-shadow);
 	border-bottom: none;
 	font-weight: 600;
 	font-size: 13px;
@@ -175,7 +145,7 @@ $wp-link: null !default;
 }
 
 @mixin table-list {
-	border: 2px solid var(--paper-shadow);
+	border: 1px solid var(--paper-shadow);
 }
 
 @mixin table-row {
@@ -266,7 +236,7 @@ $wp-link: null !default;
 		border-color: var(--paper-shadow, #c3c4c7);
 	}
 
-	.striped > tbody > tr:nth-child(odd) {
+	.striped>tbody>tr:nth-child(odd) {
 		background-color: var(--paper-2, #f6f7f7);
 	}
 }
