@@ -35,13 +35,14 @@ export default function ThemedRoot( { children } ) {
 		if ( ! host ) {
 			return undefined;
 		}
-		// Resolve the skin's --paper to a concrete colour from inside the themed
+		// Resolve the skin's --paper-3 (the outermost/base surface — the body sits
+		// behind the whole dashboard) to a concrete colour from inside the themed
 		// wrapper (custom props resolve on the element even under display:contents).
 		const probe = document.createElement( 'span' );
 		host.appendChild( probe );
 		let paper;
 		try {
-			probe.style.background = 'var(--paper)';
+			probe.style.background = 'var(--paper-3)';
 			paper = window.getComputedStyle( probe ).backgroundColor;
 		} finally {
 			probe.remove();

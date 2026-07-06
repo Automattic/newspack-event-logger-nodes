@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The seven global logging settings** `log_urls`, `skip_urls`, `log_events`, `custom_events`, `significant_events`, `auto_disable_threshold`, `auto_protect_time_threshold` ([54]) — absorbed into per-rule fields on the ruleset, edited through the new rules editor; `enable_logging`, `log_memory`, `flush_every_line`, `allowed_users`, `hook_start_priority` stay global. Discovery / `Hook_Categorizer` now advertise the union of hooks/custom-events across all log rules.
 
+### Changed
+
+- **Rule-editor / picker modal frames follow the substrate elevation-token refactor.** The rule-edit, hook-selector, and custom-event modal frames move from `--paper` to `--paper-2` (panel role), so their inputs — now the shared `--paper` well — read as lighter fields that pop off the frame. Pairs with the newspack-nodes `--paper` ramp reconciliation + new `--canvas` token (inlined via the shared `@newspack-nodes/*` build aliases; rebuild required).
+- **Dashboard surfaces follow the elevation model.** The dashboard wrap (`.topology-app > .newspack-nodes-theme`) + the WP-admin `<body>` (via `ThemedRoot`) and every page-root (requests / gyroscope / error-log) move to the `--paper-3` base; the URL-detail modal frame + the log-entries table to `--paper-2`; the Find / Errors-Only buttons to the `--paper` well; the settings-page rule modal gains a width cap so a long tag row can't stretch it edge-to-edge.
+
 ## [0.25.1] - 2026-07-04
 
 ### Fixed

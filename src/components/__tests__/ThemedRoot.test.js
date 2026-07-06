@@ -60,7 +60,7 @@ describe( 'ThemedRoot', () => {
 	} );
 
 	it( 'paints the WP-admin body with the resolved skin surface, restored on unmount', () => {
-		// The effect probes --paper from the themed wrapper; jsdom resolves no real
+		// The effect probes --paper-3 from the themed wrapper; jsdom resolves no real
 		// CSS, so mock the probe span's computed colour and delegate everything else.
 		const real = window.getComputedStyle.bind( window );
 		const spy = jest

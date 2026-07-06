@@ -6,7 +6,8 @@
 
 // Page surface — the dashboard root only (the modal has its own frame, below).
 .topology-app > .newspack-nodes-theme {
-	background: var(--paper);
+	// The dashboard's base surface (outermost) — matches the --paper-3 body.
+	background: var(--paper-3);
 	min-height: calc(100vh - 96px);
 	box-sizing: border-box;
 }
@@ -14,7 +15,7 @@
 // The URL/request detail Modal portals to <body> outside .topology-app;
 // PerformanceDashboard tags its frame with the skin classes, so paint it here.
 .event-logger-performance-modal.components-modal__frame {
-	background: var(--paper);
+	background: var(--paper-2);
 	color: var(--ink);
 	border: 1px solid var(--paper-shadow);
 	// `.topology-app` (added to this frame for the skin tokens) ALSO imposes the
@@ -108,20 +109,20 @@
 	// both states, with the disabled selector specific enough to win.
 	button.button {
 		appearance: none;
-		background: var(--paper-2) !important;
+		background: var(--paper) !important;
 		color: var(--ink) !important;
 		border: 1px solid var(--paper-shadow) !important;
 	}
 
 	button.button:disabled {
-		background: var(--paper-3) !important;
+		background: var(--paper) !important;
 		color: var(--ink-3) !important;
 		border-color: var(--paper-shadow) !important;
 	}
 
 	.components-button.is-secondary,
 	.components-button.is-tertiary {
-		background: var(--paper-2);
+		background: var(--paper);
 		color: var(--ink);
 		box-shadow: inset 0 0 0 1px var(--paper-shadow);
 
