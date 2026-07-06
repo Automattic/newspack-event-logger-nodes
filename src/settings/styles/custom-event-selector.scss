@@ -28,14 +28,14 @@
 	}
 
 	.components-modal__header {
-		border-bottom: 1px solid base.$light-border-muted;
+		border-bottom: 1px solid var(--paper-shadow, var(--np-border));
 		padding: 16px 20px;
 	}
 
 	.components-modal__header-heading {
 		font-size: 15px;
 		font-weight: 600;
-		color: base.$light-text;
+		color: var(--ink, var(--np-text));
 	}
 
 	.components-modal__content,
@@ -56,8 +56,8 @@
 .custom-event-header {
 	flex: 0 0 auto;
 	padding: 16px 20px;
-	background: base.$light-surface-alt;
-	border-bottom: 1px solid base.$light-border-faint;
+	background: var(--paper-2, var(--np-surface-subtle));
+	border-bottom: 1px solid var(--paper-3, var(--np-surface-muted));
 }
 
 .custom-event-search {
@@ -65,7 +65,7 @@
 
 	.components-search-control__input {
 		border-radius: base.$border-radius !important;
-		border-color: base.$light-border !important;
+		border-color: var(--ink-3, var(--np-border-strong)) !important;
 		transition:
 			border-color 0.15s ease,
 			box-shadow 0.15s ease;
@@ -90,7 +90,7 @@
 	transition: background 0.15s ease !important;
 
 	&:hover {
-		background: base.$light-surface !important;
+		background: var(--paper-2, var(--np-surface-subtle)) !important;
 	}
 }
 
@@ -114,7 +114,7 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
-	background: base.$light-border-faint;
+	background: var(--paper-3, var(--np-surface-muted));
 
 	// Subtle scrollbar styling
 	&::-webkit-scrollbar {
@@ -122,15 +122,15 @@
 	}
 
 	&::-webkit-scrollbar-track {
-		background: base.$light-surface;
+		background: var(--paper-2, var(--np-surface-subtle));
 	}
 
 	&::-webkit-scrollbar-thumb {
-		background: base.$light-border;
+		background: var(--ink-3, var(--np-border-strong));
 		border-radius: 4px;
 
 		&:hover {
-			background: base.$light-text-muted;
+			background: var(--ink-3, var(--np-text-secondary));
 		}
 	}
 }
@@ -150,14 +150,14 @@
 	position: relative;
 
 	&:hover {
-		background: base.$light-surface;
+		background: var(--paper-2, var(--np-surface-subtle));
 	}
 
 	&.is-selected {
-		background: base.$light-selected;
+		background: var(--cyan-subtle, var(--np-primary-subtle));
 
 		.custom-event-name {
-			color: base.$light-text;
+			color: var(--ink, var(--np-text));
 			font-weight: 500;
 		}
 
@@ -205,7 +205,7 @@
 
 .custom-event-name {
 	font-size: 13px;
-	color: base.$light-text-secondary;
+	color: var(--ink-3, var(--np-text-secondary));
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -223,15 +223,15 @@
 .custom-event-footer {
 	flex: 0 0 auto;
 	padding: 12px 20px;
-	border-top: 1px solid base.$light-border-faint;
-	background: base.$light-surface-alt;
+	border-top: 1px solid var(--paper-3, var(--np-surface-muted));
+	background: var(--paper-2, var(--np-surface-subtle));
 	display: flex;
 	justify-content: flex-end;
 }
 
 .custom-event-count {
 	font-size: 12px;
-	color: base.$light-text-muted;
+	color: var(--ink-3, var(--np-text-secondary));
 }
 
 // =============================================================================

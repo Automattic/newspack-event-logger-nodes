@@ -97,7 +97,7 @@
 	padding: 8px 0;
 	margin-top: 4px;
 	font-size: 13px;
-	color: base.$light-text-secondary;
+	color: var(--ink-3);
 }
 
 .event-logger-table__pagination-controls {
@@ -108,12 +108,12 @@
 
 .event-logger-table__pagination-btn {
 	padding: 4px 10px;
-	border: 2px solid base.$light-border;
+	border: 2px solid var(--paper-shadow);
 	border-radius: 3px;
 	background: var(--paper);
 	cursor: pointer;
 	font-size: 13px;
-	color: base.$light-text;
+	color: var(--ink);
 
 	&:disabled {
 		opacity: 0.4;
@@ -184,19 +184,19 @@
 
 		&__count {
 			font-size: 12px;
-			color: base.$light-text-secondary;
+			color: var(--ink-3);
 			min-width: 50px;
 			text-align: center;
 		}
 
 		&__nav {
 			background: none;
-			border: 2px solid base.$light-border;
+			border: 2px solid var(--paper-shadow);
 			border-radius: 3px;
 			cursor: pointer;
 			font-size: 10px;
 			padding: 2px 5px;
-			color: base.$light-text-secondary;
+			color: var(--ink-3);
 			line-height: 1;
 
 			&:disabled {

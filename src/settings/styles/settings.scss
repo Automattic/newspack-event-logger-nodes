@@ -16,23 +16,23 @@
 	h2 {
 		font-size: 16px;
 		font-weight: 600;
-		color: base.$light-text;
+		color: var(--ink, var(--np-text));
 		padding-bottom: 12px;
-		border-bottom: 1px solid base.$light-border;
+		border-bottom: 1px solid var(--ink-3, var(--np-border-strong));
 		margin-top: 32px;
 	}
 
 	// Card-style form tables
 	.form-table {
 		background: base.$white;
-		border: 2px solid base.$light-border;
+		border: 2px solid var(--ink-3, var(--np-border-strong));
 		border-radius: base.$border-radius-lg;
 		padding: 8px;
 		margin-top: 16px;
 
 		th {
 			font-weight: 500;
-			color: base.$light-text;
+			color: var(--ink, var(--np-text));
 			padding: 16px 12px;
 			vertical-align: top;
 		}
@@ -87,16 +87,16 @@
 		align-items: center;
 		justify-content: center;
 		font-size: 18px;
-		color: base.$light-text-secondary;
-		background: base.$light-surface;
-		border: 2px solid base.$light-border;
+		color: var(--ink-3, var(--np-text-secondary));
+		background: var(--paper-2, var(--np-surface-subtle));
+		border: 2px solid var(--ink-3, var(--np-border-strong));
 		border-radius: base.$border-radius;
 		cursor: pointer;
 		transition: all 0.15s ease;
 
 		&:hover {
 			color: base.$focus-color;
-			background: base.$light-surface-hover;
+			background: var(--hover);
 			border-color: base.$focus-color;
 		}
 
@@ -133,7 +133,7 @@
 	font-weight: 500;
 	font-size: 14px;
 	padding: 8px 0;
-	color: base.$light-text;
+	color: var(--ink, var(--np-text));
 }
 
 // =============================================================================
@@ -142,12 +142,12 @@
 
 .event-logger-field-desc {
 	margin-top: 6px;
-	color: base.$light-text-secondary;
+	color: var(--ink-3, var(--np-text-secondary));
 	font-size: 13px;
 	line-height: 1.5;
 
 	code {
-		background: base.$light-border-light;
+		background: var(--paper-shadow, var(--np-border));
 		padding: 1px 5px;
 		border-radius: 3px;
 		font-size: 12px;
@@ -156,7 +156,7 @@
 
 .event-logger-field-examples {
 	margin-top: 4px;
-	color: base.$light-text-muted;
+	color: var(--ink-3, var(--np-text-secondary));
 	font-size: 12px;
 	font-style: italic;
 }

@@ -2,12 +2,8 @@
  * Base Styles
  *
  * Loading states, stats grid, admin wrapper, shared component rules.
- * Tokens live in `_tokens.scss` (this dashboard's divergent theme values);
- * the shared mixin bodies live in `src/styles/_dashboard-mixins.scss`.
- *
- * NOTE: this settings page keeps its OWN `dark-button` / `dark-column-picker`
- * (the white-on-dark hover/active variant) - those bodies genuinely diverge
- * from the shared set, so they stay local and are excluded from the forward.
+ * Tokens live in `_tokens.scss`; the shared mixin bodies live in
+ * `src/styles/_dashboard-mixins.scss`.
  */
 
 // Tokens: in local scope for the component rules + the mixin config below, and
@@ -23,85 +19,10 @@
 	table-list, table-row, table-cell, table-cell-numeric, table-empty,
 	sortable-header-button,
 	widefat-themed with (
-		$dark-bg-secondary: $dark-bg-secondary,
-		$dark-bg-tertiary: $dark-bg-tertiary,
-		$dark-bg-hover: $dark-bg-hover,
-		$dark-bg-active: $dark-bg-active,
-		$dark-text: $dark-text,
-		$dark-text-muted: $dark-text-muted,
-		$dark-text-placeholder: $dark-text-placeholder,
-		$dark-border: $dark-border,
-		$dark-accent: $dark-accent,
-		$dark-success: $dark-success,
 		$error-bg: $error-bg,
-		$light-surface: $light-surface,
-		$light-selected: $light-selected,
-		$light-border: $light-border,
-		$light-border-light: $light-border-light,
-		$light-text-muted: $light-text-muted,
 		$wp-link: $wp-link
 	);
 @use "../../styles/dashboard-mixins" as mix;
-
-// =============================================================================
-// Local Mixins — divergent button/column-picker (white-on-dark variant)
-// =============================================================================
-// Dark theme button
-@mixin dark-button {
-	background: $dark-bg-tertiary;
-	border: 2px solid $dark-border;
-	color: $dark-text;
-	padding: 0 $space-sm;
-	border-radius: $border-radius;
-	cursor: pointer;
-	font-size: 12px;
-	height: $control-height;
-	min-height: $control-height;
-	max-height: $control-height;
-	box-sizing: border-box;
-	vertical-align: middle;
-	transition: all 0.2s;
-
-	&:hover {
-		background: $dark-bg-hover;
-		color: $white;
-	}
-
-	&.active {
-		background: $dark-bg-active;
-		color: $white;
-	}
-}
-
-// Dark theme column picker
-@mixin dark-column-picker {
-	background: $dark-bg-secondary;
-	border: 2px solid $dark-border;
-	border-radius: $border-radius;
-	padding: $space-sm $space-md;
-	margin-bottom: $space-md;
-	display: flex;
-	flex-wrap: wrap;
-	gap: $space-sm;
-	font-size: 12px;
-	color: $dark-text;
-
-	label {
-		display: flex;
-		align-items: center;
-		gap: $space-xs;
-		color: $dark-text-muted;
-		cursor: pointer;
-
-		&:hover {
-			color: $white;
-		}
-	}
-
-	input[type="checkbox"] {
-		margin: 0;
-	}
-}
 
 // =============================================================================
 // Component Styles
@@ -156,9 +77,9 @@
 .event-logger-skeleton {
 	background: linear-gradient(
 		90deg,
-		$light-surface 25%,
-		$light-border-light 50%,
-		$light-surface 75%
+		var(--paper-2, var(--np-surface-subtle)) 25%,
+		var(--paper-shadow, var(--np-border)) 50%,
+		var(--paper-2, var(--np-surface-subtle)) 75%
 	);
 	background-size: 200% 100%;
 	animation: skeleton-pulse 1.5s ease-in-out infinite;
@@ -185,12 +106,12 @@
 // Empty states
 .event-logger-empty-state,
 .event-logger-no-selection {
-	color: $light-text-secondary;
+	color: var(--ink-3, var(--np-text-secondary));
 	text-align: center;
 	padding: $space-xl $space-lg;
-	background: $light-surface;
+	background: var(--paper-2, var(--np-surface-subtle));
 	border-radius: $border-radius-lg;
-	border: 2px dashed $light-border;
+	border: 2px dashed var(--ink-3, var(--np-border-strong));
 
 	&::before {
 		content: "";
@@ -216,11 +137,11 @@
 	.event-logger-stat-value {
 		font-size: 28px;
 		font-weight: 600;
-		color: $light-text;
+		color: var(--ink, var(--np-text));
 	}
 
 	.event-logger-stat-label {
-		color: $light-text-secondary;
+		color: var(--ink-3, var(--np-text-secondary));
 		font-size: 14px;
 	}
 }
@@ -231,7 +152,7 @@
 	justify-content: space-between;
 	align-items: center;
 	padding: 10px 14px;
-	background: $light-surface;
+	background: var(--paper-2, var(--np-surface-subtle));
 	border-radius: $border-radius-sm;
 	border-left: 3px solid transparent;
 	text-decoration: none;
@@ -243,7 +164,7 @@
 		border-color 0.2s ease;
 
 	&:hover {
-		background: $light-surface-hover;
+		background: var(--hover);
 		text-decoration: none;
 		transform: translateY(-2px);
 		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
@@ -262,11 +183,11 @@
 
 	.event-logger-card-link-name {
 		font-weight: 500;
-		color: $light-text;
+		color: var(--ink, var(--np-text));
 	}
 
 	.event-logger-card-link-count {
-		color: $light-text-secondary;
+		color: var(--ink-3, var(--np-text-secondary));
 		font-size: 12px;
 		margin-left: $space-sm;
 	}
@@ -295,9 +216,9 @@ select.event-logger-refresh-select {
 	-webkit-appearance: none;
 	-moz-appearance: none;
 	appearance: none;
-	background: $dark-bg-tertiary !important;
-	border: 2px solid $dark-border !important;
-	color: $dark-text !important;
+	background: var(--paper-2) !important;
+	border: 2px solid var(--paper-shadow) !important;
+	color: var(--ink) !important;
 	padding: 0 8px !important;
 	border-radius: 4px !important;
 	font-size: 12px !important;
@@ -311,14 +232,14 @@ select.event-logger-refresh-select {
 	vertical-align: middle;
 
 	&:hover {
-		background: $dark-bg-hover !important;
+		background: var(--hover) !important;
 	}
 
 	&:focus {
 		outline: none;
-		border-color: $dark-accent !important;
-		background: $dark-bg-tertiary !important;
-		color: $dark-text !important;
+		border-color: var(--cyan) !important;
+		background: var(--paper-2) !important;
+		color: var(--ink) !important;
 	}
 }
 
@@ -332,20 +253,20 @@ select.event-logger-refresh-select {
 	min-height: 40px;
 	margin-bottom: 12px;
 	padding-bottom: 12px;
-	border-bottom: 1px solid $dark-header-border;
+	border-bottom: 1px solid var(--paper-shadow);
 
 	h2,
 	h3 {
 		margin: 0;
 		font-size: 14px;
 		font-weight: 600;
-		color: $white;
+		color: var(--ink);
 	}
 }
 
 // Shared entry cell styles (used by Request Log and Gyroscope)
 .entry-time {
-	color: $dark-text-time;
+	color: var(--ink-3);
 	font-size: 11px;
 }
 
@@ -355,7 +276,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-method {
-	color: $dark-accent;
+	color: var(--cyan);
 	font-weight: 500;
 	text-transform: uppercase;
 	font-size: 11px;
@@ -383,7 +304,7 @@ select.event-logger-refresh-select {
 }
 
 .entry-url {
-	color: $dark-text;
+	color: var(--ink);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -394,32 +315,32 @@ select.event-logger-refresh-select {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: $dark-accent;
+	color: var(--cyan);
 	text-decoration: none;
 
 	&:hover {
-		color: $dark-accent-hover;
+		color: var(--cyan-dark);
 		text-decoration: underline;
 	}
 }
 
 .entry-url-link {
-	color: $dark-text;
+	color: var(--ink);
 	text-decoration: none;
 
 	&:hover {
-		color: $white;
+		color: var(--ink);
 		text-decoration: underline;
 	}
 }
 
 .entry-ip {
-	color: $dark-text-muted;
+	color: var(--ink-3);
 	font-size: 11px;
 }
 
 .entry-ua {
-	color: $dark-text-time;
+	color: var(--ink-3);
 	font-size: 10px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -427,13 +348,13 @@ select.event-logger-refresh-select {
 }
 
 .entry-partition {
-	color: $dark-text-dim;
+	color: var(--ink-3);
 	font-size: 10px;
 	text-align: center;
 }
 
 .entry-default {
-	color: $dark-text-dim;
+	color: var(--ink-3);
 }
 
 // Shared search input (dark theme)

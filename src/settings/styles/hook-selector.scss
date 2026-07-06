@@ -34,8 +34,8 @@
 	.hook-selector-header {
 		flex: 0 0 auto;
 		padding: 16px 20px;
-		border-bottom: 1px solid base.$light-border-muted;
-		background: base.$light-surface-alt;
+		border-bottom: 1px solid var(--paper-shadow, var(--np-border));
+		background: var(--paper-2, var(--np-surface-subtle));
 
 		.components-search-control {
 			margin-bottom: 12px;
@@ -64,7 +64,7 @@
 		gap: 8px;
 
 		&:hover {
-			background: base.$light-surface;
+			background: var(--paper-2, var(--np-surface-subtle));
 		}
 
 		.components-checkbox-control__input-container {
@@ -77,12 +77,12 @@
 		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 		gap: 4px 16px;
 		padding: 8px 16px 16px 40px;
-		background: base.$light-surface-hover;
-		border-top: 1px solid base.$light-border-faint;
+		background: var(--hover);
+		border-top: 1px solid var(--paper-3, var(--np-surface-muted));
 	}
 
 	.hook-selector-category {
-		border-bottom: 1px solid base.$light-border-faint;
+		border-bottom: 1px solid var(--paper-3, var(--np-surface-muted));
 
 		&:last-child {
 			border-bottom: none;
@@ -110,7 +110,7 @@
 	.hook-selector-expand {
 		width: 16px;
 		font-size: 10px;
-		color: base.$light-text-muted;
+		color: var(--ink-3, var(--np-text-secondary));
 		flex-shrink: 0;
 	}
 
@@ -129,7 +129,7 @@
 	.hook-selector-category-desc {
 		// Light-chrome muted text — was a $dark-* token before the value flip,
 		// which would read as a near-black term ink on this white modal.
-		color: base.$light-text-muted;
+		color: var(--ink-3, var(--np-text-secondary));
 		font-size: 12px;
 		flex: 1;
 		margin-left: 8px;
@@ -137,8 +137,8 @@
 
 	.hook-selector-category-count {
 		font-size: 12px;
-		color: base.$light-text-muted;
-		background: base.$light-border-light;
+		color: var(--ink-3, var(--np-text-secondary));
+		background: var(--paper-shadow, var(--np-border));
 		padding: 2px 8px;
 		border-radius: 10px;
 		flex-shrink: 0;
@@ -153,7 +153,7 @@
 		font-size: 12px;
 
 		&:hover {
-			background: base.$light-selected;
+			background: var(--cyan-subtle, var(--np-primary-subtle));
 		}
 
 		input[type="checkbox"] {
@@ -165,7 +165,7 @@
 		font-family: base.$mono-font;
 		font-size: 11px;
 		// Mono hook name body text on the light modal (was a $dark-bg-* token).
-		color: base.$light-text;
+		color: var(--ink, var(--np-text));
 		word-break: break-all;
 	}
 
@@ -206,7 +206,7 @@
 		background: transparent;
 
 		&:hover {
-			background: var(--paper-2);
+			background: var(--hover);
 		}
 	}
 
@@ -216,7 +216,7 @@
 	}
 
 	.hook-selector-hook:hover {
-		background: var(--paper-2);
+		background: var(--hover);
 	}
 
 	.hook-selector-category-count {
@@ -240,7 +240,7 @@
 			background: var(--paper-2);
 
 			&:hover {
-				background: var(--paper-3);
+				background: var(--hover);
 			}
 		}
 

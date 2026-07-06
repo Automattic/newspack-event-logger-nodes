@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Rule-editor / picker modal frames follow the substrate elevation-token refactor.** The rule-edit, hook-selector, and custom-event modal frames move from `--paper` to `--paper-2` (panel role), so their inputs — now the shared `--paper` well — read as lighter fields that pop off the frame. Pairs with the newspack-nodes `--paper` ramp reconciliation + new `--canvas` token (inlined via the shared `@newspack-nodes/*` build aliases; rebuild required).
 - **Dashboard surfaces follow the elevation model.** The dashboard wrap (`.topology-app > .newspack-nodes-theme`) + the WP-admin `<body>` (via `ThemedRoot`) and every page-root (requests / gyroscope / error-log) move to the `--paper-3` base; the URL-detail modal frame + the log-entries table to `--paper-2`; the Find / Errors-Only buttons to the `--paper` well; the settings-page rule modal gains a width cap so a long tag row can't stretch it edge-to-edge.
+- **Dashboards read skin CSS vars directly; settings page is now skin-aware.** The pre-skin `$dark-*` / `$light-*` / `$term-*` SCSS alias layer and the `_dashboard-mixins` config-param (`@use ... with (…)`) indirection were deleted — component rules read `var(--paper*/--ink*/--cyan*/--hover)` directly. The settings page (and the shared refresh-select / headers it feeds Gyroscope / Request-Stream / Worker-Status) de-darkens from hardcoded dark hexes to skin-aware chrome; the modal / `@wordpress` buttons pull the shared `wp-reskin` mixin from the substrate.
+
+### Fixed
+
+- **Settings de-darkening follow-ups.** White-on-dark text stranded on the now-light surfaces is restored to readable `var(--ink)`; HTTP status inks go back to full strength (the `color-mix`-toward-white variants tuned for the retired dark pane were illegible on light chrome); the dead `dark-button` / `dark-column-picker` local mixins were removed; and the refresh-select / toolbar-button hover restings move off `--paper-3` to `--paper-2` so the `--hover` step is visible in light skins.
 
 ## [0.25.1] - 2026-07-04
 
