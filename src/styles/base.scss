@@ -21,18 +21,16 @@
 // in newspack-nodes; nothing per-dashboard to keep in sync.
 @use "@newspack-nodes/shared/styles/controls";
 
-// Shared mixin bodies, configured with the dashboard color tokens so the
-// compiled CSS matches the old inline definitions. `@forward` re-exports them so
-// dashboards + their siblings keep calling `base.<mixin>`.
-@forward "dashboard-mixins" show dark-error-banner, dark-button,
-	dark-column-picker, dark-stats, dark-stats-count, dark-stats-rps,
-	table-header, table-list, table-row, table-cell,
-	table-cell-numeric, table-empty, sortable-header-button,
-	widefat-themed with (
-		$error-bg: $error-bg,
-		$wp-link: $wp-link
-	);
-@use "dashboard-mixins" as mix;
+// Shared mixin bodies from newspack-nodes (the byte-identical ELN copy in
+// styles/_dashboard-mixins.scss was deleted). `@forward` re-exports them so
+// dashboards + their siblings keep calling `base.<mixin>`; the shared mixins
+// carry their own tokens ($error-bg/$wp-link resolve to --oxide/--cyan under the
+// skin, same as before), so there's no per-dashboard config. Only the mixins the
+// dashboards still call are forwarded — the retired toolbar mixins are gone.
+@forward "@newspack-nodes/shared/styles/mixins" show dark-error-banner,
+	table-header, table-list, table-row, table-cell, table-cell-numeric,
+	table-empty, sortable-header-button, widefat-themed;
+@use "@newspack-nodes/shared/styles/mixins" as mix;
 
 // Scoped border-box baseline — each dashboard `@include`s this with its OWN root
 // id so the reset only applies inside that app's root, never leaking into the

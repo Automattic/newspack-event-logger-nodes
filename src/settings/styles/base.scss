@@ -3,7 +3,7 @@
  *
  * Loading states, stats grid, admin wrapper, shared component rules.
  * Tokens live in `_tokens.scss`; the shared mixin bodies live in
- * `src/styles/_dashboard-mixins.scss`.
+ * `@newspack-nodes/shared/styles/mixins` (the local duplicate was deleted).
  */
 
 // Tokens: in local scope for the component rules + the mixin config below, and
@@ -11,18 +11,15 @@
 @use "tokens" as *;
 @forward "tokens";
 
-// Shared mixin bodies, configured with THIS dashboard's divergent color tokens
-// so the compiled CSS is byte-identical to the old inline definitions.
-// `dark-button` / `dark-column-picker` are excluded — kept local below.
-@forward "../../styles/dashboard-mixins" show dark-error-banner, dark-stats,
-	dark-stats-count, dark-stats-rps, table-header,
-	table-list, table-row, table-cell, table-cell-numeric, table-empty,
-	sortable-header-button,
-	widefat-themed with (
-		$error-bg: $error-bg,
-		$wp-link: $wp-link
-	);
-@use "../../styles/dashboard-mixins" as mix;
+// Shared mixin bodies from newspack-nodes (the byte-identical ELN copy in
+// styles/_dashboard-mixins.scss was deleted). `@forward` re-exports them so this
+// page + its siblings keep calling `base.<mixin>`; the shared mixins carry their
+// own tokens, so there's no per-dashboard config. `dark-button` /
+// `dark-column-picker` stay LOCAL below (settings keeps its own variants).
+@forward "@newspack-nodes/shared/styles/mixins" show dark-error-banner,
+	table-header, table-list, table-row, table-cell, table-cell-numeric,
+	table-empty, sortable-header-button, widefat-themed;
+@use "@newspack-nodes/shared/styles/mixins" as mix;
 
 // =============================================================================
 // Component Styles
