@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Dashboard toolbars adopt the shared canonical control classes** (from newspack-nodes `_inputs.scss`): the request-stream, error-log, and gyroscope toolbars drop their bespoke `event-logger-*-{search,controls,select,btn}` selectors for the shared `.newspack-nodes-toolbar` / `.newspack-nodes-search-input` / `.button` / `.newspack-nodes-select` / `.newspack-nodes-column-picker` / `.newspack-nodes-toolbar-stats` set, so buttons render the WordPress-default look via the shared `wp-reskin` and every toolbar of the same kind shares one class. Orphaned `event-logger-refresh-select` rules removed.
+- **Dashboard toolbars adopt the shared canonical control classes** (from newspack-nodes `_inputs.scss`): the request-stream, error-log, and gyroscope toolbars drop their bespoke `event-logger-*-{search,controls,select,btn}` selectors for the shared `.newspack-nodes-toolbar` / `.newspack-nodes-search-input` / `.button` / `.newspack-nodes-select` / `.newspack-nodes-column-picker` / `.newspack-nodes-toolbar-stats` set, so buttons render the native WordPress/Newspack `.button` look (the shared `wp-reskin` no longer overrides `.button`, only adds the `.is-active`/`.is-paused` toolbar states) and every toolbar of the same kind shares one class. Orphaned `event-logger-refresh-select` rules removed.
 
 ### Added
 

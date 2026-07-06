@@ -42,15 +42,6 @@
 	// so table cells / headers / sortable buttons read without per-element rules.
 	color: var(--ink);
 
-	// <button> does NOT inherit colour (UA ButtonText = black) — opt buttons in so
-	// the sortable column-header buttons read on the skinned surface. The themed
-	// component buttons below set their own colour and out-specify this. Exclude the
-	// overlay (`.nodes-debug`): forcing inherit there overrides the substrate's dark
-	// primary modal button (`--paper` text on an `--ink` fill) to --ink → invisible.
-	button:not(.nodes-debug *) {
-		color: inherit;
-	}
-
 	// Page + section headings carry no class and inherit WP-admin's dark default
 	// ink (#1d2327) — invisible on the skinned surface. h1 covers the
 	// @wordpress/components Modal title (`.components-modal__header-heading`).
@@ -62,45 +53,6 @@
 	h5,
 	h6 {
 		color: var(--ink);
-	}
-
-	// Form controls — reskin the WP-default light widgets onto the surface system.
-	// EXCLUDE the substrate debug-overlay (`.nodes-debug`): it renders INLINE inside
-	// this ThemedRoot (no portal), so the console's REPL / settings inputs are
-	// descendants here. Block scoping alone can't spare them — the descendant rule
-	// out-specifies the REPL input's transparent bg and paints it light --paper-3
-	// (white-on-white under light skins). The overlay owns its own input styling.
-	input[type="text"]:not(.nodes-debug *),
-	input[type="search"]:not(.nodes-debug *),
-	input[type="number"]:not(.nodes-debug *),
-	select:not(.nodes-debug *),
-	textarea:not(.nodes-debug *) {
-		background: var(--paper-3);
-		color: var(--ink);
-		border: 1px solid var(--paper-shadow);
-		border-radius: 4px;
-		font-family: var(--font-mono);
-		font-size: 12px;
-
-		&::placeholder {
-			color: var(--ink-3);
-		}
-
-		&:focus {
-			outline: none;
-			border-color: var(--cyan);
-			box-shadow: 0 0 0 2px var(--cyan-subtle);
-		}
-	}
-
-	select:not(.nodes-debug *) {
-		appearance: none;
-		padding: 0 22px 0 8px;
-		// neutral mid-tone chevron — reads on both light and dark surfaces.
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10' fill='none' stroke='%23888' stroke-width='1.5'%3E%3Cpath d='M2 4l3 3 3-3'/%3E%3C/svg%3E");
-		background-repeat: no-repeat;
-		background-position: right 7px center;
-		cursor: pointer;
 	}
 
 	// Buttons — the shared @wordpress reskin (WP-core .button + is-primary /
