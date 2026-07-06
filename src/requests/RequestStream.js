@@ -544,10 +544,10 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				<h1 className="newspack-dashboard-title">
 					{ __( 'Request Log', 'newspack-event-logger-nodes' ) }
 				</h1>
-				<div className="event-logger-request-stream-controls">
+				<div className="newspack-nodes-toolbar">
 					<input
 						type="text"
-						className="event-logger-request-stream-search"
+						className="newspack-nodes-search-input"
 						placeholder={ __(
 							'Filter by URL…',
 							'newspack-event-logger-nodes'
@@ -555,8 +555,8 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						value={ filter }
 						onChange={ ( e ) => setFilter( e.target.value ) }
 					/>
-					<span className="event-logger-request-stream-stats">
-						<span className="event-logger-request-stream-count">
+					<span className="newspack-nodes-toolbar-stats">
+						<span className="newspack-nodes-toolbar-stats__count">
 							{ sprintf(
 								// translators: %d: number of requests shown in the log.
 								_n(
@@ -568,7 +568,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 								filteredEntries.length
 							) }
 						</span>
-						<span className="event-logger-request-stream-rps">
+						<span className="newspack-nodes-toolbar-stats__rps">
 							{ requestsPerSecond.toFixed( 1 ) } req/s
 						</span>
 						{ staleSec !== null && (
@@ -592,9 +592,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						) }
 					</span>
 					<button
-						className={ `event-logger-request-stream-btn ${
-							isPaused ? 'paused' : ''
-						}` }
+						className={ `button ${ isPaused ? 'is-paused' : '' }` }
 						onClick={ () => setPaused( ! isPaused ) }
 						title={
 							isPaused
@@ -611,7 +609,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						{ isPaused ? '▶' : '⏸' }
 					</button>
 					<button
-						className="event-logger-request-stream-btn"
+						className="button"
 						onClick={ handleClear }
 						title={ __(
 							'Clear all entries',
@@ -621,8 +619,8 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						{ __( 'Clear', 'newspack-event-logger-nodes' ) }
 					</button>
 					<button
-						className={ `event-logger-request-stream-btn ${
-							showColumnPicker ? 'active' : ''
+						className={ `button ${
+							showColumnPicker ? 'is-active' : ''
 						}` }
 						onClick={ () =>
 							setShowColumnPicker( ! showColumnPicker )
@@ -646,7 +644,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			/>
 
 			{ showColumnPicker && (
-				<div className="event-logger-request-stream-column-picker">
+				<div className="newspack-nodes-column-picker">
 					{ Object.entries( COLUMNS ).map( ( [ key, col ] ) => (
 						<label
 							key={ key }

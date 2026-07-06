@@ -154,9 +154,7 @@ describe( 'ErrorLog', () => {
 	it( 'pause button reflects the view model and calls setPaused on click', () => {
 		registerViewFixture( { paused: false } );
 		const { container } = mount();
-		const pauseBtn = container.querySelector(
-			'.event-logger-error-log-btn'
-		);
+		const pauseBtn = container.querySelector( 'button.button' );
 		expect( pauseBtn.textContent ).toContain( '⏸' );
 		act( () => pauseBtn.click() );
 		expect( setPaused ).toHaveBeenCalledWith( true );
@@ -165,9 +163,7 @@ describe( 'ErrorLog', () => {
 	it( 'pause button shows ▶ when the view model is paused', () => {
 		registerViewFixture( { paused: true } );
 		const { container } = mount();
-		const pauseBtn = container.querySelector(
-			'.event-logger-error-log-btn'
-		);
+		const pauseBtn = container.querySelector( 'button.button' );
 		expect( pauseBtn.textContent ).toContain( '▶' );
 		act( () => pauseBtn.click() );
 		expect( setPaused ).toHaveBeenCalledWith( false );
@@ -376,7 +372,7 @@ describe( 'ErrorLog', () => {
 		const { container } = mount();
 		tickFrame();
 		expect(
-			container.querySelector( '.event-logger-error-log-stats' )
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
 				.textContent
 		).toMatch( /\d+s ago/ );
 	} );
@@ -391,9 +387,7 @@ describe( 'ErrorLog', () => {
 		} );
 		const { container } = mount();
 		tickFrame();
-		const input = container.querySelector(
-			'.event-logger-error-log-search'
-		);
+		const input = container.querySelector( '.newspack-nodes-search-input' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
 			'value'
@@ -404,7 +398,7 @@ describe( 'ErrorLog', () => {
 		} );
 		tickFrame();
 		expect(
-			container.querySelector( '.event-logger-error-log-stats' )
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
 				.textContent
 		).toMatch( /\d+s ago/ );
 	} );
@@ -421,7 +415,7 @@ describe( 'ErrorLog', () => {
 		const { container } = mount();
 		tickFrame();
 		expect(
-			container.querySelector( '.event-logger-error-log-stats' )
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
 				.textContent
 		).toMatch( /\d+s ago/ );
 		node.entries = [];
@@ -431,7 +425,7 @@ describe( 'ErrorLog', () => {
 		act( () => clearBtn.click() );
 		tickFrame();
 		expect(
-			container.querySelector( '.event-logger-error-log-stats' )
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
 				.textContent
 		).toMatch( /\d+s ago/ );
 	} );
@@ -452,7 +446,7 @@ describe( 'ErrorLog', () => {
 			jest.advanceTimersByTime( 1000 );
 		} );
 		const stats = container.querySelector(
-			'.event-logger-error-log-stats'
+			'.newspack-nodes-toolbar-stats'
 		);
 		expect( stats.textContent ).toMatch( /1[123]s ago/ );
 		// A heartbeat advances the connector's lastEventTime to now — "Xs ago"

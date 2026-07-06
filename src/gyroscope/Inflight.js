@@ -535,9 +535,9 @@ export default function Inflight( { maxRows = 20 } ) {
 						</span>
 					) ) }
 				</div>
-				<span className="event-logger-inflight-meta">
-					<span className="event-logger-inflight-stats">
-						<span className="event-logger-inflight-count">
+				<span className="newspack-nodes-toolbar">
+					<span className="newspack-nodes-toolbar-stats">
+						<span className="newspack-nodes-toolbar-stats__count">
 							{ sprintf(
 								// translators: %d: number of in-flight requests.
 								_n(
@@ -549,7 +549,7 @@ export default function Inflight( { maxRows = 20 } ) {
 								totalCount
 							) }
 						</span>
-						<span className="event-logger-inflight-rps">
+						<span className="newspack-nodes-toolbar-stats__rps">
 							{ sprintf(
 								// translators: %s: requests-per-second rate, formatted to one decimal place.
 								__( '%s req/s', 'newspack-event-logger-nodes' ),
@@ -577,7 +577,7 @@ export default function Inflight( { maxRows = 20 } ) {
 						) }
 					</span>
 					<select
-						className="event-logger-refresh-select"
+						className="newspack-nodes-select"
 						value={ refreshInterval }
 						onChange={ ( e ) =>
 							setRefreshInterval( parseFloat( e.target.value ) )
@@ -594,8 +594,8 @@ export default function Inflight( { maxRows = 20 } ) {
 						) ) }
 					</select>
 					<button
-						className={ `event-logger-inflight-btn${
-							showColumnPicker ? ' active' : ''
+						className={ `button${
+							showColumnPicker ? ' is-active' : ''
 						}` }
 						onClick={ () =>
 							setShowColumnPicker( ! showColumnPicker )
@@ -619,7 +619,7 @@ export default function Inflight( { maxRows = 20 } ) {
 			/>
 
 			{ showColumnPicker && (
-				<div className="event-logger-inflight-column-picker">
+				<div className="newspack-nodes-column-picker">
 					{ Object.entries( COLUMNS ).map( ( [ key, col ] ) => (
 						<label
 							key={ key }

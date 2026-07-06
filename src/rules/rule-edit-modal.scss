@@ -4,7 +4,7 @@
  * settings rules editor AND the performance dashboard's "Log this URL") gets it.
  */
 
-@use "@newspack-nodes/shared/styles/buttons";
+@use "@newspack-nodes/shared/styles/inputs";
 
 .event-logger-rule-edit-modal {
 	// Breathing room below the header divider before the first field.
@@ -202,7 +202,7 @@
 
 	// Portal frames escape ThemedRoot's DOM subtree, so its @wordpress reskin
 	// can't reach here — pull the SAME mixin so the modal buttons never drift.
-	@include buttons.wp-reskin;
+	@include inputs.wp-reskin;
 
 	::placeholder {
 		color: var( --ink-3 );

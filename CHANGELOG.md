@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard toolbars adopt the shared canonical control classes** (from newspack-nodes `_inputs.scss`): the request-stream, error-log, and gyroscope toolbars drop their bespoke `event-logger-*-{search,controls,select,btn}` selectors for the shared `.newspack-nodes-toolbar` / `.newspack-nodes-search-input` / `.button` / `.newspack-nodes-select` / `.newspack-nodes-column-picker` / `.newspack-nodes-toolbar-stats` set, so buttons render the WordPress-default look via the shared `wp-reskin` and every toolbar of the same kind shares one class. Orphaned `event-logger-refresh-select` rules removed.
+
 ### Added
 
 - **Per-URL logging ruleset** ([54]) — replaces the four global logging settings (`log_urls` / `skip_urls` / `log_events` / `custom_events`) and the three global auto-tune settings with a per-URL **ruleset**: an ordered list of rules, each a URL pattern (prefix `/x` or exact `/x?`) with a `log`/`skip` action and — for `log` rules — its own hooks, custom events, significant events, and auto-tune thresholds. Matching is **longest-prefix wins** (an exact `/x?` beats an equal-length prefix) and **case-insensitive** (preserving the old `log_urls`/`skip_urls` behavior); no rule matches ⇒ skip. A rule's hooks ride inline in the autoloaded rule list when small, or — past `Rule_Set::INLINE_HOOK_LIMIT` — behind a per-rule non-autoloaded durable option mirrored into memcache (warmed on miss), so the standard hook set never pays a memcache hop and heavy rules don't bloat autoload. New classes: `Rule`, `Rule_Matcher`, `Rule_Set`.

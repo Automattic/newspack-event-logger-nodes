@@ -207,42 +207,6 @@
 	@include mix.dark-error-banner;
 }
 
-// =============================================================================
-// Shared Dark Theme Components
-// =============================================================================
-
-// Shared refresh select (used on Gyroscope, Worker Status, Request Log)
-select.event-logger-refresh-select {
-	-webkit-appearance: none;
-	-moz-appearance: none;
-	appearance: none;
-	background: var(--paper) !important;
-	border: 1px solid var(--paper-shadow) !important;
-	color: var(--ink) !important;
-	padding: 0 8px !important;
-	border-radius: 4px !important;
-	font-size: 12px !important;
-	cursor: pointer;
-	min-width: 50px;
-	height: $control-height !important;
-	max-height: $control-height !important;
-	min-height: $control-height !important;
-	box-sizing: border-box !important;
-	line-height: normal !important;
-	vertical-align: middle;
-
-	&:hover {
-		background: var(--hover) !important;
-	}
-
-	&:focus {
-		outline: none;
-		border-color: var(--cyan) !important;
-		background: var(--paper) !important;
-		color: var(--ink) !important;
-	}
-}
-
 // Shared header styles (dark theme)
 .event-logger-inflight-header,
 .event-logger-request-stream-header,

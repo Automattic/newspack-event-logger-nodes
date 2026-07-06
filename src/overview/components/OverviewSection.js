@@ -204,6 +204,7 @@ export default function OverviewSection( {
 							</span>
 							<SelectControl
 								__next40pxDefaultSize
+								className="newspack-nodes-select"
 								value={ refreshInterval }
 								options={ DASHBOARD_REFRESH_OPTIONS }
 								onChange={ setRefreshInterval }
