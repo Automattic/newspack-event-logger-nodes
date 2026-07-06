@@ -35,46 +35,6 @@ final class Rule_Set {
 		$this->rules = $rules;
 	}
 
-	public static function load(): self {
-		$raw = \get_option( self::OPTION_RULES, null );
-		if ( null === $raw ) {
-			return new self( [ Rule::minimal( '/' ) ] );
-		}
-		if ( ! \is_array( $raw ) ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( 'Newspack ELN: corrupt rules option; falling back to minimal log-all rule.' );
-			return new self( [ Rule::minimal( '/' ) ] );
-		}
-		$rules = [];
-		foreach ( $raw as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
-				$rules[] = Rule::from_array( $entry );
-			}
-		}
-		return new self( $rules );
-	}
-
-	/**
-	 * @return Rule[]
-	 */
-	public function rules(): array {
-		return $this->rules;
-	}
-
-	public function rule_by_id( string $id ): ?Rule {
-		foreach ( $this->rules as $rule ) {
-			if ( $id === $rule->id ) {
-				return $rule;
-			}
-		}
-		return null;
-	}
-
-	public function matcher(): Rule_Matcher {
-		return new Rule_Matcher( $this->rules );
-	}
-
 	/**
 	 * The union across every LOG rule of the hooks it instruments and the custom
 	 * events it tracks. Feeds Discovery (spoke payload) and Hook_Categorizer
@@ -100,12 +60,47 @@ final class Rule_Set {
 		return [ 'hooks' => \array_keys( $hooks ), 'custom_events' => \array_keys( $custom ) ];
 	}
 
-	public static function hooks_option_name( string $id ): string {
-		return self::OPTION_HOOKS_PREFIX . $id;
+	/**
+	 * Resolve a rule's hooks. Inline is free; pointer reads mc, then the durable
+	 * option (warming mc), then gives up to [] with a single notice.
+	 *
+	 * Stateless (consults only $rule + Core::$memd + the durable option), so it's
+	 * static — Log_Manager already loaded the ruleset once per request; callers
+	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
+	 *
+	 * @return string[]
+	 */
+	public static function hooks_for( Rule $rule ): array {
+		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
+			return $rule->hooks ?? [];
+		}
+		$memd = Core::$memd ?? null;
+		if ( null !== $memd ) {
+			$cached = $memd->get( self::mc_key( $rule->id ) );
+			if ( \is_array( $cached ) ) {
+				/** @var string[] $cached mc mirror of a durable hooks option. */
+				return $cached;
+			}
+		}
+		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
+		if ( \is_array( $durable ) ) {
+			if ( null !== $memd ) {
+				$memd->set( self::mc_key( $rule->id ), $durable, self::MC_TTL );
+			}
+			/** @var string[] $durable hooks list persisted by save(). */
+			return $durable;
+		}
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		\error_log( \sprintf( 'Newspack ELN: hooks missing for pointer rule "%s" (mc + durable option both absent).', $rule->id ) );
+		return [];
 	}
 
 	public static function mc_key( string $id ): string {
 		return self::MC_HOOKS_PREFIX . $id;
+	}
+
+	public static function hooks_option_name( string $id ): string {
+		return self::OPTION_HOOKS_PREFIX . $id;
 	}
 
 	/**
@@ -201,41 +196,6 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Resolve a rule's hooks. Inline is free; pointer reads mc, then the durable
-	 * option (warming mc), then gives up to [] with a single notice.
-	 *
-	 * Stateless (consults only $rule + Core::$memd + the durable option), so it's
-	 * static — Log_Manager already loaded the ruleset once per request; callers
-	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
-	 *
-	 * @return string[]
-	 */
-	public static function hooks_for( Rule $rule ): array {
-		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
-			return $rule->hooks ?? [];
-		}
-		$memd = Core::$memd ?? null;
-		if ( null !== $memd ) {
-			$cached = $memd->get( self::mc_key( $rule->id ) );
-			if ( \is_array( $cached ) ) {
-				/** @var string[] $cached mc mirror of a durable hooks option. */
-				return $cached;
-			}
-		}
-		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
-		if ( \is_array( $durable ) ) {
-			if ( null !== $memd ) {
-				$memd->set( self::mc_key( $rule->id ), $durable, self::MC_TTL );
-			}
-			/** @var string[] $durable hooks list persisted by save(). */
-			return $durable;
-		}
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		\error_log( \sprintf( 'Newspack ELN: hooks missing for pointer rule "%s" (mc + durable option both absent).', $rule->id ) );
-		return [];
-	}
-
-	/**
 	 * One-time, idempotent, behavior-preserving migration from the seven legacy
 	 * options. Returns whether it ran and whether a skip/log prefix overlap was
 	 * detected (the documented semantics-flip caveat).
@@ -315,10 +275,6 @@ final class Rule_Set {
 		return \is_scalar( $value ) ? (float) $value : 0.0;
 	}
 
-	private static function gen_id( int $n ): string {
-		return \substr( \md5( 'eln_rule_' . $n ), 0, 8 );
-	}
-
 	/**
 	 * Mint a short id not already present in $existing_ids. Walks the same
 	 * deterministic md5-substr scheme migrate_from_legacy seeded with, skipping
@@ -333,6 +289,10 @@ final class Rule_Set {
 			++$n;
 		} while ( \in_array( $id, $existing_ids, true ) );
 		return $id;
+	}
+
+	private static function gen_id( int $n ): string {
+		return \substr( \md5( 'eln_rule_' . $n ), 0, 8 );
 	}
 
 	/**
@@ -353,5 +313,45 @@ final class Rule_Set {
 			}
 		}
 		return false;
+	}
+
+	public static function load(): self {
+		$raw = \get_option( self::OPTION_RULES, null );
+		if ( null === $raw ) {
+			return new self( [ Rule::minimal( '/' ) ] );
+		}
+		if ( ! \is_array( $raw ) ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( 'Newspack ELN: corrupt rules option; falling back to minimal log-all rule.' );
+			return new self( [ Rule::minimal( '/' ) ] );
+		}
+		$rules = [];
+		foreach ( $raw as $entry ) {
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
+				$rules[] = Rule::from_array( $entry );
+			}
+		}
+		return new self( $rules );
+	}
+
+	/**
+	 * @return Rule[]
+	 */
+	public function rules(): array {
+		return $this->rules;
+	}
+
+	public function rule_by_id( string $id ): ?Rule {
+		foreach ( $this->rules as $rule ) {
+			if ( $id === $rule->id ) {
+				return $rule;
+			}
+		}
+		return null;
+	}
+
+	public function matcher(): Rule_Matcher {
+		return new Rule_Matcher( $this->rules );
 	}
 }

@@ -192,24 +192,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * The rule governing this request (null ⇒ no match ⇒ skip).
-	 *
-	 * @api Used by external plugins.
-	 */
-	public function governing_rule(): ?Rule {
-		return $this->matched_rule;
-	}
-
-	/**
-	 * The governing rule's id, or '' when nothing matched.
-	 *
-	 * @api Used by external plugins.
-	 */
-	public function governing_rule_id(): string {
-		return $this->matched_rule->id ?? '';
-	}
-
-	/**
 	 * Log final summary including memory usage and resources.
 	 */
 	public function finish(): void {
@@ -421,6 +403,15 @@ class Log_Manager {
 
 		$this->log_environment();
 		$this->log_resources();
+	}
+
+	/**
+	 * The governing rule's id, or '' when nothing matched.
+	 *
+	 * @api Used by external plugins.
+	 */
+	public function governing_rule_id(): string {
+		return $this->matched_rule->id ?? '';
 	}
 
 	/**
@@ -713,6 +704,15 @@ class Log_Manager {
 			self::$context_stack[]           = self::$instance;
 			self::$instance                  = null;
 		}
+	}
+
+	/**
+	 * The rule governing this request (null ⇒ no match ⇒ skip).
+	 *
+	 * @api Used by external plugins.
+	 */
+	public function governing_rule(): ?Rule {
+		return $this->matched_rule;
 	}
 
 	/**

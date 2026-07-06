@@ -22,37 +22,6 @@ class Ruleset_Bench_Command {
 	private const RULE_COUNTS    = [ 1, 10, 50 ];
 
 	/**
-	 * Deterministic synthetic hook-name list.
-	 *
-	 * @param int $count How many.
-	 * @return string[]
-	 */
-	public static function synthetic_hooks( int $count ): array {
-		$hooks = [];
-		for ( $i = 0; $i < $count; $i++ ) {
-			$hooks[] = 'bench_hook_' . $i;
-		}
-		return $hooks;
-	}
-
-	/**
-	 * Reduce a sample list (microseconds) to median / p95 / n.
-	 *
-	 * @param float[] $samples Raw timings.
-	 * @return array{median: float, p95: float, n: int}
-	 */
-	public static function summarize( array $samples ): array {
-		$n = \count( $samples );
-		if ( 0 === $n ) {
-			return [ 'median' => 0.0, 'p95' => 0.0, 'n' => 0 ];
-		}
-		\sort( $samples );
-		$median = $samples[ (int) \floor( ( $n - 1 ) / 2 ) ];
-		$p95    = $samples[ (int) \ceil( 0.95 * ( $n - 1 ) ) ];
-		return [ 'median' => $median, 'p95' => $p95, 'n' => $n ];
-	}
-
-	/**
 	 * Run the sweep.
 	 *
 	 * ## OPTIONS
@@ -164,5 +133,36 @@ class Ruleset_Bench_Command {
 			'inline'   => self::summarize( $inline_samps ),
 			'pointer'  => self::summarize( $pointer_samps ),
 		];
+	}
+
+	/**
+	 * Deterministic synthetic hook-name list.
+	 *
+	 * @param int $count How many.
+	 * @return string[]
+	 */
+	public static function synthetic_hooks( int $count ): array {
+		$hooks = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$hooks[] = 'bench_hook_' . $i;
+		}
+		return $hooks;
+	}
+
+	/**
+	 * Reduce a sample list (microseconds) to median / p95 / n.
+	 *
+	 * @param float[] $samples Raw timings.
+	 * @return array{median: float, p95: float, n: int}
+	 */
+	public static function summarize( array $samples ): array {
+		$n = \count( $samples );
+		if ( 0 === $n ) {
+			return [ 'median' => 0.0, 'p95' => 0.0, 'n' => 0 ];
+		}
+		\sort( $samples );
+		$median = $samples[ (int) \floor( ( $n - 1 ) / 2 ) ];
+		$p95    = $samples[ (int) \ceil( 0.95 * ( $n - 1 ) ) ];
+		return [ 'median' => $median, 'p95' => $p95, 'n' => $n ];
 	}
 }
