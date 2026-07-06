@@ -25,7 +25,6 @@ import {
 	CardBody,
 	CardHeader,
 	Modal,
-	Button,
 } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -664,9 +663,9 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 									) }
 								</div>
 								<div className="event-logger-rule-control">
-									<Button
-										variant="secondary"
-										className="event-logger-log-url-button"
+									<button
+										type="button"
+										className="button"
 										disabled={ ! canLogUrl }
 										onClick={ openRuleEditor }
 									>
@@ -679,7 +678,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 													'Log this URL',
 													'newspack-event-logger-nodes'
 											  ) }
-									</Button>
+									</button>
 									{ ruleError && (
 										<span
 											className="event-logger-rule-error"

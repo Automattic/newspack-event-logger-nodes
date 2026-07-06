@@ -887,7 +887,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 			await flushEffects();
 			const btn = container.querySelector(
-				'.event-logger-log-url-button'
+				'.event-logger-rule-control button'
 			);
 			expect( btn ).toBeTruthy();
 			expect( btn.textContent ).toContain( 'Log this URL' );
@@ -904,7 +904,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 			await flushEffects();
 			const btn = container.querySelector(
-				'.event-logger-log-url-button'
+				'.event-logger-rule-control button'
 			);
 			expect( btn ).toBeTruthy();
 			expect( btn.disabled ).toBe( true );
@@ -937,7 +937,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 			await flushEffects();
 			expect(
-				container.querySelector( '.event-logger-log-url-button' )
+				container.querySelector( '.event-logger-rule-control button' )
 			).toBeNull();
 			unmount();
 		} );
@@ -959,7 +959,7 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 			expect( mockGraph.listRules ).toHaveBeenCalled();
 			const btn = container.querySelector(
-				'.event-logger-log-url-button'
+				'.event-logger-rule-control button'
 			);
 			expect( btn.textContent ).toContain( 'Edit logging rule' );
 			await act( async () => {
@@ -982,7 +982,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 			await flushEffects();
 			const btn = container.querySelector(
-				'.event-logger-log-url-button'
+				'.event-logger-rule-control button'
 			);
 			expect( btn.textContent ).toContain( 'Log this URL' );
 			await act( async () => {
@@ -1008,7 +1008,7 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 			await act( async () => {
 				container
-					.querySelector( '.event-logger-log-url-button' )
+					.querySelector( '.event-logger-rule-control button' )
 					.click();
 			} );
 			const draft = {
@@ -1044,7 +1044,7 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 			await act( async () => {
 				container
-					.querySelector( '.event-logger-log-url-button' )
+					.querySelector( '.event-logger-rule-control button' )
 					.click();
 			} );
 			await act( async () => {

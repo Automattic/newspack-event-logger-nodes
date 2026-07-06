@@ -16,7 +16,7 @@ import {
 	useCallback,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { Button, SelectControl } from '@wordpress/components';
+import { SelectControl } from '@wordpress/components';
 import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
 
 // Lazy load FlameGraph (heaviest component - uses d3-flame-graph).
@@ -426,9 +426,9 @@ export default function UrlDetailView( {
 							filteredRequests.length
 						) }
 					</h3>
-					<Button
-						variant={ errorsOnly ? 'primary' : 'secondary' }
-						size="small"
+					<button
+						type="button"
+						className={ errorsOnly ? 'button is-active' : 'button' }
 						onClick={ () => setErrorsOnly( ! errorsOnly ) }
 					>
 						{ errorsOnly
@@ -440,7 +440,7 @@ export default function UrlDetailView( {
 									'Errors Only',
 									'newspack-event-logger-nodes'
 							  ) }
-					</Button>
+					</button>
 				</div>
 
 				{ /* Header outside scroll container */ }

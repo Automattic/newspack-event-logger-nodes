@@ -13,7 +13,7 @@ import {
 	memo,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { Button, TextControl } from '@wordpress/components';
+import { TextControl } from '@wordpress/components';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 
@@ -348,14 +348,15 @@ export default function UrlTable( {
 						__nextHasNoMarginBottom
 					/>
 				</div>
-				<Button
-					variant={ errorsOnly ? 'primary' : 'secondary' }
+				<button
+					type="button"
+					className={ errorsOnly ? 'button is-active' : 'button' }
 					onClick={ () => setErrorsOnly( ! errorsOnly ) }
 				>
 					{ errorsOnly
 						? __( 'Showing Errors', 'newspack-event-logger-nodes' )
 						: __( 'Errors Only', 'newspack-event-logger-nodes' ) }
-				</Button>
+				</button>
 			</div>
 
 			{ /* Scroll container for header + list */ }
