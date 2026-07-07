@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from '@wordpress/element';
-import { getStoredTheme } from '@newspack-nodes/shared/theme';
+import { useEffect, useRef } from '@wordpress/element';
+import { SKIN_EVENT, initSkin } from '@newspack-nodes/shared/theme';
 
 import './ThemedRoot.scss';
 
@@ -27,40 +27,57 @@ import './ThemedRoot.scss';
  * @return {import('react').ReactElement} The themed token provider.
  */
 export default function ThemedRoot( { children } ) {
-	const [ theme ] = useState( getStoredTheme );
 	const ref = useRef( null );
 
+	// Paint the WP-admin gutters around the dashboard to the live skin's base
+	// surface, re-running on every skin change so a set_skin from the debug
+	// overlay reskins the gutters too. The skin itself is the global
+	// `<html>.theme-<slug>` class (see shared/theme.js) — no React state here.
 	useEffect( () => {
+		// Apply the persisted skin to <html> so this dashboard shows the
+		// console-selected skin on a fresh load (the class must be set before the
+		// gutter probe below reads the skin's --paper-3).
+		initSkin();
 		const host = ref.current;
 		if ( ! host ) {
 			return undefined;
 		}
-		// Resolve the skin's --paper-3 (the outermost/base surface — the body sits
-		// behind the whole dashboard) to a concrete colour from inside the themed
-		// wrapper (custom props resolve on the element even under display:contents).
-		const probe = document.createElement( 'span' );
-		host.appendChild( probe );
-		let paper;
-		try {
-			probe.style.background = 'var(--paper-3)';
-			paper = window.getComputedStyle( probe ).backgroundColor;
-		} finally {
-			probe.remove();
-		}
-		if ( ! paper || paper === 'rgba(0, 0, 0, 0)' ) {
-			return undefined;
-		}
-		const previous = document.body.style.background;
-		document.body.style.background = paper;
-		return () => {
-			document.body.style.background = previous;
+		let previous = null;
+		const paintGutters = () => {
+			// Resolve the skin's --paper-3 (base surface behind the dashboard) to a
+			// concrete colour from inside the themed wrapper (custom props resolve on
+			// the element even under display:contents).
+			const probe = document.createElement( 'span' );
+			host.appendChild( probe );
+			let paper;
+			try {
+				probe.style.background = 'var(--paper-3)';
+				paper = window.getComputedStyle( probe ).backgroundColor;
+			} finally {
+				probe.remove();
+			}
+			if ( ! paper || paper === 'rgba(0, 0, 0, 0)' ) {
+				return;
+			}
+			if ( null === previous ) {
+				previous = document.body.style.background;
+			}
+			document.body.style.background = paper;
 		};
-	}, [ theme ] );
+		paintGutters();
+		window.addEventListener( SKIN_EVENT, paintGutters );
+		return () => {
+			window.removeEventListener( SKIN_EVENT, paintGutters );
+			if ( null !== previous ) {
+				document.body.style.background = previous;
+			}
+		};
+	}, [] );
 
 	return (
 		<div
 			ref={ ref }
-			className={ `topology-app newspack-nodes-theme theme-${ theme }` }
+			className="topology-app newspack-nodes-theme"
 			style={ { display: 'contents' } }
 		>
 			{ children }
