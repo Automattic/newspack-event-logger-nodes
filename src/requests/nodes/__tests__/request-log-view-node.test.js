@@ -7,6 +7,7 @@
  * model ({ paused }) publishes via setState('view', …).
  */
 
+import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import {
 	VALUE,
 	TYPE,
@@ -82,6 +83,17 @@ test( 'caps the buffer at maxEntries (newest kept)', () => {
 	expect( v.entries ).toHaveLength( 3 );
 	expect( v.entries[ 0 ].rid ).toBe( 'r4' ); // newest
 	expect( v.entries[ 2 ].rid ).toBe( 'r2' ); // oldest still in cap
+} );
+
+test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP url_hash)', () => {
+	const v = makeView( 'requestlog:view' );
+	v.fill(
+		rowMsg( row( { rid: 'w', url: '/jobs/x?supervisor', end_time: 1 } ) )
+	);
+	// PHP url_hash hashes the FULL string incl. the intentional ?worker marker;
+	// stripping at '?' in JS would hash the bare path and break the deep-link.
+	expect( v.entries[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?supervisor' ) );
+	expect( v.entries[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
 } );
 
 test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () => {

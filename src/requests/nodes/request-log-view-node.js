@@ -18,15 +18,16 @@ const clip = ( s, max ) => {
 };
 
 /**
- * Generate URL hash for linking to URL detail (path only, no query string).
+ * URL hash for deep-linking to URL detail. Hashes the FULL url — matching PHP
+ * `Request_Builder_Node::url_hash`. The real query is already stripped upstream,
+ * so the only `?` left is the intentional `?worker_type` marker on nodes/ELN
+ * URLs (e.g. `/jobs/x?supervisor`), which MUST be kept or the hash won't match
+ * that URL's row.
  *
  * @param {string} url URL to hash.
  * @return {string} 12-character FNV-1a hash.
  */
-const urlHash = ( url ) => {
-	const urlPath = url?.split( '?' )[ 0 ] || '';
-	return fnv1a( urlPath );
-};
+const urlHash = ( url ) => fnv1a( url || '' );
 
 /**
  * `requestlog:view` — owns the Request Log view model.
