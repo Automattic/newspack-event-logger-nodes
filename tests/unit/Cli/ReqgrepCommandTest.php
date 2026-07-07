@@ -1,9 +1,10 @@
 <?php
 /**
- * Smoke tests for `wp nodes reqgrep`. Drives the private state machine via
- * reflection rather than `__invoke()` because the public entrypoint drains all
- * output buffers (including PHPUnit's), making `ob_start()`-based capture
- * unreliable. Reflection-driven tests cover the parts that matter:
+ * Smoke tests for `wp nodes reqgrep`. Output is captured by swapping the
+ * command's `$stdout` node for a line-capturing Callback_Node (the
+ * `capture_output()` harness); `joined()` reassembles the captured lines into
+ * the byte-stream the old `echo` path produced. The private state machine is
+ * still driven via reflection. Tests cover the parts that matter:
  *
  *  - LruCache rotation contract.
  *  - Indent state machine: (start)/(complete) push/pop with depth tracking.
@@ -117,9 +118,11 @@ class ReqgrepCommandTest extends TestCase {
 				if ( ! $state instanceof \stdClass ) {
 					return;
 				}
-				$out = new \ReflectionMethod( $cmd, 'output_request' );
-				$out->invoke( $cmd, $state->lines );
-				echo "[incomplete]\n\n";
+				$out  = new \ReflectionMethod( $cmd, 'output_request' );
+				$emit = new \ReflectionMethod( $cmd, 'emit' );
+				$out->invoke( $cmd, $state->lines, $rid );
+				$emit->invoke( $cmd, '[incomplete]' );
+				$emit->invoke( $cmd, '' );
 			}
 		);
 		$set( 'inflight', $inflight );
@@ -164,6 +167,27 @@ class ReqgrepCommandTest extends TestCase {
 		return $message;
 	}
 
+	/**
+	 * Swap the command's output node for a line-capturing Callback_Node; returns
+	 * the accumulator (one entry per emit, the message VALUE verbatim).
+	 */
+	private function capture_output( Reqgrep_Command $cmd ): \ArrayObject {
+		$lines = new \ArrayObject();
+		$cmd->stdout = new \Newspack_Nodes\Callback_Node( static function ( array $m ) use ( $lines ): void {
+			$lines[] = (string) $m[ \Newspack_Nodes\Message::VALUE ];
+		} );
+		return $lines;
+	}
+
+	/** Reproduce the old echo byte-stream: each captured VALUE + a trailing "\n" if absent (Stdout_Node's rule). */
+	private static function joined( \ArrayObject $lines ): string {
+		$out = '';
+		foreach ( $lines as $text ) {
+			$out .= \str_ends_with( $text, "\n" ) ? $text : $text . "\n";
+		}
+		return $out;
+	}
+
 	// -------------------------------------------------------------------------
 	// LruCache smoke (rotation + on_evict callback).
 	// -------------------------------------------------------------------------
@@ -202,7 +226,7 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_indent_machine_push_pop_around_start_complete(): void {
 		$cmd = $this->make_cmd();
 
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		// Build a request with a nested wp_loaded (start)/(complete) pair.
 		// Sequence + expected indent column:
@@ -224,7 +248,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->feed( $cmd, $entry );
 		}
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 
 		// Output format: "%4d: %22s %sKEY..." → number(4)+":"+ " "+ts(22)+" "+indent+key.
 		// Fixed prefix before indent = 4+1+1+22+1 = 29 chars.
@@ -250,13 +274,12 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_indent_clamped_at_zero_on_unbalanced_complete(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		// (complete) before any (start) should clamp to 0, not go negative.
 		$rid = 'clampR';
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'foo (complete)', 'm' => 'x', 'ts' => 1700000000 ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.1 ] );
-		\ob_get_clean();
 
 		$indent_prop = new \ReflectionProperty( $cmd, 'fmt_indent' );
 		$this->assertGreaterThanOrEqual( 0, $indent_prop->getValue( $cmd ) );
@@ -264,7 +287,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_complete_request_emits_when_pattern_matches_first_line(): void {
 		$cmd = $this->make_cmd( '/calendar' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'reqA';
 		$ts  = 1700000000.0;
@@ -272,7 +295,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'mid', 'ts' => $ts + 0.1 ] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/calendar', 'ts' => $ts + 0.5, 'duration_ms' => 500.12 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringContainsString( "request_id:{$rid}", $out );
 		$this->assertStringContainsString( 'process (complete)', $out );
 		$this->assertStringContainsString( '500.12ms', $out );
@@ -280,26 +303,26 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_skips_non_matching_request(): void {
 		$cmd = $this->make_cmd( '/calendar' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$ts = 1700000000.0;
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => 'X', 'k' => 'process (start)', 'm' => '/other', 'ts' => $ts ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => 'X', 'k' => 'process (complete)', 'm' => '/other', 'ts' => $ts + 0.1 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringNotContainsString( 'request_id:X', $out );
 	}
 
 	public function test_raw_mode_emits_jsonl(): void {
 		$cmd = $this->make_cmd( '/raw', /*raw*/ true );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'rawR';
 		$ts  = 1700000000.0;
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/raw', 'ts' => $ts ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/raw', 'ts' => $ts + 0.1 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// Raw mode echoes the packed envelope verbatim; rid + entry fields survive.
 		$this->assertStringContainsString( '"rid":"rawR"', $out );
 		$this->assertStringContainsString( '"k":"process (start)"', $out );
@@ -333,7 +356,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_history_tracks_non_matching_rids(): void {
 		$cmd = $this->make_cmd( 'targetRid' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		// Start a non-matching rid; it lands in history.
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => 'targetRid', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000 ] );
@@ -344,7 +367,7 @@ class ReqgrepCommandTest extends TestCase {
 		// Complete it.
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => 'targetRid', 'k' => 'process (complete)', 'm' => '/x', 'ts' => 1700000000.2 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringContainsString( 'request_id:targetRid', $out );
 	}
 
@@ -354,7 +377,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_format_entry_dot_rows_for_multi_second_gaps(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		// Start a request, then jump 5 seconds — dot rows should appear
 		// for each elapsed second.
@@ -365,7 +388,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-gap', 'ts' => $ts0 + 5 ] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 5.1 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// Look for at least one dot row (lines ending with " .").
 		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
 		$this->assertGreaterThanOrEqual( 1, $dot_rows, 'should emit dot rows for multi-second gaps' );
@@ -373,7 +396,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_format_entry_includes_peak_mb_in_complete_suffix(): void {
 		$cmd = $this->make_cmd( 'memR' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'memR';
 		$ts  = 1700000000.0;
@@ -388,14 +411,14 @@ class ReqgrepCommandTest extends TestCase {
 			'peak_mb' => 42,
 		] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringContainsString( '99.99ms', $out );
 		$this->assertStringContainsString( '[42MB]', $out );
 	}
 
 	public function test_format_entry_pretty_prints_array_message(): void {
 		$cmd = $this->make_cmd( 'arrR' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'arrR';
 		$ts  = 1700000000.0;
@@ -410,7 +433,7 @@ class ReqgrepCommandTest extends TestCase {
 		] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/a', 'ts' => $ts + 0.2 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// JSON-encoded array message should include the keys.
 		$this->assertStringContainsString( 'key1', $out );
 		$this->assertStringContainsString( 'v1', $out );
@@ -418,7 +441,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_format_entry_aligns_multiline_message_continuation(): void {
 		$cmd = $this->make_cmd( 'mlR' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'mlR';
 		$ts  = 1700000000.0;
@@ -433,7 +456,7 @@ class ReqgrepCommandTest extends TestCase {
 		] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/m', 'ts' => $ts + 0.2 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// All three lines should appear in output.
 		$this->assertStringContainsString( 'line one', $out );
 		$this->assertStringContainsString( 'line two', $out );
@@ -442,7 +465,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_format_entry_emits_separator_when_number_rewinds(): void {
 		$cmd = $this->make_cmd( 'sepR' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'sepR';
 		$ts  = 1700000000.0;
@@ -453,7 +476,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'shutdown', 'm' => 'reset', 'ts' => $ts + 0.2 ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/s', 'ts' => $ts + 0.3 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// Separator (60 hash chars) should appear when number rewinds.
 		$this->assertStringContainsString( \str_repeat( '#', 60 ), $out );
 	}
@@ -464,35 +487,35 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_process_message_skips_messages_without_rid(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		// No `rid` → Message::KEY is '' → process_message returns early.
 		$this->feed( $cmd, [ 'n' => 1, 'k' => 'foo', 'm' => 'bar' ] );
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertSame( '', $out );
 	}
 
 	public function test_process_message_skips_non_array_value(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		// A TM_EOF-shaped message (VALUE '') must be ignored, not crash.
 		$message                    = Message::new_message();
 		$message[ Message::TYPE ]   = Message::TM_EOF;
 		$message[ Message::KEY ]    = 'anything';
 		$this->process_message->invoke( $cmd, $message );
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertSame( '', $out );
 	}
 
 	public function test_process_message_groups_and_outputs_completed_request(): void {
 		$cmd = $this->make_cmd( '/wrapped' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'wrappedR';
 		$ts  = 1700000000.0;
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/wrapped', 'ts' => $ts ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/wrapped', 'ts' => $ts + 0.1, 'duration_ms' => 100 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringContainsString( "request_id:{$rid}", $out );
 		$this->assertStringContainsString( 'process (complete)', $out );
 	}
@@ -537,7 +560,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_output_remaining_emits_incomplete_for_in_flight(): void {
 		$cmd = $this->make_cmd( '/inflight' );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'inflightR';
 		$ts  = 1700000000.0;
@@ -548,7 +571,7 @@ class ReqgrepCommandTest extends TestCase {
 		// Now flush remaining — should emit [incomplete].
 		$this->output_remaining->invoke( $cmd );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringContainsString( 'request_id:' . $rid, $out );
 		$this->assertStringContainsString( '[incomplete]', $out );
 	}
@@ -559,7 +582,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_output_request_raw_emits_jsonl(): void {
 		$cmd = $this->make_cmd( '.', /*raw*/ true );
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$lines = [
 			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'rawX', 'k' => 'a', 'm' => 'one', 'ts' => 1700000000.0 ] ) ),
@@ -567,7 +590,7 @@ class ReqgrepCommandTest extends TestCase {
 		];
 		$this->output_request->invoke( $cmd, $lines, 'rawX' );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// Raw mode emits each packed envelope verbatim.
 		foreach ( $lines as $line ) {
 			$this->assertStringContainsString( $line, $out );
@@ -576,7 +599,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_output_request_formatted_includes_header(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$lines = [
 			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'fmtX', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ),
@@ -584,7 +607,7 @@ class ReqgrepCommandTest extends TestCase {
 		];
 		$this->output_request->invoke( $cmd, $lines, 'fmtX' );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// Header line carries request_id:fmtX; the unwrapped body carries the key.
 		$this->assertStringContainsString( 'request_id:fmtX', $out );
 		$this->assertStringContainsString( 'process (complete)', $out );
@@ -592,7 +615,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_output_request_falls_through_for_unparseable_line(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		// One line is not a packed Message — should pass through verbatim.
 		$lines = [
@@ -602,13 +625,13 @@ class ReqgrepCommandTest extends TestCase {
 		];
 		$this->output_request->invoke( $cmd, $lines, 'pthroughX' );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringContainsString( 'this-is-not-a-message', $out );
 	}
 
 	public function test_output_request_skips_header_when_rid_empty(): void {
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$lines = [
 			Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'noheaderR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ),
@@ -617,7 +640,7 @@ class ReqgrepCommandTest extends TestCase {
 		// Pass empty rid → no "request_id:" header line should appear.
 		$this->output_request->invoke( $cmd, $lines, '' );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$this->assertStringNotContainsString( 'request_id:', $out );
 		// Body still emitted.
 		$this->assertStringContainsString( 'process (start)', $out );
@@ -627,7 +650,7 @@ class ReqgrepCommandTest extends TestCase {
 		// Formatted mode (raw=false) unpacks packed Message envelopes so on-disk
 		// envelopes render correctly.
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid     = 'envR';
 		$ts      = 1700000000.0;
@@ -639,7 +662,7 @@ class ReqgrepCommandTest extends TestCase {
 		] ) );
 		$this->output_request->invoke( $cmd, [ $packed1, $packed2 ], $rid );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		// Header + key strings make it through the unwrap.
 		$this->assertStringContainsString( 'request_id:' . $rid, $out );
 		$this->assertStringContainsString( '/env', $out );
@@ -698,9 +721,9 @@ class ReqgrepCommandTest extends TestCase {
 		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 3, 'rid' => 'targetR', 'k' => 'process (complete)', 'm' => '/api', 'ts' => 1700000001.0 ] ) ) . "\n" );
 		\rewind( $stream );
 
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		$ref->invoke( $cmd, $stream );
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		\fclose( $stream );
 
 		// The matched request was emitted (look for the URL we put in `m`).
@@ -722,9 +745,9 @@ class ReqgrepCommandTest extends TestCase {
 		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'partialR', 'k' => 'process (start)', 'm' => '/half', 'ts' => 1700000000.0 ] ) ) . "\n" );
 		\rewind( $stream );
 
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		$ref->invoke( $cmd, $stream );
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		\fclose( $stream );
 
 		// With --incomplete, output_remaining emits the partial request.
@@ -741,9 +764,8 @@ class ReqgrepCommandTest extends TestCase {
 		\fwrite( $stream, Message::packed( $this->packed_struct( [ 'n' => 1, 'rid' => 'noiseR', 'k' => 'process (start)', 'm' => '/x', 'ts' => 1700000000.0 ] ) ) . "\n" );
 		\rewind( $stream );
 
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		$ref->invoke( $cmd, $stream );
-		\ob_get_clean();
 		\fclose( $stream );
 
 		$inflight = $this->get_prop( 'inflight' );
@@ -761,9 +783,9 @@ class ReqgrepCommandTest extends TestCase {
 		\fwrite( $stream, '{"just":"a hash"}' . "\n" );
 		\rewind( $stream );
 
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		$ref->invoke( $cmd, $stream );
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		\fclose( $stream );
 
 		$this->assertSame( '', $out );
@@ -778,9 +800,9 @@ class ReqgrepCommandTest extends TestCase {
 		$stream = \fopen( 'php://memory', 'r+' );
 		// Don't write anything → stream starts at EOF.
 
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 		$ref->invoke( $cmd, $stream );
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		\fclose( $stream );
 		$this->assertSame( '', $out );
 	}
@@ -835,10 +857,10 @@ class ReqgrepCommandTest extends TestCase {
 			$set( 'num_partitions', 1 );
 			$set( 'cat_offset', 'start' );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
 			$ref->invoke( $cmd );
-			$out = \ob_get_clean();
+			$out = self::joined( $captured );
 
 			// Output must contain the matched request's URL and rid.
 			$this->assertStringContainsString( '/calendar/today', $out );
@@ -883,10 +905,10 @@ class ReqgrepCommandTest extends TestCase {
 			$set( 'num_partitions', 1 );
 			$set( 'cat_offset', 'recent' );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
 			$ref->invoke( $cmd );
-			$out = \ob_get_clean();
+			$out = self::joined( $captured );
 
 			// 'recent' starts at segments[count-2] = id 3, so seg 0 is skipped.
 			$this->assertStringNotContainsString( 'old-rid', $out );
@@ -908,10 +930,10 @@ class ReqgrepCommandTest extends TestCase {
 			$set( 'num_partitions', 1 );
 			$set( 'cat_offset', 'start' );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$ref = new \ReflectionMethod( $cmd, 'cat_mode' );
 			$ref->invoke( $cmd );
-			$out = \ob_get_clean();
+			$out = self::joined( $captured );
 
 			// Empty partition → nothing but the Consumer's terminal EOF (ignored).
 			$this->assertSame( '', $out );
@@ -986,9 +1008,8 @@ class ReqgrepCommandTest extends TestCase {
 
 			// 0 iterations: seed the tail Consumers + log lines, no polling.
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$ref->invoke( $cmd, 0 );
-			\ob_get_clean();
 
 			// Returned without infinite-looping. Reaching here is the assertion.
 			$this->assertTrue( true );
@@ -1044,9 +1065,9 @@ class ReqgrepCommandTest extends TestCase {
 			$set( 'num_partitions', 1 );
 
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$ref->invoke( $cmd, 1 );
-			$out = \ob_get_clean();
+			$out = self::joined( $captured );
 
 			// Seeded at the tail → the pre-existing request is NOT replayed.
 			$this->assertStringNotContainsString( 'existing-rid', $out );
@@ -1083,19 +1104,15 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			// Suppress the prod-only output-buffer drain so PHPUnit's own
-			// ob_start layer stays intact for the duration of the test.
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
 			// Path must be inside the logs directory the Config resolves.
 			$path = "{$base_dir}/logs/firehose.log";
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ 'invoke-rid' ],
 				[ 'path' => $path ]
 			);
-			$out = \ob_get_clean();
+			$out = self::joined( $captured );
 
 			// cat_mode reached its body — output mentions the seeded URL.
 			$this->assertStringContainsString( '/calendar', $out );
@@ -1119,8 +1136,6 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
 			$this->expectException( \RuntimeException::class );
 			$this->expectExceptionMessageMatches( '/Invalid path/' );
@@ -1147,8 +1162,6 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
 			$this->expectException( \RuntimeException::class );
 			$this->expectExceptionMessageMatches( '/Path must be within the logs directory/' );
@@ -1173,10 +1186,8 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ '.' ],
 				[
@@ -1185,7 +1196,6 @@ class ReqgrepCommandTest extends TestCase {
 					'num-buckets' => '99999', // > 100 cap.
 				]
 			);
-			\ob_get_clean();
 
 			$bucket = new \ReflectionProperty( $cmd, 'bucket_size' );
 			$buckets_n = new \ReflectionProperty( $cmd, 'num_buckets' );
@@ -1210,10 +1220,8 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ '.' ],
 				[
@@ -1222,7 +1230,6 @@ class ReqgrepCommandTest extends TestCase {
 					'num-buckets' => '0',  // Below min 1.
 				]
 			);
-			\ob_get_clean();
 
 			$bucket = new \ReflectionProperty( $cmd, 'bucket_size' );
 			$buckets_n = new \ReflectionProperty( $cmd, 'num_buckets' );
@@ -1254,10 +1261,8 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ '.' ],
 				[
@@ -1265,7 +1270,6 @@ class ReqgrepCommandTest extends TestCase {
 					'recent' => true,
 				]
 			);
-			\ob_get_clean();
 
 			$offset = new \ReflectionProperty( $cmd, 'cat_offset' );
 			$this->assertSame( 'recent', $offset->getValue( $cmd ) );
@@ -1287,10 +1291,8 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ '.' ],
 				[
@@ -1298,7 +1300,6 @@ class ReqgrepCommandTest extends TestCase {
 					'raw'  => true,
 				]
 			);
-			\ob_get_clean();
 
 			$prop = new \ReflectionProperty( $cmd, 'raw' );
 			$this->assertTrue( $prop->getValue( $cmd ) );
@@ -1320,10 +1321,8 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
-			$ref = new \ReflectionProperty( $cmd, 'drain_buffers_on_invoke' );
-			$ref->setValue( $cmd, false );
 
-			\ob_start();
+			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ '.' ],
 				[
@@ -1331,7 +1330,6 @@ class ReqgrepCommandTest extends TestCase {
 					'incomplete' => true,
 				]
 			);
-			\ob_get_clean();
 
 			$prop = new \ReflectionProperty( $cmd, 'incomplete' );
 			$this->assertTrue( $prop->getValue( $cmd ) );
@@ -1355,39 +1353,6 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertStringContainsString( '[--follow]', $doc );
 		$this->assertStringContainsString( '## EXAMPLES', $doc );
 		$this->assertStringContainsString( 'wp nodes reqgrep --follow', $doc );
-	}
-
-	// -------------------------------------------------------------------------
-	// drain_output_buffers — direct unit coverage of the OB drain path.
-	// -------------------------------------------------------------------------
-
-	public function test_drain_output_buffers_clears_userspace_layers(): void {
-		// __invoke calls this on production runs to flush plugin-installed ob
-		// layers so the streaming echoes hit the terminal. Stack three extra
-		// layers and verify the method tears at least those down (the safety
-		// cap is 16 so 3 stays well below). Restore PHPUnit's baseline before
-		// the test ends so other tests don't see torn-down buffers.
-		$cmd = $this->make_cmd();
-		$ref = new \ReflectionMethod( $cmd, 'drain_output_buffers' );
-
-		$start_level = \ob_get_level();
-		\ob_start();
-		\ob_start();
-		\ob_start();
-		$mid_level = \ob_get_level();
-		$this->assertSame( $start_level + 3, $mid_level );
-
-		$ref->invoke( $cmd );
-
-		// At minimum the 3 pushed layers were torn down (the cap is 16 so
-		// three is well within reach).
-		$end_level = \ob_get_level();
-		$this->assertLessThan( $mid_level, $end_level, 'drain_output_buffers must remove pushed layers' );
-
-		// Restore baseline so subsequent tests don't see fewer layers.
-		while ( \ob_get_level() < $start_level ) {
-			\ob_start();
-		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -1428,7 +1393,7 @@ class ReqgrepCommandTest extends TestCase {
 		// rows are at 1s spacing, then 10 at 10s, etc. This caps the row
 		// count at roughly O(log gap) so multi-hour gaps stay readable.
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'longGapR';
 		$ts0 = 1700000000.0;
@@ -1437,7 +1402,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'after-long', 'ts' => $ts0 + 200 ] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 200.1 ] );
 
-		$out = \ob_get_clean();
+		$out = self::joined( $captured );
 		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
 		// First 10 rows at 1s + ~10 rows at 10s = ~20 max. Asserting <50 keeps
 		// the test robust against floor/jump alignment edge cases.
@@ -1449,7 +1414,7 @@ class ReqgrepCommandTest extends TestCase {
 		// A 1-second gap should NOT emit any dot rows (curr_sec <= last_sec+1
 		// branch short-circuits).
 		$cmd = $this->make_cmd();
-		\ob_start();
+		$captured = $this->capture_output( $cmd );
 
 		$rid = 'tightR';
 		$ts0 = 1700000000.0;
@@ -1457,7 +1422,7 @@ class ReqgrepCommandTest extends TestCase {
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'a', 'ts' => $ts0 + 0.5 ] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/t', 'ts' => $ts0 + 1.0 ] );
 
-		$out      = \ob_get_clean();
+		$out      = self::joined( $captured );
 		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
 		$this->assertSame( 0, $dot_rows, 'sub-second gaps must not emit dot rows' );
 	}

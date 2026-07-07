@@ -20,7 +20,6 @@
  *    callback prints `[incomplete]` and drops.
  *  - Per-rid byte cap MAX_BYTES_PER_REQUEST = 10MB.
  *  - Line caps MAX_LINES_PER_REQUEST = 20000, MAX_LINES_PER_REQUEST_IN_HISTORY = 10000.
- *  - Output buffer drain (`ob_get_level` loop, capped at 16 iterations).
  *  - Indent state machine: `(start)` increases indent by 4, `(complete)`
  *    decreases by 4 (clamped at 0).
  *  - 0.1-second timestamp resolution display.
@@ -29,7 +28,9 @@
  *  - peak_mb / duration_ms suffix on (complete) lines.
  *  - Multi-line message indentation aligned to the prefix width.
  *  - `#` separator on rid reset (when message number rewinds).
- *  - stdin pipe-mode (S_IFIFO + S_IFREG detection).
+ *  - stdin pipe-mode (S_IFIFO + S_IFREG detection), read via the substrate's
+ *    `Stdin_Node`; all output flows through a swappable `Stdout_Node` (which
+ *    fwrites straight to STDOUT, bypassing PHP output buffers).
  *
  * Capability: requires `manage_options` (the standard WP-CLI invariant —
  * WP-CLI calls run as root unless the user explicitly passes `--user=`, but
@@ -50,6 +51,8 @@ use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Stdin_Node;
+use Newspack_Nodes\Stdout_Node;
 
 class Reqgrep_Command {
 
@@ -78,9 +81,6 @@ class Reqgrep_Command {
 
 	/** Seconds between in-flight cache rotations (60 × 3 = 180s idle ceiling). */
 	private const INFLIGHT_ROTATE_INTERVAL = 60.0;
-
-	/** Output-buffer drain cap (defends against non-erasable userland buffers). */
-	private const OB_DRAIN_CAP = 16;
 
 	/** Formatting state — current indent column. */
 	private int $fmt_indent = 0;
@@ -131,11 +131,11 @@ class Reqgrep_Command {
 	private array $config = [];
 
 	/**
-	 * When true (production default), __invoke drains all plugin-installed
-	 * output buffers before streaming begins. Tests set this to false to
-	 * preserve PHPUnit's own ob layer.
+	 * Output sink — lazily a Stdout_Node in production (see emit()); tests swap in
+	 * a capturing Callback_Node. Public so the test harness can substitute the
+	 * terminal sink without short-circuiting the rest of the emit path.
 	 */
-	private bool $drain_buffers_on_invoke = true;
+	public ?\Newspack_Nodes\Node $stdout = null;
 
 	/**
 	 * Filter firehose JSONL logs by request id or pattern.
@@ -193,12 +193,6 @@ class Reqgrep_Command {
 	 * @param array<string, mixed> $assoc_args Associative arguments.
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
-		// Drain any plugin-installed output buffers so streamed echoes don't get
-		// captured into a userspace buffer that grows until OOM.
-		if ( $this->drain_buffers_on_invoke ) {
-			$this->drain_output_buffers();
-		}
-
 		$this->pattern       = $args[0] ?? '.';
 		$this->pattern_regex = '/' . \preg_quote( $this->pattern, '/' ) . '/i';
 		$this->incomplete    = isset( $assoc_args['incomplete'] );
@@ -225,7 +219,8 @@ class Reqgrep_Command {
 						return;
 					}
 					$this->output_request( self::to_lines( $state->lines ), $rid );
-					echo "[incomplete]\n\n";
+					$this->emit( '[incomplete]' );
+					$this->emit( '' );
 				}
 			);
 
@@ -256,18 +251,12 @@ class Reqgrep_Command {
 		}
 	}
 
-	/**
-	 * Drain plugin-installed output buffers up to OB_DRAIN_CAP iterations so
-	 * echo lines stream straight to the terminal instead of accumulating in a
-	 * buffer.
-	 */
-	private function drain_output_buffers(): void {
-		$safety = self::OB_DRAIN_CAP;
-		while ( \ob_get_level() > 0 && $safety-- > 0 ) {
-			if ( ! @\ob_end_clean() ) {
-				break; // Non-erasable buffer — give up.
-			}
-		}
+	/** Emit one line to the output node (Stdout_Node appends the trailing newline). */
+	private function emit( string $text ): void {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::VALUE ] = $text;
+		( $this->stdout ??= new Stdout_Node() )->fill( $message );
 	}
 
 	/**
@@ -284,9 +273,9 @@ class Reqgrep_Command {
 	private function output_request( array $lines, string $rid ): void {
 		if ( $this->raw ) {
 			foreach ( $lines as $line ) {
-				echo $line . "\n";
+				$this->emit( $line );
 			}
-			echo "\n";
+			$this->emit( '' );
 			return;
 		}
 
@@ -295,24 +284,24 @@ class Reqgrep_Command {
 		$this->fmt_last_timestamp = 0;
 
 		if ( '' !== $rid ) {
-			echo \sprintf( "      %22s request_id:%s\n", '', $rid );
+			$this->emit( \sprintf( '      %22s request_id:%s', '', $rid ) );
 		}
 
 		foreach ( $lines as $line ) {
 			try {
 				$message = Message::unpacked( $line );
 			} catch ( \InvalidArgumentException $e ) {
-				echo $line . "\n";
+				$this->emit( $line );
 				continue;
 			}
 			$entry = $message[ Message::VALUE ];
 			if ( ! \is_array( $entry ) ) {
-				echo $line . "\n";
+				$this->emit( $line );
 				continue;
 			}
-			echo $this->format_entry( $entry ) . "\n";
+			$this->emit( $this->format_entry( $entry ) );
 		}
-		echo "\n";
+		$this->emit( '' );
 	}
 
 	/**
@@ -504,34 +493,37 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Stdin pipe mode: read line-by-line from `$stream`, unpack each packed
-	 * Message envelope, run it through process_message, then flush incomplete
-	 * requests so the operator can see partial state.
+	 * Stdin pipe mode: drive a `Stdin_Node` over `$stream` into a `Callback_Node`
+	 * that unpacks each packed Message envelope and runs it through
+	 * process_message, then flush incomplete requests so the operator can see
+	 * partial state. eof_deadline 0 → the reader self-exits immediately after the
+	 * stream's TM_EOF (no lingering post-EOF poll).
 	 *
-	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled
-	 * with fixture lines to drive the loop deterministically. (A shared
-	 * `Stdin_Node` primitive is future work — this stays minimal.)
+	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled with
+	 * fixture lines to drive the loop deterministically.
 	 *
 	 * @param resource|null $stream Source stream (defaults to STDIN).
 	 */
 	private function process_stdin( $stream = null ): void {
+		$stream = $stream ?? ( \defined( 'STDIN' ) ? \STDIN : null );
 		if ( null === $stream ) {
-			$stream = \defined( 'STDIN' ) ? STDIN : null;
-			if ( null === $stream ) {
+			return;
+		}
+		$src = new Stdin_Node( $stream, 0.0 );
+		$src->sink( new Callback_Node( function ( array $message ): void {
+			$line = \trim( self::to_str( $message[ Message::VALUE ] ) );
+			if ( '' === $line ) {
 				return;
 			}
-		}
-		while ( ( $line = \fgets( $stream ) ) !== false ) {
-			$line = \trim( $line );
-			if ( '' === $line ) {
-				continue;
-			}
 			try {
-				$message = Message::unpacked( $line );
+				$unpacked = Message::unpacked( $line );
 			} catch ( \InvalidArgumentException $e ) {
-				continue; // Not a packed Message envelope — skip.
+				return; // Not a packed envelope — skip.
 			}
-			$this->process_message( $message );
+			$this->process_message( $unpacked );
+		} ) );
+		while ( ! $src->exit ) {
+			$src->fire();
 		}
 		$this->output_remaining();
 	}
@@ -684,7 +676,8 @@ class Reqgrep_Command {
 				continue;
 			}
 			$this->output_request( self::to_lines( $state->lines ), self::to_str( $rid ) );
-			echo "[incomplete]\n\n";
+			$this->emit( '[incomplete]' );
+			$this->emit( '' );
 		}
 	}
 

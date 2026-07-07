@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`wp nodes reqgrep` reads stdin and writes output through the substrate's `Stdin_Node` / `Stdout_Node`.** The hand-rolled `while ( fgets )` stdin loop is replaced by a `Stdin_Node` (eof-deadline 0) driving a `Callback_Node`, and every `echo` now routes through a swappable `$stdout` node (a `Stdout_Node` in production, fwriting straight to STDOUT). This removes the old output-buffer-drain hack (`drain_output_buffers()` / the `ob_end_clean` loop) entirely, since `Stdout_Node` bypasses PHP output buffers. Byte-for-byte output is preserved.
+
 ### Fixed
 
 - **Modal close (×) buttons are visible again under dark skins (CRT, etc.).** WordPress `<Modal>`s portal to `document.body`, so the dashboards re-apply the skin classes to the modal frame — that themes the surface, but the WP close button still inherits its near-black default `currentColor` (`rgb(30,30,30)`), invisible on a dark CRT background. The performance-dashboard URL/request modal and the Hook/Custom-Event selector pickers never coloured that button (only `rule-edit-modal.scss` did); they now paint `.components-modal__header button` with `var(--ink)` (dashboard-only modal) / `var(--ink, var(--np-text))` (the selectors, which also open on the light settings page). The `×` glyph inherits the colour via the SVG's `currentColor` fill.
