@@ -325,6 +325,40 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'does not unfold an empty pair when a search lands on it', () => {
+		const entries = makeEntries();
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const input = container.querySelector( 'input' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'render' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 200 );
+		} );
+		input.blur();
+		act( () => {
+			document.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key: 'n', bubbles: true } )
+			);
+		} );
+		// `render` (pairId 3) is an empty pair — start immediately followed by
+		// its complete. Landing a search on it must NOT split it open (same
+		// rule as Unfold All); it stays a single merged row, not two.
+		expect(
+			container.querySelectorAll( 'tr[data-pair-id="3"]' ).length
+		).toBe( 1 );
+		jest.useRealTimers();
+		unmount();
+	} );
+
 	it( 'Escape clears active search', () => {
 		const entries = makeEntries();
 		jest.useFakeTimers();

@@ -440,6 +440,7 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 	// (which we find by walking backwards to the enclosing start).
 	const keyword = targetEntry.k || '';
 	const isStart = keyword.includes( '(start)' );
+	const isComplete = keyword.includes( '(complete)' );
 
 	if (
 		isStart &&
@@ -450,9 +451,12 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 	}
 
 	// Walk backwards collecting the nearest start-entry pairId at each
-	// decreasing indent level.  For non-start entries (complete, leaf),
-	// start from the target's own indent level to find the enclosing pair.
-	let needIndent = isStart ? targetEntry.indent - 1 : targetEntry.indent;
+	// decreasing indent level. A complete entry's indent is normalized down to
+	// its matched start's level, so its enclosing start sits at its OWN indent;
+	// a start or a leaf (error/info) child sits one level DEEPER than the start
+	// that contains it, so those look one indent up. (A leaf reading its own
+	// indent would never find its parent start — the include-error reveal bug.)
+	let needIndent = isComplete ? targetEntry.indent : targetEntry.indent - 1;
 	for ( let i = targetIdx - 1; i >= 0 && needIndent >= 0; i-- ) {
 		const e = indentedEntries[ i ];
 		if (
