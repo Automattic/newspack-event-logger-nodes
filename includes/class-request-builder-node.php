@@ -676,36 +676,57 @@ class Request_Builder_Node extends Timer_Node {
 			$request->request_method = $parts[0];
 		};
 
-		$s['environment_v2'] = function ( \stdClass $request, array $entry ): void {
-			$message = $entry['m'] ?? '';
-			if ( ! \is_string( $message ) || \strlen( $message ) > self::MAX_PAYLOAD_SCAN_LENGTH ) {
+		$s['environment_v3'] = function ( \stdClass $request, array $entry ): void {
+			$raw = $entry['m'] ?? null;
+			if ( ! \is_array( $raw ) ) {
 				return;
 			}
-			if ( \preg_match( '/^REMOTE_ADDR => "(.+)"$/', $message, $m ) ) {
-				$ip = \trim( $m[1] );
+			// The v3 `m` is a JSON object, so its keys are strings — make that
+			// explicit so the typed env_str() lookups below type-check.
+			$env = [];
+			foreach ( $raw as $k => $v ) {
+				$env[ (string) $k ] = $v;
+			}
+			// REMOTE_ADDR, when present, wins outright (empty/invalid ⇒ ''); XFF is
+			// consulted only when REMOTE_ADDR is entirely absent.
+			$remote = self::env_str( $env, 'REMOTE_ADDR' );
+			if ( '' !== $remote ) {
+				$ip = \trim( $remote );
 				$request->remote_addr = \filter_var( $ip, FILTER_VALIDATE_IP ) ? $ip : '';
-			} elseif ( \preg_match( '/^HTTP_USER_AGENT => "(.+)"$/', $message, $m ) ) {
-				$request->user_agent = $m[1];
-			} elseif ( \preg_match( '/^HTTP_X_FORWARDED_FOR => "(.+)"$/', $message, $m ) ) {
-				if ( empty( $request->remote_addr ) ) {
-					$parts = \explode( ',', $m[1], 2 );
-					$ip    = \trim( $parts[0] );
+			} else {
+				$xff = self::env_str( $env, 'HTTP_X_FORWARDED_FOR' );
+				if ( '' !== $xff ) {
+					$ip = \trim( \explode( ',', $xff, 2 )[0] );
 					if ( \filter_var( $ip, FILTER_VALIDATE_IP ) ) {
 						$request->remote_addr = $ip;
 					}
 				}
-			} elseif ( \preg_match( '/^SERVER_NAME => "(.+)"$/', $message, $m ) ) {
-				$request->server_name = $m[1];
-			} elseif ( \preg_match( '/^GEOIP_COUNTRY_CODE => "(.+)"$/', $message, $m ) ) {
-				$request->country_code = $m[1];
-			} elseif ( \preg_match( '/^HTTP_FROM => "(.+)"$/', $message, $m ) ) {
-				$request->http_from = $m[1];
-			} elseif ( \preg_match( '/^HTTP_X_JA4_HASH => "(.+)"$/', $message, $m ) ) {
-				$request->ja4_hash = $m[1];
-			} elseif ( \preg_match( '/^NEWSPACK_NODES_WORKER_TYPE => "(.+)"$/', $message, $m ) ) {
+			}
+			$user_agent = self::env_str( $env, 'HTTP_USER_AGENT' );
+			if ( '' !== $user_agent ) {
+				$request->user_agent = $user_agent;
+			}
+			$server_name = self::env_str( $env, 'SERVER_NAME' );
+			if ( '' !== $server_name ) {
+				$request->server_name = $server_name;
+			}
+			$country_code = self::env_str( $env, 'GEOIP_COUNTRY_CODE' );
+			if ( '' !== $country_code ) {
+				$request->country_code = $country_code;
+			}
+			$http_from = self::env_str( $env, 'HTTP_FROM' );
+			if ( '' !== $http_from ) {
+				$request->http_from = $http_from;
+			}
+			$ja4_hash = self::env_str( $env, 'HTTP_X_JA4_HASH' );
+			if ( '' !== $ja4_hash ) {
+				$request->ja4_hash = $ja4_hash;
+			}
+			$worker_type = self::env_str( $env, 'NEWSPACK_NODES_WORKER_TYPE' );
+			if ( '' !== $worker_type ) {
 				// Capture the value so the worker gets its own ?worker_type URL row.
 				$request->is_worker   = true;
-				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $m[1] ) ?? '';
+				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $worker_type ) ?? '';
 			}
 		};
 
@@ -717,6 +738,17 @@ class Request_Builder_Node extends Timer_Node {
 		};
 
 		return $s;
+	}
+
+	/**
+	 * Read a curated environment_v3 field as a string ('' when absent or non-string).
+	 *
+	 * @param array<string, mixed> $env Curated env map from the environment_v3 entry.
+	 * @param string               $key Field name.
+	 */
+	private static function env_str( array $env, string $key ): string {
+		$value = $env[ $key ] ?? '';
+		return \is_string( $value ) ? $value : '';
 	}
 
 	/**

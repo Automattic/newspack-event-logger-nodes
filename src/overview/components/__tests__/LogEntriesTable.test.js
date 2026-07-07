@@ -462,10 +462,14 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
-	it( 'renders message values as JSON when entry.m is an object', () => {
+	it( 'pretty-prints (indented, multi-line) message values when entry.m is an object', () => {
 		const entries = makeEntries();
-		// Replace one entry's m with an object.
-		entries[ 2 ] = { ...entries[ 2 ], m: { foo: 'bar' } };
+		// environment_v3-style entry: m is a { KEY => value } map.
+		entries[ 2 ] = {
+			...entries[ 2 ],
+			k: 'environment_v3',
+			m: { REMOTE_ADDR: '1.2.3.4', HTTP_HOST: 'example.com' },
+		};
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, { entries } )
 		);
@@ -474,7 +478,18 @@ describe( 'LogEntriesTable', () => {
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
 		act( () => unfoldBtn.click() );
-		expect( container.textContent ).toContain( '{"foo":"bar"}' );
+		// Pretty-printed (matches reqgrep's JSON_PRETTY_PRINT): indented keys
+		// on their own lines, NOT a single-line JSON blob.
+		const expected = JSON.stringify(
+			{ REMOTE_ADDR: '1.2.3.4', HTTP_HOST: 'example.com' },
+			null,
+			2
+		);
+		expect( expected ).toContain( '\n' );
+		expect( container.textContent ).toContain( expected );
+		expect( container.textContent ).not.toContain(
+			'{"REMOTE_ADDR":"1.2.3.4","HTTP_HOST":"example.com"}'
+		);
 		unmount();
 	} );
 

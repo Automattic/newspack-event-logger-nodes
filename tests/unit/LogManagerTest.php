@@ -669,6 +669,21 @@ class LogManagerTest extends TestCase {
 	 *
 	 * @return array[] Decoded JSON entries.
 	 */
+	/**
+	 * The curated environment_v3 map (the single `m` map) from a firehose read.
+	 *
+	 * @param array<int, array<string, mixed>> $entries Decoded firehose entries.
+	 * @return array<string, mixed>
+	 */
+	private function env_map( array $entries ): array {
+		foreach ( $entries as $entry ) {
+			if ( 'environment_v3' === ( $entry['k'] ?? '' ) && \is_array( $entry['m'] ?? null ) ) {
+				return $entry['m'];
+			}
+		}
+		return [];
+	}
+
 	private function read_firehose_entries(): array {
 		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
@@ -1065,9 +1080,12 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$_SERVER['HTTP_REFERER']     = 'https://example.com/page?token=SHHH&id=ok';
+		$_SERVER['REMOTE_ADDR']      = '1.2.3.4';
 		$_SERVER['DB_PASSWORD']      = 'do-not-log';
 		$_SERVER['SOME_API_KEY']     = 'k-do-not-log';
-		$_SERVER['CUSTOM_NICE_VAR']  = "hello\x07world";
+		$_SERVER['CUSTOM_NICE_VAR']  = 'not-curated';
+		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'combined';
+		$_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] = '0';
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'unit' );
@@ -1077,8 +1095,9 @@ class LogManagerTest extends TestCase {
 		$entries = $this->read_firehose_entries();
 		$kinds   = \array_column( $entries, 'k' );
 
-		// log_environment emits one entry per non-sensitive $_SERVER key under k=environment_v2.
-		$this->assertContains( 'environment_v2', $kinds, 'log_environment must emit environment_v2 entries' );
+		// log_environment emits exactly ONE curated environment_v3 message (not one-per-key).
+		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => 'environment_v3' === ( $e['k'] ?? '' ) ) );
+		$this->assertCount( 1, $env_entries, 'log_environment must emit exactly one curated environment_v3 entry' );
 
 		// log_resources emits k=resources.
 		$this->assertContains( 'resources', $kinds, 'log_resources must emit a resources entry' );
@@ -1087,28 +1106,162 @@ class LogManagerTest extends TestCase {
 		$this->assertContains( 'memory', $kinds, 'finish must emit a memory entry' );
 		$this->assertContains( 'process (complete)', $kinds, 'finish must emit process (complete)' );
 
-		// Sensitive keys redacted — DB_PASSWORD must NOT appear as an
-		// environment_v2 entry, but CUSTOM_NICE_VAR should.
-		$env_msgs = [];
-		foreach ( $entries as $entry ) {
-			if ( 'environment_v2' === ( $entry['k'] ?? '' ) ) {
-				$env_msgs[] = $entry['m'] ?? '';
-			}
-		}
-		$env_blob = \implode( "\n", $env_msgs );
-		$this->assertStringNotContainsString( 'DB_PASSWORD', $env_blob, 'DB_PASSWORD must be filtered out' );
-		$this->assertStringNotContainsString( 'do-not-log', $env_blob, 'DB_PASSWORD value must not appear' );
-		$this->assertStringNotContainsString( 'SOME_API_KEY', $env_blob, 'KEY-substring keys must be filtered' );
-		$this->assertStringNotContainsString( 'k-do-not-log', $env_blob, 'API key value must not appear' );
-		$this->assertStringContainsString( 'CUSTOM_NICE_VAR', $env_blob, 'Non-sensitive keys must be logged' );
-		// Control-char stripped from value.
-		$this->assertStringNotContainsString( "\x07", $env_blob, 'Control chars must be stripped from env values' );
-		// HTTP_REFERER must be redacted at the value layer.
-		$this->assertStringContainsString( 'HTTP_REFERER', $env_blob );
-		$this->assertStringNotContainsString( 'token=SHHH', $env_blob, 'URL-value sensitive params must be redacted' );
-		$this->assertStringContainsString( 'token=[REDACTED]', $env_blob );
+		// The curated payload is a structured map under `m`.
+		$env = $env_entries[0]['m'] ?? null;
+		$this->assertIsArray( $env, 'environment_v3 must carry a structured map under m' );
 
-		unset( $_SERVER['HTTP_REFERER'], $_SERVER['DB_PASSWORD'], $_SERVER['SOME_API_KEY'], $_SERVER['CUSTOM_NICE_VAR'] );
+		// Curated (allowlisted) keys present; sensitive + non-curated keys absent.
+		$this->assertArrayHasKey( 'REMOTE_ADDR', $env, 'allowlisted REMOTE_ADDR must be present' );
+		$this->assertSame( '1.2.3.4', $env['REMOTE_ADDR'] );
+		$this->assertArrayNotHasKey( 'DB_PASSWORD', $env, 'DB_PASSWORD must be filtered out' );
+		$this->assertArrayNotHasKey( 'SOME_API_KEY', $env, 'KEY-substring keys must be filtered' );
+		$this->assertArrayNotHasKey( 'CUSTOM_NICE_VAR', $env, 'non-curated keys must be dropped' );
+
+		// Worker-identity keys are allowlisted so worker requests stay taggable.
+		$this->assertSame( 'combined', $env['NEWSPACK_NODES_WORKER_TYPE'] ?? null, 'worker type must be curated' );
+		$this->assertSame( '0', $env['NEWSPACK_NODES_WORKER_PARTITION'] ?? null, 'worker partition must be curated' );
+
+		// HTTP_REFERER present and redacted at the value layer.
+		$this->assertArrayHasKey( 'HTTP_REFERER', $env );
+		$this->assertStringNotContainsString( 'token=SHHH', $env['HTTP_REFERER'], 'URL-value sensitive params must be redacted' );
+		$this->assertStringContainsString( 'token=[REDACTED]', $env['HTTP_REFERER'] );
+
+		// Curated payload stays well under the firehose MAX_DATA_SIZE (3840) cap.
+		$this->assertLessThan( 3840, \strlen( (string) \wp_json_encode( [ 'm' => $env ] ) ), 'curated env payload must stay under the size cap' );
+
+		unset( $_SERVER['HTTP_REFERER'], $_SERVER['REMOTE_ADDR'], $_SERVER['DB_PASSWORD'], $_SERVER['SOME_API_KEY'], $_SERVER['CUSTOM_NICE_VAR'], $_SERVER['NEWSPACK_NODES_WORKER_TYPE'], $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] );
+	}
+
+	/**
+	 * With every mandated allowlist key present at a realistic length, the
+	 * single environment_v3 map stays comfortably under MAX_DATA_SIZE (3840),
+	 * carries each present key, and redacts secrets in the URL-valued ones.
+	 */
+	public function test_environment_v3_full_allowlist_stays_under_cap_and_redacts(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$allowlist = [
+			'A8C_PROXIED_REQUEST', 'ATOMIC_SITE_OPCACHE_MEMORY_MB', 'CONTENT_LENGTH', 'CONTENT_TYPE',
+			'GEOIP_COUNTRY_CODE', 'HTTP_FROM', 'HTTP_HOST', 'HTTP_USER_AGENT', 'HTTP_X_A8C_EDGE_DC',
+			'HTTP_X_A8C_REQUEST_ID', 'HTTP_X_EDGE_BLACKBOX_SCORE', 'HTTP_X_FORWARDED_FOR',
+			'HTTP_X_IP_PROXY_TYPE', 'HTTP_X_JA3_HASH', 'HTTP_X_JA4T_HASH', 'HTTP_X_JA4T_LITE_HASH',
+			'HTTP_X_JA4_HASH', 'HTTP_X_OPENAI_HOST_HASH', 'HTTP_X_REQUESTED_WITH', 'HTTP_X_SUPPORTLOGIN',
+			'HTTP_X_TCP_RTT_AVG', 'HTTP_X_TCP_RTT_MIN', 'HTTP_X_VALID_CERTIFICATE', 'HTTP_X_WPLOGIN',
+			'REMOTE_ADDR', 'REMOTE_PORT', 'REQUEST_SCHEME', 'REQUEST_TIME',
+			'REQUEST_TIME_FLOAT', 'SERVER_NAME', 'UNIQUE_ID',
+		];
+		foreach ( $allowlist as $key ) {
+			$_SERVER[ $key ] = \str_repeat( 'v', 40 );
+		}
+		// Worst case: several client-controllable values are pathologically long
+		// (a 5KB user agent, a many-hop XFF, a 5KB proxied-request), plus the
+		// URL-valued referer carrying a secret. The per-value cap must keep each
+		// bounded so no single value blows the whole map past MAX_DATA_SIZE.
+		$_SERVER['HTTP_USER_AGENT']      = \str_repeat( 'A', 5000 );
+		$_SERVER['HTTP_X_FORWARDED_FOR'] = \str_repeat( '1.2.3.4, ', 700 );
+		$_SERVER['A8C_PROXIED_REQUEST']  = '/proxy?secret=NOPE&' . \str_repeat( 'x', 5000 );
+		$_SERVER['HTTP_REFERER']         = 'https://example.com/prev?token=SEEKRIT&ok=1';
+
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries     = $this->read_firehose_entries();
+		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => 'environment_v3' === ( $e['k'] ?? '' ) ) );
+		$this->assertCount( 1, $env_entries, 'exactly one curated environment_v3 entry' );
+		$env = $env_entries[0]['m'];
+		$this->assertIsArray( $env );
+
+		$this->assertArrayHasKey( 'REMOTE_ADDR', $env );
+		$this->assertArrayHasKey( 'SERVER_NAME', $env );
+		$this->assertArrayHasKey( 'UNIQUE_ID', $env );
+		$this->assertArrayHasKey( 'HTTP_X_JA4_HASH', $env );
+		// Request-line duplicates are intentionally absent.
+		$this->assertArrayNotHasKey( 'REQUEST_METHOD', $env );
+		$this->assertArrayNotHasKey( 'REQUEST_URI', $env );
+		$this->assertArrayNotHasKey( 'QUERY_STRING', $env );
+
+		// Secret redacted in the URL-valued referer AND in any other value that
+		// carries a URL query (A8C_PROXIED_REQUEST), not just HTTP_REFERER.
+		$this->assertStringContainsString( 'token=[REDACTED]', $env['HTTP_REFERER'] );
+		$this->assertStringContainsString( 'secret=[REDACTED]', $env['A8C_PROXIED_REQUEST'] );
+		$this->assertStringNotContainsString( 'SEEKRIT', (string) \wp_json_encode( $env ) );
+		$this->assertStringNotContainsString( 'NOPE', (string) \wp_json_encode( $env ) );
+
+		// Each oversized value is per-value capped (elided), so a single long
+		// value can't push the encoded map over MAX_DATA_SIZE and drop the map.
+		$cap = ( new \ReflectionClassConstant( Log_Manager::class, 'ENV_VALUE_MAX' ) )->getValue();
+		foreach ( [ 'HTTP_USER_AGENT', 'HTTP_X_FORWARDED_FOR', 'A8C_PROXIED_REQUEST' ] as $long_key ) {
+			$this->assertStringEndsWith( '…', $env[ $long_key ], "{$long_key} must be elided when over the cap" );
+			$this->assertSame( $cap, \strlen( \substr( $env[ $long_key ], 0, -\strlen( '…' ) ) ), "{$long_key} capped to ENV_VALUE_MAX bytes" );
+		}
+
+		$encoded_size = \strlen( (string) \wp_json_encode( [ 'm' => $env ] ) );
+		$this->assertLessThan( 3840, $encoded_size, "full curated env payload ({$encoded_size}B) must stay under the size cap" );
+
+		foreach ( $allowlist as $key ) {
+			unset( $_SERVER[ $key ] );
+		}
+	}
+
+	/**
+	 * Bug 2: a per-value length cap elides an oversized value so one long
+	 * allowlisted value can't blow the whole environment_v3 map.
+	 */
+	public function test_environment_v3_caps_oversized_value(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['HTTP_USER_AGENT'] = \str_repeat( 'A', 4096 );
+
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$env = $this->env_map( $this->read_firehose_entries() );
+		$this->assertArrayHasKey( 'HTTP_USER_AGENT', $env );
+		$ua  = $env['HTTP_USER_AGENT'];
+		$this->assertStringEndsWith( '…', $ua, 'oversized value must be ellipsis-elided' );
+		$cap = ( new \ReflectionClassConstant( Log_Manager::class, 'ENV_VALUE_MAX' ) )->getValue();
+		$this->assertSame( $cap, \strlen( \substr( $ua, 0, -\strlen( '…' ) ) ), 'value capped to ENV_VALUE_MAX bytes before the ellipsis' );
+
+		unset( $_SERVER['HTTP_USER_AGENT'] );
+	}
+
+	/**
+	 * Bug 3: URL-secret redaction is a catch-all over every allowlisted value
+	 * that carries a URL query — not just HTTP_REFERER. A value like
+	 * A8C_PROXIED_REQUEST=/x?token=SHHH must be redacted.
+	 */
+	public function test_environment_v3_redacts_url_secrets_in_any_value(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$_SERVER['A8C_PROXIED_REQUEST'] = '/x?token=SHHH&ok=1';
+
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$env = $this->env_map( $this->read_firehose_entries() );
+		$this->assertArrayHasKey( 'A8C_PROXIED_REQUEST', $env );
+		$this->assertStringContainsString( 'token=[REDACTED]', $env['A8C_PROXIED_REQUEST'] );
+		$this->assertStringNotContainsString( 'SHHH', $env['A8C_PROXIED_REQUEST'] );
+
+		unset( $_SERVER['A8C_PROXIED_REQUEST'] );
 	}
 
 	public function test_log_process_uses_mu_profiler_request_ts_for_process_start(): void {
@@ -1636,7 +1789,7 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * Control characters in non-sensitive $_SERVER values are stripped before
-	 * the environment_v2 line is emitted. The existing finish() test verifies
+	 * the environment_v3 line is emitted. The existing finish() test verifies
 	 * \x07; this widens to a multi-byte control range.
 	 */
 	public function test_log_environment_strips_full_control_char_range(): void {
@@ -1647,30 +1800,22 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$_SERVER['CUSTOM_CTRL'] = "before\x00\x01\x02\x1F\x7Fafter";
+		// SERVER_NAME is allowlisted; control bytes in its value are stripped.
+		$_SERVER['SERVER_NAME'] = "before\x00\x01\x02\x1F\x7Fafter";
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
 		$entries = $this->read_firehose_entries();
-		$env_msg = '';
-		foreach ( $entries as $entry ) {
-			if ( 'environment_v2' === ( $entry['k'] ?? '' )
-				&& false !== \strpos( (string) ( $entry['m'] ?? '' ), 'CUSTOM_CTRL' )
-			) {
-				$env_msg = (string) $entry['m'];
-				break;
-			}
-		}
-		$this->assertNotSame( '', $env_msg, 'CUSTOM_CTRL must surface as an environment_v2 entry' );
+		$env     = $this->env_map( $entries );
+		$this->assertArrayHasKey( 'SERVER_NAME', $env, 'SERVER_NAME must surface in the curated env map' );
+		$value = (string) $env['SERVER_NAME'];
 		// Control bytes removed; surrounding characters intact.
-		$this->assertStringContainsString( 'beforeafter', $env_msg );
-		$this->assertStringNotContainsString( "\x00", $env_msg );
-		$this->assertStringNotContainsString( "\x1F", $env_msg );
-		$this->assertStringNotContainsString( "\x7F", $env_msg );
-
-		unset( $_SERVER['CUSTOM_CTRL'] );
+		$this->assertSame( 'beforeafter', $value );
+		$this->assertStringNotContainsString( "\x00", $value );
+		$this->assertStringNotContainsString( "\x1F", $value );
+		$this->assertStringNotContainsString( "\x7F", $value );
 	}
 
 	/**
@@ -1687,19 +1832,18 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		$_SERVER['SOME_ARRAY_VAR'] = [ 'nested', 'value' ];
+		// An allowlisted key whose value is (pathologically) an array is skipped.
+		$_SERVER['REMOTE_ADDR'] = [ 'nested', 'value' ];
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$lm->finish();
 
 		$entries = $this->read_firehose_entries();
-		foreach ( $entries as $entry ) {
-			if ( 'environment_v2' === ( $entry['k'] ?? '' ) ) {
-				$this->assertStringNotContainsString( 'SOME_ARRAY_VAR', (string) ( $entry['m'] ?? '' ) );
-			}
-		}
-		unset( $_SERVER['SOME_ARRAY_VAR'] );
+		$env     = $this->env_map( $entries );
+		$this->assertArrayNotHasKey( 'REMOTE_ADDR', $env, 'array-valued env keys must be skipped' );
+
+		unset( $_SERVER['REMOTE_ADDR'] );
 	}
 
 	// ── complete(): orphaned-inner with valid outer ─────────────────────────

@@ -709,7 +709,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return '';
 		}
 		if ( typeof entry.m === 'object' ) {
-			return JSON.stringify( entry.m );
+			// Pretty-print object/map values (environment_v3) on their own
+			// indented lines, matching `wp nodes reqgrep`'s JSON_PRETTY_PRINT.
+			// The message cell is `white-space: pre-wrap`, so newlines render.
+			return JSON.stringify( entry.m, null, 2 );
 		}
 		const msg = entry.m || entry.l || '';
 		// Suppress bare '-' for merged rows, complete entries, and any entry
