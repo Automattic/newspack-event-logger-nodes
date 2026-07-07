@@ -42,6 +42,8 @@
 
 namespace Newspack_Event_Logger_Nodes\CLI;
 
+\defined( 'ABSPATH' ) || exit;
+
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Nodes\Callback_Node;

@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes;
 
+\defined( 'ABSPATH' ) || exit;
+
 use Newspack_Nodes\Core;
 
 /**

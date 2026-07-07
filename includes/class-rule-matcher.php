@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes;
 
+\defined( 'ABSPATH' ) || exit;
+
 /**
  * Built once per request from the autoloaded rule list. Matching is
  * order-independent (specificity governs) and cached per normalized URL.

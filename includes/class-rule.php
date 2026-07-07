@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes;
 
+\defined( 'ABSPATH' ) || exit;
+
 /**
  * Immutable value object. Hooks are either inlined (small rules) or held in
  * memcache behind a durable option (heavy rules) — this object only records
