@@ -128,12 +128,23 @@ class Flame_Builder_Node extends Node {
 	/** Name of the durable Partition shadowing the stats store (non-Atomic cold-boot replay); '' = disabled. Resolved by name lazily at use. */
 	private string $stats_partition = '';
 
-	/** Per-URL namespaces bounded to top-N by traffic when mirrored. */
+	/** Per-URL namespaces bounded to top-N by traffic when mirrored. NS_URL (the
+	 *  flame profiles) is the STARTING default only — the live bound is $flame_topn
+	 *  (see set_flame_topn), so the routing check here still recognizes NS_URL. */
 	private const STATS_MIRROR_TOPN = [
-		Stats_Store::NS_URL     => 0,    // flame profiles — profiled requests only
+		Stats_Store::NS_URL     => 0,    // flame profiles — see $flame_topn
 		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional
 		Stats_Store::NS_URL_CAT => 100,  // per-URL categories
 	];
+
+	/**
+	 * Live top-N cap for the per-URL flame-profile mirror (NS_URL). 0 in production
+	 * — per-URL flame profiles are NOT mirrored to memcache (a perf win; the per-URL
+	 * dimensional/category namespaces still mirror at top-100). A config point:
+	 * `set_flame_topn` raises it, which tests use to exercise the persisted-profile
+	 * shape at a non-zero cap.
+	 */
+	private int $flame_topn = 0;
 
 	/** @var array<string, array{0: array<array-key, mixed>, 1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
 	private array $stats_mirror_buffer = [];
@@ -1859,9 +1870,31 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 		$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl, $this->mirror_traffic_rank( $data, $ns ) ];
-		if ( \count( $this->stats_mirror_topn[ $ns ] ) > self::STATS_MIRROR_TOPN[ $ns ] ) {
+		if ( \count( $this->stats_mirror_topn[ $ns ] ) > $this->mirror_topn( $ns ) ) {
 			$this->evict_lowest_rank( $ns );
 		}
+	}
+
+	/**
+	 * The live top-N cap for a per-URL namespace: the configurable $flame_topn for
+	 * NS_URL (the flame profiles), the fixed STATS_MIRROR_TOPN default otherwise.
+	 */
+	private function mirror_topn( string $ns ): int {
+		return Stats_Store::NS_URL === $ns
+			? $this->flame_topn
+			: self::STATS_MIRROR_TOPN[ $ns ];
+	}
+
+	/**
+	 * Set the per-URL flame-profile mirror cap (NS_URL top-N). 0 (the production
+	 * default) disables the flame-profile mirror; a positive cap mirrors the top-N
+	 * profiled URLs by traffic. A config point — tests raise it to exercise the
+	 * persisted-profile shape.
+	 *
+	 * @param int $n Top-N cap; negatives clamp to 0.
+	 */
+	public function set_flame_topn( int $n ): void {
+		$this->flame_topn = \max( 0, $n );
 	}
 
 	/**
@@ -2222,6 +2255,9 @@ class Flame_Builder_Node extends Node {
 		if ( '' !== $this->stats_partition ) {
 			$out .= "cmd {$this->name}:config set_stats_partition {$this->stats_partition}\n";
 		}
+		if ( 0 !== $this->flame_topn ) {
+			$out .= "cmd {$this->name}:config set_flame_topn {$this->flame_topn}\n";
+		}
 		return $out;
 	}
 
@@ -2327,6 +2363,17 @@ class Flame_Builder_Node extends Node {
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_stats_partition( \trim( $args ) );
+						return 'ok';
+					},
+				],
+				[
+					'name'        => 'set_flame_topn',
+					'description' => 'Cap how many per-URL flame profiles mirror to memcache (top-N by traffic). 0 (default) disables the flame-profile mirror.',
+					'args'        => [ [ 'name' => 'n', 'type' => 'int', 'required' => false, 'default' => 0 ] ],
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+						/** @var self $patron */
+						$patron = $interpreter->patron();
+						$patron->set_flame_topn( (int) \trim( $args ) );
 						return 'ok';
 					},
 				],

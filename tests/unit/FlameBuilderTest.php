@@ -102,6 +102,22 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
+	 * The persisted per-URL flame-profile frame keys (`evlog:p0:url:*`) — NOT the
+	 * url_dim / url_cat namespaces (their keys carry a `_dim` / `_cat` stem, so the
+	 * `url:` colon prefix excludes them).
+	 *
+	 * @return list<string>
+	 */
+	private function url_flame_keys( \Newspack_Nodes\Partition_Node $p ): array {
+		return \array_values(
+			\array_filter(
+				\array_keys( $this->read_mirror_frames( $p ) ),
+				static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url:' )
+			)
+		);
+	}
+
+	/**
 	 * Build a completed-request payload for FlameBuilder. Defaults are
 	 * production-shaped; tests override only the fields they assert on.
 	 *
@@ -1948,7 +1964,7 @@ class FlameBuilderTest extends TestCase {
 		}
 	}
 
-	public function test_url_stats_bounded_to_top_10_by_traffic(): void {
+	public function test_url_flame_profiles_not_mirrored_by_default(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$p          = $this->make_partition( 'flames-stats' );
@@ -1958,7 +1974,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_partition( $p->name() );
 
-		// 15 distinct URLs with ascending flame.count — only the top 10 survive.
+		// No set_flame_topn() → the production default of 0: the per-URL flame
+		// mirror is OFF, so no `url:` frames persist regardless of traffic.
 		for ( $i = 1; $i <= 15; $i++ ) {
 			$store->set_url_stats( "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
 		}
@@ -1966,10 +1983,35 @@ class FlameBuilderTest extends TestCase {
 		$fb->save_state();
 		$p->flush();
 
-		$frames    = $this->read_mirror_frames( $p );
-		$url_keys  = \array_filter( \array_keys( $frames ), static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url:' ) );
-		$this->assertCount( 10, $url_keys, 'top-10 flame profiles retained' );
-		for ( $i = 6; $i <= 15; $i++ ) {
+		$url_keys = $this->url_flame_keys( $p );
+		$this->assertCount( 0, $url_keys, 'flame profiles not mirrored at the default top-N of 0' );
+	}
+
+	public function test_url_flame_profiles_bounded_to_configured_topn(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_partition( $p->name() );
+		$topn = 10;
+		$fb->set_flame_topn( $topn );
+
+		// 15 distinct URLs with ascending flame.count — exactly the configured
+		// top-N (highest-traffic) survive; the count persisted IS the number
+		// configured.
+		for ( $i = 1; $i <= 15; $i++ ) {
+			$store->set_url_stats( "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
+		}
+
+		$fb->save_state();
+		$p->flush();
+
+		$url_keys = $this->url_flame_keys( $p );
+		$this->assertCount( $topn, $url_keys, 'exactly the configured top-N flame profiles persisted' );
+		for ( $i = 16 - $topn; $i <= 15; $i++ ) {
 			$this->assertContains( "evlog:p0:url:h{$i}", $url_keys );
 		}
 		$this->assertNotContains( 'evlog:p0:url:h5', $url_keys, 'lowest-traffic URL evicted' );
@@ -2018,6 +2060,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
 		$fb->set_stats_partition( $p->name() );
+
+		$fb->set_flame_topn( 10 ); // enable the flame mirror to exercise the gate
 
 		$store->set_url_stats( 'empty', [ 'flame' => [ 'count' => 0 ] ] );
 		$store->set_url_stats( 'filled', [ 'flame' => [ 'count' => 3 ] ] );
@@ -2098,6 +2142,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_partition( $p->name() );
 
+		$fb->set_flame_topn( 10 ); // enable the flame mirror
 		// >4KB and carries profiling detail so it survives the top-N gate.
 		$data = [ 'flame' => [ 'count' => 1 ], 'blob' => \str_repeat( 'x', 5000 ) ];
 		$store->set_url_stats( 'abc', $data );
