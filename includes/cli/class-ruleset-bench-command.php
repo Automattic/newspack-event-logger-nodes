@@ -13,6 +13,8 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\CLI;
 
+\defined( 'ABSPATH' ) || exit;
+
 /**
  * `wp nodes ruleset-bench` — measurement only. Not on the request hot path.
  */

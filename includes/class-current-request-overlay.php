@@ -14,6 +14,8 @@ declare(strict_types=1);
 
 namespace Newspack_Event_Logger_Nodes;
 
+\defined( 'ABSPATH' ) || exit;
+
 /**
  * Wires the Current-Request overlay tab's bundle + per-request data exposure.
  */
