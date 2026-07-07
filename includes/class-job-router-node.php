@@ -52,7 +52,7 @@ class Job_Router_Node extends Node {
 	public const KIND_JOB        = 'job';
 	public const KIND_REMOTE_JOB = 'remote_job';
 
-	public function fill( array &$message ): void {
+	public function fill( array $message ): void {
 		++$this->counter;
 		/** @var int $type_flags */
 		$type_flags = $message[ Message::TYPE ];

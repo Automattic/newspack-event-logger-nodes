@@ -138,7 +138,7 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * @param array<int, mixed> $message Reference; not mutated.
 	 */
-	public function fill( array &$message ): void {
+	public function fill( array $message ): void {
 		++$this->counter;
 		$type_raw = $message[ Message::TYPE ];
 		$type     = \is_scalar( $type_raw ) ? (int) $type_raw : 0;

@@ -186,7 +186,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param array<int, mixed> $message Reference; not mutated.
 	 */
-	public function fill( array &$message ): void {
+	public function fill( array $message ): void {
 		++$this->counter;
 		$this->reload_stats_from_partition(); // Lazy cold-boot warm once the partition node exists.
 		$type_raw = $message[ Message::TYPE ];

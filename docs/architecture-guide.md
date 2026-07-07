@@ -328,7 +328,7 @@ class Request_Builder_Node extends Timer_Node {
     private const DEFAULT_BUCKET_SIZE = 100;
     private const DEFAULT_NUM_BUCKETS = 3;
 
-    public function fill( array &$message ): void {
+    public function fill( array $message ): void {
         // Parse firehose JSONL line; assemble start/complete pairs into request.
         // On rotation: evict timed-out bucket (sets error_status='T' on each orphan).
         // On overflow: evict oldest entry from oldest bucket.
@@ -439,7 +439,7 @@ Executes registered job handlers. Per-job try/catch isolates failures. Fires `be
 
 ```php
 // \Newspack_Nodes\Job_Worker_Node — abridged
-public function fill( array &$message ): void {
+public function fill( array $message ): void {
     $entry    = $message[ Message::VALUE ];
     $kind     = $entry['type'] ?? '';                          // 'job' or 'remote_job'
     $handler  = $entry['handler'] ?? '';
@@ -469,7 +469,7 @@ The one application-specific piece is `Remote_Job_Rewrite_Node` — a pass-throu
 ```php
 // includes/class-remote-job-rewrite-node.php
 class Remote_Job_Rewrite_Node extends Node {
-    public function fill( array &$message ): void {
+    public function fill( array $message ): void {
         $value = $message[ Message::VALUE ];
         if ( is_array( $value ) && 'job' === ( $value['k'] ?? null ) ) {
             $value['k']                = 'remote_job';

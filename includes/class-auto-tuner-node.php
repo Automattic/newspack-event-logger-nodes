@@ -31,7 +31,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 class Auto_Tuner_Node extends Node {
 
-	public function fill( array &$message ): void {
+	public function fill( array $message ): void {
 		/** @var int $type_flags */
 		$type_flags = $message[ Message::TYPE ];
 		if ( ( $type_flags & Message::TM_STRUCT ) === 0 ) {

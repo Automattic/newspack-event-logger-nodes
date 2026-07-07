@@ -39,7 +39,7 @@ class Remote_Job_Rewrite_Node extends Node {
 	 * @api Entry point invoked by the substrate Router / upstream sink.
 	 * @param array<int, mixed> $message Message reference; VALUE is the entry array.
 	 */
-	public function fill( array &$message ): void {
+	public function fill( array $message ): void {
 		$value = $message[ Message::VALUE ];
 		if ( \is_array( $value ) && 'job' === ( $value['k'] ?? null ) ) {
 			$value['k']                = 'remote_job';
