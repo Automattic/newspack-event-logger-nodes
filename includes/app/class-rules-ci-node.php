@@ -146,7 +146,7 @@ class Rules_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'upsert',
-					'description' => 'Add/replace a single rule. Arg is a JSON rule object; same-pattern rules are replaced in place, preserving their id.',
+					'description' => 'Add/replace a single rule. Arg is a JSON rule object; an edit (matched by id) or a same-pattern add is replaced in place, preserving the id — so changing an existing rule\'s pattern never orphans the old one.',
 					'args'        => [
 						[ 'name' => 'rule', 'type' => 'string', 'required' => true ],
 					],
@@ -161,7 +161,16 @@ class Rules_CI_Node extends Service_CI_Node {
 						$match_index  = null;
 						foreach ( $rules as $i => $r ) {
 							$existing_ids[] = $r->id;
-							if ( $r->pattern === $incoming->pattern ) {
+							// An EDIT carries the rule's id: match by id so a
+							// changed pattern replaces the SAME rule in place
+							// instead of appending a new one and orphaning the
+							// old pattern. An ADD / "Log this URL" has no id:
+							// match by pattern so re-adding an already-ruled URL
+							// updates it rather than duplicating.
+							$is_match = '' !== $incoming->id
+								? $r->id === $incoming->id
+								: $r->pattern === $incoming->pattern;
+							if ( $is_match ) {
 								$match_index = $i;
 							}
 						}

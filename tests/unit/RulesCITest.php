@@ -179,6 +179,22 @@ class RulesCITest extends TestCase {
 		$this->assertCount( 2, $stored, 'a new-pattern upsert appends' );
 	}
 
+	public function test_upsert_edit_with_a_changed_pattern_replaces_by_id_not_orphan(): void {
+		$existing = new Rule( 'edit-1', '/old/', Rule::ACTION_LOG );
+		( new Rule_Set( [] ) )->save( [ $existing ] );
+
+		// Editing that rule (its id round-trips from the modal) and changing the
+		// pattern must REPLACE it — not append a new-id rule and orphan '/old/'.
+		$payload = \wp_json_encode( [ 'id' => 'edit-1', 'pattern' => '/new/', 'action' => Rule::ACTION_LOG ] );
+		$result  = $this->fire( 'upsert', $payload );
+
+		$this->assertSame( 'edit-1', $result['rule']['id'], 'an edit keeps the rule id' );
+		$this->assertSame( '/new/', $result['rule']['pattern'] );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$this->assertCount( 1, $stored, 'editing a pattern replaces in place — no orphaned old-pattern rule' );
+		$this->assertSame( '/new/', $stored[0]['pattern'], 'the surviving rule carries the new pattern' );
+	}
+
 	public function test_upsert_preserves_a_sibling_pointer_rules_durable_hooks(): void {
 		$big     = \array_map( static fn ( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
 		$sibling = new Rule( 'sib-1', '/heavy/', Rule::ACTION_LOG, hooks: $big );
