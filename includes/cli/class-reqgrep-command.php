@@ -251,14 +251,6 @@ class Reqgrep_Command {
 		}
 	}
 
-	/** Emit one line to the output node (Stdout_Node appends the trailing newline). */
-	private function emit( string $text ): void {
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$message[ Message::VALUE ] = $text;
-		( $this->stdout ??= new Stdout_Node() )->fill( $message );
-	}
-
 	/**
 	 * Output a completed request — either the raw JSON lines (raw mode) or the
 	 * formatted indented tree.
@@ -302,6 +294,14 @@ class Reqgrep_Command {
 			$this->emit( $this->format_entry( $entry ) );
 		}
 		$this->emit( '' );
+	}
+
+	/** Emit one line to the output node (Stdout_Node appends the trailing newline). */
+	private function emit( string $text ): void {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		$message[ Message::VALUE ] = $text;
+		( $this->stdout ??= new Stdout_Node() )->fill( $message );
 	}
 
 	/**

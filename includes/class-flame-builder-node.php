@@ -1886,18 +1886,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Set the per-URL flame-profile mirror cap (NS_URL top-N). 0 (the production
-	 * default) disables the flame-profile mirror; a positive cap mirrors the top-N
-	 * profiled URLs by traffic. A config point — tests raise it to exercise the
-	 * persisted-profile shape.
-	 *
-	 * @param int $n Top-N cap; negatives clamp to 0.
-	 */
-	public function set_flame_topn( int $n ): void {
-		$this->flame_topn = \max( 0, $n );
-	}
-
-	/**
 	 * @param array<array-key, mixed> $data
 	 */
 	private function has_profiling_detail( array $data ): bool {
@@ -2080,6 +2068,18 @@ class Flame_Builder_Node extends Node {
 		$msg[ Message::KEY ]       = $key;
 		$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
 		$partition->fill( $msg );
+	}
+
+	/**
+	 * Set the per-URL flame-profile mirror cap (NS_URL top-N). 0 (the production
+	 * default) disables the flame-profile mirror; a positive cap mirrors the top-N
+	 * profiled URLs by traffic. A config point — tests raise it to exercise the
+	 * persisted-profile shape.
+	 *
+	 * @param int $n Top-N cap; negatives clamp to 0.
+	 */
+	public function set_flame_topn( int $n ): void {
+		$this->flame_topn = \max( 0, $n );
 	}
 
 	/**
