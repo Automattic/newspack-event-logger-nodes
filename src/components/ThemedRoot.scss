@@ -6,6 +6,12 @@
 
 @use "@newspack-nodes/shared/styles/inputs";
 
+// Skin-adaptive `.button` theming — the SAME shared mixin the devtools hub uses
+// (one source): stock WordPress `.button` under the Newspack skins, token-themed
+// under the decorative ones (crt/nord/…). Without this the dashboards' buttons
+// stayed admin-styled in every skin.
+@include inputs.skin-adaptive-buttons;
+
 // Page surface — the dashboard root only (the modal has its own frame, below).
 .topology-app > .newspack-nodes-theme {
 	// The dashboard's base surface (outermost) — matches the --paper-3 body.
