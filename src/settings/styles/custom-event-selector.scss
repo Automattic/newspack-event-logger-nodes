@@ -38,6 +38,12 @@
 		color: var(--ink, var(--np-text));
 	}
 
+	// The WP close (×) button defaults to a near-black currentColor — invisible
+	// on dark skins when this picker is opened from the themed dashboard.
+	.components-modal__header button {
+		color: var(--ink, var(--np-text));
+	}
+
 	.components-modal__content,
 	.components-modal__children-container {
 		display: flex;

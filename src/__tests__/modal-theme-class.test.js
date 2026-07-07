@@ -28,6 +28,23 @@ describe( 'dashboard Modal theme class', () => {
 		);
 	} );
 
+	// Every themed WP <Modal> reachable on a dark skin must paint its close (×)
+	// button with --ink. The button inherits a near-black currentColor
+	// (rgb(30,30,30)) by default — invisible on the CRT/dark skins. The selector
+	// modals are also opened on the light settings page, so they carry the
+	// `var(--ink, var(--np-text))` fallback; the dashboard-only modals use --ink
+	// directly. Regex tolerates either.
+	it.each( [
+		'overview/styles/modal.scss',
+		'rules/rule-edit-modal.scss',
+		'settings/styles/custom-event-selector.scss',
+		'settings/styles/hook-selector.scss',
+	] )( '%s: colours the modal close button with --ink', ( rel ) => {
+		expect( read( rel ) ).toMatch(
+			/\.components-modal__header\s*>?\s*button\s*\{[^}]*color:\s*var\(\s*--ink[,)]/
+		);
+	} );
+
 	it.each( [
 		'settings/settings/HookSelectorModal.js',
 		'settings/settings/CustomEventSelectorModal.js',
