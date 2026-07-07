@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-07
+
 ### Changed
 
+- **`fill()` takes the message by value** (`array $message`, was `array &$message`), matching the substrate's by-value contract: every Node subclass (and `Log_Manager::relay_topic_to_ci`) owns the message it is given and forwards a value to its sink — nobody reaches back across a `fill()`. Requires newspack-nodes ≥ 0.29.0.
 - **`wp nodes reqgrep` reads stdin and writes output through the substrate's `Stdin_Node` / `Stdout_Node`.** The hand-rolled `while ( fgets )` stdin loop is replaced by a `Stdin_Node` (eof-deadline 0) driving a `Callback_Node`, and every `echo` now routes through a swappable `$stdout` node (a `Stdout_Node` in production, fwriting straight to STDOUT). This removes the old output-buffer-drain hack (`drain_output_buffers()` / the `ob_end_clean` loop) entirely, since `Stdout_Node` bypasses PHP output buffers. Byte-for-byte output is preserved.
 
 ### Fixed
