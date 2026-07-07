@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The request-details `environment_v3` map renders alpha-sorted by key.** `LogEntriesTable` now sorts the object/map keys before pretty-printing (the producer emits them in allowlist order), so the ~33-key environment block is scannable. Display-only — the stored firehose payload and `wp nodes reqgrep` output are unchanged.
+- **Searching the log entries no longer splits an empty pair open just to land on it.** When a search match is a start/complete of an empty pair (start immediately followed by its complete — the same pairs Unfold All leaves merged), navigating to it now keeps it a single merged row and scrolls to that row, instead of unfolding it into two lines.
+
+### Fixed
+
+- **Log search can now jump to a nested leaf entry (e.g. `include (error)`).** `getAncestorPairIds` computed the wrong indent level for leaf entries (error/info children), so it never added their containing pair to the expand set — the parent stayed folded and the row never rendered, leaving the match unreachable ("1 match" but `n` wouldn't move to it). A leaf sits one indent level deeper than the start that contains it (a complete is normalized to its start's level); the walk now looks one level up for leaves, so the parent pair expands and the match scrolls into view.
 
 ## [0.26.0] - 2026-07-07
 

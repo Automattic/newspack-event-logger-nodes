@@ -222,6 +222,25 @@ describe( 'getAncestorPairIds', () => {
 		expect( ids.has( entries[ 1 ].pairId ) ).toBe( true );
 	} );
 
+	it( 'expands the containing pair for a nested leaf (error) entry', () => {
+		const { entries } = computeIndentedEntries( [
+			{ k: 'include (start)', ts: 1 },
+			{ k: 'include (error)', ts: 1.001 },
+			{ k: 'include (complete)', ts: 1.002 },
+		] );
+		// The error line is a CHILD of the include pair (its indent is one
+		// deeper than the start). To reveal it, the include (start) pair must be
+		// in the expand set — the walk has to look one indent level up, not at
+		// the leaf's own indent.
+		const errIdx = entries.findIndex( ( e ) => e.k === 'include (error)' );
+		const parentPairId = entries.find(
+			( e ) => e.k === 'include (start)'
+		).pairId;
+		expect(
+			getAncestorPairIds( errIdx, entries ).has( parentPairId )
+		).toBe( true );
+	} );
+
 	it( "includes the start entry's own pairId", () => {
 		const { entries } = computeIndentedEntries( [
 			{ k: 'a (start)', ts: 1 },

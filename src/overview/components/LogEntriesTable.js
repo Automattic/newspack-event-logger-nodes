@@ -231,6 +231,33 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		};
 	}, [ searchQuery, entries ] );
 
+	// Collect pairIds that have content between start and complete.
+	// Empty pairs (start immediately followed by complete) are not unfoldable.
+	const allPairIds = useMemo( () => {
+		const ids = new Set();
+		for ( let i = 0; i < entries.length; i++ ) {
+			const entry = entries[ i ];
+			if (
+				entry.pairId !== null &&
+				entry.pairId !== undefined &&
+				( entry.k || '' ).match( /\(start\)$/ ) &&
+				! ( entry.k || '' ).startsWith( 'process ' )
+			) {
+				// Check if next entry is the matching complete (nothing between).
+				const next = entries[ i + 1 ];
+				if (
+					next &&
+					next.pairId === entry.pairId &&
+					( next.k || '' ).includes( '(complete)' )
+				) {
+					continue; // Empty pair — skip.
+				}
+				ids.add( entry.pairId );
+			}
+		}
+		return ids;
+	}, [ entries ] );
+
 	// Navigate to a specific match index: unfold ancestors, scroll, highlight.
 	const navigateToMatch = useCallback(
 		( matchIdx ) => {
@@ -246,18 +273,50 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			const entryIdx = matchedIndices[ matchIdx ];
 			const ancestorIds = getAncestorPairIds( entryIdx, entries );
 
+			// Only expand pairs that actually have children (same rule as Unfold
+			// All / allPairIds). An empty start/complete pair renders as one
+			// merged row, so a search landing on it never splits it open.
 			setExpandedSet( ( prev ) => {
 				const next = new Set( prev );
 				for ( const id of ancestorIds ) {
-					next.add( id );
+					if ( allPairIds.has( id ) ) {
+						next.add( id );
+					}
 				}
 				return next;
 			} );
 
 			setCurrentMatchIndex( matchIdx );
-			scrollToAndHighlight( tableRef, { entryIdx } );
+
+			// A match on an empty pair's own start/complete stays a folded merged
+			// row — scroll to it by pairId, since that row carries the START's
+			// entry idx (a complete-only match would otherwise miss). Everything
+			// else scrolls to its own row.
+			const matchEntry = entries[ entryIdx ];
+			const ownPairId = matchEntry?.pairId;
+			const keyword = matchEntry?.k || '';
+			let staysFolded = false;
+			if ( ownPairId !== null && ownPairId !== undefined ) {
+				if ( keyword.includes( '(start)' ) ) {
+					const next = entries[ entryIdx + 1 ];
+					staysFolded =
+						!! next &&
+						next.pairId === ownPairId &&
+						( next.k || '' ).includes( '(complete)' );
+				} else if ( keyword.includes( '(complete)' ) ) {
+					const prev = entries[ entryIdx - 1 ];
+					staysFolded =
+						!! prev &&
+						prev.pairId === ownPairId &&
+						( prev.k || '' ).includes( '(start)' );
+				}
+			}
+			scrollToAndHighlight(
+				tableRef,
+				staysFolded ? { pairId: ownPairId } : { entryIdx }
+			);
 		},
-		[ matchedIndices, entries, expandedSet ]
+		[ matchedIndices, entries, expandedSet, allPairIds ]
 	);
 
 	// Clear search and restore pre-search fold state.
@@ -353,33 +412,6 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		() => computeVisibleEntries( entries, expandedSet ),
 		[ entries, expandedSet ]
 	);
-
-	// Collect pairIds that have content between start and complete.
-	// Empty pairs (start immediately followed by complete) are not unfoldable.
-	const allPairIds = useMemo( () => {
-		const ids = new Set();
-		for ( let i = 0; i < entries.length; i++ ) {
-			const entry = entries[ i ];
-			if (
-				entry.pairId !== null &&
-				entry.pairId !== undefined &&
-				( entry.k || '' ).match( /\(start\)$/ ) &&
-				! ( entry.k || '' ).startsWith( 'process ' )
-			) {
-				// Check if next entry is the matching complete (nothing between).
-				const next = entries[ i + 1 ];
-				if (
-					next &&
-					next.pairId === entry.pairId &&
-					( next.k || '' ).includes( '(complete)' )
-				) {
-					continue; // Empty pair — skip.
-				}
-				ids.add( entry.pairId );
-			}
-		}
-		return ids;
-	}, [ entries ] );
 
 	// Build path→pairId map for flame graph integration.
 	// Uses "name: message" detail keys to match flame graph's detail field,
