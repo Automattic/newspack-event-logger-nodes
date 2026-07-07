@@ -60,7 +60,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 *
 	 * @param array<int,mixed> $message Message reference (a spoke's `discovery.get` reply).
 	 */
-	public function fill( array &$message ): void {
+	public function fill( array $message ): void {
 		++$this->counter;
 		$value = $message[ Message::VALUE ];
 		if ( ! \is_array( $value ) ) {

@@ -49,7 +49,7 @@ class AutoTunerTest extends TestCase {
 
 	/**
 	 * Build a TM_STRUCT message routed at the AutoTuner. Returned by reference
-	 * via output variable so the caller's `fill( array &$message )` doesn't
+	 * via output variable so the caller's `fill( array $message )` doesn't
 	 * trip "Only variables should be passed by reference" on a function-call
 	 * result.
 	 *

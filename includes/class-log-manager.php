@@ -773,7 +773,7 @@ class Log_Manager {
 	 *
 	 * @param array<int, mixed> $message The positional Message array.
 	 */
-	public function relay_topic_to_ci( array &$message ): void {
+	public function relay_topic_to_ci( array $message ): void {
 		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 		if ( null !== $ci ) {
 			$this->topic?->sink( $ci );
