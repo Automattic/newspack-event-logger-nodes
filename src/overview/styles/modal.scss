@@ -58,6 +58,14 @@
 		gap: 16px;
 	}
 
+	// The WP close (×) button inherits a near-black currentColor by default —
+	// invisible on dark skins. Paint it --ink, as rule-edit-modal.scss does.
+	// Direct child only: headerActions (the stats + rule-control button) also
+	// live in the header, and they own their own theming.
+	.components-modal__header > button {
+		color: var(--ink);
+	}
+
 	.event-logger-header-stats {
 		display: flex;
 		gap: 16px;

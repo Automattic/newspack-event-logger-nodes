@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Modal close (×) buttons are visible again under dark skins (CRT, etc.).** WordPress `<Modal>`s portal to `document.body`, so the dashboards re-apply the skin classes to the modal frame — that themes the surface, but the WP close button still inherits its near-black default `currentColor` (`rgb(30,30,30)`), invisible on a dark CRT background. The performance-dashboard URL/request modal and the Hook/Custom-Event selector pickers never coloured that button (only `rule-edit-modal.scss` did); they now paint `.components-modal__header button` with `var(--ink)` (dashboard-only modal) / `var(--ink, var(--np-text))` (the selectors, which also open on the light settings page). The `×` glyph inherits the colour via the SVG's `currentColor` fill.
+
 ## [0.26.1] - 2026-07-07
 
 ### Changed
