@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-07
+
 ### Changed
 
 - **The per-URL flame-profile mirror top-N is a configurable field, not a const.** A `cmd <flame-node>:config set_flame_topn <n>` verb (round-tripped by `dump_config`, exposed as `Flame_Builder_Node::set_flame_topn()`) sets the NS_URL mirror cap; production keeps the default of `0` (flame profiles stay unmirrored to memcache for perf — unchanged), but a non-zero cap mirrors the top-N profiled URLs by traffic, which tests use to exercise the persisted-profile shape (the profiling-detail gate, the top-N eviction, large-write void-warranty). This fixes three stale FlameBuilder tests that still asserted the pre-`aab0390` mirror behavior after that commit set the cap to 0.
