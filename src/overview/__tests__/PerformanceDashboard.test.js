@@ -994,6 +994,29 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
+		it( 'does not append a second ? on a nodes/ELN URL that already has one', async () => {
+			mockGraph.listRules.mockResolvedValue( { rules: [] } );
+			mockView = urlModalView( '/jobs/x?supervisor' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			const btn = container.querySelector(
+				'.event-logger-rule-control button'
+			);
+			await act( async () => {
+				btn.click();
+			} );
+			// The ?worker marker already terminates the URL — the exact-match
+			// sentinel is NOT appended a second time (no '/jobs/x?supervisor?').
+			expect( globalThis.__ruleEditProps.rule.pattern ).toBe(
+				'/jobs/x?supervisor'
+			);
+			unmount();
+		} );
+
 		it( 'saving upserts the exact rule and flips the button label without closing the URL modal', async () => {
 			mockGraph.listRules.mockResolvedValue( { rules: [] } );
 			mockGraph.upsertRule.mockResolvedValue( {

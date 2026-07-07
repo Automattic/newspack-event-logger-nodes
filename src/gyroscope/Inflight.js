@@ -140,16 +140,16 @@ const COLUMNS = {
 };
 
 /**
- * Generate URL hash (must match PHP url_hash function).
+ * URL hash for deep-linking to URL detail — must match PHP
+ * `Request_Builder_Node::url_hash`, which hashes the FULL url. The real query is
+ * already stripped upstream, so the only `?` left is the intentional
+ * `?worker_type` marker on nodes/ELN URLs (e.g. `/jobs/x?supervisor`); keeping
+ * it is what makes those URLs deep-link correctly.
  *
  * @param {string} url URL to hash.
- * @return {string} 8-character FNV-1a hash.
+ * @return {string} FNV-1a hash.
  */
-const urlHash = ( url ) => {
-	// Remove query string (matches PHP's strtok($url, '?')).
-	const urlPath = url?.split( '?' )[ 0 ] || '';
-	return fnv1a( urlPath );
-};
+const urlHash = ( url ) => fnv1a( url || '' );
 
 /**
  * Default visible columns.

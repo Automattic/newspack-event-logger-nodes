@@ -414,9 +414,13 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		__( 'Unknown URL', 'newspack-event-logger-nodes' ) !== ruleUrl;
 	// Rules match the REQUEST_URI path, not the dashboard's display URL (which
 	// carries scheme + host); strip the origin so the exact rule actually matches.
-	const exactPattern = ruleUrl
-		? `${ ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) }?`
-		: '';
+	// The trailing '?' is the exact-match sentinel — but a nodes/ELN URL already
+	// carries a '?' (the ?worker_type marker), so don't append a second one.
+	const rulePath = ruleUrl ? ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) : '';
+	// Append the sentinel only when there IS a URL and it doesn't already carry a
+	// '?'; otherwise use the path as-is (empty when there's no URL).
+	const needsSentinel = ruleUrl && ! rulePath.includes( '?' );
+	const exactPattern = needsSentinel ? `${ rulePath }?` : rulePath;
 
 	// On URL-modal open, look up the current ruleset once to detect an existing
 	// exact rule (`<url>?`) — sets the button label and the prefill source. Reset
