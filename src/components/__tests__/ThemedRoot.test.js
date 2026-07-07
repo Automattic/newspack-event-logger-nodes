@@ -38,24 +38,24 @@ describe( 'ThemedRoot', () => {
 		unmount();
 	} );
 
-	it( 'carries the persisted skin class from getStoredTheme', () => {
+	it( 'applies the persisted skin as the global <html> class on mount', () => {
 		window.localStorage.setItem( THEME_STORAGE_KEY, 'crt' );
-		const { container, unmount } = renderComponent(
+		const { unmount } = renderComponent(
 			React.createElement( ThemedRoot, null, 'x' )
 		);
 		expect(
-			container.querySelector( '.topology-app.theme-crt' )
-		).not.toBeNull();
+			document.documentElement.classList.contains( 'theme-crt' )
+		).toBe( true );
 		unmount();
 	} );
 
 	it( 'falls back to the default skin class for an absent preference', () => {
-		const { container, unmount } = renderComponent(
+		const { unmount } = renderComponent(
 			React.createElement( ThemedRoot, null, 'x' )
 		);
 		expect(
-			container.querySelector( '.topology-app.theme-newspack' )
-		).not.toBeNull();
+			document.documentElement.classList.contains( 'theme-newspack' )
+		).toBe( true );
 		unmount();
 	} );
 
