@@ -424,18 +424,63 @@ class Log_Manager {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
 
+	/**
+	 * Curated $_SERVER keys logged as the single environment_v3 map. The
+	 * consumer (Request_Builder_Node) reads REMOTE_ADDR / HTTP_X_FORWARDED_FOR /
+	 * HTTP_USER_AGENT / SERVER_NAME / GEOIP_COUNTRY_CODE / HTTP_FROM /
+	 * HTTP_X_JA4_HASH; the rest are diagnostics. Keys already carried by the
+	 * `request` log line (REQUEST_METHOD / REQUEST_URI / QUERY_STRING) are
+	 * intentionally omitted. Perl mirrors this list in Gyrobase::Log — keep the
+	 * two IDENTICAL and in sync.
+	 *
+	 * @var array<int, string>
+	 */
+	private const ENV_ALLOWLIST = [
+		'A8C_PROXIED_REQUEST',
+		'ATOMIC_SITE_OPCACHE_MEMORY_MB',
+		'CONTENT_LENGTH',
+		'CONTENT_TYPE',
+		'GEOIP_COUNTRY_CODE',
+		'HTTP_FROM',
+		'HTTP_HOST',
+		'HTTP_REFERER',
+		'HTTP_USER_AGENT',
+		'HTTP_X_A8C_EDGE_DC',
+		'HTTP_X_A8C_REQUEST_ID',
+		'HTTP_X_EDGE_BLACKBOX_SCORE',
+		'HTTP_X_FORWARDED_FOR',
+		'HTTP_X_IP_PROXY_TYPE',
+		'HTTP_X_JA3_HASH',
+		'HTTP_X_JA4T_HASH',
+		'HTTP_X_JA4T_LITE_HASH',
+		'HTTP_X_JA4_HASH',
+		'HTTP_X_OPENAI_HOST_HASH',
+		'HTTP_X_REQUESTED_WITH',
+		'HTTP_X_SUPPORTLOGIN',
+		'HTTP_X_TCP_RTT_AVG',
+		'HTTP_X_TCP_RTT_MIN',
+		'HTTP_X_VALID_CERTIFICATE',
+		'HTTP_X_WPLOGIN',
+		'NEWSPACK_NODES_WORKER_PARTITION',
+		'NEWSPACK_NODES_WORKER_TYPE',
+		'REMOTE_ADDR',
+		'REMOTE_PORT',
+		'REQUEST_SCHEME',
+		'REQUEST_TIME',
+		'REQUEST_TIME_FLOAT',
+		'SERVER_NAME',
+		'UNIQUE_ID',
+	];
+
+	/** @var int Per-value byte cap for environment_v3 map values. Keeps one long
+	 * (client-controllable) value from pushing the encoded map over MAX_DATA_SIZE
+	 * and dropping the whole map. 256 keeps the full curated allowlist — even with
+	 * several oversized values — comfortably under MAX_DATA_SIZE. */
+	private const ENV_VALUE_MAX = 256;
+
 	private function log_environment(): void {
-		/** @var array<string, true> $url_value_keys */
-		static $url_value_keys = [
-			'HTTP_REFERER'          => true,
-			'QUERY_STRING'          => true,
-			'REDIRECT_QUERY_STRING' => true,
-			'REDIRECT_URL'          => true,
-			'REQUEST_URI'           => true,
-		];
-		$keys = \array_keys( $_SERVER );
-		\sort( $keys );
-		foreach ( $keys as $key ) {
+		$env = [];
+		foreach ( self::ENV_ALLOWLIST as $key ) {
 			if ( ! isset( $_SERVER[ $key ] ) ) {
 				continue;
 			}
@@ -445,15 +490,20 @@ class Log_Manager {
 				continue;
 			}
 			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
-			if ( isset( $url_value_keys[ $key ] ) ) {
+			// Catch-all URL-secret redaction: any value carrying a URL query, not
+			// just HTTP_REFERER (v2 applied this to every `m` string with a '?').
+			if ( false !== \strpos( $sanitized, '?' ) ) {
 				$sanitized = self::redact_url( $sanitized );
 			}
-			$this->message( 'environment_v2', [
-				'm' => \sprintf( '%s => "%s"',
-					$key,
-					\str_replace( '"', '\\"', $sanitized )
-				)
-			] );
+			// Per-value cap AFTER redaction, so a truncated tail can't strip the
+			// query boundary a secret needs to be recognized and redacted.
+			if ( \strlen( $sanitized ) > self::ENV_VALUE_MAX ) {
+				$sanitized = \substr( $sanitized, 0, self::ENV_VALUE_MAX ) . '…';
+			}
+			$env[ $key ] = $sanitized;
+		}
+		if ( ! empty( $env ) ) {
+			$this->message( 'environment_v3', [ 'm' => $env ] );
 		}
 	}
 

@@ -21,7 +21,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
  *  - `process (start)` — initializes the request, populates timestamp/process_id/host
  *  - `process (complete)` — terminal: emits the assembled doc downstream
  *  - `request` — extracts URL + method
- *  - `environment_v2` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / NEWSPACK_NODES_WORKER_TYPE / etc.
+ *  - `environment_v3` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / NEWSPACK_NODES_WORKER_TYPE / etc.
  *  - `memory` — extracts peak_mb
  *
  * Anything else with " (start)" / " (complete)" suffix pushes/pops the LIFO
@@ -200,64 +200,86 @@ class RequestBuilderTest extends TestCase {
 
 	// --- State callback extraction ----------------------------------------
 
-	public function test_environment_v2_extracts_remote_addr(): void {
+	public function test_environment_v3_extracts_remote_addr(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'REMOTE_ADDR => "1.2.3.4"' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'REMOTE_ADDR' => '1.2.3.4' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)', [ 'duration_ms' => 1.0 ] );
 
 		$req = $this->captured_request( $capture );
 		$this->assertSame( '1.2.3.4', $req['remote_addr'] );
 	}
 
-	public function test_environment_v2_invalid_remote_addr_becomes_empty(): void {
+	public function test_environment_v3_invalid_remote_addr_becomes_empty(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'REMOTE_ADDR => "not-an-ip"' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'REMOTE_ADDR' => 'not-an-ip' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
 		$this->assertSame( '', $req['remote_addr'] );
 	}
 
-	public function test_environment_v2_falls_back_to_x_forwarded_for(): void {
+	public function test_environment_v3_falls_back_to_x_forwarded_for(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		// REMOTE_ADDR comes through invalid → remote_addr stays empty.
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'REMOTE_ADDR => ""' ] );
-		// XFF picks up the real IP.
-		$this->fill( $rb, 4, 'r1', 'environment_v2', [ 'm' => 'HTTP_X_FORWARDED_FOR => "5.6.7.8, 9.9.9.9"' ] );
-		$this->fill( $rb, 5, 'r1', 'process (complete)' );
+		// REMOTE_ADDR absent (empty ⇒ treated as absent) → XFF fallback supplies the real IP.
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [
+			'REMOTE_ADDR'          => '',
+			'HTTP_X_FORWARDED_FOR' => '5.6.7.8, 9.9.9.9',
+		] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
 		$this->assertSame( '5.6.7.8', $req['remote_addr'] );
 	}
 
-	public function test_environment_v2_extracts_server_name_country_user_agent_ja4(): void {
+	public function test_environment_v3_present_invalid_remote_addr_wins_over_x_forwarded_for(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'SERVER_NAME => "example.com"' ] );
-		$this->fill( $rb, 4, 'r1', 'environment_v2', [ 'm' => 'GEOIP_COUNTRY_CODE => "US"' ] );
-		$this->fill( $rb, 5, 'r1', 'environment_v2', [ 'm' => 'HTTP_USER_AGENT => "curl/7.0"' ] );
-		$this->fill( $rb, 6, 'r1', 'environment_v2', [ 'm' => 'HTTP_X_JA4_HASH => "deadbeef"' ] );
-		$this->fill( $rb, 7, 'r1', 'environment_v2', [ 'm' => 'HTTP_FROM => "from@example"' ] );
-		$this->fill( $rb, 8, 'r1', 'process (complete)' );
+		// A present-but-invalid REMOTE_ADDR takes precedence and leaves remote_addr
+		// empty; XFF is only consulted when REMOTE_ADDR is entirely absent.
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [
+			'REMOTE_ADDR'          => 'not-an-ip',
+			'HTTP_X_FORWARDED_FOR' => '5.6.7.8',
+		] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( '', $req['remote_addr'] );
+	}
+
+	public function test_environment_v3_extracts_server_name_country_user_agent_ja4(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [
+			'SERVER_NAME'        => 'example.com',
+			'GEOIP_COUNTRY_CODE' => 'US',
+			'HTTP_USER_AGENT'    => 'curl/7.0',
+			'HTTP_X_JA4_HASH'    => 'deadbeef',
+			'HTTP_FROM'          => 'from@example',
+		] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
 		$this->assertSame( 'example.com', $req['server_name'] );
@@ -274,21 +296,21 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'NEWSPACK_NODES_WORKER_TYPE => "stream-merger"' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'stream-merger' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
 		$this->assertTrue( $req['is_worker'] );
 	}
 
-	public function test_environment_v2_captures_worker_type_value(): void {
+	public function test_environment_v3_captures_worker_type_value(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'NEWSPACK_NODES_WORKER_TYPE => "cache-cozy"' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'cache-cozy' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -296,14 +318,14 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'cache-cozy', $req['worker_type'] );
 	}
 
-	public function test_environment_v2_sanitizes_worker_type_value(): void {
+	public function test_environment_v3_sanitizes_worker_type_value(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => 'NEWSPACK_NODES_WORKER_TYPE => "evil/../type?x"' ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'evil/../type?x' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -313,7 +335,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_bare_worker_type_keyword_no_longer_flags_worker(): void {
 		// The museum-era explicit `worker_type` keyword entry is no longer produced
 		// (the substrate sets the env var before the environment block is logged), so
-		// worker detection flows solely through the environment_v2 env-var line.
+		// worker detection flows solely through the environment_v3 env-var line.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1568,22 +1590,23 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
-	// --- environment_v2 long message guard --------------------------------
+	// --- environment_v3 malformed-entry guard -----------------------------
 
-	public function test_environment_v2_skipped_when_message_exceeds_8192_bytes(): void {
-		// Lines longer than 8192 bytes are silently dropped (DoS guard).
+	public function test_environment_v3_non_map_payload_skipped(): void {
+		// A malformed/truncated environment_v3 whose `m` is a string (the shape a
+		// producer-side MAX_DATA_SIZE truncation leaves behind, or a legacy
+		// per-key line) is skipped gracefully — no field set, no crash.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
-		$huge = 'REMOTE_ADDR => "' . \str_repeat( '1', 9000 ) . '"';
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v2', [ 'm' => $huge ] );
+		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => 'REMOTE_ADDR => "1.2.3.4"' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
-		// remote_addr never set because the line was skipped before the regex.
+		// remote_addr never set because the string payload is not a curated map.
 		$this->assertArrayNotHasKey( 'remote_addr', $req );
 	}
 
