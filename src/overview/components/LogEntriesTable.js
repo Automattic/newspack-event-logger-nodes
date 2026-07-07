@@ -710,9 +710,18 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		}
 		if ( typeof entry.m === 'object' ) {
 			// Pretty-print object/map values (environment_v3) on their own
-			// indented lines, matching `wp nodes reqgrep`'s JSON_PRETTY_PRINT.
-			// The message cell is `white-space: pre-wrap`, so newlines render.
-			return JSON.stringify( entry.m, null, 2 );
+			// indented lines. Keys are alpha-sorted for scannability (the
+			// producer emits them in allowlist order). The message cell is
+			// `white-space: pre-wrap`, so newlines render.
+			const value =
+				entry.m && ! Array.isArray( entry.m )
+					? Object.fromEntries(
+							Object.keys( entry.m )
+								.sort()
+								.map( ( k ) => [ k, entry.m[ k ] ] )
+					  )
+					: entry.m;
+			return JSON.stringify( value, null, 2 );
 		}
 		const msg = entry.m || entry.l || '';
 		// Suppress bare '-' for merged rows, complete entries, and any entry

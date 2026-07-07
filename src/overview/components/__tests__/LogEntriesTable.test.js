@@ -462,9 +462,10 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
-	it( 'pretty-prints (indented, multi-line) message values when entry.m is an object', () => {
+	it( 'pretty-prints (indented, multi-line, alpha-sorted) message values when entry.m is an object', () => {
 		const entries = makeEntries();
-		// environment_v3-style entry: m is a { KEY => value } map.
+		// environment_v3-style entry: m is a { KEY => value } map, inserted
+		// out of alpha order (REMOTE_ADDR before HTTP_HOST).
 		entries[ 2 ] = {
 			...entries[ 2 ],
 			k: 'environment_v3',
@@ -478,15 +479,19 @@ describe( 'LogEntriesTable', () => {
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
 		act( () => unfoldBtn.click() );
-		// Pretty-printed (matches reqgrep's JSON_PRETTY_PRINT): indented keys
-		// on their own lines, NOT a single-line JSON blob.
+		// Pretty-printed indented keys on their own lines, alpha-sorted for
+		// scannability — HTTP_HOST renders before REMOTE_ADDR despite being
+		// inserted second — NOT a single-line JSON blob.
 		const expected = JSON.stringify(
-			{ REMOTE_ADDR: '1.2.3.4', HTTP_HOST: 'example.com' },
+			{ HTTP_HOST: 'example.com', REMOTE_ADDR: '1.2.3.4' },
 			null,
 			2
 		);
 		expect( expected ).toContain( '\n' );
 		expect( container.textContent ).toContain( expected );
+		expect( container.textContent.indexOf( 'HTTP_HOST' ) ).toBeLessThan(
+			container.textContent.indexOf( 'REMOTE_ADDR' )
+		);
 		expect( container.textContent ).not.toContain(
 			'{"REMOTE_ADDR":"1.2.3.4","HTTP_HOST":"example.com"}'
 		);
