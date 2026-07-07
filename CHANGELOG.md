@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The request-details `environment_v3` map renders alpha-sorted by key.** `LogEntriesTable` now sorts the object/map keys before pretty-printing (the producer emits them in allowlist order), so the ~33-key environment block is scannable. Display-only — the stored firehose payload and `wp nodes reqgrep` output are unchanged.
+
 ## [0.26.0] - 2026-07-07
 
 ### Changed
