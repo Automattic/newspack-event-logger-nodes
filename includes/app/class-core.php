@@ -34,46 +34,8 @@ class Core {
 	/** Priority of the sacrificial hook_spacer; wrap_callbacks treats everything at/above it as ours. */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
 
-	/**
-	 * Short name for a callback (no namespace, no priority).
-	 *
-	 * @param mixed $function Callback.
-	 * @return string e.g. "do_blocks" or "Image_CDN::filter_the_content".
-	 */
-	private static function short_name( $function ): string {
-		if ( \is_string( $function ) ) {
-			$pos = \strrpos( $function, '\\' );
-			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
-		}
-		if ( \is_array( $function ) && \count( $function ) === 2 ) {
-			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : ( \is_string( $function[0] ) ? $function[0] : '' );
-			$method = \is_string( $function[1] ) ? $function[1] : '';
-			$pos    = \strrpos( $class, '\\' );
-			if ( false !== $pos ) {
-				$class = \substr( $class, $pos + 1 );
-			}
-			return "{$class}::{$method}";
-		}
-		if ( $function instanceof \Closure ) {
-			$ref  = new \ReflectionFunction( $function );
-			$file = $ref->getFileName();
-			$line = $ref->getStartLine();
-			if ( $file ) {
-				$file = \basename( $file );
-				return "{closure}:{$file}:{$line}";
-			}
-			return '{closure}';
-		}
-		if ( \is_object( $function ) ) {
-			$class = \get_class( $function );
-			$pos   = \strrpos( $class, '\\' );
-			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
-		}
-		return '{unknown}';
-	}
-
-	/** @var array<int, true> spl_object_id of wrappers we created (prevents double-wrap). */
-	private array $wrapper_ids = [];
+	/** @var string[] Hook names currently bound (tracked for rebind_for_current_scope). */
+	private array $bound_hooks = [];
 
 	/** @var array<string, true> Significant events that get per-callback profiling. */
 	private array $significant = [];
@@ -81,8 +43,8 @@ class Core {
 	/** @var int Priority used for hook_start registration. */
 	private int $start_priority = 1;
 
-	/** @var string[] Hook names currently bound (tracked for rebind_for_current_scope). */
-	private array $bound_hooks = [];
+	/** @var array<int, true> spl_object_id of wrappers we created (prevents double-wrap). */
+	private array $wrapper_ids = [];
 
 	public function __construct() {
 		// Hooks are registered unconditionally. The enabled check happens
@@ -99,22 +61,6 @@ class Core {
 
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
-	}
-
-	/**
-	 * Remove the currently-bound hook filters and bind the current request's
-	 * governing rule afresh. Used when a job context switch changes which
-	 * rule governs mid-request (JobWorker's begin/end_job_context).
-	 */
-	public function rebind_for_current_scope(): void {
-		foreach ( $this->bound_hooks as $hook_name ) {
-			\remove_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
-			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
-			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
-		}
-		$this->bound_hooks = [];
-		$this->significant = [];
-		$this->bind_current_scope();
 	}
 
 	/**
@@ -214,46 +160,6 @@ class Core {
 	}
 
 	/**
-	 * Whether a callback declares a by-reference parameter.
-	 *
-	 * Such a callback can't be timing-wrapped: the wrapper passes args via
-	 * func_get_args() + call_user_func_array(), which copy, so a by-ref param
-	 * receives a value (PHP warning + lost mutation). Reflect once; on any
-	 * reflection failure, fall through to wrapping (prior behavior).
-	 *
-	 * @param mixed $function Callback (string|array|Closure|invokable object).
-	 * @return bool
-	 */
-	private static function callback_has_ref_param( $function ): bool {
-		try {
-			if ( \is_array( $function ) && \count( $function ) === 2 ) {
-				$target = $function[0];
-				$method = $function[1];
-				if ( ( ! \is_object( $target ) && ! \is_string( $target ) ) || ! \is_string( $method ) ) {
-					return false;
-				}
-				$ref = new \ReflectionMethod( $target, $method );
-			} elseif ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
-				$ref = new \ReflectionMethod( $function );
-			} elseif ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
-				$ref = new \ReflectionMethod( $function, '__invoke' );
-			} elseif ( $function instanceof \Closure || \is_string( $function ) ) {
-				$ref = new \ReflectionFunction( $function );
-			} else {
-				return false;
-			}
-		} catch ( \Throwable $e ) {
-			return false;
-		}
-		foreach ( $ref->getParameters() as $param ) {
-			if ( $param->isPassedByReference() ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
 	 * Wrap each callback on a hook with timing instrumentation.
 	 *
 	 * Replaces each callback's function with a closure that calls start/complete
@@ -324,6 +230,100 @@ class Core {
 			unset( $cb );
 		}
 		unset( $priority_callbacks );
+	}
+
+	/**
+	 * Short name for a callback (no namespace, no priority).
+	 *
+	 * @param mixed $function Callback.
+	 * @return string e.g. "do_blocks" or "Image_CDN::filter_the_content".
+	 */
+	private static function short_name( $function ): string {
+		if ( \is_string( $function ) ) {
+			$pos = \strrpos( $function, '\\' );
+			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
+		}
+		if ( \is_array( $function ) && \count( $function ) === 2 ) {
+			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : ( \is_string( $function[0] ) ? $function[0] : '' );
+			$method = \is_string( $function[1] ) ? $function[1] : '';
+			$pos    = \strrpos( $class, '\\' );
+			if ( false !== $pos ) {
+				$class = \substr( $class, $pos + 1 );
+			}
+			return "{$class}::{$method}";
+		}
+		if ( $function instanceof \Closure ) {
+			$ref  = new \ReflectionFunction( $function );
+			$file = $ref->getFileName();
+			$line = $ref->getStartLine();
+			if ( $file ) {
+				$file = \basename( $file );
+				return "{closure}:{$file}:{$line}";
+			}
+			return '{closure}';
+		}
+		if ( \is_object( $function ) ) {
+			$class = \get_class( $function );
+			$pos   = \strrpos( $class, '\\' );
+			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
+		}
+		return '{unknown}';
+	}
+
+	/**
+	 * Whether a callback declares a by-reference parameter.
+	 *
+	 * Such a callback can't be timing-wrapped: the wrapper passes args via
+	 * func_get_args() + call_user_func_array(), which copy, so a by-ref param
+	 * receives a value (PHP warning + lost mutation). Reflect once; on any
+	 * reflection failure, fall through to wrapping (prior behavior).
+	 *
+	 * @param mixed $function Callback (string|array|Closure|invokable object).
+	 * @return bool
+	 */
+	private static function callback_has_ref_param( $function ): bool {
+		try {
+			if ( \is_array( $function ) && \count( $function ) === 2 ) {
+				$target = $function[0];
+				$method = $function[1];
+				if ( ( ! \is_object( $target ) && ! \is_string( $target ) ) || ! \is_string( $method ) ) {
+					return false;
+				}
+				$ref = new \ReflectionMethod( $target, $method );
+			} elseif ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
+				$ref = new \ReflectionMethod( $function );
+			} elseif ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
+				$ref = new \ReflectionMethod( $function, '__invoke' );
+			} elseif ( $function instanceof \Closure || \is_string( $function ) ) {
+				$ref = new \ReflectionFunction( $function );
+			} else {
+				return false;
+			}
+		} catch ( \Throwable $e ) {
+			return false;
+		}
+		foreach ( $ref->getParameters() as $param ) {
+			if ( $param->isPassedByReference() ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Remove the currently-bound hook filters and bind the current request's
+	 * governing rule afresh. Used when a job context switch changes which
+	 * rule governs mid-request (JobWorker's begin/end_job_context).
+	 */
+	public function rebind_for_current_scope(): void {
+		foreach ( $this->bound_hooks as $hook_name ) {
+			\remove_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
+			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+		}
+		$this->bound_hooks = [];
+		$this->significant = [];
+		$this->bind_current_scope();
 	}
 
 	/**

@@ -25,26 +25,26 @@ class LRU_Cache {
 	/** @var int Upper clamp on num_buckets; caps memory + the get()/delete() scan. */
 	private const MAX_BUCKETS = 100;
 
+	/** @var int Max items per bucket. */
+	private int $bucket_size;
+
 	/** @var array<int, array<string, mixed>> Buckets array, indexed by bucket number. */
 	private array $buckets = [];
 
 	/** @var int Current bucket index. */
 	private int $current = 0;
 
-	/** @var int Max items per bucket. */
-	private int $bucket_size;
+	/** @var float Last rotation timestamp. */
+	private float $last_rotation = 0;
 
 	/** @var int Max number of buckets. */
 	private int $num_buckets;
 
-	/** @var float Seconds between time-based rotations (0 = capacity-only). */
-	private float $rotate_interval = 0;
-
-	/** @var float Last rotation timestamp. */
-	private float $last_rotation = 0;
-
 	/** @var callable|null Called with (key, value) for each evicted item. */
 	private $on_evict = null;
+
+	/** @var float Seconds between time-based rotations (0 = capacity-only). */
+	private float $rotate_interval = 0;
 
 	/**
 	 * Constructor.

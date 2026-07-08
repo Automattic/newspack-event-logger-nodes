@@ -58,6 +58,49 @@ class Performance_CI_Node extends Service_CI_Node {
 	public const MAX_INDEX_ENTRIES = 100000;
 
 	/**
+	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs.
+	 * Echoes the legacy PerfOverviewController::DIMENSIONS whitelist — typos
+	 * fall through without surfacing arbitrary memcache reads.
+	 */
+	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
+	private const SETTINGS_ARRAY_DEPTH = 5;
+
+	/**
+	 * Maximum array element count + nesting depth for `set`.
+	 * Mirrors PerfSettingsController::MAX_EVENTS / sanitize_array depth cap.
+	 */
+	private const SETTINGS_ARRAY_MAX   = 10000;
+
+	/**
+	 * Upper bound on `set` float values (24h in seconds). Mirrors
+	 * PerfSettingsController::sanitize_value `$f < 0 || $f > 86400`.
+	 */
+	private const SETTINGS_FLOAT_MAX = 86400;
+
+	/**
+	 * Upper bound on `set` integer values (2^30). Mirrors
+	 * PerfSettingsController::sanitize_value `$int < 0 || $int > 1073741824`.
+	 */
+	private const SETTINGS_INT_MAX = 1073741824;
+
+	/**
+	 * `set` whitelist: WP option name → sanitization type.
+	 * 
+	 * @var array<string,string>
+	 */
+	private const SETTINGS_OPTIONS = [
+		'newspack_event_logger_nodes_rules'            => 'array',
+		'newspack_event_logger_nodes_log_memory'       => 'bool',
+		'newspack_event_logger_nodes_flush_every_line' => 'bool',
+	];
+
+	/**
+	 * Valid sort fields for the `urls` verb. Echoes the legacy
+	 * PerfUrlsController whitelist; anything outside falls back to `count`.
+	 */
+	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'p95_ms', 'avg_peak_mb', 'last_updated' ];
+
+	/**
 	 * URL-index read seam. Lazily-defaulted to the real merge-across-partitions
 	 * loader (load_index_default). Tests reassign it to COUNT index reads without
 	 * short-circuiting the production fan-out — the surrounding memo + the merge
@@ -105,49 +148,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		$this->index_cache = $rows;
 		return $this->index_cache;
 	}
-
-	/**
-	 * Valid sort fields for the `urls` verb. Echoes the legacy
-	 * PerfUrlsController whitelist; anything outside falls back to `count`.
-	 */
-	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'p95_ms', 'avg_peak_mb', 'last_updated' ];
-
-	/**
-	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs.
-	 * Echoes the legacy PerfOverviewController::DIMENSIONS whitelist — typos
-	 * fall through without surfacing arbitrary memcache reads.
-	 */
-	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
-
-	/**
-	 * `set` whitelist: WP option name → sanitization type.
-	 * 
-	 * @var array<string,string>
-	 */
-	private const SETTINGS_OPTIONS = [
-		'newspack_event_logger_nodes_rules'            => 'array',
-		'newspack_event_logger_nodes_log_memory'       => 'bool',
-		'newspack_event_logger_nodes_flush_every_line' => 'bool',
-	];
-
-	/**
-	 * Upper bound on `set` integer values (2^30). Mirrors
-	 * PerfSettingsController::sanitize_value `$int < 0 || $int > 1073741824`.
-	 */
-	private const SETTINGS_INT_MAX = 1073741824;
-
-	/**
-	 * Upper bound on `set` float values (24h in seconds). Mirrors
-	 * PerfSettingsController::sanitize_value `$f < 0 || $f > 86400`.
-	 */
-	private const SETTINGS_FLOAT_MAX = 86400;
-
-	/**
-	 * Maximum array element count + nesting depth for `set`.
-	 * Mirrors PerfSettingsController::MAX_EVENTS / sanitize_array depth cap.
-	 */
-	private const SETTINGS_ARRAY_MAX   = 10000;
-	private const SETTINGS_ARRAY_DEPTH = 5;
 
 	/**
 	 * Decode a synced array-option value: JSON first (what Settings_Sync_Node now

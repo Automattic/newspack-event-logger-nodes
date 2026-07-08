@@ -21,9 +21,25 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Hook_Categorizer {
 
 	/**
+	 * Maximum pattern length to prevent ReDoS attacks.
+	 */
+	const MAX_PATTERN_LENGTH = 100;
+
+	/**
 	 * Option name for user customizations.
 	 */
 	const OPTION_NAME = 'newspack_event_logger_nodes_hook_customizations';
+
+	/**
+	 * file_get_contents seam. Lazily-defaulted to a closure wrapping the real
+	 * read of hook_categories.json. Tests reassign to return false so the
+	 * read-failure guard in get_base_config() runs as production code.
+	 *
+	 * Signature: `function ( string $path ): string|false`.
+	 *
+	 * @var \Closure(string): (string|false)|null
+	 */
+	public static ?\Closure $read_file = null;
 
 	/**
 	 * Cached base config from JSON file.
@@ -38,22 +54,6 @@ class Hook_Categorizer {
 	 * @var array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>}|null
 	 */
 	private static ?array $merged_config = null;
-
-	/**
-	 * Maximum pattern length to prevent ReDoS attacks.
-	 */
-	const MAX_PATTERN_LENGTH = 100;
-
-	/**
-	 * file_get_contents seam. Lazily-defaulted to a closure wrapping the real
-	 * read of hook_categories.json. Tests reassign to return false so the
-	 * read-failure guard in get_base_config() runs as production code.
-	 *
-	 * Signature: `function ( string $path ): string|false`.
-	 *
-	 * @var \Closure(string): (string|false)|null
-	 */
-	public static ?\Closure $read_file = null;
 
 	/**
 	 * Get registered hooks grouped by category.

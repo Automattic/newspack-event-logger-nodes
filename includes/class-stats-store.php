@@ -22,28 +22,24 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Stats_Store {
 
+	public const MAX_CAT_VALUES           = 50;
+	public const MAX_DIM_VALUES           = 20;
+	public const MAX_DURATIONS_PER_BUCKET = 100;
+	public const MAX_URL_DIM_VALUES       = 10;
+	public const NS_CATEGORIES  = 'categories';
+	public const NS_DIM         = 'dim';
+
 	public const NS_HOURLY      = 'hourly';
 	public const NS_LB          = 'lb';
 	public const NS_LB_S        = 'lb_s';
-	public const NS_URLS        = 'urls';
 	public const NS_URL         = 'url';
-	public const NS_DIM         = 'dim';
-	public const NS_URL_DIM     = 'url_dim';
-	public const NS_CATEGORIES  = 'categories';
+	public const NS_URLS        = 'urls';
 	public const NS_URL_CAT     = 'url_cat';
-
-	public const MAX_CAT_VALUES           = 50;
-	public const MAX_DIM_VALUES           = 20;
-	public const MAX_URL_DIM_VALUES       = 10;
-	public const MAX_DURATIONS_PER_BUCKET = 100;
+	public const NS_URL_DIM     = 'url_dim';
 
 	private const PREFIX_BASE  = 'evlog';
-	private const SALT_OPTION  = 'newspack_event_logger_nodes_stats_salt';
 	private const PREFIX_FLOOR = 3600;
-
-	private int $partition;
-	private int $max_lifespan;
-	private string $prefix;
+	private const SALT_OPTION  = 'newspack_event_logger_nodes_stats_salt';
 
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
@@ -55,6 +51,10 @@ class Stats_Store {
 	 * @var \Closure|null
 	 */
 	public ?\Closure $mirror = null;
+	private int $max_lifespan;
+
+	private int $partition;
+	private string $prefix;
 
 	public function __construct(
 		int $partition = 0,

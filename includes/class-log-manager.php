@@ -28,58 +28,67 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Log_Manager {
 
-	/** @var bool */
-	public $enabled          = false;
-	/** @var bool|null */
-	private $started         = null;
-	/** @var bool */
-	private $finished        = false;
-	/** @var \Newspack_Nodes\Topic_Node|null */
-	private $topic           = null;
-	/** @var int */
-	private $partition_idx   = 0;
-	/** @var bool */
-	private $line_limited    = false;
-	/** @var int */
-	private $line_number     = 1;
-	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
-	private $times           = [];
-	/** @var float|null */
-	private $request_time    = null;
-	/** @var int|float|null */
-	private $request_ts      = null;
-	/** @var string */
-	private $request_id      = '';
-	/** @var string */
-	private $request_url     = '';
-	private static ?self $instance = null;
+	/**
+	 * PHP error types that indicate a fatal crash.
+	 */
+	const FATAL_TYPES = [ E_ERROR, E_PARSE, E_COMPILE_ERROR, E_USER_ERROR ];
 
-	/** @var array<int, self> Stack of suspended parent LogManager instances. */
-	private static $context_stack = [];
+	/** @var int Bytes-to-megabytes divisor. */
+	private const BYTES_PER_MB = 1024 * 1024;
 
-	/** @var array<int, array<string, mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
-	private static array $job_server_stack = [];
+	/**
+	 * Curated $_SERVER keys logged as the single environment_v3 map. The
+	 * consumer (Request_Builder_Node) reads REMOTE_ADDR / HTTP_X_FORWARDED_FOR /
+	 * HTTP_USER_AGENT / SERVER_NAME / GEOIP_COUNTRY_CODE / HTTP_FROM /
+	 * HTTP_X_JA4_HASH; the rest are diagnostics. Keys already carried by the
+	 * `request` log line (REQUEST_METHOD / REQUEST_URI / QUERY_STRING) are
+	 * intentionally omitted. Perl mirrors this list in Gyrobase::Log — keep the
+	 * two IDENTICAL and in sync.
+	 *
+	 * @var array<int, string>
+	 */
+	private const ENV_ALLOWLIST = [
+		'A8C_PROXIED_REQUEST',
+		'ATOMIC_SITE_OPCACHE_MEMORY_MB',
+		'CONTENT_LENGTH',
+		'CONTENT_TYPE',
+		'GEOIP_COUNTRY_CODE',
+		'HTTP_FROM',
+		'HTTP_HOST',
+		'HTTP_REFERER',
+		'HTTP_USER_AGENT',
+		'HTTP_X_A8C_EDGE_DC',
+		'HTTP_X_A8C_REQUEST_ID',
+		'HTTP_X_EDGE_BLACKBOX_SCORE',
+		'HTTP_X_FORWARDED_FOR',
+		'HTTP_X_IP_PROXY_TYPE',
+		'HTTP_X_JA3_HASH',
+		'HTTP_X_JA4T_HASH',
+		'HTTP_X_JA4T_LITE_HASH',
+		'HTTP_X_JA4_HASH',
+		'HTTP_X_OPENAI_HOST_HASH',
+		'HTTP_X_REQUESTED_WITH',
+		'HTTP_X_SUPPORTLOGIN',
+		'HTTP_X_TCP_RTT_AVG',
+		'HTTP_X_TCP_RTT_MIN',
+		'HTTP_X_VALID_CERTIFICATE',
+		'HTTP_X_WPLOGIN',
+		'NEWSPACK_NODES_WORKER_PARTITION',
+		'NEWSPACK_NODES_WORKER_TYPE',
+		'REMOTE_ADDR',
+		'REMOTE_PORT',
+		'REQUEST_SCHEME',
+		'REQUEST_TIME',
+		'REQUEST_TIME_FLOAT',
+		'SERVER_NAME',
+		'UNIQUE_ID',
+	];
 
-	/** @var array<string, mixed> Cached config (loaded once at construction). */
-	private $config = [];
-
-	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
-	private $log_memory = false;
-
-	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
-	private $flush_every_line = false;
-
-	/** Saved UNIQUE_ID for suspend/resume. */
-	private ?string $saved_unique_id = null;
-
-	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
-	private ?Rule_Matcher $matcher = null;
-
-	/** @var Rule|null The rule governing this request (null ⇒ no match ⇒ skip). */
-	private ?Rule $matched_rule = null;
-
-	/** @var int Maximum timer stack depth to prevent unbounded growth. */
-	private const MAX_TIMER_DEPTH = 100;
+	/** @var int Per-value byte cap for environment_v3 map values. Keeps one long
+	 * (client-controllable) value from pushing the encoded map over MAX_DATA_SIZE
+	 * and dropping the whole map. 256 keeps the full curated allowlist — even with
+	 * several oversized values — comfortably under MAX_DATA_SIZE. */
+	private const ENV_VALUE_MAX = 256;
 
 	/** @var int Maximum data size in bytes for log entry data arrays. */
 	private const MAX_DATA_SIZE = 3840;
@@ -87,16 +96,21 @@ class Log_Manager {
 	/** @var int Mute start/complete after this many lines, leaving room for messages + finish. */
 	private const MAX_LOG_LINES = 40000;
 
+	/** @var int Maximum timer stack depth to prevent unbounded growth. */
+	private const MAX_TIMER_DEPTH = 100;
+
 	/** @var int Nanoseconds-to-milliseconds divisor. */
 	private const NS_PER_MS = 1_000_000;
 
-	/** @var int Bytes-to-megabytes divisor. */
-	private const BYTES_PER_MB = 1024 * 1024;
+	/** @var string Regex for sensitive URL query parameters. */
+	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
 
-	/**
-	 * PHP error types that indicate a fatal crash.
-	 */
-	const FATAL_TYPES = [ E_ERROR, E_PARSE, E_COMPILE_ERROR, E_USER_ERROR ];
+	/** @var array<int, self> Stack of suspended parent LogManager instances. */
+	private static $context_stack = [];
+	private static ?self $instance = null;
+
+	/** @var array<int, array<string, mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
+	private static array $job_server_stack = [];
 
 	/** @var array<string, bool> Hash set for fast sensitive key lookup. */
 	private static array $sensitive_keys = [
@@ -138,8 +152,48 @@ class Log_Manager {
 		'_URL',
 	];
 
-	/** @var string Regex for sensitive URL query parameters. */
-	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
+	/** @var bool */
+	public $enabled          = false;
+
+	/** @var array<string, mixed> Cached config (loaded once at construction). */
+	private $config = [];
+	/** @var bool */
+	private $finished        = false;
+
+	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
+	private $flush_every_line = false;
+	/** @var bool */
+	private $line_limited    = false;
+	/** @var int */
+	private $line_number     = 1;
+
+	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
+	private $log_memory = false;
+
+	/** @var Rule|null The rule governing this request (null ⇒ no match ⇒ skip). */
+	private ?Rule $matched_rule = null;
+
+	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
+	private ?Rule_Matcher $matcher = null;
+	/** @var int */
+	private $partition_idx   = 0;
+	/** @var string */
+	private $request_id      = '';
+	/** @var float|null */
+	private $request_time    = null;
+	/** @var int|float|null */
+	private $request_ts      = null;
+	/** @var string */
+	private $request_url     = '';
+
+	/** Saved UNIQUE_ID for suspend/resume. */
+	private ?string $saved_unique_id = null;
+	/** @var bool|null */
+	private $started         = null;
+	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
+	private $times           = [];
+	/** @var \Newspack_Nodes\Topic_Node|null */
+	private $topic           = null;
 
 	public function __construct() {
 		// Assign self FIRST: load_config() can re-enter instance(); a null $instance would spawn a second LM and recurse.
@@ -423,60 +477,6 @@ class Log_Manager {
 	private static function redact_url( string $url ): string {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
-
-	/**
-	 * Curated $_SERVER keys logged as the single environment_v3 map. The
-	 * consumer (Request_Builder_Node) reads REMOTE_ADDR / HTTP_X_FORWARDED_FOR /
-	 * HTTP_USER_AGENT / SERVER_NAME / GEOIP_COUNTRY_CODE / HTTP_FROM /
-	 * HTTP_X_JA4_HASH; the rest are diagnostics. Keys already carried by the
-	 * `request` log line (REQUEST_METHOD / REQUEST_URI / QUERY_STRING) are
-	 * intentionally omitted. Perl mirrors this list in Gyrobase::Log — keep the
-	 * two IDENTICAL and in sync.
-	 *
-	 * @var array<int, string>
-	 */
-	private const ENV_ALLOWLIST = [
-		'A8C_PROXIED_REQUEST',
-		'ATOMIC_SITE_OPCACHE_MEMORY_MB',
-		'CONTENT_LENGTH',
-		'CONTENT_TYPE',
-		'GEOIP_COUNTRY_CODE',
-		'HTTP_FROM',
-		'HTTP_HOST',
-		'HTTP_REFERER',
-		'HTTP_USER_AGENT',
-		'HTTP_X_A8C_EDGE_DC',
-		'HTTP_X_A8C_REQUEST_ID',
-		'HTTP_X_EDGE_BLACKBOX_SCORE',
-		'HTTP_X_FORWARDED_FOR',
-		'HTTP_X_IP_PROXY_TYPE',
-		'HTTP_X_JA3_HASH',
-		'HTTP_X_JA4T_HASH',
-		'HTTP_X_JA4T_LITE_HASH',
-		'HTTP_X_JA4_HASH',
-		'HTTP_X_OPENAI_HOST_HASH',
-		'HTTP_X_REQUESTED_WITH',
-		'HTTP_X_SUPPORTLOGIN',
-		'HTTP_X_TCP_RTT_AVG',
-		'HTTP_X_TCP_RTT_MIN',
-		'HTTP_X_VALID_CERTIFICATE',
-		'HTTP_X_WPLOGIN',
-		'NEWSPACK_NODES_WORKER_PARTITION',
-		'NEWSPACK_NODES_WORKER_TYPE',
-		'REMOTE_ADDR',
-		'REMOTE_PORT',
-		'REQUEST_SCHEME',
-		'REQUEST_TIME',
-		'REQUEST_TIME_FLOAT',
-		'SERVER_NAME',
-		'UNIQUE_ID',
-	];
-
-	/** @var int Per-value byte cap for environment_v3 map values. Keeps one long
-	 * (client-controllable) value from pushing the encoded map over MAX_DATA_SIZE
-	 * and dropping the whole map. 256 keeps the full curated allowlist — even with
-	 * several oversized values — comfortably under MAX_DATA_SIZE. */
-	private const ENV_VALUE_MAX = 256;
 
 	private function log_environment(): void {
 		$env = [];
