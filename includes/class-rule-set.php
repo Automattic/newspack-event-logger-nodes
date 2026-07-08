@@ -19,13 +19,13 @@ use Newspack_Nodes\Core;
  * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover (Task 0).
  */
 final class Rule_Set {
+	public const INLINE_HOOK_LIMIT     = 100; // <-- freeze from Task 0's crossover N (>= 65).
+	public const MC_HOOKS_PREFIX       = 'evlog:rules:hooks:';
+	public const MC_TTL                = 3600;
+	public const OPTION_HOOKS_PREFIX   = 'newspack_event_logger_nodes_rule_hooks_';
 
 	public const OPTION_RULES          = 'newspack_event_logger_nodes_rules';
-	public const OPTION_HOOKS_PREFIX   = 'newspack_event_logger_nodes_rule_hooks_';
 	public const OPTION_SCHEMA_VERSION = 'newspack_event_logger_nodes_rules_schema_version';
-	public const MC_HOOKS_PREFIX       = 'evlog:rules:hooks:';
-	public const INLINE_HOOK_LIMIT     = 100; // <-- freeze from Task 0's crossover N (>= 65).
-	public const MC_TTL                = 3600;
 
 	/** @var Rule[] */
 	private array $rules;

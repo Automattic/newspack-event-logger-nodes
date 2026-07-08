@@ -56,21 +56,6 @@ use Newspack_Nodes\Stdout_Node;
 
 class Reqgrep_Command {
 
-	/** Maximum lines per in-progress request. */
-	private const MAX_LINES_PER_REQUEST = 20000;
-
-	/**
-	 * Maximum bytes per in-progress request. Disk-sourced lines are already
-	 * PIPE_BUF-capped at 4KB by LogManager and RequestBuilder already truncates
-	 * the `m` field to 1KB at source, so 10MB only matters when stdin pipes in
-	 * giant lines from a non-canonical producer. 300 slots × 10MB = 3GB worst
-	 * case ceiling; the typical run stays well under PHP's memory_limit.
-	 */
-	private const MAX_BYTES_PER_REQUEST = 10 * 1024 * 1024;
-
-	/** Maximum lines per request retained in history buckets. */
-	private const MAX_LINES_PER_REQUEST_IN_HISTORY = 10000;
-
 	/**
 	 * In-flight LRU geometry: 100 items × 3 buckets = 300 slots, well above the
 	 * typical PHP-FPM concurrency ceiling. Anything that falls out of the oldest
@@ -82,6 +67,43 @@ class Reqgrep_Command {
 	/** Seconds between in-flight cache rotations (60 × 3 = 180s idle ceiling). */
 	private const INFLIGHT_ROTATE_INTERVAL = 60.0;
 
+	/**
+	 * Maximum bytes per in-progress request. Disk-sourced lines are already
+	 * PIPE_BUF-capped at 4KB by LogManager and RequestBuilder already truncates
+	 * the `m` field to 1KB at source, so 10MB only matters when stdin pipes in
+	 * giant lines from a non-canonical producer. 300 slots × 10MB = 3GB worst
+	 * case ceiling; the typical run stays well under PHP's memory_limit.
+	 */
+	private const MAX_BYTES_PER_REQUEST = 10 * 1024 * 1024;
+
+	/** Maximum lines per in-progress request. */
+	private const MAX_LINES_PER_REQUEST = 20000;
+
+	/** Maximum lines per request retained in history buckets. */
+	private const MAX_LINES_PER_REQUEST_IN_HISTORY = 10000;
+
+	/**
+	 * Output sink — lazily a Stdout_Node in production (see emit()); tests swap in
+	 * a capturing Callback_Node. Public so the test harness can substitute the
+	 * terminal sink without short-circuiting the rest of the emit path.
+	 */
+	public ?\Newspack_Nodes\Node $stdout = null;
+
+	/** Firehose base directory (resolved from Config or --path). */
+	private string $base_dir = '';
+
+	/** History bucket size (lines per bucket). */
+	private int $bucket_size = 250;
+
+	/**
+	 * Cat-mode starting offset: 'start' (default; full grep semantics) or
+	 * 'recent' (only the second-to-last segment and newer — fast lookup).
+	 */
+	private string $cat_offset = 'start';
+
+	/** @var array<string, mixed> Loaded config snapshot. */
+	private array $config = [];
+
 	/** Formatting state — current indent column. */
 	private int $fmt_indent = 0;
 
@@ -91,11 +113,20 @@ class Reqgrep_Command {
 	/** Formatting state — last seen timestamp. */
 	private float $fmt_last_timestamp = 0;
 
+	/** @var array<int, array<string, array<int, string>>> History buckets; each bucket maps rid => lines. */
+	private array $history = [ [] ];
+
+	/** True if --incomplete was passed. */
+	private bool $incomplete = false;
+
 	/** In-flight matched requests. Each value is stdClass {lines:array, bytes:int}. */
 	private ?LRU_Cache $inflight = null;
 
-	/** @var array<int, array<string, array<int, string>>> History buckets; each bucket maps rid => lines. */
-	private array $history = [ [] ];
+	/** History bucket count. */
+	private int $num_buckets = 10;
+
+	/** Number of partitions to walk. */
+	private int $num_partitions = 1;
 
 	/** Search pattern (positional arg, default '.'). */
 	private string $pattern = '.';
@@ -103,39 +134,8 @@ class Reqgrep_Command {
 	/** Pre-compiled regex pattern for matching. */
 	private string $pattern_regex = '/./i';
 
-	/** True if --incomplete was passed. */
-	private bool $incomplete = false;
-
 	/** True if --raw was passed. */
 	private bool $raw = false;
-
-	/**
-	 * Cat-mode starting offset: 'start' (default; full grep semantics) or
-	 * 'recent' (only the second-to-last segment and newer — fast lookup).
-	 */
-	private string $cat_offset = 'start';
-
-	/** History bucket size (lines per bucket). */
-	private int $bucket_size = 250;
-
-	/** History bucket count. */
-	private int $num_buckets = 10;
-
-	/** Firehose base directory (resolved from Config or --path). */
-	private string $base_dir = '';
-
-	/** Number of partitions to walk. */
-	private int $num_partitions = 1;
-
-	/** @var array<string, mixed> Loaded config snapshot. */
-	private array $config = [];
-
-	/**
-	 * Output sink — lazily a Stdout_Node in production (see emit()); tests swap in
-	 * a capturing Callback_Node. Public so the test harness can substitute the
-	 * terminal sink without short-circuiting the rest of the emit path.
-	 */
-	public ?\Newspack_Nodes\Node $stdout = null;
 
 	/**
 	 * Filter firehose JSONL logs by request id or pattern.

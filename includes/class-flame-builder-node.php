@@ -25,22 +25,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Flame_Builder_Node extends Node {
 	use \Newspack_Nodes\Schema_Reflection;
 
-	const FLUSH_INTERVAL_SEC = 5;
-
-	/** Security limits for recursion and unbounded growth. */
-	private const MAX_RECURSION_DEPTH = 50;
-	private const MAX_STACK_DEPTH     = 50;
-
-	/** Pre-compiled regex patterns for flame data parsing. */
-	const PATTERN_START    = '/^(.+?) \(start\)$/';
-	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
-
-	/** Entry limits with hysteresis: only trim when upper limit hit, trim to lower limit. */
-	const ENTRY_LIMIT_URL_UPPER    = 40;
-	const ENTRY_LIMIT_URL_LOWER    = 20;
-	const ENTRY_LIMIT_GLOBAL_UPPER = 100;
-	const ENTRY_LIMIT_GLOBAL_LOWER = 50;
-
 	/** Dimension field mapping: dim key => request field name. */
 	const DIM_FIELDS = [
 		'status'  => 'status_category',
@@ -51,57 +35,81 @@ class Flame_Builder_Node extends Node {
 		'ua'      => 'user_agent',
 		'ja4'     => 'ja4_hash',
 	];
+	const ENTRY_LIMIT_GLOBAL_LOWER = 50;
+	const ENTRY_LIMIT_GLOBAL_UPPER = 100;
+	const ENTRY_LIMIT_URL_LOWER    = 20;
+
+	/** Entry limits with hysteresis: only trim when upper limit hit, trim to lower limit. */
+	const ENTRY_LIMIT_URL_UPPER    = 40;
+
+	const FLUSH_INTERVAL_SEC = 5;
+	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
+
+	/** Pre-compiled regex patterns for flame data parsing. */
+	const PATTERN_START    = '/^(.+?) \(start\)$/';
 
 	/** Minutes per time-series bucket. */
 	private const BUCKET_MINUTES = 5;
+
+	/** Security limits for recursion and unbounded growth. */
+	private const MAX_RECURSION_DEPTH = 50;
+	private const MAX_STACK_DEPTH     = 50;
 
 	/** LRU cache for per-URL stats accumulators. */
 	private const STATS_CACHE_BUCKET_SIZE = 1000;
 	private const STATS_CACHE_NUM_BUCKETS = 5;
 
-	/** @var LRU_Cache Per-URL aggregate accumulator. */
-	private $stats_cache;
+	/** Per-URL namespaces bounded to top-N by traffic when mirrored. NS_URL (the
+	 *  flame profiles) is the STARTING default only — the live bound is $flame_topn
+	 *  (see set_flame_topn), so the routing check here still recognizes NS_URL. */
+	private const STATS_MIRROR_TOPN = [
+		Stats_Store::NS_URL     => 0,    // flame profiles — see $flame_topn
+		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional
+		Stats_Store::NS_URL_CAT => 100,  // per-URL categories
+	];
 
-	/** @var array<string, array<string, mixed>> Bucket-keyed hourly accumulator. */
-	private $hourly_stats                = [];
-	/** @var array<string, array<string, mixed>> Bucket-keyed leaderboard accumulator. */
-	private $leaderboard_stats           = [];
-	/** @var array<string, array<string, array<string, mixed>>> Server → bucket leaderboard accumulator. */
-	private $leaderboard_by_server_stats = [];
-	/** @var array<string, array<string, mixed>> Bucket → url-hash URL stats accumulator. */
-	private $url_stats                   = [];
-	/** @var array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>> Dim → bucket → value accumulator. */
-	private $dim_stats                   = [];
-	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Server → dim → bucket → value accumulator. */
-	private $dim_stats_by_server         = [];
-	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Url-hash → dim → bucket → value accumulator. */
-	private $url_dim_stats               = [];
+	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
+	private ?Auto_Tuner_Node $auto_tuner = null;
 	/** @var array<string, array<string, mixed>> Bucket → category accumulator. */
 	private $cat_stats                   = [];
 	/** @var array<string, array<string, array<string, mixed>>> Server → bucket → category accumulator. */
 	private $cat_stats_by_server         = [];
-	/** @var array<string, array<string, array<string, mixed>>> Url-hash → bucket → category accumulator. */
-	private $url_cat_stats               = [];
+
+
+	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
+	private $clock_fn = null;
+	/** @var array<string, bool> Custom-event-name set ({name => true}). */
+	private array $custom_event_names       = [];
+	/** @var array<string, array<string, bool>> rule_id => {event => true} disable decisions. */
+	private array $custom_events_to_disable = [];
+	/** @var array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>> Dim → bucket → value accumulator. */
+	private $dim_stats                   = [];
+	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Server → dim → bucket → value accumulator. */
+	private $dim_stats_by_server         = [];
+
+	/**
+	 * Live top-N cap for the per-URL flame-profile mirror (NS_URL). 0 in production
+	 * — per-URL flame profiles are NOT mirrored to memcache (a perf win; the per-URL
+	 * dimensional/category namespaces still mirror at top-100). A config point:
+	 * `set_flame_topn` raises it, which tests use to exercise the persisted-profile
+	 * shape at a non-zero cap.
+	 */
+	private int $flame_topn = 0;
+	/** @var array<string, array<string, bool>> rule_id => {hook => true} disable decisions. */
+	private array $hooks_to_disable         = [];
+
+	/** @var array<string, array<string, mixed>> Bucket-keyed hourly accumulator. */
+	private $hourly_stats                = [];
+	private bool $is_hub                    = false;
 
 	/** Per-URL aggregate state. */
 	private float $last_flush_time          = 0.0;
-	/** @var array<string, array<string, bool>> rule_id => {hook => true} disable decisions. */
-	private array $hooks_to_disable         = [];
-	/** @var array<string, array<string, bool>> rule_id => {event => true} disable decisions. */
-	private array $custom_events_to_disable = [];
-	/** @var array<string, array<string, bool>> rule_id => {event => true} known-significant dedupe cache. */
-	private array $significant_events       = [];
+	/** @var array<string, array<string, array<string, mixed>>> Server → bucket leaderboard accumulator. */
+	private $leaderboard_by_server_stats = [];
+	/** @var array<string, array<string, mixed>> Bucket-keyed leaderboard accumulator. */
+	private $leaderboard_stats           = [];
 	/** @var array<string, array<string, bool>> rule_id => {event => true} newly promoted. */
 	private array $new_significant_events   = [];
-	/** @var array<string, bool> Custom-event-name set ({name => true}). */
-	private array $custom_event_names       = [];
-	private bool $is_hub                    = false;
-
-	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
-	private ?Rule_Set $rule_set = null;
-
-	/** Pending stats for the current (incomplete) 5-minute bucket. */
-	private string $pending_bucket = '';
 
 	/**
 	 * Pending bucket accumulators. All keys optional so the empty default and
@@ -122,29 +130,16 @@ class Flame_Builder_Node extends Node {
 	 */
 	private $pending = [];
 
-	/** @var Stats_Store|null Memcache-backed stats store. */
-	private $stats_store = null;
+	/** Pending stats for the current (incomplete) 5-minute bucket. */
+	private string $pending_bucket = '';
 
-	/** Name of the durable Partition shadowing the stats store (non-Atomic cold-boot replay); '' = disabled. Resolved by name lazily at use. */
-	private string $stats_partition = '';
+	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
+	private ?Rule_Set $rule_set = null;
+	/** @var array<string, array<string, bool>> rule_id => {event => true} known-significant dedupe cache. */
+	private array $significant_events       = [];
 
-	/** Per-URL namespaces bounded to top-N by traffic when mirrored. NS_URL (the
-	 *  flame profiles) is the STARTING default only — the live bound is $flame_topn
-	 *  (see set_flame_topn), so the routing check here still recognizes NS_URL. */
-	private const STATS_MIRROR_TOPN = [
-		Stats_Store::NS_URL     => 0,    // flame profiles — see $flame_topn
-		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional
-		Stats_Store::NS_URL_CAT => 100,  // per-URL categories
-	];
-
-	/**
-	 * Live top-N cap for the per-URL flame-profile mirror (NS_URL). 0 in production
-	 * — per-URL flame profiles are NOT mirrored to memcache (a perf win; the per-URL
-	 * dimensional/category namespaces still mirror at top-100). A config point:
-	 * `set_flame_topn` raises it, which tests use to exercise the persisted-profile
-	 * shape at a non-zero cap.
-	 */
-	private int $flame_topn = 0;
+	/** @var LRU_Cache Per-URL aggregate accumulator. */
+	private $stats_cache;
 
 	/** @var array<string, array{0: array<array-key, mixed>, 1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
 	private array $stats_mirror_buffer = [];
@@ -152,15 +147,20 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string, array<string, array{0: array<array-key, mixed>, 1: int, 2: int}>> Per-URL top-N: ns => key => [data, ttl, rank]. */
 	private array $stats_mirror_topn = [];
 
+	/** Name of the durable Partition shadowing the stats store (non-Atomic cold-boot replay); '' = disabled. Resolved by name lazily at use. */
+	private string $stats_partition = '';
+
 	/** Guards reload_stats_from_partition() to a single cold-boot replay per process. */
 	private bool $stats_reloaded = false;
 
-
-	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
-	private $clock_fn = null;
-
-	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
-	private ?Auto_Tuner_Node $auto_tuner = null;
+	/** @var Stats_Store|null Memcache-backed stats store. */
+	private $stats_store = null;
+	/** @var array<string, array<string, array<string, mixed>>> Url-hash → bucket → category accumulator. */
+	private $url_cat_stats               = [];
+	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Url-hash → dim → bucket → value accumulator. */
+	private $url_dim_stats               = [];
+	/** @var array<string, array<string, mixed>> Bucket → url-hash URL stats accumulator. */
+	private $url_stats                   = [];
 
 	/** @api Used by substrate */
 	public function __construct() {

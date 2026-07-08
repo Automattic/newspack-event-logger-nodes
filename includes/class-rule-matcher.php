@@ -17,11 +17,11 @@ namespace Newspack_Event_Logger_Nodes;
  */
 final class Rule_Matcher {
 
-	/** @var Rule[] Sorted most-specific first. */
-	private array $rules;
-
 	/** @var array<string, Rule|null> Normalized-URL => match cache. */
 	private array $cache = [];
+
+	/** @var Rule[] Sorted most-specific first. */
+	private array $rules;
 
 	/**
 	 * @param Rule[] $rules Unsorted rule list.

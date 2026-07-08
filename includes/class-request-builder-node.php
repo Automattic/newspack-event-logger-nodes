@@ -26,8 +26,15 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
 
-	/** Maximum stack depth before request is considered runaway and evicted. */
-	private const MAX_STACK_DEPTH = 50;
+	/** Default LRU cache capacity. */
+	public const DEFAULT_BUCKET_SIZE = 100;
+	public const DEFAULT_NUM_BUCKETS = 3;
+
+	/**
+	 * Bucket rotation interval in seconds.
+	 * 3 buckets x 200s = 600s (10 min) before oldest bucket is evicted.
+	 */
+	private const BUCKET_ROTATION_S = 200;
 
 	/**
 	 * Maximum entries stored per request (for the detail view Log Entries table).
@@ -45,18 +52,8 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	private const MAX_PAYLOAD_SCAN_LENGTH = 8192;
 
-	/**
-	 * Bucket rotation interval in seconds.
-	 * 3 buckets x 200s = 600s (10 min) before oldest bucket is evicted.
-	 */
-	private const BUCKET_ROTATION_S = 200;
-
-	/** Default LRU cache capacity. */
-	public const DEFAULT_BUCKET_SIZE = 100;
-	public const DEFAULT_NUM_BUCKETS = 3;
-
-	protected int $bucket_size = self::DEFAULT_BUCKET_SIZE;
-	protected int $num_buckets = self::DEFAULT_NUM_BUCKETS;
+	/** Maximum stack depth before request is considered runaway and evicted. */
+	private const MAX_STACK_DEPTH = 50;
 
 	/** @var LRU_Cache In-flight requests, keyed by rid. */
 	public $cache;
@@ -64,17 +61,20 @@ class Request_Builder_Node extends Timer_Node {
 	/** @var Request_Flight_Node|null Hidden sibling — periodic in-flight snapshots. */
 	public ?Request_Flight_Node $flight = null;
 
-	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
-	private $state_callbacks;
-
-	/** @var string Named target for error/warning lines (empty = disabled). */
-	private $errors_target = '';
+	protected int $bucket_size = self::DEFAULT_BUCKET_SIZE;
+	protected int $num_buckets = self::DEFAULT_NUM_BUCKETS;
 
 	/** @var string Named target for compact-summary completed lines (empty = disabled). */
 	private string $completed_target = '';
 
+	/** @var string Named target for error/warning lines (empty = disabled). */
+	private $errors_target = '';
+
 	/** @var int Process line counter (for tests/debug). */
 	private $line_counter = 0;
+
+	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
+	private $state_callbacks;
 
 	/**
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),

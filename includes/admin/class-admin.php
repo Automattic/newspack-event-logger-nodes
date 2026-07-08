@@ -55,23 +55,23 @@ use Newspack_Nodes\Config_System\Settings_Renderer;
 class Admin {
 
 	/**
-	 * Settings group registered with `register_setting()`. WordPress uses this
-	 * to scope nonce verification and validation when the form posts to
-	 * `options.php`.
+	 * Nonce action / field name for the flush-memcache-stats form.
 	 */
-	public const OPTIONS_GROUP = 'newspack_event_logger_nodes_options_group';
-
-	/**
-	 * Settings page slug used by `add_settings_section/field()` and
-	 * `do_settings_sections()`. Distinct from the menu-page slug below.
-	 */
-	public const SETTINGS_PAGE = 'newspack_event_logger_nodes';
+	public const FLUSH_STATS_ACTION = 'newspack_event_logger_nodes_flush_stats';
+	public const FLUSH_STATS_NONCE  = 'newspack_event_logger_nodes_flush_stats_nonce';
 
 	/**
 	 * Menu page slug used by `add_options_page()` (the URL fragment after
 	 * `?page=`).
 	 */
 	public const MENU_SLUG = 'newspack-event-logger-nodes';
+
+	/**
+	 * Settings group registered with `register_setting()`. WordPress uses this
+	 * to scope nonce verification and validation when the form posts to
+	 * `options.php`.
+	 */
+	public const OPTIONS_GROUP = 'newspack_event_logger_nodes_options_group';
 
 	/**
 	 * WP-option name prefix. All admin-managed options live under this prefix.
@@ -84,16 +84,29 @@ class Admin {
 	 * Nonce action / field name for the reset-to-defaults form.
 	 */
 	public const RESET_ACTION = 'newspack_event_logger_nodes_reset_settings';
-	public const RESET_NONCE  = 'newspack_event_logger_nodes_reset_nonce';
 
 	/** Hidden-input array name carrying per-field reset marks ({option} => "1"). */
 	public const RESET_MARK_FIELD = 'newspack_event_logger_nodes_reset';
+	public const RESET_NONCE  = 'newspack_event_logger_nodes_reset_nonce';
 
 	/**
-	 * Nonce action / field name for the flush-memcache-stats form.
+	 * Settings page slug used by `add_settings_section/field()` and
+	 * `do_settings_sections()`. Distinct from the menu-page slug below.
 	 */
-	public const FLUSH_STATS_ACTION = 'newspack_event_logger_nodes_flush_stats';
-	public const FLUSH_STATS_NONCE  = 'newspack_event_logger_nodes_flush_stats_nonce';
+	public const SETTINGS_PAGE = 'newspack_event_logger_nodes';
+
+	/**
+	 * Text-like keys that get a `pre_update_option_{$option}` delete-on-blank
+	 * filter: a blank submission (or `↺` field-reset) deletes the row so the file
+	 * default resurfaces under presence-based Config, instead of storing '' (which
+	 * would override the default). The scalar subset of $option_names — checkbox
+	 * bools and multi-select arrays are EXCLUDED (an unchecked box / empty
+	 * selection is a real override). Derived from the Schema's
+	 * `delete_on_blank_options()` in `register_settings()`.
+	 *
+	 * @var array<int, string>
+	 */
+	private static array $delete_on_blank_options = [];
 
 	/**
 	 * Application-level option names cleared by `handle_reset_settings()`.
@@ -118,19 +131,6 @@ class Admin {
 	 * @var array<int, string>
 	 */
 	private static array $option_names = [];
-
-	/**
-	 * Text-like keys that get a `pre_update_option_{$option}` delete-on-blank
-	 * filter: a blank submission (or `↺` field-reset) deletes the row so the file
-	 * default resurfaces under presence-based Config, instead of storing '' (which
-	 * would override the default). The scalar subset of $option_names — checkbox
-	 * bools and multi-select arrays are EXCLUDED (an unchecked box / empty
-	 * selection is a real override). Derived from the Schema's
-	 * `delete_on_blank_options()` in `register_settings()`.
-	 *
-	 * @var array<int, string>
-	 */
-	private static array $delete_on_blank_options = [];
 
 	public function __construct() {
 		\add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );

@@ -29,6 +29,20 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Config {
 
+	/** One-time marker so `correct_option_autoload()` sweeps once per install. */
+	public const AUTOLOAD_FIXED_OPTION = 'newspack_event_logger_nodes_autoload_fixed';
+
+	/**
+	 * Allowed directories for local config override files.
+	 *
+	 * Only config files within these directories (or subdirectories) are allowed.
+	 *
+	 * @var array<int, string>
+	 */
+	private static $allowed_config_dirs = [
+		'/usr/src',
+	];
+
 	/**
 	 * Cached config (file defaults + WordPress options + substrate values).
 	 *
@@ -60,54 +74,45 @@ class Config {
 	];
 
 	/**
-	 * Whether a given option should be written with `autoload=true`. Every
-	 * `update_option()` call for an application option routes through this so
-	 * the hot-path scalars stay on the single alloptions query and the large
-	 * list options stay off it — consistently, regardless of which write path
-	 * (admin save, Performance_CI verbs, AutoTuner, health-check) fires.
-	 */
-	public static function autoload_for( string $option ): bool {
-		return ! isset( self::$non_autoloaded_options[ $option ] );
-	}
-
-	/** One-time marker so `correct_option_autoload()` sweeps once per install. */
-	public const AUTOLOAD_FIXED_OPTION = 'newspack_event_logger_nodes_autoload_fixed';
-
-	/**
-	 * One-time autoload-correction sweep, applying `autoload_for()` to every
-	 * application option (schema keys + the explicitly-non-autoloaded set).
-	 * Fixes existing installs that persisted these with the wrong flag, once,
-	 * guarded by a marker. Hooked on `admin_init`; no-op on WP < 6.6. The
-	 * substrate runs its own sweep for the `newspack_nodes_*` keys.
-	 */
-	public static function correct_option_autoload(): void {
-		if ( ! \function_exists( 'wp_set_option_autoload' ) ) {
-			return;
-		}
-		if ( ! empty( \get_option( self::AUTOLOAD_FIXED_OPTION ) ) ) {
-			return;
-		}
-		$options = \array_keys( self::$non_autoloaded_options );
-		$schema  = Settings_Schema::get();
-		foreach ( $schema->overlay_keys() as $key ) {
-			$options[] = $schema->prefix() . $key;
-		}
-		foreach ( \array_unique( $options ) as $option ) {
-			\wp_set_option_autoload( $option, self::autoload_for( $option ) );
-		}
-		\update_option( self::AUTOLOAD_FIXED_OPTION, '1', false );
-	}
-
-	/**
-	 * Allowed directories for local config override files.
+	 * Get custom colors with filter applied (for admin UI).
 	 *
-	 * Only config files within these directories (or subdirectories) are allowed.
+	 * This method applies the newspack_event_logger_nodes_custom_colors filter lazily,
+	 * allowing plugins that load after Event Logger to register their events.
 	 *
-	 * @var array<int, string>
+	 * @return array<string, mixed> Associative array of event_name => hex_color.
 	 */
-	private static $allowed_config_dirs = [
-		'/usr/src',
-	];
+	public static function get_custom_colors(): array {
+		$config = self::load_config();
+		$raw    = $config['custom_colors'] ?? [];
+		/** @var array<string, mixed> $colors */
+		$colors = \is_array( $raw ) ? $raw : [];
+
+		// Apply filter to allow plugins to register custom events.
+		if ( \function_exists( 'apply_filters' ) ) {
+			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
+			// Validate filter return type (may return any type); color maps are string-keyed by design.
+			/** @var array<string, mixed> $colors */
+			$colors = \is_array( $filtered ) ? $filtered : [];
+		}
+
+		// Merge discovered events from remote spokes (available but not selected).
+		if ( \function_exists( 'get_option' ) ) {
+			$discovered = \get_option( 'newspack_event_logger_nodes_discovered_events', [] );
+			if ( \is_array( $discovered ) ) {
+				foreach ( $discovered as $event => $color ) {
+					$event = (string) $event;
+					if ( ! isset( $colors[ $event ] ) ) {
+						$colors[ $event ] = \is_string( $color ) ? $color : '#ffa726';
+					}
+				}
+			}
+		}
+
+		// Sort alphabetically so events are easier to find in the UI.
+		\ksort( $colors, SORT_NATURAL | SORT_FLAG_CASE );
+
+		return $colors;
+	}
 
 	/**
 	 * Load configuration from disk + WordPress options.
@@ -197,44 +202,72 @@ class Config {
 	}
 
 	/**
-	 * Get custom colors with filter applied (for admin UI).
+	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
+	 * derivation. Used both by the plugin's `register_config_namespace`
+	 * call and by `tests/bootstrap.php` so both paths resolve identically.
 	 *
-	 * This method applies the newspack_event_logger_nodes_custom_colors filter lazily,
-	 * allowing plugins that load after Event Logger to register their events.
+	 * Returns null for keys this plugin doesn't own (substrate keys fall
+	 * back to the `<config:KEY>` namespace). The substrate wraps the
+	 * return in `(string) ($value ?? '')`, so bools surface as '1' / ''
+	 * and arrays must be flattened here (no `(string) array`).
 	 *
-	 * @return array<string, mixed> Associative array of event_name => hex_color.
+	 * @param string $key Token key after the `eln:` prefix.
+	 * @return mixed|null Resolved value, or null if not owned by `eln`.
 	 */
-	public static function get_custom_colors(): array {
+	public static function resolve_eln_token( string $key ) {
+		/** @var array<string, bool> $own */
+		static $own = [
+			'is_hub'            => true,
+			'stats_mirror_node' => true,
+		];
+		if ( ! isset( $own[ $key ] ) ) {
+			return null;
+		}
 		$config = self::load_config();
-		$raw    = $config['custom_colors'] ?? [];
-		/** @var array<string, mixed> $colors */
-		$colors = \is_array( $raw ) ? $raw : [];
 
-		// Apply filter to allow plugins to register custom events.
-		if ( \function_exists( 'apply_filters' ) ) {
-			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
-			// Validate filter return type (may return any type); color maps are string-keyed by design.
-			/** @var array<string, mixed> $colors */
-			$colors = \is_array( $filtered ) ? $filtered : [];
+		if ( 'is_hub' === $key ) {
+			// A hub is a site whose active topologies include `aggregator`;
+			// the substrate's `(string)` wrap surfaces the bool as '1' / ''.
+			return \in_array( 'aggregator', \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ), true );
 		}
 
-		// Merge discovered events from remote spokes (available but not selected).
-		if ( \function_exists( 'get_option' ) ) {
-			$discovered = \get_option( 'newspack_event_logger_nodes_discovered_events', [] );
-			if ( \is_array( $discovered ) ) {
-				foreach ( $discovered as $event => $color ) {
-					$event = (string) $event;
-					if ( ! isset( $colors[ $event ] ) ) {
-						$colors[ $event ] = \is_string( $color ) ? $color : '#ffa726';
-					}
-				}
-			}
+		return $config[ $key ] ?? null;
+	}
+
+	/**
+	 * One-time autoload-correction sweep, applying `autoload_for()` to every
+	 * application option (schema keys + the explicitly-non-autoloaded set).
+	 * Fixes existing installs that persisted these with the wrong flag, once,
+	 * guarded by a marker. Hooked on `admin_init`; no-op on WP < 6.6. The
+	 * substrate runs its own sweep for the `newspack_nodes_*` keys.
+	 */
+	public static function correct_option_autoload(): void {
+		if ( ! \function_exists( 'wp_set_option_autoload' ) ) {
+			return;
 		}
+		if ( ! empty( \get_option( self::AUTOLOAD_FIXED_OPTION ) ) ) {
+			return;
+		}
+		$options = \array_keys( self::$non_autoloaded_options );
+		$schema  = Settings_Schema::get();
+		foreach ( $schema->overlay_keys() as $key ) {
+			$options[] = $schema->prefix() . $key;
+		}
+		foreach ( \array_unique( $options ) as $option ) {
+			\wp_set_option_autoload( $option, self::autoload_for( $option ) );
+		}
+		\update_option( self::AUTOLOAD_FIXED_OPTION, '1', false );
+	}
 
-		// Sort alphabetically so events are easier to find in the UI.
-		\ksort( $colors, SORT_NATURAL | SORT_FLAG_CASE );
-
-		return $colors;
+	/**
+	 * Whether a given option should be written with `autoload=true`. Every
+	 * `update_option()` call for an application option routes through this so
+	 * the hot-path scalars stay on the single alloptions query and the large
+	 * list options stay off it — consistently, regardless of which write path
+	 * (admin save, Performance_CI verbs, AutoTuner, health-check) fires.
+	 */
+	public static function autoload_for( string $option ): bool {
+		return ! isset( self::$non_autoloaded_options[ $option ] );
 	}
 
 	/**
@@ -289,39 +322,6 @@ class Config {
 	 */
 	public static function get_offsets_directory(): string {
 		return RuntimeConfig::get_offsets_directory();
-	}
-
-	/**
-	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
-	 * derivation. Used both by the plugin's `register_config_namespace`
-	 * call and by `tests/bootstrap.php` so both paths resolve identically.
-	 *
-	 * Returns null for keys this plugin doesn't own (substrate keys fall
-	 * back to the `<config:KEY>` namespace). The substrate wraps the
-	 * return in `(string) ($value ?? '')`, so bools surface as '1' / ''
-	 * and arrays must be flattened here (no `(string) array`).
-	 *
-	 * @param string $key Token key after the `eln:` prefix.
-	 * @return mixed|null Resolved value, or null if not owned by `eln`.
-	 */
-	public static function resolve_eln_token( string $key ) {
-		/** @var array<string, bool> $own */
-		static $own = [
-			'is_hub'            => true,
-			'stats_mirror_node' => true,
-		];
-		if ( ! isset( $own[ $key ] ) ) {
-			return null;
-		}
-		$config = self::load_config();
-
-		if ( 'is_hub' === $key ) {
-			// A hub is a site whose active topologies include `aggregator`;
-			// the substrate's `(string)` wrap surfaces the bool as '1' / ''.
-			return \in_array( 'aggregator', \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ), true );
-		}
-
-		return $config[ $key ] ?? null;
 	}
 
 }
