@@ -106,7 +106,7 @@
 	&.components-modal__frame {
 		min-width: 560px;
 		width: 640px;
-		max-width: calc( 100% - 32px );
+		max-width: calc(100% - 32px);
 	}
 }
 
@@ -126,10 +126,10 @@
 	grid-template: none;
 	gap: 0;
 	width: 600px;
-	max-width: calc( 100% - 32px );
+	max-width: calc(100% - 32px);
 	height: auto;
 	min-height: 0;
-	max-height: calc( 100vh - 64px );
+	max-height: calc(100vh - 64px);
 
 	.components-modal__content {
 		width: 100%;
@@ -145,9 +145,9 @@
 .event-logger-rule-edit-modal.topology-app.components-modal__frame,
 .event-logger-hook-selector-modal.topology-app.components-modal__frame,
 .event-logger-custom-event-modal.topology-app.components-modal__frame {
-	background: var( --paper-2 );
-	color: var( --ink );
-	border: 1px solid var( --paper-shadow );
+	background: var(--paper-2);
+	color: var(--ink);
+	border: 1px solid var(--paper-shadow);
 
 	// Undo the leaked console grid on the picker frames too.
 	display: flex;
@@ -157,7 +157,7 @@
 
 	// A 1px header divider on every modal (the custom-event picker already had one).
 	.components-modal__header {
-		border-bottom: 1px solid var( --paper-shadow );
+		border-bottom: 1px solid var(--paper-shadow);
 		padding: 0 18px;
 		height: 64px;
 	}
@@ -191,13 +191,13 @@
 	.components-input-control__label,
 	.components-flex-item,
 	.rule-edit-field-label {
-		color: var( --ink-2 );
+		color: var(--ink-2);
 	}
 
 	// Secondary text (help lines, the hook/event counts) stays muted.
 	.components-base-control__help,
 	.rule-edit-field-count {
-		color: var( --ink-3 );
+		color: var(--ink-3);
 	}
 
 	// Portal frames escape ThemedRoot's DOM subtree, so its @wordpress reskin
@@ -205,6 +205,6 @@
 	@include inputs.wp-reskin;
 
 	::placeholder {
-		color: var( --ink-3 );
+		color: var(--ink-3);
 	}
 }
