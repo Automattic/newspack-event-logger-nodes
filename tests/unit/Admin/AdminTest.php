@@ -180,6 +180,11 @@ namespace {
 			return $v;
 		}
 	}
+	if ( ! \function_exists( '_n' ) ) {
+		function _n( string $single, string $plural, int $number, string $domain = '' ): string {
+			return 1 === $number ? $single : $plural;
+		}
+	}
 	if ( ! \function_exists( 'wp_get_current_user' ) ) {
 		function wp_get_current_user() {
 			$u             = new \stdClass();
@@ -542,6 +547,62 @@ class AdminTest extends TestCase {
 
 		// Per-field reset toggle highlight style is injected on the page.
 		$this->assertStringContainsString( '.is-marked [data-nn-reset-toggle]', $html );
+	}
+
+	public function test_render_settings_page_shows_flush_success_notice(): void {
+		// The `?flushed=1&restarted=N` query params render the "Cache flushed"
+		// admin notice with the pluralized worker-restart count.
+		$_GET['flushed']   = '1';
+		$_GET['restarted'] = '3';
+		try {
+			$admin = new Admin();
+			$admin->register_settings();
+			\ob_start();
+			$admin->render_settings_page();
+			$html = \ob_get_clean();
+		} finally {
+			unset( $_GET['flushed'], $_GET['restarted'] );
+		}
+
+		$this->assertStringContainsString( 'notice notice-success', $html );
+		$this->assertStringContainsString( 'Cache flushed.', $html );
+		// restarted=3 → plural form ("workers"), with the count substituted.
+		$this->assertStringContainsString( '3 workers restart requested', $html );
+	}
+
+	public function test_render_settings_page_flush_notice_defaults_restarted_to_zero(): void {
+		// `flushed` present but `restarted` absent → the count coerces to 0
+		// (plural branch of the notice), proving the is_numeric guard fallback.
+		$_GET['flushed'] = '1';
+		try {
+			$admin = new Admin();
+			$admin->register_settings();
+			\ob_start();
+			$admin->render_settings_page();
+			$html = \ob_get_clean();
+		} finally {
+			unset( $_GET['flushed'] );
+		}
+
+		$this->assertStringContainsString( 'Cache flushed.', $html );
+		$this->assertStringContainsString( '0 workers restart requested', $html );
+	}
+
+	public function test_render_settings_page_shows_reset_success_notice(): void {
+		// The `?reset=1` query param renders the "Settings reset to defaults" notice.
+		$_GET['reset'] = '1';
+		try {
+			$admin = new Admin();
+			$admin->register_settings();
+			\ob_start();
+			$admin->render_settings_page();
+			$html = \ob_get_clean();
+		} finally {
+			unset( $_GET['reset'] );
+		}
+
+		$this->assertStringContainsString( 'notice notice-success', $html );
+		$this->assertStringContainsString( 'Settings reset to defaults.', $html );
 	}
 
 	public function test_render_settings_page_wrap_carries_newspack_theme_class(): void {
@@ -1162,6 +1223,27 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'flushed=1', $GLOBALS['_last_redirect'] );
 		$this->assertStringContainsString( 'restarted=', $GLOBALS['_last_redirect'] );
 		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
+	}
+
+	public function test_handle_flush_stats_swallows_restart_throwable(): void {
+		// The worker-restart step is best-effort: if expand_workers / restart_workers
+		// throws (here forced via an uncreatable base_directory so the locks path
+		// blows up), the catch swallows it and the handler still redirects.
+		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/this/cannot/be/created' ] );
+		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
+
+		$admin = new Admin();
+		try {
+			$admin->handle_flush_stats();
+			$this->fail( 'expected RedirectException even when the restart step throws' );
+		} catch ( RedirectException $e ) {
+			// Expected — the catch swallowed the restart failure and redirected.
+		}
+
+		// The salt still rotated (flush_all runs before the restart attempt).
+		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
+		$this->assertNotNull( $GLOBALS['_last_redirect'] );
+		$this->assertStringContainsString( 'flushed=1', $GLOBALS['_last_redirect'] );
 	}
 
 	public function test_handle_flush_stats_rotates_salt(): void {

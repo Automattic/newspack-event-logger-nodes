@@ -912,4 +912,207 @@ class AppCoreTest extends TestCase {
 		// Wrapper sliced to accepted_args=3.
 		$this->assertSame( [ 'first', 'second', 'third' ], $received_args );
 	}
+
+	// ── hook_start disabled short-circuit ──────────────────────────────
+
+	public function test_hook_start_returns_early_when_log_manager_disabled(): void {
+		// When the LogManager is disabled, hook_start must return the filter value
+		// untouched WITHOUT calling start() / wrap_callbacks (the hot-path guard).
+		$this->require_config_or_skip();
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		Log_Manager::instance()->enabled = false;
+		$this->assertSame( 'passthrough', $core->hook_start( 'passthrough' ) );
+	}
+
+	// ── wrap_callbacks: real wrap path (governing rule populates `significant`) ──
+
+	/**
+	 * Install a governing rule whose significant events cover `the_content`, so
+	 * hook_start('the_content') actually invokes wrap_callbacks — the earlier
+	 * use_config()-based wrap tests left `significant` empty, making the wrap a
+	 * no-op. Returns the enabled Core with current_filter set to the_content.
+	 *
+	 * @param array<string, mixed> $config Extra global config (e.g. hook_start_priority).
+	 */
+	private function significant_core( array $config = [] ): Core {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content hook' ] ),
+			$config
+		);
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+		return $core;
+	}
+
+	public function test_wrapper_body_runs_original_and_returns_result(): void {
+		// The wrapper closure's body (start/call/complete/return) only executes
+		// when the wrapper is actually invoked — this drives it end to end.
+		$core = $this->significant_core();
+
+		$original = function ( $v ) { return $v . ' WRAPPED'; };
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'cb' => [ 'function' => $original, 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'seed' );
+
+		$wrapped = $wp_filter['the_content']->callbacks[10]['cb']['function'];
+		$this->assertNotSame( $original, $wrapped, 'callback must be wrapped when significant' );
+		$this->assertSame( 'hi WRAPPED', \call_user_func( $wrapped, 'hi' ), 'wrapper must run the original and return its result' );
+	}
+
+	public function test_wrap_callbacks_returns_when_hook_absent_from_wp_filter(): void {
+		// significant is populated, but the hook has no wp_filter entry → the
+		// early `return;` guard fires. hook_start still passes the value through.
+		$core = $this->significant_core();
+		global $wp_filter;
+		unset( $wp_filter['the_content'] );
+
+		$this->assertSame( 'v', $core->hook_start( 'v' ) );
+	}
+
+	public function test_wrap_callbacks_skips_callback_at_start_priority(): void {
+		// A callback registered AT start_priority (== $min) must be left alone —
+		// it's below the wrap window. Pin start_priority to a known value.
+		$core = $this->significant_core( [ 'hook_start_priority' => 5 ] );
+
+		$original = function ( $v ) { return $v; };
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [ 5 => [ 'low' => [ 'function' => $original, 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'x' );
+
+		$this->assertSame( $original, $wp_filter['the_content']->callbacks[5]['low']['function'] );
+		$this->assertSame( 1, $wp_filter['the_content']->callbacks[5]['low']['accepted_args'] );
+	}
+
+	public function test_wrap_callbacks_does_not_rewrap_existing_wrapper(): void {
+		// Second hook_start on the same hook must recognise the wrapper it created
+		// (spl_object_id in wrapper_ids) and skip re-wrapping it.
+		$core = $this->significant_core();
+
+		$original = function ( $v ) { return $v; };
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'cb' => [ 'function' => $original, 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'x' );
+		$first = $wp_filter['the_content']->callbacks[10]['cb']['function'];
+		$core->hook_start( 'x' );
+		$second = $wp_filter['the_content']->callbacks[10]['cb']['function'];
+
+		$this->assertInstanceOf( \Closure::class, $first );
+		$this->assertSame( $first, $second, 'existing wrapper must not be re-wrapped' );
+	}
+
+	public function test_wrap_callbacks_skips_array_by_reference_callback_under_governing_rule(): void {
+		// Real wrap path (significant populated) + a by-reference array callback:
+		// callback_has_ref_param() returns true → the `continue` leaves it un-wrapped.
+		$core = $this->significant_core();
+
+		$original = [ new RefParamFixture(), 'by_ref' ];
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'byref' => [ 'function' => $original, 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		$core->hook_start( 'x' );
+
+		$this->assertSame( $original, $wp_filter['the_content']->callbacks[10]['byref']['function'] );
+		$this->assertSame( 1, $wp_filter['the_content']->callbacks[10]['byref']['accepted_args'] );
+	}
+
+	// ── callback_has_ref_param: every callback shape (direct reflection) ──
+
+	public function test_callback_has_ref_param_array_object_method(): void {
+		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		$this->assertTrue( $ref->invoke( null, [ new RefParamFixture(), 'by_ref' ] ) );
+		$this->assertFalse( $ref->invoke( null, [ new RefParamFixture(), 'no_ref' ] ) );
+	}
+
+	public function test_callback_has_ref_param_array_with_non_string_method_is_false(): void {
+		// target is a string but method isn't a string → the invalid-shape guard.
+		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		$this->assertFalse( $ref->invoke( null, [ 'SomeClass', 42 ] ) );
+	}
+
+	public function test_callback_has_ref_param_invokable_object(): void {
+		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		$this->assertTrue( $ref->invoke( null, new InvokableRefFixture() ) );
+	}
+
+	public function test_callback_has_ref_param_plain_function_string(): void {
+		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		// A non-namespaced function with a normal (by-value) param → false.
+		$this->assertFalse( $ref->invoke( null, 'strlen' ) );
+	}
+
+	public function test_callback_has_ref_param_returns_false_on_reflection_failure(): void {
+		// ReflectionMethod on a nonexistent class throws → caught → false.
+		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		$this->assertFalse( $ref->invoke( null, [ 'No_Such_Class_ABC123', 'method' ] ) );
+	}
+
+	public function test_callback_has_ref_param_unsupported_type_is_false(): void {
+		// An int is neither array/string/object → the else `return false`.
+		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		$this->assertFalse( $ref->invoke( null, 42 ) );
+	}
+
+	// ── rebind_for_current_scope ───────────────────────────────────────
+
+	public function test_rebind_for_current_scope_removes_then_rebinds_hooks(): void {
+		// Constructing with a governing rule binds the rule's hooks; rebind must
+		// remove those filters and re-bind the current scope's hooks afresh.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content', 'wp_head' ] )
+		);
+
+		$core        = new Core();
+		$bound_ref   = new \ReflectionProperty( Core::class, 'bound_hooks' );
+		$before      = $bound_ref->getValue( $core );
+		$this->assertContains( 'the_content', $before );
+		$this->assertContains( 'wp_head', $before );
+
+		$core->rebind_for_current_scope();
+
+		$after = $bound_ref->getValue( $core );
+		$this->assertContains( 'the_content', $after, 'hooks must be re-bound after rebind' );
+		$this->assertContains( 'wp_head', $after );
+		// The re-bind left the governing hook registered in the filter registry.
+		$this->assertArrayHasKey( 'the_content', $GLOBALS['_wp_test_filters'] ?? [] );
+	}
+}
+
+/**
+ * Fixture: a class exposing by-reference and by-value callbacks so
+ * App\Core::callback_has_ref_param can be exercised for every callback shape.
+ */
+class RefParamFixture {
+	public function by_ref( &$v ) {
+		return $v;
+	}
+	public function no_ref( $v ) {
+		return $v;
+	}
+	public static function static_by_ref( &$v ) {
+		return $v;
+	}
+}
+
+/**
+ * Fixture: an invokable object whose __invoke takes a by-reference parameter.
+ */
+class InvokableRefFixture {
+	public function __invoke( &$v ) {
+		return $v;
+	}
 }
