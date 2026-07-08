@@ -50,6 +50,30 @@ if ( ! function_exists( 'do_action' ) ) {
 	}
 }
 
+if ( ! function_exists( 'remove_filter' ) ) {
+	// Reverses add_filter's `_wp_test_filters` bookkeeping so App\Core's
+	// rebind_for_current_scope() (which calls the global remove_filter for each
+	// bound hook before re-binding) round-trips in tests. Callbacks are
+	// `[$obj, 'method']` arrays — value comparison matches on the same instance.
+	function remove_filter( string $hook, $function_to_remove, int $priority = 10 ): bool {
+		$bucket = &$GLOBALS['_wp_test_filters'][ $hook ][ $priority ];
+		if ( isset( $bucket ) && is_array( $bucket ) ) {
+			foreach ( $bucket as $i => $existing ) {
+				if ( $existing === $function_to_remove ) {
+					unset( $bucket[ $i ] );
+				}
+			}
+			if ( empty( $bucket ) ) {
+				unset( $GLOBALS['_wp_test_filters'][ $hook ][ $priority ] );
+			}
+			if ( empty( $GLOBALS['_wp_test_filters'][ $hook ] ) ) {
+				unset( $GLOBALS['_wp_test_filters'][ $hook ] );
+			}
+		}
+		return true;
+	}
+}
+
 if ( ! class_exists( '\WP_Hook' ) ) {
 	// Minimal WP_Hook stub: stores callbacks keyed by priority, provides
 	// remove_filter() so Core::wrap_callbacks's introspection round-trips.
