@@ -47,35 +47,32 @@ use Newspack_Nodes\Service_CI_Node;
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Hard cap on .idx entries scanned per disk-walking verb. Matches the
-	 * legacy controllers' MAX_INDEX_ENTRIES — prevents a missing-rid scan
-	 * from walking unbounded numbers of firehose entries.
+	 * Hard cap on .idx entries scanned per disk-walking verb — prevents a
+	 * missing-rid scan from walking unbounded numbers of firehose entries.
 	 */
 	public const MAX_INDEX_ENTRIES = 100000;
 
 	/**
-	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs.
-	 * Echoes the legacy PerfOverviewController::DIMENSIONS whitelist — typos
-	 * fall through without surfacing arbitrary memcache reads.
+	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs —
+	 * typos fall through without surfacing arbitrary memcache reads.
 	 */
 	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
 	/**
 	 * Maximum array element count + nesting depth for `set`.
-	 * Mirrors PerfSettingsController::MAX_EVENTS / sanitize_array depth cap.
 	 */
 	private const SETTINGS_ARRAY_MAX   = 10000;
 
 	/**
-	 * Upper bound on `set` float values (24h in seconds). Mirrors
-	 * PerfSettingsController::sanitize_value `$f < 0 || $f > 86400`.
+	 * Upper bound on `set` float values (24h in seconds); values outside
+	 * `0 <= $f <= 86400` are rejected.
 	 */
 	private const SETTINGS_FLOAT_MAX = 86400;
 
 	/**
-	 * Upper bound on `set` integer values (2^30). Mirrors
-	 * PerfSettingsController::sanitize_value `$int < 0 || $int > 1073741824`.
+	 * Upper bound on `set` integer values (2^30); values outside
+	 * `0 <= $int <= 1073741824` are rejected.
 	 */
 	private const SETTINGS_INT_MAX = 1073741824;
 
@@ -91,8 +88,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	];
 
 	/**
-	 * Valid sort fields for the `urls` verb. Echoes the legacy
-	 * PerfUrlsController whitelist; anything outside falls back to `count`.
+	 * Valid sort fields for the `urls` verb; anything outside falls back
+	 * to `count`.
 	 */
 	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'p95_ms', 'avg_peak_mb', 'last_updated' ];
 
@@ -698,8 +695,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Pull the per-URL aggregate stats blob (flame, profiles, last_modified).
-	 * First partition with a matching blob wins — matches legacy
-	 * PerfUrlsController::find_url_aggregate.
+	 * First partition with a matching blob wins.
 	 * @return array<array-key, mixed>|null Decoded per-URL stats blob from get_url_stats().
 	 */
 	private static function find_url_aggregate( string $hash ): ?array {
@@ -813,7 +809,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Locate a single request index entry by rid in one partition.
-	 * Returns the legacy search shape: `{rid, partition, url_hash}`.
+	 * Returns the search shape `{rid, partition, url_hash}`.
 	 * @return array<string, mixed>
 	 */
 	private static function find_request_index_entry( string $log_base, int $partition, string $rid, int &$entries_count ): ?array {
@@ -1044,8 +1040,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Optional args mirror the legacy PerfOverviewController query
-				// params: `server` scopes the leaderboard / breakdown /
+				// Optional args: `server` scopes the leaderboard / breakdown /
 				// categories; `breakdown` is a comma-separated dim list
 				// (single-dim → flat `breakdown_time_series`; multi-dim →
 				// nested `breakdowns: {dim => series}`); `--categories`
@@ -1188,8 +1183,7 @@ class Performance_CI_Node extends Service_CI_Node {
 							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
 							'last_updated' => $entry['last_updated'] ?? 0,
 							// Per-URL time series (consumed by UrlDetailView +
-							// urlRequestsPerSecond). Matches legacy
-							// PerfUrlsController::build_url_time_series.
+							// urlRequestsPerSecond).
 							'time_series'  => self::build_url_time_series( $hash ),
 						];
 						break;

@@ -264,8 +264,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// Track per-line activity timestamps for the inflight snapshot's
-		// time_ms / est_ms / lag_ms derivation (matches legacy
-		// InflightTracker::process lines 88-90).
+		// time_ms / est_ms / lag_ms derivation.
 		$ts_log_v             = $entry['ts'] ?? 0;
 		$request->last_log_ts = \is_scalar( $ts_log_v ) ? (float) $ts_log_v : 0.0;
 		$request->tracker_ts  = \microtime( true );
@@ -842,9 +841,8 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Build an HTTP-access-log-style compact summary from a completed
-	 * request envelope. Schema mirrors legacy
-	 * requests-stream-controller::transform_line so the schema-parity
-	 * audit passes. URL clipped to 2000 chars + "..." suffix; UA to 500.
+	 * request envelope. The schema is a fixed wire contract the request-log
+	 * dashboard consumes. URL clipped to 2000 chars + "..." suffix; UA to 500.
 	 *
 	 * @param \stdClass $request Completed request envelope.
 	 * @return array<string,mixed>
@@ -866,11 +864,10 @@ class Request_Builder_Node extends Timer_Node {
 		$method_raw = $r['request_method'] ?? 'GET';
 		/** @var int|float|string|bool|null $remote_addr_raw */
 		$remote_addr_raw = $r['remote_addr'] ?? '';
-		// Preserve native numeric type for ts and dur so the wire format is
-		// byte-for-byte equivalent to legacy transform_line (which never
-		// cast). json_encode strips trailing `.0`, so an int-valued float
-		// round-trips as int through the wire — the SchemaParityAudit asserts
-		// that on the unpacked side.
+		// Preserve native numeric type for ts and dur — do not cast them.
+		// json_encode strips trailing `.0`, so an int-valued float round-trips
+		// as int through the wire; keeping the native type is what makes the
+		// encode/decode round-trip stable.
 		/** @var int|float $ts */
 		$ts = $r['timestamp'] ?? 0;
 		/** @var int|float $dur */

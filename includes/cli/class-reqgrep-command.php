@@ -685,7 +685,7 @@ class Reqgrep_Command {
 	 * Follow mode: one Consumer per partition seeded at the tail (no history
 	 * replay), then run under the Event_Framework drain loop — each Consumer's
 	 * fire_cb polls its source for new bytes and forwards them to
-	 * process_message. Mirrors the legacy FirehoseReader('end') behavior.
+	 * process_message.
 	 *
 	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever until
 	 * SIGINT). Tests pass a small number to bound the drain loop.

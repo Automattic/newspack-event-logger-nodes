@@ -25,8 +25,7 @@
  * hook: it mounts via `mountExospine` (snapshotting Core so the soft nodes tear down +
  * rebuild on `reinit()` — "Reset Graph"), closes the stream while hidden, and
  * RECONNECTS from the last seen offset on refocus. The `connected → slot` bridge lives
- * inside RemoteLink. `onConnect` resets the view map before each (re)connect (mirrors
- * the legacy Inflight `onBeforeConnect` reset).
+ * inside RemoteLink. `onConnect` resets the view map before each (re)connect.
  */
 
 import {

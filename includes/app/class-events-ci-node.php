@@ -3,23 +3,22 @@
  * Events_CI: command-dispatch for the hourly-stats surface that powers
  * the `event-dashboards` React tree.
  *
- * Replaces legacy class-events-controller.php with a CommandInterpreter
- * that mounts at priority 11 alongside the rest of the M2 service CIs.
+ * A CommandInterpreter that mounts at priority 11 alongside the rest of
+ * the M2 service CIs.
  *
  * Verbs:
  *   stats  — merge of per-partition hourly buckets read from Stats_Store
  *            into a single time_series array sorted by hour. Fail-soft on
  *            memcache outage (Stats_Store::get_hourly returns []).
  *
- * Value-equivalence with the legacy controller: same envelope shape
- * (`{data, meta}`), same time_series payload, same fail-soft semantics
- * on the stats path.
+ * The response is a fixed contract the event-dashboards tree depends on:
+ * envelope shape (`{data, meta}`), the time_series payload, and fail-soft
+ * semantics on the stats path.
  *
  * Dependencies are injected via the constructor so tests can stub Cache
  * without touching the substrate's request-scope graph; this mirrors the
  * dependency-injection pattern Workers_CI and Status_CI adopted. The
- * substrate Config is a global accessed directly, matching the legacy
- * controller.
+ * substrate Config is a global accessed directly.
  *
  * @package Newspack_Event_Logger_Nodes
  */

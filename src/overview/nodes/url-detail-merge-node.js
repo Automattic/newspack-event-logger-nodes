@@ -12,8 +12,7 @@ import { Node, VALUE, TYPE, TM_STRUCT } from '@newspack-nodes/runtime';
  * — or DROPS the message when last_modified is unchanged (no republish, so an
  * unchanged auto-refresh tick never re-renders the modal).
  *
- * The merge logic is lifted verbatim from the old performance-view-node
- * `_mergeUrlDetail`:
+ * The merge logic:
  *   - empty/null payload                → drop (no forward);
  *   - first reply (no retained state)   → forward as-is, record last_modified;
  *   - unchanged last_modified           → drop;

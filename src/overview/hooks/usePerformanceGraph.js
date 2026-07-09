@@ -90,7 +90,7 @@ function armTimer( timer, intervalMs ) {
 const urlDetailArgs = ( hash ) =>
 	formatCommandArgs( [ hash ], { categories: true } );
 
-// Validation — mirror the old command-node guards.
+// Validation guards for command args.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
 const isValidRequestId = ( r ) =>
 	'string' === typeof r && /^[a-zA-Z0-9_-]+$/.test( r );
@@ -132,7 +132,7 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
 }
 
 // Build the urls args string from current UI state (sort/order/limit/offset/
-// search/server). Grammar order matches the old command node.
+// search/server). Option order follows the command's arg grammar.
 function urlsArgs( { urlParams, serverFilter } ) {
 	const options = {};
 	if ( urlParams.sort ) {
