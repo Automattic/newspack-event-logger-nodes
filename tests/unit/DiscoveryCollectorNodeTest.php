@@ -175,6 +175,22 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertArrayHasKey( 'my_custom', $events );
 	}
 
+	public function test_fill_keeps_custom_events_out_of_discovered_hooks(): void {
+		$sink = new Capture_Sink_Node();
+		$node = $this->wired_node( $sink );
+
+		// A name reported in BOTH lists stages only as an event — the hub filters
+		// it out of the hook catalog (belt + suspenders with the spoke-side filter).
+		$node->fill( $this->reply( [
+			'registered_hooks' => [ 'init', 'my_custom' ],
+			'custom_events'    => [ 'my_custom' ],
+		] ) );
+
+		$this->assertSame( [ 'init' ], \array_keys( $this->discovered_hooks() ), 'custom event excluded from hooks' );
+		$events = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
+		$this->assertArrayHasKey( 'my_custom', $events );
+	}
+
 	public function test_fill_caps_discovered_hooks_at_max(): void {
 		$max_events = ( new \ReflectionClassConstant( Discovery_Collector_Node::class, 'MAX_EVENTS' ) )->getValue();
 		$existing   = [];

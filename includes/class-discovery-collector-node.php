@@ -147,68 +147,44 @@ class Discovery_Collector_Node extends Timer_Node {
 		}
 
 		if ( ! empty( $events ) ) {
-			$this->merge_events( \array_keys( $events ) );
+			$this->stage_discovered( Config::OPTION_DISCOVERED_EVENTS, \array_keys( $events ) );
 		}
-		if ( ! empty( $hooks ) ) {
-			$this->merge_hooks( \array_keys( $hooks ) );
+		// A custom-event name never stages as a hook — filter it out here (belt +
+		// suspenders with the spoke-side filter in Discovery_CI_Node).
+		$hook_names = \array_keys( \array_diff_key( $hooks, $events ) );
+		if ( ! empty( $hook_names ) ) {
+			$this->stage_discovered( Config::OPTION_DISCOVERED_HOOKS, $hook_names );
 		}
 	}
 
 	/**
-	 * Merge remote registered hooks into discovered_hooks — a staging catalog of
-	 * hooks seen across spokes, never written into the ruleset (the editor is the
-	 * only rules writer). Mirrors merge_events / discovered_events.
+	 * Union $names into a discovered_* staging catalog option — a passive record
+	 * of what spokes report, never the ruleset (the editor is the only rules
+	 * writer). Non-autoloaded; capped to bound option growth.
 	 *
-	 * @param array<int,int|string> $remote_hooks Remote hook names (array_keys output; numeric names coerce to int).
+	 * @param string                 $option Fully-qualified staging option name.
+	 * @param array<int,int|string> $names  Names to union in (array_keys output; numeric names coerce to int).
 	 */
-	private function merge_hooks( array $remote_hooks ): void {
-		$discovered = \get_option( 'newspack_event_logger_nodes_discovered_hooks', [] );
+	private function stage_discovered( string $option, array $names ): void {
+		$discovered = \get_option( $option, [] );
 		if ( ! \is_array( $discovered ) ) {
 			$discovered = [];
 		}
 		$updated = false;
 
-		foreach ( $remote_hooks as $hook ) {
-			if ( ! isset( $discovered[ $hook ] ) ) {
-				// Cap total accumulated hooks to prevent unbounded option growth.
+		foreach ( $names as $name ) {
+			if ( ! isset( $discovered[ $name ] ) ) {
+				// Cap total accumulated names to prevent unbounded option growth.
 				if ( \count( $discovered ) >= self::MAX_EVENTS ) {
 					break;
 				}
-				$discovered[ $hook ] = true;
+				$discovered[ $name ] = true;
 				$updated             = true;
 			}
 		}
 
 		if ( $updated ) {
-			\update_option( 'newspack_event_logger_nodes_discovered_hooks', $discovered, Config::autoload_for( 'newspack_event_logger_nodes_discovered_hooks' ) );
-		}
-	}
-
-	/**
-	 * Merge remote custom events into discovered_events.
-	 *
-	 * @param array<int,int|string> $remote_events Remote event names (array_keys output; numeric names coerce to int).
-	 */
-	private function merge_events( array $remote_events ): void {
-		$discovered = \get_option( 'newspack_event_logger_nodes_discovered_events', [] );
-		if ( ! \is_array( $discovered ) ) {
-			$discovered = [];
-		}
-		$updated = false;
-
-		foreach ( $remote_events as $event ) {
-			if ( ! isset( $discovered[ $event ] ) ) {
-				// Cap total accumulated events to prevent unbounded option growth.
-				if ( \count( $discovered ) >= self::MAX_EVENTS ) {
-					break;
-				}
-				$discovered[ $event ] = true;
-				$updated              = true;
-			}
-		}
-
-		if ( $updated ) {
-			\update_option( 'newspack_event_logger_nodes_discovered_events', $discovered, Config::autoload_for( 'newspack_event_logger_nodes_discovered_events' ) );
+			\update_option( $option, $discovered, Config::autoload_for( $option ) );
 		}
 	}
 

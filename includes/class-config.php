@@ -71,9 +71,15 @@ class Config {
 	 * @var array<string, bool>
 	 */
 	private static $non_autoloaded_options = [
-		'newspack_event_logger_nodes_discovered_events' => true,
-		'newspack_event_logger_nodes_discovered_hooks'  => true,
+		self::OPTION_DISCOVERED_EVENTS => true,
+		self::OPTION_DISCOVERED_HOOKS  => true,
 	];
+
+	/** Staging option: custom-event names discovered across spokes (admin/health-check only). */
+	public const OPTION_DISCOVERED_EVENTS = 'newspack_event_logger_nodes_discovered_events';
+
+	/** Staging option: hook names discovered across spokes (admin/health-check only). */
+	public const OPTION_DISCOVERED_HOOKS = 'newspack_event_logger_nodes_discovered_hooks';
 
 	/**
 	 * Get custom colors with filter applied (for admin UI).
@@ -99,7 +105,7 @@ class Config {
 
 		// Merge discovered events from remote spokes (available but not selected).
 		if ( \function_exists( 'get_option' ) ) {
-			$discovered = \get_option( 'newspack_event_logger_nodes_discovered_events', [] );
+			$discovered = \get_option( self::OPTION_DISCOVERED_EVENTS, [] );
 			if ( \is_array( $discovered ) ) {
 				foreach ( $discovered as $event => $color ) {
 					$event = (string) $event;
