@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-09
+
 ### Added
 
 - **`$config['rules']` seeds the per-URL ruleset when no rules option is stored.** `rules` is now a `Settings_Schema` overlay-only field (`ui: false`), so a deployment can declare its rules in `newspack-event-logger-nodes-config.php` and `Rule_Set::load()` builds the ruleset from them (read-time, non-persisting) until the rules editor writes the option — the same role the old `Rule::minimal( '/' )` fallback filled, now config-driven. Config rules omit `id` entirely — see below.
