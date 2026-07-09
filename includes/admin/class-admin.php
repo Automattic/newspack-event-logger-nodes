@@ -314,8 +314,8 @@ class Admin {
 			</form>
 			<?php
 			// Allow child plugins (Performance, Aggregator, etc.) to inject sections
-			// below the form. Matches the legacy plugin's
-			// `newspack_event_logger_settings_after_form` hook.
+			// below the form via the `newspack_event_logger_nodes/settings_after_form`
+			// hook.
 			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
 			Field_Reset_Assets::enqueue();
 			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
@@ -396,9 +396,9 @@ class Admin {
 	 *
 	 * The top-level menu is gated through the existing `admin_menu` hook in
 	 * the main plugin file (which mounts dashboards as submenus). This callback
-	 * adds ONLY the Settings submenu under the standard Settings menu, matching
-	 * the legacy plugin's dual-mount pattern (top-level for dashboards, Settings
-	 * menu for configuration).
+	 * adds ONLY the Settings submenu under the standard Settings menu; the
+	 * top-level menu handles dashboards, so configuration lives under Settings
+	 * while dashboards stay top-level.
 	 */
 	public function add_admin_menu(): void {
 		if ( ! self::current_user_allowed() ) {
@@ -600,9 +600,9 @@ class Admin {
 
 	/**
 	 * Maintenance section — rendered below the form via
-	 * `newspack_event_logger_nodes/settings_after_form`. Mirrors the legacy
-	 * `Clear Memcache Stats` button: a confirm dialog feeds a hidden form
-	 * that POSTs to `admin-post.php`, which routes to `handle_flush_stats`.
+	 * `newspack_event_logger_nodes/settings_after_form`. A confirm dialog feeds
+	 * a hidden form that POSTs to `admin-post.php`, which routes to
+	 * `handle_flush_stats`.
 	 */
 	public function render_maintenance_section(): void {
 		$flush_url = \function_exists( 'admin_url' ) ? \admin_url( 'admin-post.php' ) : '';

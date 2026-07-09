@@ -23,11 +23,10 @@
  * `hookcatalog:view`, and the view's `fill()` matches `message[ID]` to settle
  * the Promise + extract hooks_by_category for the render model.
  *
- * Error contract: the legacy modal's `.catch(() => setHookCategories({}))`
- * meant a failure cleared the spinner with an empty catalog (HookSelectorModal
- * has no error UI). Pending-matched TM_ERROR rejects the Promise without
- * polluting view.error; this hook's catch synthesizes a fake empty-catalog
- * reply into the view to clear loading.
+ * Error contract: a failure clears the spinner with an empty catalog —
+ * HookSelectorModal has no error UI. Pending-matched TM_ERROR rejects the
+ * Promise without polluting view.error; this hook's catch synthesizes a fake
+ * empty-catalog reply into the view to clear loading.
  *
  * The command boundary is injectable: tests pass `opts.commandClient` (assigned
  * to `_http.client`) so the hook never touches the network. Production lazily
@@ -151,7 +150,7 @@ export function useHookCatalogGraph( opts = {} ) {
 	// Fire one hooks_registered fetch whenever the modal opens. On failure
 	// route a synthetic empty-catalog reply THROUGH the interpreter (canonical path —
 	// router peels TO=`hookcatalog:view` and delivers) so the spinner clears
-	// (legacy modal had no error UI).
+	// (there is no error UI).
 	useEffect( () => {
 		if ( ! isOpen ) {
 			return;

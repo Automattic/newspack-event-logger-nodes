@@ -3,9 +3,8 @@ import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const RPS_WINDOW_SEC = 10;
-// Defensive bounds for raw envelope VALUEs. Mirrors the legacy
-// `transformCompletedLine` clip behavior — kept here so the view is the single
-// place that knows envelope → render-entry mapping.
+// Defensive bounds for raw envelope VALUEs — kept here so the view is the
+// single place that knows envelope → render-entry mapping.
 const MAX_URL_LENGTH = 2000;
 const MAX_UA_LENGTH = 500;
 

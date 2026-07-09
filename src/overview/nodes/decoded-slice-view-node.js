@@ -20,8 +20,7 @@ import { errorMessage } from '@newspack-nodes/shared/pendingReplies';
  * expects a JSON STRING and would JSON.parse a live object — forcing it here is
  * false symmetry. So this base reads `value.payload` as an object directly.
  *
- * `fill()` handles these message kinds, mirroring the old performance-view-node
- * slice protocol but per-slice:
+ * `fill()` handles these message kinds (per-slice):
  *   - TM_STRUCT { action:'loading' }         → loading:true, error:null (data kept);
  *   - TM_STRUCT { action:'clear' }           → reset to emptySlice() (modal close);
  *   - a command reply (VALUE = {name,payload}) → store the payload (subclass shapes

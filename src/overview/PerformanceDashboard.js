@@ -197,8 +197,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	} );
 	commandResolveRef.current = resolveRequest;
 
-	// Reset the search-sourced partition when leaving request detail (the old
-	// request-detail effect did setRequestPartition(null) here).
+	// Reset the search-sourced partition when leaving request detail.
 	useEffect( () => {
 		if ( ! selectedRequest ) {
 			setRequestPartition( null );

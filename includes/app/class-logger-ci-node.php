@@ -10,10 +10,10 @@
  * automatically.
  *
  * Verbs:
- *   config — return the full filterable substrate config (matches the
- *            legacy `/logger/config` payload sans the `{data, meta}` REST
- *            envelope). The React tree populates the settings UI from
- *            this single endpoint.
+ *   config — return the full filterable substrate config; the `{data, meta}`
+ *            REST envelope is added by the REST shim, not the interpreter.
+ *            The React tree populates the settings UI from this single
+ *            endpoint.
  *   hooks  — return a flattened `{ hooks: [{name, category}, ...],
  *            categories: {...} }` view derived from
  *            HookCategorizer::get_registered_hooks_by_category() and
@@ -53,8 +53,8 @@ class Logger_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						// Echo the full filterable config; sensitive values (memcache
 						// server strings) stay since they're already managed via WP
-						// options. Value-equivalent with the legacy `get_config`
-						// response body — minus the `{data, meta}` REST envelope,
+						// options. This is the stable response shape the settings UI
+						// depends on — minus the `{data, meta}` REST envelope,
 						// which is reconstructed by the REST shim, not the interpreter.
 						return RuntimeConfig::load_config();
 					},
