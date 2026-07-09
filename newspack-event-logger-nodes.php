@@ -99,7 +99,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_bootstrap, 11 );
 }
 
-// One-time ruleset migration on activation (the deploy deactivates then reinstalls+activates).
+// XXX: One-time ruleset migration on activation (the deploy deactivates then reinstalls+activates).
 if ( \function_exists( 'register_activation_hook' ) ) {
 	\register_activation_hook(
 		__FILE__,
