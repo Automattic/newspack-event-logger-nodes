@@ -210,7 +210,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		renderHook( () => useErrorLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
@@ -221,7 +221,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		renderHook( () => useErrorLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: null } ) )
 			);
 		} );
@@ -237,7 +237,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 			http.client = { buildMessage: () => newMessage(), postBatch };
 			act( () => {
 				FakeEventSource.last.dispatch(
-					'msg',
+					'connected',
 					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
@@ -278,7 +278,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
@@ -329,7 +329,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );

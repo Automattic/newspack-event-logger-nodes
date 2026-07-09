@@ -203,7 +203,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 		renderHook( () => useGyroscopeGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
@@ -215,7 +215,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 		renderHook( () => useGyroscopeGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: null } ) )
 			);
 		} );
@@ -231,7 +231,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 			http.client = { buildMessage: () => newMessage(), postBatch };
 			act( () => {
 				FakeEventSource.last.dispatch(
-					'msg',
+					'connected',
 					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
@@ -293,7 +293,7 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 		const { rerender } = renderHook( () => useGyroscopeGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );

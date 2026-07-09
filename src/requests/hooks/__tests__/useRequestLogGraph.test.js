@@ -202,7 +202,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 		renderHook( () => useRequestLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
@@ -213,7 +213,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 		renderHook( () => useRequestLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: null } ) )
 			);
 		} );
@@ -230,7 +230,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 			http.client = { buildMessage: () => newMessage(), postBatch };
 			act( () => {
 				FakeEventSource.last.dispatch(
-					'msg',
+					'connected',
 					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
@@ -276,7 +276,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		// Acquire a slot first so we can prove clearSlot fires.
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
@@ -330,7 +330,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		const { result } = renderHook( () => useRequestLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
-				'msg',
+				'connected',
 				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 			);
 		} );
