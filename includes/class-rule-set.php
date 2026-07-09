@@ -41,28 +41,177 @@ final class Rule_Set {
 	}
 
 	/**
-	 * The union across every LOG rule of the hooks it instruments and the custom
-	 * events it tracks. Feeds Discovery (spoke payload) and Hook_Categorizer
-	 * (browse-modal selected set) now that those readers no longer consult the
-	 * retired global `log_events` / `custom_events` options.
+	 * One-time, idempotent, version-gated ruleset migration, run on activation
+	 * (the deploy deactivates then re-installs+activates). Steps: v0→v1 folds the
+	 * seven legacy options into a ruleset; v1→v2 rekeys stored ids to id_for(pattern).
+	 * Returns whether anything ran and whether a skip/log prefix overlap was
+	 * detected during v0→v1.
 	 *
-	 * @return array{hooks: string[], custom_events: string[]}
+	 * @return array{migrated: bool, overlap: bool}
 	 */
-	public function instrumented_union(): array {
-		$hooks  = [];
-		$custom = [];
-		foreach ( $this->rules as $rule ) {
-			if ( ! $rule->is_log() ) {
-				continue;
-			}
-			foreach ( self::hooks_for( $rule ) as $h ) {
-				$hooks[ $h ] = true;
-			}
-			foreach ( $rule->custom_events as $e ) {
-				$custom[ $e ] = true;
+	public static function migrate_from_legacy(): array {
+		$version = self::to_int( \get_option( self::OPTION_SCHEMA_VERSION, 0 ) );
+		if ( $version >= self::SCHEMA_VERSION ) {
+			return [
+				'migrated' => false,
+				'overlap'  => false,
+			];
+		}
+		$overlap = $version < 1 ? self::migrate_legacy_options() : false;
+		// Every sub-v2 install needs the id rekey: a v0 install after the legacy
+		// fold-in (its rules already carry id_for ids, so this is a cheap re-save),
+		// a v1 install directly.
+		self::rekey_ids();
+		\update_option( self::OPTION_SCHEMA_VERSION, self::SCHEMA_VERSION, true );
+		return [
+			'migrated' => true,
+			'overlap'  => $overlap,
+		];
+	}
+
+	private static function to_int( mixed $value ): int {
+		return \is_scalar( $value ) ? (int) $value : 0;
+	}
+
+	/**
+	 * v0→v1: synthesize a ruleset from the seven legacy options and delete them.
+	 * Returns whether a skip/log prefix overlap was detected.
+	 */
+	private static function migrate_legacy_options(): bool {
+		$p            = 'newspack_event_logger_nodes_';
+		$legacy_keys  = [ 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events', 'auto_disable_threshold', 'auto_protect_time_threshold' ];
+		$absent       = "\0__eln_absent__\0";
+		$any_present  = false;
+		foreach ( $legacy_keys as $short ) {
+			if ( $absent !== \get_option( $p . $short, $absent ) ) {
+				$any_present = true;
+				break;
 			}
 		}
-		return [ 'hooks' => \array_keys( $hooks ), 'custom_events' => \array_keys( $custom ) ];
+		if ( ! $any_present ) {
+			// Nothing to migrate — leave the rules option absent so the file-config
+			// seed (Rule_Set::load) owns a fresh install's ruleset instead of a
+			// fabricated '/' rule shadowing it.
+			return false;
+		}
+
+		$log_urls = self::string_list( \get_option( $p . 'log_urls', [] ) );
+		$skip     = self::string_list( \get_option( $p . 'skip_urls', [] ) );
+		$bundle   = [
+			'auto_disable_threshold'      => self::to_int( \get_option( $p . 'auto_disable_threshold', 0 ) ),
+			'auto_protect_time_threshold' => self::to_float( \get_option( $p . 'auto_protect_time_threshold', 0.0 ) ),
+			'significant_events'          => self::string_list( \get_option( $p . 'significant_events', [] ) ),
+			'custom_events'               => self::string_list( \get_option( $p . 'custom_events', [] ) ),
+			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
+		];
+
+		// Key by id (= id_for(pattern)) so a pattern in BOTH lists collapses to one
+		// rule instead of two colliding ids. Skip is added first and wins, matching
+		// the old flat "skip_urls always wins over log_urls" semantics.
+		$rules = [];
+		foreach ( $skip as $pattern ) {
+			$rules[ self::id_for( $pattern ) ] ??= new Rule( self::id_for( $pattern ), $pattern, Rule::ACTION_SKIP );
+		}
+		$log_patterns = empty( $log_urls ) ? [ '/' ] : $log_urls;
+		foreach ( $log_patterns as $pattern ) {
+			$rules[ self::id_for( $pattern ) ] ??= new Rule(
+				self::id_for( $pattern ),
+				$pattern,
+				Rule::ACTION_LOG,
+				$bundle['auto_disable_threshold'],
+				$bundle['auto_protect_time_threshold'],
+				$bundle['significant_events'],
+				$bundle['custom_events'],
+				$bundle['hooks']
+			);
+		}
+		$rules = \array_values( $rules );
+
+		$overlap = self::detect_prefix_overlap( $skip, $log_urls );
+
+		( new self( [] ) )->save( $rules );
+
+		foreach ( $legacy_keys as $short ) {
+			\delete_option( $p . $short );
+		}
+
+		return $overlap;
+	}
+
+	/**
+	 * @param mixed $value Raw option value, expected to be a list of strings.
+	 * @return string[]
+	 */
+	private static function string_list( mixed $value ): array {
+		return \is_array( $value ) ? \array_values( \array_filter( $value, 'is_string' ) ) : [];
+	}
+
+	private static function to_float( mixed $value ): float {
+		return \is_scalar( $value ) ? (float) $value : 0.0;
+	}
+
+	/**
+	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
+	 * the identity, so there is exactly one id per pattern — you can never end up
+	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
+	 */
+	public static function id_for( string $pattern ): string {
+		return Log_Manager::url_hash( $pattern );
+	}
+
+	/**
+	 * True when any skip pattern is a strict prefix of a log pattern, or vice-versa.
+	 *
+	 * @param string[] $skip
+	 * @param string[] $log
+	 */
+	private static function detect_prefix_overlap( array $skip, array $log ): bool {
+		// Case-insensitive to match Rule_Matcher (a case-differing overlap still flips a decision).
+		foreach ( $skip as $s ) {
+			$sl = \strtolower( $s );
+			foreach ( $log as $l ) {
+				$ll = \strtolower( $l );
+				if ( $sl !== $ll && ( \str_starts_with( $ll, $sl ) || \str_starts_with( $sl, $ll ) ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * v1→v2: rekey each stored rule to id_for(pattern). Resolves a rule's hooks
+	 * under its CURRENT (positional/idless) id first, then re-saves them inline so
+	 * save() re-tiers under the new id and reconciles the old durable option away —
+	 * no pointer-tier hooks are lost. Dedupes any same-pattern collisions.
+	 */
+	private static function rekey_ids(): void {
+		$raw = \get_option( self::OPTION_RULES, null );
+		if ( ! \is_array( $raw ) ) {
+			return;
+		}
+		$rekeyed = [];
+		foreach ( $raw as $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
+			$rule      = Rule::from_array( $entry );
+			$id        = self::id_for( $rule->pattern );
+			$candidate = new Rule(
+				$id, $rule->pattern, $rule->action,
+				$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
+				$rule->significant_events, $rule->custom_events,
+				self::hooks_for( $rule ), Rule::HOOKS_INLINE
+			);
+			// Same-pattern collision: skip wins regardless of stored order, matching
+			// migrate_legacy_options' skip-first precedence.
+			$existing = $rekeyed[ $id ] ?? null;
+			if ( null === $existing || ( $existing->is_log() && $candidate->is_skip() ) ) {
+				$rekeyed[ $id ] = $candidate;
+			}
+		}
+		( new self( [] ) )->save( \array_values( $rekeyed ) );
 	}
 
 	/**
@@ -106,6 +255,91 @@ final class Rule_Set {
 
 	public static function hooks_option_name( string $id ): string {
 		return self::OPTION_HOOKS_PREFIX . $id;
+	}
+
+	public static function load(): self {
+		$raw = \get_option( self::OPTION_RULES, null );
+		if ( null === $raw ) {
+			return self::seed_from_config();
+		}
+		if ( ! \is_array( $raw ) ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			\error_log( 'Newspack ELN: corrupt rules option; seeding from config.' );
+			return self::seed_from_config();
+		}
+		$rules = [];
+		foreach ( $raw as $entry ) {
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
+				$rule = Rule::from_array( $entry );
+				// Mint an id for an idless stored rule (e.g. a settings-synced config
+				// default) so nothing collides on the '' key; a non-empty (legacy
+				// positional) id is trusted — its durable hooks option is keyed by it.
+				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
+			}
+		}
+		return new self( $rules );
+	}
+
+	/**
+	 * Read-time default when the option is absent (or corrupt): build the ruleset
+	 * from the file config's `rules` list, minting ids for entries that omit one.
+	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
+	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
+	 * baseline. Does NOT persist — the file value stands in until the editor writes
+	 * the option.
+	 */
+	private static function seed_from_config(): self {
+		$config = \class_exists( Config::class ) ? Config::load_config() : [];
+		$raw    = $config['rules'] ?? [];
+		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
+	}
+
+	/**
+	 * Turn config rule maps into Rule objects, deriving each id from its pattern
+	 * (a config-supplied id is ignored — the pattern is the identity) and
+	 * collapsing duplicate patterns to one rule, last entry wins.
+	 *
+	 * @param array<array-key, mixed> $entries
+	 * @return Rule[]
+	 */
+	private static function rules_from_config( array $entries ): array {
+		$by_id = [];
+		foreach ( $entries as $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			/** @var array<string, mixed> $entry config rule shape (Rule::from_array()). */
+			$rule                = Rule::from_array( $entry );
+			$rule                = $rule->with_id( self::id_for( $rule->pattern ) );
+			$by_id[ $rule->id ]  = $rule;
+		}
+		return \array_values( $by_id );
+	}
+
+	/**
+	 * The union across every LOG rule of the hooks it instruments and the custom
+	 * events it tracks. Feeds Discovery (spoke payload) and Hook_Categorizer
+	 * (browse-modal selected set) now that those readers no longer consult the
+	 * retired global `log_events` / `custom_events` options.
+	 *
+	 * @return array{hooks: string[], custom_events: string[]}
+	 */
+	public function instrumented_union(): array {
+		$hooks  = [];
+		$custom = [];
+		foreach ( $this->rules as $rule ) {
+			if ( ! $rule->is_log() ) {
+				continue;
+			}
+			foreach ( self::hooks_for( $rule ) as $h ) {
+				$hooks[ $h ] = true;
+			}
+			foreach ( $rule->custom_events as $e ) {
+				$custom[ $e ] = true;
+			}
+		}
+		return [ 'hooks' => \array_keys( $hooks ), 'custom_events' => \array_keys( $custom ) ];
 	}
 
 	/**
@@ -198,240 +432,6 @@ final class Rule_Set {
 				\delete_option( $name );
 			}
 		}
-	}
-
-	/**
-	 * One-time, idempotent, version-gated ruleset migration, run on activation
-	 * (the deploy deactivates then re-installs+activates). Steps: v0→v1 folds the
-	 * seven legacy options into a ruleset; v1→v2 rekeys stored ids to id_for(pattern).
-	 * Returns whether anything ran and whether a skip/log prefix overlap was
-	 * detected during v0→v1.
-	 *
-	 * @return array{migrated: bool, overlap: bool}
-	 */
-	public static function migrate_from_legacy(): array {
-		$version = self::to_int( \get_option( self::OPTION_SCHEMA_VERSION, 0 ) );
-		if ( $version >= self::SCHEMA_VERSION ) {
-			return [
-				'migrated' => false,
-				'overlap'  => false,
-			];
-		}
-		$overlap = $version < 1 ? self::migrate_legacy_options() : false;
-		// Every sub-v2 install needs the id rekey: a v0 install after the legacy
-		// fold-in (its rules already carry id_for ids, so this is a cheap re-save),
-		// a v1 install directly.
-		self::rekey_ids();
-		\update_option( self::OPTION_SCHEMA_VERSION, self::SCHEMA_VERSION, true );
-		return [
-			'migrated' => true,
-			'overlap'  => $overlap,
-		];
-	}
-
-	/**
-	 * v0→v1: synthesize a ruleset from the seven legacy options and delete them.
-	 * Returns whether a skip/log prefix overlap was detected.
-	 */
-	private static function migrate_legacy_options(): bool {
-		$p            = 'newspack_event_logger_nodes_';
-		$legacy_keys  = [ 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events', 'auto_disable_threshold', 'auto_protect_time_threshold' ];
-		$absent       = "\0__eln_absent__\0";
-		$any_present  = false;
-		foreach ( $legacy_keys as $short ) {
-			if ( $absent !== \get_option( $p . $short, $absent ) ) {
-				$any_present = true;
-				break;
-			}
-		}
-		if ( ! $any_present ) {
-			// Nothing to migrate — leave the rules option absent so the file-config
-			// seed (Rule_Set::load) owns a fresh install's ruleset instead of a
-			// fabricated '/' rule shadowing it.
-			return false;
-		}
-
-		$log_urls = self::string_list( \get_option( $p . 'log_urls', [] ) );
-		$skip     = self::string_list( \get_option( $p . 'skip_urls', [] ) );
-		$bundle   = [
-			'auto_disable_threshold'      => self::to_int( \get_option( $p . 'auto_disable_threshold', 0 ) ),
-			'auto_protect_time_threshold' => self::to_float( \get_option( $p . 'auto_protect_time_threshold', 0.0 ) ),
-			'significant_events'          => self::string_list( \get_option( $p . 'significant_events', [] ) ),
-			'custom_events'               => self::string_list( \get_option( $p . 'custom_events', [] ) ),
-			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
-		];
-
-		// Key by id (= id_for(pattern)) so a pattern in BOTH lists collapses to one
-		// rule instead of two colliding ids. Skip is added first and wins, matching
-		// the old flat "skip_urls always wins over log_urls" semantics.
-		$rules = [];
-		foreach ( $skip as $pattern ) {
-			$rules[ self::id_for( $pattern ) ] ??= new Rule( self::id_for( $pattern ), $pattern, Rule::ACTION_SKIP );
-		}
-		$log_patterns = empty( $log_urls ) ? [ '/' ] : $log_urls;
-		foreach ( $log_patterns as $pattern ) {
-			$rules[ self::id_for( $pattern ) ] ??= new Rule(
-				self::id_for( $pattern ),
-				$pattern,
-				Rule::ACTION_LOG,
-				$bundle['auto_disable_threshold'],
-				$bundle['auto_protect_time_threshold'],
-				$bundle['significant_events'],
-				$bundle['custom_events'],
-				$bundle['hooks']
-			);
-		}
-		$rules = \array_values( $rules );
-
-		$overlap = self::detect_prefix_overlap( $skip, $log_urls );
-
-		( new self( [] ) )->save( $rules );
-
-		foreach ( $legacy_keys as $short ) {
-			\delete_option( $p . $short );
-		}
-
-		return $overlap;
-	}
-
-	/**
-	 * v1→v2: rekey each stored rule to id_for(pattern). Resolves a rule's hooks
-	 * under its CURRENT (positional/idless) id first, then re-saves them inline so
-	 * save() re-tiers under the new id and reconciles the old durable option away —
-	 * no pointer-tier hooks are lost. Dedupes any same-pattern collisions.
-	 */
-	private static function rekey_ids(): void {
-		$raw = \get_option( self::OPTION_RULES, null );
-		if ( ! \is_array( $raw ) ) {
-			return;
-		}
-		$rekeyed = [];
-		foreach ( $raw as $entry ) {
-			if ( ! \is_array( $entry ) ) {
-				continue;
-			}
-			/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
-			$rule      = Rule::from_array( $entry );
-			$id        = self::id_for( $rule->pattern );
-			$candidate = new Rule(
-				$id, $rule->pattern, $rule->action,
-				$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
-				$rule->significant_events, $rule->custom_events,
-				self::hooks_for( $rule ), Rule::HOOKS_INLINE
-			);
-			// Same-pattern collision: skip wins regardless of stored order, matching
-			// migrate_legacy_options' skip-first precedence.
-			$existing = $rekeyed[ $id ] ?? null;
-			if ( null === $existing || ( $existing->is_log() && $candidate->is_skip() ) ) {
-				$rekeyed[ $id ] = $candidate;
-			}
-		}
-		( new self( [] ) )->save( \array_values( $rekeyed ) );
-	}
-
-	/**
-	 * @param mixed $value Raw option value, expected to be a list of strings.
-	 * @return string[]
-	 */
-	private static function string_list( mixed $value ): array {
-		return \is_array( $value ) ? \array_values( \array_filter( $value, 'is_string' ) ) : [];
-	}
-
-	private static function to_int( mixed $value ): int {
-		return \is_scalar( $value ) ? (int) $value : 0;
-	}
-
-	private static function to_float( mixed $value ): float {
-		return \is_scalar( $value ) ? (float) $value : 0.0;
-	}
-
-	/**
-	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
-	 * the identity, so there is exactly one id per pattern — you can never end up
-	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
-	 */
-	public static function id_for( string $pattern ): string {
-		return Log_Manager::url_hash( $pattern );
-	}
-
-	/**
-	 * True when any skip pattern is a strict prefix of a log pattern, or vice-versa.
-	 *
-	 * @param string[] $skip
-	 * @param string[] $log
-	 */
-	private static function detect_prefix_overlap( array $skip, array $log ): bool {
-		// Case-insensitive to match Rule_Matcher (a case-differing overlap still flips a decision).
-		foreach ( $skip as $s ) {
-			$sl = \strtolower( $s );
-			foreach ( $log as $l ) {
-				$ll = \strtolower( $l );
-				if ( $sl !== $ll && ( \str_starts_with( $ll, $sl ) || \str_starts_with( $sl, $ll ) ) ) {
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-
-	public static function load(): self {
-		$raw = \get_option( self::OPTION_RULES, null );
-		if ( null === $raw ) {
-			return self::seed_from_config();
-		}
-		if ( ! \is_array( $raw ) ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( 'Newspack ELN: corrupt rules option; seeding from config.' );
-			return self::seed_from_config();
-		}
-		$rules = [];
-		foreach ( $raw as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
-				$rule = Rule::from_array( $entry );
-				// Mint an id for an idless stored rule (e.g. a settings-synced config
-				// default) so nothing collides on the '' key; a non-empty (legacy
-				// positional) id is trusted — its durable hooks option is keyed by it.
-				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
-			}
-		}
-		return new self( $rules );
-	}
-
-	/**
-	 * Read-time default when the option is absent (or corrupt): build the ruleset
-	 * from the file config's `rules` list, minting ids for entries that omit one.
-	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
-	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
-	 * baseline. Does NOT persist — the file value stands in until the editor writes
-	 * the option.
-	 */
-	private static function seed_from_config(): self {
-		$config = \class_exists( Config::class ) ? Config::load_config() : [];
-		$raw    = $config['rules'] ?? [];
-		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
-	}
-
-	/**
-	 * Turn config rule maps into Rule objects, deriving each id from its pattern
-	 * (a config-supplied id is ignored — the pattern is the identity) and
-	 * collapsing duplicate patterns to one rule, last entry wins.
-	 *
-	 * @param array<array-key, mixed> $entries
-	 * @return Rule[]
-	 */
-	private static function rules_from_config( array $entries ): array {
-		$by_id = [];
-		foreach ( $entries as $entry ) {
-			if ( ! \is_array( $entry ) ) {
-				continue;
-			}
-			/** @var array<string, mixed> $entry config rule shape (Rule::from_array()). */
-			$rule                = Rule::from_array( $entry );
-			$rule                = $rule->with_id( self::id_for( $rule->pattern ) );
-			$by_id[ $rule->id ]  = $rule;
-		}
-		return \array_values( $by_id );
 	}
 
 	/**
