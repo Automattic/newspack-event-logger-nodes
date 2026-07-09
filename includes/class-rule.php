@@ -87,6 +87,14 @@ final class Rule {
 		return \array_values( \array_map( static fn ( mixed $item ): string => self::to_str( $item, '' ), $v ) );
 	}
 
+	public function is_skip(): bool {
+		return ! $this->is_log();
+	}
+
+	public function is_log(): bool {
+		return self::ACTION_LOG === $this->action;
+	}
+
 	/** A copy of this rule under a different id (immutable — the id is a pure function of the pattern; see Rule_Set::id_for). */
 	public function with_id( string $id ): self {
 		return new self(
@@ -95,14 +103,6 @@ final class Rule {
 			$this->significant_events, $this->custom_events,
 			$this->hooks, $this->hooks_in
 		);
-	}
-
-	public function is_skip(): bool {
-		return ! $this->is_log();
-	}
-
-	public function is_log(): bool {
-		return self::ACTION_LOG === $this->action;
 	}
 
 	public function is_exact(): bool {

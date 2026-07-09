@@ -478,43 +478,6 @@ class Log_Manager {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
 
-	/**
-	 * URL hash - 12-char FNV-1a hash. The shared URL identity primitive: the
-	 * firehose per-URL key (Request_Builder_Node / Flame_Builder_Node) and the
-	 * per-URL rule id (Rule_Set::id_for) both derive from this one function. Note
-	 * they hash different inputs — a rule id hashes a PATTERN (`/shop`), a stats
-	 * bucket hashes a concrete request URL (`/shop/item/5`) — so the two keys
-	 * coincide only for an exact (`?`-terminated) rule pattern; don't join them.
-	 *
-	 * @param string $url URL to hash.
-	 * @return string 12-character hex hash.
-	 */
-	public static function url_hash( string $url ): string {
-		// Hash the full string: callers already strip the real query string upstream,
-		// so the only '?' that survives here is the intentional ?worker_type marker --
-		// stripping it would re-collide the synthetic row onto the real URL.
-		$hash1 = self::fnv1a32( $url );
-		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
-		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
-	}
-
-	/**
-	 * FNV-1a 32-bit hash.
-	 *
-	 * @param string $str  Input string.
-	 * @param int    $seed Offset basis.
-	 * @return int 32-bit hash.
-	 */
-	private static function fnv1a32( string $str, int $seed = 2166136261 ): int {
-		$hash = $seed;
-		$len  = \strlen( $str );
-		for ( $i = 0; $i < $len; $i++ ) {
-			$hash ^= \ord( $str[ $i ] );
-			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
-		}
-		return $hash;
-	}
-
 	private function log_environment(): void {
 		$env = [];
 		foreach ( self::ENV_ALLOWLIST as $key ) {
@@ -693,6 +656,43 @@ class Log_Manager {
 			$entry['m'] = $data['m'];
 		}
 		$this->times[] = $entry;
+	}
+
+	/**
+	 * URL hash - 12-char FNV-1a hash. The shared URL identity primitive: the
+	 * firehose per-URL key (Request_Builder_Node / Flame_Builder_Node) and the
+	 * per-URL rule id (Rule_Set::id_for) both derive from this one function. Note
+	 * they hash different inputs — a rule id hashes a PATTERN (`/shop`), a stats
+	 * bucket hashes a concrete request URL (`/shop/item/5`) — so the two keys
+	 * coincide only for an exact (`?`-terminated) rule pattern; don't join them.
+	 *
+	 * @param string $url URL to hash.
+	 * @return string 12-character hex hash.
+	 */
+	public static function url_hash( string $url ): string {
+		// Hash the full string: callers already strip the real query string upstream,
+		// so the only '?' that survives here is the intentional ?worker_type marker --
+		// stripping it would re-collide the synthetic row onto the real URL.
+		$hash1 = self::fnv1a32( $url );
+		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
+		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
+	}
+
+	/**
+	 * FNV-1a 32-bit hash.
+	 *
+	 * @param string $str  Input string.
+	 * @param int    $seed Offset basis.
+	 * @return int 32-bit hash.
+	 */
+	private static function fnv1a32( string $str, int $seed = 2166136261 ): int {
+		$hash = $seed;
+		$len  = \strlen( $str );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$hash ^= \ord( $str[ $i ] );
+			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
+		}
+		return $hash;
 	}
 
 	/**
