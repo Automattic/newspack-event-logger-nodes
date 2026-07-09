@@ -107,6 +107,14 @@ class Settings_Schema {
 					type: 'array_strings',
 					ui: false,
 				),
+				// The per-URL ruleset. Overlaid so `$config['rules']` seeds an
+				// absent option (Rule_Set::load), but the rules editor owns the
+				// stored option — it is not a WP Settings API field.
+				new Field(
+					key: 'rules',
+					type: 'array',
+					ui: false,
+				),
 				new Field(
 					key: 'hook_start_priority',
 					type: 'int',

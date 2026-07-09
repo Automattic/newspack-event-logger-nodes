@@ -68,4 +68,15 @@ final class RuleTest extends TestCase {
 		$this->assertNull( $rule->hooks );
 		$this->assertSame( 'mc', $rule->hooks_in );
 	}
+
+	public function test_with_id_copies_the_rule_with_a_new_id(): void {
+		$rule = Rule::from_array( [ 'id' => 'old', 'pattern' => '/heavy/', 'action' => 'log', 'hooks' => [ 'init', 'wp' ] ] );
+
+		$rekeyed = $rule->with_id( 'new' );
+
+		$this->assertSame( 'new', $rekeyed->id );
+		$this->assertSame( 'old', $rule->id, 'the original is untouched' );
+		$this->assertSame( '/heavy/', $rekeyed->pattern );
+		$this->assertSame( [ 'init', 'wp' ], $rekeyed->hooks );
+	}
 }

@@ -33,6 +33,10 @@ class SettingsSchemaTest extends TestCase {
 		'log_memory',
 		'flush_every_line',
 		'hook_start_priority',
+		// The per-URL ruleset overlays the config file (so `$config['rules']`
+		// can seed it) but is not a settings-form field — the rules editor
+		// owns its option, not the WP Settings API.
+		'rules',
 	];
 
 	/** The prefixed settings-form option names surviving the Task 10 retirement. */
@@ -68,6 +72,12 @@ class SettingsSchemaTest extends TestCase {
 		$names = Settings_Schema::get()->setting_option_names();
 		$this->assertNotContains( 'newspack_event_logger_nodes_allowed_users', $names );
 		$this->assertNotContains( 'newspack_event_logger_nodes_hook_start_priority', $names );
+	}
+
+	public function test_rules_overlays_but_is_not_a_settings_field(): void {
+		$schema = Settings_Schema::get();
+		$this->assertContains( 'rules', $schema->overlay_keys() );
+		$this->assertNotContains( 'newspack_event_logger_nodes_rules', $schema->setting_option_names() );
 	}
 
 	public function test_delete_on_blank_options_match_legacy(): void {

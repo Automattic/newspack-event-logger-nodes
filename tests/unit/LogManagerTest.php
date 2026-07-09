@@ -84,6 +84,19 @@ class LogManagerTest extends TestCase {
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = $rules;
 	}
 
+	public function test_url_hash_is_a_stable_12_char_fnv1a_hash(): void {
+		$this->assertSame( '13ead606a028', Log_Manager::url_hash( '/wp-cron.php' ) );
+		$this->assertSame( '2a0c975ed95c', Log_Manager::url_hash( '/' ) );
+		$this->assertSame( 12, \strlen( Log_Manager::url_hash( '/anything/at/all' ) ) );
+	}
+
+	public function test_url_hash_keeps_the_worker_type_marker_distinct(): void {
+		$this->assertNotSame(
+			Log_Manager::url_hash( '/' ),
+			Log_Manager::url_hash( '/?worker_type=combined' )
+		);
+	}
+
 	/**
 	 * Load the `logging-enabled` config (enable_logging=true) and construct a
 	 * fresh Log_Manager against the current REQUEST_URI + rules option.

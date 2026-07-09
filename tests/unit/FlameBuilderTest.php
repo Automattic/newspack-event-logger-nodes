@@ -2,7 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
-use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
@@ -411,7 +411,7 @@ class FlameBuilderTest extends TestCase {
 		// Force flush.
 		$fb->flush();
 
-		$url_hash = Request_Builder_Node::url_hash( '/x' );
+		$url_hash = Log_Manager::url_hash( '/x' );
 		$stats    = $store->get_url_stats( $url_hash );
 		$this->assertNotNull( $stats );
 		// flame_raw retains sums; flame is finalized for display.
@@ -435,7 +435,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
-		$url_hash = Request_Builder_Node::url_hash( '/w' );
+		$url_hash = Log_Manager::url_hash( '/w' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertSame( 1, $index[ $url_hash ]['count'] );
 		$this->assertSame( 0, $index[ $url_hash ]['timed_count'] );
@@ -455,7 +455,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
-		$url_hash = Request_Builder_Node::url_hash( '/w?supervisor' );
+		$url_hash = Log_Manager::url_hash( '/w?supervisor' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertSame( 1, $index[ $url_hash ]['count'] );
 		$this->assertSame( 1, $index[ $url_hash ]['timed_count'] );
@@ -477,7 +477,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
-		$url_hash = Request_Builder_Node::url_hash( '/m' );
+		$url_hash = Log_Manager::url_hash( '/m' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
 	}
@@ -501,7 +501,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
-		$url_hash = Request_Builder_Node::url_hash( '/p' );
+		$url_hash = Log_Manager::url_hash( '/p' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
 	}
@@ -637,7 +637,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket   = $this->bucket_key_for( $now );
-		$url_hash = Request_Builder_Node::url_hash( '/?cache-cozy' );
+		$url_hash = Log_Manager::url_hash( '/?cache-cozy' );
 
 		// Per-URL timing IS kept for the synthetic worker row.
 		$index = $store->get_url_index_hourly( $bucket );
@@ -1347,7 +1347,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket    = $this->bucket_key_for( $now );
 		$index     = $store->get_url_index_hourly( $bucket );
-		$url_hash  = Request_Builder_Node::url_hash( '/p50' );
+		$url_hash  = Log_Manager::url_hash( '/p50' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$stats     = $index[ $url_hash ];
 		$this->assertGreaterThan( 0, $stats['p50_ms'] );
@@ -1423,7 +1423,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$url_hash = Request_Builder_Node::url_hash( '/shared' );
+		$url_hash = Log_Manager::url_hash( '/shared' );
 		$url_dim  = $store->get_url_dimensional( $url_hash );
 		$this->assertArrayHasKey( 'ua', $url_dim );
 		$bucket = $this->bucket_key_for( $now );
@@ -1580,7 +1580,7 @@ class FlameBuilderTest extends TestCase {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/legacy';
-		$url_hash = Request_Builder_Node::url_hash( $url );
+		$url_hash = Log_Manager::url_hash( $url );
 		$store->set_url_stats( $url_hash, [
 			'flame'    => [
 				'name'     => 'aggregate',
@@ -1617,7 +1617,7 @@ class FlameBuilderTest extends TestCase {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/promoted';
-		$url_hash = Request_Builder_Node::url_hash( $url );
+		$url_hash = Log_Manager::url_hash( $url );
 		$store->set_url_stats( $url_hash, [
 			'flame_raw' => [
 				'name'      => 'aggregate',

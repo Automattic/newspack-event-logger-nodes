@@ -11,6 +11,7 @@ declare( strict_types=1 );
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Rules_CI_Node;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
@@ -118,18 +119,33 @@ class RulesCITest extends TestCase {
 		$this->assertCount( 2, $stored );
 		$heavy = $stored[1];
 		$this->assertSame( 'mc', $heavy['hooks_in'], 'save must go through Rule_Set::save so the tiering threshold applies' );
-		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'a2' ) ] );
+		// Supplied ids ('a1'/'a2') are ignored — the durable option keys off the pattern hash.
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( Log_Manager::url_hash( '/heavy/' ) ) ] );
 	}
 
-	public function test_save_mints_ids_for_blank_id_rules(): void {
+	public function test_save_derives_ids_from_the_pattern(): void {
 		$payload = \wp_json_encode( [
-			[ 'pattern' => '/new/', 'action' => Rule::ACTION_LOG ],
+			[ 'id' => 'ignored', 'pattern' => '/new/', 'action' => Rule::ACTION_LOG ],
 		] );
 
 		$this->fire( 'save', $payload );
 
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
-		$this->assertNotSame( '', $stored[0]['id'] );
+		$this->assertSame( Log_Manager::url_hash( '/new/' ), $stored[0]['id'] );
+	}
+
+	public function test_save_collapses_duplicate_patterns_to_one_rule(): void {
+		$payload = \wp_json_encode( [
+			[ 'pattern' => '/dup/', 'action' => Rule::ACTION_SKIP ],
+			[ 'pattern' => '/dup/', 'action' => Rule::ACTION_LOG ],
+		] );
+
+		$result = $this->fire( 'save', $payload );
+
+		$this->assertSame( [ 'saved' => 1 ], $result );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$this->assertCount( 1, $stored );
+		$this->assertSame( Rule::ACTION_LOG, $stored[0]['action'], 'last entry for a pattern wins' );
 	}
 
 	public function test_save_rejects_invalid_json(): void {
@@ -153,51 +169,80 @@ class RulesCITest extends TestCase {
 	// upsert
 	// -------------------------------------------------------------------------
 
-	public function test_upsert_replaces_a_rule_with_the_same_pattern_preserving_its_id(): void {
-		$existing = new Rule( 'keep-1', '/exact/', Rule::ACTION_SKIP );
+	public function test_upsert_replaces_a_rule_with_the_same_pattern(): void {
+		$existing = new Rule( Log_Manager::url_hash( '/exact/' ), '/exact/', Rule::ACTION_SKIP );
 		( new Rule_Set( [] ) )->save( [ $existing ] );
 
 		$payload = \wp_json_encode( [ 'pattern' => '/exact/', 'action' => Rule::ACTION_LOG, 'hooks' => [ 'init' ] ] );
 		$result  = $this->fire( 'upsert', $payload );
 
-		$this->assertSame( 'keep-1', $result['rule']['id'], 'upsert must preserve the id of the same-pattern rule it replaces' );
+		$this->assertSame( Log_Manager::url_hash( '/exact/' ), $result['rule']['id'], 'same pattern -> same id' );
 		$this->assertSame( Rule::ACTION_LOG, $result['rule']['action'] );
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
 		$this->assertCount( 1, $stored, 'a same-pattern upsert replaces in place, not append' );
 	}
 
-	public function test_upsert_appends_a_new_rule_with_a_fresh_unique_id(): void {
-		$existing = new Rule( 'only-1', '/existing/', Rule::ACTION_LOG );
+	public function test_upsert_appends_a_new_rule_keyed_by_its_pattern(): void {
+		$existing = new Rule( Log_Manager::url_hash( '/existing/' ), '/existing/', Rule::ACTION_LOG );
 		( new Rule_Set( [] ) )->save( [ $existing ] );
 
 		$payload = \wp_json_encode( [ 'pattern' => '/brand-new/', 'action' => Rule::ACTION_LOG ] );
 		$result  = $this->fire( 'upsert', $payload );
 
-		$this->assertNotSame( '', $result['rule']['id'] );
-		$this->assertNotSame( 'only-1', $result['rule']['id'] );
+		$this->assertSame( Log_Manager::url_hash( '/brand-new/' ), $result['rule']['id'] );
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
 		$this->assertCount( 2, $stored, 'a new-pattern upsert appends' );
 	}
 
-	public function test_upsert_edit_with_a_changed_pattern_replaces_by_id_not_orphan(): void {
-		$existing = new Rule( 'edit-1', '/old/', Rule::ACTION_LOG );
+	public function test_upsert_add_does_not_drop_the_log_all_baseline(): void {
+		// An id-less ADD must match only by pattern, never by empty id — else it
+		// would delete an id-less baseline ('/') and silently disable logging.
+		$baseline = new Rule( Log_Manager::url_hash( '/' ), '/', Rule::ACTION_LOG );
+		( new Rule_Set( [] ) )->save( [ $baseline ] );
+
+		$payload = \wp_json_encode( [ 'pattern' => '/foo/', 'action' => Rule::ACTION_SKIP ] );
+		$this->fire( 'upsert', $payload );
+
+		$stored   = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$patterns = \array_column( $stored, 'pattern' );
+		$this->assertContains( '/', $patterns, 'the log-all baseline must survive an unrelated add' );
+		$this->assertContains( '/foo/', $patterns );
+	}
+
+	public function test_upsert_replaces_a_legacy_positional_id_rule_for_the_same_pattern(): void {
+		// A rule persisted by v0.26 carries a positional id, not id_for(pattern).
+		// An id-less add for that same pattern must still replace it, not duplicate.
+		$legacy = new Rule( 'faed26b5', '/exact/', Rule::ACTION_SKIP );
+		( new Rule_Set( [] ) )->save( [ $legacy ] );
+
+		$payload = \wp_json_encode( [ 'pattern' => '/exact/', 'action' => Rule::ACTION_LOG ] );
+		$this->fire( 'upsert', $payload );
+
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$this->assertCount( 1, $stored, 'a same-pattern add must replace the legacy-id rule, not duplicate it' );
+		$this->assertSame( Log_Manager::url_hash( '/exact/' ), $stored[0]['id'], 'the survivor is rekeyed to the pattern hash' );
+	}
+
+	public function test_upsert_edit_rekeys_by_new_pattern_and_deletes_the_old(): void {
+		$existing = new Rule( Log_Manager::url_hash( '/old/' ), '/old/', Rule::ACTION_LOG );
 		( new Rule_Set( [] ) )->save( [ $existing ] );
 
-		// Editing that rule (its id round-trips from the modal) and changing the
-		// pattern must REPLACE it — not append a new-id rule and orphan '/old/'.
-		$payload = \wp_json_encode( [ 'id' => 'edit-1', 'pattern' => '/new/', 'action' => Rule::ACTION_LOG ] );
+		// Editing that rule (its old-pattern id round-trips from the modal) and
+		// changing the pattern rekeys it to the new pattern's id and drops '/old/'.
+		$payload = \wp_json_encode( [ 'id' => Log_Manager::url_hash( '/old/' ), 'pattern' => '/new/', 'action' => Rule::ACTION_LOG ] );
 		$result  = $this->fire( 'upsert', $payload );
 
-		$this->assertSame( 'edit-1', $result['rule']['id'], 'an edit keeps the rule id' );
+		$this->assertSame( Log_Manager::url_hash( '/new/' ), $result['rule']['id'], 'the rekeyed rule is identified by its new pattern' );
 		$this->assertSame( '/new/', $result['rule']['pattern'] );
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
-		$this->assertCount( 1, $stored, 'editing a pattern replaces in place — no orphaned old-pattern rule' );
+		$this->assertCount( 1, $stored, 'the old-pattern rule is deleted, not orphaned' );
 		$this->assertSame( '/new/', $stored[0]['pattern'], 'the surviving rule carries the new pattern' );
 	}
 
 	public function test_upsert_preserves_a_sibling_pointer_rules_durable_hooks(): void {
 		$big     = \array_map( static fn ( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
-		$sibling = new Rule( 'sib-1', '/heavy/', Rule::ACTION_LOG, hooks: $big );
+		$sib_id  = Log_Manager::url_hash( '/heavy/' );
+		$sibling = new Rule( $sib_id, '/heavy/', Rule::ACTION_LOG, hooks: $big );
 		( new Rule_Set( [] ) )->save( [ $sibling ] );
 
 		$payload = \wp_json_encode( [ 'pattern' => '/brand-new/', 'action' => Rule::ACTION_LOG ] );
@@ -205,12 +250,12 @@ class RulesCITest extends TestCase {
 
 		$this->assertSame(
 			$big,
-			$GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'sib-1' ) ],
+			$GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( $sib_id ) ],
 			'an unrelated upsert must not wipe a sibling pointer rule\'s durable hooks option'
 		);
 		VerbHarness::reset(); // fresh request-scope graph: fire() registers '_router' once per call.
 		$list = $this->fire( 'list' );
-		$sib  = \array_values( \array_filter( $list['rules'], static fn ( array $r ): bool => 'sib-1' === $r['id'] ) )[0];
+		$sib  = \array_values( \array_filter( $list['rules'], static fn ( array $r ): bool => $sib_id === $r['id'] ) )[0];
 		$this->assertSame( $big, $sib['hooks'], 'list must still resolve the sibling pointer rule to its full hook list' );
 	}
 

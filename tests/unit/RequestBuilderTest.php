@@ -769,24 +769,8 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( '/x', $req['url'] );
 	}
 
-	// --- url_hash + index format -----------------------------------------
-
-	public function test_url_hash_is_deterministic_over_full_string(): void {
-		$h1 = Request_Builder_Node::url_hash( '/post/123' );
-		$this->assertSame( 12, \strlen( $h1 ) );
-		// Determinism: same input produces same hash across calls.
-		$h2 = Request_Builder_Node::url_hash( '/post/123' );
-		$this->assertSame( $h1, $h2 );
-	}
-
-	public function test_url_hash_distinguishes_worker_suffix(): void {
-		// Callers strip the real query upstream; the only '?' that reaches
-		// url_hash is the intentional ?worker_type marker, which must hash
-		// distinctly so the synthetic row doesn't re-collide onto the real URL.
-		$base = Request_Builder_Node::url_hash( 'https://x.test/' );
-		$wt   = Request_Builder_Node::url_hash( 'https://x.test/?supervisor' );
-		$this->assertNotSame( $base, $wt );
-	}
+	// --- index format ----------------------------------------------------
+	// (url_hash moved to Log_Manager; see LogManagerTest for its coverage.)
 
 	public function test_format_index_entry_round_trip(): void {
 		$req = [

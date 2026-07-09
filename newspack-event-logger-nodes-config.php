@@ -17,11 +17,17 @@ return [
 	// `topologies` list which decides which worker fleets run).
 	'enable_logging'              => true,
 
-	// Per-URL logging ruleset. URL filters, instrumented-hook lists, custom
-	// events, significant events, and auto-tune thresholds are per-RULE fields
-	// here now — NOT global settings (Task 10). Empty = the minimal log-all
-	// baseline (Rule_Set::load() falls back to it when the option is absent).
-	'rules'                       => [],
+	// Per-URL logging ruleset (per-rule fields: URL filter, instrumented hooks,
+	// custom/significant events, auto-tune thresholds). Seeds the ruleset when no
+	// stored option exists; the rules editor owns it once saved. These skips
+	// out-specify the '/' log rule, so worker IPC/SSE/spawn + wp-cron never log.
+	'rules'                       => [
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/command', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/messages/stream', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/workers/spawn', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-cron.php', 'action' => 'skip' ],
+		[ 'pattern' => '/', 'action' => 'log' ],
+	],
 
 	// Hook categorization colors.
 	'custom_colors'               => [],

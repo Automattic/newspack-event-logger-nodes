@@ -223,19 +223,17 @@ final class Rule_Set {
 			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
 		];
 
-		$rules        = [];
-		$existing_ids = [];
+		// Key by id (= id_for(pattern)) so a pattern in BOTH lists collapses to one
+		// rule instead of two colliding ids. Skip is added first and wins, matching
+		// the old flat "skip_urls always wins over log_urls" semantics.
+		$rules = [];
 		foreach ( $skip as $pattern ) {
-			$id             = self::generate_rule_id( $existing_ids );
-			$existing_ids[] = $id;
-			$rules[]        = new Rule( $id, $pattern, Rule::ACTION_SKIP );
+			$rules[ self::id_for( $pattern ) ] ??= new Rule( self::id_for( $pattern ), $pattern, Rule::ACTION_SKIP );
 		}
 		$log_patterns = empty( $log_urls ) ? [ '/' ] : $log_urls;
 		foreach ( $log_patterns as $pattern ) {
-			$id             = self::generate_rule_id( $existing_ids );
-			$existing_ids[] = $id;
-			$rules[]        = new Rule(
-				$id,
+			$rules[ self::id_for( $pattern ) ] ??= new Rule(
+				self::id_for( $pattern ),
 				$pattern,
 				Rule::ACTION_LOG,
 				$bundle['auto_disable_threshold'],
@@ -245,6 +243,7 @@ final class Rule_Set {
 				$bundle['hooks']
 			);
 		}
+		$rules = \array_values( $rules );
 
 		$overlap = self::detect_prefix_overlap( $skip, $log_urls );
 
@@ -278,23 +277,12 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Mint a short id not already present in $existing_ids. Walks the same
-	 * deterministic md5-substr scheme migrate_from_legacy seeded with, skipping
-	 * any candidate that collides with an id already in use.
-	 *
-	 * @param string[] $existing_ids Ids already assigned in the set being built.
+	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
+	 * the identity, so there is exactly one id per pattern — you can never end up
+	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
 	 */
-	public static function generate_rule_id( array $existing_ids ): string {
-		$n = 1;
-		do {
-			$id = self::gen_id( $n );
-			++$n;
-		} while ( \in_array( $id, $existing_ids, true ) );
-		return $id;
-	}
-
-	private static function gen_id( int $n ): string {
-		return \substr( \md5( 'eln_rule_' . $n ), 0, 8 );
+	public static function id_for( string $pattern ): string {
+		return Log_Manager::url_hash( $pattern );
 	}
 
 	/**
@@ -320,21 +308,63 @@ final class Rule_Set {
 	public static function load(): self {
 		$raw = \get_option( self::OPTION_RULES, null );
 		if ( null === $raw ) {
-			return new self( [ Rule::minimal( '/' ) ] );
+			return self::seed_from_config();
 		}
 		if ( ! \is_array( $raw ) ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( 'Newspack ELN: corrupt rules option; falling back to minimal log-all rule.' );
-			return new self( [ Rule::minimal( '/' ) ] );
+			\error_log( 'Newspack ELN: corrupt rules option; seeding from config.' );
+			return self::seed_from_config();
 		}
 		$rules = [];
 		foreach ( $raw as $entry ) {
 			if ( \is_array( $entry ) ) {
 				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
-				$rules[] = Rule::from_array( $entry );
+				$rule = Rule::from_array( $entry );
+				// Mint an id for an idless stored rule (e.g. a settings-synced config
+				// default) so nothing collides on the '' key; a non-empty (legacy
+				// positional) id is trusted — its durable hooks option is keyed by it.
+				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
 			}
 		}
 		return new self( $rules );
+	}
+
+	/**
+	 * Read-time default when the option is absent (or corrupt): build the ruleset
+	 * from the file config's `rules` list, minting ids for entries that omit one,
+	 * and fall back to the minimal log-all baseline when config carries none. Does
+	 * NOT persist — like the old Rule::minimal fallback, the file value stands in
+	 * until the rules editor writes the option.
+	 */
+	private static function seed_from_config(): self {
+		$config = \class_exists( Config::class ) ? Config::load_config() : [];
+		$raw    = $config['rules'] ?? [];
+		$rules  = \is_array( $raw ) ? self::rules_from_config( $raw ) : [];
+		// The minimal baseline still carries a real id, so no seeded/persisted rule
+		// ever has id '' (which would collide on rule_by_id / the durable-hooks key).
+		return new self( [] === $rules ? [ Rule::minimal( '/' )->with_id( self::id_for( '/' ) ) ] : $rules );
+	}
+
+	/**
+	 * Turn config rule maps into Rule objects, deriving each id from its pattern
+	 * (a config-supplied id is ignored — the pattern is the identity) and
+	 * collapsing duplicate patterns to one rule, last entry wins.
+	 *
+	 * @param array<array-key, mixed> $entries
+	 * @return Rule[]
+	 */
+	private static function rules_from_config( array $entries ): array {
+		$by_id = [];
+		foreach ( $entries as $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			/** @var array<string, mixed> $entry config rule shape (Rule::from_array()). */
+			$rule                = Rule::from_array( $entry );
+			$rule                = $rule->with_id( self::id_for( $rule->pattern ) );
+			$by_id[ $rule->id ]  = $rule;
+		}
+		return \array_values( $by_id );
 	}
 
 	/**

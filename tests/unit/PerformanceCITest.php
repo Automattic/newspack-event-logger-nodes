@@ -28,6 +28,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Stats_Store;
@@ -926,7 +927,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		// Flame entry indexed by rid + url_hash; FlameBuilder writes the
 		// flame body at Message::VALUE alongside the index entry.
-		$url_hash = Request_Builder_Node::url_hash( '/with-flame' );
+		$url_hash = Log_Manager::url_hash( '/with-flame' );
 		$this->write_flame( [
 			'rid'      => $rid,
 			'url_hash' => $url_hash,
@@ -963,7 +964,7 @@ class PerformanceCITest extends TestCase {
 			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
 		}
 		$flame['rid']      = $rid;
-		$flame['url_hash'] = Request_Builder_Node::url_hash( '/with-deep-flame' );
+		$flame['url_hash'] = Log_Manager::url_hash( '/with-deep-flame' );
 		$this->write_flame( $flame );
 
 		$interpreter = new Performance_CI_Node();
@@ -1352,7 +1353,7 @@ class PerformanceCITest extends TestCase {
 		// url_hash matches. Seed the URL in the memcache index AND two on-disk
 		// requests so the collect + dedup walk runs (not the empty-result skip).
 		$url    = '/recent-list';
-		$hash   = Request_Builder_Node::url_hash( $url );
+		$hash   = Log_Manager::url_hash( $url );
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket, [

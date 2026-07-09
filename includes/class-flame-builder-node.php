@@ -206,7 +206,7 @@ class Flame_Builder_Node extends Node {
 		$rid_raw  = $request['rid'] ?? '';
 		$rid      = \is_string( $rid_raw ) ? $rid_raw : '';
 		$url_raw  = $request['url'] ?? '';
-		$url_hash = Request_Builder_Node::url_hash( \is_string( $url_raw ) ? $url_raw : '' );
+		$url_hash = Log_Manager::url_hash( \is_string( $url_raw ) ? $url_raw : '' );
 		$entries  = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
