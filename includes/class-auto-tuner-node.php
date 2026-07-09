@@ -6,13 +6,6 @@
  * mutating the rule identified by `rule_id` and persisting via `Rule_Set::save()`,
  * which handles the inline<->pointer tiering + orphan reconciliation.
  *
- * Replaces the legacy AutoTuneHandlers static action listeners. FlameBuilder
- * used to fire three `do_action()` calls and AutoTuneHandlers wired six
- * priority-5/priority-10 listeners (hub + standalone for each event); since
- * both sides live in the same request-workers process anyway, the WP-action
- * indirection was just intra-process message-passing dressed up as hooks.
- * Now expressed as a Node fill() with dispatch by Message::KEY.
- *
  * Message shape:
  *   KEY   = 'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
  *   VALUE = [ 'rule_id' => string, 'items' => string[] ]

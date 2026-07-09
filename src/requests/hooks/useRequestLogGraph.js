@@ -15,14 +15,10 @@
  *
  *   requestlog:view        (the view-model node the React view reads)
  *
- * Every node sinks into the interpreter; flow is steered by each node's `target`. The
- * chain collapsed in May 2026 from `_sse → requestlog:route →
- * requestlog:transform → requestlog:view` to a direct sse-in → requestlog:view.
- * The route node was a pass-through (the substrate's SseConnector snoops the
- * `connected` envelope off before routing, so the control branch was
- * unreachable), and the transform's defensive shaping (drop missing-url, clip
- * url@2000 + UA@500, default-fill) moved into the view's `_appendRow()` — the
- * single place that knows envelope → render-entry mapping.
+ * Every node sinks into the interpreter; flow is steered by each node's `target`.
+ * The graph is a direct sse-in → requestlog:view. The view's `_appendRow()` does
+ * the defensive shaping (drop missing-url, clip url@2000 + UA@500, default-fill) —
+ * the single place that knows envelope → render-entry mapping.
  *
  * The graph + connection lifecycle are handed to the shared
  * `useVisibilityGatedLink` hook: it mounts via `mountExospine` (snapshotting Core so

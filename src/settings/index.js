@@ -3,8 +3,7 @@
  *
  * Mounts the per-URL logging-ruleset editor (RulesAdmin) into the
  * `#event-logger-rules-editor` container rendered by the "Logging Rules"
- * settings section (class-admin.php). The old TagInputField DOM-scan mounts died
- * with Task 10's ruleset migration; the ruleset is now managed here.
+ * settings section (class-admin.php).
  */
 
 import { createRoot } from '@wordpress/element';

@@ -16,13 +16,9 @@
  * CommandInterpreter dispatch path doesn't stream.
  *
  * Cross-cutting design choices:
- *  - Auth: every verb requires `manage_options`. Legacy parity — every
- *    replaced controller gated through `PerformanceControllerBase::read_permissions_check`
- *    (or its `admin_permissions_check` cousin on the writers), which
- *    enforces the capability.
- *  - Rate limit: dropped. The legacy rate-limit was an artifact of REST
- *    polling; interpreter dispatch fires verbs once-per-request through the worker,
- *    not from a fan-out of polling tabs.
+ *  - Auth: every verb requires `manage_options`.
+ *  - Rate limit: none — interpreter dispatch fires verbs once-per-request
+ *    through the worker, not from a fan-out of polling tabs.
  *  - Stats reads fail-soft (matches Stats_Store + dashboards "no data" UX).
  *  - Disk scans capped at MAX_INDEX_ENTRIES so a missing-rid lookup can't
  *    escalate into a partition-wide segment walk.
@@ -1300,10 +1296,9 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Lifted from legacy PerfHooksController::get_registered_hooks.
-				// The legacy controller also returned `total_hooks` as the sum
-				// of all category buckets; recomputing here keeps the contract
-				// identical without trusting the categorizer to sum for us.
+				// `total_hooks` is the sum of all category buckets; recomputing
+				// here keeps the response contract stable without trusting the
+				// categorizer to sum for us.
 				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 				$total       = 0;
 				foreach ( $by_category as $list ) {

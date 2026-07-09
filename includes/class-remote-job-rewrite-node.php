@@ -3,10 +3,9 @@
  * Remote_Job_Rewrite_Node — hub-side `k:"job"` -> `k:"remote_job"` rewrite on
  * aggregated firehose entries.
  *
- * Relocated from the deleted Stream_Merger's `newspack_nodes/aggregator_ingest_line`
- * filter so the substrate Remote_Source / SSE_In stay application-agnostic: the
- * rewrite is now a graph node the hub topology wires between the aggregated
- * source and the jobs partition. A spoke-produced `k:"job"` entry, once
+ * The rewrite is a graph node the hub topology wires between the aggregated
+ * source and the jobs partition, keeping the substrate Remote_Source / SSE_In
+ * application-agnostic. A spoke-produced `k:"job"` entry, once
  * aggregated on the hub, becomes `k:"remote_job"` so it dispatches through the
  * `newspack_nodes/remote_job_handlers` filter (centrally on the hub) rather than
  * locally. Non-`job` entries and non-array VALUEs pass through untouched.

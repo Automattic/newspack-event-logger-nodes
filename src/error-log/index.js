@@ -2,10 +2,9 @@
  * Error Log Dashboard entry point.
  *
  * Mounts the full-page dark Error Log view on its own admin page
- * (`#event-logger-errors`). Split out of the overview bundle (where it rode
- * along as a second React root) so the perf dashboard and the error log ship as
- * independent bundles — the error log is structurally the request log for
- * errors, not part of the performance overview.
+ * (`#event-logger-errors`). Ships as an independent bundle from the perf
+ * dashboard — the error log is structurally the request log for errors, not
+ * part of the performance overview.
  */
 
 import { createRoot, lazy, Suspense } from '@wordpress/element';

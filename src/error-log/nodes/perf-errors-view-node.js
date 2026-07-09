@@ -7,9 +7,8 @@ const MAX_M_LENGTH = 1000;
 /**
  * `perferrors:view` — owns the Error Log view model.
  *
- * The chain collapsed in v0.x: `_sse` now targets the view directly. fill()
- * receives raw 7-field envelopes (KEY=rid, VALUE={ts, k, m, n}) and shapes them
- * into rows inline — what `perferrors:transform` used to do is now a tiny
+ * `_sse` targets the view directly. fill() receives raw 7-field envelopes
+ * (KEY=rid, VALUE={ts, k, m, n}) and shapes them into rows inline via a tiny
  * dispatch in `_appendEnvelope`.
  *
  * Two cadences, deliberately split for performance (mirrors requestLogView):
@@ -99,8 +98,7 @@ export class PerfErrorsViewNode extends Node {
 	}
 
 	// A raw stream envelope: KEY=rid, VALUE={ts, k, m, n}. Validate + enrich +
-	// append newest-first, capped. Mirrors the dispatch the retired
-	// `perferrors:transform` Callback used to do.
+	// append newest-first, capped.
 	_appendEnvelope( message ) {
 		const rid = message[ KEY ];
 		if ( ! rid ) {

@@ -11,8 +11,6 @@
  * one reply at a time (the union is order-independent, so out-of-order / partial
  * replies converge).
  *
- * Replaces the legacy poll-based discovery sweep (Slice A1).
- *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -27,7 +25,7 @@ use Newspack_Nodes\Timer_Node;
 
 class Discovery_Collector_Node extends Timer_Node {
 
-	/** Legacy discovery cadence (seconds) used when arguments() is armed without an explicit interval. */
+	/** Default discovery cadence (seconds) used when arguments() is armed without an explicit interval. */
 	private const DEFAULT_INTERVAL_SECONDS = 300;
 
 	/** Maximum discovered events to merge. */
@@ -36,7 +34,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	/**
 	 * Arm the recurring discovery-fan-out timer. A Timer_Node subclass does not
 	 * self-schedule, so we explicitly call set_timer() here. A blank/absent
-	 * interval falls back to the legacy 300s discovery cadence.
+	 * interval falls back to the default 300s discovery cadence.
 	 *
 	 * @api Called by the substrate during make_node construction.
 	 * @param string|null $args Interval in seconds (digits), '' for the default, or null to read back.

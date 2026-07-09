@@ -130,8 +130,7 @@ class Hook_Categorizer {
 
 	/**
 	 * The instrumented-hook set the operator has selected: the union of hooks
-	 * across every LOG rule in the durable ruleset. Replaces the retired global
-	 * `newspack_event_logger_nodes_log_events` option.
+	 * across every LOG rule in the durable ruleset.
 	 *
 	 * @return string[]
 	 */

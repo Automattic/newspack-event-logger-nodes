@@ -821,7 +821,7 @@ class Log_Manager {
 	/**
 	 * Drain every materialized Partition's in-memory batch to disk.
 	 *
-	 * Equivalent of the legacy `flush_buffer()`. Callers that hand off to a
+	 * Callers that hand off to a
 	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
 	 * pyrobase's template execution) call this BEFORE `proc_open` so the
 	 * parent's buffered Messages land in segment order before the child starts

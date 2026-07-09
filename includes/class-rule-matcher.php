@@ -68,9 +68,9 @@ final class Rule_Matcher {
 	}
 
 	/**
-	 * Normalize exactly as Log_Manager historically did: drop the query string,
-	 * re-append a single '?' terminator so an exact 'pattern?' matches the path.
-	 * Lowercased — the legacy compile_url_filter regex matched case-insensitively.
+	 * Normalize a URL for rule matching: drop the query string, re-append a
+	 * single '?' terminator so an exact 'pattern?' matches the path, and
+	 * lowercase for case-insensitive matching.
 	 */
 	public static function normalize( string $url ): string {
 		return \strtolower( \explode( '?', $url, 2 )[0] ) . '?';

@@ -70,11 +70,11 @@ class Settings_Schema {
 				),
 
 				// -- Instrumentation / Performance Workers ------------------
-				// The former URL filters (log_urls/skip_urls), hook lists
+				// URL filters (log_urls/skip_urls), hook lists
 				// (log_events/custom_events/significant_events) and auto-tune
-				// thresholds are no longer global settings — they are per-RULE
-				// fields inside the `newspack_event_logger_nodes_rules` option
-				// (Task 10). No Fields remain in those sections.
+				// thresholds are per-RULE fields inside the
+				// `newspack_event_logger_nodes_rules` option, not global
+				// settings. No Fields remain in this section.
 
 				// -- Debugging ----------------------------------------------
 				new Field(

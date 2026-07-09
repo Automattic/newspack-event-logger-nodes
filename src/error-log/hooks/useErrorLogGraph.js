@@ -14,11 +14,8 @@
  *
  *   perferrors:view  (the view-model node the React view reads)
  *
- * The chain collapsed in v0.x: the link targets the view directly. The old
- * `perferrors:route` classifier was dead (its `controlTarget` was never
- * reached — the substrate emits `KEY='connected'` AND snoops it off before it
- * reaches subscribers), and `perferrors:transform` was a one-line dispatch
- * that's now inline in the view's `fill()`.
+ * The link targets the view directly; the view's `fill()` shapes envelopes
+ * into rows inline.
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * graph + connection lifecycle are handed to the shared `useVisibilityGatedLink` hook:
