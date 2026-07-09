@@ -241,6 +241,21 @@ class HookCategorizerTest extends TestCase {
 		$this->assertContains( 'my_custom_hook', $hooks );
 	}
 
+	public function test_get_registered_hooks_includes_discovered_hooks(): void {
+		global $wp_filter;
+		$wp_filter = [];
+
+		// Spoke-discovered hooks (staged by Discovery_Collector_Node) surface in
+		// the picker even though they aren't registered locally — symmetric with
+		// discovered_events feeding get_custom_colors().
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_hooks'] = [ 'spoke_only_hook' => true ];
+
+		$hooks = Hook_Categorizer::get_registered_hooks();
+		$this->assertContains( 'spoke_only_hook', $hooks );
+
+		$wp_filter = [];
+	}
+
 	public function test_selected_hooks_come_from_the_rule_union(): void {
 		$this->set_rules_option( [
 			[ 'id' => 'a', 'pattern' => '/a/', 'action' => 'log', 'hooks' => [ 'init' ] ],

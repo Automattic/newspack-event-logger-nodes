@@ -10,7 +10,7 @@ import {
  * Post-migration to substrate-canonical wiring, `fill()` receives the raw reply
  * Messages HttpOutNode feeds back from POST /command: the router peels the reply's
  * TO (= `hookcatalog:view`, stamped from the outbound FROM by the server's
- * reply pivot) and delivers them here. VALUE is the `{ name, payload }`
+ * TO=FROM reply) and delivers them here. VALUE is the `{ name, payload }`
  * envelope.
  *
  * On a `hooks_registered` reply the node extracts `hooks_by_category` from the
@@ -49,7 +49,7 @@ export class HookCatalogViewNode extends Node {
 		const payload = value.payload;
 
 		// Resolve / reject any pending promise the hook stashed under this ID.
-		// Track whether we handled the message via the pending pivot — if so,
+		// Track whether we handled the message via the pending-Map — if so,
 		// the caller is the error surface and we must NOT also paint a
 		// view-level error banner (mirrors servers:view).
 		const pendingMatched = this.replies.settle( message );

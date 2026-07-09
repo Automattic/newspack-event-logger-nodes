@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Core;
@@ -134,6 +135,87 @@ final class RulesetMigrationTest extends TestCase {
 		$this->assertCount( 1, $rules );
 		$this->assertSame( '/x', $rules[0]->pattern );
 		$this->assertTrue( $rules[0]->is_skip(), 'skip wins for a contradictory same-pattern config' );
+	}
+
+	public function test_rekey_collapse_skip_wins_even_when_the_log_rule_is_stored_first(): void {
+		// Log FIRST, skip LAST — the order that drives the replace branch
+		// ($existing is a log rule, $candidate is skip). Skip must still win, so
+		// precedence is order-independent (not just first-insert-wins).
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'aaaaaaaa', 'pattern' => '/x', 'action' => 'log' ],
+			[ 'id' => 'bbbbbbbb', 'pattern' => '/x', 'action' => 'skip' ],
+		];
+		\update_option( Rule_Set::OPTION_SCHEMA_VERSION, 1, true );
+
+		Rule_Set::migrate_from_legacy();
+
+		$rules = Rule_Set::load()->rules();
+		$this->assertCount( 1, $rules );
+		$this->assertTrue( $rules[0]->is_skip(), 'skip wins even when stored after the log rule' );
+	}
+
+	public function test_fresh_install_with_no_legacy_options_leaves_the_rules_option_absent(): void {
+		// Nothing to migrate: the config seed owns the ruleset, so migration must
+		// not fabricate + persist a '/' rule that would shadow the config baseline.
+		$result = Rule_Set::migrate_from_legacy();
+
+		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'], 'a no-op migration must not write the rules option' );
+		$this->assertSame( 2, (int) \get_option( Rule_Set::OPTION_SCHEMA_VERSION, 0 ), 'the version still advances so it runs once' );
+		$this->assertFalse( $result['overlap'] );
+	}
+
+	public function test_rekey_migration_normalizes_a_positional_id_and_preserves_pointer_hooks(): void {
+		// A v1 install: a heavy rule stored under an OLD positional id, its hooks in
+		// a durable option keyed by that id. The v1->v2 rekey must move it to the
+		// pattern-hash id without losing the hooks.
+		$big     = \array_map( static fn ( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		$old_id  = 'faed26b5';
+		$GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( $old_id ) ] = $big;
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ]                 = [
+			[ 'id' => $old_id, 'pattern' => '/shop/', 'action' => 'log', 'hooks' => null, 'hooks_in' => 'mc' ],
+		];
+		\update_option( Rule_Set::OPTION_SCHEMA_VERSION, 1, true );
+
+		Rule_Set::migrate_from_legacy();
+
+		$new_id = Log_Manager::url_hash( '/shop/' );
+		$rules  = Rule_Set::load()->rules();
+		$this->assertCount( 1, $rules );
+		$this->assertSame( $new_id, $rules[0]->id, 'positional id rekeyed to the pattern hash' );
+		$this->assertSame( $big, Rule_Set::hooks_for( $rules[0] ), 'pointer hooks survive the rekey' );
+		$this->assertArrayNotHasKey( Rule_Set::hooks_option_name( $old_id ), $GLOBALS['_wp_options'], 'old durable option reconciled away' );
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( $new_id ) ] );
+	}
+
+	public function test_rekey_migration_is_idempotent_and_stamps_the_current_version(): void {
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'a4c8c1c1', 'pattern' => '/', 'action' => 'log' ],
+		];
+		\update_option( Rule_Set::OPTION_SCHEMA_VERSION, 1, true );
+
+		$first  = Rule_Set::migrate_from_legacy();
+		$second = Rule_Set::migrate_from_legacy();
+
+		$this->assertTrue( $first['migrated'] );
+		$this->assertFalse( $second['migrated'], 'a second run is a no-op' );
+		$this->assertSame( Log_Manager::url_hash( '/' ), Rule_Set::load()->rules()[0]->id );
+	}
+
+	public function test_rekey_collapses_same_pattern_collision_with_skip_precedence(): void {
+		// A v1 install that stored two rules for the same pattern (different
+		// positional ids) — skip first, log LAST. The rekey collapses them to one
+		// id; skip must win regardless of stored order, matching migrate_legacy_options.
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'aaaaaaaa', 'pattern' => '/x', 'action' => 'skip' ],
+			[ 'id' => 'bbbbbbbb', 'pattern' => '/x', 'action' => 'log' ],
+		];
+		\update_option( Rule_Set::OPTION_SCHEMA_VERSION, 1, true );
+
+		Rule_Set::migrate_from_legacy();
+
+		$rules = Rule_Set::load()->rules();
+		$this->assertCount( 1, $rules );
+		$this->assertTrue( $rules[0]->is_skip(), 'skip wins the collapse even when the log rule is stored last' );
 	}
 
 	public function test_migration_deletes_legacy_options_and_is_idempotent(): void {

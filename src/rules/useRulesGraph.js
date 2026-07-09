@@ -10,7 +10,7 @@
  * in VALUE.name) with a correlator in `message[ID]`, stashes a `{ resolve,
  * reject }` in the view's `replies` map under that ID, and fills the message
  * into the interpreter via the `_shell` Tap (observable at `connect _shell`).
- * The router peels `_http`, HttpOutNode POSTs, the server pivots the reply
+ * The router peels `_http`, HttpOutNode POSTs, the server replies TO=FROM
  * TO=FROM, the router peels the receiver Tee, the Tee fans to the view, and the
  * view settles the Promise (and refreshes its render model on a `list` reply).
  *
@@ -59,7 +59,7 @@ function makeOpId() {
 }
 
 // Build a TM_COMMAND addressed at the `rules` CI. FROM = the receiver Tee so the
-// server's reply pivot lands there; TO = `_http/rules` so the router peels
+// server's TO=FROM reply lands there; TO = `_http/rules` so the router peels
 // `_http` and HttpOutNode POSTs the bare command.
 function buildCommand( verb, args, id ) {
 	const m = newMessage();

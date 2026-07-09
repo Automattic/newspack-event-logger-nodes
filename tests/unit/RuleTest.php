@@ -55,14 +55,6 @@ final class RuleTest extends TestCase {
 		$this->assertTrue( $rule->is_skip() );
 	}
 
-	public function test_minimal_is_a_log_rule_with_no_hooks(): void {
-		$rule = Rule::minimal();
-		$this->assertSame( '/', $rule->pattern );
-		$this->assertTrue( $rule->is_log() );
-		$this->assertSame( [], $rule->hooks );
-		$this->assertSame( '', $rule->id );
-	}
-
 	public function test_pointer_rule_carries_null_hooks(): void {
 		$rule = Rule::from_array( [ 'id' => 'f6', 'pattern' => '/heavy/', 'action' => 'log', 'hooks' => null, 'hooks_in' => 'mc' ] );
 		$this->assertNull( $rule->hooks );

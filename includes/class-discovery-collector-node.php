@@ -5,10 +5,11 @@
  * fire() mints a `discovery.get` TM_COMMAND to every connected spoke's
  * Discovery_CI. Each spoke's reply self-routes back (TO=FROM) into fill(),
  * which monotonically union-merges the reply's registered_hooks into the
- * baseline `/` LOG rule's instrumented-hook set (the ruleset absorbed the retired
- * global log_events option) and its custom_events into the discovered_events
- * staging option — folded incrementally one reply at a time (the union is
- * order-independent, so out-of-order / partial replies converge).
+ * discovered_hooks staging option and its custom_events into the discovered_events
+ * staging option — a passive catalog of what spokes instrument, never written
+ * into the ruleset (the editor is the only rules writer). Folded incrementally
+ * one reply at a time (the union is order-independent, so out-of-order / partial
+ * replies converge).
  *
  * Replaces the legacy poll-based discovery sweep (Slice A1).
  *
@@ -149,80 +150,38 @@ class Discovery_Collector_Node extends Timer_Node {
 			$this->merge_events( \array_keys( $events ) );
 		}
 		if ( ! empty( $hooks ) ) {
-			$this->merge_hooks( \array_keys( $hooks ), \array_keys( $events ) );
+			$this->merge_hooks( \array_keys( $hooks ) );
 		}
 	}
 
 	/**
-	 * Union remote hooks into the baseline `/` LOG rule's instrumented-hook set.
-	 * The rules absorbed the retired global `log_events` option (Task 10), so the
-	 * merge target is the ruleset. Rule_Set::save() writes the autoloaded rules
-	 * option, which emits a settings event like any other watched option change,
-	 * so the merged set still propagates to spokes through the settings-sync graph.
+	 * Merge remote registered hooks into discovered_hooks — a staging catalog of
+	 * hooks seen across spokes, never written into the ruleset (the editor is the
+	 * only rules writer). Mirrors merge_events / discovered_events.
 	 *
-	 * @param array<int,int|string> $remote_hooks  Remote hook names (array_keys output; numeric names coerce to int).
-	 * @param array<int,int|string> $remote_custom Remote custom-event names — excluded from the hook set (they belong in discovered_events, not instrumented hooks).
+	 * @param array<int,int|string> $remote_hooks Remote hook names (array_keys output; numeric names coerce to int).
 	 */
-	private function merge_hooks( array $remote_hooks, array $remote_custom ): void {
-		$set   = Rule_Set::load();
-		$rules = $set->rules();
-
-		// Target the baseline `/` LOG rule; mint one if the ruleset lacks it.
-		$index = null;
-		foreach ( $rules as $i => $rule ) {
-			if ( $rule->is_log() && '/' === $rule->pattern ) {
-				$index = $i;
-				break;
-			}
+	private function merge_hooks( array $remote_hooks ): void {
+		$discovered = \get_option( 'newspack_event_logger_nodes_discovered_hooks', [] );
+		if ( ! \is_array( $discovered ) ) {
+			$discovered = [];
 		}
-		if ( null === $index ) {
-			$rules[] = Rule::minimal( '/' );
-			$index   = \array_key_last( $rules );
-		}
-		$rule = $rules[ $index ];
-
-		// Custom events never belong in the instrumented-hook set.
-		$custom_lookup = \array_flip(
-			\array_merge(
-				\array_map( '\strval', $remote_custom ),
-				$rule->custom_events
-			)
-		);
-
-		$local   = \array_values( \array_unique( \array_filter( Rule_Set::hooks_for( $rule ), '\is_string' ) ) );
-		$lookup  = \array_flip( $local );
 		$updated = false;
 
 		foreach ( $remote_hooks as $hook ) {
-			$hook = (string) $hook;
-			if ( '' === $hook || isset( $custom_lookup[ $hook ] ) || isset( $lookup[ $hook ] ) ) {
-				continue;
+			if ( ! isset( $discovered[ $hook ] ) ) {
+				// Cap total accumulated hooks to prevent unbounded option growth.
+				if ( \count( $discovered ) >= self::MAX_EVENTS ) {
+					break;
+				}
+				$discovered[ $hook ] = true;
+				$updated             = true;
 			}
-			// Cap total accumulated hooks to prevent unbounded rule growth.
-			if ( \count( $local ) >= self::MAX_EVENTS ) {
-				break;
-			}
-			$local[]         = $hook;
-			$lookup[ $hook ] = true;
-			$updated         = true;
 		}
 
-		if ( ! $updated ) {
-			return;
+		if ( $updated ) {
+			\update_option( 'newspack_event_logger_nodes_discovered_hooks', $discovered, Config::autoload_for( 'newspack_event_logger_nodes_discovered_hooks' ) );
 		}
-
-		$rules[ $index ] = new Rule(
-			$rule->id,
-			$rule->pattern,
-			$rule->action,
-			$rule->auto_disable_threshold,
-			$rule->auto_protect_time_threshold,
-			$rule->significant_events,
-			$rule->custom_events,
-			$local,
-			Rule::HOOKS_INLINE
-		);
-		$set->save( $rules );
 	}
 
 	/**

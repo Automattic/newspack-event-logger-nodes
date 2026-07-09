@@ -58,13 +58,11 @@ final class RuleSetTest extends TestCase {
 		$ref->setValue( null, [ 'rules' => $rules ] );
 	}
 
-	public function test_load_missing_option_with_no_config_yields_synthetic_root_log_rule(): void {
+	public function test_load_missing_option_with_empty_config_yields_empty_ruleset(): void {
+		// Empty means empty everywhere: config `rules => []` (like a stored `[]`)
+		// is an explicit "log nothing", not an implicit log-all baseline.
 		$this->set_config_rules( [] );
-		$set = Rule_Set::load();
-		$this->assertCount( 1, $set->rules() );
-		$this->assertSame( '/', $set->rules()[0]->pattern );
-		$this->assertTrue( $set->rules()[0]->is_log() );
-		$this->assertNotSame( '', $set->rules()[0]->id, 'even the synthetic baseline carries a real id' );
+		$this->assertCount( 0, Rule_Set::load()->rules() );
 	}
 
 	public function test_load_missing_option_seeds_from_config_rules_with_pattern_hashed_ids(): void {
@@ -113,22 +111,12 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( [ 'init', 'wp' ], $rule->hooks );
 	}
 
-	public function test_load_missing_option_with_empty_config_rules_falls_back_to_minimal(): void {
-		$this->set_config_rules( [] );
-
-		$rules = Rule_Set::load()->rules();
-
-		$this->assertCount( 1, $rules );
-		$this->assertSame( '/', $rules[0]->pattern );
-		$this->assertTrue( $rules[0]->is_log() );
-	}
-
-	public function test_load_corrupt_option_falls_back_to_minimal(): void {
+	public function test_load_corrupt_option_with_empty_config_yields_empty_ruleset(): void {
+		// Corrupt option → seed_from_config; with no config rules that is empty
+		// (log nothing), not the old minimal log-all fallback.
 		$this->set_config_rules( [] );
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = 'not-an-array';
-		$set = Rule_Set::load();
-		$this->assertCount( 1, $set->rules() );
-		$this->assertTrue( $set->rules()[0]->is_log() );
+		$this->assertCount( 0, Rule_Set::load()->rules() );
 	}
 
 	public function test_load_mints_ids_for_stored_rules_that_lack_one(): void {
