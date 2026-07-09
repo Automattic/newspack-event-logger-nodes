@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-07-09
+
+### Changed
+
+- **Rebuild the dashboard bundles against the updated `newspack-nodes` shared runtime.** The substrate's SSE rework (newspack-nodes 0.32.x) made the `connected` handshake its own SSE `event:` type — the shared `SseInNode` now routes it via `addEventListener( 'connected' )` and snoops slot/pid from it, instead of KEY-peeking every `msg`. Rebuilding the bundles ships that runtime so the live-dashboard slot keep-alive bridge reads the typed `connected` frame in production. The requests / error-log / gyroscope hook tests were updated to dispatch the handshake as a `connected` event to match.
+
 ## [0.28.0] - 2026-07-09
 
 ### Added
