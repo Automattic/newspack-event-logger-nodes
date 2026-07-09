@@ -99,11 +99,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_bootstrap, 11 );
 }
 
-// XXX:
-// Run the one-time ruleset migration on activation. The deploy deactivates then
-// re-installs+activates (a genuine inactive→active transition), so stored rules
-// get normalized here without every admin request re-checking a version gate.
-// Substrate-gated (Requires Plugins keeps it present).
+// One-time ruleset migration on activation (the deploy deactivates then reinstalls+activates).
 if ( \function_exists( 'register_activation_hook' ) ) {
 	\register_activation_hook(
 		__FILE__,

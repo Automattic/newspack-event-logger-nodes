@@ -113,7 +113,7 @@ class Hook_Categorizer {
 		// Include spoke-discovered hooks (staged by Discovery_Collector_Node) so
 		// they surface in the picker even if not registered locally — symmetric
 		// with discovered_events feeding Config::get_custom_colors().
-		$discovered = \get_option( 'newspack_event_logger_nodes_discovered_hooks', [] );
+		$discovered = \get_option( Config::OPTION_DISCOVERED_HOOKS, [] );
 		if ( \is_array( $discovered ) ) {
 			foreach ( \array_keys( $discovered ) as $hook ) {
 				$hook = (string) $hook;
