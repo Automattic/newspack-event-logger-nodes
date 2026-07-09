@@ -122,6 +122,20 @@ final class RulesetMigrationTest extends TestCase {
 		$this->assertNull( $this->rule_with_pattern( $rules, '/' ) );
 	}
 
+	public function test_same_pattern_in_skip_and_log_collapses_to_one_skip_rule(): void {
+		// Since a rule id is now id_for(pattern), a URL in BOTH lists would mint two
+		// rules with the same id. Dedupe with skip precedence (the old flat
+		// skip-wins semantics) instead of persisting a colliding pair.
+		$this->seed_legacy( [ 'skip_urls' => [ '/x' ], 'log_urls' => [ '/x' ], 'log_events' => [] ] );
+
+		Rule_Set::migrate_from_legacy();
+
+		$rules = Rule_Set::load()->rules();
+		$this->assertCount( 1, $rules );
+		$this->assertSame( '/x', $rules[0]->pattern );
+		$this->assertTrue( $rules[0]->is_skip(), 'skip wins for a contradictory same-pattern config' );
+	}
+
 	public function test_migration_deletes_legacy_options_and_is_idempotent(): void {
 		$this->seed_legacy( [ 'log_urls' => [], 'log_events' => [ 'wp' ] ] );
 

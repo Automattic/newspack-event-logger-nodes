@@ -3,6 +3,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -143,7 +144,7 @@ class FullPipelineTest extends TestCase {
 
 		// 3. FlameBuilder.flush() writes URL aggregate to memcache.
 		$fb->flush();
-		$url_hash = Request_Builder_Node::url_hash( '/x' );
+		$url_hash = Log_Manager::url_hash( '/x' );
 		$stats    = $store->get_url_stats( $url_hash );
 		$this->assertNotNull( $stats, 'flush should write per-URL aggregate' );
 		$this->assertSame( 1, $stats['flame_raw']['count'] );

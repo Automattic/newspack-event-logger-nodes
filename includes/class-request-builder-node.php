@@ -948,7 +948,7 @@ class Request_Builder_Node extends Timer_Node {
 		$rid     = \is_string( $rid_raw ) ? $rid_raw : '';
 		$url_raw = $request->url ?? '';
 		$url     = \is_string( $url_raw ) ? $url_raw : '';
-		$url_hash     = self::url_hash( $url );
+		$url_hash     = Log_Manager::url_hash( $url );
 		/** @var int|float|string $ts_raw */
 		$ts_raw      = $request->timestamp ?? \time();
 		$timestamp   = (int) $ts_raw;
@@ -1000,38 +1000,6 @@ class Request_Builder_Node extends Timer_Node {
 			. \str_pad( (string) $peak_mb_int, 6, '0', STR_PAD_LEFT )
 			. $method
 			. $error_status;
-	}
-
-	/**
-	 * URL hash - 12-char FNV-1a hash.
-	 *
-	 * @param string $url URL to hash.
-	 * @return string 12-character hex hash.
-	 */
-	public static function url_hash( string $url ): string {
-		// Hash the full string: callers already strip the real query string upstream,
-		// so the only '?' that survives here is the intentional ?worker_type marker --
-		// stripping it would re-collide the synthetic row onto the real URL.
-		$hash1 = self::fnv1a32( $url );
-		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
-		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
-	}
-
-	/**
-	 * FNV-1a 32-bit hash.
-	 *
-	 * @param string $str  Input string.
-	 * @param int    $seed Offset basis.
-	 * @return int 32-bit hash.
-	 */
-	private static function fnv1a32( string $str, int $seed = 2166136261 ): int {
-		$hash = $seed;
-		$len  = \strlen( $str );
-		for ( $i = 0; $i < $len; $i++ ) {
-			$hash ^= \ord( $str[ $i ] );
-			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
-		}
-		return $hash;
 	}
 
 	/**

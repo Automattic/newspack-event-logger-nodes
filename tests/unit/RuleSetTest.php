@@ -41,27 +41,117 @@ final class RuleSetTest extends TestCase {
 		global $wpdb;
 		$wpdb       = $this->wpdb_double();
 		Core::$memd = null; // pointer tests exercise the durable-option fallback by default.
+		\Newspack_Event_Logger_Nodes\Config::reset();
 	}
 
 	protected function tearDown(): void {
 		global $wpdb;
 		$wpdb       = null;
 		Core::$memd = null;
+		\Newspack_Event_Logger_Nodes\Config::reset();
 		parent::tearDown();
 	}
 
-	public function test_load_missing_option_yields_synthetic_root_log_rule(): void {
+	/** Pin the memoized Config so an absent rules option seeds from these entries. */
+	private function set_config_rules( array $rules ): void {
+		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Config::class, 'config' );
+		$ref->setValue( null, [ 'rules' => $rules ] );
+	}
+
+	public function test_load_missing_option_with_no_config_yields_synthetic_root_log_rule(): void {
+		$this->set_config_rules( [] );
 		$set = Rule_Set::load();
 		$this->assertCount( 1, $set->rules() );
 		$this->assertSame( '/', $set->rules()[0]->pattern );
 		$this->assertTrue( $set->rules()[0]->is_log() );
+		$this->assertNotSame( '', $set->rules()[0]->id, 'even the synthetic baseline carries a real id' );
+	}
+
+	public function test_load_missing_option_seeds_from_config_rules_with_pattern_hashed_ids(): void {
+		$this->set_config_rules( [
+			[ 'pattern' => '/api/', 'action' => 'skip' ],
+			[ 'pattern' => '/',     'action' => 'log' ],
+		] );
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 2, $rules );
+		// id == Log_Manager::url_hash( pattern ).
+		$this->assertSame( '4247c63fd79e', $rules[0]->id );
+		$this->assertSame( '/api/', $rules[0]->pattern );
+		$this->assertTrue( $rules[0]->is_skip() );
+		$this->assertSame( '2a0c975ed95c', $rules[1]->id );
+		$this->assertTrue( $rules[1]->is_log() );
+	}
+
+	public function test_seed_from_config_derives_id_from_pattern_ignoring_any_supplied_id(): void {
+		$this->set_config_rules( [ [ 'id' => 'home', 'pattern' => '/', 'action' => 'log' ] ] );
+		// The pattern IS the identity — a config-supplied id is ignored.
+		$this->assertSame( '2a0c975ed95c', Rule_Set::load()->rules()[0]->id );
+	}
+
+	public function test_seed_from_config_collapses_duplicate_patterns_to_one_rule(): void {
+		$this->set_config_rules( [
+			[ 'pattern' => '/api/', 'action' => 'skip' ],
+			[ 'pattern' => '/api/', 'action' => 'log' ],
+		] );
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 1, $rules, 'one id per pattern — the last entry wins' );
+		$this->assertSame( '4247c63fd79e', $rules[0]->id );
+		$this->assertTrue( $rules[0]->is_log() );
+	}
+
+	public function test_seed_from_config_carries_per_rule_fields(): void {
+		$this->set_config_rules( [
+			[ 'pattern' => '/shop/', 'action' => 'log', 'hooks' => [ 'init', 'wp' ] ],
+		] );
+
+		$rule = Rule_Set::load()->rules()[0];
+
+		$this->assertSame( [ 'init', 'wp' ], $rule->hooks );
+	}
+
+	public function test_load_missing_option_with_empty_config_rules_falls_back_to_minimal(): void {
+		$this->set_config_rules( [] );
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 1, $rules );
+		$this->assertSame( '/', $rules[0]->pattern );
+		$this->assertTrue( $rules[0]->is_log() );
 	}
 
 	public function test_load_corrupt_option_falls_back_to_minimal(): void {
+		$this->set_config_rules( [] );
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = 'not-an-array';
 		$set = Rule_Set::load();
 		$this->assertCount( 1, $set->rules() );
 		$this->assertTrue( $set->rules()[0]->is_log() );
+	}
+
+	public function test_load_mints_ids_for_stored_rules_that_lack_one(): void {
+		// A settings-synced config-default ruleset can be stored idless; load()
+		// must mint each id from the pattern so nothing collides on the '' key.
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'pattern' => '/api/', 'action' => 'skip' ],
+			[ 'pattern' => '/',     'action' => 'log' ],
+		];
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertSame( \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( '/api/' ), $rules[0]->id );
+		$this->assertSame( \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( '/' ), $rules[1]->id );
+	}
+
+	public function test_load_preserves_a_nonempty_legacy_id(): void {
+		// A non-empty (legacy positional) id is trusted — its durable hooks option
+		// is keyed by it, so load() must NOT rekey it out from under that option.
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'faed26b5', 'pattern' => '/', 'action' => 'log' ],
+		];
+		$this->assertSame( 'faed26b5', Rule_Set::load()->rules()[0]->id );
 	}
 
 	public function test_load_respects_a_valid_empty_ruleset(): void {
@@ -168,17 +258,13 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( [ 'from', 'durable' ], $mc->get( Rule_Set::mc_key( 'h8' ) ) );
 	}
 
-	public function test_generate_rule_id_avoids_a_colliding_existing_id(): void {
-		$first  = Rule_Set::generate_rule_id( [] );
-		$second = Rule_Set::generate_rule_id( [ $first ] );
-
-		$this->assertNotSame( $first, $second );
-		$this->assertNotContains( $second, [ $first ] );
+	public function test_id_for_hashes_the_pattern_via_the_shared_url_hash(): void {
+		$this->assertSame( \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( '/shop/' ), Rule_Set::id_for( '/shop/' ) );
+		$this->assertSame( '20e00bf7badc', Rule_Set::id_for( '/shop/' ) );
 	}
 
-	public function test_generate_rule_id_returns_the_deterministic_first_candidate_when_unused(): void {
-		// Same deterministic scheme migrate_from_legacy relies on: the first
-		// candidate against an empty existing-id set is stable across calls.
-		$this->assertSame( Rule_Set::generate_rule_id( [] ), Rule_Set::generate_rule_id( [] ) );
+	public function test_id_for_is_a_pure_function_of_the_pattern(): void {
+		$this->assertSame( Rule_Set::id_for( '/a/' ), Rule_Set::id_for( '/a/' ) );
+		$this->assertNotSame( Rule_Set::id_for( '/a/' ), Rule_Set::id_for( '/b/' ) );
 	}
 }

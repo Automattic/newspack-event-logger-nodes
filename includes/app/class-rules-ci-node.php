@@ -74,34 +74,20 @@ class Rules_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Assign a fresh id to any rule in the list whose id is blank, minting
-	 * against the ids already in use so no two rules in the same save collide.
+	 * Rekey every rule to its pattern-derived id (Rule_Set::id_for), ignoring any
+	 * client-supplied id, and collapse duplicate patterns to one rule (last wins).
+	 * The pattern is the identity — a save can never persist two rules for one URL.
 	 *
 	 * @param Rule[] $rules
 	 * @return Rule[]
 	 */
 	private static function ensure_ids( array $rules ): array {
-		$existing_ids = [];
+		$by_id = [];
 		foreach ( $rules as $rule ) {
-			if ( '' !== $rule->id ) {
-				$existing_ids[] = $rule->id;
-			}
+			$id            = Rule_Set::id_for( $rule->pattern );
+			$by_id[ $id ]  = $rule->with_id( $id );
 		}
-		$out = [];
-		foreach ( $rules as $rule ) {
-			if ( '' === $rule->id ) {
-				$id             = Rule_Set::generate_rule_id( $existing_ids );
-				$existing_ids[] = $id;
-				$rule           = new Rule(
-					$id, $rule->pattern, $rule->action,
-					$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
-					$rule->significant_events, $rule->custom_events,
-					$rule->hooks, $rule->hooks_in
-				);
-			}
-			$out[] = $rule;
-		}
-		return $out;
+		return \array_values( $by_id );
 	}
 
 	/** @api Used by the substrate to provide UI etc. */
@@ -146,7 +132,7 @@ class Rules_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'upsert',
-					'description' => 'Add/replace a single rule. Arg is a JSON rule object; an edit (matched by id) or a same-pattern add is replaced in place, preserving the id — so changing an existing rule\'s pattern never orphans the old one.',
+					'description' => 'Add/replace a single rule, keyed by pattern hash. Arg is a JSON rule object; a same-pattern add replaces in place, and an edit that changes the pattern (its old-pattern id round-trips) rekeys the rule and drops the old-pattern entry.',
 					'args'        => [
 						[ 'name' => 'rule', 'type' => 'string', 'required' => true ],
 					],
@@ -154,44 +140,26 @@ class Rules_CI_Node extends Service_CI_Node {
 						$decoded = self::decode_json_array( $args );
 						/** @var array<string, mixed> $decoded decoded rule object (Rule::to_array() shape). */
 						$incoming = Rule::from_array( $decoded );
+						$new_id   = Rule_Set::id_for( $incoming->pattern );
 
-						$set          = Rule_Set::load();
-						$rules        = $set->rules();
-						$existing_ids = [];
-						$match_index  = null;
-						foreach ( $rules as $i => $r ) {
-							$existing_ids[] = $r->id;
-							// An EDIT carries the rule's id: match by id so a
-							// changed pattern replaces the SAME rule in place
-							// instead of appending a new one and orphaning the
-							// old pattern. An ADD / "Log this URL" has no id:
-							// match by pattern so re-adding an already-ruled URL
-							// updates it rather than duplicating.
-							$is_match = '' !== $incoming->id
-								? $r->id === $incoming->id
-								: $r->pattern === $incoming->pattern;
-							if ( $is_match ) {
-								$match_index = $i;
+						$set       = Rule_Set::load();
+						$remaining = [];
+						foreach ( $set->rules() as $r ) {
+							// Drop the rule being edited (its old-pattern id round-trips
+							// as $incoming->id) and any rule for the same pattern — the
+							// pattern is the identity, whether or not a stored rule still
+							// carries a legacy positional id from before id_for(). The
+							// id-match is guarded against '' so an ADD (no id) never drops
+							// an unrelated rule by an empty-string collision.
+							if ( ( '' !== $incoming->id && $r->id === $incoming->id ) || $r->pattern === $incoming->pattern ) {
+								continue;
 							}
+							$remaining[] = $r;
 						}
-						$id = null !== $match_index
-							? $rules[ $match_index ]->id
-							: Rule_Set::generate_rule_id( $existing_ids );
+						$remaining[] = $incoming->with_id( $new_id );
+						$set->save( $remaining );
 
-						$saved = new Rule(
-							$id, $incoming->pattern, $incoming->action,
-							$incoming->auto_disable_threshold, $incoming->auto_protect_time_threshold,
-							$incoming->significant_events, $incoming->custom_events,
-							$incoming->hooks, $incoming->hooks_in
-						);
-						if ( null !== $match_index ) {
-							$rules[ $match_index ] = $saved;
-						} else {
-							$rules[] = $saved;
-						}
-						$set->save( $rules );
-
-						$persisted = $set->rule_by_id( $id );
+						$persisted = $set->rule_by_id( $new_id );
 						\assert( null !== $persisted );
 						return [ 'rule' => self::wire_shape( $persisted ) ];
 					},

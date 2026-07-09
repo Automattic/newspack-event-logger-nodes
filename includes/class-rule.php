@@ -87,6 +87,16 @@ final class Rule {
 		return \array_values( \array_map( static fn ( mixed $item ): string => self::to_str( $item, '' ), $v ) );
 	}
 
+	/** A copy of this rule under a different id (immutable — the id is a pure function of the pattern; see Rule_Set::id_for). */
+	public function with_id( string $id ): self {
+		return new self(
+			$id, $this->pattern, $this->action,
+			$this->auto_disable_threshold, $this->auto_protect_time_threshold,
+			$this->significant_events, $this->custom_events,
+			$this->hooks, $this->hooks_in
+		);
+	}
+
 	public function is_skip(): bool {
 		return ! $this->is_log();
 	}

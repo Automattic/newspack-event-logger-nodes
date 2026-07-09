@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`$config['rules']` seeds the per-URL ruleset when no rules option is stored.** `rules` is now a `Settings_Schema` overlay-only field (`ui: false`), so a deployment can declare its rules in `newspack-event-logger-nodes-config.php` and `Rule_Set::load()` builds the ruleset from them (read-time, non-persisting) until the rules editor writes the option — the same role the old `Rule::minimal( '/' )` fallback filled, now config-driven. Empty/absent config `rules` still falls back to the minimal log-all baseline. Config rules omit `id` entirely — see below.
+- **The shipped default config seeds baseline skip rules.** `newspack-event-logger-nodes-config.php` now ships a `rules` list that skips the substrate's worker endpoints (`/wp-json/newspack-nodes/v1/{command,messages/stream,workers/spawn}`) and `/wp-cron.php`, and logs everything else (`/`) — so a fresh install doesn't log the logger's own worker IPC/SSE/spawn traffic. Only seeds when no rules option exists; existing installs (which have a stored/migrated option) are unaffected.
+
+### Changed
+
+- **A rule's id is now the pattern's `url_hash`, not a positional token.** `Rule_Set::id_for( $pattern )` derives every rule id from its URL pattern via the shared `Log_Manager::url_hash()`, replacing the positional `generate_rule_id()`/`gen_id()` (`substr( md5( 'eln_rule_' . $n ), 0, 8 )`). The pattern is the identity: there is exactly one id per pattern, so the ruleset can never hold two differently-configured rules for the same URL. All minting sites — `migrate_from_legacy()` (which now dedupes a URL appearing in both `skip_urls` and `log_urls`, skip winning), the config seed, and the `rules` CI (`save` derives + dedupes, `upsert` matches by pattern so it replaces rather than duplicating and drops the old-pattern entry on a rename) — route through it; a client-supplied id is ignored. `Rule_Set::load()` mints an id for any stored rule that lacks one (e.g. a settings-synced config default) while trusting a non-empty legacy id, so no rule ever collides on an empty-string key. Rule edits still never lose a pointer-tier rule's hooks because the editor round-trips the full resolved hook list on every save.
+- **`url_hash()` + `fnv1a32()` moved from `Request_Builder_Node` to `Log_Manager`** as the single shared URL-identity primitive (firehose per-URL key, per-URL rule id, and stats bucket all agree). `Flame_Builder_Node` no longer reaches across to `Request_Builder_Node` for it.
+
 ## [0.27.0] - 2026-07-07
 
 ### Changed
