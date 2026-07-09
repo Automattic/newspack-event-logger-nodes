@@ -27,6 +27,9 @@ final class Rule_Set {
 	public const OPTION_RULES          = 'newspack_event_logger_nodes_rules';
 	public const OPTION_SCHEMA_VERSION = 'newspack_event_logger_nodes_rules_schema_version';
 
+	/** Current ruleset schema. v1: legacy-option migration. v2: ids are id_for(pattern). */
+	public const SCHEMA_VERSION = 2;
+
 	/** @var Rule[] */
 	private array $rules;
 
@@ -198,21 +201,56 @@ final class Rule_Set {
 	}
 
 	/**
-	 * One-time, idempotent, behavior-preserving migration from the seven legacy
-	 * options. Returns whether it ran and whether a skip/log prefix overlap was
-	 * detected (the documented semantics-flip caveat).
+	 * One-time, idempotent, version-gated ruleset migration, run on activation
+	 * (the deploy deactivates then re-installs+activates). Steps: v0→v1 folds the
+	 * seven legacy options into a ruleset; v1→v2 rekeys stored ids to id_for(pattern).
+	 * Returns whether anything ran and whether a skip/log prefix overlap was
+	 * detected during v0→v1.
 	 *
 	 * @return array{migrated: bool, overlap: bool}
 	 */
 	public static function migrate_from_legacy(): array {
-		if ( false !== \get_option( self::OPTION_SCHEMA_VERSION, false ) ) {
+		$version = self::to_int( \get_option( self::OPTION_SCHEMA_VERSION, 0 ) );
+		if ( $version >= self::SCHEMA_VERSION ) {
 			return [
 				'migrated' => false,
 				'overlap'  => false,
 			];
 		}
+		$overlap = $version < 1 ? self::migrate_legacy_options() : false;
+		// Every sub-v2 install needs the id rekey: a v0 install after the legacy
+		// fold-in (its rules already carry id_for ids, so this is a cheap re-save),
+		// a v1 install directly.
+		self::rekey_ids();
+		\update_option( self::OPTION_SCHEMA_VERSION, self::SCHEMA_VERSION, true );
+		return [
+			'migrated' => true,
+			'overlap'  => $overlap,
+		];
+	}
 
-		$p        = 'newspack_event_logger_nodes_';
+	/**
+	 * v0→v1: synthesize a ruleset from the seven legacy options and delete them.
+	 * Returns whether a skip/log prefix overlap was detected.
+	 */
+	private static function migrate_legacy_options(): bool {
+		$p            = 'newspack_event_logger_nodes_';
+		$legacy_keys  = [ 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events', 'auto_disable_threshold', 'auto_protect_time_threshold' ];
+		$absent       = "\0__eln_absent__\0";
+		$any_present  = false;
+		foreach ( $legacy_keys as $short ) {
+			if ( $absent !== \get_option( $p . $short, $absent ) ) {
+				$any_present = true;
+				break;
+			}
+		}
+		if ( ! $any_present ) {
+			// Nothing to migrate — leave the rules option absent so the file-config
+			// seed (Rule_Set::load) owns a fresh install's ruleset instead of a
+			// fabricated '/' rule shadowing it.
+			return false;
+		}
+
 		$log_urls = self::string_list( \get_option( $p . 'log_urls', [] ) );
 		$skip     = self::string_list( \get_option( $p . 'skip_urls', [] ) );
 		$bundle   = [
@@ -249,15 +287,46 @@ final class Rule_Set {
 
 		( new self( [] ) )->save( $rules );
 
-		foreach ( [ 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events', 'auto_disable_threshold', 'auto_protect_time_threshold' ] as $short ) {
+		foreach ( $legacy_keys as $short ) {
 			\delete_option( $p . $short );
 		}
-		\update_option( self::OPTION_SCHEMA_VERSION, 1, true );
 
-		return [
-			'migrated' => true,
-			'overlap'  => $overlap,
-		];
+		return $overlap;
+	}
+
+	/**
+	 * v1→v2: rekey each stored rule to id_for(pattern). Resolves a rule's hooks
+	 * under its CURRENT (positional/idless) id first, then re-saves them inline so
+	 * save() re-tiers under the new id and reconciles the old durable option away —
+	 * no pointer-tier hooks are lost. Dedupes any same-pattern collisions.
+	 */
+	private static function rekey_ids(): void {
+		$raw = \get_option( self::OPTION_RULES, null );
+		if ( ! \is_array( $raw ) ) {
+			return;
+		}
+		$rekeyed = [];
+		foreach ( $raw as $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
+			$rule      = Rule::from_array( $entry );
+			$id        = self::id_for( $rule->pattern );
+			$candidate = new Rule(
+				$id, $rule->pattern, $rule->action,
+				$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
+				$rule->significant_events, $rule->custom_events,
+				self::hooks_for( $rule ), Rule::HOOKS_INLINE
+			);
+			// Same-pattern collision: skip wins regardless of stored order, matching
+			// migrate_legacy_options' skip-first precedence.
+			$existing = $rekeyed[ $id ] ?? null;
+			if ( null === $existing || ( $existing->is_log() && $candidate->is_skip() ) ) {
+				$rekeyed[ $id ] = $candidate;
+			}
+		}
+		( new self( [] ) )->save( \array_values( $rekeyed ) );
 	}
 
 	/**
@@ -331,18 +400,16 @@ final class Rule_Set {
 
 	/**
 	 * Read-time default when the option is absent (or corrupt): build the ruleset
-	 * from the file config's `rules` list, minting ids for entries that omit one,
-	 * and fall back to the minimal log-all baseline when config carries none. Does
-	 * NOT persist — like the old Rule::minimal fallback, the file value stands in
-	 * until the rules editor writes the option.
+	 * from the file config's `rules` list, minting ids for entries that omit one.
+	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
+	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
+	 * baseline. Does NOT persist — the file value stands in until the editor writes
+	 * the option.
 	 */
 	private static function seed_from_config(): self {
 		$config = \class_exists( Config::class ) ? Config::load_config() : [];
 		$raw    = $config['rules'] ?? [];
-		$rules  = \is_array( $raw ) ? self::rules_from_config( $raw ) : [];
-		// The minimal baseline still carries a real id, so no seeded/persisted rule
-		// ever has id '' (which would collide on rule_by_id / the durable-hooks key).
-		return new self( [] === $rules ? [ Rule::minimal( '/' )->with_id( self::id_for( '/' ) ) ] : $rules );
+		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
 	}
 
 	/**

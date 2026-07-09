@@ -67,29 +67,17 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		return $msg;
 	}
 
-	/**
-	 * Seed the ruleset with a baseline `/` LOG rule carrying the given hooks —
-	 * the merge target now that the retired global log_events option is gone.
-	 * Direct-assigned (not update_option) so it fires no settings event.
-	 *
-	 * @param string[] $hooks  Inline instrumented-hook list.
-	 * @param string[] $custom Rule custom-event list.
-	 */
-	private function seed_baseline( array $hooks, array $custom = [] ): void {
+	/** Seed a `/` LOG rule; direct-assigned (not update_option) so it fires no settings event. */
+	private function seed_rule( array $hooks = [] ): void {
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
-			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'hooks' => $hooks, 'custom_events' => $custom ],
+			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'hooks' => $hooks ],
 		];
 	}
 
-	/** The baseline `/` LOG rule's current instrumented-hook list. */
-	private function baseline_hooks(): array {
-		$set = Rule_Set::load();
-		foreach ( $set->rules() as $rule ) {
-			if ( $rule->is_log() && '/' === $rule->pattern ) {
-				return Rule_Set::hooks_for( $rule );
-			}
-		}
-		return [];
+	/** @return array<string,mixed> The discovered_hooks staging option. */
+	private function discovered_hooks(): array {
+		$v = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_hooks'] ?? [];
+		return \is_array( $v ) ? $v : [];
 	}
 
 	public function test_fire_emits_one_discovery_get_command_to_tee(): void {
@@ -135,88 +123,92 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertFalse( $node->oneshot );
 	}
 
-	public function test_fill_unions_registered_hooks_into_the_baseline_rule(): void {
-		$this->seed_baseline( [ 'init' ] );
+	public function test_fill_unions_registered_hooks_into_discovered_hooks(): void {
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
 		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded', 'shutdown' ] ] );
 		$node->fill( $msg );
 
-		$this->assertSame( [ 'init', 'wp_loaded', 'shutdown' ], $this->baseline_hooks() );
+		$this->assertSame( [ 'wp_loaded', 'shutdown' ], \array_keys( $this->discovered_hooks() ) );
+	}
+
+	public function test_fill_never_writes_the_ruleset(): void {
+		// A seeded rule must be byte-identical after a merge — discovery stages
+		// hooks, it never touches rules.
+		$this->seed_rule( [ 'init' ] );
+		$before = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$sink   = new Capture_Sink_Node();
+		$node   = $this->wired_node( $sink );
+
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded', 'shutdown' ] ] ) );
+
+		$this->assertSame( $before, $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ], 'the ruleset is untouched' );
+		$this->assertArrayHasKey( 'wp_loaded', $this->discovered_hooks() );
 	}
 
 	public function test_fill_two_partial_replies_converge_to_union(): void {
-		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
 		// Out-of-order / partial replies: each folds in independently.
-		$first  = $this->reply( [ 'registered_hooks' => [ 'shutdown' ] ] );
-		$second = $this->reply( [ 'registered_hooks' => [ 'wp_loaded', 'init' ] ] );
-		$node->fill( $first );
-		$node->fill( $second );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'shutdown' ] ] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded', 'shutdown' ] ] ) );
 
-		$result = $this->baseline_hooks();
+		$result = \array_keys( $this->discovered_hooks() );
 		\sort( $result );
-		$this->assertSame( [ 'init', 'shutdown', 'wp_loaded' ], $result );
+		$this->assertSame( [ 'shutdown', 'wp_loaded' ], $result );
 	}
 
-	public function test_fill_excludes_custom_events_from_the_baseline_rule(): void {
-		$this->seed_baseline( [ 'init' ] );
+	public function test_fill_routes_hooks_and_custom_events_to_their_staging_options(): void {
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
 		$msg = $this->reply( [
-			'registered_hooks' => [ 'init', 'my_custom', 'wp_footer' ],
+			'registered_hooks' => [ 'init', 'wp_footer' ],
 			'custom_events'    => [ 'my_custom' ],
 		] );
 		$node->fill( $msg );
 
-		$result = $this->baseline_hooks();
-		$this->assertContains( 'wp_footer', $result );
-		$this->assertNotContains( 'my_custom', $result, 'custom events must not pollute the rule hooks' );
-
-		$discovered = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
-		$this->assertArrayHasKey( 'my_custom', $discovered );
+		$this->assertSame( [ 'init', 'wp_footer' ], \array_keys( $this->discovered_hooks() ) );
+		$events = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
+		$this->assertArrayHasKey( 'my_custom', $events );
 	}
 
-	public function test_fill_caps_rule_hooks_at_max(): void {
+	public function test_fill_caps_discovered_hooks_at_max(): void {
 		$max_events = ( new \ReflectionClassConstant( Discovery_Collector_Node::class, 'MAX_EVENTS' ) )->getValue();
 		$existing   = [];
 		for ( $i = 0; $i < $max_events; $i++ ) {
-			$existing[] = "existing_{$i}";
+			$existing[ "existing_{$i}" ] = true;
 		}
-		$this->seed_baseline( $existing );
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_hooks'] = $existing;
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
-		$msg = $this->reply( [ 'registered_hooks' => [ 'new_one', 'new_two' ] ] );
-		$node->fill( $msg );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'new_one', 'new_two' ] ] ) );
 
-		$this->assertSame( $max_events, \count( $this->baseline_hooks() ), 'cap must hold' );
+		$this->assertSame( $max_events, \count( $this->discovered_hooks() ), 'cap must hold' );
 	}
 
-	public function test_fill_emits_a_settings_event_for_the_merged_rules_option(): void {
+	public function test_fill_emits_no_settings_event_for_the_ruleset(): void {
 		$this->wire_option_watcher();
-		$this->seed_baseline( [ 'init' ] );
+		$this->seed_rule( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
-		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] );
-		$node->fill( $msg );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] ) );
 
-		// Rule_Set::save() writes the rules option like any other option change;
-		// the watcher fires a name-only settings event for it (no suppress guard).
-		$this->assertCount( 1, $this->settings_events, 'merge emits a settings event for the rules option it writes' );
-		$this->assertSame(
-			[ 'option' => Rule_Set::OPTION_RULES ],
-			$this->settings_events[0][ Message::VALUE ]
-		);
+		// The merge must actually stage the hook — otherwise the no-event assertion
+		// below would pass vacuously on a broken staging path.
+		$this->assertArrayHasKey( 'wp_loaded', $this->discovered_hooks(), 'the hook was staged' );
+
+		// Discovery stages hooks in a non-autoloaded option; it never writes the
+		// ruleset, so no rules settings event propagates to spokes.
+		$options = \array_column( \array_column( $this->settings_events, Message::VALUE ), 'option' );
+		$this->assertNotContains( Rule_Set::OPTION_RULES, $options, 'discovery must not emit a rules settings event' );
 	}
 
 	public function test_fill_ignores_non_struct_message(): void {
-		$this->seed_baseline( [ 'init' ] );
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
@@ -225,7 +217,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$msg[ Message::VALUE ] = 'not an array';
 		$node->fill( $msg );
 
-		$this->assertSame( [ 'init' ], $this->baseline_hooks() );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_discovered_hooks', $GLOBALS['_wp_options'] );
 	}
 
 	public function test_node_schema_is_monitor(): void {

@@ -64,13 +64,15 @@ class Config {
 	 * but their values can grow unbounded (full instrumented-hook maps), so
 	 * keeping them out of the per-request `alloptions` blob is the right
 	 * trade — one targeted read each beats bloating every frontend request.
-	 * `discovered_events` is admin/health-check-only (not even in the schema)
-	 * and is listed here so its writers route through the same helper.
+	 * `discovered_events` / `discovered_hooks` are admin/health-check-only (not
+	 * even in the schema) and are listed here so their writers route through the
+	 * same helper.
 	 *
 	 * @var array<string, bool>
 	 */
 	private static $non_autoloaded_options = [
 		'newspack_event_logger_nodes_discovered_events' => true,
+		'newspack_event_logger_nodes_discovered_hooks'  => true,
 	];
 
 	/**

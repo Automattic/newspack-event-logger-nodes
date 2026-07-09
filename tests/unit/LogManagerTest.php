@@ -445,10 +445,10 @@ class LogManagerTest extends TestCase {
 
 	public function test_matches_url_filter_directly(): void {
 		$this->require_config_or_skip();
-		// No rules option set: Rule_Set::load() falls back to the synthetic
-		// '/' log-all rule.
+		// A '/' log rule matches every URL (there is no implicit log-all default).
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ] );
 		$lm = Log_Manager::instance();
-		$this->assertTrue( $lm->matches_url_filter( '/anything' ), 'No filter = log all' );
+		$this->assertTrue( $lm->matches_url_filter( '/anything' ), 'a / log rule matches any URL' );
 	}
 
 	// ── URL filter: prefix match with a '?' terminator ─────────────────────

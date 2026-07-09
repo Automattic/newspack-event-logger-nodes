@@ -38,7 +38,7 @@ const VIEW = 'hookcatalog:view';
 const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
 // A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
-// Messages addressed back along FROM (the server's reply pivot). The payload
+// Messages addressed back along FROM (the server's TO=FROM reply). The payload
 // can be looked up by verb so a hooks_registered reply yields the catalog dict.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {

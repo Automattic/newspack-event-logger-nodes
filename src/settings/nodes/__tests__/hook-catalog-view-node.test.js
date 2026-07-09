@@ -4,7 +4,7 @@
  *
  * Post-migration, `fill()` receives the raw reply Messages HttpOutNode feeds back
  * from POST /command: the router peels the reply's TO (= `hookcatalog:view`,
- * stamped from the outbound FROM by the server's reply pivot) and delivers them
+ * stamped from the outbound FROM by the server's TO=FROM reply) and delivers them
  * here. VALUE is the `{ name, payload }` envelope.
  *
  * On a `hooks_registered` reply the node turns the raw

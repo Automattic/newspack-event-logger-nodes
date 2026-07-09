@@ -25,7 +25,7 @@
  * resolveRequest (request_search, navigation) + fetchUrlBreakdown (url_detail
  * breakdown) are AWAITED Promises settled via the relevant view's PendingReplies
  * (the useHookCatalogGraph / hook-catalog-view-node pattern): the hook stashes a
- * resolver under message[ID], the server pivots TO=FROM=that view, and the view's
+ * resolver under message[ID], the server replies TO=FROM=that view, and the view's
  * PendingReplies.settle resolves/rejects without touching its data slice.
  *
  * The hook returns ONLY control callbacks (`handleUrlParamsChange`,
@@ -263,8 +263,8 @@ export function usePerformanceGraph( opts = {} ) {
 	} );
 
 	// Fire a TM_COMMAND through the interpreter toward the egress. FROM = the
-	// node the reply pivots back to; the router peels TARGET, HttpOut POSTs, the
-	// server pivots TO=FROM. Batched into the next HttpOut flush.
+	// node the reply returns to; the router peels TARGET, HttpOut POSTs, the
+	// server replies TO=FROM. Batched into the next HttpOut flush.
 	const sendCommand = useCallback(
 		( verb, args, from, id, target = TARGET ) => {
 			const interpreter = interpreterRef.current;
@@ -579,7 +579,7 @@ export function usePerformanceGraph( opts = {} ) {
 	// Send a correlated command and await the reply the given view settles via its
 	// PendingReplies (the fetchUrlBreakdown/resolveRequest pattern). Resolves the
 	// reply payload; null when the graph is gone or the reply rejects. The rules
-	// commands ride the same URL-detail view — the reply pivots TO=FROM=that view,
+	// commands ride the same URL-detail view — the reply returns TO=FROM=that view,
 	// where the ID-matched resolver settles WITHOUT touching the modal's slice.
 	const awaitReply = useCallback(
 		async ( viewName, verb, args, target ) => {

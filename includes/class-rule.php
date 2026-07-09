@@ -125,11 +125,4 @@ final class Rule {
 			'hooks_in'                    => $this->hooks_in,
 		];
 	}
-
-	/**
-	 * The safe baseline: log everything at this prefix, no hook instrumentation.
-	 */
-	public static function minimal( string $pattern = '/' ): self {
-		return new self( '', $pattern, self::ACTION_LOG );
-	}
 }

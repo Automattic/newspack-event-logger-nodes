@@ -19,7 +19,7 @@
  * (FROM=`hookcatalog:view`, TO=`_http/performance`, VALUE.name=`hooks_registered`)
  * with a unique `message[ID]`, stashes a Promise resolver in the view's `pending`
  * Map, and fills the message into the interpreter. The router peels `_http`, HttpOutNode
- * POSTs, the server pivots the reply TO=FROM, the router peels
+ * POSTs, the server replies TO=FROM, the router peels
  * `hookcatalog:view`, and the view's `fill()` matches `message[ID]` to settle
  * the Promise + extract hooks_by_category for the render model.
  *
@@ -113,7 +113,7 @@ export function useHookCatalogGraph( opts = {} ) {
 				nonce: data.nonce || '',
 			} );
 
-		// The application view-model node — receiver of every reply via TO=FROM pivot.
+		// The application view-model node — receiver of every reply via the TO=FROM reply.
 		interpreter.makeNode( 'HookCatalogView', VIEW );
 
 		interpreterRef.current = interpreter;

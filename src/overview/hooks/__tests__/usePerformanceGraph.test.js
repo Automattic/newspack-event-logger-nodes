@@ -38,7 +38,7 @@ const ROUTER = '_router';
 const HTTP = '_http';
 
 // A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
-// Messages addressed back along FROM (the server's reply pivot), payload looked
+// Messages addressed back along FROM (the server's TO=FROM reply), payload looked
 // up by verb.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {

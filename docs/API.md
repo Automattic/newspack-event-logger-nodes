@@ -37,7 +37,7 @@ Content-Type: application/json
 - `KEY` is the verb name on that CI.
 - `VALUE` is the verb arguments (JSON object). The substrate validates each argument against the CI's `node_schema()['commands'][*]['args']` declaration before dispatching.
 
-The reply is a TM_COMMAND-shaped envelope routed back via `TO=FROM` pivot, with the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see architecture-guide.md → "Canonical view contract").
+The reply is a TM_COMMAND-shaped envelope routed back via the `TO=FROM` reply, with the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see architecture-guide.md → "Canonical view contract").
 
 ## Service CIs
 
@@ -107,7 +107,7 @@ The dashboards also call into substrate-owned CIs over the same `/command` endpo
 | TO | Verb examples | Used by |
 |----|---------------|---------|
 | `workers` | `list`, `restart`, `heartbeat`, `dump_metadata`, `cleanup_status` | Workers dashboard, performance dashboards' restart action, every SSE dashboard's `_heartbeat` keep-alive |
-| `_http/<ci-name>` | (transport wrapper) | All dashboards — the React graphs target `_http/<ci-name>` so the substrate's `Http_Out_Node` pivots the reply back to FROM |
+| `_http/<ci-name>` | (transport wrapper) | All dashboards — the React graphs target `_http/<ci-name>` so the substrate's `Http_Out_Node` routes the reply back to FROM |
 
 `_http/workers` is the canonical heartbeat target used by every SSE dashboard's `_heartbeat` node to keep the slot alive.
 

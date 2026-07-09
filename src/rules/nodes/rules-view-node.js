@@ -9,7 +9,7 @@ import {
  *
  * `fill()` receives the raw reply Messages HttpOutNode feeds back from POST
  * /command (the router peels the reply's TO = `rules:view`, stamped from the
- * outbound FROM by the server's reply pivot). VALUE is the `{ name, payload }`
+ * outbound FROM by the server's TO=FROM reply). VALUE is the `{ name, payload }`
  * envelope.
  *
  * A `list` reply refreshes the table (`payload.rules`). The `replies` registry

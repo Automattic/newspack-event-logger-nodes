@@ -79,21 +79,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();
 		\Newspack_Event_Logger_Nodes\Current_Request_Overlay::init();
 	}
-
-	// One-time migration from the seven retired options; the version gate makes
-	// this a single option-read after the first run. Admin/CLI only — never on
-	// the front-end hot path.
-	if ( ( \function_exists( 'is_admin' ) && \is_admin() ) || ( \defined( 'WP_CLI' ) && \WP_CLI ) ) {
-		$newspack_event_logger_nodes_migration = \Newspack_Event_Logger_Nodes\Rule_Set::migrate_from_legacy();
-		if ( $newspack_event_logger_nodes_migration['overlap'] ) {
-			\add_action(
-				'admin_notices',
-				static function (): void {
-					echo '<div class="notice notice-warning"><p>' . \esc_html__( 'Event Logger: your skip/log URL lists had overlapping prefixes. Under the new most-specific-wins ruleset, behavior for the more-specific URLs may have changed — review your logging rules.', 'newspack-event-logger-nodes' ) . '</p></div>';
-				}
-			);
-		}
-	}
 };
 
 $_newspack_event_logger_nodes_bootstrap = static function () use (
@@ -112,6 +97,22 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	$_newspack_event_logger_nodes_bootstrap();
 } else {
 	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_bootstrap, 11 );
+}
+
+// XXX:
+// Run the one-time ruleset migration on activation. The deploy deactivates then
+// re-installs+activates (a genuine inactive→active transition), so stored rules
+// get normalized here without every admin request re-checking a version gate.
+// Substrate-gated (Requires Plugins keeps it present).
+if ( \function_exists( 'register_activation_hook' ) ) {
+	\register_activation_hook(
+		__FILE__,
+		static function (): void {
+			if ( \class_exists( '\Newspack_Nodes\Core' ) ) {
+				\Newspack_Event_Logger_Nodes\Rule_Set::migrate_from_legacy();
+			}
+		}
+	);
 }
 
 const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];

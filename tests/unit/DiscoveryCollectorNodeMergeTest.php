@@ -2,9 +2,10 @@
 /**
  * DiscoveryCollectorNodeMergeTest: the defensive / shape-variant branches of
  * the hub-side union-merge that the happy-path DiscoveryCollectorNodeTest
- * doesn't exercise — read-back arguments, non-array payload guards, the
- * malformed-option fallbacks (option not an array), and the associative /
- * indexed list-shape normalizations in merge_hooks / merge_events.
+ * doesn't exercise — read-back arguments, non-array payload guards, and the
+ * malformed-option fallbacks for the discovered_hooks / discovered_events
+ * staging options. Discovery stages spoke-reported hooks/events into those
+ * options; it never writes the ruleset (the editor is the only rules writer).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,6 +21,9 @@ use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Discovery_Collector_Node::class )]
 class DiscoveryCollectorNodeMergeTest extends TestCase {
+
+	private const HOOKS_OPTION  = 'newspack_event_logger_nodes_discovered_hooks';
+	private const EVENTS_OPTION = 'newspack_event_logger_nodes_discovered_events';
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -45,28 +49,10 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		return $msg;
 	}
 
-	/**
-	 * Seed the ruleset with a baseline `/` LOG rule (the merge target). Direct
-	 * assignment fires no settings event.
-	 *
-	 * @param string[] $hooks  Inline instrumented-hook list.
-	 * @param string[] $custom Rule custom-event list.
-	 */
-	private function seed_baseline( array $hooks, array $custom = [] ): void {
-		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
-			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'hooks' => $hooks, 'custom_events' => $custom ],
-		];
-	}
-
-	/** The baseline `/` LOG rule's current instrumented-hook list. */
-	private function baseline_hooks(): array {
-		$set = Rule_Set::load();
-		foreach ( $set->rules() as $rule ) {
-			if ( $rule->is_log() && '/' === $rule->pattern ) {
-				return Rule_Set::hooks_for( $rule );
-			}
-		}
-		return [];
+	/** @return array<string,mixed> The discovered_hooks staging option. */
+	private function discovered_hooks(): array {
+		$v = $GLOBALS['_wp_options'][ self::HOOKS_OPTION ] ?? [];
+		return \is_array( $v ) ? $v : [];
 	}
 
 	public function test_arguments_null_reads_back_last_set_value(): void {
@@ -91,7 +77,6 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 	}
 
 	public function test_fill_ignores_struct_value_without_array_payload(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
 		// VALUE is an array, but `payload` is missing → merge must be skipped.
@@ -100,67 +85,45 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$msg[ Message::VALUE ] = [ 'name' => 'get' ];
 		$node->fill( $msg );
 
-		$this->assertSame( [ 'init' ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] );
+		$this->assertArrayNotHasKey( self::HOOKS_OPTION, $GLOBALS['_wp_options'], 'no payload → nothing staged' );
 	}
 
-	public function test_merge_recovers_when_rules_option_is_not_an_array(): void {
-		// A corrupt/scalar rules option must fall back to the minimal baseline
-		// before the union, not fatal.
-		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = 'corrupt-scalar';
+	public function test_hooks_stage_into_discovered_hooks_and_never_touch_the_ruleset(): void {
+		// Spoke-reported hooks accumulate in the discovered_hooks staging option;
+		// the ruleset is not written (not even minted) — the editor owns rules.
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
-		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] );
-		$node->fill( $msg );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded', 'init' ] ] ) );
 
-		$this->assertSame( [ 'wp_loaded' ], $this->baseline_hooks() );
+		$this->assertArrayHasKey( 'wp_loaded', $this->discovered_hooks() );
+		$this->assertArrayHasKey( 'init', $this->discovered_hooks() );
+		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'], 'discovery must never write the ruleset' );
 	}
 
-	public function test_merge_mints_the_baseline_rule_when_absent(): void {
-		// No rules seeded → Rule_Set::load() yields a minimal baseline the merge
-		// folds hooks into without fataling.
+	public function test_hooks_union_across_replies_and_dedupe(): void {
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
-		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] );
-		$node->fill( $msg );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'init', 'wp' ] ] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp', 'wp_loaded' ] ] ) );
 
-		$this->assertContains( 'wp_loaded', $this->baseline_hooks() );
+		$this->assertSame( [ 'init', 'wp', 'wp_loaded' ], \array_keys( $this->discovered_hooks() ) );
 	}
 
-	public function test_merge_excludes_rule_custom_events_supplied_as_an_indexed_list(): void {
-		// The baseline rule's custom_events (an INDEXED list) seed the exclusion
-		// lookup so a custom event never leaks into the instrumented-hook set.
-		$this->seed_baseline( [ 'init' ], [ 'my_custom' ] );
+	public function test_merge_recovers_when_discovered_hooks_option_is_not_an_array(): void {
+		$GLOBALS['_wp_options'][ self::HOOKS_OPTION ] = 'corrupt-scalar';
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
-		$msg = $this->reply( [ 'registered_hooks' => [ 'my_custom', 'wp_footer' ] ] );
-		$node->fill( $msg );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] ) );
 
-		$result = $this->baseline_hooks();
-		$this->assertContains( 'wp_footer', $result );
-		$this->assertNotContains( 'my_custom', $result );
-	}
-
-	public function test_merge_dedupes_existing_rule_hooks(): void {
-		// Duplicates in the baseline rule's hooks normalize to a unique flat list
-		// before the union folds new hooks in.
-		$this->seed_baseline( [ 'init', 'init', 'wp' ] );
-		$node = $this->wired_node( new Capture_Sink_Node() );
-
-		$msg = $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] );
-		$node->fill( $msg );
-
-		$result = $this->baseline_hooks();
-		\sort( $result );
-		$this->assertSame( [ 'init', 'wp', 'wp_loaded' ], $result );
+		$this->assertArrayHasKey( 'wp_loaded', $this->discovered_hooks() );
 	}
 
 	public function test_merge_recovers_when_discovered_events_option_is_not_an_array(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] = 'corrupt-scalar';
+		$GLOBALS['_wp_options'][ self::EVENTS_OPTION ] = 'corrupt-scalar';
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
-		$msg = $this->reply( [ 'custom_events' => [ 'evt_a' ] ] );
-		$node->fill( $msg );
+		$node->fill( $this->reply( [ 'custom_events' => [ 'evt_a' ] ] ) );
 
-		$this->assertArrayHasKey( 'evt_a', $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] );
+		$this->assertArrayHasKey( 'evt_a', $GLOBALS['_wp_options'][ self::EVENTS_OPTION ] );
 	}
 }
