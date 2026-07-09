@@ -13,8 +13,8 @@
  *
  * Sources the union of instrumented hooks + custom events across every LOG
  * rule in the durable ruleset (`Rule_Set::instrumented_union()`) and filters
- * custom event names out of registered_hooks to match the legacy payload
- * exactly. The retired global `log_events` / `custom_events` options are gone.
+ * custom event names out of registered_hooks to match the discovery payload
+ * exactly.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -31,8 +31,7 @@ class Discovery_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Pull a flat de-duplicated string list out of either an indexed-string
-	 * array or an `assoc[name => true]` shape. Lift of the legacy
-	 * `DiscoveryController::extract_string_list` private helper.
+	 * array or an `assoc[name => true]` shape.
 	 *
 	 * @param mixed $value Raw config value.
 	 * @return array<int,string>

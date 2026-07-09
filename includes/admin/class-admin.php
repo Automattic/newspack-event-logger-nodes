@@ -7,12 +7,11 @@
  *   - enable_logging
  *   - log_memory / flush_every_line
  *
- * The former URL filters, hook lists, and auto-tune thresholds are no longer
- * global settings — they moved to per-rule fields in the
- * `newspack_event_logger_nodes_rules` option (Task 10).
+ * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
+ * `newspack_event_logger_nodes_rules` option, not global settings.
  *
- * Substrate-level options (base_directory, partitioning, memcache_servers,
- * enable_workers) live on `\Newspack_Nodes\Admin\Admin` under the
+ * Substrate-level options (base_directory, partitioning, memcache_servers)
+ * live on `\Newspack_Nodes\Admin\Admin` under the
  * `newspack_nodes_*` prefix. This class may READ substrate values via
  * `\Newspack_Nodes\Config` but must NOT WRITE them. The aggregator spoke
  * list is owned by the substrate `\Newspack_Nodes\Vault`, not here.
@@ -112,7 +111,7 @@ class Admin {
 	 * Application-level option names cleared by `handle_reset_settings()`.
 	 *
 	 * Substrate-level options (base_directory, num_partitions, num_segments,
-	 * segment_size, max_lifespan, memcache_servers, enable_workers) live on
+	 * segment_size, max_lifespan, memcache_servers) live on
 	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. Application
 	 * admin only owns the keys below. (The aggregator spoke list is NOT here —
 	 * it's owned by the substrate `\Newspack_Nodes\Vault` and managed by its
@@ -528,7 +527,7 @@ class Admin {
 	 * Register settings with the WP Settings API.
 	 *
 	 * Wires application-level options ONLY. Substrate options (base_directory,
-	 * partitioning, memcache_servers, enable_workers) are registered by
+	 * partitioning, memcache_servers) are registered by
 	 * `\Newspack_Nodes\Admin\Admin` under the `newspack_nodes` group. Child
 	 * plugins extend by hooking `admin_init` AFTER this runs and calling
 	 * `add_settings_section/field()` on `self::SETTINGS_PAGE`.

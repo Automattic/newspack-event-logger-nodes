@@ -16,10 +16,10 @@ use Newspack_Nodes\Core;
 /**
  * Rule LIST rides an autoloaded option. A heavy rule's hooks live in a
  * NON-autoloaded durable option (system of record) mirrored into memcache
- * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover (Task 0).
+ * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover.
  */
 final class Rule_Set {
-	public const INLINE_HOOK_LIMIT     = 100; // <-- freeze from Task 0's crossover N (>= 65).
+	public const INLINE_HOOK_LIMIT     = 100; // Inline/durable crossover threshold; do not set below 65.
 	public const MC_HOOKS_PREFIX       = 'evlog:rules:hooks:';
 	public const MC_TTL                = 3600;
 	public const OPTION_HOOKS_PREFIX   = 'newspack_event_logger_nodes_rule_hooks_';
@@ -320,8 +320,7 @@ final class Rule_Set {
 	/**
 	 * The union across every LOG rule of the hooks it instruments and the custom
 	 * events it tracks. Feeds Discovery (spoke payload) and Hook_Categorizer
-	 * (browse-modal selected set) now that those readers no longer consult the
-	 * retired global `log_events` / `custom_events` options.
+	 * (browse-modal selected set).
 	 *
 	 * @return array{hooks: string[], custom_events: string[]}
 	 */

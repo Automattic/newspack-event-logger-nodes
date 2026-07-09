@@ -85,7 +85,7 @@ class Job_Router_Node extends Node {
 
 		// Resolve the kind from the entry-level `k` — the canonical dispatch
 		// field. It's what LogManager::message() writes from the category
-		// argument, and the field StreamMerger's rewrite filter mutates from
+		// argument, and what Remote_Job_Rewrite_Node mutates from
 		// 'job' to 'remote_job' on the hub. Read it (never a body-level field)
 		// so that hub rewrite is honored at dispatch. For jobintake the entry
 		// is flat (no `m` wrap) so $body IS $entry; reading $entry['k'] handles

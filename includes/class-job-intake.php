@@ -6,10 +6,7 @@
  * Jobs written here are routed to jobs.log by JobRouter.
  *
  * Locking happens per-Partition inside `Partition::allow_large_writes()` —
- * one writer per partition, multiple partitions can write in parallel. The
- * legacy intake-level lock at `{base_dir}/locks/jobintake.lock.d` (a single
- * host-wide gate) was removed when Partition learned to drive its own
- * heartbeat from `fill()` without an EventFramework Timer.
+ * one writer per partition, multiple partitions can write in parallel.
  *
  * @package Newspack_Event_Logger_Nodes
  */

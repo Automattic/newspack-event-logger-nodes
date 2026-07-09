@@ -20,9 +20,8 @@
  *            HookCategorizer::get_categories(). Internal Event Logger /
  *            Nodes hooks are filtered out by the categorizer itself.
  *
- * Both verbs are read-only with no auth check — the legacy controller
- * gated them on `read_permissions_check` for rate-limiting; rate-limiting
- * is now a transport concern handled outside the interpreter. No service
+ * Both verbs are read-only with no auth check — rate-limiting is a transport
+ * concern handled outside the interpreter. No service
  * dependencies — substrate Config and HookCategorizer are both globals
  * accessed directly, matching Discovery_CI / Settings_CI.
  *
