@@ -231,7 +231,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		};
 	}, [ searchQuery, entries ] );
 
-	// Collect pairIds with content; empty start/complete pairs aren't unfoldable.
+	// Collect pairIds with content; empty pairs aren't unfoldable.
 	const allPairIds = useMemo( () => {
 		const ids = new Set();
 		for ( let i = 0; i < entries.length; i++ ) {
@@ -242,7 +242,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				( entry.k || '' ).match( /\(start\)$/ ) &&
 				! ( entry.k || '' ).startsWith( 'process ' )
 			) {
-				// Check if next entry is the matching complete (nothing between).
+				// Next entry is the matching complete (nothing between).
 				const next = entries[ i + 1 ];
 				if (
 					next &&
@@ -272,7 +272,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			const entryIdx = matchedIndices[ matchIdx ];
 			const ancestorIds = getAncestorPairIds( entryIdx, entries );
 
-			// Only expand pairs with children; an empty pair stays a merged row.
+			// Only expand pairs with children; empty pair stays merged.
 			setExpandedSet( ( prev ) => {
 				const next = new Set( prev );
 				for ( const id of ancestorIds ) {
@@ -285,7 +285,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 			setCurrentMatchIndex( matchIdx );
 
-			// Match on an empty pair: scroll by pairId (its row carries the start idx).
+			// Empty-pair match: scroll by pairId (row carries start idx).
 			const matchEntry = entries[ entryIdx ];
 			const ownPairId = matchEntry?.pairId;
 			const keyword = matchEntry?.k || '';
@@ -327,7 +327,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	// Keyboard navigation: n = next, p = previous, Escape = clear.
 	useEffect( () => {
 		const handleKeyDown = ( e ) => {
-			// Escape: clear search, refocus so the next Escape closes the modal.
+			// Escape: clear search, refocus so next Escape closes modal.
 			if ( e.key === 'Escape' && searchQuery ) {
 				e.preventDefault();
 				e.stopPropagation();
@@ -354,7 +354,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				return;
 			}
 
-			// Skip n/p while typing in an input (search uses Enter to navigate).
+			// Skip n/p while typing in an input (Enter navigates).
 			if ( tag === 'INPUT' || tag === 'TEXTAREA' ) {
 				return;
 			}
@@ -454,7 +454,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				cleanPath = cleanPath.slice( 1 );
 			}
 
-			// Try the detail path ("name: message"), fall back to the base-name path.
+			// Try detail path ("name: message"), fall back to base-name.
 			const detailKey = cleanPath.join( '/' );
 			const baseKey = cleanPath
 				.map( ( seg ) => seg.replace( /: .+$/, '' ) )
@@ -1205,7 +1205,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 														formatTimestamp(
 															entry.ts
 														);
-													// Different tenths: dual timestamps.
+													// Diff tenth → 2 stamps.
 													const startTenth =
 														Math.floor(
 															Math.round(
@@ -1232,7 +1232,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 															</>
 														);
 													}
-													// Same tenth: show bullets for 10ms boundaries crossed.
+													// Same tenth → 10ms dots.
 													const startH = Math.round(
 														( entry.startTs || 0 ) *
 															100

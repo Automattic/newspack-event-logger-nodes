@@ -33,8 +33,7 @@ describe( 'shadeForDepth', () => {
 		const bgRgb = parseColor( BG );
 		const deep = parseColor( shadeForDepth( 3, ACCENT, BG ) );
 
-		// Green is the dominant accent channel and bg is near-black, so the
-		// dominant channel must drop as depth increases (moving toward bg).
+		// Green dominates accent, bg near-black → g drops with depth.
 		expect( deep.g ).toBeLessThan( accentRgb.g );
 
 		// And the deep shade's luminance sits between bg and accent.

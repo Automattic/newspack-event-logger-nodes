@@ -98,8 +98,7 @@ import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 
-// jsdom has no ResizeObserver. Capture the latest observer's callback so a test
-// can fire a synthetic container resize.
+// jsdom has no ResizeObserver; capture the callback to fire a resize.
 let resizeObserverCb = null;
 global.ResizeObserver = class {
 	constructor( cb ) {
@@ -171,8 +170,7 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
 		);
-		// The container resize must be observed (window `resize` only fires for
-		// the browser window, not an overlay panel resize).
+		// Container resize must be observed (window resize misses panels).
 		expect( resizeObserverCb ).toEqual( expect.any( Function ) );
 		// Clear the width recorded by the initial create, then fire a resize.
 		flamegraphState.options.width = undefined;
@@ -214,10 +212,7 @@ describe( 'FlameGraph', () => {
 			data: { name: 'process', value: 1000 },
 			parent: null,
 		};
-		// Trigger mousedown with metaKey on the chart container.
-		// The mousedown listener was attached to container.
-		// Find the container — it's the wrapping div in the rendered tree.
-		// In jsdom we can locate it via the className.
+		// Locate the container div and fire mousedown with metaKey.
 		const container = document.querySelector( '.event-logger-flame-graph' );
 		expect( container ).toBeTruthy();
 		container.dispatchEvent(
@@ -246,8 +241,7 @@ describe( 'FlameGraph', () => {
 				parent: null,
 			},
 		};
-		// No meta — should NOT call onReveal, but should set zoom path and
-		// schedule transitionDuration(0) via setTimeout.
+		// No meta: doesn't call onReveal; sets zoom path + schedules reset.
 		flamegraphState.onClick( child );
 		expect( onReveal ).not.toHaveBeenCalled();
 		jest.runAllTimers();
@@ -548,14 +542,13 @@ describe( 'pruneFlameGraph', () => {
 	} );
 
 	it( 'keeps small frames when the graph is under the soft cap', () => {
-		// Only three frames — far under the soft cap — so nothing is stripped
-		// for being small, even the 0.05% sliver.
+		// Three frames under the soft cap → nothing stripped (even the sliver).
 		const root = {
 			name: 'process',
 			value: 1000,
 			children: [
 				{ name: 'A', value: 500, children: [] },
-				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% — below 0.1%.
+				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% < 0.1%.
 				{ name: 'C', value: 200, children: [] },
 			],
 		};
@@ -568,14 +561,13 @@ describe( 'pruneFlameGraph', () => {
 	} );
 
 	it( 'keeps every frame at exactly the soft cap, including sub-0.1% ones', () => {
-		// Root + 2 children == softMaxNodes 3, so every frame is within the top
-		// softMaxNodes by rank — nothing is stripped for being small.
+		// Root+2 == softMaxNodes 3, so every frame ranks in → nothing stripped.
 		const root = {
 			name: 'process',
 			value: 1000,
 			children: [
 				{ name: 'A', value: 500, children: [] },
-				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% — below 0.1%.
+				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% < 0.1%.
 			],
 		};
 		const pruned = pruneFlameGraph( root, { softMaxNodes: 3 } );
@@ -592,7 +584,7 @@ describe( 'pruneFlameGraph', () => {
 			children: [
 				{
 					name: 'sliver',
-					value: 0.4, // below 0.1% of 1000, but we are under the soft cap.
+					value: 0.4, // below 0.1% but under the soft cap.
 					children: [ { name: 'deep', value: 0.4, children: [] } ],
 				},
 			],
@@ -603,17 +595,15 @@ describe( 'pruneFlameGraph', () => {
 	} );
 
 	it( 'once over the soft cap, drops frames that are both ranked out and below 0.1%', () => {
-		// softMaxNodes 2 means only the top 1 non-root frame is guaranteed.
-		// medium is ranked out but >= 0.1%, so it survives; tiny is ranked out
-		// AND below 0.1%, so it is the only one dropped.
+		// softMaxNodes 2: medium survives (>=0.1%); only tiny drops.
 		const root = {
 			name: 'process',
 			value: 1000,
 			children: [
 				{ name: 'big1', value: 500, children: [] },
 				{ name: 'big2', value: 200, children: [] },
-				{ name: 'medium', value: 5, children: [] }, // 0.5% — above 0.1%.
-				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% — below 0.1%.
+				{ name: 'medium', value: 5, children: [] }, // 0.5% > 0.1%.
+				{ name: 'tiny', value: 0.5, children: [] }, // 0.05% < 0.1%.
 			],
 		};
 		const pruned = pruneFlameGraph( root, { softMaxNodes: 2 } );
@@ -625,14 +615,13 @@ describe( 'pruneFlameGraph', () => {
 	} );
 
 	it( 'keeps the top frames past the soft cap even when they are below 0.1%', () => {
-		// Only one frame clears 0.1%; the soft cap still guarantees the top
-		// (softMaxNodes - 1) frames, so a sub-0.1% frame survives by rank.
+		// Only one clears 0.1%; soft cap keeps a sub-0.1% frame.
 		const root = {
 			name: 'process',
 			value: 1000,
 			children: [
 				{ name: 'a', value: 500, children: [] },
-				{ name: 'b', value: 0.6, children: [] }, // 0.06% — kept by rank.
+				{ name: 'b', value: 0.6, children: [] }, // 0.06% kept by rank.
 				{ name: 'c', value: 0.5, children: [] },
 				{ name: 'd', value: 0.4, children: [] },
 			],

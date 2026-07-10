@@ -41,7 +41,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 
 import { useGyroscopeGraph } from '../useGyroscopeGraph';
 
-// Minimal FakeEventSource — same shape as the substrate's `sse_connector.test.js`.
+// Minimal FakeEventSource — same shape as the substrate's sse_connector test.
 class FakeEventSource {
 	constructor( url ) {
 		this.url = url;
@@ -73,17 +73,14 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'gyroscope:link';
-// RemoteLink composes an UNNAMED SseIn (held internally, not registered in Core)
-// and SHARES the reserved-name `_http` (HttpOut) + `_heartbeat` (Heartbeat)
-// singletons — the old per-link `{link}:sse-in/http/heartbeat` names are gone.
+// RemoteLink has an unnamed SseIn + shares the reserved _http/_heartbeat.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'gyroscope:view';
 const TEE = 'gyroscope:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
-// A `connected` envelope as SseInNode recognizes it: a flat `KEY VALUE` string
-// (the SSE rework). SLOT is omitted when null; `partition` was removed.
+// A `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
 function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
@@ -115,9 +112,7 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// RemoteLink shares the reserved _http + _heartbeat singletons, each
-		// sinking into the interpreter. (The SseIn is unnamed — proven below via
-		// the FakeEventSource URL + the end-to-end routing into the view.)
+		// RemoteLink shares _http + _heartbeat, each sinking into interpreter.
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
@@ -129,8 +124,7 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `gyroscope` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useGyroscopeGraph() );
-		// The unnamed SseIn opened against the `gyroscope` subscribe topic (its
-		// target → view is proven by the end-to-end routing test below).
+		// The unnamed SseIn opened against the `gyroscope` subscribe topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
@@ -317,7 +311,7 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useGyroscopeGraph() );
-		// A real tailed record: segment:offset:length breadcrumb in ID, partition dir in FROM.
+		// A tailed record: segment:offset:length in ID, partition dir in FROM.
 		const rec = inflightEnvelope( [ { rid: 'r1' } ] );
 		rec[ FROM ] = 'gyroscope.p0';
 		rec[ ID ] = '1:64:20';
@@ -410,8 +404,7 @@ describe( 'useGyroscopeGraph — Core.reinit (Reset Graph)', () => {
 			Core.reinit();
 		} );
 
-		// Soft nodes are fresh instances under the same names; backbone survives —
-		// including the shared `_http` singleton it now owns (preserved, not rebuilt).
+		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `gyroscope` topic.
@@ -433,8 +426,7 @@ describe( 'useGyroscopeGraph — Core.reinit (Reset Graph)', () => {
 		const freshView = Core.node( VIEW );
 		expect( freshView ).not.toBe( firstView );
 
-		// The fresh view publishes state; the consumer must observe it (proving it
-		// re-subscribed to freshView, not the removed firstView).
+		// Fresh view publishes; consumer observes it (proves re-subscribe).
 		act( () => {
 			freshView.setState( 'view', { sampled: true } );
 		} );

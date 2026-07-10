@@ -141,9 +141,7 @@ describe( 'LogEntriesTable', () => {
 	} );
 
 	it( 'falsy entries array is the no-render path (component returns null)', () => {
-		// Note: entries=undefined CRASHES the component (real bug, see
-		// useMemo on line 357). The supported "no entries" path uses an
-		// empty array. We don't try the undefined case here.
+		// entries=undefined CRASHES (real bug); use [] for the no-entries path.
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, { entries: [] } )
 		);
@@ -159,11 +157,7 @@ describe( 'LogEntriesTable', () => {
 		expect( container.textContent ).toContain( 'Log Entries' );
 		expect( container.textContent ).toContain( 'Fold All' );
 		expect( container.textContent ).toContain( 'Unfold All' );
-		// All entries visible by default — expandedSet is empty so the
-		// outermost `process` start is rendered, and since it's `process`
-		// it's not collapsible — but child pairs ARE collapsed by default.
-		// Actually expandedSet starts empty so db / render are folded.
-		// process is non-foldable, so its children all show.
+		// expandedSet empty by default: child pairs folded; process shows.
 		expect( container.textContent ).toContain( 'process (start)' );
 		unmount();
 	} );
@@ -260,8 +254,7 @@ describe( 'LogEntriesTable', () => {
 				} )
 			);
 		} );
-		// Enter triggered a navigateToMatch — currentMatchIndex moved
-		// to 0; "1/2" or "1/N" shows in the count span.
+		// Enter → navigateToMatch(0); count span shows "1/N".
 		expect( container.textContent ).toMatch( /\d+\/\d+/ );
 		jest.useRealTimers();
 		unmount();
@@ -349,9 +342,7 @@ describe( 'LogEntriesTable', () => {
 				new KeyboardEvent( 'keydown', { key: 'n', bubbles: true } )
 			);
 		} );
-		// `render` (pairId 3) is an empty pair — start immediately followed by
-		// its complete. Landing a search on it must NOT split it open (same
-		// rule as Unfold All); it stays a single merged row, not two.
+		// render (pairId 3) empty pair: search stays one merged row.
 		expect(
 			container.querySelectorAll( 'tr[data-pair-id="3"]' ).length
 		).toBe( 1 );
@@ -442,8 +433,7 @@ describe( 'LogEntriesTable', () => {
 			container.querySelectorAll( 'tbody tr' )
 		).find( ( r ) => r.textContent.includes( 'process (start)' ) );
 		expect( processRow ).toBeTruthy();
-		// Clicking process should NOT throw and should NOT change the
-		// presence of the row (no fold happens for outermost pair).
+		// Clicking process must not throw or fold (outermost pair).
 		expect( () => act( () => processRow.click() ) ).not.toThrow();
 		expect( container.textContent ).toContain( 'process (start)' );
 		unmount();
@@ -498,8 +488,7 @@ describe( 'LogEntriesTable', () => {
 
 	it( 'pretty-prints (indented, multi-line, alpha-sorted) message values when entry.m is an object', () => {
 		const entries = makeEntries();
-		// environment_v3-style entry: m is a { KEY => value } map, inserted
-		// out of alpha order (REMOTE_ADDR before HTTP_HOST).
+		// m is a KEY=>value map, inserted out of alpha order.
 		entries[ 2 ] = {
 			...entries[ 2 ],
 			k: 'environment_v3',
@@ -513,9 +502,7 @@ describe( 'LogEntriesTable', () => {
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
 		act( () => unfoldBtn.click() );
-		// Pretty-printed indented keys on their own lines, alpha-sorted for
-		// scannability — HTTP_HOST renders before REMOTE_ADDR despite being
-		// inserted second — NOT a single-line JSON blob.
+		// Pretty-printed alpha-sorted keys, not a single-line JSON blob.
 		const expected = JSON.stringify(
 			{ HTTP_HOST: 'example.com', REMOTE_ADDR: '1.2.3.4' },
 			null,
@@ -533,10 +520,7 @@ describe( 'LogEntriesTable', () => {
 	} );
 
 	it( 'handles merged entries (collapsed start+complete render)', () => {
-		// A merged entry is what gets returned by computeVisibleEntries
-		// when a fold-all collapses a child pair. The simpler way is to
-		// trigger Fold All and verify the merge happens. We assert the
-		// startTs/endTs distinction is rendered.
+		// Fold All merges a child pair; assert start/end timestamps render.
 		const entries = makeEntries();
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, { entries } )
@@ -581,8 +565,7 @@ describe( 'LogEntriesTable', () => {
 	} );
 
 	it( 'placeholder entries render an empty keyword / message', () => {
-		// A placeholder is `{ isPlaceholder: true, indent: ..., originalIdx: ... }`.
-		// Compose entries with a placeholder injected.
+		// Inject a placeholder entry (isPlaceholder: true).
 		const entries = [
 			...makeEntries(),
 			{ n: '...', ts: null, isPlaceholder: true, indent: 0 },

@@ -174,11 +174,7 @@ describe( 'TagInputField', () => {
 	} );
 
 	it( 'ignores legacy event-logger-reset DOM events (per-field reset is now the toggle module)', () => {
-		// The old PHP reset button dispatched `event-logger-reset` to reset the
-		// field to baked-in defaults. That mechanism was replaced by the shared
-		// admin-field-reset toggle (clears + marks for server-side delete), so
-		// TagInputField no longer listens for the event: its hidden value stays
-		// at the current values regardless of the (now-orphaned) event.
+		// TagInputField no longer listens for `event-logger-reset` (legacy).
 		const hidden = setUpHiddenInput( 'urls' );
 		const containerDiv = setUpContainer( 'urls' );
 		const { unmount } = renderComponent(
@@ -277,9 +273,7 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
-	// Build a reset-marked wrapper around the hidden carrier, exactly as the
-	// shared admin-field-reset module leaves it after a ↺ toggle on a
-	// react_mount field: data-nn-reset + is-marked + an injected marker input.
+	// Build a reset-marked wrapper as the admin-field-reset toggle leaves it.
 	function setUpMarkedWrapper( name ) {
 		const wrapper = document.createElement( 'div' );
 		wrapper.setAttribute( 'data-nn-reset', `pfx_reset[pfx_${ name }]` );
@@ -313,10 +307,7 @@ describe( 'TagInputField', () => {
 	} );
 
 	it( 'drops the pending reset mark when the value is edited', () => {
-		// The shared reset module only auto-drops marks for non-hidden controls;
-		// a react_mount field's only input is the hidden carrier (ignored), so
-		// editing must drop the mark here — else Reset_Gate would delete the
-		// option on Save and discard the operator's edit.
+		// Editing must drop the mark here, else Reset_Gate deletes the option.
 		const { wrapper, hidden } = setUpMarkedWrapper( 'urls' );
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {

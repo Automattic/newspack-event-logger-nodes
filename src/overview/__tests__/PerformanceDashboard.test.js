@@ -21,11 +21,7 @@
  * module boundary as stub components that record their props.
  */
 
-// The view model the orchestrator reads via FOUR per-slice useNodeState calls
-// (overview:view / urls:view / urldetail:view / requestdetail:view). Set per-test
-// in the same combined `{ overview, urls, urlDetail, requestDetail }` shape the
-// old single god view used; the mock fans that out by node name, so the existing
-// per-test `loadedView({...})` setups work unchanged.
+// Per-slice view model; the mock fans it out by node name.
 let mockView = null;
 jest.mock( '@newspack-nodes/runtime', () => ( {
 	__esModule: true,
@@ -80,8 +76,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => true,
 } ) );
 
-// Mock children — each renders a placeholder string capturing useful
-// portions of its props so the tests can locate it in the DOM.
+// Mock children: each renders a placeholder capturing its props.
 jest.mock( '../components/OverviewSection', () => ( {
 	__esModule: true,
 	default: ( props ) => {
@@ -139,9 +134,7 @@ jest.mock( '../components/RequestDetailView', () => ( {
 	},
 } ) );
 
-// RuleEditModal is the shared rule editor the "Log this URL" affordance opens.
-// Stub it so the test doesn't pull in the real @wordpress/components widgets;
-// capture props so the tests can assert the prefilled rule + drive onSave.
+// Stub RuleEditModal: capture props to assert prefill + drive onSave.
 jest.mock( '../../rules/RuleEditModal', () => ( {
 	__esModule: true,
 	default: ( props ) => {
@@ -859,7 +852,7 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	// The URL-details modal's inline "Log this URL" affordance (spec section C).
+	// URL modal inline "Log this URL" affordance (spec section C).
 	describe( 'Log this URL affordance', () => {
 		// A URL-detail-loaded view model with the modal open on `url`.
 		function urlModalView( url = '/foo' ) {
@@ -1009,8 +1002,7 @@ describe( 'PerformanceDashboard', () => {
 			await act( async () => {
 				btn.click();
 			} );
-			// The ?worker marker already terminates the URL — the exact-match
-			// sentinel is NOT appended a second time (no '/jobs/x?supervisor?').
+			// ?worker already terminates the URL — no second '?' appended.
 			expect( globalThis.__ruleEditProps.rule.pattern ).toBe(
 				'/jobs/x?supervisor'
 			);
@@ -1050,7 +1042,7 @@ describe( 'PerformanceDashboard', () => {
 			expect(
 				container.querySelector( '[data-testid="rule-edit-modal"]' )
 			).toBeNull();
-			// Success is signalled by the button label flipping (no status banner).
+			// Success = button label flips (no status banner).
 			expect( container.textContent ).toContain( 'Edit logging rule' );
 			unmount();
 		} );

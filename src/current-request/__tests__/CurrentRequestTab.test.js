@@ -17,9 +17,7 @@ import {
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import CurrentRequestTab from '../CurrentRequestTab';
 
-// The flame graph (d3-heavy, lazy) + profiles breakdown are reused from the
-// performance dashboard; mock them to sentinels so the tab's wiring is the unit
-// under test, not d3.
+// Mock the d3-heavy FlameGraph + RequestProfile to sentinels — test the wiring.
 jest.mock( '../../overview/FlameGraph', () => ( {
 	__esModule: true,
 	default: ( { data } ) => (
@@ -35,11 +33,7 @@ jest.mock( '../../overview/RequestProfile', () => ( {
 	),
 } ) );
 
-// Spy on the response-unwrap step. React 18 makes a setState on an unmounted
-// component a silent no-op (no error, no DOM change), so the ONLY observable of
-// the load()'s mountedRef guard is whether a late reply gets unwrapped/processed
-// at all. The spy delegates to the real impl so every other test's unwrap
-// behavior is unchanged.
+// Spy on unwrap: the only observable of the mountedRef guard on a late reply.
 jest.mock( '@newspack-nodes/shared/utils/unwrapCommandResponse', () => {
 	const actual = jest.requireActual(
 		'@newspack-nodes/shared/utils/unwrapCommandResponse'
@@ -51,9 +45,7 @@ jest.mock( '@newspack-nodes/shared/utils/unwrapCommandResponse', () => {
 } );
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 
-// A one-shot CommandClient seam (matches getCommandClient().send): resolves the
-// next reply Message. `error: true` returns a TM_ERROR reply (verb threw, e.g.
-// the request isn't in requests.log yet — request-builder hasn't processed it).
+// One-shot CommandClient seam; `error: true` returns a TM_ERROR reply.
 function fakeClient( payload, { error = false } = {} ) {
 	const reply = newMessage();
 	reply[ TYPE ] = error
@@ -78,8 +70,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 		partition: 2,
 		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
-	// `request_detail` returns the full request envelope ($decoded[VALUE]) — the
-	// real shape this fixture mirrors (url + duration_ms + status_code + … ).
+	// `request_detail` returns the request envelope this fixture mirrors.
 	const client = fakeClient( {
 		rid: 'abc123',
 		url: '/wp-admin/index.php',
@@ -102,7 +93,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 			<CurrentRequestTab commandClient={ client } />
 		);
 	} );
-	// Flush the lazy FlameGraph import (Suspense) after the request_detail fetch.
+	// Flush the lazy FlameGraph import (Suspense) after the fetch.
 	await act( async () => {} );
 
 	expect( client.send ).toHaveBeenCalledWith( {
@@ -144,7 +135,7 @@ test( 'shows a still-processing state (with retry) when the request is not in th
 	expect( view.container.textContent.toLowerCase() ).toContain(
 		'still processing'
 	);
-	expect( view.container.querySelector( 'button' ) ).not.toBeNull(); // a Refresh/retry control
+	expect( view.container.querySelector( 'button' ) ).not.toBeNull();
 } );
 
 test( 'renders an idle hint when no request id is localized', async () => {
@@ -157,8 +148,7 @@ test( 'renders an idle hint when no request id is localized', async () => {
 	);
 } );
 
-// A request that finished with an error_status renders the Status card with the
-// human label from statusLabel(); the timestamp 0 path renders the "—" placeholder.
+// error_status renders the Status card via statusLabel(); ts 0 → placeholder.
 test.each( [
 	[ 'F', 'fatal error' ],
 	[ 'T', 'timed out' ],
@@ -183,10 +173,7 @@ test.each( [
 		} );
 		await act( async () => {} );
 		expect( view.container.textContent ).toContain( label );
-		// timestamp 0 → the Time field renders the "—" placeholder. Scope the
-		// check to THAT field's <p>: the Status card's "500 — <label>" separator
-		// is the same em-dash (U+2014), so a whole-container toContain('—') would
-		// pass even if the placeholder regressed.
+		// Scope the — check to the Time <p>: Status uses the same em-dash.
 		const timeRow = Array.from(
 			view.container.querySelectorAll( '.eln-current-request__info p' )
 		).find( ( p ) =>
@@ -197,8 +184,7 @@ test.each( [
 	}
 );
 
-// A reply that resolves AFTER the tab unmounts must be swallowed by the mountedRef
-// guard — no setState on a torn-down component.
+// A reply resolving after unmount must be swallowed by the mountedRef guard.
 test( 'ignores a request_detail reply that arrives after the tab unmounts', async () => {
 	setBlob( { rid: 'late1', perfUrl: 'admin.php?page=x' } );
 	let resolveReply;
@@ -219,15 +205,13 @@ test( 'ignores a request_detail reply that arrives after the tab unmounts', asyn
 			<CurrentRequestTab commandClient={ client } />
 		);
 	} );
-	// load() fired its request; the reply is still in flight (send is pending).
+	// load() fired; the reply is in flight (send is pending).
 	expect( client.send ).toHaveBeenCalled();
 	// Scope the post-unmount assertion to THIS reply only.
 	unwrapCommandResponse.mockClear();
 	// Tear the tab down while the request_detail call is still in flight.
 	view.unmount();
-	// Now settle the in-flight reply. The mountedRef guard must drop it BEFORE
-	// it is ever unwrapped — delete that guard and this late reply gets unwrapped
-	// (and setState'd on a torn-down component), so this assertion goes red.
+	// The mountedRef guard must drop the late reply before it's unwrapped.
 	await act( async () => {
 		resolveReply( reply );
 	} );

@@ -25,8 +25,7 @@ import { PerfErrorsViewNode } from '../perf-errors-view-node';
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// Construct + name the node directly — the createX factory is gone (make_node
-// builds it in production); bare-new + name= is the test seam.
+// Construct + name directly — createX factory is gone; bare-new is the seam.
 function makeView( name, opts = {} ) {
 	const node = new PerfErrorsViewNode( opts.maxEntries );
 	node.name = name;
@@ -60,10 +59,7 @@ test( 'appends rows newest-first with seq + isEven, capped', () => {
 } );
 
 test( 'RPS tracking aggregates per second, not one entry per error (bounded window)', () => {
-	// Perf contract: the errors/second window must NOT grow one entry per error
-	// (the old `completedHistory.push`-per-error + full filter+reduce was O(n)
-	// per error). A 10s window collapses to per-second buckets, so a burst of
-	// 500 synchronous errors stays a handful of buckets — never 500.
+	// Perf: the errors/sec window is per-second buckets, not one per error.
 	const v = makeView( 'perferrors:view', { maxEntries: 100000 } );
 	for ( let i = 0; i < 500; i++ ) {
 		v.fill( envMsg( `r${ i }`, { ts: i, k: 'error', m: `m${ i }` } ) );
@@ -161,11 +157,9 @@ test( 'drops envelopes whose VALUE is an array', () => {
 
 test( 'drops the `connected` sentinel (which the SseInNode would otherwise stream through)', () => {
 	const v = makeView( 'perferrors:view' );
-	// The connected sentinel uses KEY='connected' with a structured VALUE
-	// (slot/partition/pid). It must NOT land in the error buffer.
+	// The `connected` sentinel must NOT land in the error buffer.
 	v.fill( envMsg( 'connected', { slot: 0, partition: 0, pid: 1 } ) );
-	// Allowed to be either dropped outright or treated as "not an error row".
-	// Either way the entries buffer must remain empty.
+	// Either dropped or ignored — either way entries buffer stays empty.
 	expect( v.entries ).toHaveLength( 0 );
 } );
 

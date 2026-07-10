@@ -21,12 +21,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useGyroscopeGraph } = require( '../hooks/useGyroscopeGraph' );
 
-// A minimal stand-in for the gyroscope:view node: snapshot() returns the render
-// rows (the real node reaps + sorts + caps here), and rps lives on the instance —
-// exactly what the refresh tick reads off Core.node('gyroscope:view').
-// The register/setState/setStateCache machinery backs useNodeState('gyroscope:view',
-// 'view'), which the view reads for the low-frequency { connectionError } model
-// (the reconnect banner). setState here notifies subscribers like the real Node.
+// Stand-in for gyroscope:view: snapshot() returns render rows, rps on instance.
 function registerViewFixture( {
 	rows = [],
 	rps = 0,
@@ -85,7 +80,7 @@ describe( 'Inflight', () => {
 		window.localStorage.clear();
 	} );
 
-	// Advance the default 2s refresh interval so renderRequests samples the node.
+	// Advance the default 2s refresh so renderRequests samples the node.
 	const tickRefresh = () => {
 		act( () => {
 			jest.advanceTimersByTime( 2000 );
@@ -206,9 +201,7 @@ describe( 'Inflight', () => {
 	} );
 
 	it( 'sources "Xs ago" staleness from the link connector, not row arrivals', () => {
-		// The connector owns stream liveness (it sees data rows AND heartbeats), so
-		// an idle-but-healthy stream — view node with no row arrivals — still shows a
-		// fresh "ago" off the connector's lastEventTime.
+		// Connector owns liveness: an idle stream still shows a fresh "ago".
 		registerViewFixture(); // no row arrivals
 		Core.nodes.set( 'gyroscope:link', { lastEventTime: () => Date.now() } );
 		const { container } = mount();

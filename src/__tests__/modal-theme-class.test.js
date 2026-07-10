@@ -28,12 +28,7 @@ describe( 'dashboard Modal theme class', () => {
 		);
 	} );
 
-	// Every themed WP <Modal> reachable on a dark skin must paint its close (×)
-	// button with --ink. The button inherits a near-black currentColor
-	// (rgb(30,30,30)) by default — invisible on the CRT/dark skins. The selector
-	// modals are also opened on the light settings page, so they carry the
-	// `var(--ink, var(--np-text))` fallback; the dashboard-only modals use --ink
-	// directly. Regex tolerates either.
+	// Dark-skin modals need --ink on the close (×) button or it's invisible.
 	it.each( [
 		'overview/styles/modal.scss',
 		'rules/rule-edit-modal.scss',
@@ -49,8 +44,7 @@ describe( 'dashboard Modal theme class', () => {
 		'settings/settings/HookSelectorModal.js',
 		'settings/settings/CustomEventSelectorModal.js',
 	] )( '%s: the Modal carries newspack-nodes-theme', ( rel ) => {
-		// Static base classes + a forwarded `${ className }` (empty on the settings
-		// page; the dashboard passes its skin classes so the picker gets themed).
+		// Base classes + forwarded `${ className }` (empty on settings page).
 		expect( read( rel ) ).toMatch(
 			/event-logger-[\w-]+-modal newspack-nodes-theme \$\{ className \}/
 		);

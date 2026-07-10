@@ -164,13 +164,13 @@ export default function Inflight( { maxRows = 20 } ) {
 	// Mount the node graph; it owns the data, this only renders the snapshot.
 	useGyroscopeGraph();
 
-	// Low-freq view model (reconnect banner); rows/rps read off the node directly.
+	// Low-freq view model (reconnect banner); rows/rps read off the node.
 	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
 	const [ lastEventTime, setLastEventTime ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
-		// Load from localStorage with validation against allowed dropdown values.
+		// Load from localStorage; validate against allowed dropdown values.
 		const validValues = INFLIGHT_REFRESH_OPTIONS.map(
 			( opt ) => opt.value
 		);

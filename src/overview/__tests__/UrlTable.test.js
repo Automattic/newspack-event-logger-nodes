@@ -174,8 +174,7 @@ describe( 'UrlTable', () => {
 		const rows = Array.from(
 			container.querySelectorAll( '.event-logger-table__row' )
 		);
-		// /baz has count_2xx=100, count=200 → 100 unclassified → kept.
-		// /foo, /bar fully classified → dropped.
+		// /baz has 100 unclassified → kept; /foo, /bar classified → dropped.
 		expect( rows.length ).toBe( 1 );
 		expect( rows[ 0 ].textContent ).toContain( '/baz' );
 		unmount();
@@ -335,9 +334,7 @@ describe( 'UrlTable', () => {
 	} );
 
 	it( 'switches the bar to peak_mb when metric=memory', () => {
-		// metric=memory means UrlRow renders the bar with peak_mb. No
-		// direct DOM hook to assert that, but rendering with metric=memory
-		// drives the otherwise-uncovered branches in UrlRow.
+		// metric=memory drives UrlRow's peak_mb bar branch.
 		const { container, unmount } = mount( { metric: 'memory' } );
 		expect( container.textContent ).toContain( '/foo' );
 		unmount();

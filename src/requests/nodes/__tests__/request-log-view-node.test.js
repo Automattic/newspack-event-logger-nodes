@@ -20,8 +20,7 @@ import { RequestLogViewNode } from '../request-log-view-node';
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// Construct + name the node directly — the createX factory is gone (make_node
-// builds it in production); bare-new + name= is the test seam.
+// Construct + name directly (createX gone); bare-new + name= is the seam.
 function makeView( name, opts = {} ) {
 	const node = new RequestLogViewNode( opts.maxEntries );
 	node.name = name;
@@ -90,8 +89,7 @@ test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP
 	v.fill(
 		rowMsg( row( { rid: 'w', url: '/jobs/x?supervisor', end_time: 1 } ) )
 	);
-	// PHP url_hash hashes the FULL string incl. the intentional ?worker marker;
-	// stripping at '?' in JS would hash the bare path and break the deep-link.
+	// PHP url_hash hashes the full string incl. ?worker; don't strip at '?'.
 	expect( v.entries[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?supervisor' ) );
 	expect( v.entries[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
 } );
@@ -124,10 +122,7 @@ test( 'exposes a numeric rps on the node instance', () => {
 } );
 
 test( 'RPS tracking aggregates per second, not one entry per request (bounded window)', () => {
-	// Perf contract: the requests/second window must NOT grow one entry per
-	// request (the old `completedHistory.push`-per-request + full filter+reduce
-	// was O(n) per request). A 10s window collapses to per-second buckets, so a
-	// burst of 500 synchronous requests stays a handful of buckets — never 500.
+	// Perf: the rps window collapses to per-second buckets, not one/request.
 	const v = makeView( 'requestlog:view', { maxEntries: 100000 } );
 	for ( let i = 0; i < 500; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }`, url: `/p/${ i }` } ) ) );
@@ -241,10 +236,7 @@ test( 'names the node', () => {
 	expect( v.name ).toBe( 'requestlog:view' );
 } );
 
-// --- Defensive shaping inlined from the dropped requestlog:transform node. ---
-// The view now consumes the raw envelope VALUE (a completed-request blob)
-// directly from `_sse`, so the per-field defaults + url/user-agent clip live
-// here. Mirrors what `transformCompletedLine` used to do.
+// Defensive shaping inlined from the dropped requestlog:transform node.
 
 test( 'drops a raw envelope whose VALUE has no url (defensive)', () => {
 	const v = makeView( 'requestlog:view' );

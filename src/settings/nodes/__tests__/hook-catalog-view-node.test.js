@@ -30,8 +30,7 @@ import { HookCatalogViewNode } from '../hook-catalog-view-node';
 
 beforeEach( () => Core.reset() );
 
-// Construct + name the node directly — the createX factory is gone (make_node
-// builds it in production); bare-new + name= is the test seam.
+// Construct + name directly — createX factory is gone; bare-new is the seam.
 function makeView( name ) {
 	const node = new HookCatalogViewNode();
 	node.name = name;
@@ -43,7 +42,7 @@ const SAMPLE = {
 	'REST API': [ 'rest_api_init' ],
 };
 
-// Build the verb-reply Message HttpOutNode feeds back (TO already peeled by router).
+// Build the verb-reply Message HttpOutNode feeds back (TO peeled by router).
 function replyMsg( {
 	name,
 	payload,

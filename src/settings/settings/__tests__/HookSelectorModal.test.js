@@ -7,11 +7,7 @@
  * (../../hooks/__tests__/useHookCatalogGraph.test.js) cover the graph wiring.
  */
 
-// Mock useHookCatalogGraph so the modal tests stay focused on UI behavior.
-// The hook's own tests (../../hooks/__tests__/useHookCatalogGraph.test.js)
-// cover the graph wiring. The mock stores state on `globalThis` so the
-// jest.mock factory (which cannot close over file-local variables) can read
-// it; tests update the slot before mounting.
+// Mock useHookCatalogGraph; state on globalThis (jest.mock can't see locals).
 jest.mock( '../../hooks/useHookCatalogGraph', () => ( {
 	__esModule: true,
 	useHookCatalogGraph: jest.fn( ( opts ) => {

@@ -32,8 +32,7 @@ import {
 } from '@newspack-nodes/runtime';
 import { UrlDetailMergeNode } from '../url-detail-merge-node';
 
-// A sink that records every forwarded message so tests can assert what (and
-// whether) the transform forwarded.
+// A sink that records forwarded messages for assertions.
 class RecordingSink extends Node {
 	constructor() {
 		super();
@@ -161,7 +160,7 @@ describe( 'UrlDetailMergeNode — incremental merge on change', () => {
 			} )
 		);
 		expect( sink.received ).toHaveLength( 2 );
-		// New stats/last_modified forwarded, but request list unchanged (only 'a').
+		// New last_modified forwarded, but request list unchanged (only 'a').
 		const merged = forwardedPayload( sink, 1 );
 		expect( merged.last_modified ).toBe( 2 );
 		expect( merged.requests.map( ( r ) => r.rid ) ).toEqual( [ 'a' ] );
@@ -197,8 +196,7 @@ describe( 'UrlDetailMergeNode — clear resets retained state', () => {
 		clear[ VALUE ] = { action: 'clear' };
 		node.fill( clear );
 
-		// Same last_modified as before the clear — but state was reset, so it
-		// forwards again (fresh).
+		// Same last_modified as before the clear, but state reset → forwards.
 		node.fill( reply( { last_modified: 7, requests: [ { rid: 'a' } ] } ) );
 		expect( sink.received ).toHaveLength( 2 );
 	} );

@@ -30,10 +30,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 
-// A minimal stand-in for the requestlog:view node: the low-frequency model lives
-// in setStateCache.view (what useNodeState subscribes to) and the high-frequency
-// buffer / rps live directly on the instance (what the rAF reads). setState here
-// notifies subscribers exactly like the real Node.setState.
+// requestlog:view stand-in: view model + high-freq buffer/rps on instance.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
@@ -97,8 +94,7 @@ describe( 'RequestStream', () => {
 		useRequestLogGraph.mockClear();
 		useRequestLogGraph.mockReturnValue( { setPaused, clear } );
 
-		// Capture rAF callbacks so a test can drive exactly one frame (the rAF
-		// reads node.entries / node.rps and pushes them into React state).
+		// Capture rAF callbacks so a test can drive exactly one frame.
 		rafCbs = [];
 		global.requestAnimationFrame = ( cb ) => {
 			rafCbs.push( cb );
@@ -283,8 +279,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'falls back to an empty model when the view node is absent', () => {
-		// No fixture registered — useNodeState yields undefined; the view must
-		// still render (Waiting…) without throwing.
+		// No fixture → useNodeState undefined; view still renders (Waiting…).
 		const { container } = mount();
 		expect( container.textContent.toLowerCase() ).toMatch(
 			/wait|no|empty/i
@@ -306,8 +301,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'renders the placeholder time string for entries with a falsy timestamp', () => {
-		// Drives the `if ( ! ts )` branch in formatTime — the production code
-		// renders `--:--:--.---` for any entry whose timestamp is missing/zero.
+		// Drives formatTime's !ts branch → renders --:--:--.--- for zero ts.
 		registerViewFixture( {
 			entries: [ entry( { rid: 'r-noT', timestamp: 0 } ) ],
 		} );
@@ -318,8 +312,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'toggleColumn removes a checked column when its checkbox is clicked', () => {
-		// Open the column picker, click an already-visible column's checkbox,
-		// and verify the column header disappears (visibleColumns shrank).
+		// Uncheck a visible column in the picker → its header disappears.
 		registerViewFixture();
 		const { container } = mount();
 		const colsBtn = Array.from(
@@ -346,9 +339,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'toggleColumn adds an unchecked column when its checkbox is clicked', () => {
-		// user_agent is NOT in DEFAULT_COLUMNS — clicking it adds it, and it
-		// must be inserted in the original COLUMNS order (between remote_addr
-		// and duration). This drives the `allCols.filter(...)` add branch.
+		// Adding user_agent inserts it in COLUMNS order (IP..duration).
 		registerViewFixture();
 		const { container } = mount();
 		const colsBtn = Array.from(
@@ -374,8 +365,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'sources the staleness display from the link connector lastEventTime', () => {
-		// Staleness now reflects CONNECTION liveness, owned by the shared link
-		// connector — the rAF reads its lastEventTime, not the view node's.
+		// Staleness = connection liveness; rAF reads the link's lastEventTime.
 		registerViewFixture( {
 			entries: [ entry( { rid: 'r-stale' } ) ],
 		} );
@@ -384,7 +374,7 @@ describe( 'RequestStream', () => {
 		} );
 		const { container } = mount();
 		tickFrame();
-		// Find any sibling span inside the stats element whose text matches "Xs ago".
+		// Find a sibling span in stats whose text matches "Xs ago".
 		const stats = container.querySelector(
 			'.newspack-nodes-toolbar-stats'
 		);
@@ -393,10 +383,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'scrolling away from top and back restores the saved animation offset', () => {
-		// Drives the handleScroll save (away-from-top) + restore (back-to-top)
-		// branches: scrolling down saves the current offsetRef and clears it;
-		// scrolling back restores it. No throw + correct state mutation is the
-		// visible signal (no public API surfaces offset).
+		// Scroll away saves offsetRef; back-to-top restores it.
 		registerViewFixture( {
 			entries: Array.from( { length: 20 }, ( _, i ) =>
 				entry( { seq: i + 1, rid: `r-${ i }` } )
@@ -408,8 +395,7 @@ describe( 'RequestStream', () => {
 			'.event-logger-request-stream-list'
 		);
 		expect( list ).toBeTruthy();
-		// Away from top — fires save branch (offsetRef → savedOffsetRef,
-		// then offsetRef = 0, animOffsetRows = 0).
+		// Away from top → save branch (offsetRef saved, then zeroed).
 		act( () => {
 			list.scrollTop = 500;
 			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
@@ -424,9 +410,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'rAF maintains scroll position when buffer grows and the list is scrolled down', () => {
-		// Drives the `else if ( list ) { list.scrollTop += visibleNewCount * ROW_HEIGHT }`
-		// branch — the rAF compensates for newly prepended entries so the user's
-		// scroll position is preserved.
+		// rAF bumps scrollTop for newly prepended entries (scroll preserved).
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
@@ -441,8 +425,7 @@ describe( 'RequestStream', () => {
 			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
 		} );
 		const before = list.scrollTop;
-		// Append a new entry to the node buffer — the next frame should bump
-		// scrollTop by ROW_HEIGHT to compensate (and set the adjusting flag).
+		// New buffer entry → next frame bumps scrollTop by ROW_HEIGHT.
 		node.entries = [
 			entry( { seq: 2, rid: 'r-2' } ),
 			entry( { seq: 1, rid: 'r-1' } ),
@@ -452,9 +435,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'rAF snaps the smooth-scroll offset to zero when it has decayed past the threshold', () => {
-		// Drives the `else if ( content && offsetRef.current !== 0 )` branch:
-		// once the |offset| < 0.5 threshold is hit, the next frame snaps to
-		// exactly 0 and clears the transform.
+		// Once |offset| < 0.5 the next frame snaps to 0, clears transform.
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
@@ -464,15 +445,13 @@ describe( 'RequestStream', () => {
 		const content = container.querySelector(
 			'.event-logger-request-stream-content'
 		);
-		// Append a row at the top so visibleNewCount > 0 → offsetRef becomes
-		// -33 (compensation). Subsequent frames decay it toward zero.
+		// Row at top → offsetRef = -33; later frames decay it to zero.
 		node.entries = [
 			entry( { seq: 2, rid: 'r-2' } ),
 			entry( { seq: 1, rid: 'r-1' } ),
 		];
 		tickFrame();
-		// Now drive enough frames for the |offset| to decay below 0.5
-		// (decay is 1% per frame). A loop of ~700 frames is plenty.
+		// Drive enough frames for |offset| to decay below 0.5 (~1%/frame).
 		for ( let i = 0; i < 800; i++ ) {
 			tickFrame();
 		}
@@ -481,10 +460,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'keeps rendering the newest row after the buffer saturates its cap', () => {
-		// At the cap the node rotates: newest unshifted, oldest dropped, so
-		// buffer.length is constant while the newest seq keeps climbing. Change
-		// detection must key off the newest seq, not the length — otherwise the
-		// view freezes at the cap (the "stops scrolling at 1000" bug).
+		// At the cap the buffer rotates; key change off newest seq, not length.
 		const rotated = ( top ) =>
 			[ top, top - 1, top - 2 ].map( ( s ) =>
 				entry( { seq: s, rid: `r-${ s }`, url: `/u/${ s }` } )
@@ -501,10 +477,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'applies the full one-row offset when a new row is committed at the top', () => {
-		// The compensation lives in a useLayoutEffect keyed on the committed
-		// entries, so the offset lands in the SAME commit as the new row (no
-		// jump-then-correct flicker). At commit the offset is a full ROW_HEIGHT
-		// up — the rAF only decays it on subsequent frames.
+		// Offset lands in the same commit as the new row (no flicker).
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
@@ -523,9 +496,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'staleness is connection-driven, so a filter never affects it', () => {
-		// Staleness reflects the link connection's liveness, not the displayed
-		// rows — so a non-matching filter (which hides every row) still shows
-		// "Xs ago" off the connector.
+		// Connection-driven staleness: a non-matching filter keeps "Xs ago".
 		registerViewFixture( { entries: [] } );
 		Core.nodes.set( 'requestlog:link', {
 			lastEventTime: () => Date.now() - 3000,
@@ -549,8 +520,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'Clear keeps the live-stream staleness (connection still alive)', () => {
-		// Clear empties the displayed rows, but the link connection is still
-		// alive — so "Xs ago" must persist (Clear no longer touches staleness).
+		// Clear empties rows but the connection lives → "Xs ago" persists.
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
@@ -577,9 +547,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'resets "Xs ago" when an idle stream gets a heartbeat (connector lastEventTime advances)', () => {
-		// An idle stream (no new rows) whose link lastEventTime advances on a
-		// heartbeat must reset "Xs ago" — that is the whole point of sourcing
-		// staleness from the connector.
+		// Idle stream: a heartbeat advancing lastEventTime resets "Xs ago".
 		jest.useFakeTimers();
 		registerViewFixture( { entries: [] } );
 		Core.nodes.set( 'requestlog:link', {
@@ -595,8 +563,7 @@ describe( 'RequestStream', () => {
 			'.newspack-nodes-toolbar-stats'
 		);
 		expect( stats.textContent ).toMatch( /1[123]s ago/ );
-		// A heartbeat advances the connector's lastEventTime to now — "Xs ago"
-		// must reset to a small value instead of climbing past 12s.
+		// Heartbeat advances lastEventTime → "Xs ago" resets, not past 12s.
 		Core.node( 'requestlog:link' ).lastEventTime = () => Date.now();
 		tickFrame();
 		act( () => {
@@ -607,9 +574,7 @@ describe( 'RequestStream', () => {
 	} );
 
 	it( 'baselines the first row after Clear (no slide), then slides the next', () => {
-		// After Clear the node counter resets, so post-clear seqs restart at 1.
-		// The first row re-establishes the baseline and must NOT slide; the next
-		// genuinely-new row slides in.
+		// Post-clear: first row baselines (no slide); the next one slides.
 		const node = registerViewFixture( {
 			entries: [
 				entry( { seq: 3, rid: 'r-3' } ),

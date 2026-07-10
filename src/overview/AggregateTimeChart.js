@@ -71,7 +71,7 @@ export default function AggregateTimeChart( {
 		const slots = buildTimeSlots();
 
 		if ( ! effectiveBreakdown ) {
-			// No dimensional data — use base data for a single-series "Total" chart.
+			// No dimensional data — single-series "Total" chart.
 			const key = 'Total';
 			const chartData = slots.map( ( { date, bucketKey } ) => {
 				const b = data[ bucketKey ];
@@ -104,7 +104,7 @@ export default function AggregateTimeChart( {
 		} );
 		const dimValues = Array.from( valueSet );
 
-		// Build color map: use STATUS_COLORS for status breakdown, PALETTE otherwise.
+		// Color map: STATUS_COLORS for status breakdown, PALETTE otherwise.
 		const colorMap = {};
 		dimValues.forEach( ( v, i ) => {
 			colorMap[ v ] =
