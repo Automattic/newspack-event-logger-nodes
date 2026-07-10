@@ -40,8 +40,7 @@ describe( 'overview — AdminApp', () => {
 		views.forEach( ( v ) => v.unmount() );
 	} );
 
-	// Mount a component and flush the lazy import microtask so the
-	// PerformanceDashboard mock renders and captures its onError prop.
+	// Mount + flush the lazy import so the mock captures its onError prop.
 	async function mount( element ) {
 		const view = renderComponent( element );
 		views.push( view );

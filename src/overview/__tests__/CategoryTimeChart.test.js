@@ -16,8 +16,7 @@
  *   the render body runs against the d3 chainable AND coverage flows.
  */
 
-// Mock d3 — every call returns the shared chainable. Must be jest.fn so
-// tests can assert call counts.
+// Mock d3: every call returns the shared chainable (jest.fn for asserts).
 jest.mock( 'd3', () => {
 	const chain = {};
 	const fnNames = [
@@ -68,11 +67,7 @@ jest.mock( 'd3', () => {
 	return new Proxy( {}, handler );
 } );
 
-// useTimeChart mock — return real refs and run renderFn synchronously so
-// the body of renderFn gets covered without RAF. Also stubs setupTooltip
-// because the real one reaches into x.invert / x.range / dates.length on
-// the mocked d3 chain — that's out of scope here (covered separately in
-// useTimeChart tests).
+// useTimeChart mock: real refs + sync renderFn; stubs setupTooltip.
 jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 	const actual = jest.requireActual(
 		'@newspack-nodes/shared/hooks/useTimeChart'
@@ -141,8 +136,7 @@ describe( 'CategoryTimeChart', () => {
 	} );
 
 	it( 'renders title + container divs when data has categories', () => {
-		// Compute today's UTC bucket key (the same way buildTimeSlots does)
-		// so the chart will find a matching bucket.
+		// Compute today's UTC bucket key so the chart finds a matching bucket.
 		const now = new Date();
 		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
 		const bucketKey = [
@@ -245,8 +239,7 @@ describe( 'CategoryTimeChart', () => {
 	} );
 
 	it( 'handles buckets where category stats are missing', () => {
-		// Bucket key in `data` doesn't match any slot — exercises the
-		// fallback that returns value=0 for missing stats.
+		// Bucket key matches no slot → exercises the value=0 fallback.
 		const data = {
 			'1970-01-01-00-00': {
 				db: { c: 1, t: 10 },
@@ -308,12 +301,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'formatYValue covers all branches via tooltip formatEntry callback', () => {
 		const bucketKey = bucketKeyNow();
-		// data with three categories at varying value magnitudes — drives
-		// the < 0.001, < 1, >= 1 branches in time mode.
-		// BUCKET_SECONDS = 300, so:
-		//   tiny: t=0.0001 -> value = (0.0001/1000)/300 = 3.3e-10 -> microsecond branch
-		//   mid: t=150000  -> value = (150000/1000)/300 = 0.5 -> ms branch
-		//   big: t=900000  -> value = (900000/1000)/300 = 3.0 -> s/s branch
+		// varying magnitudes drive the <0.001 / <1 / >=1 time-mode branches.
 		const data = {
 			[ bucketKey ]: {
 				tiny: { c: 1, t: 0.0001 },
@@ -342,7 +330,7 @@ describe( 'CategoryTimeChart', () => {
 		// average mode: value = t/c (in same units).
 		const data = {
 			[ bucketKey ]: {
-				submicro: { c: 1000, t: 0.5 }, // value=0.0005ms → microsecond branch
+				submicro: { c: 1000, t: 0.5 }, // 0.0005ms → microsecond
 				bigsec: { c: 1, t: 2000 }, // value=2000ms → s branch
 				normal: { c: 1, t: 5 }, // value=5ms → ms branch
 			},
@@ -382,8 +370,7 @@ describe( 'CategoryTimeChart', () => {
 	} );
 
 	it( 'renderFn no-ops when containerRef is null', () => {
-		// Capture renderFn from a working render, then re-invoke with null
-		// containerRef — exercises the early return.
+		// Re-invoke captured renderFn with null containerRef → early return.
 		const now = new Date();
 		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
 		const bucketKey = [
@@ -406,8 +393,7 @@ describe( 'CategoryTimeChart', () => {
 		);
 
 		expect( globalThis.__lastRenderFn ).toEqual( expect.any( Function ) );
-		// Re-invoke with a null container — should return immediately,
-		// not throw.
+		// Re-invoke with a null container — returns immediately, no throw.
 		expect( () =>
 			globalThis.__lastRenderFn( {
 				containerRef: { current: null },

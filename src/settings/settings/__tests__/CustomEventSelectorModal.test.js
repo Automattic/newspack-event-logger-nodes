@@ -4,9 +4,7 @@
  * module import time, so we set that before importing.
  */
 
-// CUSTOM_COLORS in CustomEventSelectorModal is captured at module load.
-// We set the global FIRST, then require() the SUT — jest's import
-// hoisting can't reorder this.
+// CUSTOM_COLORS is captured at module load — set the global before require().
 beforeAll( () => {
 	window.newspackNodesCustomColors = {
 		'wp.cron.event': '#aabbcc',

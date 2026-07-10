@@ -37,8 +37,7 @@ import { GyroscopeViewNode } from '../gyroscope-view-node';
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// Construct + name the node directly — the createX factory is gone (make_node
-// builds it in production); bare-new + name= is the test seam.
+// Construct + name directly — createX factory is gone; bare-new is the seam.
 function makeView( name ) {
 	const node = new GyroscopeViewNode();
 	node.name = name;
@@ -53,7 +52,7 @@ function inflightEnvelope( requests ) {
 	return m;
 }
 
-// A wire envelope as the EventSource delivers it: KEY=<rid>, VALUE=object with rid.
+// A wire envelope as the EventSource delivers it: KEY=<rid>, VALUE=object.
 function completeEnvelope( request ) {
 	const m = newMessage();
 	m[ KEY ] = request.rid;
@@ -61,7 +60,7 @@ function completeEnvelope( request ) {
 	return m;
 }
 
-// A substrate `connected` envelope — KEY='connected', VALUE={pid,slot,partition}.
+// A `connected` envelope — KEY='connected', VALUE={pid,slot,partition}.
 function connectedEnvelope( payload = { pid: 1, slot: 0, partition: 0 } ) {
 	const m = newMessage();
 	m[ KEY ] = 'connected';
@@ -69,7 +68,7 @@ function connectedEnvelope( payload = { pid: 1, slot: 0, partition: 0 } ) {
 	return m;
 }
 
-// A local TM_STRUCT control message dispatched from the React layer (action ride).
+// A local TM_STRUCT control message from the React layer (action ride).
 function controlMsg( payload ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -208,10 +207,7 @@ test( 'snapshot() updates rps from the reaped completed count', () => {
 } );
 
 test( 'RPS tracking aggregates per second, not one entry per tick (bounded window)', () => {
-	// Perf contract: the requests/second window must NOT grow one entry per
-	// snapshot tick (the old `completedHistory.push` + full filter+reduce was
-	// O(n) per tick). A 10s window collapses to per-second buckets, so 500
-	// complete+snapshot cycles stay a handful of buckets — never 500.
+	// Perf: requests/sec window is per-second buckets, not one per tick.
 	const v = makeView( 'gyroscope:view' );
 	for ( let i = 0; i < 500; i++ ) {
 		v.fill(

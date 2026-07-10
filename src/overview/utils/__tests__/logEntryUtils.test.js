@@ -158,8 +158,7 @@ describe( 'computeVisibleEntries', () => {
 
 describe( 'placeholder runs in computeVisibleEntries', () => {
 	it( 'collapses a placeholder gap into dot + timestamp rows', () => {
-		// 1.0s to 1.5s = 50 hundredths of placeholders. The
-		// collapser should emit some dot rows + timestamp rows.
+		// 1.0s→1.5s = 50 hundredths → collapser emits dot + timestamp rows.
 		const { entries } = computeIndentedEntries( [
 			{ k: 'a', ts: 1.0 },
 			{ k: 'b', ts: 1.5 },
@@ -178,8 +177,7 @@ describe( 'placeholder runs in computeVisibleEntries', () => {
 	} );
 
 	it( 'collapses a long placeholder gap into escalating timestamps (Phase 2)', () => {
-		// 1.0s to 100.0s = 9900 hundredths — Phase 1 emits 2
-		// timestamps, then Phase 2 takes over.
+		// 1.0s→100.0s = 9900 hundredths: Phase 1 emits 2, then Phase 2.
 		const { entries } = computeIndentedEntries( [
 			{ k: 'a', ts: 1.0 },
 			{ k: 'b', ts: 100.0 },
@@ -214,8 +212,7 @@ describe( 'getAncestorPairIds', () => {
 			{ k: 'b (complete)', ts: 1.002 },
 			{ k: 'a (complete)', ts: 1.003 },
 		] );
-		// For 'b (start)' at indent 1: include own pairId + walk back
-		// to indent 0 = 'a (start)'.
+		// 'b (start)' at indent 1: own pairId + walk back to 'a (start)'.
 		const bIdx = entries.findIndex( ( e ) => e.k === 'b (start)' );
 		const ids = getAncestorPairIds( bIdx, entries );
 		expect( ids.has( entries[ 0 ].pairId ) ).toBe( true );
@@ -228,10 +225,7 @@ describe( 'getAncestorPairIds', () => {
 			{ k: 'include (error)', ts: 1.001 },
 			{ k: 'include (complete)', ts: 1.002 },
 		] );
-		// The error line is a CHILD of the include pair (its indent is one
-		// deeper than the start). To reveal it, the include (start) pair must be
-		// in the expand set — the walk has to look one indent level up, not at
-		// the leaf's own indent.
+		// The error line is a CHILD of include; walk one indent up.
 		const errIdx = entries.findIndex( ( e ) => e.k === 'include (error)' );
 		const parentPairId = entries.find(
 			( e ) => e.k === 'include (start)'

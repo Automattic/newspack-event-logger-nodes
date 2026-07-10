@@ -26,8 +26,7 @@ describe( 'error-log — ErrorLogPage', () => {
 		views.forEach( ( v ) => v.unmount() );
 	} );
 
-	// Mount a component and flush the lazy import microtask so the mocked
-	// ErrorLog renders.
+	// Mount a component and flush lazy-import microtask so ErrorLog renders.
 	async function mount( element ) {
 		const view = renderComponent( element );
 		views.push( view );

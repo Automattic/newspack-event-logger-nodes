@@ -53,8 +53,7 @@ describe( 'overview theme root', () => {
 		unmount();
 	} );
 
-	// The ThemedRoot token-provider wraps each root so a console-selected
-	// skin's universal tokens are in scope above the dashboard.
+	// ThemedRoot wraps each root so a skin's universal tokens are in scope.
 	it( 'AdminApp wraps its root in a ThemedRoot token provider', async () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( AdminApp )

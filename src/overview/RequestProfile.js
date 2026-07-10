@@ -69,7 +69,7 @@ export default function RequestProfile( {
 		if ( totalProfiledTime !== undefined ) {
 			return totalProfiledTime;
 		}
-		// Single request: sum category times, skipping " @N " callback breakdowns.
+		// Single request: sum category times, skip " @N " breakdowns.
 		return sortedProfiles
 			.filter( ( p ) => ! isCallbackCategory( p.state ) )
 			.reduce( ( sum, p ) => sum + p.time, 0 );
@@ -116,7 +116,7 @@ export default function RequestProfile( {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
-					// Wall-clock denominator so the unprofiled gap shows as empty background.
+					// Wall-clock denominator: unprofiled gap shows as empty bg.
 					const pct = totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 					return (
 						<div

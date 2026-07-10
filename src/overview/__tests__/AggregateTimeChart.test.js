@@ -47,9 +47,7 @@ jest.mock( 'd3', () => {
 				return chain;
 			}
 			if ( prop === 'stack' ) {
-				// d3.stack().keys(k) returns a callable that takes data
-				// and returns a layered array — the renderer iterates
-				// over it. Return an empty layered array.
+				// d3.stack().keys(k) returns a callable; return empty layers.
 				return jest.fn( () => {
 					const stacker = jest.fn( () => [] );
 					stacker.keys = jest.fn( () => stacker );
@@ -329,11 +327,7 @@ describe( 'AggregateTimeChart', () => {
 	} );
 
 	it( 'formatSeconds covers all five magnitude branches', () => {
-		// cumulative mode: row[v] = s.s / 1000, so to cover formatSeconds
-		// branches we need s.s values that yield 0, < 1, < 10, < 1000,
-		// >= 1000 (and the integer-Ks branch). Each series row → one
-		// formatSeconds call from saFmt; the formatEntry callback then
-		// computes a total via reduce + saFmt(total) → covers them too.
+		// cumulative mode drives every formatSeconds branch via saFmt.
 		const bk = bucketKeyNow();
 		const data = { [ bk ]: { count: 100, sum_ms: 1000 } };
 		const breakdownData = {

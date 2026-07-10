@@ -232,7 +232,7 @@ export default function UrlTable( {
 			);
 		}
 
-		// "Errors" = timeouts (T) + fatals (F); 5xx is a response, not an error.
+		// "Errors" = timeouts (T) + fatals (F); 5xx is a response.
 		if ( errorsOnly ) {
 			filtered = filtered.filter( ( u ) => {
 				const classified =

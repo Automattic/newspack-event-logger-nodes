@@ -37,9 +37,7 @@ const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
 
-// A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
-// Messages addressed back along FROM (the server's TO=FROM reply), payload looked
-// up by verb.
+// Fake CommandClient: postBatch returns TO=FROM replies keyed by verb.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
@@ -72,8 +70,7 @@ function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 			} );
 			return Promise.resolve( replies );
 		},
-		// One-shot send seam used by resolveRequest's no-graph fallback path
-		// (interpreter not mounted yet / torn down). Mirrors getCommandClient().send.
+		// One-shot send seam for resolveRequest's no-graph fallback path.
 		send: jest.fn( ( { verb } ) => {
 			const reply = newMessage();
 			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
@@ -113,7 +110,7 @@ function countVerbs( batches, verb ) {
 	return count;
 }
 
-// Drive document.visibilityState (matches usePageVisibility / useBatchedPoll tests).
+// Drive document.visibilityState (matches the visibility tests).
 function setVisibility( state ) {
 	Object.defineProperty( document, 'visibilityState', {
 		configurable: true,
@@ -122,8 +119,7 @@ function setVisibility( state ) {
 	document.dispatchEvent( new Event( 'visibilitychange' ) );
 }
 
-// Restore the default visible state for the next test WITHOUT dispatching into a
-// still-mounted hook (the event would fire a setState outside act → warning).
+// Restore default visibility without dispatching into a mounted hook.
 afterEach( () => {
 	Object.defineProperty( document, 'visibilityState', {
 		configurable: true,
@@ -556,7 +552,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 				selectedUrl: { hash: 'abc' },
 			} );
 		} );
-		// The on-demand slice is now driven by a real Timer + Fetcher, not setInterval.
+		// On-demand slice runs on a real Timer + Fetcher, not setInterval.
 		expect( Core.node( 'urldetail:timer' ) ).toBeTruthy();
 		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
 		expect( Core.node( 'fetch-urldetail' ) ).toBeTruthy();
@@ -622,7 +618,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		// While the modal is open the overview/urls poll is suspended.
 		client.batches.length = 0;
 
-		// Closing it must refresh the now-visible overview at once, not after a tick.
+		// Closing must refresh the now-visible overview at once.
 		await act( async () => {
 			rerender( { commandClient: client, selectedUrl: null } );
 		} );
@@ -900,8 +896,7 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 		const { getApi, unmount } = renderGraph( { commandClient: client } );
 		await act( async () => {} );
 		unmount();
-		// A param change after unmount must not throw — sendControl/sendCommand
-		// short-circuit on the missing view / detached interpreter.
+		// Param change after unmount must not throw (detached interpreter).
 		expect( () =>
 			getApi().handleUrlParamsChange( {
 				search: '',

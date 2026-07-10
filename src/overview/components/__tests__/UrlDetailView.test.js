@@ -11,9 +11,7 @@
  *     on first render
  */
 
-// useVirtualization expects a .components-modal__content ancestor; in
-// tests the SUT mounts at the root so closest() returns null and the
-// hook crashes on getBoundingClientRect. Mock to a no-op virtualizer.
+// Mock useVirtualization: no modal ancestor in tests → real hook crashes.
 jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
 	default: ( _ref, _row, total ) => ( {
@@ -211,8 +209,7 @@ describe( 'UrlDetailView', () => {
 				aggregate_flame: { children: [ { name: 'x' } ] },
 			},
 		} );
-		// FlameGraph is lazy; flush its import resolution inside act so the
-		// suspended-resource completion doesn't warn (header renders eagerly).
+		// FlameGraph is lazy; flush its import in act so it doesn't warn.
 		await act( async () => {} );
 		expect( container.textContent ).toContain( 'Aggregate Flame Graph' );
 		unmount();

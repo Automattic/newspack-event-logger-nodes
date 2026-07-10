@@ -85,7 +85,7 @@ function setInput( input, value ) {
 	} );
 }
 
-// The @wordpress/components Modal portals to document.body; scope queries there.
+// @wordpress/components Modals portal to document.body; scope queries there.
 function inDialog( selector ) {
 	const dialog = document.querySelector( '[role="dialog"]' ) || document;
 	return dialog.querySelector( selector );
@@ -137,7 +137,7 @@ describe( 'RuleEditModal — log rule fields', () => {
 		mount( LOG_RULE );
 		expect( inDialog( '.rule-edit-hooks-field' ) ).toBeTruthy();
 		expect( inDialog( '.rule-edit-custom-field' ) ).toBeTruthy();
-		// Significant events is a TagInputField (pill input), not a plain control.
+		// Significant events is a TagInputField (pill input), not a control.
 		expect(
 			inDialog( '.rule-edit-tag-field .event-logger-tag-input' )
 		).toBeTruthy();

@@ -189,7 +189,7 @@ const createTooltip = () => {
 const readThemeTokens = ( container ) => {
 	const style = window.getComputedStyle( container );
 	const read = ( name ) => style.getPropertyValue( name ).trim();
-	// First fallback that's a parseable color (skips named / color-mix() tokens).
+	// First parseable color (skips named / color-mix() tokens).
 	const pick = ( ...candidates ) => candidates.find( isColorParseable );
 	const accent = pick( read( '--cyan' ), read( '--np-primary' ), '#41e07a' );
 	const bg = pick( read( '--paper' ), read( '--np-surface' ), '#ffffff' );
@@ -377,7 +377,7 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 	let pruned = cloneAboveCutoff( root, cutoff );
 
 	if ( countNodes( pruned ) > hardMaxNodes ) {
-		// Still too many — raise the cutoff to the largest `hardMaxNodes` frames.
+		// Still too many — raise cutoff to the top hardMaxNodes frames.
 		cutoff = Math.max( cutoff, valueAtRank( hardMaxNodes ) );
 		pruned = cloneAboveCutoff( root, cutoff );
 	}
@@ -398,7 +398,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	const containerRef = useRef( null );
 	const chartRef = useRef( null );
 	const tooltipRef = useRef( null );
-	const metaClickRef = useRef( false ); // tooltip meta state across refreshes.
+	const metaClickRef = useRef( false ); // tooltip meta across refreshes.
 	const zoomedNodeRef = useRef( null ); // zoomed path across refreshes.
 	const lastChangeKeyRef = useRef( '' ); // skip redundant updates.
 
@@ -414,7 +414,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		const container = containerRef.current;
 		const width = container.clientWidth || 800;
 
-		// Depth-shaded palette in the theme accent; re-read each render (reskins).
+		// Depth-shaded palette in theme accent; re-read each render (reskins).
 		const { accent, bg } = readThemeTokens( container );
 		const colorMapper = createColorMapper( accent, bg );
 
@@ -453,7 +453,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					}
 				}
 
-				// Restore tooltip if it had state (else it vanishes on autorefresh/zoom).
+				// Restore tooltip state (else it vanishes on refresh/zoom).
 				if ( tooltipHasState ) {
 					tooltipRef.current?.restore?.();
 				}
@@ -530,7 +530,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		};
 	}, [] );
 
-	// Re-fit on CONTAINER resize (window resize misses panel resizes); debounced.
+	// Re-fit on CONTAINER resize (window resize misses panels); debounced.
 	useEffect( () => {
 		const container = containerRef.current;
 		if ( ! container || typeof window.ResizeObserver === 'undefined' ) {

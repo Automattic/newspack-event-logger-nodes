@@ -37,9 +37,7 @@ const HTTP = '_http';
 const VIEW = 'hookcatalog:view';
 const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
 
-// A fake CommandClient matching HttpOutNode's seam: postBatch returns reply
-// Messages addressed back along FROM (the server's TO=FROM reply). The payload
-// can be looked up by verb so a hooks_registered reply yields the catalog dict.
+// A fake CommandClient (HttpOutNode seam): postBatch returns TO=FROM replies.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
@@ -153,7 +151,7 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( msg[ TO ] ).toBe( 'performance' );
 		expect( msg[ FROM ] ).toBe( VIEW );
 		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
-		// hooks_registered takes no args; empty args string, no request payload.
+		// hooks_registered takes no args; empty args string, no payload.
 		expect( msg[ VALUE ].arguments ).toBe( '' );
 		expect( msg[ VALUE ].payload ).toBeUndefined();
 	} );
@@ -230,10 +228,7 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 } );
 
 describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirrors old modal)', () => {
-	// The legacy modal's `.catch(() => setHookCategories({}))` model: a fetch
-	// failure leaves the spinner cleared and the category list empty. There's
-	// no error UI in HookSelectorModal — just an empty modal. So a TM_ERROR
-	// reply must not throw out of the hook and must clear loading.
+	// A fetch failure clears loading + empties the catalog (no error UI).
 	test( 'an error reply clears loading without throwing', async () => {
 		const client = makeFakeClient(
 			{ hooks_registered: 'capability check failed' },
@@ -247,8 +242,7 @@ describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirro
 			rerender( { isOpen: true, commandClient: client } );
 		} );
 		expect( result.current.loading ).toBe( false );
-		// Caller's catch handled the rejection — no global error to surface.
-		// hooksByCategory stays at its default empty map.
+		// Caller's catch handled it; hooksByCategory stays its empty map.
 		expect( result.current.hooksByCategory ).toEqual( {} );
 	} );
 } );

@@ -40,9 +40,7 @@ describe( 'page wrappers', () => {
 		unmount();
 	} );
 
-	// The dashboards reference var(--np-*) tokens defined on the
-	// `.newspack-nodes-theme` root class (the shared newspack-nodes-theme
-	// stylesheet). Each full-page wrapper must carry it so those resolve.
+	// Each wrapper must carry .newspack-nodes-theme so var(--np-*) resolves.
 	it( 'GyroscopePage root carries .newspack-nodes-theme', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( GyroscopePage )
@@ -63,8 +61,7 @@ describe( 'page wrappers', () => {
 		unmount();
 	} );
 
-	// Each wrapper sits inside a ThemedRoot token-provider so a
-	// console-selected skin's universal tokens scope the dashboard.
+	// Each wrapper sits in a ThemedRoot provider so a skin's tokens scope it.
 	it( 'GyroscopePage wraps its root in a ThemedRoot token provider', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( GyroscopePage )

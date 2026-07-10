@@ -10,9 +10,7 @@
  */
 
 jest.mock( 'd3', () => {
-	// chain is itself a Proxy — any property access returns a jest-fn
-	// that yields the chain, so arbitrarily-deep d3.foo().bar().baz()
-	// chains work without enumerating every method.
+	// chain is a Proxy: any access yields a jest-fn returning the chain.
 	const chainHandler = {
 		get: ( target, prop ) => {
 			if ( prop === 'then' ) {
@@ -91,7 +89,8 @@ const REQUESTS = [
 	{ rid: 'r2', timestamp: 1700000100, duration_ms: 100, status_code: 404 },
 	{ rid: 'r3', timestamp: 1700000200, duration_ms: 75, status_code: 500 },
 	{ rid: 'r4', timestamp: 1700000300, duration_ms: 25, status_code: 301 },
-	{ rid: 'r5', timestamp: 1700000400, duration_ms: 200, status_code: 600 }, // unknown bucket
+	// status 600 → unknown bucket.
+	{ rid: 'r5', timestamp: 1700000400, duration_ms: 200, status_code: 600 },
 	// Filtered out — no timestamp:
 	{ rid: 'r6', duration_ms: 100, status_code: 200 },
 	// Filtered out — no duration:
@@ -99,8 +98,7 @@ const REQUESTS = [
 ];
 
 describe( 'ResponseTimeChart', () => {
-	// Capture initial keys lazily; the chain Proxy populates them as the
-	// component uses them. mockClear is best-effort across runs.
+	// mockClear the lazily-populated chain keys, best-effort across runs.
 	beforeEach( () => {
 		Object.keys( d3Mock ).forEach( ( k ) => {
 			const v = d3Mock[ k ];
@@ -215,9 +213,7 @@ describe( 'ResponseTimeChart', () => {
 				onRequestClick: jest.fn(),
 			} )
 		);
-		// Rerender with empty requests → component returns null but the
-		// resize listener for the previous render is still registered
-		// briefly. Just verify no throw on dispatch.
+		// Empty requests → null render; stale resize listener must not throw.
 		rerender(
 			React.createElement( ResponseTimeChart, {
 				requests: [],

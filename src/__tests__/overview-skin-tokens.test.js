@@ -14,9 +14,7 @@ const read = ( rel ) =>
 	fs.readFileSync( path.join( __dirname, '..', rel ), 'utf8' );
 
 describe( 'dashboard skin tokens', () => {
-	// Strip line comments so the no-fallback / no-lightening assertions check the
-	// actual declarations, not the header prose that describes them. Tokens were
-	// lifted to the shared src/styles/_tokens.scss (one copy for every dashboard).
+	// Strip line comments so assertions check declarations, not prose.
 	const tokens = read( 'styles/_tokens.scss' ).replace( /\/\/.*$/gm, '' );
 
 	it( 'maps the surface/ink/accent primitives straight to bare skin tokens', () => {
@@ -50,17 +48,13 @@ describe( 'dashboard skin tokens', () => {
 	} );
 
 	it( 'keeps the reskin rules off the bare .newspack-nodes-theme (the overlay console carries it too)', () => {
-		// The component + form-control block must be scoped to the dashboard root
-		// and the detail modal, NOT the bare class the substrate debug-overlay
-		// console also mounts under — else our light input bg paints its REPL /
-		// settings-panel fields (whose own class sits on an ancestor, not the input).
+		// Scope to the dashboard root, not the bare overlay-console class.
 		const scss = read( 'components/ThemedRoot.scss' );
 		expect( scss ).not.toMatch( /^\s*\.newspack-nodes-theme\s*\{/m );
 	} );
 
 	it( 'settings/_tokens.scss keeps its --np-* fallback chain (settings is NOT reskinned)', () => {
-		// Unlike overview/gyroscope/requests, the settings page is deliberately
-		// Newspack-fixed (no ThemedRoot), so its tokens MUST keep the --np-* fallback.
+		// Settings is Newspack-fixed (no ThemedRoot), so tokens keep --np-*.
 		const settings = read( 'settings/styles/_tokens.scss' );
 		expect( settings ).toMatch( /var\(\s*--[\w-]+\s*,\s*var\(\s*--np-/ );
 	} );

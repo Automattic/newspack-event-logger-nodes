@@ -11,8 +11,7 @@ jest.mock( '../requests/RequestStreamPage', () => ( {
 	__esModule: true,
 	default: () => 'REQUEST_STREAM_PAGE',
 } ) );
-// overview/index.js mounts the lazy-loaded PerformanceDashboard; the error log
-// is its own entry (error-log/index.js → lazy-loaded ErrorLog).
+// overview mounts the lazy PerformanceDashboard; error-log is its own entry.
 jest.mock( '../overview/PerformanceDashboard', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
@@ -48,10 +47,7 @@ describe( 'dashboard mount-entry points', () => {
 	} );
 
 	it( 'requests/index.js mounts when #event-logger-stream exists', () => {
-		// The mount container id is `event-logger-stream` (the prior
-		// version of this test used `event-logger-request-stream` which
-		// does not match the production lookup, so the if-block was
-		// never exercised — see src/requests/index.js).
+		// Container id is `event-logger-stream` (must match production lookup).
 		const el = mountContainer( 'event-logger-stream' );
 		expect( () => require( '../requests' ) ).not.toThrow();
 		expect( el.parentNode ).toBe( document.body );
@@ -64,10 +60,7 @@ describe( 'dashboard mount-entry points', () => {
 	it( 'overview/index.js mounts the dashboard container', () => {
 		const admin = mountContainer( 'event-logger-admin' );
 		require( '../overview' );
-		// Dispatch DOMContentLoaded — required because the handler is
-		// registered at module-load time in jsdom (the document is
-		// already "interactive" by then, but DOMContentLoaded hasn't
-		// fired yet in this environment).
+		// Dispatch DOMContentLoaded — jsdom won't fire it on its own.
 		document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
 		expect( admin.parentNode ).toBe( document.body );
 	} );
@@ -125,9 +118,7 @@ describe( 'dashboard mount-entry points', () => {
 	} );
 
 	it( 'settings no longer wires legacy reset buttons (per-field reset is the toggle module)', () => {
-		// The old in-page reset-to-baked-default mechanism was replaced by the
-		// shared admin-field-reset toggle module. settings no longer
-		// binds `event-logger-reset-*` buttons, so a legacy button click is inert.
+		// Reset moved to the shared toggle module; a legacy click is inert.
 		const div = mountContainer( 'event-logger-log_urls' );
 		div.dataset.values = '[]';
 		div.dataset.default = '[]';
@@ -146,8 +137,7 @@ describe( 'dashboard mount-entry points', () => {
 		expect( captured ).toBeNull();
 	} );
 
-	// The createRoot deprecation surfaces via console.error; capture it and assert
-	// the legacy-render notice never fires (the entrypoints mount via createRoot).
+	// Capture console.error; React 18 legacy-render notice must never fire.
 	function renderDeprecationOnMount( moduleId, prepare ) {
 		prepare();
 		const errSpy = jest

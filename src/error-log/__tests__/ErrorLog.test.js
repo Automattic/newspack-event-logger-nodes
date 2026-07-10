@@ -30,10 +30,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useErrorLogGraph } = require( '../hooks/useErrorLogGraph' );
 
-// A minimal stand-in for the perferrors:view node: the low-frequency model lives
-// in setStateCache.view (what useNodeState subscribes to) and the high-frequency
-// buffer lives directly on the instance (what the rAF reads). setState here
-// notifies subscribers exactly like the real Node.setState.
+// Stand-in perferrors:view node: low-freq in setStateCache, buffer on instance.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
@@ -64,9 +61,7 @@ function registerViewFixture( {
 	return node;
 }
 
-// Production assigns each entry a unique `id` (perf-errors-view-node's
-// entryCounter), and ErrorRow keys on it — so the factory must mint a unique id
-// per call, else multi-entry fixtures collide on `id:1` (duplicate React keys).
+// Each entry needs a unique `id` (ErrorRow keys on it) or React keys collide.
 let nextEntryId = 0;
 function entry( overrides = {} ) {
 	nextEntryId += 1;
@@ -95,8 +90,7 @@ describe( 'ErrorLog', () => {
 		useErrorLogGraph.mockClear();
 		useErrorLogGraph.mockReturnValue( { setPaused, clear } );
 
-		// Capture rAF callbacks so a test can drive exactly one frame (the rAF
-		// reads node.entries and pushes them into React state).
+		// Capture rAF callbacks so a test can drive exactly one frame.
 		rafCbs = [];
 		global.requestAnimationFrame = ( cb ) => {
 			rafCbs.push( cb );
@@ -264,8 +258,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'falls back to an empty model when the view node is absent', () => {
-		// No fixture registered — useNodeState yields undefined; the view must
-		// still render (Waiting…) without throwing.
+		// No fixture — useNodeState yields undefined; the view still renders.
 		const { container } = mount();
 		expect( container.textContent.toLowerCase() ).toMatch(
 			/wait|no|empty/i
@@ -273,8 +266,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'keeps rendering the newest row after the buffer saturates its cap', () => {
-		// At the cap the node rotates at constant length while the newest seq
-		// climbs — change detection must key off seq, not length (the freeze bug).
+		// At the cap, key change detection off seq not length (freeze bug).
 		const rotated = ( top ) =>
 			[ top, top - 1, top - 2 ].map( ( s ) =>
 				entry( { seq: s, rid: `r-${ s }`, m: `m-${ s }` } )
@@ -290,8 +282,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'applies the full one-row offset when a new row is committed at the top', () => {
-		// Compensation lives in a useLayoutEffect keyed on committed entries, so
-		// the offset lands in the same commit as the new row (no flicker).
+		// useLayoutEffect keyed on committed entries lands offset in-commit.
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
@@ -361,8 +352,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'sources the staleness display from the link connector lastEventTime', () => {
-		// Staleness now reflects CONNECTION liveness, owned by the shared link
-		// connector - the rAF reads its lastEventTime, not the view node's.
+		// Staleness reads the link's lastEventTime, not the view node's.
 		registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1', k: 'error', m: 'boom' } ) ],
 		} );
@@ -378,9 +368,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'staleness is connection-driven, so a filter never affects it', () => {
-		// Staleness reflects the link connection's liveness, not the displayed
-		// rows — so a non-matching filter (which hides every row) still shows
-		// "Xs ago" off the connector.
+		// Connection-driven staleness: a filter hiding all rows shows it.
 		registerViewFixture( { entries: [] } );
 		Core.nodes.set( 'perferrors:link', {
 			lastEventTime: () => Date.now() - 3000,
@@ -404,8 +392,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'Clear keeps the live-stream staleness (connection still alive)', () => {
-		// Clear empties the displayed rows, but the link connection is still
-		// alive — so "Xs ago" must persist (Clear no longer touches staleness).
+		// Clear empties rows but connection is alive, so staleness persists.
 		const node = registerViewFixture( {
 			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
 		} );
@@ -431,9 +418,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'resets "Xs ago" when an idle stream gets a heartbeat (connector lastEventTime advances)', () => {
-		// An idle stream (no new rows) whose link lastEventTime advances on a
-		// heartbeat must reset "Xs ago" — that is the whole point of sourcing
-		// staleness from the connector.
+		// An idle stream's advancing link lastEventTime resets "Xs ago".
 		jest.useFakeTimers();
 		registerViewFixture( { entries: [] } );
 		Core.nodes.set( 'perferrors:link', {
@@ -449,8 +434,7 @@ describe( 'ErrorLog', () => {
 			'.newspack-nodes-toolbar-stats'
 		);
 		expect( stats.textContent ).toMatch( /1[123]s ago/ );
-		// A heartbeat advances the connector's lastEventTime to now — "Xs ago"
-		// must reset to a small value instead of climbing past 12s.
+		// A heartbeat resets "Xs ago" by advancing lastEventTime to now.
 		Core.node( 'perferrors:link' ).lastEventTime = () => Date.now();
 		tickFrame();
 		act( () => {

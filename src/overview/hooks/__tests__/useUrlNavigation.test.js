@@ -19,9 +19,7 @@ const URLS = [
 ];
 
 function setLocation( href ) {
-	// jsdom navigates via window.history.replaceState — the only way to
-	// change window.location.search / .href without crashing on the
-	// non-configurable Location getter.
+	// jsdom: use history.replaceState to change window.location.
 	window.history.replaceState( {}, '', href );
 }
 

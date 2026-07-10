@@ -60,9 +60,7 @@ const SAMPLE_RULES = [
 	},
 ];
 
-// A fake CommandClient matching HttpOutNode's seam: postBatch echoes reply
-// Messages addressed back along FROM (the server's TO=FROM reply). Payload looked
-// up by verb.
+// A fake CommandClient (HttpOutNode seam): postBatch echoes TO=FROM replies.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],

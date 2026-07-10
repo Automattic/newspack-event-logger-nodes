@@ -40,9 +40,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 
 import { useRequestLogGraph } from '../useRequestLogGraph';
 
-// Minimal FakeEventSource — same shape as the substrate's `sse_connector.test.js`.
-// Stores the last instance on a static for tests to drive `msg` dispatches and
-// inspect closed-state.
+// Minimal FakeEventSource: static holds the last instance for tests to drive.
 class FakeEventSource {
 	constructor( url ) {
 		this.url = url;
@@ -74,17 +72,14 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'requestlog:link';
-// RemoteLink composes an UNNAMED SseIn (held internally, not registered in Core)
-// and SHARES the reserved-name `_http` (HttpOut) + `_heartbeat` (Heartbeat)
-// singletons — the old per-link `{link}:sse-in/http/heartbeat` names are gone.
+// RemoteLink: unnamed SseIn + shared reserved _http/_heartbeat singletons.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'requestlog:view';
 const TEE = 'requestlog:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 
-// Build a `connected` envelope as SseInNode recognizes it: a flat `KEY VALUE`
-// string (the SSE rework). SLOT is omitted when null; `partition` was removed.
+// Build a `connected` envelope: flat KEY VALUE string; SLOT omitted if null.
 function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
@@ -98,8 +93,7 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	return m;
 }
 
-// A completed-request envelope as the wire delivers it (no special KEY — just
-// a request row in VALUE).
+// A completed-request envelope: no special KEY, request row in VALUE.
 function completedEnvelope( req ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -116,9 +110,7 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// RemoteLink shares the reserved _http + _heartbeat singletons, each
-		// sinking into the interpreter. (The SseIn is unnamed — proven below via
-		// the FakeEventSource URL + the end-to-end routing into the view.)
+		// Shared _http/_heartbeat sink into the interpreter (SseIn unnamed).
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
@@ -130,8 +122,7 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `completed` and routes to view (and heartbeat → _http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
-		// The unnamed SseIn opened against the `completed` subscribe topic (its
-		// target → view is proven by the end-to-end routing test below).
+		// Unnamed SseIn opened on the `completed` subscribe topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
@@ -224,7 +215,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 		jest.useFakeTimers();
 		try {
 			renderHook( () => useRequestLogGraph() );
-			// Spy on the composed HttpOut's client.postBatch instead of fetch().
+			// Spy on the composed HttpOut's client.postBatch, not fetch().
 			const http = Core.node( HTTP );
 			const postBatch = jest.fn().mockResolvedValue( [] );
 			http.client = { buildMessage: () => newMessage(), postBatch };
@@ -234,7 +225,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
 				);
 			} );
-			// 1s Router TIMER × 5 = past the 5s base-Timer throttle (lastFireTime).
+			// 1s Router TIMER ×5 = past the 5s base-Timer throttle.
 			act( () => {
 				jest.advanceTimersByTime( 5000 );
 			} );
@@ -300,8 +291,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useRequestLogGraph() );
-		// Stream a real tailed record: the server stamps a `segment:offset:length` breadcrumb in
-		// ID and the partition dir in FROM — that is what the SseIn tracks.
+		// Tailed record: ID holds segment:offset:length; FROM holds partition.
 		const rec = completedEnvelope( { rid: 'r1', url: '/a' } );
 		rec[ FROM ] = 'completed.p0';
 		rec[ ID ] = '2:8800:120';
@@ -311,7 +301,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		// Hide → close.
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
-		// Show → reopen MUST seek the last offset (fill the hidden gap), not tail.
+		// Show → reopen seeks the last offset (fills the gap), not tail.
 		mockPageVisible = true;
 		act( () => rerender( { n: 2 } ) );
 		const url = FakeEventSource.last.url;
@@ -415,8 +405,7 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 			Core.reinit();
 		} );
 
-		// Soft nodes are fresh instances under the same names; backbone survives —
-		// including the shared `_http` singleton it now owns (preserved, not rebuilt).
+		// Soft nodes rebuild fresh; the backbone (incl. shared _http) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `completed` topic.
@@ -438,8 +427,7 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 		const freshView = Core.node( VIEW );
 		expect( freshView ).not.toBe( firstView );
 
-		// The fresh view publishes state; the consumer must observe it (proving it
-		// re-subscribed to freshView, not the removed firstView).
+		// Fresh view publishes state; consumer must observe it (re-subscribed).
 		act( () => {
 			freshView.setState( 'view', { paused: true } );
 		} );
@@ -455,10 +443,7 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 			Core.reinit();
 		} );
 
-		// The rebuilt view's constructor defaults paused:false; the hook must
-		// re-apply the surviving pause so the button / empty-state don't show
-		// "live" while the connection effect (gating on the surviving isPaused)
-		// keeps the stream closed.
+		// Rebuilt view defaults paused:false; hook re-applies surviving pause.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
 	} );
 } );

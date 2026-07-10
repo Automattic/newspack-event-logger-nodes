@@ -77,9 +77,7 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'perferrors:link';
-// RemoteLink composes an UNNAMED SseIn (held internally, not registered in Core)
-// and SHARES the reserved-name `_http` (HttpOut) + `_heartbeat` (Heartbeat)
-// singletons — the old per-link `{link}:sse-in/http/heartbeat` names are gone.
+// RemoteLink has an unnamed SseIn + shares the reserved _http/_heartbeat.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'perferrors:view';
@@ -88,9 +86,7 @@ const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
 const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
 
-// Build a `connected` envelope as SseInNode recognizes it: a flat `KEY VALUE`
-// string (the SSE rework). SLOT is omitted when null so the bridge leaves
-// heartbeat.slot null. `partition` was removed end-to-end.
+// Build a `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
 function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
@@ -122,9 +118,7 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// RemoteLink shares the reserved _http + _heartbeat singletons, each
-		// sinking into the interpreter. (The SseIn is unnamed — proven below via
-		// the FakeEventSource URL + the end-to-end routing into the view.)
+		// RemoteLink shares _http + _heartbeat, each sinking into interpreter.
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
@@ -176,8 +170,7 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useErrorLogGraph() );
-		// The unnamed SseIn opened against the `errors` subscribe topic (its
-		// target → view is proven by the end-to-end routing test below).
+		// The unnamed SseIn opened against the `errors` subscribe topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
@@ -302,7 +295,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
-		// A real tailed record: segment:offset:length breadcrumb in ID, partition dir in FROM.
+		// A tailed record: segment:offset:length in ID, partition dir in FROM.
 		const rec = errorEnvelope( 'r1', { ts: 1, k: 'error', m: 'x' } );
 		rec[ FROM ] = 'errors.p0';
 		rec[ ID ] = '4:512:100';
@@ -406,8 +399,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 			Core.reinit();
 		} );
 
-		// Soft nodes are fresh instances under the same names; backbone survives —
-		// including the shared `_http` singleton it now owns (preserved, not rebuilt).
+		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `errors` topic.
@@ -429,8 +421,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 		const freshView = Core.node( VIEW );
 		expect( freshView ).not.toBe( firstView );
 
-		// The fresh view publishes state; the consumer must observe it (proving it
-		// re-subscribed to freshView, not the removed firstView).
+		// Fresh view publishes; consumer observes it (proves re-subscribe).
 		act( () => {
 			freshView.setState( 'view', { paused: true } );
 		} );
@@ -446,10 +437,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 			Core.reinit();
 		} );
 
-		// The rebuilt view's constructor defaults paused:false; the hook must
-		// re-apply the surviving pause so the button / empty-state don't show
-		// "live" while the connection effect (gating on the surviving isPaused)
-		// keeps _sse closed.
+		// Rebuilt view defaults paused:false; the hook re-applies the pause.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
 	} );
 } );
