@@ -18,6 +18,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_Utils;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -93,14 +94,14 @@ class Config {
 		$config = self::load_config();
 		$raw    = $config['custom_colors'] ?? [];
 		/** @var array<string, mixed> $colors */
-		$colors = \is_array( $raw ) ? $raw : [];
+		$colors = Core::arr( $raw );
 
 		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
 			// Validate filter return (may be any type); color maps are string-keyed.
 			/** @var array<string, mixed> $colors */
-			$colors = \is_array( $filtered ) ? $filtered : [];
+			$colors = Core::arr( $filtered );
 		}
 
 		// Merge discovered events from remote spokes (available but not selected).
@@ -110,7 +111,7 @@ class Config {
 				foreach ( $discovered as $event => $color ) {
 					$event = (string) $event;
 					if ( ! isset( $colors[ $event ] ) ) {
-						$colors[ $event ] = \is_string( $color ) ? $color : '#ffa726';
+						$colors[ $event ] = Core::str( $color, '#ffa726' );
 					}
 				}
 			}

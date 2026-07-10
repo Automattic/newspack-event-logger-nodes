@@ -21,6 +21,7 @@ use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Nodes\Core as RuntimeCore;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -51,7 +52,7 @@ class Core {
 
 		$config               = Config::load_config();
 		$start_priority       = $config['hook_start_priority'] ?? 1;
-		$this->start_priority = \is_numeric( $start_priority ) ? (int) $start_priority : 1;
+		$this->start_priority = RuntimeCore::num_int( $start_priority, 1 );
 
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
@@ -220,8 +221,8 @@ class Core {
 			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
 		}
 		if ( \is_array( $function ) && \count( $function ) === 2 ) {
-			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : ( \is_string( $function[0] ) ? $function[0] : '' );
-			$method = \is_string( $function[1] ) ? $function[1] : '';
+			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : RuntimeCore::str( $function[0] );
+			$method = RuntimeCore::str( $function[1] );
 			$pos    = \strrpos( $class, '\\' );
 			if ( false !== $pos ) {
 				$class = \substr( $class, $pos + 1 );

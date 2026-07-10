@@ -8,6 +8,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Discovery_Collector_Node;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Settings_Event_Writer;
@@ -77,7 +78,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 	/** @return array<string,mixed> The discovered_hooks staging option. */
 	private function discovered_hooks(): array {
 		$v = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_hooks'] ?? [];
-		return \is_array( $v ) ? $v : [];
+		return Core::arr( $v );
 	}
 
 	public function test_fire_emits_one_discovery_get_command_to_tee(): void {

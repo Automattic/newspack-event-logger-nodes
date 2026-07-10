@@ -50,7 +50,7 @@ final class Rule_Set {
 	 * @return array{migrated: bool, overlap: bool}
 	 */
 	public static function migrate_from_legacy(): array {
-		$version = self::to_int( \get_option( self::OPTION_SCHEMA_VERSION, 0 ) );
+		$version = Core::as_int( \get_option( self::OPTION_SCHEMA_VERSION, 0 ) );
 		if ( $version >= self::SCHEMA_VERSION ) {
 			return [
 				'migrated' => false,
@@ -65,10 +65,6 @@ final class Rule_Set {
 			'migrated' => true,
 			'overlap'  => $overlap,
 		];
-	}
-
-	private static function to_int( mixed $value ): int {
-		return \is_scalar( $value ) ? (int) $value : 0;
 	}
 
 	/**
@@ -94,8 +90,8 @@ final class Rule_Set {
 		$log_urls = self::string_list( \get_option( $p . 'log_urls', [] ) );
 		$skip     = self::string_list( \get_option( $p . 'skip_urls', [] ) );
 		$bundle   = [
-			'auto_disable_threshold'      => self::to_int( \get_option( $p . 'auto_disable_threshold', 0 ) ),
-			'auto_protect_time_threshold' => self::to_float( \get_option( $p . 'auto_protect_time_threshold', 0.0 ) ),
+			'auto_disable_threshold'      => Core::as_int( \get_option( $p . 'auto_disable_threshold', 0 ) ),
+			'auto_protect_time_threshold' => Core::as_float( \get_option( $p . 'auto_protect_time_threshold', 0.0 ) ),
 			'significant_events'          => self::string_list( \get_option( $p . 'significant_events', [] ) ),
 			'custom_events'               => self::string_list( \get_option( $p . 'custom_events', [] ) ),
 			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
@@ -140,10 +136,6 @@ final class Rule_Set {
 	 */
 	private static function string_list( mixed $value ): array {
 		return \is_array( $value ) ? \array_values( \array_filter( $value, 'is_string' ) ) : [];
-	}
-
-	private static function to_float( mixed $value ): float {
-		return \is_scalar( $value ) ? (float) $value : 0.0;
 	}
 
 	/**

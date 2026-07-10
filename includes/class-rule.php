@@ -9,6 +9,8 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
+
 \defined( 'ABSPATH' ) || exit;
 
 /**
@@ -53,28 +55,16 @@ final class Rule {
 		$action = ( self::ACTION_LOG === ( $a['action'] ?? '' ) ) ? self::ACTION_LOG : self::ACTION_SKIP;
 		$hooks  = \array_key_exists( 'hooks', $a ) ? $a['hooks'] : [];
 		return new self(
-			self::to_str( $a['id'] ?? null, '' ),
-			self::to_str( $a['pattern'] ?? null, '/' ),
+			Core::as_string( $a['id'] ?? null, '' ),
+			Core::as_string( $a['pattern'] ?? null, '/' ),
 			$action,
-			self::to_int( $a['auto_disable_threshold'] ?? null ),
-			self::to_float( $a['auto_protect_time_threshold'] ?? null ),
+			Core::as_int( $a['auto_disable_threshold'] ?? null ),
+			Core::as_float( $a['auto_protect_time_threshold'] ?? null ),
 			self::to_string_list( $a['significant_events'] ?? null ),
 			self::to_string_list( $a['custom_events'] ?? null ),
 			\is_array( $hooks ) ? self::to_string_list( $hooks ) : null,
 			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE
 		);
-	}
-
-	private static function to_str( mixed $v, string $default ): string {
-		return \is_scalar( $v ) ? (string) $v : $default;
-	}
-
-	private static function to_int( mixed $v ): int {
-		return \is_scalar( $v ) ? (int) $v : 0;
-	}
-
-	private static function to_float( mixed $v ): float {
-		return \is_scalar( $v ) ? (float) $v : 0.0;
 	}
 
 	/**
@@ -84,7 +74,7 @@ final class Rule {
 		if ( ! \is_array( $v ) ) {
 			return [];
 		}
-		return \array_values( \array_map( static fn ( mixed $item ): string => self::to_str( $item, '' ), $v ) );
+		return \array_values( \array_map( static fn ( mixed $item ): string => Core::as_string( $item, '' ), $v ) );
 	}
 
 	public function is_skip(): bool {

@@ -140,7 +140,7 @@ class Request_Builder_Node extends Timer_Node {
 	public function fill( array $message ): void {
 		++$this->counter;
 		$type_raw = $message[ Message::TYPE ];
-		$type     = \is_scalar( $type_raw ) ? (int) $type_raw : 0;
+		$type     = Core::as_int( $type_raw );
 		if ( $type & Message::TM_REQUEST ) {
 			$this->handle_request( $message );
 			return;
@@ -157,7 +157,7 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var array<string, mixed> $entry */
 
 		$key_raw = $message[ Message::KEY ] ?? '';
-		$rid     = \is_scalar( $key_raw ) ? (string) $key_raw : '';
+		$rid     = Core::as_string( $key_raw );
 		if ( '' === $rid ) {
 			return;
 		}
@@ -190,7 +190,7 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var \stdClass $request */
 
 		// Validate per-request sequence n: catch orphans, dupes, reorders, rid reuse.
-		$seq_n = \is_scalar( $n ) ? (int) $n : 0;
+		$seq_n = Core::as_int( $n );
 
 		// Nested render (proc_open) restarts n at 1 same rid; stack saves parent n.
 		if ( 'gyrobase (start)' === $keyword ) {
@@ -220,7 +220,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( 'gyrobase (complete)' === $keyword && \is_array( $request->seq_stack ?? null ) && [] !== $request->seq_stack ) {
 			$stack               = $request->seq_stack;
 			$popped              = \array_pop( $stack );
-			$request->expected_n = \is_int( $popped ) ? $popped : 1;
+			$request->expected_n = Core::int( $popped, 1 );
 			$request->seq_stack  = $stack;
 		}
 
@@ -236,21 +236,21 @@ class Request_Builder_Node extends Timer_Node {
 			$this->state_callbacks[ $keyword ]( $request, $entry );
 		} elseif ( \str_ends_with( $keyword, ' (start)' ) ) {
 			$label = $entry['l'] ?? '';
-			$this->push_stack( $request, \substr( $keyword, 0, -8 ), \is_string( $label ) ? $label : '' );
+			$this->push_stack( $request, \substr( $keyword, 0, -8 ), Core::str( $label ) );
 		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
 			$dur_v = $entry['duration_ms'] ?? 0;
 			$ts_v  = $entry['ts'] ?? 0;
 			$this->pop_stack(
 				$request,
 				\substr( $keyword, 0, -11 ),
-				\is_scalar( $dur_v ) ? (float) $dur_v : 0.0,
-				\is_scalar( $ts_v ) ? (float) $ts_v : 0.0
+				Core::as_float( $dur_v ),
+				Core::as_float( $ts_v )
 			);
 		}
 
 		// Per-line activity timestamps for the inflight snapshot's *_ms derivation.
 		$ts_log_v             = $entry['ts'] ?? 0;
-		$request->last_log_ts = \is_scalar( $ts_log_v ) ? (float) $ts_log_v : 0.0;
+		$request->last_log_ts = Core::as_float( $ts_log_v );
 		$request->tracker_ts  = \microtime( true );
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted + bounded.
@@ -317,7 +317,7 @@ class Request_Builder_Node extends Timer_Node {
 			throw new \RuntimeException( 'Request_Builder::fill requires a wired sink' );
 		}
 		$value_raw = $message[ Message::VALUE ];
-		$value     = \is_scalar( $value_raw ) ? (string) $value_raw : '';
+		$value     = Core::as_string( $value_raw );
 		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_CACHE' === $verb ) {
@@ -332,14 +332,14 @@ class Request_Builder_Node extends Timer_Node {
 				if ( \is_array( $request ) ) {
 					$proc      = $request['process'] ?? null;
 					$created_v = ( \is_array( $proc ) ? ( $proc['ts_start'] ?? null ) : null ) ?? ( $request['ts'] ?? 0 );
-					$created   = \is_scalar( $created_v ) ? (int) $created_v : 0;
+					$created   = Core::as_int( $created_v );
 				}
 				if ( $created > 0 && $created < $oldest_ts ) {
 					$oldest_ts  = $created;
 					$oldest_rid = $rid;
 				}
 				if ( \count( $samples ) < 5 ) {
-					$samples[] = \is_scalar( $rid ) ? (string) $rid : '';
+					$samples[] = Core::as_string( $rid );
 				}
 			}
 			$payload = [
@@ -709,7 +709,7 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	private static function env_str( array $env, string $key ): string {
 		$value = $env[ $key ] ?? '';
-		return \is_string( $value ) ? $value : '';
+		return Core::str( $value );
 	}
 
 	/**
@@ -898,9 +898,9 @@ class Request_Builder_Node extends Timer_Node {
 
 		// Dynamic \stdClass reads are mixed by design; the casts are intentional.
 		$rid_raw = $request->rid ?? '';
-		$rid     = \is_string( $rid_raw ) ? $rid_raw : '';
+		$rid     = Core::str( $rid_raw );
 		$url_raw = $request->url ?? '';
-		$url     = \is_string( $url_raw ) ? $url_raw : '';
+		$url     = Core::str( $url_raw );
 		$url_hash     = Log_Manager::url_hash( $url );
 		/** @var int|float|string $ts_raw */
 		$ts_raw      = $request->timestamp ?? \time();
@@ -918,7 +918,7 @@ class Request_Builder_Node extends Timer_Node {
 		$offset       = $position['offset'];
 		$length       = $position['length'];
 		$es_raw       = $request->error_status ?? '-';
-		$error_status = \is_string( $es_raw ) ? $es_raw : '-';
+		$error_status = Core::str( $es_raw, '-' );
 
 		if ( $offset > 9999999999 || $length > 99999999 || $segment > 999999 ) {
 			return '';
@@ -940,7 +940,7 @@ class Request_Builder_Node extends Timer_Node {
 			'CLI'     => 'C',
 		];
 		$rm_raw = $request->request_method ?? 'GET';
-		$method = $method_codes[ \is_string( $rm_raw ) ? $rm_raw : 'GET' ] ?? 'G';
+		$method = $method_codes[ Core::str( $rm_raw, 'GET' ) ] ?? 'G';
 
 		return \str_pad( \substr( $rid, 0, 32 ), 32 )
 			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )

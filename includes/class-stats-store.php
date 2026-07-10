@@ -69,7 +69,7 @@ class Stats_Store {
 		$salt = '';
 		if ( \function_exists( 'get_option' ) ) {
 			$opt  = \get_option( self::SALT_OPTION, '' );
-			$salt = \is_scalar( $opt ) ? (string) $opt : '';
+			$salt = Core::as_string( $opt );
 		}
 		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
 	}
@@ -116,16 +116,6 @@ class Stats_Store {
 			$out[ (string) $k ] = $v;
 		}
 		return $out;
-	}
-
-	/** Numeric value coerced to int, or 0 when not numeric (missing/bool/array). */
-	private static function num_int( mixed $value ): int {
-		return \is_numeric( $value ) ? (int) $value : 0;
-	}
-
-	/** Numeric value coerced to float, or 0.0 when not numeric (missing/bool/array). */
-	private static function num_float( mixed $value ): float {
-		return \is_numeric( $value ) ? (float) $value : 0.0;
 	}
 
 	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} } (one key/partition).
@@ -389,14 +379,14 @@ class Stats_Store {
 	 * @param array<string, mixed> $src
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
-		$dst['count']        = self::num_int( $dst['count'] ?? null ) + self::num_int( $src['count'] ?? null );
-		$dst['sum_req_time'] = self::num_float( $dst['sum_req_time'] ?? null ) + self::num_float( $src['sum_req_time'] ?? null );
+		$dst['count']        = Core::num_int( $dst['count'] ?? null ) + Core::num_int( $src['count'] ?? null );
+		$dst['sum_req_time'] = Core::num_float( $dst['sum_req_time'] ?? null ) + Core::num_float( $src['sum_req_time'] ?? null );
 		if ( ! isset( $dst['categories'] ) || ! \is_array( $dst['categories'] ) ) {
 			$dst['categories'] = [];
 		}
 		$src_cats = ( isset( $src['categories'] ) && \is_array( $src['categories'] ) ) ? $src['categories'] : [];
 		foreach ( $src_cats as $cat => $data ) {
-			$data = \is_array( $data ) ? $data : [];
+			$data = Core::arr( $data );
 			if ( ! isset( $dst['categories'][ $cat ] ) ) {
 				$dst['categories'][ $cat ] = [
 					'samples'   => 0,
@@ -407,20 +397,20 @@ class Stats_Store {
 			}
 			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key, mixed>} $c */
 			$c               = &$dst['categories'][ $cat ];
-			$c['samples']   += self::num_int( $data['samples'] ?? null );
-			$c['sum_time']  += self::num_float( $data['sum_time'] ?? null );
-			$c['sum_count'] += self::num_float( $data['sum_count'] ?? null );
+			$c['samples']   += Core::num_int( $data['samples'] ?? null );
+			$c['sum_time']  += Core::num_float( $data['sum_time'] ?? null );
+			$c['sum_count'] += Core::num_float( $data['sum_count'] ?? null );
 			$entries         = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
 			foreach ( $entries as $name => $entry ) {
-				$entry = \is_array( $entry ) ? $entry : [];
+				$entry = Core::arr( $entry );
 				if ( ! isset( $c['entries'][ $name ] ) ) {
 					$c['entries'][ $name ] = [ 0.0, 0.0, 0 ];
 				}
 				/** @var array{0:float, 1:float, 2:int} $dst_entry */
 				$dst_entry      = &$c['entries'][ $name ];
-				$dst_entry[0]  += self::num_float( $entry[0] ?? null );
-				$dst_entry[1]  += self::num_float( $entry[1] ?? null );
-				$dst_entry[2]  += self::num_int( $entry[2] ?? null );
+				$dst_entry[0]  += Core::num_float( $entry[0] ?? null );
+				$dst_entry[1]  += Core::num_float( $entry[1] ?? null );
+				$dst_entry[2]  += Core::num_int( $entry[2] ?? null );
 				unset( $dst_entry );
 			}
 			unset( $c );
@@ -444,20 +434,20 @@ class Stats_Store {
 	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
 		$display_cats = [];
 		foreach ( $sums as $cat => $data ) {
-			$data      = \is_array( $data ) ? $data : [];
-			$samples   = self::num_int( $data['samples'] ?? null );
-			$sum_time  = self::num_float( $data['sum_time'] ?? null );
-			$sum_count = self::num_float( $data['sum_count'] ?? null );
+			$data      = Core::arr( $data );
+			$samples   = Core::num_int( $data['samples'] ?? null );
+			$sum_time  = Core::num_float( $data['sum_time'] ?? null );
+			$sum_count = Core::num_float( $data['sum_count'] ?? null );
 
 			$entries_out = [];
 			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
 			foreach ( $entries as $name => $entry ) {
-				$entry     = \is_array( $entry ) ? $entry : [];
-				$e_samples = self::num_int( $entry[2] ?? null );
+				$entry     = Core::arr( $entry );
+				$e_samples = Core::num_int( $entry[2] ?? null );
 				if ( $e_samples > 0 ) {
 					$entries_out[ $name ] = [
-						self::num_float( $entry[0] ?? null ) / $e_samples,
-						self::num_float( $entry[1] ?? null ) / $e_samples,
+						Core::num_float( $entry[0] ?? null ) / $e_samples,
+						Core::num_float( $entry[1] ?? null ) / $e_samples,
 						$e_samples,
 					];
 				}
