@@ -35,7 +35,7 @@ A diff that unifies these into one error-handling style is wrong. If you see new
 
 LogManager writes to the firehose under a `MAX_DATA_SIZE = 3840` byte cap (kept under PIPE_BUF's 4096). Anything larger is silently clipped: the category gets ` (truncated)` appended and the data is replaced with a single 1000-char `m` string (`['m' => substr(json,0,1000).'...']`, plus an `error_log`) — destroys the job payload.
 
-The right path for large jobs is `JobIntake::queue($handler, $payload)`. JobIntake auto-locks via Lock and uses an `allow_large_writes()` Partition (10MB cap).
+The right path for large jobs is `JobIntake::queue($handler, $payload)`. JobIntake auto-locks via Lock and uses an `allow_large_writes()` Partition (`MAX_JOB_SIZE = 33554432` — a 32MB cap, matching `Job_Router_Node`).
 
 A diff that introduces a new producer of potentially-large jobs and routes them through LogManager is silently broken. Reviewer must check: does `wp_json_encode($payload)` ever exceed 4KB? If yes, must use JobIntake.
 
@@ -105,7 +105,7 @@ LogManager, RequestBuilder (`emit_request` / `emit_error`), FlameBuilder, JobInt
 
 ## Service CI specifics
 
-Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs. This plugin owns four: `Discovery_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Performance_CI_Node`. (`status`/`settings`/`aggregator` are substrate-owned CIs; the old `servers` CI was replaced by the substrate `vault` CI.) The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` and the entire `includes/rest/` directory were DELETED in v0.9.0; an `M2BootstrapTest` regression guard asserts the class stays gone. A diff that reintroduces `Performance_Controller_Base`, adds `extends Performance_Controller_Base`, or revives `includes/rest/` reverts that v0.9.0 deletion; push back.
+Per-plugin REST controllers are gone — endpoints are now declared as verbs on `App\*_CI_Node` service CIs. This plugin owns FIVE: `Discovery_CI_Node`, `Logger_CI_Node`, `Events_CI_Node`, `Performance_CI_Node`, `Rules_CI_Node` (the last is the v0.28.0 per-URL-ruleset editor — verbs `list`/`save`/`upsert`/`delete`). (`status`/`settings`/`aggregator` are substrate-owned CIs; the old `servers` CI was replaced by the substrate `vault` CI.) The substrate's command-protocol REST surface dispatches commands at `/wp-json/newspack-nodes/v1/command` (POST) and SSE at `/wp-json/newspack-nodes/v1/messages/stream` (GET). `Performance_Controller_Base` and the entire `includes/rest/` directory were DELETED in v0.9.0; an `M2BootstrapTest` regression guard asserts the class stays gone. A diff that reintroduces `Performance_Controller_Base`, adds `extends Performance_Controller_Base`, or revives `includes/rest/` reverts that v0.9.0 deletion; push back.
 
 - Verb declaration: in `node_schema()['commands']` — `name`, `description`, `args` (per-arg `name`/`type`/`required`/optional `default`), and an inline `handler` closure. There is no per-schema `permission_callback` field.
 - Per-verb capability gate: every handler calls `self::require_manage_options()` (the `Service_CI_Node` static helper) at the top; worker requests are excluded via the `NEWSPACK_NODES_WORKER_TYPE` env tag set pre-dispatch.
@@ -147,6 +147,18 @@ The deferred bootstrap (`plugins_loaded` priority 11) is gated on `class_exists(
 
 The job executor (`Job_Worker_Node`) moved to `newspack-nodes` in v0.12.0. This plugin keeps ONLY the job request-context glue — `Log_Manager::begin/end_job_context`, hooked onto the substrate's `newspack_nodes/job_worker/{before,after}_job` actions. Don't expect (or add) a `Job_Worker_Node` in this plugin; a diff that reintroduces one here is duplicating the substrate.
 
+### 21. Per-URL logging ruleset (v0.28.0) — one writer, pattern-hash ids, empty-means-empty
+
+The seven global logging settings (`log_urls`/`skip_urls`/`log_events`/`custom_events`/`significant_events`/`auto_disable_threshold`/`auto_protect_time_threshold`) were absorbed into a per-URL **ruleset**: an ordered list of `Rule`s, each a URL pattern (prefix `/x` or exact `/x?`) with a `log`/`skip` action and — for `log` rules — its own hooks / custom events / significant events / auto-tune thresholds. `Log_Manager` resolves ONE governing rule per request (longest-prefix-wins, case-insensitive; no match ⇒ skip). Gates:
+
+- **Every write goes through `Rule_Set::save()`** — never a raw `update_option` on `newspack_event_logger_nodes_rules`. `save()` maintains the inline↔pointer hook tiering (`INLINE_HOOK_LIMIT = 100`; heavy hooks tier to a non-autoloaded `..._rule_hooks_<id>` option mirrored into `evlog:rules:hooks:<id>`) and orphan reconcile. A diff that bypasses it corrupts the two-tier storage.
+- **A rule's id is `Rule_Set::id_for($pattern)`** (the pattern's `Log_Manager::url_hash()`) — one id per pattern; a client-supplied id is ignored. A diff that reintroduces positional id minting (`generate_rule_id`/`gen_id`) or lets two rules share a pattern is a regression.
+- **Empty means empty.** There is NO implicit `/` log-all baseline — an empty/absent ruleset logs nothing. A diff that re-adds a synthetic `Rule::minimal('/')` fallback (that factory was removed) regresses the fixed behavior. Deployments that want log-all declare a `/` log rule explicitly (the shipped default config does).
+- **Don't revive the global logging options.** A diff that reintroduces `log_urls`/`skip_urls`/`log_events`/`custom_events`/etc. as `Settings_Schema` fields or option rows is reviving retired machinery — those are per-rule now. (`enable_logging`, `log_memory`, `flush_every_line`, `allowed_users`, `hook_start_priority` stay global.)
+- **Discovery stages hooks, it doesn't write rules.** `Discovery_Collector_Node` stages spoke-reported hooks into a non-autoloaded `discovered_hooks` option (surfaced in the editor's picker) — the editor is the only writer of rules. A diff that has discovery union-merge into a `/` rule and save the ruleset regresses the "empty means empty" fix.
+- **`upsert` edits match by id, add matches by pattern.** `Rules_CI_Node::upsert` replaces in place by `id` when the incoming rule carries one (an edit → rename doesn't orphan the old pattern), falling back to pattern-match only for the id-less "Log this URL" add. Don't collapse them back to pattern-only.
+- **Migration is activation-only + version-gated** (`SCHEMA_VERSION = 2`). No request-path version check.
+
 ## React / dashboard nits
 
 - `@wordpress/element` for React, `@wordpress/api-fetch` for REST.
@@ -156,7 +168,7 @@ The job executor (`Job_Worker_Node`) moved to `newspack-nodes` in v0.12.0. This 
 
 ## Tests
 
-- Unit tests under `tests/unit/` — mostly flat. ELN owns four Service-CI test files: `DiscoveryCITest.php`, `LoggerCITest.php`, `EventsCITest.php`, `PerformanceCITest.php` (the `AggregatorCITest` / `SettingsCITest` are substrate tests in newspack-nodes, not here). The only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
+- Unit tests under `tests/unit/` — mostly flat. ELN owns five Service-CI test files: `DiscoveryCITest.php`, `LoggerCITest.php`, `EventsCITest.php`, `PerformanceCITest.php`, `RulesCITest.php` (the `AggregatorCITest` / `SettingsCITest` are substrate tests in newspack-nodes, not here). The per-URL-ruleset engine has its own suite: `RuleTest.php`, `RuleSetTest.php`, `RuleMatcherTest.php`, `RulesetMigrationTest.php`. The only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
 - Coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
 - New Service CI verbs should have a happy-path test, an unauthorized-request test (verifying `require_manage_options` throws for non-admins), and a memcache-failure test (where the handler reads `Core::$memd`). Rate-limit tests aren't applicable — Service CI verbs aren't rate-limited at the CI layer; the SSE slot pool is the only structural backpressure.
