@@ -84,9 +84,7 @@ class Job_Intake {
 	 */
 	public function __construct( ?string $base_dir = null, ?int $num_partitions = null ) {
 		if ( null === $base_dir || null === $num_partitions ) {
-			$config         = \class_exists( '\Newspack_Nodes\Config' )
-				? \Newspack_Nodes\Config::load_config()
-				: [];
+			$config   = \Newspack_Nodes\Config::load_config();
 			$base_dir = $base_dir ?? \Newspack_Nodes\Config::get_base_directory();
 			/** @var int|float|string|bool|null $raw_num_partitions */
 			$raw_num_partitions = $config['num_partitions'] ?? 1;

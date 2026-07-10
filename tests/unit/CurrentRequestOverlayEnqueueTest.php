@@ -5,10 +5,10 @@
  * (enqueue_on_overlay_pages), per-request inline-data injection
  * (enqueue_inline_data), and hook wiring (init).
  *
- * These paths touch admin enqueue functions that aren't in the shared
- * bootstrap, so the global stubs are declared here (function_exists-guarded so
- * they coexist with sibling Admin tests) and record into $GLOBALS the assertions
- * read back.
+ * These paths touch admin ENQUEUE functions that aren't in the shared
+ * bootstrap, so those stubs are declared here (function_exists-guarded) and
+ * record into $GLOBALS the assertions read back. Everything else (admin_url,
+ * escaping, i18n) comes from tests/bootstrap.php — per-file copies forbidden.
  */
 
 namespace {
@@ -21,11 +21,6 @@ namespace {
 		function wp_add_inline_script( ...$args ): bool {
 			$GLOBALS['_inline_scripts'][] = $args;
 			return true;
-		}
-	}
-	if ( ! \function_exists( 'admin_url' ) ) {
-		function admin_url( string $path = '' ): string {
-			return 'http://example.test/wp-admin/' . \ltrim( $path, '/' );
 		}
 	}
 	if ( ! \function_exists( 'wp_script_is' ) ) {
