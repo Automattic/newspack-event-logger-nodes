@@ -34,8 +34,7 @@ import TagInputField from '../settings/settings/TagInputField';
 
 import './rule-edit-modal.scss';
 
-// A number input coerced through `parse`; blank/invalid falls back to 0. Kept
-// as a controlled string so a half-typed value ("2.") doesn't fight the caret.
+// Number input via parse (blank→0), held as a string so the caret is stable.
 function toNumber( value, parse ) {
 	const n = parse( value );
 	return Number.isFinite( n ) ? n : 0;
@@ -80,8 +79,7 @@ export default function RuleEditModal( {
 			);
 			return;
 		}
-		// Skip rules carry no instrumentation payload — emit empty log-only
-		// fields so a log→skip toggle doesn't smuggle stale hooks through.
+		// Skip rules carry no payload; emit empty fields so no stale hooks leak.
 		const draft = {
 			id: rule?.id ?? '',
 			pattern: trimmed,

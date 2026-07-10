@@ -19,7 +19,7 @@ use Newspack_Nodes\Core;
  * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover.
  */
 final class Rule_Set {
-	public const INLINE_HOOK_LIMIT     = 100; // Inline/durable crossover threshold; do not set below 65.
+	public const INLINE_HOOK_LIMIT     = 100; // crossover threshold; not below 65.
 	public const MC_HOOKS_PREFIX       = 'evlog:rules:hooks:';
 	public const MC_TTL                = 3600;
 	public const OPTION_HOOKS_PREFIX   = 'newspack_event_logger_nodes_rule_hooks_';
@@ -58,9 +58,7 @@ final class Rule_Set {
 			];
 		}
 		$overlap = $version < 1 ? self::migrate_legacy_options() : false;
-		// Every sub-v2 install needs the id rekey: a v0 install after the legacy
-		// fold-in (its rules already carry id_for ids, so this is a cheap re-save),
-		// a v1 install directly.
+		// Every sub-v2 install needs the id rekey (cheap re-save on v0 post-fold-in).
 		self::rekey_ids();
 		\update_option( self::OPTION_SCHEMA_VERSION, self::SCHEMA_VERSION, true );
 		return [
@@ -89,9 +87,7 @@ final class Rule_Set {
 			}
 		}
 		if ( ! $any_present ) {
-			// Nothing to migrate — leave the rules option absent so the file-config
-			// seed (Rule_Set::load) owns a fresh install's ruleset instead of a
-			// fabricated '/' rule shadowing it.
+			// Nothing to migrate: leave rules absent so the file-config seed owns it.
 			return false;
 		}
 
@@ -105,9 +101,7 @@ final class Rule_Set {
 			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
 		];
 
-		// Key by id (= id_for(pattern)) so a pattern in BOTH lists collapses to one
-		// rule instead of two colliding ids. Skip is added first and wins, matching
-		// the old flat "skip_urls always wins over log_urls" semantics.
+		// Key by id so a pattern in both lists collapses to one rule; skip wins.
 		$rules = [];
 		foreach ( $skip as $pattern ) {
 			$rules[ self::id_for( $pattern ) ] ??= new Rule( self::id_for( $pattern ), $pattern, Rule::ACTION_SKIP );
@@ -166,7 +160,7 @@ final class Rule_Set {
 	 * @param string[] $log
 	 */
 	private static function detect_prefix_overlap( array $skip, array $log ): bool {
-		// Case-insensitive to match Rule_Matcher (a case-differing overlap still flips a decision).
+		// Case-insensitive to match Rule_Matcher (a case-diff overlap flips it).
 		foreach ( $skip as $s ) {
 			$sl = \strtolower( $s );
 			foreach ( $log as $l ) {
@@ -204,8 +198,7 @@ final class Rule_Set {
 				$rule->significant_events, $rule->custom_events,
 				self::hooks_for( $rule ), Rule::HOOKS_INLINE
 			);
-			// Same-pattern collision: skip wins regardless of stored order, matching
-			// migrate_legacy_options' skip-first precedence.
+			// Same-pattern collision: skip wins regardless of stored order.
 			$existing = $rekeyed[ $id ] ?? null;
 			if ( null === $existing || ( $existing->is_log() && $candidate->is_skip() ) ) {
 				$rekeyed[ $id ] = $candidate;
@@ -272,9 +265,7 @@ final class Rule_Set {
 			if ( \is_array( $entry ) ) {
 				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
 				$rule = Rule::from_array( $entry );
-				// Mint an id for an idless stored rule (e.g. a settings-synced config
-				// default) so nothing collides on the '' key; a non-empty (legacy
-				// positional) id is trusted — its durable hooks option is keyed by it.
+				// Mint an id for an idless stored rule so nothing collides on the '' key.
 				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
 			}
 		}
@@ -361,9 +352,7 @@ final class Rule_Set {
 			}
 			$hooks = $rule->hooks;
 			if ( null === $hooks && Rule::HOOKS_MC === $rule->hooks_in ) {
-				// Unchanged pointer rule loaded with hooks=null: rehydrate the real
-				// list so tiering below doesn't mistake it for an empty rule and
-				// re-inline it to [], wiping its durable option.
+				// Rehydrate a hooks=null pointer rule so tiering doesn't wipe its option.
 				$hooks = self::hooks_for( $rule );
 			}
 			$hooks = $hooks ?? [];
@@ -401,9 +390,7 @@ final class Rule_Set {
 
 		$this->reconcile_orphans( $live_pointers );
 		\update_option( self::OPTION_RULES, $stored, true );
-		// Keep the in-memory list in the SAME re-tiered form we persisted, so
-		// rules() after save() matches a fresh load() (a just-pointered rule
-		// reports hooks=null/mc, not its stale inline list).
+		// Keep in-memory list in the persisted re-tiered form so rules()==load().
 		$this->rules = $tiered;
 	}
 

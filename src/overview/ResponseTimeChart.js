@@ -302,8 +302,6 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				scalesRef.current.x.range( [ 0, width ] );
 			}
 
-			// Trigger data update by re-running the effect.
-			// Force update by dispatching a custom event or just re-render.
 			if ( chartData.length > 0 && scalesRef.current ) {
 				const { g } = svgRef.current;
 				const { x, y } = scalesRef.current;

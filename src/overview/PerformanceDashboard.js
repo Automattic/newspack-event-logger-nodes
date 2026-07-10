@@ -67,8 +67,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	// Page-wide server filter state (lifted from OverviewSection).
 	const [ serverFilter, setServerFilter ] = useState( '' );
 
-	// Breakdown selector state (lifted from OverviewSection so the active
-	// dimension rides along on the combined /overview fetch).
+	// Breakdown selector state (lifted so the dim rides the combined /overview).
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
@@ -94,16 +93,13 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const urlsRef = useRef( [] );
 	const setRequestPartitionRef = useRef( () => {} );
 
-	// Read each slice from its own per-slice view node (D1b de-god — no single god
-	// view). Each is null until the hook mounts its node; useBatchedPoll's build
-	// re-render forces useNodeState to subscribe to the freshly-mounted views.
+	// Read each slice from its own per-slice view node (null until mounted).
 	const overviewSlice = useNodeState( 'overview:view', 'view' );
 	const urlsSlice = useNodeState( 'urls:view', 'view' );
 	const urlDetailSlice = useNodeState( 'urldetail:view', 'view' );
 	const requestDetailSlice = useNodeState( 'requestdetail:view', 'view' );
 
-	// Derive the locals the orchestrator renders/derives from — SAME NAMES as
-	// before, so every surviving useMemo + the JSX reference them unchanged.
+	// Derive the locals the orchestrator renders from (same names as before).
 	const overview = overviewSlice?.data ?? null;
 	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );
 	const totalUrls = urlsSlice?.total ?? 0;
@@ -127,9 +123,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return overview.breakdowns[ chartBreakdown ] ?? null;
 	}, [ overview, chartBreakdown ] );
 
-	// serverNames stays STICKY state: when a filter is active the scoped response
-	// collapses to one server, so DON'T overwrite the names list (it would drop the
-	// dropdown below 2 entries and trap the user). Mirrors applyServerBreakdown.
+	// serverNames stays sticky: don't overwrite on a one-server scoped response.
 	const [ serverNames, setServerNames ] = useState( [] );
 	useEffect( () => {
 		if ( ! serverBreakdownData || serverFilter ) {
@@ -142,8 +136,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		setServerNames( Array.from( names ).sort() );
 	}, [ serverBreakdownData, serverFilter ] );
 
-	// resolveRequestId — used by useUrlNavigation for `?request=`-only deep links.
-	// Stable []; reaches the command's resolveRequest via a ref populated post-hook.
+	// resolveRequestId for ?request= deep links; reaches resolveRequest via a ref.
 	const resolveRequestId = useCallback( async ( rid ) => {
 		const data = await commandResolveRef.current?.( rid );
 		if ( ! data || ! data.url_hash || data.partition === undefined ) {
@@ -317,7 +310,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		[ requestDetail?.entries ]
 	);
 
-	// Calculate requests per second from the last hour of complete 5-minute buckets.
+	// Requests/sec from the last hour of complete 5-minute buckets.
 	const globalRequestsPerSecond = useMemo( () => {
 		if ( ! overview?.aggregate_time_series ) {
 			return 0;
@@ -326,7 +319,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		if ( buckets.length < 2 ) {
 			return 0;
 		}
-		// Skip the most recent bucket (still accumulating). Use up to 12 complete buckets = 1 hour.
+		// Skip the accumulating bucket; use up to 12 complete buckets (1 hour).
 		const complete = buckets.slice( -13, -1 );
 		let total = 0;
 		for ( const key of complete ) {
@@ -390,7 +383,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		if ( buckets.length < 2 ) {
 			return 0;
 		}
-		// Skip the most recent bucket (still accumulating). Use up to 12 complete buckets = 1 hour.
+		// Skip the accumulating bucket; use up to 12 complete buckets (1 hour).
 		const complete = buckets.slice( -13, -1 );
 		let total = 0;
 		for ( const key of complete ) {
@@ -399,10 +392,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return total / ( complete.length * 300 );
 	}, [ urlDetail?.stats?.time_series ] );
 
-	// Inline "Log this URL" affordance state. `ruleDraft` is the rule open in the
-	// shared RuleEditModal (null = closed); `existingRule` drives the button label
-	// (an exact rule already logs this URL); the confirmation / error banners show
-	// inline in the URL modal without closing it.
+	// Inline "Log this URL" state: ruleDraft = open rule, existingRule = label.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
 	const [ existingRule, setExistingRule ] = useState( null );
 	const [ ruleError, setRuleError ] = useState( null );
@@ -411,19 +401,13 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const canLogUrl =
 		!! ruleUrl &&
 		__( 'Unknown URL', 'newspack-event-logger-nodes' ) !== ruleUrl;
-	// Rules match the REQUEST_URI path, not the dashboard's display URL (which
-	// carries scheme + host); strip the origin so the exact rule actually matches.
-	// The trailing '?' is the exact-match sentinel — but a nodes/ELN URL already
-	// carries a '?' (the ?worker_type marker), so don't append a second one.
+	// Strip origin so the exact rule matches REQUEST_URI ('?' = match sentinel).
 	const rulePath = ruleUrl ? ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) : '';
-	// Append the sentinel only when there IS a URL and it doesn't already carry a
-	// '?'; otherwise use the path as-is (empty when there's no URL).
+	// Append the sentinel only for a URL that lacks a '?'; else use path as-is.
 	const needsSentinel = ruleUrl && ! rulePath.includes( '?' );
 	const exactPattern = needsSentinel ? `${ rulePath }?` : rulePath;
 
-	// On URL-modal open, look up the current ruleset once to detect an existing
-	// exact rule (`<url>?`) — sets the button label and the prefill source. Reset
-	// the inline banners; skip while a request is drilled in (button hidden).
+	// On modal open, detect an existing exact rule (button label + prefill).
 	useEffect( () => {
 		setRuleError( null );
 		setRuleDraft( null );
@@ -453,8 +437,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		};
 	}, [ ruleUrl, exactPattern, canLogUrl, selectedRequest, listRules ] );
 
-	// Open RuleEditModal on the existing exact rule (edit) or a blank log rule
-	// seeded with the exact pattern (add).
+	// Open RuleEditModal on the exact rule (edit) or a blank seeded rule (add).
 	const openRuleEditor = useCallback( () => {
 		if ( ! canLogUrl ) {
 			return;
@@ -469,9 +452,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		);
 	}, [ canLogUrl, existingRule, exactPattern ] );
 
-	// Save: upsert the exact rule, close ONLY the RuleEditModal, surface an error
-	// inline on failure — never crash. Success is signalled by the button label
-	// flipping to "Edit logging rule" (no separate confirmation banner).
+	// Save: upsert the exact rule, close only RuleEditModal, error inline on fail.
 	const saveRule = useCallback(
 		async ( draft ) => {
 			const res = await upsertRule( draft );
@@ -498,7 +479,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		}
 	}, [ initialSearchQuery, searchRequest, setInitialSearchQuery ] );
 
-	// Manage modal scroll position when switching between URL detail and request detail.
+	// Manage modal scroll when switching URL detail ↔ request detail.
 	useEffect( () => {
 		const modalContent = document.querySelector(
 			'.event-logger-performance-modal .components-modal__content'
@@ -515,12 +496,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		}
 	}, [ selectedRequest ] );
 
-	// "Initial load not done": the overview slice hasn't resolved yet — no view
-	// node mounted, OR mounted but its first reply (data, even null/memcache-down)
-	// or error hasn't landed. The overview slice's data starts null and loading
-	// starts false; a resolved reply stamps data (or error), a fired fetch flips
-	// loading true. So: still loading while there's no data, no error, and we
-	// haven't even started fetching (loading false).
+	// Initial load pending: no data, no error, and no fetch started yet.
 	const overviewResolved =
 		!! overviewSlice &&
 		( null !== overviewSlice.data ||
@@ -607,10 +583,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 							: selectedUrl.url
 					}
 					onRequestClose={ () => {
-						// The nested RuleEditModal steals focus, which fires this
-						// modal's focus-outside close; don't tear down the URL modal
-						// (and the shared selectedUrl both modals depend on) while
-						// the editor is open — the editor owns its own dismiss.
+						// Keep the URL modal open while the nested editor is open.
 						if ( ruleDraft ) {
 							return;
 						}
@@ -735,8 +708,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 				</Modal>
 			) }
 
-			{ /* Inline rule editor for the "Log this URL" affordance. Scoped to
-			     the URL-detail view — never over the request-detail drill-in. */ }
+			{ /* Inline rule editor for "Log this URL" (URL-detail view only). */ }
 			{ selectedUrl && ! selectedRequest && ruleDraft && (
 				<RuleEditModal
 					rule={ ruleDraft }

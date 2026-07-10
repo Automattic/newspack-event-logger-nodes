@@ -70,10 +70,7 @@ class Hook_Categorizer {
 			$grouped[ $category ] = [];
 		}
 
-		// Categorize each hook, skipping Event Logger's own internal filters.
-		// Instrumenting them is a no-op at best (Core::hook_start rejects the
-		// prefixes) and used to cause a bootstrap reentry loop, so there's no
-		// reason to surface them in the picker at all.
+		// Skip Event Logger's own internal filters (no-op + past reentry loop).
 		foreach ( $hooks as $hook ) {
 			if ( self::is_internal( $hook ) ) {
 				continue;
@@ -102,17 +99,14 @@ class Hook_Categorizer {
 			}
 		}
 
-		// Include already-selected hooks so they appear in the browse modal
-		// even if not registered on the current page (e.g. worker-only hooks).
+		// Include already-selected hooks so worker-only ones still show.
 		foreach ( self::selected_hooks() as $hook ) {
 			if ( '' !== $hook ) {
 				$hooks[ $hook ] = true;
 			}
 		}
 
-		// Include spoke-discovered hooks (staged by Discovery_Collector_Node) so
-		// they surface in the picker even if not registered locally — symmetric
-		// with discovered_events feeding Config::get_custom_colors().
+		// Include spoke-discovered hooks even if not registered locally.
 		$discovered = \get_option( Config::OPTION_DISCOVERED_HOOKS, [] );
 		if ( \is_array( $discovered ) ) {
 			foreach ( \array_keys( $discovered ) as $hook ) {

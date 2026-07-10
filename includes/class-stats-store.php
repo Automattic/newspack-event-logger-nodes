@@ -83,10 +83,7 @@ class Stats_Store {
 		return $this->get_url_bucket( $bucket );
 	}
 
-	// -------------------------------------------------------------------------
-	// URL index: { bucket => { url => {count, sum_req_time, samples} } }
-	// Plus an explicit bucket-keyed setter for FlameBuilder's full-bucket merge.
-	// -------------------------------------------------------------------------
+	// URL index: { bucket => { url => {count, sum_req_time, samples} } }.
 
 	/**
 	 * @return array<string, mixed>
@@ -121,10 +118,7 @@ class Stats_Store {
 		return $out;
 	}
 
-	// -------------------------------------------------------------------------
-	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} }
-	// Single key per partition holds the rolling map.
-	// -------------------------------------------------------------------------
+	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} } (one key/partition).
 
 	/**
 	 * @return array<string, mixed>
@@ -134,9 +128,7 @@ class Stats_Store {
 		return self::map_or_empty( $val );
 	}
 
-	// -------------------------------------------------------------------------
 	// Leaderboard: 5-min buckets, sums + per-category sums.
-	// -------------------------------------------------------------------------
 
 	/**
 	 * @return array<string, mixed>
@@ -171,11 +163,7 @@ class Stats_Store {
 		return \sprintf( '%08x', $hash );
 	}
 
-	// -------------------------------------------------------------------------
 	// Dimensional: { bucket => { value => {c, s, m} } } per dimension.
-	// One key per (partition, dimension) for the global, plus
-	// (partition, dimension, server) for the per-server variant.
-	// -------------------------------------------------------------------------
 
 	/**
 	 * @return array<string, mixed>
@@ -189,11 +177,7 @@ class Stats_Store {
 		return self::map_or_empty( $val );
 	}
 
-	// -------------------------------------------------------------------------
-	// Per-URL dimensional: { dim => { bucket => { value => {c, s, m} } } }
-	// One key per (partition, url_hash). Cap is tighter (10) since per-URL
-	// fan-out is multiplicative across dimensions × buckets.
-	// -------------------------------------------------------------------------
+	// Per-URL dimensional: { dim => { bucket => { value => {c, s, m} } } }.
 
 	/**
 	 * @return array<string, mixed>
@@ -203,10 +187,7 @@ class Stats_Store {
 		return self::map_or_empty( $val );
 	}
 
-	// -------------------------------------------------------------------------
-	// Categories (global): { bucket => { cat => {t, c, n} } }
-	// Plus per-server variants keyed by server hash.
-	// -------------------------------------------------------------------------
+	// Categories (global): per-bucket category sums (keys t, c, n).
 
 	/**
 	 * @return array<string, mixed>
@@ -216,9 +197,7 @@ class Stats_Store {
 		return self::map_or_empty( $val );
 	}
 
-	// -------------------------------------------------------------------------
 	// Per-URL categories: { bucket => { cat => {t, c, n} } } per url_hash.
-	// -------------------------------------------------------------------------
 
 	/**
 	 * @return array<string, mixed>
@@ -270,7 +249,7 @@ class Stats_Store {
 			$keys[]    = $k;
 			$map[ $k ] = $b;
 		}
-		// `?->` yields null when no handle; getMulti yields false on miss — both → [].
+		// `?->` yields null (no handle); getMulti false on miss — both → [].
 		$results = Core::$memd?->getMulti( $keys ) ?: [];
 		$out     = [];
 		foreach ( $results as $k => $v ) {
@@ -290,10 +269,7 @@ class Stats_Store {
 		return $this->store( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl(), self::NS_URLS );
 	}
 
-	// -------------------------------------------------------------------------
-	// Per-URL stats blob (flame, profiles, ...). Shorter TTL since per-URL
-	// volume can be high.
-	// -------------------------------------------------------------------------
+	// Per-URL stats blob (flame, profiles, ...); shorter TTL (high volume).
 
 	/**
 	 * @return array<array-key, mixed>|null
@@ -441,9 +417,7 @@ class Stats_Store {
 		}
 	}
 
-	// -------------------------------------------------------------------------
-	// Sums-to-display helper (used by dashboards to render bucket-merged data).
-	// -------------------------------------------------------------------------
+	// Sums-to-display helper (dashboards render bucket-merged data).
 
 	/**
 	 * Convert summed leaderboard data to the display shape expected by the frontend.
@@ -502,9 +476,7 @@ class Stats_Store {
 		];
 	}
 
-	// -------------------------------------------------------------------------
 	// Schema migration: salt rotation.
-	// -------------------------------------------------------------------------
 
 	public function flush_all(): bool {
 		$salt = \bin2hex( \random_bytes( 4 ) );

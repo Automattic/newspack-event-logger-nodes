@@ -87,30 +87,22 @@ class Request_Builder_Node extends Timer_Node {
 	 * @api Used by substrate.
 	 */
 	public function __construct() {
-		// Initial cache uses schema defaults so the no-arg ctor produces a
-		// working instance; arguments() rebuilds with caller-supplied sizes.
+		// Schema-default cache so the no-arg ctor works; arguments() rebuilds sizes.
 		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
 
-		// Hidden Flight sibling — patron filter hides it from the canvas.
-		// Naming happens in the overridden name() setter so the sibling
-		// adopts `{patron}:flight` when the patron is named (mirroring the
-		// interpreter sibling's `{patron}:config` propagation in Node::name).
-		// Sink wiring also propagates from the overridden sink() setter.
+		// Hidden Flight sibling; name()/sink() overrides propagate its wiring.
 		$this->flight = new Request_Flight_Node();
 		$this->flight->patron( $this );
 
-		// Rule 2c sibling default: sink into `_command_interpreter` when one is
-		// in scope so Flight's emits route there before the topology wires
-		// RequestBuilder's own sink. Rule 4: skip when no interpreter exists.
+		// Rule 2c: default Flight's sink to _command_interpreter when in scope.
 		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 		if ( null !== $ci && null === $this->flight->sink() ) {
 			$this->flight->sink( $ci );
 		}
 
 		parent::__construct();
-		// Wire the sibling :config interpreter from node_schema()['commands']
-		// handlers (static; read $interpreter->patron() lazily, so end-placement is fine).
+		// Wire :config interpreter last: handlers read patron() lazily (safe).
 		$this->auto_wire_interpreter();
 	}
 
@@ -163,9 +155,7 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 
-		// Intern keyword strings — json_decode allocates a new string per entry,
-		// but most entries share the same ~200 unique keywords. Interning makes
-		// all identical strings share one zval, saving ~80 bytes per entry.
+		// Intern keywords: dedupe json_decode's per-entry strings to one zval each.
 		/** @var array<string, string> $intern */
 		static $intern = [];
 		$keyword       = $entry['k'] ?? '';
@@ -192,19 +182,10 @@ class Request_Builder_Node extends Timer_Node {
 		// The cache only ever stores the \stdClass built above for a given rid.
 		/** @var \stdClass $request */
 
-		// Per-request sequence validation (ported from Tachikoma InstrumentalityGrail):
-		// surface orphaned mid-stream lines, dupes/reorders, and rid reuse instead of
-		// silently corrupting assembly. NB: a lost *trailing* line (e.g. the terminal
-		// `process (complete)`) has no later n to reveal a gap — that case is the
-		// evict-timeout path below, and is prevented by the Consumer seal-grace.
+		// Validate per-request sequence n: catch orphans, dupes, reorders, rid reuse.
 		$seq_n = \is_scalar( $n ) ? (int) $n : 0;
 
-		// Nested subprocess sequence: nuclear-gyrobase shells out to the Perl engine
-		// (proc_open), and the child emits its OWN n-sequence (restarting at 1) inside
-		// the parent request's stream under the SAME rid. Stash the parent's expected n
-		// on `gyrobase (start)` (reset to the nested sequence) and restore it on
-		// `gyrobase (complete)` below — so neither the nested restart nor the parent's
-		// resume reads as a gap/dup. A stack handles sequential or nested renders.
+		// Nested render (proc_open) restarts n at 1 same rid; stack saves parent n.
 		if ( 'gyrobase (start)' === $keyword ) {
 			$stack               = \is_array( $request->seq_stack ?? null ) ? $request->seq_stack : [];
 			$stack[]             = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
@@ -236,10 +217,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->seq_stack  = $stack;
 		}
 
-		// Forward errors and warnings to errors.log. Pass the rid so the
-		// emitted Message carries it in KEY — errors.log readers (and any
-		// future StreamMerger forwarders) need it for the same reasons the
-		// firehose does.
+		// Forward errors/warnings to errors.log; pass rid so it rides Message KEY.
 		if ( 'error' === $keyword || 'warning' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
@@ -263,19 +241,12 @@ class Request_Builder_Node extends Timer_Node {
 			);
 		}
 
-		// Track per-line activity timestamps for the inflight snapshot's
-		// time_ms / est_ms / lag_ms derivation.
+		// Per-line activity timestamps for the inflight snapshot's *_ms derivation.
 		$ts_log_v             = $entry['ts'] ?? 0;
 		$request->last_log_ts = \is_scalar( $ts_log_v ) ? (float) $ts_log_v : 0.0;
 		$request->tracker_ts  = \microtime( true );
 
-		// Runaway requests stay visible in the cache so inflight_snapshot
-		// surfaces them — matches the Perl gyroscope, which displays
-		// over-depth requests reliably. Memory is still bounded: push_stack
-		// stops growing the stack at MAX_STACK_DEPTH (see the guard at
-		// push_stack line 504-506), and the LRU bucket rotation will
-		// eventually evict the runaway via evict_request (which stamps
-		// error_status=T and emits to the completed pipeline).
+		// Runaways stay visible (Perl gyroscope parity); still evicted + bounded.
 		if ( $request->is_runaway ?? false ) {
 			return;
 		}
@@ -290,8 +261,7 @@ class Request_Builder_Node extends Timer_Node {
 				'k'  => $keyword,
 			];
 
-			// Truncate string 'm' to bound per-entry memory.
-			// Array messages are already bounded by PIPE_BUF (4KB) at the firehose writer.
+			// Truncate 'm' to bound memory (arrays already PIPE_BUF-bounded).
 			$m = $entry['m'] ?? '';
 			if ( \is_string( $m ) && \strlen( $m ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
 				$m = \substr( $m, 0, self::MAX_ENTRY_MESSAGE_LENGTH );
@@ -429,18 +399,14 @@ class Request_Builder_Node extends Timer_Node {
 			$request->profiles = [];
 		}
 
-		// References (not copies) so frame/profile mutations write through to the
-		// \stdClass properties in place — copy-into-local + write-back would
-		// copy-on-write the whole stack + profiles map on every push.
+		// References, not copies: mutate \stdClass arrays in place (avoid COW).
 		/** @var list<array{0: string, 1: string}> $stack */
 		$stack = &$request->stack;
 		// Dynamic \stdClass property: per-state profile records keyed by state name.
 		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
 		$profiles = &$request->profiles;
 
-		// Stop appending once we've hit the stack-depth cap — keeps memory
-		// bounded for runaway requests we deliberately keep visible in the
-		// inflight snapshot.
+		// Stop at stack-depth cap: bound memory for runaways kept visible.
 		if ( \count( $stack ) >= self::MAX_STACK_DEPTH ) {
 			$request->is_runaway = true;
 			return;
@@ -491,9 +457,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->profiles = [];
 		}
 
-		// References (not copies): mutate the \stdClass property arrays in place.
-		// A copy-into-local + write-back would copy-on-write the whole stack +
-		// profiles map on every pop.
+		// References, not copies: mutate \stdClass arrays in place (avoid COW).
 		/** @var list<array{0: string, 1: string}> $stack */
 		$stack = &$request->stack;
 		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
@@ -536,11 +500,7 @@ class Request_Builder_Node extends Timer_Node {
 			unset( $profile );
 		}
 
-		// Subtract child time from ancestors to avoid double-counting.
-		// Callbacks (contain " @N") are breakdowns of their parent hook's time,
-		// so callback completion does NOT subtract from the hook.
-		// Non-callback children subtract from BOTH the callback (if inside one)
-		// AND the callback's parent hook.
+		// Subtract child time from ancestors; callbacks (" @N") don't subtract.
 		if ( ! empty( $stack ) && ! self::is_callback_state( $state ) ) {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];
@@ -555,9 +515,7 @@ class Request_Builder_Node extends Timer_Node {
 					if ( $ancestor_label && isset( $profiles[ $ancestor ]['entries'][ $ancestor_label ] ) ) {
 						$profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
-					// If we just subtracted from a callback, continue to also
-					// subtract from its parent hook. Stop after the first
-					// non-callback ancestor.
+					// Keep subtracting up to the first non-callback ancestor, then stop.
 					if ( ! self::is_callback_state( $ancestor ) ) {
 						break;
 					}
@@ -667,8 +625,7 @@ class Request_Builder_Node extends Timer_Node {
 				return;
 			}
 			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
-				// Strip query string — URL hash already ignores it for merging,
-				// and keeping it wastes memory and makes the URL table noisy.
+				// Strip query string: hash ignores it; keeps URL table lean.
 				$request->url = \explode( '?', $m[1], 2 )[0];
 			}
 			$parts                   = \explode( ' ', $message, 2 );
@@ -680,14 +637,12 @@ class Request_Builder_Node extends Timer_Node {
 			if ( ! \is_array( $raw ) ) {
 				return;
 			}
-			// The v3 `m` is a JSON object, so its keys are strings — make that
-			// explicit so the typed env_str() lookups below type-check.
+			// v3 `m` keys are strings — cast so typed env_str() lookups type-check.
 			$env = [];
 			foreach ( $raw as $k => $v ) {
 				$env[ (string) $k ] = $v;
 			}
-			// REMOTE_ADDR, when present, wins outright (empty/invalid ⇒ ''); XFF is
-			// consulted only when REMOTE_ADDR is entirely absent.
+			// REMOTE_ADDR wins when present; XFF only when REMOTE_ADDR is absent.
 			$remote = self::env_str( $env, 'REMOTE_ADDR' );
 			if ( '' !== $remote ) {
 				$ip = \trim( $remote );
@@ -796,10 +751,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * @param \stdClass $request Completed request envelope.
 	 */
 	public function emit_request( \stdClass $request ): void {
-		// Workers get their own URL row (?worker_type) so warm/supervisor/job hits
-		// don't merge onto the real URL. One mutation here -> index line, compact
-		// summary, and stats all read the same effective URL. Real query is already
-		// stripped upstream, so the '?' guard only blocks a double-append.
+		// Workers get a ?worker_type URL row so they don't merge onto real URLs.
 		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
 		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
 		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
@@ -809,7 +761,7 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
-		// Dynamic \stdClass property is mixed by design; the string cast is intentional.
+		// Dynamic \stdClass prop is mixed by design; the string cast is intentional.
 		/** @var int|float|string $rid_raw */
 		$rid_raw                   = $request->rid ?? '';
 		$message[ Message::KEY ]       = (string) $rid_raw;
@@ -864,10 +816,7 @@ class Request_Builder_Node extends Timer_Node {
 		$method_raw = $r['request_method'] ?? 'GET';
 		/** @var int|float|string|bool|null $remote_addr_raw */
 		$remote_addr_raw = $r['remote_addr'] ?? '';
-		// Preserve native numeric type for ts and dur — do not cast them.
-		// json_encode strips trailing `.0`, so an int-valued float round-trips
-		// as int through the wire; keeping the native type is what makes the
-		// encode/decode round-trip stable.
+		// Preserve native ts/dur type: casting breaks the json_encode round-trip.
 		/** @var int|float $ts */
 		$ts = $r['timestamp'] ?? 0;
 		/** @var int|float $dur */
@@ -940,7 +889,7 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var array<string, mixed> $value */
 		$request = (object) $value;
 
-		// Dynamic \stdClass property reads are mixed by design; the casts are intentional.
+		// Dynamic \stdClass reads are mixed by design; the casts are intentional.
 		$rid_raw = $request->rid ?? '';
 		$rid     = \is_string( $rid_raw ) ? $rid_raw : '';
 		$url_raw = $request->url ?? '';
@@ -1285,8 +1234,7 @@ class Request_Builder_Node extends Timer_Node {
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
-						// Flight::target() registers the Router-TIMER hitchhike for a
-						// non-empty target and stops it for an empty one.
+						// Flight::target() arms the Router-TIMER hitchhike; empty stops it.
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->flight()->target( $args );

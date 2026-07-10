@@ -208,7 +208,7 @@ export default function UrlTable( {
 		setCurrentPage( 1 );
 	};
 
-	// Notify parent when params change for server-side filtering/sorting/pagination.
+	// Notify parent on param change (server-side filter/sort/paginate).
 	useEffect( () => {
 		const offset = ( currentPage - 1 ) * URLS_PER_PAGE;
 		onParamsChange?.( {
@@ -232,12 +232,7 @@ export default function UrlTable( {
 			);
 		}
 
-		// "Errors" = timeouts (T) and fatals (F) — requests that never
-		// emitted a status_code, so they fall outside count_2xx/3xx/4xx/5xx.
-		// Matches the per-request definition in UrlDetailView.js
-		// (`error_status === 'F' || 'T'`). 5xx is treated as a classified
-		// response, not an error, for consistency between aggregate and
-		// per-request views.
+		// "Errors" = timeouts (T) + fatals (F); 5xx is a response, not an error.
 		if ( errorsOnly ) {
 			filtered = filtered.filter( ( u ) => {
 				const classified =
@@ -274,8 +269,7 @@ export default function UrlTable( {
 		} );
 	}, [ urls, searchTerm, errorsOnly, sortField, sortOrder ] );
 
-	// Calculate max for bar chart backgrounds using p95 to prevent
-	// outliers (workers, long crons) from blowing out the scale.
+	// Bar-background max uses p95 so outliers don't blow out the scale.
 	const maxAvg = useMemo( () => {
 		let field = 'avg_ms';
 		if ( metric === 'memory' ) {

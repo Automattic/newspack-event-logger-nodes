@@ -32,8 +32,7 @@ export class HookCatalogViewNode extends Node {
 			loading: true,
 			error: null,
 		};
-		// Hook-stamped ID → { resolve, reject }; resolved/rejected when the
-		// matching reply lands here. Cleared on resolution.
+		// Hook-stamped ID → resolver; settled when the matching reply lands.
 		this.replies = new PendingReplies();
 		this._publish();
 	}
@@ -48,15 +47,10 @@ export class HookCatalogViewNode extends Node {
 		const name = value.name;
 		const payload = value.payload;
 
-		// Resolve / reject any pending promise the hook stashed under this ID.
-		// Track whether we handled the message via the pending-Map — if so,
-		// the caller is the error surface and we must NOT also paint a
-		// view-level error banner (mirrors servers:view).
+		// Settle any pending promise for this ID; if matched, caller owns the error.
 		const pendingMatched = this.replies.settle( message );
 
-		// View-model updates: hooks_registered replies refresh the catalog;
-		// un-correlated errors (broadcasts) surface globally. Pending-matched
-		// errors are owned by the caller's catch — see comment above.
+		// hooks_registered refreshes the catalog; uncorrelated errors go global.
 		if ( isError && ! pendingMatched ) {
 			this._applyError( payload );
 			this._publish();
@@ -94,8 +88,7 @@ export class HookCatalogViewNode extends Node {
 			error: null,
 		};
 	}
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
+	// View-model terminal: fill() mutates state + publishes; never forwards.
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

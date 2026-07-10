@@ -145,12 +145,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						$set       = Rule_Set::load();
 						$remaining = [];
 						foreach ( $set->rules() as $r ) {
-							// Drop the rule being edited (its old-pattern id round-trips
-							// as $incoming->id) and any rule for the same pattern — the
-							// pattern is the identity, whether or not a stored rule still
-							// carries a legacy positional id from before id_for(). The
-							// id-match is guarded against '' so an ADD (no id) never drops
-							// an unrelated rule by an empty-string collision.
+							// Drop the edited rule and any rule sharing its pattern (pattern = id).
 							if ( ( '' !== $incoming->id && $r->id === $incoming->id ) || $r->pattern === $incoming->pattern ) {
 								continue;
 							}

@@ -36,15 +36,12 @@ export class PerfErrorsViewNode extends Node {
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		// Ring buffer: rows written at `_head` (mod maxEntries), oldest overwritten
-		// once full. `_count` is how many slots hold a live row. Append and
-		// cap-drop are both O(1) — no shift, concat, or truncation.
+		// Ring buffer: write at _head (mod maxEntries), oldest overwritten; O(1).
 		this._ring = [];
 		this._head = 0;
 		this._count = 0;
 		this.entryCounter = 0;
-		// Per-second RPS buckets ({ sec, count }) + their running total — bounded
-		// to the window instead of one entry per error.
+		// Per-second RPS buckets + running total, bounded to the window.
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
@@ -56,14 +53,11 @@ export class PerfErrorsViewNode extends Node {
 	fill( message ) {
 		const value = message[ VALUE ];
 		if ( value && typeof value === 'object' && value.action ) {
-			// Control changes are the LOW-frequency path — publish so the pause
-			// button / banner / empty-state label re-render.
+			// Control changes: LOW-frequency path — publish so button/banner re-render.
 			this._control( value );
 			this._publish();
 		} else {
-			// Otherwise treat as a raw stream envelope: validate, enrich, append.
-			// The rAF reads the buffer directly, so this is the HIGH-frequency
-			// path and deliberately does NOT publish.
+			// Raw stream envelope: validate, enrich, append. HIGH-freq — no publish.
 			this._appendEnvelope( message );
 		}
 	}
@@ -87,9 +81,7 @@ export class PerfErrorsViewNode extends Node {
 		this.rps = 0;
 	}
 
-	// Publish ONLY the low-frequency view model. `entries` / `rps` are the
-	// high-frequency buffer the rAF reads off the node directly, kept out of
-	// setState so a busy stream never re-renders React per envelope.
+	// Publish only the low-freq view model; entries/rps stay off setState.
 	_publish() {
 		this.setState( 'view', {
 			paused: this.paused,
@@ -97,8 +89,7 @@ export class PerfErrorsViewNode extends Node {
 		} );
 	}
 
-	// A raw stream envelope: KEY=rid, VALUE={ts, k, m, n}. Validate + enrich +
-	// append newest-first, capped.
+	// A raw stream envelope (KEY=rid): validate, enrich, append newest-first.
 	_appendEnvelope( message ) {
 		const rid = message[ KEY ];
 		if ( ! rid ) {
@@ -123,8 +114,7 @@ export class PerfErrorsViewNode extends Node {
 
 		this.entryCounter += 1;
 		this._writeEntry( {
-			// Monotonic per-mount counter — used as the React list key (id) so two
-			// entries with the same rid get distinct DOM nodes.
+			// Monotonic per-mount counter as the React key (distinct DOM per dup rid).
 			seq: this.entryCounter,
 			id: this.entryCounter,
 			rid,
@@ -136,9 +126,7 @@ export class PerfErrorsViewNode extends Node {
 		this._updateRequestsPerSecond( 1 );
 	}
 
-	// Errors per second over a 10s window. Counts are aggregated into per-second
-	// buckets with a running total, so each error is O(1) (one bucket bump +
-	// bounded expiry) — not an O(n) scan of the window.
+	// Errors/sec over a 10s window: per-second buckets, O(1) per error.
 	_updateRequestsPerSecond( completedCount ) {
 		if ( completedCount <= 0 ) {
 			return;
@@ -162,9 +150,7 @@ export class PerfErrorsViewNode extends Node {
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
-	// The whole buffer materialized newest-first — O(n), for the filter path and
-	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
-	// graph clear) reseeds the ring from the given newest-first array.
+	// Whole buffer newest-first — O(n), filter/tests only (not per-frame).
 	get entries() {
 		const out = new Array( this._count );
 		for ( let i = 0; i < this._count; i++ ) {
@@ -185,16 +171,14 @@ export class PerfErrorsViewNode extends Node {
 		}
 	}
 
-	// Write one entry into the ring at the head and advance, capping at maxEntries.
+	// Write one entry at the ring head and advance, capping at maxEntries.
 	_writeEntry( entry ) {
 		this._ring[ this._head ] = entry;
 		this._head = ( this._head + 1 ) % this.maxEntries;
 		this._count = Math.min( this._count + 1, this.maxEntries );
 	}
 
-	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
-	// The virtual list reads only its on-screen window through this — never the
-	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
+	// The i-th entry newest-first (i=0 newest), O(1); undefined out of range.
 	entryAt( i ) {
 		if ( i < 0 || i >= this._count ) {
 			return undefined;
@@ -207,8 +191,7 @@ export class PerfErrorsViewNode extends Node {
 	get entriesCount() {
 		return this._count;
 	}
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
+	// View-model terminal: fill() mutates state + publishes; never forwards.
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

@@ -273,10 +273,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					continue;
 				}
 				foreach ( $bucket_data as $hash_or_url => $stats ) {
-					// FlameBuilder writes `[bucket => [hash => {url, count, ...}]]`
-					// — inner key is the URL hash, URL string lives in `$stats['url']`.
-					// StatsAggregator buckets may key by URL string directly; fall back
-					// to a derived hash in that case.
+					// Inner key is the URL hash; derive one if keyed by URL string instead.
 					$stat_arr = \is_array( $stats ) ? $stats : [];
 					if ( isset( $stat_arr['url'] ) ) {
 						$url  = self::to_string( $stat_arr['url'] );
@@ -310,19 +307,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					$entry['count_3xx'] += self::to_int( $stat_arr['count_3xx'] ?? 0 );
 					$entry['count_4xx'] += self::to_int( $stat_arr['count_4xx'] ?? 0 );
 					$entry['count_5xx'] += self::to_int( $stat_arr['count_5xx'] ?? 0 );
-					// FlameBuilder bucket has `sum_ms` directly; StatsAggregator
-					// bucket has `sum_req_time` in seconds — accept either.
+					// Accept sum_ms (FlameBuilder) or sum_req_time seconds (Aggregator).
 					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
 						? self::to_float( $stat_arr['sum_ms'] )
 						: self::to_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
 					$entry['sum_peak_mb'] += self::to_float( $stat_arr['sum_peak_mb'] ?? 0 );
-					// `min_ms` is optional on the entry — only seeded once a
-					// stat-with-min_ms arrives, so the missing-key path stays
-					// distinguishable from a legitimate 0.0 min. Mirror the write
-					// side: fold only from buckets that actually have timing.
-					// Untimed-only buckets (timed_count 0, min_ms 0 or a poisoned
-					// PHP_INT_MAX) are skipped, so neither clamps the merged min
-					// and old poison heals to 0 at display.
+					// Fold min_ms only from timed buckets; skips untimed/poisoned sentinels.
 					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
 						$stat_min        = self::to_float( $stat_arr['min_ms'] );
 						$entry['min_ms'] = isset( $entry['min_ms'] )
@@ -393,8 +383,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( 0 === $count ) {
 					continue;
 				}
-				// FlameBuilder buckets carry `sum_ms` directly; StatsAggregator
-				// buckets carry `sum_req_time` in seconds — accept either.
+				// Accept sum_ms (FlameBuilder) or sum_req_time seconds (Aggregator).
 				$sum_ms = isset( $stats['sum_ms'] )
 					? self::to_float( $stats['sum_ms'] )
 					: self::to_float( $stats['sum_req_time'] ?? 0 ) * 1000.0;
@@ -708,9 +697,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return null;
 	}
 
-	// -------------------------------------------------------------------------
 	// Stats_Store helpers — fan out across partitions and merge.
-	// -------------------------------------------------------------------------
 
 	/**
 	 * One Stats_Store per partition over the shared `Core::$memd` handle.
@@ -731,9 +718,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return $stores;
 	}
 
-	// -------------------------------------------------------------------------
 	// Disk-walking helpers — recent requests + request body lookup + flame.
-	// -------------------------------------------------------------------------
 
 	/**
 	 * Walk `requests.log` partitions and collect the 500 most-recent index
@@ -900,11 +885,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return $result;
 	}
 
-	// -------------------------------------------------------------------------
-	// Scalar coercion — decoded JSON / memcache blobs carry `mixed` leaf values;
-	// these reproduce PHP's int/float/string cast for the scalar+null domain those
-	// blobs actually hold, narrowing without changing any reachable value.
-	// -------------------------------------------------------------------------
+	// Scalar coercion of mixed leaf values from decoded JSON / memcache blobs.
 
 	/**
 	 * Coerce a mixed leaf to int, reproducing `(int)` for scalar/null inputs.
@@ -1040,11 +1021,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Optional args: `server` scopes the leaderboard / breakdown /
-				// categories; `breakdown` is a comma-separated dim list
-				// (single-dim → flat `breakdown_time_series`; multi-dim →
-				// nested `breakdowns: {dim => series}`); `--categories`
-				// adds `category_time_series` (global or per-server).
+				// Optional args: server scopes results; breakdown is a comma-sep dim list.
 				$opts       = Command_Args::parse( $args )['options'];
 				$server     = (string) ( $opts['server'] ?? '' );
 				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
@@ -1182,8 +1159,7 @@ class Performance_CI_Node extends Service_CI_Node {
 							'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
 							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
 							'last_updated' => $entry['last_updated'] ?? 0,
-							// Per-URL time series (consumed by UrlDetailView +
-							// urlRequestsPerSecond).
+							// Per-URL time series (UrlDetailView + urlRequestsPerSecond).
 							'time_series'  => self::build_url_time_series( $hash ),
 						];
 						break;
@@ -1290,9 +1266,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// `total_hooks` is the sum of all category buckets; recomputing
-				// here keeps the response contract stable without trusting the
-				// categorizer to sum for us.
+				// Recompute total_hooks here so the response contract stays stable.
 				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 				$total       = 0;
 				foreach ( $by_category as $list ) {
@@ -1315,9 +1289,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Normalized positional receiver: `set <option> <value>`, one setting
-				// per command — the grammar Settings_Sync_Node fans out to spokes.
-				// Nine-option whitelist + array/int/float/bool sanitize.
+				// Positional receiver: set one option per command; Settings_Sync fans out.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
 
 				$option = \is_string( $option ) ? $option : '';
@@ -1328,8 +1300,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
 				}
 
-				// The value rides the wire as a string; array-typed options carry it
-				// as JSON (lossless for assoc maps like custom_events), decoded here.
+				// Value rides the wire as a string; array options carry JSON, decoded here.
 				$type      = self::SETTINGS_OPTIONS[ $option ];
 				$raw_value = \is_string( $value_arg ) ? $value_arg : '';
 				$value     = 'array' === $type ? self::decode_array_value( $raw_value ) : $raw_value;
@@ -1339,8 +1310,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
 
-				// Autoload follows the central Config::autoload_for policy. The write
-				// emits a settings event like any other option change.
+				// Autoload follows Config::autoload_for; the write emits a settings event.
 				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				AppConfig::reset();
 

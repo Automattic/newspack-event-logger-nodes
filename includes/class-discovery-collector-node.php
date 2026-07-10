@@ -103,8 +103,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * @param array<array-key,mixed> $payload One spoke's discovery payload.
 	 */
 	private function merge_discovery( array $payload ): void {
-		// Long-lived worker; merge_hooks / merge_events below do read-modify-write
-		// on WP options and would clobber concurrent writes without a fresh snapshot.
+		// Fresh snapshot: merge below read-modify-writes WP options (avoid clobber).
 		RuntimeConfig::invalidate_options_cache();
 
 		$hooks  = [];
@@ -147,8 +146,7 @@ class Discovery_Collector_Node extends Timer_Node {
 		if ( ! empty( $events ) ) {
 			$this->stage_discovered( Config::OPTION_DISCOVERED_EVENTS, \array_keys( $events ) );
 		}
-		// A custom-event name never stages as a hook — filter it out here (belt +
-		// suspenders with the spoke-side filter in Discovery_CI_Node).
+		// Custom-event names never stage as hooks (belt+suspenders w/ spoke filter).
 		$hook_names = \array_keys( \array_diff_key( $hooks, $events ) );
 		if ( ! empty( $hook_names ) ) {
 			$this->stage_discovered( Config::OPTION_DISCOVERED_HOOKS, $hook_names );

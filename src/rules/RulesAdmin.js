@@ -19,7 +19,7 @@ import { useRulesGraph } from './useRulesGraph';
 import RuleEditModal from './RuleEditModal';
 import { BLANK_RULE } from './constants';
 
-// One-line auto-tune summary for the table cell (—when both thresholds are off).
+// One-line auto-tune summary for the table cell (— when both are off).
 function autoTuneSummary( rule ) {
 	const parts = [];
 	if ( rule.auto_disable_threshold ) {
@@ -166,7 +166,7 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 export default function RulesAdmin() {
 	const { rules, loading, error, upsert, remove } = useRulesGraph();
 
-	// The rule currently open in the editor: null = closed, object = editing/adding.
+	// Rule open in the editor: null = closed, object = editing/adding.
 	const [ editing, setEditing ] = useState( null );
 	// The rule pending delete confirmation.
 	const [ deleting, setDeleting ] = useState( null );
@@ -184,8 +184,7 @@ export default function RulesAdmin() {
 		}
 	};
 
-	// Resolve the table body once (avoids a nested ternary in JSX): loading row,
-	// then a row per rule, then the empty state.
+	// Resolve the table body once (avoids a nested ternary in JSX).
 	let tableBody;
 	if ( loading ) {
 		tableBody = (

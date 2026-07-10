@@ -47,13 +47,7 @@ class Core {
 	private array $wrapper_ids = [];
 
 	public function __construct() {
-		// Hooks are registered unconditionally. The enabled check happens
-		// inside each callback against LogManager::instance() — when JobWorker
-		// suspends the parent LM and creates a fresh one for a /jobs/{handler}
-		// scope, that fresh LM may be enabled even though the parent (worker
-		// spawn URL, skip-listed) wasn't. Caching the parent's `enabled = false`
-		// at construction would silently disable all hook instrumentation
-		// inside the job too. Hence: no $log_manager property.
+		// Bind hooks unconditionally; check enabled per-call (no cached LM).
 
 		$config               = Config::load_config();
 		$start_priority       = $config['hook_start_priority'] ?? 1;
@@ -74,9 +68,7 @@ class Core {
 			return;
 		}
 
-		// Also ensure real hooks are in the hook list so they get instrumented.
-		// Custom events (logged via LogManager::message, not do_action) are excluded
-		// — instrumenting them with add_filter is pointless and pollutes the hook selector.
+		// Instrument real hooks; custom events (not do_action) are excluded.
 		$hooks          = Rule_Set::hooks_for( $rule );
 		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
 		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
@@ -90,8 +82,7 @@ class Core {
 			}
 		}
 
-		// Plugin load timing is handled by the 00-newspack-profiler mu-plugin
-		// which loads early enough to capture all plugins. See: mu-plugins/00-newspack-profiler.php
+		// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
 
 		// Bind each hook individually for proper timing.
 		foreach ( $hooks as $hook_name ) {
@@ -101,10 +92,7 @@ class Core {
 			if ( 'plugin_loaded' === $hook_name ) {
 				continue;
 			}
-			// Skip Event Logger / Nodes internal filters — instrumenting
-			// them creates a re-entry loop via Config::load_config during
-			// LogManager bootstrap. HookCategorizer::is_internal covers
-			// both slash and underscore prefix styles.
+			// Skip internal filters: instrumenting them re-enters LogManager bootstrap.
 			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
 				continue;
 			}
@@ -122,10 +110,7 @@ class Core {
 	 * @return mixed
 	 */
 	public function hook_start( $v = null ) {
-		// Resolve fresh per-call so JobWorker suspend/resume picks up the
-		// current LogManager scope. Caching at construction would pin us to
-		// whichever LM existed at App\Core load time (typically the worker's
-		// disabled spawn-URL scope).
+		// Resolve LM fresh per-call so suspend/resume picks up the current scope.
 		$lm = Log_Manager::instance();
 		if ( ! $lm->enabled ) {
 			return $v;
@@ -134,8 +119,7 @@ class Core {
 		$hook_name = \current_filter() ?: '';
 		$category  = $hook_name . ' hook';
 
-		// Log filter value as 'm', truncated to keep firehose lines small.
-		// Full content is in the filter itself — this is just a preview.
+		// Log filter value as 'm', truncated (preview; full value is the filter).
 		$m = '';
 		if ( isset( $v ) && \is_string( $v ) ) {
 			$m = \strlen( $v ) > 1024 ? \substr( $v, 0, 1024 ) : $v;
@@ -150,8 +134,7 @@ class Core {
 		}
 		$lm->start( $category, [ 'm' => $m, 'l' => '' ] );
 
-		// Wrap callbacks for significant hooks. Runs every invocation to catch
-		// late-registered callbacks. wrapper_ids prevents double-wrapping.
+		// Wrap significant-hook callbacks every call (catches late registrations).
 		if ( isset( $this->significant[ $hook_name ] ) ) {
 			$this->wrap_callbacks( $hook_name );
 		}
@@ -197,19 +180,12 @@ class Core {
 					continue;
 				}
 
-				// A by-reference callback (e.g. a `pre_get_posts` $query mutator
-				// like vip_es_disable_advanced_post_cache) can't be wrapped: the
-				// wrapper reads args via func_get_args(), which drops the
-				// reference, so the original would be handed a value and PHP warns.
+				// By-ref callbacks can't be wrapped: func_get_args() drops the reference.
 				if ( self::callback_has_ref_param( $original ) ) {
 					continue;
 				}
 
-				// Wrap the original with timing instrumentation. Resolve LM
-				// per-call inside the wrapper so the wrapper survives across
-				// suspend/resume boundaries (a wrapper installed during a
-				// worker request shouldn't pin to the worker's LM when later
-				// invoked inside a /jobs/* scope).
+				// Wrap with timing; resolve LM per-call so it survives suspend/resume.
 				$label   = "{$name} @{$priority}";
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$lm   = Log_Manager::instance();

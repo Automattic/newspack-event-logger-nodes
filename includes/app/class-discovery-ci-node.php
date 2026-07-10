@@ -67,8 +67,7 @@ class Discovery_CI_Node extends Service_CI_Node {
 						$registered_hooks = self::extract_string_list( $union['hooks'] );
 						$custom_events    = self::extract_string_list( $union['custom_events'] );
 
-						// Filter custom event names out of registered_hooks to prevent
-						// cross-contamination.
+						// Filter custom-event names out of registered_hooks.
 						if ( ! empty( $custom_events ) ) {
 							$custom_set       = \array_flip( $custom_events );
 							$registered_hooks = \array_values( \array_filter( $registered_hooks, static fn ( $h ) => ! isset( $custom_set[ $h ] ) ) );

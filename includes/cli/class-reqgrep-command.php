@@ -316,8 +316,7 @@ class Reqgrep_Command {
 		$ts     = self::to_float( $entry['ts'] ?? 0 );
 		$key    = self::to_str( $entry['k'] ?? '' );
 
-		// Decrease indent BEFORE printing the (complete) line so its key sits
-		// at the same column as the matching (start) entry.
+		// Dedent BEFORE the (complete) line so its key aligns with (start).
 		if ( false !== \strpos( $key, '(complete)' ) ) {
 			$this->fmt_indent -= 4;
 		}
@@ -340,9 +339,7 @@ class Reqgrep_Command {
 			$tenth    = (int) ( ( $ts - \floor( $ts ) ) * 10 );
 			$time_str = \gmdate( 'Y-m-d H:i:s', (int) $ts ) . ".{$tenth}";
 
-			// Print dot rows for elapsed seconds with escalating intervals so
-			// a multi-hour gap doesn't blow up output. First 10 rows at 1s,
-			// next 10 at 10s, etc. — O(log gap) rows.
+			// Dot rows at escalating intervals so a long gap stays O(log gap) rows.
 			if ( $this->fmt_last_timestamp ) {
 				$last_sec = (int) $this->fmt_last_timestamp;
 				$curr_sec = (int) $ts;
@@ -393,8 +390,7 @@ class Reqgrep_Command {
 			$key
 		);
 
-		// Multi-line `m` — pad continuation lines so they align with the start
-		// of the message column.
+		// Multi-line 'm': pad continuation lines to the message column.
 		if ( false !== \strpos( $message, "\n" ) ) {
 			$pad   = \str_repeat( ' ', \strlen( $prefix ) );
 			$lines = \explode( "\n", $message );
@@ -406,8 +402,7 @@ class Reqgrep_Command {
 
 		$output .= $prefix . $message . $suffix;
 
-		// Increase indent AFTER printing the (start) line so the next entry is
-		// rendered one column deeper.
+		// Indent AFTER the (start) line so the next entry is one column deeper.
 		if ( false !== \strpos( $key, '(start)' ) ) {
 			$this->fmt_indent += 4;
 		}
@@ -621,8 +616,7 @@ class Reqgrep_Command {
 			}
 		}
 
-		// Roll the LruCache on its own schedule — the on-evict callback prints
-		// `[incomplete]` for any rids that fell out of the oldest bucket.
+		// Roll the LruCache; on-evict prints [incomplete] for dropped rids.
 		$inflight->rotate_if_due();
 	}
 
@@ -647,13 +641,12 @@ class Reqgrep_Command {
 	 */
 	private function append_to_state( \stdClass $state, string $line ): bool {
 		$line_bytes = \strlen( $line );
-		// Dynamic \stdClass state: ->bytes is always int, ->lines always a string list.
+		// Dynamic \stdClass: ->bytes always int, ->lines always a string list.
 		$bytes = \is_int( $state->bytes ) ? $state->bytes : 0;
 		if ( ! \is_array( $state->lines ) ) {
 			$state->lines = [];
 		}
-		// Reference (not a copy) so the append mutates the property in place —
-		// a copy-into-local + write-back triggers copy-on-write on every line.
+		// Reference, not copy: append mutates the property in place (avoid COW).
 		/** @var list<string> $lines */
 		$lines = &$state->lines;
 		if ( $bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {

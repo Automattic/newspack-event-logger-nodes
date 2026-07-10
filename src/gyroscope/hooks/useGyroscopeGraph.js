@@ -39,7 +39,7 @@ import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 
-// The single RemoteLink node, the inspectable stream Tee, and the view-model node.
+// The RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'gyroscope:link';
 const TEE = 'gyroscope:stream';
 const VIEW = 'gyroscope:view';
@@ -60,11 +60,7 @@ const controlMsg = ( value ) => {
 export function useGyroscopeGraph() {
 	const isPageVisible = usePageVisibility();
 
-	// The shared lifecycle owns close-while-hidden + resume-on-refocus. On each
-	// genuine (re)connect we clear the stale in-flight map first, then connect: the
-	// FIRST connect live-follows (null = tail); a RECONNECT resumes from the last
-	// seen offset so the gap accumulated while hidden replays into a correct
-	// in-flight snapshot instead of tail-dropping.
+	// Clear the stale in-flight map on each reconnect; first connect tails.
 	useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const data =
@@ -73,18 +69,13 @@ export function useGyroscopeGraph() {
 			const baseUrl = data.restUrl || '/wp-json/';
 			const nonce = data.nonce || '';
 
-			// ONE RemoteLink composes the SseIn + HttpOut + Heartbeat children and
-			// the `connected → slot` bridge. The positional `arguments` carry the
-			// `gyroscope` subscribe plus baseUrl/nonce; the children build lazily on
-			// the first connect(), so `.target` / `.client` are assigned first.
+			// RemoteLink composes SseIn + HttpOut + Heartbeat children (built lazily).
 			const link = interpreter.makeNode(
 				'RemoteLink',
 				LINK,
 				`gyroscope ${ baseUrl } ${ nonce }`
 			);
-			// A pure pass-through Tee on the stream edge: the link re-homes received
-			// frames to it, it copies each to the view. `connect gyroscope:stream` in
-			// the debug overlay appends a second target to inspect the live stream.
+			// Pass-through Tee on the stream edge; copies each frame to the view.
 			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
 

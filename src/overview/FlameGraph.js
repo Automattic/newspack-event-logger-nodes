@@ -19,7 +19,7 @@ import { shadeForDepth, pickLabelColor, isColorParseable } from './flameColors';
  * @return {string} Tooltip text.
  */
 const getTooltipText = ( d ) => {
-	// Use 'detail' (with volatile message) if available, else 'name' (stable label).
+	// Use 'detail' if available, else 'name' (stable label).
 	const name = d.data?.detail || d.data?.name || 'unknown';
 	const value = d.data?.value || 0;
 
@@ -67,7 +67,7 @@ const getTooltipText = ( d ) => {
  */
 const createTooltip = () => {
 	let tooltipEl = null;
-	let lastState = null; // Track tooltip state for restoration after data updates.
+	let lastState = null; // tooltip state, restored after updates.
 
 	const tip = function () {
 		tooltipEl = d3
@@ -141,11 +141,10 @@ const createTooltip = () => {
 		if ( tooltipEl ) {
 			tooltipEl.style( 'display', 'none' );
 		}
-		// Don't clear lastState here - zoom/click events trigger hide,
-		// but we still want to restore on autorefresh.
+		// Don't clear lastState here; we still restore on autorefresh.
 	};
 
-	// Restore tooltip after chart data update (prevents disappearing on autorefresh).
+	// Restore tooltip after a data update (else it vanishes on autorefresh).
 	tip.restore = function () {
 		if ( lastState && tooltipEl ) {
 			tooltipEl
@@ -190,8 +189,7 @@ const createTooltip = () => {
 const readThemeTokens = ( container ) => {
 	const style = window.getComputedStyle( container );
 	const read = ( name ) => style.getPropertyValue( name ).trim();
-	// First fallback that is an actual parseable color (skips absent or
-	// non-hex/rgb tokens like a named color or color-mix()).
+	// First fallback that's a parseable color (skips named / color-mix() tokens).
 	const pick = ( ...candidates ) => candidates.find( isColorParseable );
 	const accent = pick( read( '--cyan' ), read( '--np-primary' ), '#41e07a' );
 	const bg = pick( read( '--paper' ), read( '--np-surface' ), '#ffffff' );
@@ -285,9 +283,7 @@ const findNodeByPath = ( node, path ) => {
 	return null;
 };
 
-// Pruning thresholds. A frame survives if it is among the top PRUNE_SOFT_MAX_NODES
-// frames OR is at least PRUNE_MIN_FRACTION of the total — small frames are only
-// dropped once the graph is large. PRUNE_HARD_MAX_NODES is the absolute ceiling.
+// Pruning thresholds: keep top-N or >= min fraction; hard cap is the ceiling.
 const PRUNE_MIN_FRACTION = 0.001;
 const PRUNE_SOFT_MAX_NODES = 1000;
 const PRUNE_HARD_MAX_NODES = 5000;
@@ -364,9 +360,7 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 	const hardMaxNodes = options.hardMaxNodes ?? PRUNE_HARD_MAX_NODES;
 	const total = root.value || 0;
 
-	// Under the soft cap, every frame is within the top `softMaxNodes` by rank,
-	// so nothing is stripped for being small — keep all (the common case; skips
-	// the sort below). Clone for immutability.
+	// Under the soft cap, keep all frames (common case; skips the sort). Clone.
 	if ( countNodes( root ) <= softMaxNodes ) {
 		return cloneAboveCutoff( root, 0 );
 	}
@@ -375,13 +369,10 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 	collectNonRootValues( root, values, true );
 	values.sort( ( a, b ) => b - a );
 
-	// Value of the frame at rank `maxNodes` (root counts toward the cap, so the
-	// (maxNodes - 1)th-largest non-root frame). 0 when there are fewer than that
-	// many frames, meaning "keep everything".
+	// Value of the frame at rank maxNodes; 0 = fewer frames, keep everything.
 	const valueAtRank = ( maxNodes ) => values[ maxNodes - 2 ] ?? 0;
 
-	// Keep frames that are EITHER in the top `softMaxNodes` OR >= minFraction of
-	// total — i.e. down to whichever cutoff is more inclusive (lower).
+	// Keep frames in the top softMaxNodes OR >= minFraction of total.
 	let cutoff = Math.min( total * minFraction, valueAtRank( softMaxNodes ) );
 	let pruned = cloneAboveCutoff( root, cutoff );
 
@@ -407,11 +398,11 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	const containerRef = useRef( null );
 	const chartRef = useRef( null );
 	const tooltipRef = useRef( null );
-	const metaClickRef = useRef( false ); // Track tooltip for restoration across refreshes.
-	const zoomedNodeRef = useRef( null ); // Track zoomed node path for preservation across refreshes.
-	const lastChangeKeyRef = useRef( '' ); // Track change key to skip unnecessary updates.
+	const metaClickRef = useRef( false ); // tooltip meta state across refreshes.
+	const zoomedNodeRef = useRef( null ); // zoomed path across refreshes.
+	const lastChangeKeyRef = useRef( '' ); // skip redundant updates.
 
-	// Keep top frames + everything >= 0.1% of total; cap node count before rendering.
+	// Keep top frames + everything >= 0.1% of total; cap before rendering.
 	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
 
 	// Create/update chart when data changes.
@@ -423,12 +414,11 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		const container = containerRef.current;
 		const width = container.clientWidth || 800;
 
-		// Depth-shaded palette in the active theme's accent (re-read each render
-		// so the flame reskins when the hub theme changes).
+		// Depth-shaded palette in the theme accent; re-read each render (reskins).
 		const { accent, bg } = readThemeTokens( container );
 		const colorMapper = createColorMapper( accent, bg );
 
-		// Skip update if data hasn't changed (use server-side timestamp for aggregates).
+		// Skip update if data unchanged (server timestamp for aggregates).
 		const dataChanged = lastModified
 			? String( lastModified ) !== lastChangeKeyRef.current
 			: true; // No timestamp = single request, always render on mount.
@@ -463,7 +453,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					}
 				}
 
-				// Restore tooltip if it had state (prevents disappearing on autorefresh/zoom).
+				// Restore tooltip if it had state (else it vanishes on autorefresh/zoom).
 				if ( tooltipHasState ) {
 					tooltipRef.current?.restore?.();
 				}
@@ -479,7 +469,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 			const chart = flamegraph()
 				.width( width )
 				.cellHeight( 20 )
-				.transitionDuration( 0 ) // Start with no transitions for auto-refresh efficiency.
+				.transitionDuration( 0 ) // no transitions for auto-refresh.
 				.minFrameSize( 0 )
 				.sort( true )
 				.title( '' )
@@ -510,8 +500,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 			d3.select( container ).datum( prunedData ).call( chart );
 			applyLabelContrast( container );
 
-			// Track Cmd/Ctrl state on mousedown (more reliable than click
-			// which Mac browsers may intercept for Cmd+Click).
+			// Track Cmd/Ctrl on mousedown (more reliable than click on Mac).
 			container.addEventListener( 'mousedown', ( e ) => {
 				metaClickRef.current = e.metaKey || e.ctrlKey;
 			} );
@@ -541,11 +530,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		};
 	}, [] );
 
-	// Re-fit the chart when its CONTAINER resizes — an overlay panel resize, a
-	// layout change, etc. A `window` resize listener only catches the browser
-	// window resizing, NOT the panel the flame graph lives in, so the chart stayed
-	// at its old width after a panel resize. Debounced so it re-fits once the
-	// resize settles rather than every frame of a drag.
+	// Re-fit on CONTAINER resize (window resize misses panel resizes); debounced.
 	useEffect( () => {
 		const container = containerRef.current;
 		if ( ! container || typeof window.ResizeObserver === 'undefined' ) {
@@ -576,8 +561,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		};
 	}, [ prunedData ] );
 
-	// Gate the empty state on the original data — pruning is a render
-	// optimization and must never turn a non-empty graph into "no data".
+	// Gate the empty state on original data; pruning must not fake "no data".
 	if ( ! data || ! data.children || data.children.length === 0 ) {
 		return (
 			<div className="event-logger-flame-empty">
@@ -607,8 +591,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		}
 	};
 
-	// Handlers are for auxiliary behavior (tooltip cleanup, transition timing).
-	// D3 flame graph creates its own interactive SVG elements inside.
+	// Handlers are auxiliary (tooltip/transition); D3 owns the interactive SVG.
 	return (
 		<div
 			ref={ containerRef }

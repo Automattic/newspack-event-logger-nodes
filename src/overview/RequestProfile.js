@@ -64,13 +64,12 @@ export default function RequestProfile( {
 			.sort( ( a, b ) => b.time - a.time );
 	}, [ profiles ] );
 
-	// Use pre-calculated total if provided (aggregated views), otherwise sum (single request view).
+	// Use the pre-calculated total (aggregated) or sum it (single request).
 	const profiledTime = useMemo( () => {
 		if ( totalProfiledTime !== undefined ) {
 			return totalProfiledTime;
 		}
-		// Single request: sum category times, skipping per-callback profiling
-		// entries (contain " @N ") which are breakdowns of their parent hook.
+		// Single request: sum category times, skipping " @N " callback breakdowns.
 		return sortedProfiles
 			.filter( ( p ) => ! isCallbackCategory( p.state ) )
 			.reduce( ( sum, p ) => sum + p.time, 0 );
@@ -117,9 +116,7 @@ export default function RequestProfile( {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
-					// Use wall clock as the denominator so the bar visually
-					// shows the unprofiled gap as empty background. Chunks
-					// sum to (profiledTime / totalMs) * 100% of bar width.
+					// Wall-clock denominator so the unprofiled gap shows as empty background.
 					const pct = totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 					return (
 						<div
@@ -170,8 +167,7 @@ export default function RequestProfile( {
 				<tbody>
 					{ visibleProfiles.map(
 						( { state, count, time, entries } ) => {
-							// Use wall clock so row percentages match the
-							// summary bar widths and sum to ≤ Total Profiled.
+							// Wall clock so row % match the summary bars.
 							const pct =
 								totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 							const hasEntries =

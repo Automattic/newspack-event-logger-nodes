@@ -29,8 +29,7 @@ import { Node, VALUE, TYPE, TM_STRUCT } from '@newspack-nodes/runtime';
 export class UrlDetailMergeNode extends Node {
 	constructor() {
 		super();
-		// The last url_detail payload this node forwarded (the merge accumulator),
-		// and its last_modified — both reset on clear.
+		// Last forwarded url_detail payload + last_modified (reset on clear).
 		this._merged = null;
 		this._lastModified = null;
 	}
@@ -61,9 +60,7 @@ export class UrlDetailMergeNode extends Node {
 		super.fill( message );
 	}
 
-	// Merge `data` against the retained payload. Returns the payload to forward,
-	// or null to drop (empty data or unchanged last_modified). Verbatim port of
-	// performance-view-node._mergeUrlDetail, minus the React publish.
+	// Merge data into the retained payload; null drops (empty/unchanged).
 	_merge( data ) {
 		// Empty payload: no-op, skip forward.
 		if ( ! data ) {
@@ -108,8 +105,7 @@ export class UrlDetailMergeNode extends Node {
 		return merged;
 	}
 
-	// Edge transform: rewrites VALUE.payload + forwards; no input verbs, no target
-	// schema (target is wired by addSliceFetcher).
+	// Edge transform: rewrites VALUE.payload + forwards; target wired externally.
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

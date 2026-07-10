@@ -68,9 +68,7 @@ export default function OverviewSection( {
 	breakdownData,
 	categoryData,
 } ) {
-	// `breakdownData` and `chartBreakdown` are lifted into PerformanceDashboard
-	// so the active dimension rides along on the combined `/overview` call —
-	// no separate `?breakdown=...` round-trip.
+	// breakdownData/chartBreakdown lifted so the dim rides the combined /overview.
 	const breakdownLoading = false;
 
 	// Show server dropdown when 2+ servers detected (hub mode).

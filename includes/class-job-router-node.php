@@ -64,8 +64,7 @@ class Job_Router_Node extends Node {
 			return;
 		}
 
-		// Source disambiguation: Consumer stamps FROM with its own node name.
-		// Topology names them `firehose:consumer` and `jobintake:consumer`.
+		// Consumer stamps FROM: `firehose:consumer` / `jobintake:consumer`.
 		/** @var int|float|string|bool|null $raw_from */
 		$raw_from     = $message[ Message::FROM ] ?? '';
 		$from         = (string) $raw_from;
@@ -83,14 +82,7 @@ class Job_Router_Node extends Node {
 			return;
 		}
 
-		// Resolve the kind from the entry-level `k` — the canonical dispatch
-		// field. It's what LogManager::message() writes from the category
-		// argument, and what Remote_Job_Rewrite_Node mutates from
-		// 'job' to 'remote_job' on the hub. Read it (never a body-level field)
-		// so that hub rewrite is honored at dispatch. For jobintake the entry
-		// is flat (no `m` wrap) so $body IS $entry; reading $entry['k'] handles
-		// both branches uniformly, and `k` is carried through to jobs.log
-		// unrenamed (JobWorker dispatches on the same field).
+		// Dispatch kind = entry `k` (not body) so hub job→remote_job rewrite wins.
 		/** @var int|float|string|bool|null $raw_type */
 		$raw_type = $entry['k'] ?? '';
 		$type     = (string) $raw_type;
@@ -126,8 +118,7 @@ class Job_Router_Node extends Node {
 			'ts'         => $body['ts'] ?? $entry['ts'] ?? \microtime( true ),
 		];
 
-		// Pre-pack size guard. Partition's MAX_LARGE_LINE_SIZE catches this
-		// at write time too, but failing earlier produces a clearer error.
+		// Pre-pack size guard: fail earlier than Partition for a clearer error.
 		$encoded = \wp_json_encode( $normalized );
 		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
 			$this->print_less_often( "$handler entry exceeds MAX_JOB_SIZE; dropping" );
@@ -138,9 +129,7 @@ class Job_Router_Node extends Node {
 			return;
 		}
 
-		// Replace VALUE with the normalized entry and forward to target.
-		// Node::fill stamps TO from $this->target (set by topology
-		// connect_node('jobs:partition')) when TO is empty.
+		// Forward normalized VALUE; Node::fill stamps TO from $this->target.
 		$message[ Message::VALUE ] = $normalized;
 		parent::fill( $message );
 	}

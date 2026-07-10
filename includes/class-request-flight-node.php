@@ -34,14 +34,11 @@ class Request_Flight_Node extends Timer_Node {
 		if ( empty( $batch ) ) {
 			return;
 		}
-		// Target is typed string|array<string> on Node; RequestFlight only
-		// emits to a single named partition (the gyroscope), so reject the
-		// array form rather than silently stringifying it ("Array").
+		// Reject Node's array-target form; Flight emits to one named partition.
 		if ( ! \is_string( $this->target ) || '' === $this->target ) {
 			return;
 		}
-		// Timer_Node::fire_cb() already early-returns on a null sink, but this guard
-		// also narrows ?Node -> Node for the static analyzer before ->fill() below.
+		// Guard also narrows ?Node -> Node for the analyzer before ->fill().
 		if ( null === $this->sink ) {
 			return;
 		}
@@ -73,19 +70,13 @@ class Request_Flight_Node extends Timer_Node {
 		$out = [];
 		$now = ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $patron->cache->iterate() as $rid => $request ) {
-			// Cache only ever stores the \stdClass request record; rebuild a
-			// string-keyed property map (object props are always strings) so the
-			// extract_* calls get the array<string, mixed> they require.
+			// Rebuild string-keyed prop map so extract_* gets array<string,mixed>.
 			if ( ! $request instanceof \stdClass ) {
 				continue;
 			}
 			$vars = \get_object_vars( $request );
 			$r    = \array_combine( \array_map( '\strval', \array_keys( $vars ) ), \array_values( $vars ) );
-			// Process-start ts — the EARLIEST point PHP began handling this
-			// request. LogManager stamps `process (start)` with the
-			// mu-profiler's wall-clock load ts (captured before any plugins
-			// load), so this is the real request-start time the operator
-			// cares about.
+			// Process-start ts: mu-profiler wall-clock load ts (before plugins load).
 			$ts_v          = $r['timestamp'] ?? 0;
 			$start_time    = \is_scalar( $ts_v ) ? (float) $ts_v : 0.0;
 			$last_log_v    = $r['last_log_ts'] ?? $start_time;

@@ -103,8 +103,7 @@ class Auto_Tuner_Node extends Node {
 				$significant = $rule->significant_events;
 				$disable     = \array_flip( \array_filter( $items, static fn( $event ) => ! \in_array( $event, $significant, true ) ) );
 				$kept        = \array_values( \array_filter( $rule->custom_events, static fn( $event ) => ! isset( $disable[ $event ] ) ) );
-				// Hooks are untouched but MUST be the resolved list, not the pointer's
-				// null — otherwise save() re-inlines the rule to hooks=[] and drops it.
+				// Pass resolved hooks (not the pointer's null) or save() drops the rule.
 				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $kept, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
 			}
 		);
@@ -118,7 +117,7 @@ class Auto_Tuner_Node extends Node {
 			$rule_id,
 			static function ( Rule $rule ) use ( $items ): Rule {
 				$merged = \array_values( \array_unique( \array_merge( $rule->significant_events, $items ) ) );
-				// Resolve hooks (pointer ->hooks is null) so save() re-tiers instead of dropping.
+				// Resolve hooks (pointer ->hooks is null) so save() re-tiers, not drops.
 				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $merged, $rule->custom_events, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
 			}
 		);
@@ -134,11 +133,7 @@ class Auto_Tuner_Node extends Node {
 	 * @param callable(Rule): ?Rule $mutate
 	 */
 	private function mutate_rule( string $rule_id, callable $mutate ): void {
-		// AutoTuner runs inside a long-lived request-workers process, and
-		// mutate_rule below does read-modify-write on the rules option.
-		// Without invalidating the alloptions snapshot, the RMW would
-		// clobber writes made by other workers / SettingsSync fanouts /
-		// admin edits since this worker spawned.
+		// Fresh snapshot: RMW on rules option in a long-lived worker (avoid clobber).
 		\Newspack_Nodes\Config::invalidate_options_cache();
 
 		$set  = Rule_Set::load();
@@ -183,10 +178,7 @@ class Auto_Tuner_Node extends Node {
 
 	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
-		// Hidden: AutoTuner is instantiated as a sibling/patron of
-		// FlameBuilder (handled via $interpreter->patron()), not built directly
-		// in TSL. Keeping it out of the palette prevents operators from
-		// wiring up a second instance that nothing routes messages to.
+		// Hidden: AutoTuner is a FlameBuilder sibling, not built directly in TSL.
 		return [
 			'category'    => 'Hidden',
 			'description' => 'Receives FlameBuilder auto-tune decisions and applies them to the identified rule.',

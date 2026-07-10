@@ -50,17 +50,14 @@ const HTTP = '_http';
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
 
-// Monotonic per-hook-instance ID counter — message[ID] is what the view uses to
-// match a reply back to a pending Promise resolver.
+// Monotonic ID counter; the view matches message[ID] to a pending resolver.
 let nextOpId = 0;
 function makeOpId() {
 	nextOpId += 1;
 	return `rules-op-${ Date.now() }-${ nextOpId }`;
 }
 
-// Build a TM_COMMAND addressed at the `rules` CI. FROM = the receiver Tee so the
-// server's TO=FROM reply lands there; TO = `_http/rules` so the router peels
-// `_http` and HttpOutNode POSTs the bare command.
+// TM_COMMAND to rules CI; FROM = receiver Tee, TO = _http/rules.
 function buildCommand( verb, args, id ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_COMMAND;
@@ -78,8 +75,7 @@ export function useRulesGraph( opts = {} ) {
 	const interpreterRef = useRef( null );
 	const shellRef = useRef( null );
 
-	// Bumped on every (re)build so a consumer's useNodeState re-subscribes to the
-	// freshly-registered view node.
+	// Bumped on every rebuild so useNodeState re-subscribes to the fresh view.
 	const [ , bumpBuild ] = useState( 0 );
 
 	useEffect( () => {
@@ -104,9 +100,7 @@ export function useRulesGraph( opts = {} ) {
 
 			bumpBuild( ( n ) => n + 1 );
 
-			// Fire one immediate list through `_shell` → interpreter. Uncorrelated
-			// (no stashed resolver): its reply refreshes the view via the `list`
-			// name branch.
+			// Fire one immediate uncorrelated list; its reply refreshes the view.
 			shell.fill( buildCommand( 'list', '', makeOpId() ) );
 
 			return () => {
@@ -118,8 +112,7 @@ export function useRulesGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// Dispatch a verb and return a Promise the view settles by matching
-	// `message[ID]` against its `replies` map.
+	// Dispatch a verb; the view settles the Promise by matching message[ID].
 	const dispatch = useCallback( ( verb, args = '' ) => {
 		const shell = shellRef.current;
 		if ( ! shell ) {
@@ -139,9 +132,7 @@ export function useRulesGraph( opts = {} ) {
 
 	const list = useCallback( () => dispatch( 'list', '' ), [ dispatch ] );
 
-	// Run a ruleset-mutating verb, then re-list to refresh the table. A failure
-	// rejects to the caller; the view leaves its banner clean for a
-	// pending-matched error (no extra control fill needed).
+	// Run a mutating verb, then re-list to refresh the table; failure rejects.
 	const runMutation = useCallback(
 		async ( verb, args ) => {
 			const result = await dispatch( verb, args );
@@ -151,8 +142,7 @@ export function useRulesGraph( opts = {} ) {
 		[ dispatch ]
 	);
 
-	// save/upsert pass the raw JSON as the whole arguments string (Rules_CI
-	// json_decodes the arg verbatim); delete passes the id as a positional token.
+	// save/upsert send raw JSON as the args string; delete sends the id token.
 	const saveAll = useCallback(
 		( rules ) => runMutation( 'save', JSON.stringify( rules ) ),
 		[ runMutation ]
