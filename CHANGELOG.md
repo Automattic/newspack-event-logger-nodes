@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Job_Intake`'s constructor drops its half-dead `class_exists( '\Newspack_Nodes\Config' )` guard** — the next line already called the substrate Config unconditionally, and the plugin hard-requires newspack-nodes. Behavior-neutral. Test infra: the WP Settings-API / escaping / i18n stubs consolidated from per-test-file copies into `tests/bootstrap.php` (with a shared `RedirectException` helper), so every suite — including ones run in isolation — sees one set of definitions.
+
 - **Behavior-preserving elegance pass (writing-elegant-code forces), verified against the architecture decisions.** Highlights: the flame-builder's duplicated inline category-cap block now calls the existing `cap_single_bucket()`; magic numbers named across both builders (`INTERN_TABLE_LIMIT`, `AGGREGATE_EXPIRY_SEC`, `MAX_URLS_PER_BUCKET`, `INTERN_MAX_KEY_LENGTH`, `MAX_PROFILE_ENTRY_LABELS`) and the 32 MB job cap rewritten as `32 * 1024 * 1024` in intake + router; `Stats_Store`'s repeated numeric coercions collapsed into `num_int()`/`num_float()` (sums-not-means math pinned by new characterization tests); duplicated blocks extracted in `Performance_CI` (`merge_dim_buckets_into`), reqgrep (`finalize_if_complete`), and Admin (`verify_admin_post`); dead locals removed from `Log_Manager::begin_job_context()`. PIPE_BUF audit passed — no change touches `Log_Manager::message()`'s truncation contract or grows any encoded payload.
 
 ## [0.28.1] - 2026-07-09

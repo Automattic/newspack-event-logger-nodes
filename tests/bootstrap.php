@@ -337,6 +337,188 @@ if ( ! function_exists( 'esc_html' ) ) {
 	}
 }
 
+// WP Settings-API / admin-form stubs shared by every suite. The recorder
+// stubs write their arguments into globals; assertions read those globals.
+if ( ! function_exists( 'register_setting' ) ) {
+	function register_setting( string $group, string $option, array $args = [] ): void {
+		$GLOBALS['_registered_settings'][ $option ] = [
+			'group' => $group,
+			'args'  => $args,
+		];
+	}
+}
+
+if ( ! function_exists( 'add_settings_section' ) ) {
+	function add_settings_section( string $id, string $title, callable $cb, string $page ): void {
+		$GLOBALS['_registered_sections'][ $id ] = [
+			'title'    => $title,
+			'callback' => $cb,
+			'page'     => $page,
+		];
+	}
+}
+
+if ( ! function_exists( 'add_settings_field' ) ) {
+	function add_settings_field( string $id, string $title, callable $cb, string $page, string $section ): void {
+		$GLOBALS['_registered_fields'][ $id ] = [
+			'title'    => $title,
+			'callback' => $cb,
+			'page'     => $page,
+			'section'  => $section,
+		];
+	}
+}
+
+if ( ! function_exists( 'settings_fields' ) ) {
+	function settings_fields( string $group ): void {
+		echo '<input type="hidden" name="option_page" value="' . \htmlspecialchars( $group, ENT_QUOTES ) . '" />';
+	}
+}
+
+if ( ! function_exists( 'do_settings_sections' ) ) {
+	function do_settings_sections( string $page ): void {
+		echo '<!-- do_settings_sections:' . \htmlspecialchars( $page, ENT_QUOTES ) . ' -->';
+	}
+}
+
+if ( ! function_exists( 'submit_button' ) ) {
+	function submit_button( string $text = 'Save', string $type = 'primary', string $name = 'submit', bool $wrap = true ): void {
+		echo '<input type="submit" />';
+	}
+}
+
+if ( ! function_exists( 'wp_nonce_field' ) ) {
+	function wp_nonce_field( string $action, string $name ): void {
+		echo '<input type="hidden" name="' . \htmlspecialchars( $name, ENT_QUOTES ) . '" value="nonce_' . \htmlspecialchars( $action, ENT_QUOTES ) . '" />';
+	}
+}
+
+if ( ! function_exists( 'admin_url' ) ) {
+	function admin_url( string $path = '' ): string {
+		return 'http://localhost/wp-admin/' . \ltrim( $path, '/' );
+	}
+}
+
+if ( ! function_exists( 'wp_safe_redirect' ) ) {
+	// Redirect-then-exit short-circuits the test runner. Throw a sentinel
+	// exception instead so each test can catch it explicitly.
+	function wp_safe_redirect( string $url ): void {
+		$GLOBALS['_last_redirect'] = $url;
+		throw new \Newspack_Event_Logger_Nodes\Tests\Helpers\RedirectException( $url );
+	}
+}
+
+if ( ! function_exists( 'wp_die' ) ) {
+	function wp_die( string $message ): void {
+		throw new \RuntimeException( 'wp_die: ' . $message );
+	}
+}
+
+if ( ! function_exists( 'add_options_page' ) ) {
+	function add_options_page( string $page_title, string $menu_title, string $cap, string $slug, callable $cb ): string {
+		$GLOBALS['_options_pages'][ $slug ] = [
+			'page_title' => $page_title,
+			'menu_title' => $menu_title,
+			'capability' => $cap,
+			'callback'   => $cb,
+		];
+		return 'settings_page_' . $slug;
+	}
+}
+
+if ( ! function_exists( 'checked' ) ) {
+	function checked( mixed $checked, mixed $current = true ): string {
+		$out = (string) $checked === (string) $current ? ' checked="checked"' : '';
+		echo $out;
+		return $out;
+	}
+}
+
+if ( ! function_exists( 'wp_get_current_user' ) ) {
+	function wp_get_current_user(): \stdClass {
+		$u             = new \stdClass();
+		$u->user_login = $GLOBALS['_current_user_login'] ?? '';
+		return $u;
+	}
+}
+
+if ( ! function_exists( 'remove_action' ) ) {
+	function remove_action( string $hook, $cb, int $priority = 10 ): bool {
+		if ( ! isset( $GLOBALS['_wp_actions'][ $hook ] ) ) {
+			return false;
+		}
+		foreach ( $GLOBALS['_wp_actions'][ $hook ] as $i => $existing ) {
+			if ( $existing === $cb ) {
+				unset( $GLOBALS['_wp_actions'][ $hook ][ $i ] );
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
+// Escaping/i18n stubs shared by every suite; per-file copies are forbidden —
+// a test that defines its own hides a missing-stub failure from siblings.
+if ( ! function_exists( 'esc_attr' ) ) {
+	function esc_attr( mixed $v ): string {
+		return \htmlspecialchars( (string) $v, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_attr__' ) ) {
+	function esc_attr__( string $v, string $domain = '' ): string {
+		return \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_attr_e' ) ) {
+	function esc_attr_e( string $v, string $domain = '' ): void {
+		echo \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_html__' ) ) {
+	function esc_html__( string $v, string $domain = '' ): string {
+		return \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_html_e' ) ) {
+	function esc_html_e( string $v, string $domain = '' ): void {
+		echo \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( 'esc_url' ) ) {
+	function esc_url( string $v ): string {
+		return $v;
+	}
+}
+
+if ( ! function_exists( 'esc_js' ) ) {
+	function esc_js( string $v ): string {
+		return \str_replace( [ "'", '"', '<', '>' ], [ "\\'", '\\"', '\\u003c', '\\u003e' ], $v );
+	}
+}
+
+if ( ! function_exists( 'esc_textarea' ) ) {
+	function esc_textarea( mixed $v ): string {
+		return \htmlspecialchars( (string) $v, ENT_QUOTES, 'UTF-8' );
+	}
+}
+
+if ( ! function_exists( '__' ) ) {
+	function __( string $v, string $domain = '' ): string {
+		return $v;
+	}
+}
+
+if ( ! function_exists( '_n' ) ) {
+	function _n( string $single, string $plural, int $number, string $domain = '' ): string {
+		return 1 === $number ? $single : $plural;
+	}
+}
+
 if ( ! function_exists( 'sanitize_file_name' ) ) {
 	function sanitize_file_name( string $name ): string {
 		return \preg_replace( '/[^A-Za-z0-9._\-]/', '', $name ) ?? '';
@@ -529,6 +711,7 @@ require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
+require_once __DIR__ . '/Helpers/RedirectException.php';
 
 // Widen the substrate Config's allowed_config_dirs so tests using
 // `LOCAL_NEWSPACK_NODES_CONF=...path-inside-this-plugin/tests/configs/...php`

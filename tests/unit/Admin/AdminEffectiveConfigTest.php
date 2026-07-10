@@ -9,27 +9,9 @@
  * so `combined` appears when active) and that the section is hooked to ELN's
  * `settings_after_form` action and echoes a `widefat` table.
  *
- * Defines defensive i18n/esc stubs in a global block (AdminTest.php defines the
- * full set, but test-file load order isn't guaranteed).
+ * The i18n/esc stubs this render path needs live in tests/bootstrap.php —
+ * per-file copies are forbidden (they hide missing-stub failures).
  */
-
-namespace {
-	if ( ! \function_exists( 'esc_attr' ) ) {
-		function esc_attr( $v ): string {
-			return \htmlspecialchars( (string) $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_html_e' ) ) {
-		function esc_html_e( string $v, string $domain = '' ): void {
-			echo \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( '__' ) ) {
-		function __( string $v, string $domain = '' ): string {
-			return $v;
-		}
-	}
-}
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 

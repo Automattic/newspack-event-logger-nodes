@@ -2,211 +2,14 @@
 /**
  * AdminTest: unit tests for the WP-Settings-API admin surface.
  *
- * Owns its own minimal WP-Settings-API stubs so the bootstrap stays focused on
- * REST + general admin scaffolding. The stubs intentionally just record their
- * arguments into globals — assertions read those globals to verify the admin
- * registered the right keys with the right callbacks.
- *
- * Stubs MUST live in the global namespace because the Admin class calls them
- * with a leading backslash (e.g. `\register_setting(...)` resolves to
- * `\register_setting`, not `Newspack_Event_Logger_Nodes\Admin\register_setting`).
- * This file therefore opens with a global-namespace `namespace { … }` block for
- * the stubs, then declares the test-class namespace below it.
+ * The WP-Settings-API / admin-form / escaping stubs these tests drive live in
+ * tests/bootstrap.php (global namespace, function_exists-guarded) so every
+ * suite — including AdminEffectiveConfigTest run in isolation — sees the same
+ * definitions. Per-file stub copies are forbidden: a test defining its own
+ * hides a missing-stub failure from sibling suites.
  */
 
-// -- WP Settings-API stubs (global namespace) -------------------------------
-
 namespace {
-	if ( ! \function_exists( 'register_setting' ) ) {
-		function register_setting( string $group, string $option, array $args = [] ): void {
-			$GLOBALS['_registered_settings'][ $option ] = [
-				'group' => $group,
-				'args'  => $args,
-			];
-		}
-	}
-	if ( ! \function_exists( 'add_settings_section' ) ) {
-		function add_settings_section( string $id, string $title, callable $cb, string $page ): void {
-			$GLOBALS['_registered_sections'][ $id ] = [
-				'title'    => $title,
-				'callback' => $cb,
-				'page'     => $page,
-			];
-		}
-	}
-	if ( ! \function_exists( 'add_settings_field' ) ) {
-		function add_settings_field( string $id, string $title, callable $cb, string $page, string $section ): void {
-			$GLOBALS['_registered_fields'][ $id ] = [
-				'title'    => $title,
-				'callback' => $cb,
-				'page'     => $page,
-				'section'  => $section,
-			];
-		}
-	}
-	if ( ! \function_exists( 'settings_fields' ) ) {
-		function settings_fields( string $group ): void {
-			echo '<input type="hidden" name="option_page" value="' . \htmlspecialchars( $group, ENT_QUOTES ) . '" />';
-		}
-	}
-	if ( ! \function_exists( 'do_settings_sections' ) ) {
-		function do_settings_sections( string $page ): void {
-			echo '<!-- do_settings_sections:' . \htmlspecialchars( $page, ENT_QUOTES ) . ' -->';
-		}
-	}
-	if ( ! \function_exists( 'submit_button' ) ) {
-		function submit_button( string $text = 'Save', string $type = 'primary', string $name = 'submit', bool $wrap = true ): void {
-			echo '<input type="submit" />';
-		}
-	}
-	if ( ! \function_exists( 'wp_nonce_field' ) ) {
-		function wp_nonce_field( string $action, string $name ): void {
-			echo '<input type="hidden" name="' . \htmlspecialchars( $name, ENT_QUOTES ) . '" value="nonce_' . \htmlspecialchars( $action, ENT_QUOTES ) . '" />';
-		}
-	}
-	if ( ! \function_exists( 'wp_verify_nonce' ) ) {
-		function wp_verify_nonce( string $nonce, string $action ): bool {
-			return 'nonce_' . $action === $nonce;
-		}
-	}
-	if ( ! \function_exists( 'wp_unslash' ) ) {
-		function wp_unslash( $value ) {
-			return $value;
-		}
-	}
-	if ( ! \function_exists( 'absint' ) ) {
-		function absint( $v ): int {
-			return \abs( (int) $v );
-		}
-	}
-	if ( ! \function_exists( 'admin_url' ) ) {
-		function admin_url( string $path = '' ): string {
-			return 'http://localhost/wp-admin/' . \ltrim( $path, '/' );
-		}
-	}
-	if ( ! \function_exists( 'add_query_arg' ) ) {
-		function add_query_arg( array $args, string $url ): string {
-			$sep = false === \strpos( $url, '?' ) ? '?' : '&';
-			$kv  = [];
-			foreach ( $args as $k => $v ) {
-				$kv[] = \rawurlencode( (string) $k ) . '=' . \rawurlencode( (string) $v );
-			}
-			return $url . $sep . \implode( '&', $kv );
-		}
-	}
-	if ( ! \function_exists( 'wp_safe_redirect' ) ) {
-		// Redirect-then-exit short-circuits the test runner. Throw a sentinel
-		// exception instead so each test can catch it explicitly.
-		function wp_safe_redirect( string $url ): void {
-			$GLOBALS['_last_redirect'] = $url;
-			throw new \Newspack_Event_Logger_Nodes\Tests\Unit\Admin\RedirectException( $url );
-		}
-	}
-	if ( ! \function_exists( 'wp_die' ) ) {
-		function wp_die( string $message ): void {
-			throw new \RuntimeException( 'wp_die: ' . $message );
-		}
-	}
-	if ( ! \function_exists( 'add_options_page' ) ) {
-		function add_options_page( string $page_title, string $menu_title, string $cap, string $slug, callable $cb ): string {
-			$GLOBALS['_options_pages'][ $slug ] = [
-				'page_title' => $page_title,
-				'menu_title' => $menu_title,
-				'capability' => $cap,
-				'callback'   => $cb,
-			];
-			return 'settings_page_' . $slug;
-		}
-	}
-	if ( ! \function_exists( 'esc_textarea' ) ) {
-		function esc_textarea( $v ): string {
-			return \htmlspecialchars( (string) $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'checked' ) ) {
-		function checked( $checked, $current = true ): string {
-			$out = (string) $checked === (string) $current ? ' checked="checked"' : '';
-			echo $out;
-			return $out;
-		}
-	}
-	if ( ! \function_exists( 'esc_attr' ) ) {
-		function esc_attr( $v ): string {
-			return \htmlspecialchars( (string) $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_html' ) ) {
-		function esc_html( $v ): string {
-			return \htmlspecialchars( (string) $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_html__' ) ) {
-		function esc_html__( string $v, string $domain = '' ): string {
-			return \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_html_e' ) ) {
-		function esc_html_e( string $v, string $domain = '' ): void {
-			echo \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_attr__' ) ) {
-		function esc_attr__( string $v, string $domain = '' ): string {
-			return \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_attr_e' ) ) {
-		function esc_attr_e( string $v, string $domain = '' ): void {
-			echo \htmlspecialchars( $v, ENT_QUOTES, 'UTF-8' );
-		}
-	}
-	if ( ! \function_exists( 'esc_url' ) ) {
-		function esc_url( string $v ): string {
-			return $v;
-		}
-	}
-	if ( ! \function_exists( 'esc_url_raw' ) ) {
-		function esc_url_raw( string $v ): string {
-			return $v;
-		}
-	}
-	if ( ! \function_exists( 'esc_js' ) ) {
-		function esc_js( string $v ): string {
-			return \str_replace( [ "'", '"', '<', '>' ], [ "\\'", '\\"', '\\u003c', '\\u003e' ], $v );
-		}
-	}
-	if ( ! \function_exists( '__' ) ) {
-		function __( string $v, string $domain = '' ): string {
-			return $v;
-		}
-	}
-	if ( ! \function_exists( '_n' ) ) {
-		function _n( string $single, string $plural, int $number, string $domain = '' ): string {
-			return 1 === $number ? $single : $plural;
-		}
-	}
-	if ( ! \function_exists( 'wp_get_current_user' ) ) {
-		function wp_get_current_user() {
-			$u             = new \stdClass();
-			$u->user_login = $GLOBALS['_current_user_login'] ?? '';
-			return $u;
-		}
-	}
-	if ( ! \function_exists( 'remove_action' ) ) {
-		function remove_action( string $hook, $cb, int $priority = 10 ): bool {
-			if ( ! isset( $GLOBALS['_wp_actions'][ $hook ] ) ) {
-				return false;
-			}
-			foreach ( $GLOBALS['_wp_actions'][ $hook ] as $i => $existing ) {
-				if ( $existing === $cb ) {
-					unset( $GLOBALS['_wp_actions'][ $hook ][ $i ] );
-					return true;
-				}
-			}
-			return false;
-		}
-	}
-
 	// Admin class is normally required by the main plugin file's deferred loader,
 	// but that loader doesn't yet include includes/admin/class-admin.php — until
 	// the main file is updated to wire it, require it here so this test runs.
@@ -219,6 +22,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 use Newspack_Event_Logger_Nodes\Admin\Admin;
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\RedirectException;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
@@ -226,13 +30,6 @@ use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Lock_Node;
 use Newspack_Nodes\Topology_Registry;
 use PHPUnit\Framework\Attributes\CoversClass;
-
-/**
- * Sentinel: thrown by the wp_safe_redirect stub so tests can intercept the
- * redirect-then-exit flow without actually killing the PHP process.
- */
-class RedirectException extends \RuntimeException {
-}
 
 #[CoversClass( Admin::class )]
 class AdminTest extends TestCase {
