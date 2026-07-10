@@ -6,13 +6,10 @@
  * via `rerender()` and unmount via `unmount()`.
  */
 
-// Tell React this is a concurrent-act test env to silence the
-// "current testing environment is not configured to support act(...)"
-// warning that fires from inside ReactDOMRoot.unmount otherwise.
+// Mark a concurrent-act test env to silence the act() unmount warning.
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
-// jsdom doesn't ship matchMedia; @wordpress/components uses it for
-// responsive value selection. Stub a minimal MediaQueryList shim.
+// jsdom lacks matchMedia (@wordpress/components needs it); stub a shim.
 if ( typeof window !== 'undefined' && ! window.matchMedia ) {
 	window.matchMedia = ( query ) => ( {
 		matches: false,

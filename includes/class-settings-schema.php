@@ -45,11 +45,7 @@ class Settings_Schema {
 		$workers         = 'newspack_event_logger_nodes_workers_section';
 		$debugging       = 'newspack_event_logger_nodes_debugging_section';
 
-		// Literal prefix (matches Admin::OPTION_PREFIX) so building the schema —
-		// which a frontend request does via Config::overlay_keys() — never
-		// autoloads the admin class just to read a constant. The `Admin::class`
-		// callables are compile-time strings; they don't load Admin until invoked
-		// in admin context.
+		// Literal prefix, not Admin::OPTION_PREFIX: schema-build won't load Admin.
 		self::$schema = new Schema(
 			'newspack_event_logger_nodes_',
 			[
@@ -61,20 +57,14 @@ class Settings_Schema {
 					section: $general,
 					// An unchecked box is a real "off" override, not a reset.
 					delete_on_blank: false,
-					// Cached in the Log_Manager per-process singleton, which every
-					// long-lived worker holds → restart every live topology.
+					// Cached in the Log_Manager singleton (every worker) → restart all.
 					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'enable_logging_callback' ],
 					register_args: [],
 				),
 
-				// -- Instrumentation / Performance Workers ------------------
-				// URL filters (log_urls/skip_urls), hook lists
-				// (log_events/custom_events/significant_events) and auto-tune
-				// thresholds are per-RULE fields inside the
-				// `newspack_event_logger_nodes_rules` option, not global
-				// settings. No Fields remain in this section.
+				// Instrumentation: URL/hook/threshold fields are per-rule now — none here.
 
 				// -- Debugging ----------------------------------------------
 				new Field(
@@ -100,16 +90,13 @@ class Settings_Schema {
 					render: [ Admin::class, 'flush_every_line_callback' ],
 				),
 
-				// -- Overlay-only / fieldless keys --------------------------
-				// Loaded + overlaid, but no settings field (deployment/programmatic).
+				// Overlay-only / fieldless keys: overlaid, no settings field.
 				new Field(
 					key: 'allowed_users',
 					type: 'array_strings',
 					ui: false,
 				),
-				// The per-URL ruleset. Overlaid so `$config['rules']` seeds an
-				// absent option (Rule_Set::load), but the rules editor owns the
-				// stored option — it is not a WP Settings API field.
+				// Per-URL ruleset: overlaid to seed the option; rules editor owns it.
 				new Field(
 					key: 'rules',
 					type: 'array',

@@ -57,23 +57,16 @@ export default function TagInputField( {
 		[ defaultValues ]
 	);
 
-	// Skips the mount run of the value-sync effect so the initial render can't
-	// be mistaken for an edit (and drop a pending reset mark).
+	// Skip the mount run so the initial render isn't mistaken for an edit.
 	const didMountRef = useRef( false );
 
-	// Update the hidden carrier when values change. On a real edit (not the
-	// initial mount), also drop any pending per-field reset mark: the shared
-	// admin-field-reset module only auto-drops marks for non-hidden controls,
-	// and this field's only input is the hidden carrier it ignores — so without
-	// this, marking for reset then editing would leave the marker, and
-	// Reset_Gate would delete the option on Save, discarding the edit.
+	// On a real edit, drop any pending reset mark (hidden carrier auto-skip).
 	useEffect( () => {
 		const hiddenInput = document.getElementById( `${ fieldName }_json` );
 		if ( hiddenInput ) {
 			hiddenInput.value = JSON.stringify( values );
 		}
-		// Controlled use (e.g. RuleEditModal): observe the tag list directly
-		// instead of the hidden form-POST carrier.
+		// Controlled use (RuleEditModal): observe the tag list, not the carrier.
 		if ( onChange ) {
 			onChange( values );
 		}

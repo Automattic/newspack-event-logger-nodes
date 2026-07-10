@@ -55,8 +55,7 @@ const VIEW = 'hookcatalog:view';
 // `_http` is backbone-owned (teardownSpine removes it); only the view is ours.
 const GRAPH_NODE_NAMES = [ VIEW ];
 
-// Monotonic per-hook-instance ID counter — message[ID] is what the view uses
-// to match a reply back to a pending Promise resolver.
+// Monotonic ID counter; the view matches message[ID] to a pending resolver.
 let nextOpId = 0;
 function makeOpId() {
 	nextOpId += 1;
@@ -90,8 +89,7 @@ export function useHookCatalogGraph( opts = {} ) {
 	// Live interpreter handle for the dispatch callback.
 	const interpreterRef = useRef( null );
 
-	// Flipped true once the graph (and its view node) is mounted, so the React
-	// view's useNodeState re-subscribes to the now-registered view node.
+	// Flipped once the graph mounts so useNodeState re-subscribes to the view.
 	const [ , setViewReady ] = useState( false );
 
 	// Mount the graph once: clip it onto the exospine.
@@ -99,12 +97,10 @@ export function useHookCatalogGraph( opts = {} ) {
 		const data =
 			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
 
-		// The canonical backbone every node clips onto: everything → interpreter → router.
+		// Canonical backbone: everything → interpreter → router.
 		const { interpreter, http, teardown: teardownSpine } = mountExospine();
 
-		// `_http` is a backbone singleton now (mountExospine owns it); just assign
-		// this modal's command boundary instead of minting our own, which would
-		// collide on the reserved `_http` name.
+		// _http is a backbone singleton (mountExospine owns it); reuse it.
 		http.client =
 			optsRef.current.commandClient ||
 			new CommandClient( {
@@ -112,7 +108,7 @@ export function useHookCatalogGraph( opts = {} ) {
 				nonce: data.nonce || '',
 			} );
 
-		// The application view-model node — receiver of every reply via the TO=FROM reply.
+		// Application view-model node — receives every reply via TO=FROM.
 		interpreter.makeNode( 'HookCatalogView', VIEW );
 
 		interpreterRef.current = interpreter;
@@ -147,10 +143,7 @@ export function useHookCatalogGraph( opts = {} ) {
 		return promise;
 	}, [] );
 
-	// Fire one hooks_registered fetch whenever the modal opens. On failure
-	// route a synthetic empty-catalog reply THROUGH the interpreter (canonical path —
-	// router peels TO=`hookcatalog:view` and delivers) so the spinner clears
-	// (there is no error UI).
+	// Fetch hooks_registered on open; on failure route an empty-catalog reply.
 	useEffect( () => {
 		if ( ! isOpen ) {
 			return;
@@ -171,7 +164,7 @@ export function useHookCatalogGraph( opts = {} ) {
 		} );
 	}, [ isOpen, dispatch ] );
 
-	// Read the published model on the modal's behalf (keeps the modal presentational).
+	// Read the published model for the modal (keeps the modal presentational).
 	const view = useNodeState( VIEW, 'view' );
 	return {
 		hooksByCategory: view?.hooksByCategory || {},

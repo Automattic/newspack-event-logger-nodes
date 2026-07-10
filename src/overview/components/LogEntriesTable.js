@@ -231,8 +231,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		};
 	}, [ searchQuery, entries ] );
 
-	// Collect pairIds that have content between start and complete.
-	// Empty pairs (start immediately followed by complete) are not unfoldable.
+	// Collect pairIds with content; empty start/complete pairs aren't unfoldable.
 	const allPairIds = useMemo( () => {
 		const ids = new Set();
 		for ( let i = 0; i < entries.length; i++ ) {
@@ -273,9 +272,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			const entryIdx = matchedIndices[ matchIdx ];
 			const ancestorIds = getAncestorPairIds( entryIdx, entries );
 
-			// Only expand pairs that actually have children (same rule as Unfold
-			// All / allPairIds). An empty start/complete pair renders as one
-			// merged row, so a search landing on it never splits it open.
+			// Only expand pairs with children; an empty pair stays a merged row.
 			setExpandedSet( ( prev ) => {
 				const next = new Set( prev );
 				for ( const id of ancestorIds ) {
@@ -288,10 +285,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 			setCurrentMatchIndex( matchIdx );
 
-			// A match on an empty pair's own start/complete stays a folded merged
-			// row — scroll to it by pairId, since that row carries the START's
-			// entry idx (a complete-only match would otherwise miss). Everything
-			// else scrolls to its own row.
+			// Match on an empty pair: scroll by pairId (its row carries the start idx).
 			const matchEntry = entries[ entryIdx ];
 			const ownPairId = matchEntry?.pairId;
 			const keyword = matchEntry?.k || '';
@@ -333,8 +327,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	// Keyboard navigation: n = next, p = previous, Escape = clear.
 	useEffect( () => {
 		const handleKeyDown = ( e ) => {
-			// Escape: clear search if active, then refocus the modal
-			// so the next Escape can close it normally.
+			// Escape: clear search, refocus so the next Escape closes the modal.
 			if ( e.key === 'Escape' && searchQuery ) {
 				e.preventDefault();
 				e.stopPropagation();
@@ -361,8 +354,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				return;
 			}
 
-			// Skip n/p if typing in any input (including search field).
-			// Search input uses Enter for navigation instead.
+			// Skip n/p while typing in an input (search uses Enter to navigate).
 			if ( tag === 'INPUT' || tag === 'TEXTAREA' ) {
 				return;
 			}
@@ -413,9 +405,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		[ entries, expandedSet ]
 	);
 
-	// Build path→pairId map for flame graph integration.
-	// Uses "name: message" detail keys to match flame graph's detail field,
-	// with base-name fallback for entries without messages.
+	// Build path→pairId map (flame "name: message" keys, base-name fallback).
 	const pathToPairId = useMemo( () => {
 		const map = {};
 		const stack = [];
@@ -464,8 +454,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				cleanPath = cleanPath.slice( 1 );
 			}
 
-			// Try detail path first (flame nodes use "name: message" format).
-			// Fall back to base-name path (strip ": suffix").
+			// Try the detail path ("name: message"), fall back to the base-name path.
 			const detailKey = cleanPath.join( '/' );
 			const baseKey = cleanPath
 				.map( ( seg ) => seg.replace( /: .+$/, '' ) )
@@ -741,10 +730,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return '';
 		}
 		if ( typeof entry.m === 'object' ) {
-			// Pretty-print object/map values (environment_v3) on their own
-			// indented lines. Keys are alpha-sorted for scannability (the
-			// producer emits them in allowlist order). The message cell is
-			// `white-space: pre-wrap`, so newlines render.
+			// Pretty-print object values on indented, alpha-sorted lines.
 			const value =
 				entry.m && ! Array.isArray( entry.m )
 					? Object.fromEntries(
@@ -756,8 +742,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return JSON.stringify( value, null, 2 );
 		}
 		const msg = entry.m || entry.l || '';
-		// Suppress bare '-' for merged rows, complete entries, and any entry
-		// that will show duration stats instead.
+		// Suppress bare '-' for merged/complete rows and duration-stat entries.
 		const hasDuration =
 			entry.duration_ms !== null && entry.duration_ms !== undefined;
 		if (

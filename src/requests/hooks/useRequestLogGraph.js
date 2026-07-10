@@ -39,7 +39,7 @@ import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 
-// The single RemoteLink node, the inspectable stream Tee, and the view-model node.
+// The RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'requestlog:link';
 const TEE = 'requestlog:stream';
 const VIEW = 'requestlog:view';
@@ -63,20 +63,15 @@ export function useRequestLogGraph( opts = {} ) {
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
-	// Paused state drives BOTH the view control (published for the button/label)
-	// and the shared connection lifecycle (paused closes the SSE stream).
+	// Paused drives the view control and the connection lifecycle (closes SSE).
 	const [ isPaused, setIsPaused ] = useState( false );
 	const isPageVisible = usePageVisibility();
 
-	// Mirror isPaused into a ref so mountNodes (which reads it at (re)build time)
-	// sees the CURRENT pause on a reinit — the fresh view defaults paused:false.
+	// Mirror isPaused into a ref so a reinit's mountNodes sees the current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
 
-	// The shared lifecycle owns close-while-hidden/paused + resume-on-refocus. We
-	// supply the graph and a plain connect: the FIRST connect of a link live-follows
-	// (null = tail), a RECONNECT resumes from the last seen offset so the gap
-	// accumulated while hidden/paused streams in instead of tail-dropping.
+	// First connect tails; a reconnect resumes from last offset (no gap-drop).
 	const { viewRef } = useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
@@ -86,17 +81,13 @@ export function useRequestLogGraph( opts = {} ) {
 			const baseUrl = data.restUrl || '/wp-json/';
 			const nonce = data.nonce || '';
 
-			// ONE RemoteLink composes the SseIn + HttpOut + Heartbeat children and
-			// the `connected → slot` bridge. The positional `arguments` carry the
-			// fixed `completed` subscribe plus baseUrl/nonce.
+			// RemoteLink composes SseIn + HttpOut + Heartbeat children.
 			const link = interpreter.makeNode(
 				'RemoteLink',
 				LINK,
 				`completed ${ baseUrl } ${ nonce }`
 			);
-			// A pure pass-through Tee on the stream edge: the link re-homes received
-			// frames to it, it copies each to the view. `connect requestlog:stream` in
-			// the debug overlay appends a second target to inspect the live stream.
+			// Pass-through Tee on the stream edge; copies each frame to the view.
 			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
 
@@ -109,9 +100,7 @@ export function useRequestLogGraph( opts = {} ) {
 				view.maxEntries = maxEntries;
 			}
 
-			// On a reinit-while-paused, re-publish the surviving pause to the fresh
-			// view so its `paused` flag matches the connection lifecycle (which keeps
-			// the stream closed while isPaused). No-op on first mount (isPaused=false).
+			// Re-publish a surviving pause to the fresh view on reinit.
 			if ( isPausedRef.current ) {
 				view.fill( controlMsg( { action: 'pause', paused: true } ) );
 			}
@@ -123,8 +112,7 @@ export function useRequestLogGraph( opts = {} ) {
 			link.connect( isReconnect ? link.resumePositions() : null ),
 	} );
 
-	// setPaused: flip the hook state (re-runs the connection effect) AND publish
-	// the paused flag through the view so the button / empty-state label reflect it.
+	// setPaused: flip hook state (re-runs the effect) and publish it to the view.
 	const setPaused = ( paused ) => {
 		setIsPaused( paused );
 		if ( viewRef.current ) {

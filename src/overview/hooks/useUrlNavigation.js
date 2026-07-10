@@ -99,9 +99,7 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 			setInitialRequestId( null );
 			return;
 		}
-		// `?request=` without `?url=` — owner resolves the URL hash, then
-		// selects both. Doesn't depend on `urls` being loaded since the
-		// resolver fetches the entry fresh.
+		// ?request= without ?url=: resolver fetches the entry fresh, selects both.
 		if ( ! initialUrlHash && initialRequestId && resolveRequestId ) {
 			const rid = initialRequestId;
 			setInitialRequestId( null );

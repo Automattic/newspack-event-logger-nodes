@@ -29,14 +29,9 @@ import './ThemedRoot.scss';
 export default function ThemedRoot( { children } ) {
 	const ref = useRef( null );
 
-	// Paint the WP-admin gutters around the dashboard to the live skin's base
-	// surface, re-running on every skin change so a set_skin from the debug
-	// overlay reskins the gutters too. The skin itself is the global
-	// `<html>.theme-<slug>` class (see shared/theme.js) — no React state here.
+	// Paint the WP-admin gutters to the live skin's base surface on skin change.
 	useEffect( () => {
-		// Apply the persisted skin to <html> so this dashboard shows the
-		// console-selected skin on a fresh load (the class must be set before the
-		// gutter probe below reads the skin's --paper-3).
+		// Apply persisted skin to <html> before the gutter probe reads --paper-3.
 		initSkin();
 		const host = ref.current;
 		if ( ! host ) {
@@ -44,9 +39,7 @@ export default function ThemedRoot( { children } ) {
 		}
 		let previous = null;
 		const paintGutters = () => {
-			// Resolve the skin's --paper-3 (base surface behind the dashboard) to a
-			// concrete colour from inside the themed wrapper (custom props resolve on
-			// the element even under display:contents).
+			// Resolve the skin's --paper-3 from inside the themed wrapper.
 			const probe = document.createElement( 'span' );
 			host.appendChild( probe );
 			let paper;

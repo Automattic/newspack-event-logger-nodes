@@ -140,19 +140,11 @@ class Admin {
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_effective_config_section' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
 
-		// Per-option granular worker-restart on save. Both `added_option` (first
-		// save) and `updated_option` (subsequent saves) fire this so newly-added
-		// options trigger the right restart class too.
+		// Per-option worker-restart on save (added_option + updated_option).
 		\add_action( 'updated_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
 		\add_action( 'added_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
 
-		// Skip writing a WP option when the value matches the config-file
-		// default — keeps the options table clean and lets file-side changes
-		// actually take effect instead of being shadowed by a stale stored
-		// copy of the old default. Strict comparison so a bool-defaulted
-		// option (`enable_logging: true`) doesn't trip on the absint-int form
-		// of a user-saved "on" (`1 != true` is false under loose comparison
-		// but the user definitely wants the value written).
+		// Skip storing an option equal to the file default (strict compare).
 		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );
 	}
 
@@ -313,9 +305,7 @@ class Admin {
 				<?php \wp_nonce_field( self::RESET_ACTION, self::RESET_NONCE ); ?>
 			</form>
 			<?php
-			// Allow child plugins (Performance, Aggregator, etc.) to inject sections
-			// below the form via the `newspack_event_logger_nodes/settings_after_form`
-			// hook.
+			// Let child plugins inject sections below the form via settings_after_form.
 			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
 			Field_Reset_Assets::enqueue();
 			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
@@ -348,7 +338,7 @@ class Admin {
 		}
 
 		if ( ! \function_exists( 'wp_get_current_user' ) ) {
-			return true; // CLI / no user context — don't lock out admins running CLI tools.
+			return true; // CLI / no user context — don't lock out CLI admins.
 		}
 		$current_user = \wp_get_current_user();
 		return \in_array( $current_user->user_login, $allowed_users, true );
@@ -371,11 +361,7 @@ class Admin {
 		if ( ! \array_key_exists( $key, $defaults ) ) {
 			return $value;
 		}
-		// Normalize bool defaults (`true`/`false` in config files) to int —
-		// our bool-typed sanitize_callbacks (`absint`) always produce int
-		// 0/1, so without this the strict compare never matches a bool
-		// default and the filter is a no-op for every toggle. Other types
-		// (int, string, array) are compared as-is.
+		// Normalize bool defaults to int so the strict compare matches absint 0/1.
 		$default = $defaults[ $key ];
 		if ( \is_bool( $default ) ) {
 			$default = self::bool_to_int( $default );
@@ -383,8 +369,7 @@ class Admin {
 		if ( $value !== $default ) {
 			return $value;
 		}
-		// User is actually changing the stored value back to the default —
-		// drop the row so the file default kicks in next read.
+		// Value set back to default: drop the row so the file default returns.
 		if ( $value !== $old_value ) {
 			\delete_option( $option );
 		}
@@ -431,8 +416,7 @@ class Admin {
 			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
 		}
 
-		// Derive the base reset list from the Schema so this handler works even
-		// when invoked before `register_settings()` populated the cached property.
+		// Derive reset list from Schema so this works pre-register_settings().
 		$options = Settings_Schema::get()->setting_option_names();
 
 		foreach ( $options as $option ) {
@@ -474,33 +458,20 @@ class Admin {
 			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
 		}
 
-		// Stats_Store::flush_all() only rotates the salt option — it doesn't
-		// touch the cache, so no memcache handle is needed on this path.
+		// flush_all() only rotates the salt option; no memcache handle needed.
 		$config       = Config::load_config();
 		$max_lifespan = $config['max_lifespan'] ?? 86400;
 		$stats        = new Stats_Store( 0, \is_numeric( $max_lifespan ) ? (int) $max_lifespan : 0 );
 		$stats->flush_all();
 
-		// Restart every worker across every active topology. Long-running
-		// nodes cache the prefix at construction (Stats_Store reads the
-		// salt option ONCE in __construct); they need a restart to pick up
-		// the new prefix. Today FlameBuilder is the only writer, but any
-		// future Node that uses Stats_Store inherits the same caching, so
-		// scoping the restart to one hardcoded topology name would silently
-		// break the moment a second consumer landed. Iterating the canonical
-		// `Bootstrap::expand_workers()` descriptor list reaches every
-		// (type, partition) the supervisor knows about, including custom
-		// topologies and operator-disabled subsets, with no naming knowledge
-		// baked into this file.
+		// Restart all workers: they cache the salt prefix at construction.
 		$restarted = 0;
 		try {
 			$workers   = Bootstrap::expand_workers();
 			$base_dir  = RuntimeConfig::get_base_directory();
 			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
 		} catch ( \Throwable $e ) {
-			// Best-effort: the next supervisor pass picks up the new salt
-			// on the next spawn regardless. Log via the substrate's
-			// rate-limited stderr so a misconfigured locks_dir is visible.
+			// Best-effort; next supervisor spawn picks up the salt regardless.
 			\Newspack_Nodes\Core::print_less_often(
 				'Stats flush: restart_workers failed — ' . $e->getMessage()
 			);
@@ -535,17 +506,13 @@ class Admin {
 	public function register_settings(): void {
 		$schema = Settings_Schema::get();
 
-		// Cache the derived reset surface under the historical property names so
-		// `handle_reset_settings()` (base list) and AdminTest's reflection reads
-		// see the same set the Reset_Gate is wired against.
+		// Cache the derived reset surface under the historical property names.
 		self::$option_names            = $schema->setting_option_names();
 		self::$delete_on_blank_options = $schema->delete_on_blank_options();
 
 		$schema->register_options( self::OPTIONS_GROUP );
 
-		// Shared per-field reset / delete-on-blank gate (Config_System\Reset_Gate):
-		// a reset toggle (any field — booleans + multi-selects included) OR a
-		// blanked text-like field deletes the row so the file default resurfaces.
+		// Reset / delete-on-blank gate: drops the row so the file default returns.
 		Reset_Gate::register( self::RESET_MARK_FIELD, self::$option_names, self::$delete_on_blank_options );
 
 		$schema->register_sections_and_fields( self::SETTINGS_PAGE );
@@ -647,8 +614,7 @@ class Admin {
 			return;
 		}
 
-		// Reset cached config so this process sees the new value if it reads
-		// later in the same request.
+		// Reset cached config so a later read this request sees the new value.
 		Config::reset();
 
 		$short   = \substr( $option, \strlen( self::OPTION_PREFIX ) );
@@ -656,7 +622,7 @@ class Admin {
 			? [ 'Flame_Builder' ]
 			: Settings_Schema::get()->restart_for( $short );
 
-		// Wrap the whole resolve+touch: the planner re-enters Config::load_config() via Bootstrap.
+		// resolve+touch: planner re-enters Config::load_config() via Bootstrap.
 		try {
 			$locks_dir = Config::get_locks_directory();
 			Restart_Planner::request_restarts( $restart, $locks_dir );

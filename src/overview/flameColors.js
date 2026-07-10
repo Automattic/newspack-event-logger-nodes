@@ -7,13 +7,11 @@
  * labels get a contrasting color so they stay readable on every shade.
  */
 
-// Mix fraction grows with depth, capped so the deepest frames keep enough
-// accent to never collapse into the background.
+// Mix grows with depth, capped so deep frames keep accent vs background.
 const FRACTION_PER_DEPTH = 0.13;
 const MAX_FRACTION = 0.65;
 
-// Label text colors for the contrast pick. Near-black for bright shades,
-// near-white for deep shades — readable across the whole ramp.
+// Label text colors: near-black on bright shades, near-white on deep.
 export const DARK_TEXT = '#0b140d';
 export const LIGHT_TEXT = '#eafff1';
 

@@ -23,14 +23,12 @@ import {
 import { __ } from '@wordpress/i18n';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
-// Reuse the performance dashboard's flame graph + profile breakdown so the tab
-// shows the same trace, not a reimplementation. FlameGraph is d3-heavy → lazy.
+// Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
 import RequestProfile from '../overview/RequestProfile';
 
 const FlameGraph = lazy( () => import( '../overview/FlameGraph' ) );
 
-// The page-injected summary anchor: the rid of the request that rendered this
-// page + the perf-dashboard base URL for the deep link.
+// Page-injected anchor: rendering rid + perf base URL for the deep link.
 function currentRequestData() {
 	return (
 		( typeof window !== 'undefined' &&
@@ -65,8 +63,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 	const [ state, setState ] = useState(
 		rid ? { status: 'loading' } : { status: 'idle' }
 	);
-	// The tab unmounts when the user switches overlay tabs; guard the async
-	// resolution so a late reply never setStates a torn-down component.
+	// Guard async resolution so a late reply never setStates a torn-down tab.
 	const mountedRef = useRef( true );
 	useEffect( () => {
 		mountedRef.current = true;
@@ -91,9 +88,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 				if ( ! mountedRef.current ) {
 					return;
 				}
-				// request_detail throws (TM_ERROR) until the request-builder has
-				// written the request to requests.log — treat as "still
-				// processing" so a Refresh picks it up moments later.
+				// request_detail throws until requests.log has it (still processing).
 				const request = unwrapCommandResponse( reply );
 				setState(
 					request

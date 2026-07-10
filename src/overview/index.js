@@ -93,8 +93,7 @@ export function AdminApp() {
 	);
 }
 
-// Mount the dashboard when DOM is ready. The Error Log is its own bundle now
-// (`src/error-log/`), mounted on its own admin page.
+// Mount the dashboard when DOM is ready (Error Log is its own bundle now).
 document.addEventListener( 'DOMContentLoaded', () => {
 	const dashboardContainer = document.getElementById( 'event-logger-admin' );
 	if ( dashboardContainer ) {

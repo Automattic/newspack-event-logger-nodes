@@ -37,8 +37,7 @@ export class GyroscopeViewNode extends Node {
 	constructor() {
 		super();
 		this.requests = new Map(); // All requests keyed by rid.
-		// Per-second RPS buckets ({ sec, count }) + their running total — bounded
-		// to the window instead of one entry per snapshot tick.
+		// Per-second RPS buckets + running total, bounded to the window.
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
@@ -77,9 +76,7 @@ export class GyroscopeViewNode extends Node {
 		}
 	}
 
-	// An inflight snapshot: upsert each request by rid; never overwrite a request
-	// already marked complete (the inflight snapshot was produced BEFORE the
-	// completion that may already be in our map). Ported from handleMessage.
+	// Inflight snapshot: upsert by rid; never overwrite a completed entry.
 	_inflight( requests ) {
 		for ( const req of requests ) {
 			const existing = this.requests.get( req.rid );
@@ -89,8 +86,7 @@ export class GyroscopeViewNode extends Node {
 		}
 	}
 
-	// A completion: merge into the existing entry, mark state=complete. Ported
-	// from handleMessage's `type === 'complete'` branch.
+	// A completion: merge into the existing entry, mark state=complete.
 	_complete( req ) {
 		const existing = this.requests.get( req.rid );
 		this.requests.set( req.rid, {
@@ -118,19 +114,12 @@ export class GyroscopeViewNode extends Node {
 		this.rps = 0;
 	}
 
-	// Publish ONLY the low-frequency view model. `requests` / `rps` are the
-	// high-frequency state the refresh tick reads off the node directly via
-	// snapshot() — keeping them out of setState is what stops a
-	// busy stream re-rendering React per message. `connectionError` is low-frequency
-	// (only flips on connect/disconnect) so it rides setState for the reconnect banner.
+	// Publish only the low-freq view model; requests/rps stay off setState.
 	_publish() {
 		this.setState( 'view', { connectionError: this.connectionError } );
 	}
 
-	// Build the render snapshot AND reap completed entries (like Gyroscope.pm
-	// fire() / Inflight's renderRequests): collect all requests, delete the ones
-	// marked complete (they show for exactly one tick), update RPS from that
-	// count, sort by est_ms desc, cap to maxRows. Returns the render array.
+	// Build the render snapshot and reap completed entries (one-tick display).
 	snapshot( maxRows ) {
 		const allRequests = [];
 		let completedCount = 0;
@@ -147,12 +136,7 @@ export class GyroscopeViewNode extends Node {
 			.slice( 0, maxRows );
 	}
 
-	// Requests per second over a 10s window. Counts are aggregated into
-	// per-second buckets with a running total, so each tick is O(1) (one bucket
-	// bump + bounded expiry) — not an O(n) scan of the window. Unlike the
-	// append-driven views, snapshot() calls this every tick INCLUDING idle ticks
-	// (completedCount 0), so expiry always runs — that's what decays rps to 0
-	// once completions stop.
+	// RPS over a 10s window: per-second buckets, O(1); idle ticks decay to 0.
 	_updateRequestsPerSecond( completedCount ) {
 		const sec = Math.floor( Date.now() / 1000 );
 		if ( completedCount > 0 ) {
@@ -174,8 +158,7 @@ export class GyroscopeViewNode extends Node {
 		}
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
+	// View-model terminal: fill() mutates state + publishes; never forwards.
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

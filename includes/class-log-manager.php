@@ -196,7 +196,7 @@ class Log_Manager {
 	private $topic           = null;
 
 	public function __construct() {
-		// Assign self FIRST: load_config() can re-enter instance(); a null $instance would spawn a second LM and recurse.
+		// Assign self FIRST: load_config() re-enters instance(); null would recurse.
 		self::$instance = $this;
 		$this->config = Config::load_config();
 		if ( empty( $this->config['enable_logging'] ) ) {
@@ -321,7 +321,7 @@ class Log_Manager {
 		if ( null === $this->topic ) {
 			return false;
 		}
-		// Strip caller-supplied rid: the real one lives in Message::KEY; this stops a forged rid being smuggled in.
+		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
 		unset( $data['rid'] );
 
 		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
@@ -352,7 +352,7 @@ class Log_Manager {
 		if ( $this->started || ! $this->enabled || $this->finished ) {
 			return $this->started ?? false;
 		}
-		// Set started=true BEFORE init_firehose: it can re-enter ensure_started(); this short-circuits the recursion.
+		// started=true first: init_firehose re-enters ensure_started() (recursion).
 		$this->started = true;
 		\register_shutdown_function( [ $this, 'finish' ] );
 		$this->init_firehose( $this->config );
@@ -366,7 +366,7 @@ class Log_Manager {
 	 * @param array<string, mixed> $config
 	 */
 	private function init_firehose( array $config ): void {
-		// Set request_id FIRST: the Topic ctor can re-enter message(), which needs a valid rid.
+		// request_id FIRST: the Topic ctor re-enters message(), which needs a rid.
 		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
 		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
@@ -395,8 +395,7 @@ class Log_Manager {
 			if ( null !== $ci ) {
 				$this->topic->sink( $ci );
 			} else {
-				// CI not built yet (load order, e.g. the cli boot path): wire a relay
-				// that hooks the Topic to the interpreter on its first message.
+				// CI not built yet (load order): relay hooks Topic to CI on first message.
 				$this->topic->sink( new Callback_Node( [ $this, 'relay_topic_to_ci' ] ) );
 			}
 		}
@@ -490,13 +489,11 @@ class Log_Manager {
 				continue;
 			}
 			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
-			// Catch-all URL-secret redaction: any value carrying a URL query, not
-			// just HTTP_REFERER (v2 applied this to every `m` string with a '?').
+			// Redact URL secrets in any value carrying a query, not just HTTP_REFERER.
 			if ( false !== \strpos( $sanitized, '?' ) ) {
 				$sanitized = self::redact_url( $sanitized );
 			}
-			// Per-value cap AFTER redaction, so a truncated tail can't strip the
-			// query boundary a secret needs to be recognized and redacted.
+			// Cap AFTER redaction so truncation can't hide a secret's query boundary.
 			if ( \strlen( $sanitized ) > self::ENV_VALUE_MAX ) {
 				$sanitized = \substr( $sanitized, 0, self::ENV_VALUE_MAX ) . '…';
 			}
@@ -670,9 +667,7 @@ class Log_Manager {
 	 * @return string 12-character hex hash.
 	 */
 	public static function url_hash( string $url ): string {
-		// Hash the full string: callers already strip the real query string upstream,
-		// so the only '?' that survives here is the intentional ?worker_type marker --
-		// stripping it would re-collide the synthetic row onto the real URL.
+		// Hash full string: surviving '?' is the ?worker_type marker — don't strip.
 		$hash1 = self::fnv1a32( $url );
 		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
 		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );

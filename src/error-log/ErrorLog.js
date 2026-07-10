@@ -200,9 +200,7 @@ export default function ErrorLog() {
 	const { paused: isPaused, connectionError } = view;
 
 	const [ filter, setFilter ] = useState( '' );
-	// The rendered entry buffer, fed from the rAF at frame rate (read straight off
-	// the view node). The original re-rendered via a 100ms setInterval; per-frame
-	// is visually identical and keeps everything in one push.
+	// Rendered entry buffer, fed from the rAF at frame rate (read off the node).
 	const [ entries, setEntries ] = useState( [] );
 
 	const visibleColumns = DEFAULT_COLUMNS;
@@ -215,14 +213,10 @@ export default function ErrorLog() {
 	const isAdjustingScrollRef = useRef( false );
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 );
 
-	// Newest seq the layout effect has already smooth-scrolled for, and the
-	// filter that was active then — so it compensates once per genuinely-new row
-	// and re-baselines (no spurious scroll) when the filter changes.
+	// Newest seq + filter already smooth-scrolled for (compensate once per row).
 	const lastCompensatedSeqRef = useRef( null );
 	const lastCompensatedFilterRef = useRef( filter );
-	// Last state we pushed to React — so idle frames (nothing changed) push no
-	// new refs and don't re-render. `topSeq` catches cap rotation (length
-	// constant, newest seq climbing); `count` catches clear/filter shrink.
+	// Last state pushed to React; skip idle frames (topSeq/count detect change).
 	const pushedRef = useRef( { topSeq: -1, count: -1, filter: null } );
 	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
 	const filterRef = useRef( filter );
@@ -246,38 +240,26 @@ export default function ErrorLog() {
 		e.m?.toLowerCase().includes( needle ) ||
 		e.rid?.toLowerCase().includes( needle );
 
-	// Animation/read loop. Reads the high-volume buffer (node.entries) directly
-	// every frame, snapshots + filters it, decays the smooth-scroll offset, and
-	// pushes the entries snapshot to React only when changed. The new-row offset
-	// compensation lives in the layout effect below so it lands in the same
-	// commit as the row it compensates for.
+	// rAF loop: snapshot+filter node.entries, decay offset, push only on change.
 	useEffect( () => {
 		const animate = () => {
 			const node = Core.node( VIEW_NODE );
 			const buffer = node?.entries ?? [];
 			const filterLower = filterRef.current.toLowerCase();
 
-			// Staleness reflects CONNECTION liveness, owned by the RemoteLink's
-			// composed SseIn (it stamps lastEventTime on every frame AND the
-			// server's idle heartbeats), read via the link's lastEventTime()
-			// passthrough — so an idle-but-healthy stream resets "Xs ago" instead of
-			// climbing; a real drop (no heartbeats) leaves it frozen and "ago"
-			// climbs as the intended warning.
+			// Staleness = connection liveness (link lastEventTime passthrough).
 			lastEventTimeRef.current =
 				Core.node( LINK_NODE )?.lastEventTime() ?? null;
 
-			// Snapshot (and filter) the buffer so a mid-frame append can't mutate
-			// what we draw / count.
+			// Snapshot+filter the buffer so a mid-frame append can't mutate the draw.
 			const snapshot = filterRef.current
 				? buffer.filter( ( e ) => matchesFilter( e, filterLower ) )
 				: buffer.slice();
 
-			// Newest seq of the rendered (filtered) view drives change detection —
-			// robust to the cap, where length is pinned but the seq keeps climbing.
+			// Newest seq of the filtered view drives change detection (cap-robust).
 			const topSeq = snapshot.length ? snapshot[ 0 ].seq : 0;
 
-			// Decay offset toward 0 (smooth scroll), updating virtualization when
-			// the offset crosses row boundaries.
+			// Decay offset toward 0; update virtualization on row-boundary crossings.
 			const content = contentRef.current;
 			if ( content && Math.abs( offsetRef.current ) > 0.5 ) {
 				offsetRef.current += ( 0 - offsetRef.current ) * 0.01;
@@ -290,10 +272,7 @@ export default function ErrorLog() {
 				Math.abs( offsetRef.current ) / ROW_HEIGHT
 			);
 
-			// Push the entries snapshot ONLY when it changed — the newest seq
-			// (catches cap rotation at constant length), the count (clear / filter
-			// shrink), or the filter. Skipping unchanged frames keeps idle frames
-			// from re-rendering React.
+			// Push the snapshot only when seq/count/filter changed (skip idle frames).
 			const pushed = pushedRef.current;
 			if (
 				topSeq !== pushed.topSeq ||
@@ -357,25 +336,18 @@ export default function ErrorLog() {
 		[ entries, filter, filterLower ]
 	);
 
-	// Smooth-scroll compensation, atomic with the row it compensates for. Runs
-	// synchronously after React commits the new rows but before paint, so the
-	// offset that holds the existing rows in place lands in the SAME paint as the
-	// prepended row — no jump-then-correct flicker. Keyed on the newest committed
-	// seq (robust to the cap, where length is constant) and re-baselines on a
-	// filter change so a filter switch doesn't read as new rows.
+	// Smooth-scroll compensation lands in the same paint as its row (no flicker).
 	useLayoutEffect( () => {
 		const topSeq = filteredEntries.length ? filteredEntries[ 0 ].seq : 0;
 		const prevSeq = lastCompensatedSeqRef.current;
 		const filterChanged = lastCompensatedFilterRef.current !== filter;
 		lastCompensatedFilterRef.current = filter;
-		// Don't advance the baseline past an empty list — the first real row is
-		// the baseline, so it doesn't slide in.
+		// Don't advance the baseline past an empty list (first row is the baseline).
 		if ( topSeq > 0 ) {
 			lastCompensatedSeqRef.current = topSeq;
 		}
 
-		// First observation (baseline), a filter switch, or no newer row → no
-		// smooth scroll.
+		// Baseline, filter switch, or no newer row → no smooth scroll.
 		if ( null === prevSeq || filterChanged || topSeq <= prevSeq ) {
 			return;
 		}
@@ -418,11 +390,10 @@ export default function ErrorLog() {
 	);
 	const visibleEntries = filteredEntries.slice( startIndex, endIndex );
 
-	// Clear all entries — clears the node buffer via the graph; the next frame
-	// reflects 0 entries.
+	// Clear all entries via the graph; the next frame shows 0 entries.
 	const handleClear = () => {
 		clear();
-		lastCompensatedSeqRef.current = null; // re-baseline: first post-clear row won't slide.
+		lastCompensatedSeqRef.current = null; // re-baseline: no post-clear slide.
 		pushedRef.current = { topSeq: 0, count: 0, filter: filterRef.current };
 		setEntries( [] );
 		offsetRef.current = 0;

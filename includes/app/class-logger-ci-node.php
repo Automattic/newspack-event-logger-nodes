@@ -51,11 +51,7 @@ class Logger_CI_Node extends Service_CI_Node {
 					'description' => 'Return the full filterable substrate config.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						// Echo the full filterable config; sensitive values (memcache
-						// server strings) stay since they're already managed via WP
-						// options. This is the stable response shape the settings UI
-						// depends on — minus the `{data, meta}` REST envelope,
-						// which is reconstructed by the REST shim, not the interpreter.
+						// Full filterable config; the settings UI depends on this shape.
 						return RuntimeConfig::load_config();
 					},
 				],
@@ -67,10 +63,7 @@ class Logger_CI_Node extends Service_CI_Node {
 						$hooks       = [];
 						$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 						$categories  = Hook_Categorizer::get_categories();
-						// Flatten by_category into a list of { name, category } so
-						// the React picker doesn't need to know about the grouping
-						// shape. Within each category the order follows the
-						// categorizer's per-category sort.
+						// Flatten by_category to a name+category list for the picker.
 						foreach ( $by_category as $cat => $list ) {
 							if ( ! \is_array( $list ) ) {
 								continue;

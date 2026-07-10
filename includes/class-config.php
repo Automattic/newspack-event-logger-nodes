@@ -98,7 +98,7 @@ class Config {
 		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
-			// Validate filter return type (may return any type); color maps are string-keyed by design.
+			// Validate filter return (may be any type); color maps are string-keyed.
 			/** @var array<string, mixed> $colors */
 			$colors = \is_array( $filtered ) ? $filtered : [];
 		}
@@ -141,16 +141,11 @@ class Config {
 			return [];
 		}
 
-		// Layer substrate config first; application values win on key
-		// collisions. Substrate `load_config()` already handles the
-		// substrate sample overlay.
+		// Layer substrate config first; application values win on collisions.
 		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
 		$defaults  = \array_merge( $substrate, self::load_config_defaults() );
 
-		// Presence-based overlay: a stored option (even '' / [] / false / 0) wins
-		// over the file default; only an absent option falls back. Shared rule —
-		// see Config_System\Options_Overlay. The overlay key-set is every
-		// non-empty-key field in the single Settings_Schema.
+		// Presence overlay: any stored option (even ''/[]/false/0) beats the default.
 		$schema = Settings_Schema::get();
 		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
 			$defaults,
@@ -234,8 +229,7 @@ class Config {
 		$config = self::load_config();
 
 		if ( 'is_hub' === $key ) {
-			// A hub is a site whose active topologies include `aggregator`;
-			// the substrate's `(string)` wrap surfaces the bool as '1' / ''.
+			// A hub is a site whose active topologies include `aggregator`.
 			return \in_array( 'aggregator', \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ), true );
 		}
 

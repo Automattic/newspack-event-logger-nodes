@@ -169,8 +169,7 @@ class Job_Intake {
 			return false;
 		}
 
-		// Wrap as a TM_STRUCT Message ($job is a structured array) so
-		// Partition::fill packs and appends.
+		// TM_STRUCT ($job is structured) so Partition::fill packs and appends.
 		$message                                       = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
@@ -189,9 +188,7 @@ class Job_Intake {
 			return $this->partitions[ $partition ];
 		}
 		$log_base = $this->base_dir . '/logs/jobintake';
-		// Suffix names with a process+object-id token so a second JobIntake
-		// instantiated mid-process (e.g. during tests, or after a close) doesn't
-		// clash with stale Core registrations from the previous instance.
+		// pid+object-id token: a 2nd JobIntake won't clash with stale Core regs.
 		$instance_token = \getmypid() . '-' . \spl_object_id( $this );
 		$p              = new Partition_Node();
 		$p->name( "jobintake.{$instance_token}.p{$partition}" );

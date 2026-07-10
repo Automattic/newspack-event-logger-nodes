@@ -40,10 +40,7 @@ import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
 const VIEW_NODE = 'gyroscope:view';
-// The RemoteLink's composed SseIn owns stream liveness — it stamps lastEventTime
-// on every frame AND on the server's idle heartbeats — so the "Xs ago" staleness
-// reads it (via the link's lastEventTime() passthrough), not the view node (which
-// only advances on row arrivals).
+// SseIn stamps lastEventTime on frames + idle heartbeats; staleness reads it.
 const LINK_NODE = 'gyroscope:link';
 // The low-frequency view model before the view node publishes one.
 const EMPTY_VIEW = { connectionError: false };
@@ -164,12 +161,10 @@ const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function Inflight( { maxRows = 20 } ) {
-	// Mount the node graph (SSE → transform → in-flight model). It owns the data;
-	// this component only renders the snapshot it reads off the view node.
+	// Mount the node graph; it owns the data, this only renders the snapshot.
 	useGyroscopeGraph();
 
-	// Low-frequency view model (the reconnect banner). The high-frequency in-flight
-	// rows / rps are read off the node directly in the refresh tick below.
+	// Low-freq view model (reconnect banner); rows/rps read off the node directly.
 	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
@@ -235,10 +230,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		[ visibleColumns ]
 	);
 
-	// Read the render snapshot off the view node (like Gyroscope.pm fire()): the
-	// node's snapshot() reaps completed entries, sorts by est_ms desc and caps to
-	// maxRows; we also read the node's rps + lastEventTime. The graph owns the
-	// accumulation — this just samples it at the refresh cadence.
+	// Sample the view node's snapshot() (reaps, sorts, caps) each refresh.
 	const renderRequests = useCallback( () => {
 		const node = Core.node( VIEW_NODE );
 		if ( ! node ) {

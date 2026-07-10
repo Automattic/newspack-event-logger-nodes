@@ -59,8 +59,7 @@ export class RulesViewNode extends Node {
 		this.model = { rules, loading: false, error: null };
 	}
 
-	// Surface an un-correlated failure as the table banner: keep prior rules
-	// (a transient mutation/list failure must not blank the table), clear loading.
+	// Uncorrelated failure → table banner; keep prior rules, clear loading.
 	_applyError( value ) {
 		const payload =
 			value && 'object' === typeof value ? value.payload : value;
@@ -75,9 +74,7 @@ export class RulesViewNode extends Node {
 		this.setState( 'view', this.model );
 	}
 
-	// Reject every in-flight pending promise before the node is removed so a
-	// graph teardown / Reset-Graph reinit doesn't strand a caller awaiting a
-	// reply that will now never land on this (removed) node.
+	// Reject in-flight pending promises before removal so no caller strands.
 	removeNode() {
 		this.replies.rejectAll( 'View removed before reply' );
 		super.removeNode();

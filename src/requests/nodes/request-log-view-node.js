@@ -3,8 +3,7 @@ import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const RPS_WINDOW_SEC = 10;
-// Defensive bounds for raw envelope VALUEs — kept here so the view is the
-// single place that knows envelope → render-entry mapping.
+// Defensive bounds for raw envelope VALUEs (view owns the entry mapping).
 const MAX_URL_LENGTH = 2000;
 const MAX_UA_LENGTH = 500;
 
@@ -60,15 +59,12 @@ export class RequestLogViewNode extends Node {
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		// Ring buffer: rows written at `_head` (mod maxEntries), oldest overwritten
-		// once full. `_count` is how many slots hold a live row. Append and
-		// cap-drop are both O(1) — no shift, concat, or truncation.
+		// Ring buffer: write at _head (mod maxEntries), oldest overwritten; O(1).
 		this._ring = [];
 		this._head = 0;
 		this._count = 0;
 		this.entryCounter = 0;
-		// Per-second RPS buckets ({ sec, count }) + their running total — bounded
-		// to the window instead of one entry per request.
+		// Per-second RPS buckets + running total, bounded to the window.
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
@@ -80,14 +76,11 @@ export class RequestLogViewNode extends Node {
 	fill( message ) {
 		const value = message[ VALUE ];
 		if ( value && value.action ) {
-			// Control changes are the LOW-frequency path — publish so the pause
-			// button / empty-state label re-render.
+			// Control changes: LOW-frequency path — publish so button/label re-render.
 			this._control( value );
 			this._publish();
 		} else if ( value ) {
-			// A request row is the HIGH-frequency path — update node.entries /
-			// node.rps only; the rAF reads them directly. Publishing here would
-			// re-render React per request and defeat the whole point.
+			// Request row: HIGH-freq — update node.entries/rps only (rAF reads them).
 			this._appendRow( value );
 		}
 	}
@@ -111,11 +104,7 @@ export class RequestLogViewNode extends Node {
 		this.rps = 0;
 	}
 
-	// Publish ONLY the low-frequency view model. `entries` / `rps` are the
-	// high-frequency buffer the rAF reads off the node directly — keeping them
-	// out of setState is what stops a busy stream
-	// re-rendering React per request. `connectionError` is low-frequency (only
-	// flips on connect/disconnect) so it rides setState for the reconnect banner.
+	// Publish only the low-freq view model; entries/rps stay off setState.
 	_publish() {
 		this.setState( 'view', {
 			paused: this.paused,
@@ -123,11 +112,7 @@ export class RequestLogViewNode extends Node {
 		} );
 	}
 
-	// A raw completed-request envelope's VALUE: defensively shape (drop
-	// missing-url, clip url + UA, default-fill) then enrich into the render
-	// entry shape, newest-first, capped. The defensive shaping is inlined from
-	// the dropped `requestlog:transform` node — the view is the single place
-	// that knows envelope → render-entry mapping.
+	// Defensively shape a completed-request VALUE, then enrich to a render entry.
 	_appendRow( req ) {
 		if ( this.paused ) {
 			return;
@@ -142,11 +127,7 @@ export class RequestLogViewNode extends Node {
 		const url = clip( req.url, MAX_URL_LENGTH );
 		this.entryCounter += 1;
 		this._writeEntry( {
-			// Monotonic per-mount counter — used as the React list key so two
-			// entries with the same rid get distinct DOM nodes (a colliding rid
-			// from an aggregated spoke, or a worker's reset-then-rebuild in the
-			// same second). Without it the virtualized list reuses one node for
-			// both and scrolling jumps.
+			// Monotonic per-mount key so dup rids get distinct DOM (no scroll jump).
 			seq: this.entryCounter,
 			rid: req.rid || '',
 			url,
@@ -162,9 +143,7 @@ export class RequestLogViewNode extends Node {
 		this._updateRequestsPerSecond( 1 );
 	}
 
-	// Requests per second over a 10s window. Counts are aggregated into
-	// per-second buckets with a running total, so each request is O(1) (one
-	// bucket bump + bounded expiry) — not an O(n) scan of the window.
+	// Requests/sec over a 10s window: per-second buckets, O(1) per request.
 	_updateRequestsPerSecond( completedCount ) {
 		if ( completedCount <= 0 ) {
 			return;
@@ -188,9 +167,7 @@ export class RequestLogViewNode extends Node {
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
 
-	// The whole buffer materialized newest-first — O(n), for the filter path and
-	// tests only, NOT the per-frame path. Assigning (`node.entries = []` from the
-	// graph clear) reseeds the ring from the given newest-first array.
+	// Whole buffer newest-first — O(n), filter/tests only (not per-frame).
 	get entries() {
 		const out = new Array( this._count );
 		for ( let i = 0; i < this._count; i++ ) {
@@ -211,16 +188,14 @@ export class RequestLogViewNode extends Node {
 		}
 	}
 
-	// Write one entry into the ring at the head and advance, capping at maxEntries.
+	// Write one entry at the ring head and advance, capping at maxEntries.
 	_writeEntry( entry ) {
 		this._ring[ this._head ] = entry;
 		this._head = ( this._head + 1 ) % this.maxEntries;
 		this._count = Math.min( this._count + 1, this.maxEntries );
 	}
 
-	// The i-th entry newest-first (i=0 is newest), O(1); undefined out of range.
-	// The virtual list reads only its on-screen window through this — never the
-	// whole buffer — so the frame cost is O(rows-on-screen) regardless of size.
+	// The i-th entry newest-first (i=0 newest), O(1); undefined out of range.
 	entryAt( i ) {
 		if ( i < 0 || i >= this._count ) {
 			return undefined;
@@ -233,8 +208,7 @@ export class RequestLogViewNode extends Node {
 	get entriesCount() {
 		return this._count;
 	}
-	// Consume-and-publish view-model terminal: fill() mutates state + publishes
-	// via setState, never forwards — no output port.
+	// View-model terminal: fill() mutates state + publishes; never forwards.
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

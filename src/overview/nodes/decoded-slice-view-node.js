@@ -46,8 +46,7 @@ export class DecodedSliceViewNode extends Node {
 	}
 
 	fill( message ) {
-		// Optional awaited-verb path: a settled reply is fully consumed here and
-		// never falls through to the slice logic.
+		// Awaited-verb path: a settled reply is consumed here, not the slice logic.
 		if ( this.replies && this.replies.settle( message ) ) {
 			return;
 		}
@@ -77,9 +76,7 @@ export class DecodedSliceViewNode extends Node {
 			return;
 		}
 
-		// Error control: a client-side validation failure (the hook emits this for
-		// an invalid hash / rid before any network call). Surface the error, clear
-		// loading, KEEP prior data — same as a TM_ERROR reply.
+		// Client-side validation failure: surface error, clear loading, keep data.
 		if (
 			TM_STRUCT === ( type & TM_STRUCT ) &&
 			value &&
@@ -107,8 +104,7 @@ export class DecodedSliceViewNode extends Node {
 			return;
 		}
 
-		// Success reply: only an object VALUE carries a decoded payload. A
-		// non-object reply (transport garbage) keeps the prior slice.
+		// Success reply: only an object VALUE decodes; else keep the prior slice.
 		if ( ! value || 'object' !== typeof value ) {
 			return;
 		}

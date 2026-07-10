@@ -67,8 +67,7 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 
 	const dots = currentHundredth - lastHundredth;
 
-	// First entry, exact 100ms boundary, or crossed a 100ms boundary
-	// (more than 9 dots means we skipped past a tenth mark).
+	// First entry, exact 100ms boundary, or crossed one (>9 dots skipped a mark).
 	if ( lastHundredth < 0 || currentHundredth % 10 === 0 || dots > 9 ) {
 		return {
 			displayTime: formatFullTimestamp( ts ),
@@ -99,8 +98,7 @@ export const computeIndentedEntries = ( entries ) => {
 	let lastHundredth = -1;
 	const result = [];
 	let realCount = 0;
-	// Stack to track start/complete pairs with names for LIFO matching.
-	// Each entry: { name, pairId }
+	// Stack of { name, pairId } for LIFO start/complete matching.
 	const pairStack = [];
 	let pairCounter = 0;
 
@@ -128,8 +126,7 @@ export const computeIndentedEntries = ( entries ) => {
 		// Current indent is stack depth.
 		const indent = pairStack.length;
 
-		// Insert compressed placeholder rows for time gaps between entries.
-		// Uses escalating intervals: 10ms x10, then 100ms x10, then 1s x10, etc.
+		// Insert compressed placeholder rows for gaps; escalating intervals.
 		if ( lastHundredth >= 0 && ts > 0 ) {
 			const currentHundredth = Math.round( ts * 100 );
 			if ( currentHundredth > lastHundredth + 1 ) {
@@ -141,8 +138,7 @@ export const computeIndentedEntries = ( entries ) => {
 						? pairStack[ pairStack.length - 1 ].pairId
 						: null;
 				while ( h < currentHundredth ) {
-					// Placeholder ts derived from hundredth counter for
-					// displayTime recomputation in computeVisibleEntries.
+					// Placeholder ts from the hundredth counter (recomputed later).
 					result.push( {
 						n: '',
 						k: '',
@@ -170,9 +166,7 @@ export const computeIndentedEntries = ( entries ) => {
 			lastHundredth = Math.round( ts * 100 );
 		}
 
-		// Track start/complete pairs for click-to-highlight.
-		// displayTime is left empty — computeVisibleEntries recomputes it
-		// dynamically based on which entries are actually visible.
+		// Track start/complete pairs; displayTime is recomputed per visible set.
 		let pairId = null;
 		realCount++;
 		if ( startMatch ) {
@@ -182,8 +176,7 @@ export const computeIndentedEntries = ( entries ) => {
 		} else if ( completeMatch && matchedIdx >= 0 ) {
 			// Found matching start - use its pairId.
 			pairId = pairStack[ matchedIdx ].pairId;
-			// Remove only the matched entry (like log-manager does).
-			// Children that outlive their parent stay on stack.
+			// Remove only the matched entry; children outliving their parent stay.
 			pairStack.splice( matchedIdx, 1 );
 			result.push( {
 				...entry,
@@ -256,8 +249,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 				result.push( {
 					...entry,
 					k: baseName,
-					// Use complete's ts for timeline flow so the next
-					// entry's timestamp comparison starts after this pair.
+					// Use complete's ts so the next comparison starts after this pair.
 					ts: completeEntry?.ts || entry.ts,
 					startTs: entry.ts,
 					duration_ms: completeEntry?.duration_ms ?? null,
@@ -283,9 +275,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 		i++;
 	}
 
-	// Collapse consecutive placeholder rows and recompute displayTime.
-	// Placeholders are merged: up to 9 dots per row, then a timestamp row,
-	// repeating. Non-placeholder entries get displayTime from formatTimeDisplay.
+	// Collapse placeholder rows and recompute displayTime (≤9 dots per row).
 	const collapsed = [];
 	let lastH = -1;
 
@@ -305,9 +295,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 			const runStartH = Math.round( ( result[ idx ].ts || 0 ) * 100 );
 			const runEndH = Math.round( ( result[ runEnd ].ts || 0 ) * 100 );
 
-			// Phase 1: dots + first 2 timestamps.
-			// Show dots before first tenth boundary, a timestamp,
-			// dots before second, a timestamp, then switch to phase 2.
+			// Phase 1: dots + the first two timestamps, then switch to phase 2.
 			let h = runStartH;
 			let timestampCount = 0;
 
@@ -350,9 +338,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 				}
 			}
 
-			// Phase 2: timestamps only with escalating intervals.
-			// 100ms x 10, then 1s x 10, then 10s x 10, then 1m x 10, ...
-			// (intervals in hundredths: 10, 100, 1000, 6000, ...)
+			// Phase 2: timestamps only, escalating intervals (100ms, 1s, 10s, 1m, ...).
 			if ( h <= runEndH ) {
 				const intervals = [ 10, 100, 1000, 6000 ];
 				let intervalIdx = 0;
@@ -434,10 +420,7 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 		return ids;
 	}
 
-	// The target's containing pair must be expanded for it to be visible.
-	// For start entries, that's their own pairId.
-	// For complete entries and leaf entries, it's their parent pair's pairId
-	// (which we find by walking backwards to the enclosing start).
+	// The target's containing pair must be expanded for it to show.
 	const keyword = targetEntry.k || '';
 	const isStart = keyword.includes( '(start)' );
 	const isComplete = keyword.includes( '(complete)' );
@@ -450,12 +433,7 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 		ids.add( targetEntry.pairId );
 	}
 
-	// Walk backwards collecting the nearest start-entry pairId at each
-	// decreasing indent level. A complete entry's indent is normalized down to
-	// its matched start's level, so its enclosing start sits at its OWN indent;
-	// a start or a leaf (error/info) child sits one level DEEPER than the start
-	// that contains it, so those look one indent up. (A leaf reading its own
-	// indent would never find its parent start — the include-error reveal bug.)
+	// Walk back to the nearest enclosing start pairId per indent level.
 	let needIndent = isComplete ? targetEntry.indent : targetEntry.indent - 1;
 	for ( let i = targetIdx - 1; i >= 0 && needIndent >= 0; i-- ) {
 		const e = indentedEntries[ i ];

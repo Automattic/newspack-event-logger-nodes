@@ -59,9 +59,7 @@ const SERVER = 'performance';
 const TARGET = `_shell/_http/${ SERVER }`;
 const HTTP = '_http';
 
-// The per-URL logging-ruleset CI, reached through the SAME exospine/correlator —
-// the perf modal's "Log this URL" affordance lists/upserts an exact rule without
-// a second exospine (spec section C).
+// Per-URL ruleset CI via the same exospine (the "Log this URL" affordance).
 const RULES_TARGET = '_shell/_http/rules';
 
 // Slice view + receiver names.
@@ -74,9 +72,7 @@ const URLDETAIL_TIMER = 'urldetail:timer';
 const URLDETAIL_FETCHER = 'fetch-urldetail';
 const REQUESTDETAIL_VIEW = 'requestdetail:view';
 
-// Arm a Timer's router-TIMER hitchhike at the optional intervalMs (mirrors
-// useBatchedPoll's helper): > 1000 hitchhikes + throttles; 0/omitted fires every
-// tick. The on-demand url_detail poll rides the same shared TIMER as perf:timer.
+// Arm a Timer hitchhike at intervalMs: >1000 throttles, 0 fires each tick.
 function armTimer( timer, intervalMs ) {
 	if ( intervalMs > 1000 ) {
 		timer.setTimer( intervalMs );
@@ -85,8 +81,7 @@ function armTimer( timer, intervalMs ) {
 	}
 }
 
-// url_detail command args from a selectedUrl ({ hash }): the verb the on-demand
-// Fetcher emits each tick + the initial open fetch — both must match byte-for-byte.
+// url_detail args from selectedUrl; tick + open fetch must match byte-for-byte.
 const urlDetailArgs = ( hash ) =>
 	formatCommandArgs( [ hash ], { categories: true } );
 
@@ -96,16 +91,14 @@ const isValidRequestId = ( r ) =>
 	'string' === typeof r && /^[a-zA-Z0-9_-]+$/.test( r );
 const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
 
-// Monotonic per-process op-id — correlates an awaited reply to a pending Promise.
+// Monotonic op-id: correlates an awaited reply to a pending Promise.
 let nextOpId = 0;
 function makeOpId() {
 	nextOpId += 1;
 	return `performance-op-${ Date.now() }-${ nextOpId }`;
 }
 
-// Dedup `server` (always — feeds the filter dropdown) with the active chart
-// dimension into the overview breakdown list. < 2 dims collapses the controller's
-// nested response shape, so pad with `status`.
+// Dedup server + active chart dim into the breakdown list; pad with status.
 const breakdownsFor = ( currentBreakdown ) => {
 	const set = new Set( [ 'server' ] );
 	if ( currentBreakdown ) {
@@ -117,8 +110,7 @@ const breakdownsFor = ( currentBreakdown ) => {
 	return Array.from( set );
 };
 
-// Build the overview args string from current UI state (server + breakdown +
-// always-on categories). The Fetcher's getter calls this each tick.
+// Build overview args from UI state (server + breakdown + categories).
 function overviewArgs( { serverFilter, chartBreakdown } ) {
 	const options = { categories: true };
 	if ( serverFilter ) {
@@ -131,8 +123,7 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
 	return formatCommandArgs( [], options );
 }
 
-// Build the urls args string from current UI state (sort/order/limit/offset/
-// search/server). Option order follows the command's arg grammar.
+// Build urls args from UI state (sort/order/limit/offset/search/server).
 function urlsArgs( { urlParams, serverFilter } ) {
 	const options = {};
 	if ( urlParams.sort ) {
@@ -184,11 +175,10 @@ export function usePerformanceGraph( opts = {} ) {
 
 	const isPageVisible = usePageVisibility();
 
-	// Poll cadence (ms): > 1000 hitchhikes + throttles the router TIMER; 0 every tick.
+	// Poll cadence (ms): >1000 throttles the router TIMER; 0 every tick.
 	const intervalMs = parseInt( refreshInterval, 10 ) || 0;
 
-	// The poll graph: overview + urls slices on the Timer; the on-demand
-	// url_detail/request_detail views + the urlDetail merge edge.
+	// Poll graph: overview+urls on the Timer; on-demand url/request detail views.
 	const { interpreterRef } = useBatchedPoll( {
 		build: ( { interpreter, tee } ) => {
 			addSliceFetcher( interpreter, {
@@ -220,8 +210,7 @@ export function usePerformanceGraph( opts = {} ) {
 					} ),
 			} );
 
-			// On-demand url_detail: receiver Tee → merge transform → view. The
-			// merge node lives on the edge (incremental dedup), out of view state.
+			// On-demand url_detail: Tee → merge → view; merge lives on the edge.
 			const urldetailIn = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
 			const merge = interpreter.makeNode(
 				'UrlDetailMerge',
@@ -231,8 +220,7 @@ export function usePerformanceGraph( opts = {} ) {
 			urldetailIn.connectNode( URLDETAIL_MERGE );
 			interpreter.makeNode( 'UrlDetailView', URLDETAIL_VIEW );
 
-			// On-demand url_detail auto-refresh: a Timer → Fetcher (live-hash argsFn),
-			// armed/stopped by the selection effect; left INACTIVE here.
+			// url_detail auto-refresh Timer → Fetcher; armed by the selection effect.
 			const udFetcher = interpreter.makeNode(
 				'Fetcher',
 				URLDETAIL_FETCHER,
@@ -262,9 +250,7 @@ export function usePerformanceGraph( opts = {} ) {
 		intervalMs,
 	} );
 
-	// Fire a TM_COMMAND through the interpreter toward the egress. FROM = the
-	// node the reply returns to; the router peels TARGET, HttpOut POSTs, the
-	// server replies TO=FROM. Batched into the next HttpOut flush.
+	// Fire a TM_COMMAND via the interpreter; FROM = reply target, HttpOut POSTs.
 	const sendCommand = useCallback(
 		( verb, args, from, id, target = TARGET ) => {
 			const interpreter = interpreterRef.current;
@@ -297,9 +283,7 @@ export function usePerformanceGraph( opts = {} ) {
 		view.fill( m );
 	}, [] );
 
-	// An immediate overview+urls poke (fill the interpreter directly so the args
-	// reflect the CURRENT state). Used on serverFilter/breakdown change so the
-	// dashboard refreshes at once instead of waiting a full poll interval.
+	// Immediate overview+urls poke with current args (on filter/breakdown change).
 	const pokeOverviewUrls = useCallback( () => {
 		sendControl( OVERVIEW_VIEW, { action: 'loading' } );
 		sendControl( URLS_VIEW, { action: 'loading' } );
@@ -332,9 +316,7 @@ export function usePerformanceGraph( opts = {} ) {
 		}
 	}, [ sendCommand, sendControl, interpreterRef ] );
 
-	// Re-poke overview+urls immediately when the server filter / breakdown changes
-	// (the Timer's getter would otherwise wait until the next tick). Skipped on the
-	// first run — useBatchedPoll's mount already fired the initial poll.
+	// Re-poke overview+urls on filter/breakdown change (skip first run).
 	const firstFilterRun = useRef( true );
 	useEffect( () => {
 		if ( firstFilterRun.current ) {
@@ -344,7 +326,7 @@ export function usePerformanceGraph( opts = {} ) {
 		pokeOverviewUrls();
 	}, [ serverFilter, chartBreakdown, pokeOverviewUrls ] );
 
-	// Resume-refresh overview/urls the instant the last modal closes (perf:timer was paused).
+	// Resume-refresh overview/urls when the last modal closes (timer was paused).
 	const modalWasOpen = useRef( false );
 	useEffect( () => {
 		const modalOpen = !! ( selectedUrl || selectedRequest );
@@ -354,9 +336,7 @@ export function usePerformanceGraph( opts = {} ) {
 		modalWasOpen.current = modalOpen;
 	}, [ selectedUrl, selectedRequest, isPageVisible, pokeOverviewUrls ] );
 
-	// Selection-driven url_detail, initial fetch on open (clear on close). Keyed on
-	// selectedUrl ONLY — entering/leaving request detail must NOT refire this (the
-	// arm/disarm of the auto-refresh is the separate effect below).
+	// Selection-driven url_detail fetch on open; keyed on selectedUrl only.
 	useEffect( () => {
 		if ( ! selectedUrl ) {
 			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
@@ -378,10 +358,7 @@ export function usePerformanceGraph( opts = {} ) {
 		);
 	}, [ selectedUrl, sendCommand, sendControl ] );
 
-	// Arm/stop the url_detail auto-refresh Timer. Poll only while the URL detail is
-	// the visible view: a URL is selected, NO request detail is drilled in, and the
-	// tab is visible. Opening request detail or hiding the tab stops it; backing out
-	// / returning to visible re-arms it. The Fetcher reads the live hash at fire time.
+	// Arm the url_detail refresh Timer only while URL detail is the visible view.
 	useEffect( () => {
 		const timer = Core.node( URLDETAIL_TIMER );
 		if ( ! timer ) {
@@ -448,7 +425,7 @@ export function usePerformanceGraph( opts = {} ) {
 		sendControl,
 	] );
 
-	// Debounced URL-table params fetch (search debounced 300ms; sort/page immediate).
+	// Debounced URL-table fetch (search 300ms; sort/page immediate).
 	const handleUrlParamsChange = useCallback(
 		( params ) => {
 			const prev = urlParamsRef.current;
@@ -492,10 +469,7 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, sendControl ]
 	);
 
-	// resolveRequest — request_search lookup for deep-link navigation. Awaited via
-	// requestdetail:view's PendingReplies. Falls back to the shared client when the
-	// graph isn't mounted yet (useUrlNavigation fires this from its mount effect,
-	// which can run before useBatchedPoll's mount populates the interpreter).
+	// resolveRequest — request_search for deep links; shared-client fallback.
 	const resolveRequest = useCallback(
 		async ( rid ) => {
 			const view = Core.node( REQUESTDETAIL_VIEW );
@@ -536,9 +510,7 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, interpreterRef ]
 	);
 
-	// fetchUrlBreakdown — per-URL dimensional series. Awaited via urldetail:view's
-	// PendingReplies; the transform extracts breakdown_time_series. Null on invalid
-	// hash / error (no command sent for an invalid hash).
+	// fetchUrlBreakdown — per-URL dimensional series; null on invalid hash/error.
 	const fetchUrlBreakdown = useCallback(
 		async ( hash, breakdown ) => {
 			if ( ! isValidHash( hash ) ) {
@@ -576,11 +548,7 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, onError, interpreterRef ]
 	);
 
-	// Send a correlated command and await the reply the given view settles via its
-	// PendingReplies (the fetchUrlBreakdown/resolveRequest pattern). Resolves the
-	// reply payload; null when the graph is gone or the reply rejects. The rules
-	// commands ride the same URL-detail view — the reply returns TO=FROM=that view,
-	// where the ID-matched resolver settles WITHOUT touching the modal's slice.
+	// Send a correlated command; the view settles it via PendingReplies.
 	const awaitReply = useCallback(
 		async ( viewName, verb, args, target ) => {
 			const view = Core.node( viewName );
@@ -609,16 +577,13 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, onError, interpreterRef ]
 	);
 
-	// listRules — the current ruleset, for the modal to find an existing exact
-	// rule. Resolves the `{ rules }` payload (null on no-graph / rejection).
+	// listRules — current ruleset for the modal; resolves { rules }.
 	const listRules = useCallback(
 		() => awaitReply( URLDETAIL_VIEW, 'list', '', RULES_TARGET ),
 		[ awaitReply ]
 	);
 
-	// upsertRule — replace-by-pattern / append one rule. The whole arguments
-	// string is the RAW JSON (Rules_CI json_decodes it verbatim). Resolves the
-	// `{ rule }` payload (null on no-graph / rejection).
+	// upsertRule — replace-by-pattern/append; args is raw JSON. Resolves { rule }.
 	const upsertRule = useCallback(
 		( ruleObject ) =>
 			awaitReply(

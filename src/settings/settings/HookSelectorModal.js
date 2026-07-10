@@ -164,8 +164,7 @@ export default function HookSelectorModal( {
 	const [ expandedCategories, setExpandedCategories ] = useState( new Set() );
 	const [ localSelected, setLocalSelected ] = useState( new Set( selected ) );
 
-	// The hook-catalog fetch lives in a JS-node graph; the hook fires it on open
-	// and returns the render model (production uses the default command client).
+	// The hook-catalog fetch runs in a JS-node graph; the hook fires it on open.
 	const { hooksByCategory, loading } = useHookCatalogGraph( { isOpen } );
 
 	// Reset local state when modal opens.
