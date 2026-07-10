@@ -90,6 +90,8 @@ wp nodes restart combined --all-partitions   # pick up new salt (or `restart all
 
 **Per-URL flame stats TTL** is `max(3600, max_lifespan/24)`. All other namespaces use the full `max_lifespan`. If a URL hasn't been seen in over an hour, its flame data is gone even if other stats remain.
 
+**Separate memcache use — ruleset hooks (v0.28.0).** Heavy log-rules (hooks past `Rule_Set::INLINE_HOOK_LIMIT = 100`) tier their hook list out of the autoloaded option into `evlog:rules:hooks:<rule-id>` (TTL 3600, warmed on miss from the non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` durable option). This is separate from the stats prefix; it's warm-cache, not system-of-record. Also separate: `evlog:sse:*` (SSE slot pool) and `np:pos:*` (worker positions).
+
 ## Dashboards
 
 Page slugs owned by this plugin (URL path: `/wp-admin/admin.php?page=<slug>`):
@@ -153,7 +155,7 @@ If a hub is missing entries from a spoke: check the substrate `Remote_Source_Nod
 
 **Dashboard rate-limit hit immediately.** The Service-CI verbs are NOT rate-limited at the CI layer — the only 429s you should see come from the substrate's SSE slot pool (concurrent `/messages/stream` connections, not commands). A 429 on a `/command` POST means something inside the substrate's `HTTP_In_Node` rejected it, not a per-CI throttle. There is no per-CI rate limit — the old REST controller layer (and its `includes/rest/` directory) was deleted in the Service-CI cutover.
 
-**`reqgrep --recent` shows nothing but the firehose is being written.** Two possibilities: the LogManager early-returned (e.g., running as root), so no entries are being written; OR the firehose path doesn't match (check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`).
+**`reqgrep --recent` shows nothing but the firehose is being written.** Three possibilities: (1) the LogManager early-returned (e.g., running as root), so no entries are being written; (2) the firehose path doesn't match (check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`); OR (3) **no ruleset rule matches the URL** (v0.28.0). `Log_Manager` builds a `Rule_Matcher` from `Rule_Set::load()` and resolves the one governing rule per request — no match, or a `skip` rule, means nothing is written for that URL. "Empty means empty": an empty/absent ruleset logs nothing (there is no implicit `/` log-all baseline). Check the ruleset via the `rules` CI `list` verb or `wp option get newspack_event_logger_nodes_rules`; the shipped default config seeds a `/` log rule plus skips for the substrate's own worker IPC/SSE/spawn endpoints and `/wp-cron.php`.
 
 **Worker positions are stale on the workers dashboard.** Consumer publishes its position to memcache every ~10 seconds via `np:pos:{host}:{source_base_dir}:p{N}`. If the dashboard shows old positions, either memcache is down (fail-soft, falls back to disk offsetlog) or the consumer process is wedged (heartbeat would also be stale).
 

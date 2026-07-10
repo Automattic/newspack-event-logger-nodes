@@ -25,7 +25,7 @@ Or download the zips from the [Releases](https://github.com/Automattic/newspack-
 
 There is no config *filter*. Config is loaded from a PHP config file layered with a WordPress-options overlay.
 
-Substrate-level settings (base directory, partitions, memcache, active topologies) are read by the substrate's `Newspack_Nodes\Config::load_config()` from `newspack-nodes-config.php` (in the `newspack-nodes` plugin) merged with the substrate's WP-options overlay. Application-level settings (URL filters, hooks to instrument, remote-segment sizing) are read by this plugin's `Newspack_Event_Logger_Nodes\Config::load_config()` from `newspack-event-logger-nodes-config.php` merged with the `Settings_Schema` WP-options overlay — most are editable from the WP admin.
+Substrate-level settings (base directory, partitions, memcache, active topologies) are read by the substrate's `Newspack_Nodes\Config::load_config()` from `newspack-nodes-config.php` (in the `newspack-nodes` plugin) merged with the substrate's WP-options overlay. Application-level settings (the per-URL logging ruleset, debug toggles, admin allowlist) are read by this plugin's `Newspack_Event_Logger_Nodes\Config::load_config()` from `newspack-event-logger-nodes-config.php` merged with the `Settings_Schema` WP-options overlay — most are editable from the WP admin. (Remote-pull segment sizing moved to the substrate's `newspack_nodes_*` config.)
 
 ```php
 // Substrate keys live in newspack-nodes-config.php (the newspack-nodes plugin).
@@ -37,7 +37,12 @@ return [
 
 // Application keys live in newspack-event-logger-nodes-config.php (this plugin).
 return [
-    'remote_segment_size' => 10 * 1024 * 1024,
+    'enable_logging' => true,
+    // Per-URL logging ruleset seed (the editor owns it once saved).
+    'rules'          => [
+        [ 'pattern' => '/wp-cron.php', 'action' => 'skip' ],
+        [ 'pattern' => '/', 'action' => 'log' ],
+    ],
 ];
 ```
 
@@ -59,6 +64,7 @@ Every dashboard sends TM_COMMAND envelopes to a service CI via the substrate's s
 | **Errors** | — | `subscribe=errors.pN` | Tail of `errors.log` |
 | **Workers** (substrate-owned) | `workers.{list, restart, …}` | — | Substrate's `Workers_CI` (lock-dir scan + offsetlog cursors) |
 | **Performance Logger settings** | `logger.{config, hooks}`, `performance.{hooks_registered, set}`, `discovery.get` | — | WP options |
+| **Logging Rules editor** (on the settings page) | `rules.{list, save, upsert, delete}` | — | `Rule_Set` (autoloaded ruleset option + per-rule hook options) |
 | **Aggregator Admin (hub-only, substrate-owned)** | substrate `aggregator.*` + `vault.*` CIs | — | Substrate `Remote_Source_Node` per-spoke state + Vault |
 | **Status probe** (substrate-owned) | substrate `status.get` | — | Version, partitions, active topologies, cache reachability |
 
@@ -76,6 +82,8 @@ The refresh-ahead cache warmer that used to ship here was extracted into its own
 
 As of 0.13.0 the settings layer is built on the substrate's shared Config System (`Newspack_Nodes\Config_System\Field` / `Schema` / `Settings_Renderer`). This plugin declares a single declarative `Settings_Schema` (`includes/class-settings-schema.php`); the WP-options overlay that `Config::load_config()` applies, the per-field reset (↺) UI, and the delete-on-blank gate are all the shared `Newspack_Nodes\Config_System` machinery (`Options_Overlay`, `Reset_Gate`).
 
+**Which URLs and hooks get logged is a per-URL ruleset, not a global setting (v0.26.0).** The seven old global options (`log_urls` / `skip_urls` / `log_events` / `custom_events` / `significant_events` / `auto_disable_threshold` / `auto_protect_time_threshold`) were replaced by an ordered list of **rules** — each a URL pattern (prefix `/x` or exact `/x?`) with a `log`/`skip` action and, for `log` rules, its own hooks, custom events, significant events, and auto-tune thresholds. Matching is longest-prefix-wins and case-insensitive; no rule matches ⇒ skip, and there is no implicit log-all baseline (declare a `/` log rule to log everything). Rules are edited in the "Logging Rules" editor on the settings page (the `rules` CI backs it) and seeded from `newspack-event-logger-nodes-config.php`'s `rules` key until the editor first writes the option. New classes: `Rule`, `Rule_Set`, `Rule_Matcher`.
+
 ## Migration from Newspack Event Logger Plugins
 
 The legacy `newspack-event-logger-plugins` monorepo was replaced wholesale by this plugin (application) plus `newspack-nodes` (substrate). That monorepo has since been removed from the tree ("the museum") — there is no live coexisting stack. This plugin defaults its storage to `/tmp/newspack-nodes` and exposes `wp nodes reqgrep` for firehose searching.
@@ -86,4 +94,4 @@ GPL-2.0-or-later
 
 ## Status
 
-0.22.3. The dashboard consolidation (per-dashboard SSE controllers → single substrate `/messages/stream`) and the controller→CI migration are complete; all dashboards ride the substrate's `_http` / `_sse` / `_heartbeat` spine with a canonical view contract (pending-Map gate, TM_ERROR isolation, `_errorMessage()` helper). Post-0.8 milestones: `Job_Worker_Node` executor moving to the substrate (0.12.0), migration onto the substrate's shared Config System (0.13.0), the refresh-ahead cache warmer extracted to the standalone `newspack-cache-cozy` plugin (0.15.0), `Request_Builder_Node` becoming a `Timer_Node` plus `void_warranty` lock-free output partitions (0.16.0), the jobs-log kind field normalized to `k` end-to-end (0.16.1), per-worker-URL stats rows fully excluded from global aggregates (0.17.0), and adoption of the substrate's flat partition-in-name layout plus `parse_schema_args` delegation (0.18.0). The `status.get` verb reports both the application `version` and the substrate `runtime_version`. See `CHANGELOG.md` for the version-by-version history.
+0.28.1. The dashboard consolidation (per-dashboard SSE controllers → single substrate `/messages/stream`) and the controller→CI migration are complete; all dashboards ride the substrate's `_http` / `_sse` / `_heartbeat` spine with a canonical view contract (pending-Map gate, TM_ERROR isolation, `_errorMessage()` helper). Post-0.8 milestones: `Job_Worker_Node` executor moving to the substrate (0.12.0), migration onto the substrate's shared Config System (0.13.0), the refresh-ahead cache warmer extracted to the standalone `newspack-cache-cozy` plugin (0.15.0), `Request_Builder_Node` becoming a `Timer_Node` plus `void_warranty` lock-free output partitions (0.16.0), the jobs-log kind field normalized to `k` end-to-end (0.16.1), per-worker-URL stats rows fully excluded from global aggregates (0.17.0), adoption of the substrate's flat partition-in-name layout plus `parse_schema_args` delegation (0.18.0), and — most significantly — the **per-URL logging ruleset** that replaced the seven global logging/auto-tune options with an ordered `Rule`/`Rule_Set`/`Rule_Matcher` set (0.26.0), whose rule ids are the pattern's `url_hash`, whose activation-time migration is version-gated at `SCHEMA_VERSION=2` (0.28.0), and whose editor is a fifth `rules` service CI on the settings page. The `status.get` verb reports both the application `version` and the substrate `runtime_version`. See `CHANGELOG.md` for the version-by-version history.

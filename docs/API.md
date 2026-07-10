@@ -33,7 +33,7 @@ Content-Type: application/json
 }
 ```
 
-- `TO` is the service CI name. This plugin owns `performance`, `events`, `logger`, `discovery`. The `status`, `settings`, and `aggregator` CIs are now substrate-owned (newspack-nodes); the old `servers` CI was replaced by the substrate `vault` CI. Sub-paths address a child node (rare in this plugin); most callers just name the CI.
+- `TO` is the service CI name. This plugin owns `performance`, `events`, `logger`, `discovery`, `rules`. The `status`, `settings`, and `aggregator` CIs are now substrate-owned (newspack-nodes); the old `servers` CI was replaced by the substrate `vault` CI. Sub-paths address a child node (rare in this plugin); most callers just name the CI.
 - `KEY` is the verb name on that CI.
 - `VALUE` is the verb arguments (JSON object). The substrate validates each argument against the CI's `node_schema()['commands'][*]['args']` declaration before dispatching.
 
@@ -41,7 +41,7 @@ The reply is a TM_COMMAND-shaped envelope routed back via the `TO=FROM` reply, w
 
 ## Service CIs
 
-Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci-node.php` (`<Name>_CI_Node`, e.g. `Discovery_CI_Node`) exposes. All four CIs declare their verbs in a static `node_schema()['commands']` array (name + args + handler); the inherited `Service_CI_Node` constructor builds the commands table from the schema, so none define a per-class constructor. **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
+Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci-node.php` (`<Name>_CI_Node`, e.g. `Discovery_CI_Node`) exposes. All five CIs declare their verbs in a static `node_schema()['commands']` array (name + args + handler); the inherited `Service_CI_Node` constructor builds the commands table from the schema, so none define a per-class constructor. **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
 
 The verb handlers come from this plugin's `Newspack_Event_Logger_Nodes\App\` namespace: `newspack-event-logger-nodes.php` registers it via `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' )`, and the CIs mount on the substrate's `newspack_nodes/request_graph_ready` action.
 
@@ -49,7 +49,7 @@ The verb handlers come from this plugin's `Newspack_Event_Logger_Nodes\App\` nam
 
 | Verb | Args | Returns |
 |------|------|---------|
-| `get` | — | `{ registered_hooks: string[], custom_events: string[] }` — `log_events` ∪ filter-supplied keys, with `custom_events` filtered out of `registered_hooks`. |
+| `get` | — | `{ registered_hooks: string[], custom_events: string[] }` — the union across every LOG rule of its instrumented hooks and custom events (`Rule_Set::instrumented_union()`), with `custom_events` filtered out of `registered_hooks`. |
 
 Read by hub aggregators probing each spoke. The CI handler itself doesn't call `require_manage_options()`; the substrate `/command` endpoint still gates the route on `current_user_can('manage_options')`, which the spoke's stored Basic Auth credentials satisfy.
 
@@ -69,6 +69,17 @@ Moved to the substrate `settings` CI (newspack-nodes). It owns the substrate-key
 | `hooks` | — | `{ hooks: [{name, category}], categories: {…} }` flattened via `Hook_Categorizer`. |
 
 Read-only — settings WRITES live on the `performance` CI (`set`).
+
+### `rules` — per-URL logging ruleset CRUD
+
+Backs the "Logging Rules" editor on the settings page. All four verbs route through `Rule_Set` so the inline↔pointer hook-tiering and orphan-reconcile invariants are never bypassed by a raw `update_option`. A rule's id is derived from its URL pattern (`Rule_Set::id_for` = the pattern's `url_hash`) — the pattern is the identity, so the ruleset can never hold two differently-configured rules for one URL; a client-supplied id is ignored.
+
+| Verb | Args | Returns |
+|------|------|---------|
+| `list` | — | `{ rules: [...] }` — every rule, with a pointer-tier rule's hooks resolved to the full list (`hooks_for`) and `hooks_in` normalized to `'inline'` (the storage tier is a `Rule_Set` implementation detail the editor never sees). |
+| `save` | `{ rules (required, JSON array of rule objects) }` | `{ saved: int }` — whole-list replace. Each entry decodes via `Rule::from_array`; ids are re-derived from patterns and duplicate patterns collapse to one. Payload capped at 64KB, decode depth 12. |
+| `upsert` | `{ rule (required, JSON rule object) }` | `{ rule: {...} }` — single add/replace keyed by pattern. A same-pattern rule is replaced in place (preserving its id); an edit that carries the old id and changes the pattern rekeys and drops the old-pattern entry. This is the performance-dashboard "log this URL" path. |
+| `delete` | `{ id (required) }` | `{ deleted: bool }` — drop the matching rule and re-save. |
 
 ### `events` — hourly-stats surface
 
@@ -98,7 +109,7 @@ The largest CI; every Performance-tree dashboard verb lives here.
 | `request_search` | `{ rid (required, non-empty) }` | `{ rid, partition, url_hash }` so the dashboard can deep-link without scanning every partition. Requires `manage_options`. |
 | `request_detail` | `{ rid (required), partition?: int = 0 }` | Full request body + merged flame data. Throws TM_ERROR `invalid partition` for out-of-range partition; `Request not found` for unknown rid. Requires `manage_options`. |
 | `hooks_registered` | — | `{ total_hooks, categories, hooks_by_category }`. Requires `manage_options`. |
-| `set` | `{ option (required, string), value (required, string) }` | `{ option, updated: bool }`. Normalized positional single-option writer (`set <option> <value>`) for the 9-option performance-tuning whitelist; array-typed options carry their value as JSON. Autoload follows `AppConfig::autoload_for`; the write emits a settings event that `Settings_Sync_Node` fans out to spokes. Requires `manage_options`. |
+| `set` | `{ option (required, string), value (required, string) }` | `{ option, updated: bool }`. Normalized positional single-option writer (`set <option> <value>`) for a 3-option whitelist (`newspack_event_logger_nodes_rules` → array, `_log_memory` → bool, `_flush_every_line` → bool); array-typed options carry their value as JSON. Autoload follows `AppConfig::autoload_for`; the write emits a settings event that `Settings_Sync_Node` fans out to spokes. Requires `manage_options`. |
 
 ## Substrate verbs the dashboards use
 
