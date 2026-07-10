@@ -104,12 +104,14 @@ final class Rule_Set {
 		// Key by id so a pattern in both lists collapses to one rule; skip wins.
 		$rules = [];
 		foreach ( $skip as $pattern ) {
-			$rules[ self::id_for( $pattern ) ] ??= new Rule( self::id_for( $pattern ), $pattern, Rule::ACTION_SKIP );
+			$id           = self::id_for( $pattern );
+			$rules[ $id ] ??= new Rule( $id, $pattern, Rule::ACTION_SKIP );
 		}
 		$log_patterns = empty( $log_urls ) ? [ '/' ] : $log_urls;
 		foreach ( $log_patterns as $pattern ) {
-			$rules[ self::id_for( $pattern ) ] ??= new Rule(
-				self::id_for( $pattern ),
+			$id           = self::id_for( $pattern );
+			$rules[ $id ] ??= new Rule(
+				$id,
 				$pattern,
 				Rule::ACTION_LOG,
 				$bundle['auto_disable_threshold'],

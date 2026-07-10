@@ -32,9 +32,9 @@ class Job_Intake {
 	private const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 
 	/**
-	 * Maximum job size in bytes.
+	 * Maximum job size in bytes (32 MB).
 	 */
-	private const MAX_JOB_SIZE = 33554432;
+	private const MAX_JOB_SIZE = 32 * 1024 * 1024;
 
 	/**
 	 * Round-robin counter for partition distribution.

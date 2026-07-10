@@ -403,4 +403,52 @@ class StatsStoreTest extends TestCase {
 		$this->assertEqualsWithDelta( 3.0, $display['categories']['wpdb']['entries']['SELECT'][1], 1e-9 );
 	}
 
+	public function test_merge_leaderboard_bucket_coerces_missing_and_non_numeric_to_zero(): void {
+		$dst = [];
+		$src = [
+			'count'        => 'not-a-number',
+			'sum_req_time' => null,
+			'categories'   => [
+				'wpdb' => [
+					'samples'   => [ 'nope' ],
+					'sum_time'  => '0.5',
+					'sum_count' => false,
+					'entries'   => [ 'SELECT' => [ 'x', 2, null ] ],
+				],
+			],
+		];
+		Stats_Store::merge_leaderboard_bucket( $dst, $src );
+		$this->assertSame( 0, $dst['count'] );
+		$this->assertEqualsWithDelta( 0.0, $dst['sum_req_time'], 1e-9 );
+		$this->assertSame( 0, $dst['categories']['wpdb']['samples'] );
+		$this->assertEqualsWithDelta( 0.5, $dst['categories']['wpdb']['sum_time'], 1e-9 );
+		$this->assertEqualsWithDelta( 0.0, $dst['categories']['wpdb']['sum_count'], 1e-9 );
+		// Numeric-string entry[0] coerces; non-numeric entry[0]/entry[2] coerce to 0.
+		$this->assertEqualsWithDelta( 0.0, $dst['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
+		$this->assertEqualsWithDelta( 2.0, $dst['categories']['wpdb']['entries']['SELECT'][1], 1e-9 );
+		$this->assertSame( 0, $dst['categories']['wpdb']['entries']['SELECT'][2] );
+	}
+
+	public function test_sums_to_display_skips_entries_with_zero_samples(): void {
+		$sums = [
+			'wpdb' => [
+				'samples'   => 2,
+				'sum_time'  => '1.0',
+				'sum_count' => null,
+				'entries'   => [
+					'ZERO'    => [ 5.0, 5.0, 0 ],
+					'NAN'     => [ 'x', 'y', 3 ],
+				],
+			],
+		];
+		$display = Stats_Store::sums_to_display( 2, 2.0, $sums );
+		// count/time from total_count=2: sum_count(null->0)/2=0, sum_time(1.0)/2=0.5.
+		$this->assertEqualsWithDelta( 0.5, $display['categories']['wpdb']['time'], 1e-9 );
+		$this->assertEqualsWithDelta( 0.0, $display['categories']['wpdb']['count'], 1e-9 );
+		// Zero-sample entry is dropped; non-numeric sums coerce to 0 over 3 samples.
+		$this->assertArrayNotHasKey( 'ZERO', $display['categories']['wpdb']['entries'] );
+		$this->assertEqualsWithDelta( 0.0, $display['categories']['wpdb']['entries']['NAN'][0], 1e-9 );
+		$this->assertSame( 3, $display['categories']['wpdb']['entries']['NAN'][2] );
+	}
+
 }

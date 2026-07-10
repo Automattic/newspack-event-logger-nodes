@@ -118,6 +118,16 @@ class Stats_Store {
 		return $out;
 	}
 
+	/** Numeric value coerced to int, or 0 when not numeric (missing/bool/array). */
+	private static function num_int( mixed $value ): int {
+		return \is_numeric( $value ) ? (int) $value : 0;
+	}
+
+	/** Numeric value coerced to float, or 0.0 when not numeric (missing/bool/array). */
+	private static function num_float( mixed $value ): float {
+		return \is_numeric( $value ) ? (float) $value : 0.0;
+	}
+
 	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} } (one key/partition).
 
 	/**
@@ -379,8 +389,8 @@ class Stats_Store {
 	 * @param array<string, mixed> $src
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
-		$dst['count']        = (int) ( \is_numeric( $dst['count'] ?? null ) ? $dst['count'] : 0 ) + (int) ( \is_numeric( $src['count'] ?? null ) ? $src['count'] : 0 );
-		$dst['sum_req_time'] = (float) ( \is_numeric( $dst['sum_req_time'] ?? null ) ? $dst['sum_req_time'] : 0 ) + (float) ( \is_numeric( $src['sum_req_time'] ?? null ) ? $src['sum_req_time'] : 0 );
+		$dst['count']        = self::num_int( $dst['count'] ?? null ) + self::num_int( $src['count'] ?? null );
+		$dst['sum_req_time'] = self::num_float( $dst['sum_req_time'] ?? null ) + self::num_float( $src['sum_req_time'] ?? null );
 		if ( ! isset( $dst['categories'] ) || ! \is_array( $dst['categories'] ) ) {
 			$dst['categories'] = [];
 		}
@@ -397,9 +407,9 @@ class Stats_Store {
 			}
 			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key, mixed>} $c */
 			$c               = &$dst['categories'][ $cat ];
-			$c['samples']   += (int) ( \is_numeric( $data['samples'] ?? null ) ? $data['samples'] : 0 );
-			$c['sum_time']  += (float) ( \is_numeric( $data['sum_time'] ?? null ) ? $data['sum_time'] : 0 );
-			$c['sum_count'] += (float) ( \is_numeric( $data['sum_count'] ?? null ) ? $data['sum_count'] : 0 );
+			$c['samples']   += self::num_int( $data['samples'] ?? null );
+			$c['sum_time']  += self::num_float( $data['sum_time'] ?? null );
+			$c['sum_count'] += self::num_float( $data['sum_count'] ?? null );
 			$entries         = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
 			foreach ( $entries as $name => $entry ) {
 				$entry = \is_array( $entry ) ? $entry : [];
@@ -408,9 +418,9 @@ class Stats_Store {
 				}
 				/** @var array{0:float, 1:float, 2:int} $dst_entry */
 				$dst_entry      = &$c['entries'][ $name ];
-				$dst_entry[0]  += (float) ( \is_numeric( $entry[0] ?? null ) ? $entry[0] : 0 );
-				$dst_entry[1]  += (float) ( \is_numeric( $entry[1] ?? null ) ? $entry[1] : 0 );
-				$dst_entry[2]  += (int) ( \is_numeric( $entry[2] ?? null ) ? $entry[2] : 0 );
+				$dst_entry[0]  += self::num_float( $entry[0] ?? null );
+				$dst_entry[1]  += self::num_float( $entry[1] ?? null );
+				$dst_entry[2]  += self::num_int( $entry[2] ?? null );
 				unset( $dst_entry );
 			}
 			unset( $c );
@@ -435,22 +445,19 @@ class Stats_Store {
 		$display_cats = [];
 		foreach ( $sums as $cat => $data ) {
 			$data      = \is_array( $data ) ? $data : [];
-			$samples   = (int) ( \is_numeric( $data['samples'] ?? null ) ? $data['samples'] : 0 );
-			$sum_time  = (float) ( \is_numeric( $data['sum_time'] ?? null ) ? $data['sum_time'] : 0 );
-			$sum_count = (float) ( \is_numeric( $data['sum_count'] ?? null ) ? $data['sum_count'] : 0 );
+			$samples   = self::num_int( $data['samples'] ?? null );
+			$sum_time  = self::num_float( $data['sum_time'] ?? null );
+			$sum_count = self::num_float( $data['sum_count'] ?? null );
 
 			$entries_out = [];
 			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
 			foreach ( $entries as $name => $entry ) {
 				$entry     = \is_array( $entry ) ? $entry : [];
-				$e2        = $entry[2] ?? null;
-				$e_samples = (int) ( \is_numeric( $e2 ) ? $e2 : 0 );
+				$e_samples = self::num_int( $entry[2] ?? null );
 				if ( $e_samples > 0 ) {
-					$e0 = $entry[0] ?? null;
-					$e1 = $entry[1] ?? null;
 					$entries_out[ $name ] = [
-						( \is_numeric( $e0 ) ? $e0 : 0 ) / $e_samples,
-						( \is_numeric( $e1 ) ? $e1 : 0 ) / $e_samples,
+						self::num_float( $entry[0] ?? null ) / $e_samples,
+						self::num_float( $entry[1] ?? null ) / $e_samples,
 						$e_samples,
 					];
 				}

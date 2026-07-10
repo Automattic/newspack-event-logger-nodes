@@ -493,24 +493,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge dimensional buckets across all partitions for one dim/server.
 	 * Mirror of PerfOverviewController::merge_dim_across_partitions.
-	 * @return array<string, mixed>
+	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
 		$merged = [];
 		foreach ( self::stats_stores() as $store ) {
-			foreach ( $store->get_dimensional( $dimension, $server ) as $bucket => $values ) {
-				$merged[ $bucket ] ??= [];
-				if ( ! \is_array( $values ) ) {
-					continue;
-				}
-				foreach ( $values as $name => $entry ) {
-					$entry_arr = \is_array( $entry ) ? $entry : [];
-					$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
-					$merged[ $bucket ][ $name ]['c'] += self::to_int( $entry_arr['c'] ?? 0 );
-					$merged[ $bucket ][ $name ]['s'] += self::to_float( $entry_arr['s'] ?? 0 );
-					$merged[ $bucket ][ $name ]['m'] += self::to_float( $entry_arr['m'] ?? 0 );
-				}
-			}
+			self::merge_dim_buckets_into( $merged, $store->get_dimensional( $dimension, $server ) );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -554,21 +542,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( self::stats_stores() as $store ) {
 			$rows = $store->get_url_dimensional( $hash );
 			$dim  = $rows[ $dimension ] ?? [];
-			if ( ! \is_array( $dim ) ) {
-				continue;
-			}
-			foreach ( $dim as $bucket => $values ) {
-				$merged[ $bucket ] ??= [];
-				if ( ! \is_array( $values ) ) {
-					continue;
-				}
-				foreach ( $values as $name => $entry ) {
-					$entry_arr = \is_array( $entry ) ? $entry : [];
-					$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
-					$merged[ $bucket ][ $name ]['c'] += self::to_int( $entry_arr['c'] ?? 0 );
-					$merged[ $bucket ][ $name ]['s'] += self::to_float( $entry_arr['s'] ?? 0 );
-					$merged[ $bucket ][ $name ]['m'] += self::to_float( $entry_arr['m'] ?? 0 );
-				}
+			if ( \is_array( $dim ) ) {
+				self::merge_dim_buckets_into( $merged, $dim );
 			}
 		}
 		\ksort( $merged );
@@ -587,6 +562,30 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		\ksort( $merged );
 		return $merged;
+	}
+
+	/**
+	 * Sum-merge dimensional `[bucket => [name => {c,s,m}]]` blobs into the running
+	 * totals. Shared by the global (merge_dim_across_partitions) and per-URL
+	 * (merge_url_dim) breakdown builders — the two iterate identically.
+	 *
+	 * @param array<array-key,array<array-key,array{c:int,s:float,m:float}>> $merged Mutated.
+	 * @param array<array-key,mixed>                                         $rows   Inbound (key-agnostic).
+	 */
+	private static function merge_dim_buckets_into( array &$merged, array $rows ): void {
+		foreach ( $rows as $bucket => $values ) {
+			$merged[ $bucket ] ??= [];
+			if ( ! \is_array( $values ) ) {
+				continue;
+			}
+			foreach ( $values as $name => $entry ) {
+				$entry_arr = \is_array( $entry ) ? $entry : [];
+				$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
+				$merged[ $bucket ][ $name ]['c'] += self::to_int( $entry_arr['c'] ?? 0 );
+				$merged[ $bucket ][ $name ]['s'] += self::to_float( $entry_arr['s'] ?? 0 );
+				$merged[ $bucket ][ $name ]['m'] += self::to_float( $entry_arr['m'] ?? 0 );
+			}
+		}
 	}
 
 	/**

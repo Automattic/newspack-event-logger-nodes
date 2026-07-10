@@ -559,12 +559,7 @@ class Reqgrep_Command {
 		if ( $state instanceof \stdClass ) {
 			// Already tracking this rid: extend it and finalize on complete.
 			$this->append_to_state( $state, $line );
-			if ( 'process (complete)' === $key ) {
-				if ( ! $this->incomplete ) {
-					$this->output_request( self::to_lines( $state->lines ), $rid );
-				}
-				$inflight->delete( $rid );
-			}
+			$this->finalize_if_complete( $inflight, $state, $rid, $key );
 		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
 			// New matching rid: bootstrap state from history (if any).
 			$state        = new \stdClass();
@@ -590,13 +585,7 @@ class Reqgrep_Command {
 
 			$this->append_to_state( $state, $line );
 			$inflight->set( $rid, $state );
-
-			if ( 'process (complete)' === $key ) {
-				if ( ! $this->incomplete ) {
-					$this->output_request( self::to_lines( $state->lines ), $rid );
-				}
-				$inflight->delete( $rid );
-			}
+			$this->finalize_if_complete( $inflight, $state, $rid, $key );
 		} else {
 			// Not matching — stash in history. Bound per-rid lines to defend memory.
 			$recent_idx = \count( $this->history ) - 1;
@@ -618,6 +607,27 @@ class Reqgrep_Command {
 
 		// Roll the LruCache; on-evict prints [incomplete] for dropped rids.
 		$inflight->rotate_if_due();
+	}
+
+	/**
+	 * Finalize a tracked rid once its `process (complete)` line arrives: print
+	 * the assembled request (unless --incomplete suppresses completed output)
+	 * and evict it from the in-flight cache. The shared tail of both
+	 * group_and_output branches.
+	 *
+	 * @param LRU_Cache $inflight In-flight request cache.
+	 * @param \stdClass $state    The rid's accumulated state.
+	 * @param string    $rid      Request id.
+	 * @param string    $key      This entry's `k` field.
+	 */
+	private function finalize_if_complete( LRU_Cache $inflight, \stdClass $state, string $rid, string $key ): void {
+		if ( 'process (complete)' !== $key ) {
+			return;
+		}
+		if ( ! $this->incomplete ) {
+			$this->output_request( self::to_lines( $state->lines ), $rid );
+		}
+		$inflight->delete( $rid );
 	}
 
 	/**
