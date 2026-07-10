@@ -78,11 +78,11 @@ class Request_Flight_Node extends Timer_Node {
 			$r    = \array_combine( \array_map( '\strval', \array_keys( $vars ) ), \array_values( $vars ) );
 			// Process-start ts: mu-profiler wall-clock load ts (before plugins load).
 			$ts_v          = $r['timestamp'] ?? 0;
-			$start_time    = \is_scalar( $ts_v ) ? (float) $ts_v : 0.0;
+			$start_time    = Core::as_float( $ts_v );
 			$last_log_v    = $r['last_log_ts'] ?? $start_time;
-			$last_log_ts   = \is_scalar( $last_log_v ) ? (float) $last_log_v : $start_time;
+			$last_log_ts   = Core::as_float( $last_log_v, $start_time );
 			$tracker_v     = $r['tracker_ts'] ?? $now;
-			$tracker_ts    = \is_scalar( $tracker_v ) ? (float) $tracker_v : $now;
+			$tracker_ts    = Core::as_float( $tracker_v, $now );
 			$time_ms       = ( $last_log_ts - $start_time ) * 1000;
 			$age_ms        = ( $now - $tracker_ts ) * 1000;
 			$method_v      = $r['request_method'] ?? 'GET';
@@ -90,9 +90,9 @@ class Request_Flight_Node extends Timer_Node {
 			$remote_addr_v = $r['remote_addr'] ?? '';
 			$user_agent_v  = $r['user_agent'] ?? '';
 			$out[]         = [
-				'rid'         => \is_scalar( $rid ) ? (string) $rid : '',
-				'method'      => \is_scalar( $method_v ) ? (string) $method_v : 'GET',
-				'url'         => \is_scalar( $url_v ) ? (string) $url_v : '',
+				'rid'         => Core::as_string( $rid ),
+				'method'      => Core::as_string( $method_v, 'GET' ),
+				'url'         => Core::as_string( $url_v ),
 				'state'       => Request_Builder_Node::extract_state( $r ),
 				'what'        => Request_Builder_Node::extract_what( $r ),
 				'time_ms'     => \round( $time_ms, 1 ),
@@ -100,8 +100,8 @@ class Request_Flight_Node extends Timer_Node {
 				'start_time'  => $start_time,
 				'last_log_ts' => $last_log_ts,
 				'lag_ms'      => \max( 0, \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ) ),
-				'remote_addr' => \is_scalar( $remote_addr_v ) ? (string) $remote_addr_v : '',
-				'user_agent'  => \is_scalar( $user_agent_v ) ? (string) $user_agent_v : '',
+				'remote_addr' => Core::as_string( $remote_addr_v ),
+				'user_agent'  => Core::as_string( $user_agent_v ),
 			];
 		}
 		return $out;

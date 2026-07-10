@@ -46,6 +46,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Consumer_Node;
@@ -199,8 +200,8 @@ class Reqgrep_Command {
 		$this->raw           = isset( $assoc_args['raw'] );
 		$bucket_size_arg     = $assoc_args['bucket-size'] ?? 250;
 		$num_buckets_arg     = $assoc_args['num-buckets'] ?? 10;
-		$this->bucket_size   = \max( 1, \min( 10000, \is_numeric( $bucket_size_arg ) ? (int) $bucket_size_arg : 0 ) );
-		$this->num_buckets   = \max( 1, \min( 100, \is_numeric( $num_buckets_arg ) ? (int) $num_buckets_arg : 0 ) );
+		$this->bucket_size   = \max( 1, \min( 10000, Core::num_int( $bucket_size_arg ) ) );
+		$this->num_buckets   = \max( 1, \min( 100, Core::num_int( $num_buckets_arg ) ) );
 		$follow              = isset( $assoc_args['follow'] );
 		$this->cat_offset    = isset( $assoc_args['recent'] ) ? 'recent' : 'start';
 
@@ -208,7 +209,7 @@ class Reqgrep_Command {
 		$path_arg             = $assoc_args['path'] ?? null;
 		$this->base_dir       = \is_string( $path_arg ) ? $path_arg : Config::get_logs_directory() . '/firehose.log';
 		$num_partitions_cfg   = $this->config['num_partitions'] ?? 1;
-		$this->num_partitions = \is_numeric( $num_partitions_cfg ) ? (int) $num_partitions_cfg : 0;
+		$this->num_partitions = Core::num_int( $num_partitions_cfg );
 
 		// LruCache: 300 slots, 60s rotation, on-evict prints [incomplete].
 		$this->inflight = ( new LRU_Cache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
@@ -226,7 +227,7 @@ class Reqgrep_Command {
 
 		// Validate explicit --path against the configured logs directory.
 		if ( isset( $assoc_args['path'] ) ) {
-			$path_value = \is_string( $assoc_args['path'] ) ? $assoc_args['path'] : '';
+			$path_value = Core::str( $assoc_args['path'] );
 			$real_path  = \realpath( $path_value );
 			if ( false === $real_path ) {
 				\WP_CLI::error( 'Invalid path: ' . $path_value );
@@ -312,9 +313,9 @@ class Reqgrep_Command {
 	 * @return string Formatted output line.
 	 */
 	private function format_entry( array $entry ): string {
-		$number = self::to_int( $entry['n'] ?? 0 );
-		$ts     = self::to_float( $entry['ts'] ?? 0 );
-		$key    = self::to_str( $entry['k'] ?? '' );
+		$number = Core::num_int( $entry['n'] ?? 0 );
+		$ts     = Core::num_float( $entry['ts'] ?? 0 );
+		$key    = Core::as_string( $entry['k'] ?? '' );
 
 		// Dedent BEFORE the (complete) line so its key aligns with (start).
 		if ( false !== \strpos( $key, '(complete)' ) ) {
@@ -370,16 +371,16 @@ class Reqgrep_Command {
 			if ( \is_array( $entry['m'] ) ) {
 				$message = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ?: '';
 			} else {
-				$message = self::to_str( $entry['m'] );
+				$message = Core::as_string( $entry['m'] );
 			}
 		}
 
 		$suffix = '';
 		if ( isset( $entry['duration_ms'] ) ) {
-			$suffix .= ' (' . \number_format( self::to_float( $entry['duration_ms'] ), 2 ) . 'ms)';
+			$suffix .= ' (' . \number_format( Core::num_float( $entry['duration_ms'] ), 2 ) . 'ms)';
 		}
 		if ( isset( $entry['peak_mb'] ) ) {
-			$suffix .= ' [' . self::to_str( $entry['peak_mb'] ) . 'MB]';
+			$suffix .= ' [' . Core::as_string( $entry['peak_mb'] ) . 'MB]';
 		}
 
 		$prefix = \sprintf(
@@ -411,37 +412,6 @@ class Reqgrep_Command {
 		$this->fmt_last_timestamp = $ts;
 
 		return \rtrim( $output, "\n" );
-	}
-
-	/**
-	 * Coerce a decoded-JSON numeric to int, reproducing the prior `(int)` cast
-	 * for the numeric field values the firehose emits; non-numerics become 0.
-	 *
-	 * @param mixed $value Decoded value.
-	 */
-	private static function to_int( $value ): int {
-		return \is_numeric( $value ) ? (int) $value : 0;
-	}
-
-	/**
-	 * Coerce a decoded-JSON numeric to float, reproducing the prior `(float)`
-	 * cast for the numeric field values the firehose emits; non-numerics become 0.0.
-	 *
-	 * @param mixed $value Decoded value.
-	 */
-	private static function to_float( $value ): float {
-		return \is_numeric( $value ) ? (float) $value : 0.0;
-	}
-
-	/**
-	 * Coerce a decoded-JSON scalar to string, reproducing the prior `(string)`
-	 * cast for the scalar field values the firehose actually emits; non-scalars
-	 * (which the old casts would have warned/erred on) become ''.
-	 *
-	 * @param mixed $value Decoded value.
-	 */
-	private static function to_str( $value ): string {
-		return \is_scalar( $value ) ? (string) $value : '';
 	}
 
 	/**
@@ -506,7 +476,7 @@ class Reqgrep_Command {
 		}
 		$src = new Stdin_Node( $stream, 0.0 );
 		$src->sink( new Callback_Node( function ( array $message ): void {
-			$line = \trim( self::to_str( $message[ Message::VALUE ] ) );
+			$line = \trim( Core::as_string( $message[ Message::VALUE ] ) );
 			if ( '' === $line ) {
 				return;
 			}
@@ -533,7 +503,7 @@ class Reqgrep_Command {
 	 */
 	private function process_message( array $message ): void {
 		$entry = $message[ Message::VALUE ];
-		$rid   = self::to_str( $message[ Message::KEY ] ?? '' );
+		$rid   = Core::as_string( $message[ Message::KEY ] ?? '' );
 		if ( ! \is_array( $entry ) || '' === $rid ) {
 			return;
 		}
@@ -552,7 +522,7 @@ class Reqgrep_Command {
 	 * @param string                   $line  Packed Message envelope (spooled + grepped).
 	 */
 	private function group_and_output( array $entry, string $rid, string $line ): void {
-		$key = self::to_str( $entry['k'] ?? '' );
+		$key = Core::as_string( $entry['k'] ?? '' );
 
 		$inflight = $this->require_inflight();
 		$state    = $inflight->get( $rid );
@@ -578,7 +548,7 @@ class Reqgrep_Command {
 				}
 			}
 
-			$n = self::to_int( $entry['n'] ?? 0 );
+			$n = Core::num_int( $entry['n'] ?? 0 );
 			if ( ! $found_history && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
 				\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
 			}
@@ -652,7 +622,7 @@ class Reqgrep_Command {
 	private function append_to_state( \stdClass $state, string $line ): bool {
 		$line_bytes = \strlen( $line );
 		// Dynamic \stdClass: ->bytes always int, ->lines always a string list.
-		$bytes = \is_int( $state->bytes ) ? $state->bytes : 0;
+		$bytes = Core::int( $state->bytes );
 		if ( ! \is_array( $state->lines ) ) {
 			$state->lines = [];
 		}
@@ -678,7 +648,7 @@ class Reqgrep_Command {
 			if ( ! $state instanceof \stdClass ) {
 				continue;
 			}
-			$this->output_request( self::to_lines( $state->lines ), self::to_str( $rid ) );
+			$this->output_request( self::to_lines( $state->lines ), Core::as_string( $rid ) );
 			$this->emit( '[incomplete]' );
 			$this->emit( '' );
 		}

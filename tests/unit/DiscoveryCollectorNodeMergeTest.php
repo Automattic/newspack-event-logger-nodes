@@ -12,6 +12,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Discovery_Collector_Node;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Message;
@@ -52,7 +53,7 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 	/** @return array<string,mixed> The discovered_hooks staging option. */
 	private function discovered_hooks(): array {
 		$v = $GLOBALS['_wp_options'][ self::HOOKS_OPTION ] ?? [];
-		return \is_array( $v ) ? $v : [];
+		return Core::arr( $v );
 	}
 
 	public function test_arguments_null_reads_back_last_set_value(): void {

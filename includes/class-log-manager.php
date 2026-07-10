@@ -218,19 +218,8 @@ class Log_Manager {
 		}
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( self::to_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
+		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
 		$this->matches_url_filter( $this->request_url );
-	}
-
-	/**
-	 * Narrow a mixed $_SERVER / config value to a string, reproducing the
-	 * `(string)` coercion the surrounding code already applies to scalars
-	 * (these values are always scalar strings in practice).
-	 *
-	 * @param mixed $value Value to coerce.
-	 */
-	private static function to_string( $value ): string {
-		return \is_scalar( $value ) ? (string) $value : '';
 	}
 
 	/**
@@ -377,12 +366,12 @@ class Log_Manager {
 		}
 
 		$dir_template        = Config::get_logs_directory() . '/firehose.p{partition}';
-		$num_partitions      = self::to_int( $config['num_partitions'] ?? 1 );
+		$num_partitions      = Core::as_int( $config['num_partitions'] ?? 1 );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
-		$segment_size = self::to_int( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
-		$num_segments = self::to_int( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
-		$max_lifespan = self::to_int( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
+		$segment_size = Core::as_int( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
+		$num_segments = Core::as_int( $config['num_segments'] ?? Partition_Node::DEFAULT_NUM_SEGMENTS );
+		$max_lifespan = Core::as_int( $config['max_lifespan'] ?? Partition_Node::DEFAULT_MAX_LIFESPAN );
 		$existing = Core::node( '_firehose:topic' );
 		if ( $existing instanceof Topic_Node ) {
 			$this->topic = $existing;
@@ -415,17 +404,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Narrow a mixed config value to an int, reproducing the `(int)`
-	 * coercion the surrounding code already applies to scalars (these
-	 * values are always scalar in practice).
-	 *
-	 * @param mixed $value Value to coerce.
-	 */
-	private static function to_int( $value ): int {
-		return \is_scalar( $value ) ? (int) $value : 0;
-	}
-
-	/**
 	 * Log process details
 	 *
 	 * @return void
@@ -435,7 +413,7 @@ class Log_Manager {
 		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
-		$worker_type = \sanitize_text_field( self::to_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
+		$worker_type = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
 		if ( '' !== $worker_type ) {
 			$process_data['worker_type'] = $worker_type;
 		}
@@ -488,7 +466,7 @@ class Log_Manager {
 			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
 				continue;
 			}
-			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', self::to_string( $value ) ) ?? '';
+			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', Core::as_string( $value ) ) ?? '';
 			// Redact URL secrets in any value carrying a query, not just HTTP_REFERER.
 			if ( false !== \strpos( $sanitized, '?' ) ) {
 				$sanitized = self::redact_url( $sanitized );

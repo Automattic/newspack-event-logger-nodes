@@ -41,6 +41,7 @@ use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\CLI;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Config_System\Restart_Planner;
@@ -198,7 +199,7 @@ class Admin {
 			"newspack_event_logger_nodes_{$short_key}",
 			$file_default
 		);
-		return \is_numeric( $stored ) ? (int) $stored : 0;
+		return Core::num_int( $stored );
 	}
 
 	/**
@@ -466,7 +467,7 @@ class Admin {
 		// flush_all() only rotates the salt option; no memcache handle needed.
 		$config       = Config::load_config();
 		$max_lifespan = $config['max_lifespan'] ?? 86400;
-		$stats        = new Stats_Store( 0, \is_numeric( $max_lifespan ) ? (int) $max_lifespan : 0 );
+		$stats        = new Stats_Store( 0, Core::num_int( $max_lifespan ) );
 		$stats->flush_all();
 
 		// Restart all workers: they cache the salt prefix at construction.

@@ -9,6 +9,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
+
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -163,23 +165,23 @@ class Hook_Categorizer {
 
 		// Merge colors (user overrides base).
 		/** @var array<string, mixed> $colors config dynamic output. */
-		$colors = \array_merge( \is_array( $base_colors ) ? $base_colors : [], \is_array( $user_colors ) ? $user_colors : [] );
+		$colors = \array_merge( Core::arr( $base_colors ), Core::arr( $user_colors ) );
 
 		// Merge patterns (user patterns added to base).
 		/** @var array<string, mixed> $patterns config dynamic output. */
-		$patterns = \is_array( $base_patterns ) ? $base_patterns : [];
+		$patterns = Core::arr( $base_patterns );
 		if ( \is_array( $user_patterns_all ) ) {
 			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
 				$category = (string) $raw_category;
 				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
 					$patterns[ $category ] = [];
 				}
-				$patterns[ $category ] = \array_merge( $patterns[ $category ], \is_array( $user_patterns ) ? $user_patterns : [] );
+				$patterns[ $category ] = \array_merge( $patterns[ $category ], Core::arr( $user_patterns ) );
 			}
 		}
 
 		/** @var array<string, mixed> $overrides_map config dynamic output. */
-		$overrides_map       = \is_array( $overrides ) ? $overrides : [];
+		$overrides_map       = Core::arr( $overrides );
 		self::$merged_config = [
 			'colors'    => $colors,
 			'patterns'  => $patterns,
@@ -213,7 +215,7 @@ class Hook_Categorizer {
 		}
 		$decoded = \json_decode( $json, true, 64 );
 		/** @var array<string, mixed> $config json_decode dynamic output. */
-		$config            = \is_array( $decoded ) ? $decoded : [ '_colors' => [], '_patterns' => [] ];
+		$config            = Core::arr( $decoded, [ '_colors' => [], '_patterns' => [] ] );
 		self::$base_config = $config;
 		return self::$base_config;
 	}

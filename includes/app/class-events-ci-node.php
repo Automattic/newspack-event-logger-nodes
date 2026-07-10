@@ -59,8 +59,8 @@ class Events_CI_Node extends Service_CI_Node {
 						$config            = RuntimeConfig::load_config();
 						$num_partitions_v  = $config['num_partitions'] ?? 1;
 						$max_lifespan_v    = $config['max_lifespan'] ?? 86400;
-						$num_partitions    = \is_scalar( $num_partitions_v ) ? (int) $num_partitions_v : 1;
-						$max_lifespan      = \is_scalar( $max_lifespan_v ) ? (int) $max_lifespan_v : 86400;
+						$num_partitions    = Core::as_int( $num_partitions_v, 1 );
+						$max_lifespan      = Core::as_int( $max_lifespan_v, 86400 );
 
 						$merged = [];
 						if ( null !== Core::$memd ) {
@@ -81,9 +81,9 @@ class Events_CI_Node extends Service_CI_Node {
 									$count_v       = $row['count'] ?? 0;
 									$sum_ms_v      = $row['sum_ms'] ?? 0;
 									$sum_peak_mb_v = $row['sum_peak_mb'] ?? 0;
-									$merged[ $hour ]['count']       += \is_scalar( $count_v ) ? (int) $count_v : 0;
-									$merged[ $hour ]['sum_ms']      += \is_scalar( $sum_ms_v ) ? (float) $sum_ms_v : 0.0;
-									$merged[ $hour ]['sum_peak_mb'] += \is_scalar( $sum_peak_mb_v ) ? (float) $sum_peak_mb_v : 0.0;
+									$merged[ $hour ]['count']       += Core::as_int( $count_v );
+									$merged[ $hour ]['sum_ms']      += Core::as_float( $sum_ms_v );
+									$merged[ $hour ]['sum_peak_mb'] += Core::as_float( $sum_peak_mb_v );
 								}
 							}
 							\ksort( $merged );

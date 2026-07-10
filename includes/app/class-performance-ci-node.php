@@ -133,7 +133,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$read = self::$load_index ?? static fn (): array => self::load_index_default();
 		$raw  = $read();
 		$rows = [];
-		foreach ( \is_array( $raw ) ? $raw : [] as $row ) {
+		foreach ( Core::arr( $raw ) as $row ) {
 			if ( \is_array( $row ) ) {
 				$rows[] = $row;
 			}
@@ -274,9 +274,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				foreach ( $bucket_data as $hash_or_url => $stats ) {
 					// Inner key is the URL hash; derive one if keyed by URL string instead.
-					$stat_arr = \is_array( $stats ) ? $stats : [];
+					$stat_arr = Core::arr( $stats );
 					if ( isset( $stat_arr['url'] ) ) {
-						$url  = self::to_string( $stat_arr['url'] );
+						$url  = Core::as_string( $stat_arr['url'] );
 						$hash = (string) $hash_or_url;
 					} else {
 						$url  = (string) $hash_or_url;
@@ -302,33 +302,33 @@ class Performance_CI_Node extends Service_CI_Node {
 						];
 					}
 					$entry              = $result[ $hash ];
-					$entry['count']     += self::to_int( $stat_arr['count']     ?? 0 );
-					$entry['count_2xx'] += self::to_int( $stat_arr['count_2xx'] ?? 0 );
-					$entry['count_3xx'] += self::to_int( $stat_arr['count_3xx'] ?? 0 );
-					$entry['count_4xx'] += self::to_int( $stat_arr['count_4xx'] ?? 0 );
-					$entry['count_5xx'] += self::to_int( $stat_arr['count_5xx'] ?? 0 );
+					$entry['count']     += Core::as_int( $stat_arr['count']     ?? 0 );
+					$entry['count_2xx'] += Core::as_int( $stat_arr['count_2xx'] ?? 0 );
+					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
+					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
+					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
 					// Accept sum_ms (FlameBuilder) or sum_req_time seconds (Aggregator).
 					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
-						? self::to_float( $stat_arr['sum_ms'] )
-						: self::to_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
-					$entry['sum_peak_mb'] += self::to_float( $stat_arr['sum_peak_mb'] ?? 0 );
+						? Core::as_float( $stat_arr['sum_ms'] )
+						: Core::as_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
+					$entry['sum_peak_mb'] += Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
 					// Fold min_ms only from timed buckets; skips untimed/poisoned sentinels.
 					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
-						$stat_min        = self::to_float( $stat_arr['min_ms'] );
+						$stat_min        = Core::as_float( $stat_arr['min_ms'] );
 						$entry['min_ms'] = isset( $entry['min_ms'] )
-							? \min( self::to_float( $entry['min_ms'] ), $stat_min )
+							? \min( Core::as_float( $entry['min_ms'] ), $stat_min )
 							: $stat_min;
 					}
-					$entry['max_ms']      = \max( self::to_float( $entry['max_ms'] ),      self::to_float( $stat_arr['max_ms']      ?? 0 ) );
-					$entry['max_peak_mb'] = \max( self::to_float( $entry['max_peak_mb'] ), self::to_float( $stat_arr['max_peak_mb'] ?? 0 ) );
+					$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
+					$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
 					foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
 						if ( ! empty( $stat_arr[ $k ] ) ) {
-							$entry[ $k ] = self::to_float( $stat_arr[ $k ] );
+							$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
 						}
 					}
 					$entry['last_seen'] = \max(
-						self::to_int( $entry['last_seen'] ),
-						self::to_int( $stat_arr['last_seen'] ?? 0 )
+						Core::as_int( $entry['last_seen'] ),
+						Core::as_int( $stat_arr['last_seen'] ?? 0 )
 					);
 					$result[ $hash ] = $entry;
 				}
@@ -378,19 +378,19 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( ! \is_array( $bucket_data ) || ! isset( $bucket_data[ $hash ] ) ) {
 					continue;
 				}
-				$stats = \is_array( $bucket_data[ $hash ] ) ? $bucket_data[ $hash ] : [];
-				$count = self::to_int( $stats['count'] ?? 0 );
+				$stats = Core::arr( $bucket_data[ $hash ] );
+				$count = Core::as_int( $stats['count'] ?? 0 );
 				if ( 0 === $count ) {
 					continue;
 				}
 				// Accept sum_ms (FlameBuilder) or sum_req_time seconds (Aggregator).
 				$sum_ms = isset( $stats['sum_ms'] )
-					? self::to_float( $stats['sum_ms'] )
-					: self::to_float( $stats['sum_req_time'] ?? 0 ) * 1000.0;
+					? Core::as_float( $stats['sum_ms'] )
+					: Core::as_float( $stats['sum_req_time'] ?? 0 ) * 1000.0;
 				$series[ $bucket_key ] ??= [ 'count' => 0, 'sum_ms' => 0.0, 'sum_peak_mb' => 0.0 ];
 				$series[ $bucket_key ]['count']       += $count;
 				$series[ $bucket_key ]['sum_ms']      += $sum_ms;
-				$series[ $bucket_key ]['sum_peak_mb'] += self::to_float( $stats['sum_peak_mb'] ?? 0 );
+				$series[ $bucket_key ]['sum_peak_mb'] += Core::as_float( $stats['sum_peak_mb'] ?? 0 );
 			}
 		}
 		\ksort( $series );
@@ -413,8 +413,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( empty( $row ) ) {
 					continue;
 				}
-				$count        += self::to_int( $row['count'] ?? 0 );
-				$sum_req_time += self::to_float( $row['sum_req_time'] ?? 0 );
+				$count        += Core::as_int( $row['count'] ?? 0 );
+				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
 				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
 				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
 				self::accumulate_leaderboard_categories( $sums, $categories );
@@ -439,8 +439,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( empty( $row ) ) {
 					continue;
 				}
-				$count        += self::to_int( $row['count'] ?? 0 );
-				$sum_req_time += self::to_float( $row['sum_req_time'] ?? 0 );
+				$count        += Core::as_int( $row['count'] ?? 0 );
+				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
 				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
 				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
 				self::accumulate_leaderboard_categories( $sums, $categories );
@@ -477,16 +477,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
 		foreach ( $categories as $cat => $data ) {
-			$data_arr = \is_array( $data ) ? $data : [];
+			$data_arr = Core::arr( $data );
 			$sums[ $cat ] ??= [
 				'samples'   => 0,
 				'sum_time'  => 0.0,
 				'sum_count' => 0.0,
 				'entries'   => [],
 			];
-			$sums[ $cat ]['samples']   += self::to_int( $data_arr['samples'] ?? 0 );
-			$sums[ $cat ]['sum_time']  += self::to_float( $data_arr['sum_time'] ?? 0 );
-			$sums[ $cat ]['sum_count'] += self::to_float( $data_arr['sum_count'] ?? 0 );
+			$sums[ $cat ]['samples']   += Core::as_int( $data_arr['samples'] ?? 0 );
+			$sums[ $cat ]['sum_time']  += Core::as_float( $data_arr['sum_time'] ?? 0 );
+			$sums[ $cat ]['sum_count'] += Core::as_float( $data_arr['sum_count'] ?? 0 );
 		}
 	}
 
@@ -579,11 +579,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				continue;
 			}
 			foreach ( $values as $name => $entry ) {
-				$entry_arr = \is_array( $entry ) ? $entry : [];
+				$entry_arr = Core::arr( $entry );
 				$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
-				$merged[ $bucket ][ $name ]['c'] += self::to_int( $entry_arr['c'] ?? 0 );
-				$merged[ $bucket ][ $name ]['s'] += self::to_float( $entry_arr['s'] ?? 0 );
-				$merged[ $bucket ][ $name ]['m'] += self::to_float( $entry_arr['m'] ?? 0 );
+				$merged[ $bucket ][ $name ]['c'] += Core::as_int( $entry_arr['c'] ?? 0 );
+				$merged[ $bucket ][ $name ]['s'] += Core::as_float( $entry_arr['s'] ?? 0 );
+				$merged[ $bucket ][ $name ]['m'] += Core::as_float( $entry_arr['m'] ?? 0 );
 			}
 		}
 	}
@@ -603,11 +603,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				continue;
 			}
 			foreach ( $values as $cat => $entry ) {
-				$entry_arr = \is_array( $entry ) ? $entry : [];
+				$entry_arr = Core::arr( $entry );
 				$merged[ $bucket ][ $cat ] ??= [ 't' => 0.0, 'c' => 0.0, 'n' => 0 ];
-				$merged[ $bucket ][ $cat ]['t'] += self::to_float( $entry_arr['t'] ?? 0 );
-				$merged[ $bucket ][ $cat ]['c'] += self::to_float( $entry_arr['c'] ?? 0 );
-				$merged[ $bucket ][ $cat ]['n'] += self::to_int( $entry_arr['n'] ?? 0 );
+				$merged[ $bucket ][ $cat ]['t'] += Core::as_float( $entry_arr['t'] ?? 0 );
+				$merged[ $bucket ][ $cat ]['c'] += Core::as_float( $entry_arr['c'] ?? 0 );
+				$merged[ $bucket ][ $cat ]['n'] += Core::as_int( $entry_arr['n'] ?? 0 );
 			}
 		}
 	}
@@ -626,10 +626,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$total_sum_ms      = 0.0;
 		$total_sum_peak_mb = 0.0;
 		foreach ( $time_series as $row ) {
-			$row_arr            = \is_array( $row ) ? $row : [];
-			$total_requests    += self::to_int( $row_arr['count'] ?? 0 );
-			$total_sum_ms      += self::to_float( $row_arr['sum_ms'] ?? 0 );
-			$total_sum_peak_mb += self::to_float( $row_arr['sum_peak_mb'] ?? 0 );
+			$row_arr            = Core::arr( $row );
+			$total_requests    += Core::as_int( $row_arr['count'] ?? 0 );
+			$total_sum_ms      += Core::as_float( $row_arr['sum_ms'] ?? 0 );
+			$total_sum_peak_mb += Core::as_float( $row_arr['sum_peak_mb'] ?? 0 );
 		}
 
 		$slowest = $index;
@@ -656,29 +656,20 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged = [];
 		foreach ( self::stats_stores() as $store ) {
 			foreach ( $store->get_hourly() as $hour => $row ) {
-				$row_arr = \is_array( $row ) ? $row : [];
+				$row_arr = Core::arr( $row );
 				$merged[ $hour ] ??= [
 					'hour'        => $hour,
 					'count'       => 0,
 					'sum_ms'      => 0.0,
 					'sum_peak_mb' => 0.0,
 				];
-				$merged[ $hour ]['count']       += self::to_int( $row_arr['count'] ?? 0 );
-				$merged[ $hour ]['sum_ms']      += self::to_float( $row_arr['sum_ms'] ?? 0 );
-				$merged[ $hour ]['sum_peak_mb'] += self::to_float( $row_arr['sum_peak_mb'] ?? 0 );
+				$merged[ $hour ]['count']       += Core::as_int( $row_arr['count'] ?? 0 );
+				$merged[ $hour ]['sum_ms']      += Core::as_float( $row_arr['sum_ms'] ?? 0 );
+				$merged[ $hour ]['sum_peak_mb'] += Core::as_float( $row_arr['sum_peak_mb'] ?? 0 );
 			}
 		}
 		\ksort( $merged );
 		return \array_values( $merged );
-	}
-
-	/**
-	 * Coerce a mixed leaf to float, reproducing `(float)` for scalar/null inputs.
-	 *
-	 * @param mixed $value Raw leaf value.
-	 */
-	private static function to_float( mixed $value ): float {
-		return \is_scalar( $value ) ? (float) $value : 0.0;
 	}
 
 	/**
@@ -708,8 +699,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			return [];
 		}
 		$config         = RuntimeConfig::load_config();
-		$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
-		$max_lifespan   = self::to_int( $config['max_lifespan'] ?? 86400 );
+		$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
+		$max_lifespan   = Core::as_int( $config['max_lifespan'] ?? 86400 );
 		$stores         = [];
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$stores[] = new Stats_Store( $p, $max_lifespan );
@@ -728,7 +719,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function find_recent_requests_for_url( string $url_hash ): array {
 		$config         = RuntimeConfig::load_config();
-		$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
+		$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
 		$base_dir       = RuntimeConfig::get_base_directory();
 		$log_base       = $base_dir . '/logs';
 
@@ -750,11 +741,11 @@ class Performance_CI_Node extends Service_CI_Node {
 						return false;
 					}
 					$entry = Request_Builder_Node::parse_request_index( $line );
-					if ( ! \is_array( $entry ) || \trim( self::to_string( $entry['url_hash'] ) ) !== $url_hash ) {
+					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['url_hash'] ) ) !== $url_hash ) {
 						return null;
 					}
 					$requests[] = [
-						'rid'          => \trim( self::to_string( $entry['rid'] ) ),
+						'rid'          => \trim( Core::as_string( $entry['rid'] ) ),
 						'timestamp'    => $entry['timestamp'] ?? 0,
 						'duration_ms'  => $entry['duration_ms'] ?? 0,
 						'status_code'  => $entry['status_code'] ?? 0,
@@ -813,13 +804,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					return false;
 				}
 				$entry = Request_Builder_Node::parse_request_index( $line );
-				if ( ! \is_array( $entry ) || \trim( self::to_string( $entry['rid'] ) ) !== $rid ) {
+				if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['rid'] ) ) !== $rid ) {
 					return null;
 				}
 				$result = [
 					'rid'       => $rid,
 					'partition' => $partition,
-					'url_hash'  => \trim( self::to_string( $entry['url_hash'] ) ),
+					'url_hash'  => \trim( Core::as_string( $entry['url_hash'] ) ),
 				];
 				return false;
 			},
@@ -853,19 +844,19 @@ class Performance_CI_Node extends Service_CI_Node {
 					return false;
 				}
 				$entry = Request_Builder_Node::parse_request_index( $line );
-				if ( ! \is_array( $entry ) || \trim( self::to_string( $entry['rid'] ) ) !== $rid ) {
+				if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['rid'] ) ) !== $rid ) {
 					return null;
 				}
 				$message = $requests->read_message_at(
-					self::to_int( $entry['segment'] ?? 0 ),
-					self::to_int( $entry['offset'] ?? 0 ),
-					self::to_int( $entry['length'] ?? 0 )
+					Core::as_int( $entry['segment'] ?? 0 ),
+					Core::as_int( $entry['offset'] ?? 0 ),
+					Core::as_int( $entry['length'] ?? 0 )
 				);
 				$req = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
 				if ( ! \is_array( $req ) ) {
 					return false;
 				}
-				$req['url_hash'] = \trim( self::to_string( $entry['url_hash'] ) );
+				$req['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ) );
 				$result          = $req;
 				return false;
 			},
@@ -882,26 +873,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			$result['flame_data'] = $flame;
 		}
 		return $result;
-	}
-
-	// Scalar coercion of mixed leaf values from decoded JSON / memcache blobs.
-
-	/**
-	 * Coerce a mixed leaf to int, reproducing `(int)` for scalar/null inputs.
-	 *
-	 * @param mixed $value Raw leaf value.
-	 */
-	private static function to_int( mixed $value ): int {
-		return \is_scalar( $value ) ? (int) $value : 0;
-	}
-
-	/**
-	 * Coerce a mixed leaf to string, reproducing `(string)` for scalar/null inputs.
-	 *
-	 * @param mixed $value Raw leaf value.
-	 */
-	private static function to_string( mixed $value ): string {
-		return \is_scalar( $value ) ? (string) $value : '';
 	}
 
 	/**
@@ -1094,14 +1065,14 @@ class Performance_CI_Node extends Service_CI_Node {
 					$srv   = \strtolower( $server );
 					$index = \array_values( \array_filter(
 						$index,
-						static fn ( $e ) => false !== \strpos( \strtolower( self::to_string( $e['url'] ?? '' ) ), $srv )
+						static fn ( $e ) => false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $srv )
 					) );
 				}
 				if ( '' !== $search ) {
 					$term  = \strtolower( $search );
 					$index = \array_values( \array_filter(
 						$index,
-						static fn ( $e ) => false !== \strpos( \strtolower( self::to_string( $e['url'] ?? '' ) ), $term )
+						static fn ( $e ) => false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $term )
 					) );
 				}
 
@@ -1207,7 +1178,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				$config         = RuntimeConfig::load_config();
-				$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
+				$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
 				$base_dir       = RuntimeConfig::get_base_directory();
 				$log_base       = $base_dir . '/logs';
 				$scanned        = 0;
@@ -1243,7 +1214,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
 
 				$config         = RuntimeConfig::load_config();
-				$num_partitions = self::to_int( $config['num_partitions'] ?? 1 );
+				$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
 				$base_dir       = RuntimeConfig::get_base_directory();
 				$log_base       = $base_dir . '/logs';
 
@@ -1291,7 +1262,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Positional receiver: set one option per command; Settings_Sync fans out.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
 
-				$option = \is_string( $option ) ? $option : '';
+				$option = Core::str( $option );
 				if ( '' === $option ) {
 					throw new \RuntimeException( 'option required' );
 				}
@@ -1301,7 +1272,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				// Value rides the wire as a string; array options carry JSON, decoded here.
 				$type      = self::SETTINGS_OPTIONS[ $option ];
-				$raw_value = \is_string( $value_arg ) ? $value_arg : '';
+				$raw_value = Core::str( $value_arg );
 				$value     = 'array' === $type ? self::decode_array_value( $raw_value ) : $raw_value;
 
 				$sanitized = self::sanitize_settings_value( $value, $type );
