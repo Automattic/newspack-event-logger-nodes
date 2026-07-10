@@ -59,6 +59,15 @@ class Flame_Builder_Node extends Node {
 	private const STATS_CACHE_BUCKET_SIZE = 1000;
 	private const STATS_CACHE_NUM_BUCKETS = 5;
 
+	/** Cap on the per-process string-intern table (dedupes json_decode zvals). */
+	private const INTERN_TABLE_LIMIT = 50000;
+
+	/** Aggregate/category entries unseen for this many seconds expire (1 hour). */
+	private const AGGREGATE_EXPIRY_SEC = 3600;
+
+	/** Max URLs retained per hourly bucket in the URL index (top-N by count). */
+	private const MAX_URLS_PER_BUCKET = 500;
+
 	/** Per-URL namespaces bounded to top-N by traffic when mirrored. NS_URL (the
 	 *  flame profiles) is the STARTING default only — the live bound is $flame_topn
 	 *  (see set_flame_topn), so the routing check here still recognizes NS_URL. */
@@ -665,7 +674,7 @@ class Flame_Builder_Node extends Node {
 			}
 			if ( ! $intern_full ) {
 				$val = $intern[ $val ] ??= $val;
-				if ( \count( $intern ) >= 50000 ) {
+				if ( \count( $intern ) >= self::INTERN_TABLE_LIMIT ) {
 					$intern_full = true;
 				}
 			}
@@ -755,7 +764,7 @@ class Flame_Builder_Node extends Node {
 				if ( ! $intern_full ) {
 					$interned = $intern[ $category ] ??= $category;
 					$category = \is_string( $interned ) ? $interned : $category;
-					if ( \count( $intern ) >= 50000 ) {
+					if ( \count( $intern ) >= self::INTERN_TABLE_LIMIT ) {
 						$intern_full = true;
 					}
 				}
@@ -956,7 +965,7 @@ class Flame_Builder_Node extends Node {
 			}
 
 			// Expire old per-URL categories.
-			$cutoff = $now - 3600;
+			$cutoff = $now - self::AGGREGATE_EXPIRY_SEC;
 			foreach ( $prof['categories'] as $cat => $cd ) {
 				if ( ( $cd['ts'] ?? 0 ) < $cutoff ) {
 					unset( $prof['categories'][ $cat ] );
@@ -1061,7 +1070,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Expire entries not seen in over 1 hour.
-		$cutoff = $now_ts - 3600;
+		$cutoff = $now_ts - self::AGGREGATE_EXPIRY_SEC;
 		foreach ( $indexed as $name => $child ) {
 			if ( ( $child['ts'] ?? 0 ) < $cutoff ) {
 				unset( $indexed[ $name ] );
@@ -1209,8 +1218,12 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Cap a single bucket's categories to top N by time, preserving 'total'.
 	 *
-	 * @param array<string, mixed> $cats Category buckets.
-	 * @return array<string, mixed>
+	 * Key-preserving and key-agnostic: decoded memcache buckets can carry int
+	 * keys (numeric category names); the body only names 'total'/'Other'.
+	 *
+	 * @template TKey of array-key
+	 * @param array<TKey, mixed> $cats Category buckets.
+	 * @return array<TKey|string, mixed>
 	 */
 	private static function cap_single_bucket( array $cats, int $max_values ): array {
 		if ( \count( $cats ) <= $max_values ) {
@@ -1457,9 +1470,9 @@ class Flame_Builder_Node extends Node {
 				}
 				unset( $url_stat );
 
-				if ( \count( $existing_urls ) > 500 ) {
+				if ( \count( $existing_urls ) > self::MAX_URLS_PER_BUCKET ) {
 					\uasort( $existing_urls, fn( $a, $b ) => ( \is_numeric( $b['count'] ?? null ) ? $b['count'] : 0 ) <=> ( \is_numeric( $a['count'] ?? null ) ? $a['count'] : 0 ) );
-					$existing_urls = \array_slice( $existing_urls, 0, 500, true );
+					$existing_urls = \array_slice( $existing_urls, 0, self::MAX_URLS_PER_BUCKET, true );
 				}
 
 				$stats_store->set_url_index_hourly( $bucket_key, $existing_urls );
@@ -1641,31 +1654,8 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		foreach ( $existing as $bk => $bk_cats_raw ) {
-			if ( ! \is_array( $bk_cats_raw ) ) {
-				continue;
-			}
-			$bk_cats = $bk_cats_raw;
-			if ( \count( $bk_cats ) > $max_values ) {
-				$total = $bk_cats['total'] ?? null;
-				unset( $bk_cats['total'] );
-				\uasort( $bk_cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
-				$top    = \array_slice( $bk_cats, 0, $max_values - 2, true );
-				$rest_t = $rest_c = $rest_n = 0;
-				foreach ( \array_slice( $bk_cats, $max_values - 2 ) as $v ) {
-					if ( ! \is_array( $v ) ) {
-						continue;
-					}
-					$rest_t += \is_numeric( $v['t'] ?? null ) ? $v['t'] : 0;
-					$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
-					$rest_n += \is_numeric( $v['n'] ?? null ) ? $v['n'] : 0;
-				}
-				if ( $rest_t > 0 || $rest_c > 0 ) {
-					$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
-				}
-				if ( $total ) {
-					$top['total'] = $total;
-				}
-				$existing[ $bk ] = $top;
+			if ( \is_array( $bk_cats_raw ) ) {
+				$existing[ $bk ] = self::cap_single_bucket( $bk_cats_raw, $max_values );
 			}
 		}
 		\ksort( $existing );

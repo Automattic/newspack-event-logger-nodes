@@ -751,17 +751,11 @@ class Log_Manager {
 		// LogManager::suspend() pushes the parent context onto its stack.
 		self::suspend();
 
-		$path_info = '/' . \ltrim( $handler, '/' );
-		/** @var int|float|string|bool|null $raw_server_name */
-		$raw_server_name = $_SERVER['SERVER_NAME'] ?? 'localhost'; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- internal-only context.
-		$server_name     = (string) $raw_server_name;
-
 		$_SERVER['UNIQUE_ID']      = self::generate_request_id();
 		$_SERVER['REQUEST_URI']    = '/jobs/' . \ltrim( $handler, '/' );
 		$_SERVER['REQUEST_METHOD'] = 'POST';
 		$_SERVER['PATH_INFO']      = '';
-		$foundation_base = \defined( 'NEWSPACK_FOUNDATION_BASE' ) ? \NEWSPACK_FOUNDATION_BASE : '';
-		$_SERVER['QUERY_STRING']    = '';
+		$_SERVER['QUERY_STRING']   = '';
 		unset(
 			$_SERVER['CONTENT_TYPE'],
 			$_SERVER['CONTENT_LENGTH'],

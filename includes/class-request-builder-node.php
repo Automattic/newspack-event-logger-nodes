@@ -55,6 +55,13 @@ class Request_Builder_Node extends Timer_Node {
 	/** Maximum stack depth before request is considered runaway and evicted. */
 	private const MAX_STACK_DEPTH = 50;
 
+	/** String-intern table: cap on entries and max keyword length to intern. */
+	private const INTERN_TABLE_LIMIT     = 50000;
+	private const INTERN_MAX_KEY_LENGTH  = 256;
+
+	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
+	private const MAX_PROFILE_ENTRY_LABELS = 1000;
+
 	/** @var LRU_Cache In-flight requests, keyed by rid. */
 	public $cache;
 
@@ -162,7 +169,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( ! \is_string( $keyword ) ) {
 			return;
 		}
-		if ( \strlen( $keyword ) <= 256 && \count( $intern ) < 50000 ) {
+		if ( \strlen( $keyword ) <= self::INTERN_MAX_KEY_LENGTH && \count( $intern ) < self::INTERN_TABLE_LIMIT ) {
 			$keyword = $intern[ $keyword ] ??= $keyword;
 		}
 		$n = $entry['n'] ?? 0;
@@ -423,7 +430,7 @@ class Request_Builder_Node extends Timer_Node {
 		$stack[] = [ $state, $label ];
 
 		$profile = &$profiles[ $state ];
-		if ( $label && \count( $profile['entries'] ) < 1000 && ! isset( $profile['entries'][ $label ] ) ) {
+		if ( $label && \count( $profile['entries'] ) < self::MAX_PROFILE_ENTRY_LABELS && ! isset( $profile['entries'][ $label ] ) ) {
 			$profile['entries'][ $label ] = [ 0, 0 ];
 		}
 		unset( $profile );

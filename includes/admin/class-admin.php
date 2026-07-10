@@ -402,19 +402,31 @@ class Admin {
 	}
 
 	/**
-	 * Reset-to-defaults handler — admin-post target.
+	 * Shared admin-post gate: verify the POSTed nonce (read from $nonce_field
+	 * against $action) and the caller's capability, `wp_die`-ing on either
+	 * failure. Both admin-post handlers run this identical check first.
 	 *
-	 * Nonce + permission checks before deleting any options.
+	 * @param string $nonce_field POST key carrying the nonce.
+	 * @param string $action      Nonce action to verify against.
 	 */
-	public function handle_reset_settings(): void {
+	private static function verify_admin_post( string $nonce_field, string $action ): void {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$nonce = isset( $_POST[ self::RESET_NONCE ] ) && \is_string( $_POST[ self::RESET_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::RESET_NONCE ] ) ) : '';
-		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, self::RESET_ACTION ) ) {
+		$nonce = isset( $_POST[ $nonce_field ] ) && \is_string( $_POST[ $nonce_field ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ $nonce_field ] ) ) : '';
+		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, $action ) ) {
 			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
 		}
 		if ( ! self::current_user_allowed() ) {
 			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
 		}
+	}
+
+	/**
+	 * Reset-to-defaults handler — admin-post target.
+	 *
+	 * Nonce + permission checks before deleting any options.
+	 */
+	public function handle_reset_settings(): void {
+		self::verify_admin_post( self::RESET_NONCE, self::RESET_ACTION );
 
 		// Derive reset list from Schema so this works pre-register_settings().
 		$options = Settings_Schema::get()->setting_option_names();
@@ -449,14 +461,7 @@ class Admin {
 	 * writing under the OLD salt, defeating the flush.
 	 */
 	public function handle_flush_stats(): void {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$nonce = isset( $_POST[ self::FLUSH_STATS_NONCE ] ) && \is_string( $_POST[ self::FLUSH_STATS_NONCE ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ self::FLUSH_STATS_NONCE ] ) ) : '';
-		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, self::FLUSH_STATS_ACTION ) ) {
-			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
-		}
-		if ( ! self::current_user_allowed() ) {
-			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
-		}
+		self::verify_admin_post( self::FLUSH_STATS_NONCE, self::FLUSH_STATS_ACTION );
 
 		// flush_all() only rotates the salt option; no memcache handle needed.
 		$config       = Config::load_config();
