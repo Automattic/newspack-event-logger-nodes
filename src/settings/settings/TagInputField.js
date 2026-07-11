@@ -152,12 +152,13 @@ export default function TagInputField( {
 		return (
 			<div className="event-logger-tag-input">
 				<div className="event-logger-selector-row">
-					<Button
-						variant="secondary"
+					<button
+						type="button"
+						className="button"
 						onClick={ () => setIsModalOpen( true ) }
 					>
 						{ __( 'Select Hooks', 'newspack-event-logger-nodes' ) }
-					</Button>
+					</button>
 					<span className="event-logger-selector-count">
 						{ sprintf(
 							// translators: %d: number of selected hooks.
@@ -187,12 +188,13 @@ export default function TagInputField( {
 		return (
 			<div className="event-logger-tag-input">
 				<div className="event-logger-selector-row">
-					<Button
-						variant="secondary"
+					<button
+						type="button"
+						className="button"
 						onClick={ () => setIsModalOpen( true ) }
 					>
 						{ __( 'Select Events', 'newspack-event-logger-nodes' ) }
-					</Button>
+					</button>
 					<span className="event-logger-selector-count">
 						{ sprintf(
 							// translators: %d: number of selected events.

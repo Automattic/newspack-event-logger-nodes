@@ -106,23 +106,12 @@
 	gap: 8px;
 }
 
+// Appearance is the stock `.button button-small`; only the disabled dim is
+// local (the decorative skins don't add a disabled state to `.button`).
 .event-logger-table__pagination-btn {
-	padding: 4px 10px;
-	border: 1px solid var(--paper-shadow);
-	border-radius: 3px;
-	background: var(--paper);
-	cursor: pointer;
-	font-size: 13px;
-	color: var(--ink);
-
 	&:disabled {
 		opacity: 0.4;
 		cursor: default;
-	}
-
-	&:hover:not(:disabled) {
-		background: var(--paper-3);
-		border-color: var(--ink-3);
 	}
 }
 

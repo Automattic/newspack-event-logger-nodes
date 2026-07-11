@@ -272,4 +272,56 @@ describe( 'RulesAdmin', () => {
 		expect( remove ).not.toHaveBeenCalled();
 		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
 	} );
+
+	test( 'the Add Rule button is a stock primary button that keeps its layout class', () => {
+		const { container } = mount();
+		const add = Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Add Rule' )
+		);
+		expect( add.classList.contains( 'button' ) ).toBe( true );
+		expect( add.classList.contains( 'button-primary' ) ).toBe( true );
+		expect( add.classList.contains( 'rules-admin__add' ) ).toBe( true );
+	} );
+
+	test( 'the row Edit button is a stock compact button', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		const edit = Array.from( row.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Edit'
+		);
+		expect( edit.classList.contains( 'button' ) ).toBe( true );
+		expect( edit.classList.contains( 'button-small' ) ).toBe( true );
+	} );
+
+	test( 'the row Delete button uses the canonical destructive class', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Delete'
+		);
+		expect( del.classList.contains( 'button' ) ).toBe( true );
+		expect( del.classList.contains( 'button-small' ) ).toBe( true );
+		expect( del.classList.contains( 'button-link-delete' ) ).toBe( true );
+	} );
+
+	test( 'the confirm dialog Cancel and Delete use stock classes', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Delete'
+		);
+		click( del );
+		const confirm = document.querySelector( '.rules-admin__confirm' );
+		const cancel = Array.from( confirm.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Cancel'
+		);
+		const confirmDel = Array.from(
+			confirm.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.trim() === 'Delete' );
+		expect( cancel.classList.contains( 'button' ) ).toBe( true );
+		expect( confirmDel.classList.contains( 'button' ) ).toBe( true );
+		expect( confirmDel.classList.contains( 'button-link-delete' ) ).toBe(
+			true
+		);
+	} );
 } );

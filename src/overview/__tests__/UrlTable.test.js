@@ -255,6 +255,19 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'renders the pagination controls as stock compact buttons', () => {
+		const { container, unmount } = mount( { totalUrls: 250 } );
+		const btns = container.querySelectorAll(
+			'.event-logger-table__pagination-btn'
+		);
+		expect( btns.length ).toBe( 2 );
+		btns.forEach( ( btn ) => {
+			expect( btn.classList.contains( 'button' ) ).toBe( true );
+			expect( btn.classList.contains( 'button-small' ) ).toBe( true );
+		} );
+		unmount();
+	} );
+
 	it( 'advances to page 2 when Next is clicked', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {

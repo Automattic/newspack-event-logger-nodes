@@ -13,7 +13,6 @@
 
 import { useEffect, useRef, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { Button } from '@wordpress/components';
 
 import { useRulesGraph } from './useRulesGraph';
 import RuleEditModal from './RuleEditModal';
@@ -80,17 +79,21 @@ function ConfirmDeleteModal( { pattern, onCancel, onConfirm } ) {
 					) }
 				</p>
 				<div className="rules-admin__confirm-actions">
-					<Button variant="tertiary" onClick={ onCancel }>
+					<button
+						type="button"
+						className="button"
+						onClick={ onCancel }
+					>
 						{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
-					</Button>
-					<Button
+					</button>
+					<button
 						ref={ confirmRef }
-						variant="primary"
-						isDestructive
+						type="button"
+						className="button button-link-delete"
 						onClick={ onConfirm }
 					>
 						{ __( 'Delete', 'newspack-event-logger-nodes' ) }
-					</Button>
+					</button>
 				</div>
 			</div>
 		</div>
@@ -143,21 +146,20 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 			</td>
 			<td>{ 'log' === rule.action ? autoTuneSummary( rule ) : '—' }</td>
 			<td>
-				<Button
-					variant="secondary"
+				<button
+					type="button"
 					className="button button-small"
 					onClick={ () => onEdit( rule ) }
 				>
 					{ __( 'Edit', 'newspack-event-logger-nodes' ) }
-				</Button>{ ' ' }
-				<Button
-					variant="secondary"
-					isDestructive
-					className="button button-small"
+				</button>{ ' ' }
+				<button
+					type="button"
+					className="button button-small button-link-delete"
 					onClick={ () => onDelete( rule ) }
 				>
 					{ __( 'Delete', 'newspack-event-logger-nodes' ) }
-				</Button>
+				</button>
 			</td>
 		</tr>
 	);
@@ -225,13 +227,13 @@ export default function RulesAdmin() {
 			) }
 
 			<p>
-				<Button
-					variant="primary"
-					className="rules-admin__add button"
+				<button
+					type="button"
+					className="rules-admin__add button button-primary"
 					onClick={ () => setEditing( { ...BLANK_RULE } ) }
 				>
 					{ __( '+ Add Rule', 'newspack-event-logger-nodes' ) }
-				</Button>
+				</button>
 			</p>
 
 			<table className="wp-list-table widefat fixed striped">
