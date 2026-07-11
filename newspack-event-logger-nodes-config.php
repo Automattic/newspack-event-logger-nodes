@@ -13,14 +13,10 @@ return [
 	// Deployment override: restrict admin UI to these usernames.
 	'allowed_users'               => [],
 
-	// Logging on/off (application-level — distinct from substrate's
-	// `topologies` list which decides which worker fleets run).
+	// Logging on/off (app-level; distinct from substrate's topologies list).
 	'enable_logging'              => true,
 
-	// Per-URL logging ruleset (per-rule fields: URL filter, instrumented hooks,
-	// custom/significant events, auto-tune thresholds). Seeds the ruleset when no
-	// stored option exists; the rules editor owns it once saved. These skips
-	// out-specify the '/' log rule, so worker IPC/SSE/spawn + wp-cron never log.
+	// Per-URL ruleset seed; skips out-specify '/' (worker IPC + wp-cron).
 	'rules'                       => [
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/command', 'action' => 'skip' ],
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/messages/stream', 'action' => 'skip' ],
@@ -32,10 +28,7 @@ return [
 	// Hook categorization colors.
 	'custom_colors'               => [],
 
-	// Mirror Stats_Store writes to a durable partition + reload memcache from it
-	// on cold boot. Off by default (Atomic has durable memcache). Non-Atomic
-	// (local/docker) opts in by setting this to the stats partition node name
-	// ('flame-stats:partition', wired by the flame-builder topology).
+	// Mirror stats to a durable partition (off by default; set the node name).
 	'stats_mirror_node'           => '',
 
 	// Debug.
