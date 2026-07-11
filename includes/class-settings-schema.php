@@ -45,7 +45,7 @@ class Settings_Schema {
 		$workers         = 'newspack_event_logger_nodes_workers_section';
 		$debugging       = 'newspack_event_logger_nodes_debugging_section';
 
-		// Literal prefix, not Admin::OPTION_PREFIX: schema-build won't load Admin.
+		// Literal prefix, not Admin::OPTION_PREFIX: schema-build skips Admin.
 		self::$schema = new Schema(
 			'newspack_event_logger_nodes_',
 			[
@@ -57,14 +57,14 @@ class Settings_Schema {
 					section: $general,
 					// An unchecked box is a real "off" override, not a reset.
 					delete_on_blank: false,
-					// Cached in the Log_Manager singleton (every worker) → restart all.
+					// Cached in LM singleton (every worker) → restart all.
 					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'enable_logging_callback' ],
 					register_args: [],
 				),
 
-				// Instrumentation: URL/hook/threshold fields are per-rule now — none here.
+				// URL/hook/threshold fields are per-rule now — none here.
 
 				// -- Debugging ----------------------------------------------
 				new Field(
@@ -73,7 +73,7 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Log Memory', 'newspack-event-logger-nodes' ),
 					section: $debugging,
 					delete_on_blank: false,
-					// Cached in the Log_Manager per-process singleton (every worker).
+					// Cached in LM per-process singleton (every worker).
 					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'log_memory_callback' ],
@@ -84,7 +84,7 @@ class Settings_Schema {
 					label: static fn(): string => \__( 'Flush Every Line', 'newspack-event-logger-nodes' ),
 					section: $debugging,
 					delete_on_blank: false,
-					// Cached in the Log_Manager per-process singleton (every worker).
+					// Cached in LM per-process singleton (every worker).
 					restart: 'all',
 					sanitize: 'absint',
 					render: [ Admin::class, 'flush_every_line_callback' ],
@@ -96,7 +96,7 @@ class Settings_Schema {
 					type: 'array_strings',
 					ui: false,
 				),
-				// Per-URL ruleset: overlaid to seed the option; rules editor owns it.
+				// Per-URL ruleset overlay seeds option; rules editor owns it.
 				new Field(
 					key: 'rules',
 					type: 'array',

@@ -56,7 +56,7 @@ class Current_Request_Overlay {
 		$dir   = \NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/current-request';
 		$url   = \NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/current-request';
 		$asset = $dir . '/index.asset.php';
-		// require'd PHP array of unknown shape — guard each field, don't trust it.
+		// require'd array of unknown shape — guard fields, don't trust it.
 		/** @var array<string,mixed> $meta */
 		$meta = \file_exists( $asset ) ? (array) require $asset : [];
 		$deps = isset( $meta['dependencies'] ) && \is_array( $meta['dependencies'] )
@@ -140,7 +140,7 @@ class Current_Request_Overlay {
 	public static function init(): void {
 		\add_filter( 'newspack_nodes/devtools_tab_bundles', [ self::class, 'register_bundle' ] );
 		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_on_overlay_pages' ] );
-		// Priority 20: after both enqueue paths run, so wp_add_inline_script binds.
+		// Priority 20: after both enqueue paths, so wp_add_inline_script binds.
 		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_inline_data' ], 20 );
 	}
 

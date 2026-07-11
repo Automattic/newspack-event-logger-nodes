@@ -52,10 +52,10 @@ export class UrlDetailMergeNode extends Node {
 			value && 'object' === typeof value ? value.payload : null;
 		const next = this._merge( payload );
 		if ( null === next ) {
-			// No-op (empty payload or unchanged last_modified) — drop, no republish.
+			// No-op (empty or unchanged last_modified) — drop, no republish.
 			return;
 		}
-		// Forward the merged payload to the view via sink (TO stamped from target).
+		// Forward merged payload to the view via sink (TO stamped from target).
 		message[ VALUE ] = { ...value, payload: next };
 		super.fill( message );
 	}
@@ -105,7 +105,7 @@ export class UrlDetailMergeNode extends Node {
 		return merged;
 	}
 
-	// Edge transform: rewrites VALUE.payload + forwards; target wired externally.
+	// Edge transform: rewrites VALUE.payload + forwards; target wired outside.
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

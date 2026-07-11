@@ -69,13 +69,13 @@ export function useGyroscopeGraph() {
 			const baseUrl = data.restUrl || '/wp-json/';
 			const nonce = data.nonce || '';
 
-			// RemoteLink composes SseIn + HttpOut + Heartbeat children (built lazily).
+			// RemoteLink = SseIn+HttpOut+Heartbeat children (built lazily).
 			const link = interpreter.makeNode(
 				'RemoteLink',
 				LINK,
 				`gyroscope ${ baseUrl } ${ nonce }`
 			);
-			// Pass-through Tee on the stream edge; copies each frame to the view.
+			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
 

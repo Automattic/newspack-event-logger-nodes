@@ -293,7 +293,7 @@ class Flame_Builder_Node extends Node {
 			'children' => [],
 		];
 
-		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base_name ].
+		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base ].
 		/** @var array<int, array{node: array{name?: string, value?: mixed, children?: array<int, mixed>, ts?: int, detail?: string}, name: string}> $stack */
 		$stack   = [];
 		$stack[] = [
@@ -311,7 +311,7 @@ class Flame_Builder_Node extends Node {
 
 			if ( \preg_match( self::PATTERN_START, $keyword, $m ) ) {
 				$base_name = $m[1];
-				// 'l' is the stable label (aggregation); 'm' the volatile message.
+				// 'l' = stable label (aggregation); 'm' = volatile message.
 				$label  = Core::str( $entry['l'] ?? '' );
 				$detail = Core::str( $entry['m'] ?? '' );
 				$new_node = [
@@ -355,14 +355,14 @@ class Flame_Builder_Node extends Node {
 					$stack[ $found_idx ]['node']['value'] = $duration_ms;
 					$stack[ $found_idx ]['node']['ts']    = Core::num_int( $ts_raw, $now_ts );
 
-					// Pop found_idx..top; children outliving their parent orphan (value=0).
+					// Pop found_idx..top; orphans outlive parent (value=0).
 					\array_splice( $stack, $found_idx );
 				}
 				// If not found, this is an orphaned complete - ignore it.
 			}
 		}
 
-		// Number duplicate sibling names to prevent collapse during aggregation.
+		// Number duplicate sibling names to prevent collapse on aggregation.
 		self::number_duplicate_siblings( $root );
 
 		// Restore $root's string-keyed contract widened by the by-ref helpers.
@@ -424,10 +424,10 @@ class Flame_Builder_Node extends Node {
 	 * @return bool True on success.
 	 */
 	private function store_flame( string $rid, string $url_hash, array $flame_data ): bool {
-		// Strip duplicate sibling suffixes before storage (only needed for merging).
+		// Strip duplicate sibling suffixes before storage (only for merging).
 		self::strip_name_suffixes( $flame_data );
 
-		// Add rid and url_hash to flame data so index callback can extract them.
+		// Add rid and url_hash to flame data so index callback can extract.
 		$flame_data['rid']      = $rid;
 		$flame_data['url_hash'] = $url_hash;
 
@@ -494,7 +494,7 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key, mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
-		// Resolve the request's governing rule once; no match = auto-tune inert.
+		// Resolve the request's governing rule once; no match = tune inert.
 		$rule             = $this->rule_for_request( $request );
 		$count_threshold  = null !== $rule ? $rule->auto_disable_threshold : 0;
 		$time_threshold   = null !== $rule ? $rule->auto_protect_time_threshold : 0.0;
@@ -506,7 +506,7 @@ class Flame_Builder_Node extends Node {
 		$error_status = $request['error_status'] ?? '-';
 		$is_timed_out = 'T' === $error_status;
 		$is_worker    = ! empty( $request['is_worker'] );
-		// Two gates: per-URL rows keep worker timing; global aggregates drop workers.
+		// Two gates: per-URL rows keep worker timing; global drops workers.
 		$record_timing = $duration_ms > 0 && ! $is_timed_out;
 		$count_global  = ! $is_worker;
 		$now           = $this->now_ts();
@@ -689,7 +689,7 @@ class Flame_Builder_Node extends Node {
 				$this->pending['dim'][ $dim ][ $val ]['m'] += $dim_peak_mb;
 			}
 
-			// Per-server (hub only; skip redundant 'server' dim); global drops workers.
+			// Per-server (hub only; skip redundant dim); global drops workers.
 			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim && $count_global ) {
 				if ( ! isset( $this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] ) ) {
 					$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
@@ -708,7 +708,7 @@ class Flame_Builder_Node extends Node {
 			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['m'] += $dim_peak_mb;
 		}
 
-		// 4. Profile loop: per-URL gate accrues worker rows; global by $count_global.
+		// 4. Profile loop: per-URL gate accrues worker rows; global by count.
 		if ( ! empty( $profiles ) && $record_timing ) {
 			$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
 			$prof_cats          = $aggregate_profiles['categories'] ?? [];
@@ -856,7 +856,7 @@ class Flame_Builder_Node extends Node {
 					unset( $scat );
 				}
 
-				// Global category time series (pending bucket): workers excluded.
+				// Global category time series (pending): workers excluded.
 				if ( $count_global ) {
 					$cat_bucket   = $this->pending['cat'][ $category ] ?? [ 't' => 0, 'c' => 0, 'n' => 0 ];
 					$cat_total    = $this->pending['cat']['total'] ?? [ 't' => 0, 'c' => 0, 'n' => 0 ];
@@ -887,7 +887,7 @@ class Flame_Builder_Node extends Node {
 				++$this->pending['cat_by_url'][ $url_hash ][ $category ]['n'];
 				$this->pending['cat_by_url'][ $url_hash ]['total']['c'] += $cat_count;
 
-				// Significant-event detection (avg/call > threshold); workers excluded.
+				// Significant-event: avg/call > threshold; workers excluded.
 				if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
 					$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
 					if ( $avg_per_call >= $time_threshold ) {
@@ -915,7 +915,7 @@ class Flame_Builder_Node extends Node {
 						$pcat['entries'][ $name ][1] += $entry_count;
 						++$pcat['entries'][ $name ][2];
 
-						// Global entries: skipped for workers (global category ref null).
+						// Global entries skipped for workers (ref null).
 						if ( null !== $lcat ) {
 							if ( ! isset( $lcat['entries'][ $name ] ) ) {
 								$lcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
@@ -931,7 +931,7 @@ class Flame_Builder_Node extends Node {
 						\uasort( $pcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 						$pcat['entries'] = \array_slice( $pcat['entries'], 0, self::ENTRY_LIMIT_URL_LOWER, true );
 					}
-					// Global cap: skipped for workers, whose global category ref stays null.
+					// Global cap: skipped for workers (ref stays null).
 					if ( null !== $lcat && \count( $lcat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
 						\uasort( $lcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
 						$lcat['entries'] = \array_slice( $lcat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
@@ -1091,7 +1091,7 @@ class Flame_Builder_Node extends Node {
 			$this->promote_pending_bucket();
 		}
 
-		// Flush per-URL stats accumulators (combined flame + profiles) to memcache.
+		// Flush per-URL stats accumulators (combined flame + profiles) to mc.
 		$stats_store = $this->stats_store;
 		if ( null !== $stats_store ) {
 			$now = $this->now_ts();
@@ -1101,7 +1101,7 @@ class Flame_Builder_Node extends Node {
 				}
 				$url_hash = (string) $url_hash;
 				/** @var array<string, mixed> $aggregate */
-				// Finalized flame for display; keep raw flame_raw for future merging.
+				// Finalized flame for display; keep flame_raw for merging.
 				$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
 				$count_raw              = $flame['count'] ?? 0;
 				$total_count            = Core::num_int( $count_raw );
@@ -1242,7 +1242,7 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 
-		// Strip hidden sequence suffix (\x00N) used for duplicate sibling tracking.
+		// Strip hidden sequence suffix (\x00N) for duplicate sibling tracking.
 		$name     = \is_string( $node['name'] ?? null ) ? $node['name'] : 'unknown';
 		$null_pos = \strpos( $name, "\x00" );
 		if ( false !== $null_pos ) {
@@ -1391,7 +1391,7 @@ class Flame_Builder_Node extends Node {
 					$e['count']      += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
 					$e['timed_count'] += \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0;
 					$e['sum_ms']     += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
-					// Fold min_ms only from timed buckets (skip PHP_INT_MAX sentinel).
+					// Fold min_ms from timed buckets only (skip PHP_INT_MAX).
 					$s_min_ms   = \is_numeric( $stats['min_ms'] ?? null ) ? $stats['min_ms'] : 0;
 					$s_max_ms   = \is_numeric( $stats['max_ms'] ?? null ) ? $stats['max_ms'] : 0;
 					$s_last     = \is_numeric( $stats['last_seen'] ?? null ) ? $stats['last_seen'] : 0;
@@ -1449,7 +1449,7 @@ class Flame_Builder_Node extends Node {
 		foreach ( $this->dim_stats as $dim => $buckets ) {
 			$existing = $stats_store->get_dimensional( $dim );
 			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
-			// Restore string bucket keys widened by the by-ref merge, for the store.
+			// Restore string bucket keys widened by by-ref merge, for store.
 			/** @var array<string, mixed> $existing */
 			$stats_store->set_dimensional( $dim, $existing );
 		}
@@ -1689,7 +1689,7 @@ class Flame_Builder_Node extends Node {
 		$lock_timeout = 5;
 		$lock_value   = \bin2hex( \random_bytes( 8 ) );
 
-		// No shared handle → skip cross-worker lock; just fire (single-process).
+		// No shared handle → skip cross-worker lock; just fire (single-proc).
 		if ( null === $cache ) {
 			$this->fire_auto_tune_actions();
 			return;
@@ -1818,7 +1818,7 @@ class Flame_Builder_Node extends Node {
 			$this->stats_mirror_buffer[ $key ] = [ $data, $ttl ]; // aggregate: keep all
 			return;
 		}
-		// Rank flame top-N only among URLs carrying profiling detail (fwd-compat).
+		// Rank flame top-N only among URLs with profiling detail (fwd-compat).
 		if ( Stats_Store::NS_URL === $ns && ! $this->has_profiling_detail( $data ) ) {
 			return;
 		}
@@ -2286,7 +2286,7 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						// Constant valid pattern: preg_split never returns false here.
+						// Constant valid pattern: preg_split never false here.
 						/** @var list<string> $parts */
 						$parts = \preg_split( '/\s+/', \trim( $args ) );
 						if ( \count( $parts ) < 1 || '' === $parts[0] ) {
@@ -2294,7 +2294,7 @@ class Flame_Builder_Node extends Node {
 						}
 						$partition = (int) $parts[0];
 
-						// Read substrate config for retention; store uses Core::$memd.
+						// Substrate retention config; store uses Core::$memd.
 						$config           = \Newspack_Event_Logger_Nodes\Config::load_config();
 						$max_lifespan_raw = $config['max_lifespan'] ?? 86400;
 						$max_lifespan     = Core::num_int( $max_lifespan_raw, 86400 );
@@ -2312,7 +2312,7 @@ class Flame_Builder_Node extends Node {
 					'description' => 'Mirror stats writes to a durable Partition and reload from it on cold boot (non-Atomic deployments).',
 					'args'        => [ [ 'name' => 'node', 'type' => 'string', 'required' => false, 'default' => '' ] ],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						// Store the name; resolved lazily at flush/reload (empty = disabled).
+						// Store name; resolve lazily (empty=disabled).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_stats_partition( \trim( $args ) );

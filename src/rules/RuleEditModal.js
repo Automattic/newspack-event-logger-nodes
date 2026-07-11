@@ -79,7 +79,7 @@ export default function RuleEditModal( {
 			);
 			return;
 		}
-		// Skip rules carry no payload; emit empty fields so no stale hooks leak.
+		// Skip rules carry no payload; emit empty fields, no stale hooks leak.
 		const draft = {
 			id: rule?.id ?? '',
 			pattern: trimmed,

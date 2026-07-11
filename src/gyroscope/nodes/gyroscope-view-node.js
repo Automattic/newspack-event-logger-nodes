@@ -69,7 +69,7 @@ export class GyroscopeViewNode extends Node {
 			this._complete( value );
 			return;
 		}
-		// Local control (TM_STRUCT { action, … }) — LOW-frequency path; publish.
+		// Local control (TM_STRUCT { action, … }) — LOW-freq path; publish.
 		if ( value.action ) {
 			this._control( value );
 			this._publish();

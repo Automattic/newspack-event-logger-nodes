@@ -178,7 +178,7 @@ export function usePerformanceGraph( opts = {} ) {
 	// Poll cadence (ms): >1000 throttles the router TIMER; 0 every tick.
 	const intervalMs = parseInt( refreshInterval, 10 ) || 0;
 
-	// Poll graph: overview+urls on the Timer; on-demand url/request detail views.
+	// Poll graph: overview+urls on Timer; on-demand url/request detail views.
 	const { interpreterRef } = useBatchedPoll( {
 		build: ( { interpreter, tee } ) => {
 			addSliceFetcher( interpreter, {
@@ -210,7 +210,7 @@ export function usePerformanceGraph( opts = {} ) {
 					} ),
 			} );
 
-			// On-demand url_detail: Tee → merge → view; merge lives on the edge.
+			// On-demand url_detail: Tee → merge → view; merge lives on edge.
 			const urldetailIn = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
 			const merge = interpreter.makeNode(
 				'UrlDetailMerge',
@@ -220,7 +220,7 @@ export function usePerformanceGraph( opts = {} ) {
 			urldetailIn.connectNode( URLDETAIL_MERGE );
 			interpreter.makeNode( 'UrlDetailView', URLDETAIL_VIEW );
 
-			// url_detail auto-refresh Timer → Fetcher; armed by the selection effect.
+			// url_detail auto-refresh Timer → Fetcher; armed by selection.
 			const udFetcher = interpreter.makeNode(
 				'Fetcher',
 				URLDETAIL_FETCHER,
@@ -244,13 +244,13 @@ export function usePerformanceGraph( opts = {} ) {
 		},
 		timerName: 'perf:timer',
 		teeName: 'perf:tee',
-		// Suspend the offscreen overview/urls poll while any detail modal is open.
+		// Suspend offscreen overview/urls poll while any detail modal is open.
 		paused: !! ( selectedUrl || selectedRequest ),
 		commandClient: opts.commandClient,
 		intervalMs,
 	} );
 
-	// Fire a TM_COMMAND via the interpreter; FROM = reply target, HttpOut POSTs.
+	// Fire a TM_COMMAND via interpreter; FROM = reply target, HttpOut POSTs.
 	const sendCommand = useCallback(
 		( verb, args, from, id, target = TARGET ) => {
 			const interpreter = interpreterRef.current;
@@ -283,7 +283,7 @@ export function usePerformanceGraph( opts = {} ) {
 		view.fill( m );
 	}, [] );
 
-	// Immediate overview+urls poke with current args (on filter/breakdown change).
+	// Immediate overview+urls poke with current args (filter/breakdown change).
 	const pokeOverviewUrls = useCallback( () => {
 		sendControl( OVERVIEW_VIEW, { action: 'loading' } );
 		sendControl( URLS_VIEW, { action: 'loading' } );
@@ -326,7 +326,7 @@ export function usePerformanceGraph( opts = {} ) {
 		pokeOverviewUrls();
 	}, [ serverFilter, chartBreakdown, pokeOverviewUrls ] );
 
-	// Resume-refresh overview/urls when the last modal closes (timer was paused).
+	// Resume-refresh overview/urls when last modal closes (timer was paused).
 	const modalWasOpen = useRef( false );
 	useEffect( () => {
 		const modalOpen = !! ( selectedUrl || selectedRequest );
@@ -358,7 +358,7 @@ export function usePerformanceGraph( opts = {} ) {
 		);
 	}, [ selectedUrl, sendCommand, sendControl ] );
 
-	// Arm the url_detail refresh Timer only while URL detail is the visible view.
+	// Arm url_detail refresh Timer only while URL detail is the visible view.
 	useEffect( () => {
 		const timer = Core.node( URLDETAIL_TIMER );
 		if ( ! timer ) {
@@ -510,7 +510,7 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, interpreterRef ]
 	);
 
-	// fetchUrlBreakdown — per-URL dimensional series; null on invalid hash/error.
+	// fetchUrlBreakdown — per-URL dimensional series; null on bad hash/error.
 	const fetchUrlBreakdown = useCallback(
 		async ( hash, breakdown ) => {
 			if ( ! isValidHash( hash ) ) {
@@ -583,7 +583,7 @@ export function usePerformanceGraph( opts = {} ) {
 		[ awaitReply ]
 	);
 
-	// upsertRule — replace-by-pattern/append; args is raw JSON. Resolves { rule }.
+	// upsertRule — replace-by-pattern/append; args raw JSON. Resolves {rule}.
 	const upsertRule = useCallback(
 		( ruleObject ) =>
 			awaitReply(

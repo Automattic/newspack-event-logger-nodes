@@ -87,7 +87,7 @@ class Auto_Tuner_Node extends Node {
 					$hooks,
 					static fn( $hook ) => \in_array( $hook, $significant, true ) || ! \in_array( $hook, $items, true )
 				) );
-				// Hand save() the resolved list + inline marker; it re-tiers by count.
+				// Give save() resolved list + inline marker; re-tiers by count.
 				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $rule->custom_events, $kept, Rule::HOOKS_INLINE );
 			}
 		);
@@ -103,7 +103,7 @@ class Auto_Tuner_Node extends Node {
 				$significant = $rule->significant_events;
 				$disable     = \array_flip( \array_filter( $items, static fn( $event ) => ! \in_array( $event, $significant, true ) ) );
 				$kept        = \array_values( \array_filter( $rule->custom_events, static fn( $event ) => ! isset( $disable[ $event ] ) ) );
-				// Pass resolved hooks (not the pointer's null) or save() drops the rule.
+				// Pass resolved hooks (not pointer null) or save() drops rule.
 				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $kept, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
 			}
 		);
@@ -117,13 +117,13 @@ class Auto_Tuner_Node extends Node {
 			$rule_id,
 			static function ( Rule $rule ) use ( $items ): Rule {
 				$merged = \array_values( \array_unique( \array_merge( $rule->significant_events, $items ) ) );
-				// Resolve hooks (pointer ->hooks is null) so save() re-tiers, not drops.
+				// Resolve hooks (pointer null) so save() re-tiers, not drops.
 				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $merged, $rule->custom_events, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
 			}
 		);
 	}
 
-	// --- Apply -----------------------------------------------------------------
+	// --- Apply --------------------------------------------------------------
 
 	/**
 	 * Load the rule set, mutate the rule identified by `$rule_id`, and save it
@@ -133,7 +133,7 @@ class Auto_Tuner_Node extends Node {
 	 * @param callable(Rule): ?Rule $mutate
 	 */
 	private function mutate_rule( string $rule_id, callable $mutate ): void {
-		// Fresh snapshot: RMW on rules option in a long-lived worker (avoid clobber).
+		// Fresh snapshot: RMW on rules option in worker (avoid clobber).
 		\Newspack_Nodes\Config::invalidate_options_cache();
 
 		$set  = Rule_Set::load();
@@ -178,7 +178,7 @@ class Auto_Tuner_Node extends Node {
 
 	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
-		// Hidden: AutoTuner is a FlameBuilder sibling, not built directly in TSL.
+		// Hidden: AutoTuner is a FlameBuilder sibling, not built in TSL.
 		return [
 			'category'    => 'Hidden',
 			'description' => 'Receives FlameBuilder auto-tune decisions and applies them to the identified rule.',

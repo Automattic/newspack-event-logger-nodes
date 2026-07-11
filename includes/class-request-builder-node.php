@@ -94,7 +94,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * @api Used by substrate.
 	 */
 	public function __construct() {
-		// Schema-default cache so the no-arg ctor works; arguments() rebuilds sizes.
+		// Schema-default cache so the no-arg ctor works; arguments() rebuilds.
 		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
 
@@ -162,7 +162,7 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 
-		// Intern keywords: dedupe json_decode's per-entry strings to one zval each.
+		// Intern keywords: dedupe json_decode's per-entry strings to one zval.
 		/** @var array<string, string> $intern */
 		static $intern = [];
 		$keyword       = $entry['k'] ?? '';
@@ -189,10 +189,10 @@ class Request_Builder_Node extends Timer_Node {
 		// The cache only ever stores the \stdClass built above for a given rid.
 		/** @var \stdClass $request */
 
-		// Validate per-request sequence n: catch orphans, dupes, reorders, rid reuse.
+		// Validate per-request seq n: catch orphans, dupes, reorders, reuse.
 		$seq_n = Core::as_int( $n );
 
-		// Nested render (proc_open) restarts n at 1 same rid; stack saves parent n.
+		// Nested render (proc_open) restarts n=1 same rid; stack saves parent.
 		if ( 'gyrobase (start)' === $keyword ) {
 			$stack               = \is_array( $request->seq_stack ?? null ) ? $request->seq_stack : [];
 			$stack[]             = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
@@ -216,7 +216,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		$request->expected_n = $seq_n + 1;
 
-		// End of the nested subprocess sequence: pop back to the parent's expected n.
+		// End of nested subprocess sequence: pop back to parent's expected n.
 		if ( 'gyrobase (complete)' === $keyword && \is_array( $request->seq_stack ?? null ) && [] !== $request->seq_stack ) {
 			$stack               = $request->seq_stack;
 			$popped              = \array_pop( $stack );
@@ -224,7 +224,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->seq_stack  = $stack;
 		}
 
-		// Forward errors/warnings to errors.log; pass rid so it rides Message KEY.
+		// Forward errors/warnings to errors.log; pass rid so it rides KEY.
 		if ( 'error' === $keyword || 'warning' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
@@ -248,12 +248,12 @@ class Request_Builder_Node extends Timer_Node {
 			);
 		}
 
-		// Per-line activity timestamps for the inflight snapshot's *_ms derivation.
+		// Per-line activity timestamps for the inflight snapshot's *_ms derive.
 		$ts_log_v             = $entry['ts'] ?? 0;
 		$request->last_log_ts = Core::as_float( $ts_log_v );
 		$request->tracker_ts  = \microtime( true );
 
-		// Runaways stay visible (Perl gyroscope parity); still evicted + bounded.
+		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
 		if ( $request->is_runaway ?? false ) {
 			return;
 		}
@@ -409,7 +409,7 @@ class Request_Builder_Node extends Timer_Node {
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
 		/** @var list<array{0: string, 1: string}> $stack */
 		$stack = &$request->stack;
-		// Dynamic \stdClass property: per-state profile records keyed by state name.
+		// Dynamic \stdClass property: per-state profile records keyed by state.
 		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
 		$profiles = &$request->profiles;
 
@@ -522,7 +522,7 @@ class Request_Builder_Node extends Timer_Node {
 					if ( $ancestor_label && isset( $profiles[ $ancestor ]['entries'][ $ancestor_label ] ) ) {
 						$profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
-					// Keep subtracting up to the first non-callback ancestor, then stop.
+					// Subtract up to first non-callback ancestor, then stop.
 					if ( ! self::is_callback_state( $ancestor ) ) {
 						break;
 					}
@@ -644,12 +644,12 @@ class Request_Builder_Node extends Timer_Node {
 			if ( ! \is_array( $raw ) ) {
 				return;
 			}
-			// v3 `m` keys are strings — cast so typed env_str() lookups type-check.
+			// v3 `m` keys are strings — cast so typed env_str() type-checks.
 			$env = [];
 			foreach ( $raw as $k => $v ) {
 				$env[ (string) $k ] = $v;
 			}
-			// REMOTE_ADDR wins when present; XFF only when REMOTE_ADDR is absent.
+			// REMOTE_ADDR wins if present; XFF only when it is absent.
 			$remote = self::env_str( $env, 'REMOTE_ADDR' );
 			if ( '' !== $remote ) {
 				$ip = \trim( $remote );
@@ -685,7 +685,7 @@ class Request_Builder_Node extends Timer_Node {
 			}
 			$worker_type = self::env_str( $env, 'NEWSPACK_NODES_WORKER_TYPE' );
 			if ( '' !== $worker_type ) {
-				// Capture the value so the worker gets its own ?worker_type URL row.
+				// Capture value so worker gets its own ?worker_type URL row.
 				$request->is_worker   = true;
 				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $worker_type ) ?? '';
 			}
@@ -731,7 +731,7 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 		$now = \time();
-		// Dynamic \stdClass property is mixed by design; the int cast is intentional.
+		// Dynamic \stdClass property is mixed by design; int cast intentional.
 		/** @var int|float|string $ts_raw */
 		$ts_raw                 = $request->timestamp ?? $now;
 		$start_ts               = (int) $ts_raw;
@@ -758,7 +758,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * @param \stdClass $request Completed request envelope.
 	 */
 	public function emit_request( \stdClass $request ): void {
-		// Workers get a ?worker_type URL row so they don't merge onto real URLs.
+		// Workers get ?worker_type URL row so they don't merge onto real URLs.
 		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
 		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
 		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
@@ -768,7 +768,7 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
-		// Dynamic \stdClass prop is mixed by design; the string cast is intentional.
+		// Dynamic \stdClass prop is mixed by design; string cast intentional.
 		/** @var int|float|string $rid_raw */
 		$rid_raw                   = $request->rid ?? '';
 		$message[ Message::KEY ]       = (string) $rid_raw;
@@ -807,10 +807,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * @return array<string,mixed>
 	 */
 	public function build_compact_summary( \stdClass $request ): array {
-		// Decoded request envelope: string-keyed map with mixed-by-design values.
+		// Decoded request envelope: string-keyed map, mixed-by-design values.
 		/** @var array<string, mixed> $r */
 		$r = (array) $request;
-		// Mixed-by-design (array)/stdClass reads; the string casts are intentional.
+		// Mixed-by-design (array)/stdClass reads; string casts intentional.
 		/** @var int|float|string|bool|null $url_raw */
 		$url_raw = $r['url'] ?? '';
 		$url     = (string) $url_raw;
@@ -823,7 +823,7 @@ class Request_Builder_Node extends Timer_Node {
 		$method_raw = $r['request_method'] ?? 'GET';
 		/** @var int|float|string|bool|null $remote_addr_raw */
 		$remote_addr_raw = $r['remote_addr'] ?? '';
-		// Preserve native ts/dur type: casting breaks the json_encode round-trip.
+		// Preserve native ts/dur type: casting breaks json_encode round-trip.
 		/** @var int|float $ts */
 		$ts = $r['timestamp'] ?? 0;
 		/** @var int|float $dur */
@@ -892,11 +892,11 @@ class Request_Builder_Node extends Timer_Node {
 		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
 			return null;
 		}
-		// Decoded request envelope: string-keyed map with mixed-by-design values.
+		// Decoded request envelope: string-keyed map, mixed-by-design values.
 		/** @var array<string, mixed> $value */
 		$request = (object) $value;
 
-		// Dynamic \stdClass reads are mixed by design; the casts are intentional.
+		// Dynamic \stdClass reads mixed by design; casts intentional.
 		$rid_raw = $request->rid ?? '';
 		$rid     = Core::str( $rid_raw );
 		$url_raw = $request->url ?? '';
@@ -1118,7 +1118,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( ! \is_array( $cache_state ) ) {
 			return;
 		}
-		// Persisted cache snapshot: string-keyed by design (LRU_Cache::get_state()).
+		// Persisted cache snapshot: string-keyed by design (LRU_Cache state).
 		/** @var array<string, mixed> $cache_state */
 		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
 			foreach ( $cache_state['buckets'] as &$bucket ) {
@@ -1211,7 +1211,7 @@ class Request_Builder_Node extends Timer_Node {
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
-						// Empty arg clears the target (disables the secondary emit).
+						// Empty arg clears target (disables secondary emit).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_errors_target( $args );
@@ -1226,7 +1226,7 @@ class Request_Builder_Node extends Timer_Node {
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
-						// Empty arg clears the target (disables the secondary emit).
+						// Empty arg clears target (disables secondary emit).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_completed_target( $args );
@@ -1241,7 +1241,7 @@ class Request_Builder_Node extends Timer_Node {
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						$args = \trim( $args );
-						// Flight::target() arms the Router-TIMER hitchhike; empty stops it.
+						// target() arms Router-TIMER hitchhike; empty stops it.
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->flight()->target( $args );

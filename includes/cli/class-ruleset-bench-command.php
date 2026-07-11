@@ -84,7 +84,7 @@ class Ruleset_Bench_Command {
 	private function measure_cell( int $k, int $rule_count, int $iterations ): array {
 		$hooks = self::synthetic_hooks( $k );
 
-		// Autoload tax: K×M inline hooks in one autoloaded option; time unserialize.
+		// Autoload tax: K×M inline hooks in one option; time unserialize.
 		$inline_blob = [];
 		for ( $r = 0; $r < $rule_count; $r++ ) {
 			$inline_blob[ 'bench_rule_' . $r ] = $hooks;
@@ -97,7 +97,7 @@ class Ruleset_Bench_Command {
 			$autoload_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
 
-		// Inline path: read array + bind loop (no add_filter; measure loop cost).
+		// Inline path: read array + bind loop (no add_filter; measure cost).
 		$inline_samps = [];
 		for ( $i = 0; $i < $iterations; $i++ ) {
 			$t = \hrtime( true );

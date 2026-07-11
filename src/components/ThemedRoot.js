@@ -29,9 +29,9 @@ import './ThemedRoot.scss';
 export default function ThemedRoot( { children } ) {
 	const ref = useRef( null );
 
-	// Paint the WP-admin gutters to the live skin's base surface on skin change.
+	// Paint WP-admin gutters to the skin base surface on skin change.
 	useEffect( () => {
-		// Apply persisted skin to <html> before the gutter probe reads --paper-3.
+		// Apply persisted skin to <html> before gutter probe reads --paper-3.
 		initSkin();
 		const host = ref.current;
 		if ( ! host ) {

@@ -82,7 +82,7 @@ class Job_Router_Node extends Node {
 			return;
 		}
 
-		// Dispatch kind = entry `k` (not body) so hub job→remote_job rewrite wins.
+		// Dispatch kind = entry `k` (not body) so hub job→remote_job wins.
 		/** @var int|float|string|bool|null $raw_type */
 		$raw_type = $entry['k'] ?? '';
 		$type     = (string) $raw_type;

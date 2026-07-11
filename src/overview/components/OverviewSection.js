@@ -68,7 +68,7 @@ export default function OverviewSection( {
 	breakdownData,
 	categoryData,
 } ) {
-	// breakdownData/chartBreakdown lifted so the dim rides the combined /overview.
+	// breakdownData/chartBreakdown lifted so the dim rides combined /overview.
 	const breakdownLoading = false;
 
 	// Show server dropdown when 2+ servers detected (hub mode).
@@ -101,7 +101,7 @@ export default function OverviewSection( {
 		return CHART_BREAKDOWN_OPTIONS;
 	}, [ serverFilter ] );
 
-	// Reset breakdown to 'status' if it was 'server' when server filter activates.
+	// Reset breakdown 'server'→'status' when server filter activates.
 	useEffect( () => {
 		if ( serverFilter && chartBreakdown === 'server' ) {
 			setChartBreakdown( 'status' );

@@ -88,7 +88,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 				if ( ! mountedRef.current ) {
 					return;
 				}
-				// request_detail throws until requests.log has it (still processing).
+				// request_detail throws until requests.log has it (processing).
 				const request = unwrapCommandResponse( reply );
 				setState(
 					request

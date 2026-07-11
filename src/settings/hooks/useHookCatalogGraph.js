@@ -113,7 +113,7 @@ export function useHookCatalogGraph( opts = {} ) {
 
 		interpreterRef.current = interpreter;
 
-		// Re-render so useNodeState re-subscribes to the freshly-mounted view node.
+		// Re-render so useNodeState re-subscribes to the fresh view node.
 		setViewReady( true );
 
 		return () => {

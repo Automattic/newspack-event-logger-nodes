@@ -249,7 +249,7 @@ class Stats_Store {
 			$keys[]    = $k;
 			$map[ $k ] = $b;
 		}
-		// `?->` yields null (no handle); getMulti false on miss — both → [].
+		// `?->` null (no handle); getMulti false on miss — both → [].
 		$results = Core::$memd?->getMulti( $keys ) ?: [];
 		$out     = [];
 		foreach ( $results as $k => $v ) {

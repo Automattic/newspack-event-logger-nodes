@@ -70,7 +70,7 @@ export function useErrorLogGraph( opts = {} ) {
 	const [ isPaused, setIsPaused ] = useState( false );
 	const isPageVisible = usePageVisibility();
 
-	// Mirror isPaused into a ref so a reinit's mountNodes sees the current pause.
+	// Mirror isPaused into a ref so reinit mountNodes sees current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
 
@@ -91,7 +91,7 @@ export function useErrorLogGraph( opts = {} ) {
 				LINK,
 				`errors ${ baseUrl } ${ nonce }`
 			);
-			// Pass-through Tee on the stream edge; copies each frame to the view.
+			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			link.client = new CommandClient( { baseUrl, nonce } );
 
@@ -116,7 +116,7 @@ export function useErrorLogGraph( opts = {} ) {
 			link.connect( isReconnect ? link.resumePositions() : null ),
 	} );
 
-	// setPaused: flip hook state (re-runs the effect) and publish it to the view.
+	// setPaused: flip hook state (re-runs effect) and publish it to view.
 	const setPaused = ( paused ) => {
 		setIsPaused( paused );
 		if ( viewRef.current ) {

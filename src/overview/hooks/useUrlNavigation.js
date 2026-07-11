@@ -89,7 +89,7 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 			const urlObj = urls.find( ( u ) => u.hash === initialUrlHash );
 			if ( urlObj ) {
 				selectUrl( urlObj );
-				// If there's also a request ID in the URL, set it after URL loads.
+				// If a request ID is also in the URL, set it after URL loads.
 				if ( initialRequestId ) {
 					selectRequest( initialRequestId );
 				}
@@ -99,7 +99,7 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 			setInitialRequestId( null );
 			return;
 		}
-		// ?request= without ?url=: resolver fetches the entry fresh, selects both.
+		// ?request= without ?url=: resolver fetches entry fresh, selects both.
 		if ( ! initialUrlHash && initialRequestId && resolveRequestId ) {
 			const rid = initialRequestId;
 			setInitialRequestId( null );
@@ -116,7 +116,7 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 
 	// Update browser URL when selection changes.
 	useEffect( () => {
-		// Skip if this change was triggered by popstate - URL is already correct.
+		// Skip if change was triggered by popstate — URL is already correct.
 		if ( isPopstateNavigation.current ) {
 			isPopstateNavigation.current = false;
 			return;

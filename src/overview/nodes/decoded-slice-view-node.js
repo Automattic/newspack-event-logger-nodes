@@ -46,7 +46,7 @@ export class DecodedSliceViewNode extends Node {
 	}
 
 	fill( message ) {
-		// Awaited-verb path: a settled reply is consumed here, not the slice logic.
+		// Awaited-verb path: a settled reply is consumed here, not slice logic.
 		if ( this.replies && this.replies.settle( message ) ) {
 			return;
 		}
@@ -65,7 +65,7 @@ export class DecodedSliceViewNode extends Node {
 			return;
 		}
 
-		// Clear control: reset to the empty slice (modal close → next open fresh).
+		// Clear control: reset to empty slice (modal close → next open fresh).
 		if (
 			TM_STRUCT === ( type & TM_STRUCT ) &&
 			value &&
@@ -76,7 +76,7 @@ export class DecodedSliceViewNode extends Node {
 			return;
 		}
 
-		// Client-side validation failure: surface error, clear loading, keep data.
+		// Client validation failure: surface error, clear loading, keep data.
 		if (
 			TM_STRUCT === ( type & TM_STRUCT ) &&
 			value &&
@@ -104,7 +104,7 @@ export class DecodedSliceViewNode extends Node {
 			return;
 		}
 
-		// Success reply: only an object VALUE decodes; else keep the prior slice.
+		// Success reply: only an object VALUE decodes; else keep prior slice.
 		if ( ! value || 'object' !== typeof value ) {
 			return;
 		}

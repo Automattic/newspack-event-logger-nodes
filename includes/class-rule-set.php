@@ -58,7 +58,7 @@ final class Rule_Set {
 			];
 		}
 		$overlap = $version < 1 ? self::migrate_legacy_options() : false;
-		// Every sub-v2 install needs the id rekey (cheap re-save on v0 post-fold-in).
+		// Every sub-v2 install needs id rekey (cheap re-save on v0 fold-in).
 		self::rekey_ids();
 		\update_option( self::OPTION_SCHEMA_VERSION, self::SCHEMA_VERSION, true );
 		return [
@@ -83,7 +83,7 @@ final class Rule_Set {
 			}
 		}
 		if ( ! $any_present ) {
-			// Nothing to migrate: leave rules absent so the file-config seed owns it.
+			// Nothing to migrate: leave rules absent; file-config seed owns it.
 			return false;
 		}
 
@@ -97,7 +97,7 @@ final class Rule_Set {
 			'hooks'                       => self::string_list( \get_option( $p . 'log_events', [] ) ),
 		];
 
-		// Key by id so a pattern in both lists collapses to one rule; skip wins.
+		// Key by id so pattern in both lists collapses to one rule; skip wins.
 		$rules = [];
 		foreach ( $skip as $pattern ) {
 			$id           = self::id_for( $pattern );
@@ -154,7 +154,7 @@ final class Rule_Set {
 	 * @param string[] $log
 	 */
 	private static function detect_prefix_overlap( array $skip, array $log ): bool {
-		// Case-insensitive to match Rule_Matcher (a case-diff overlap flips it).
+		// Case-insensitive to match Rule_Matcher (case-diff overlap flips it).
 		foreach ( $skip as $s ) {
 			$sl = \strtolower( $s );
 			foreach ( $log as $l ) {
@@ -259,7 +259,7 @@ final class Rule_Set {
 			if ( \is_array( $entry ) ) {
 				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
 				$rule = Rule::from_array( $entry );
-				// Mint an id for an idless stored rule so nothing collides on the '' key.
+				// Mint id for idless stored rule; avoids collision on '' key.
 				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
 			}
 		}
@@ -346,7 +346,7 @@ final class Rule_Set {
 			}
 			$hooks = $rule->hooks;
 			if ( null === $hooks && Rule::HOOKS_MC === $rule->hooks_in ) {
-				// Rehydrate a hooks=null pointer rule so tiering doesn't wipe its option.
+				// Rehydrate hooks=null pointer rule so tiering keeps option.
 				$hooks = self::hooks_for( $rule );
 			}
 			$hooks = $hooks ?? [];
@@ -366,7 +366,7 @@ final class Rule_Set {
 				$stored[] = $inline->to_array();
 				continue;
 			}
-			// Pointer: durable option is the system of record; mc is a warm mirror.
+			// Pointer: durable option is source of record; mc is warm mirror.
 			\update_option( self::hooks_option_name( $rule->id ), \array_values( $hooks ), false );
 			if ( null !== $memd ) {
 				$memd->set( self::mc_key( $rule->id ), \array_values( $hooks ), self::MC_TTL );
@@ -384,7 +384,7 @@ final class Rule_Set {
 
 		$this->reconcile_orphans( $live_pointers );
 		\update_option( self::OPTION_RULES, $stored, true );
-		// Keep in-memory list in the persisted re-tiered form so rules()==load().
+		// Keep in-memory list in persisted re-tiered form so rules()==load().
 		$this->rules = $tiered;
 	}
 
