@@ -18,7 +18,7 @@ wp plugin install --force --activate \
   https://github.com/Automattic/newspack-event-logger-nodes/releases/latest/download/newspack-event-logger-nodes.zip
 
 # Verify the runtime sees this plugin's worker topologies.
-wp nodes ls
+wp nodes status
 ```
 
 Or download the zips from the [Releases](https://github.com/Automattic/newspack-event-logger-nodes/releases) page and upload via the WordPress admin.
