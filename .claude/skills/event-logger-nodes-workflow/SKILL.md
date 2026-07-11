@@ -36,8 +36,8 @@ Quick test: would a non-event-logger consumer of newspack-nodes ever want this? 
    - `newspack_nodes/job_handlers` — dispatched for `k:"job"` entries on every node's own JobWorker. Use when the work should run locally on the node that produced the entry.
    - `newspack_nodes/remote_job_handlers` — dispatched on the hub for `k:"remote_job"` entries (the rewritten product of spoke-aggregated `k:"job"` lines). Use when the work should run centrally on the hub after aggregation.
    Registering under both is the right call when local + aggregated copies need handling under the same name but with potentially different logic (e.g. local handler runs unconditionally, hub handler filters by a per-entry attribute).
-3. Validate inputs at the handler boundary; the substrate rate-limits you on size (32MB cap per job — `MAX_JOB_SIZE = 33554432` in both `Job_Router_Node` and `Job_Intake`) but doesn't validate content.
-4. **Size discipline**: if the payload could exceed 4KB, write via `Job_Intake::queue( $handler_name, $parameters )` instead of Log_Manager. `$parameters` is the array passed through to the handler (the optional 3rd arg is a partition key). Job_Intake is the auto-locked large-write path.
+3. Validate inputs at the handler boundary; the substrate rate-limits you on size (32MB cap per job — canonical `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE`, which `Job_Router_Node` derives from) but doesn't validate content.
+4. **Size discipline**: if the payload could exceed 4KB, write via `\Newspack_Nodes\Job_Intake::queue( $handler_name, $parameters )` (the class moved to the substrate) instead of Log_Manager. `$parameters` is the array passed through to the handler (the optional 3rd arg is a hash_to_partition routing key). Job_Intake is the auto-locked large-write path.
 
 A worked example of a timer-driven local handler: `Health_Check_Tick_Node` (a `Timer_Node` that hitchhikes the `_router` heartbeat) enqueues a job every interval and registers its handler on `newspack_nodes/job_handlers`. (The sibling `newspack-cache-cozy` plugin is the same pattern as a standalone, node-only plugin — a good reference when building one from scratch.)
 

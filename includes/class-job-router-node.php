@@ -50,7 +50,7 @@ class Job_Router_Node extends Node {
 
 	public const KIND_JOB        = 'job';
 	public const KIND_REMOTE_JOB = 'remote_job';
-	public const MAX_JOB_SIZE    = 32 * 1024 * 1024;
+	public const MAX_JOB_SIZE    = \Newspack_Nodes\Job_Intake::MAX_JOB_SIZE;
 
 	public function fill( array $message ): void {
 		++$this->counter;

@@ -447,7 +447,7 @@ Multi-input routing. Reads firehose AND jobintake; disambiguates source via Mess
 Validation:
 
 - Handler name pattern `/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/`
-- `MAX_JOB_SIZE = 33554432` (32MB)
+- `MAX_JOB_SIZE` — derives from `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE` (32MB, the canonical cap)
 
 Unknown handlers, oversized lines, and invalid handler names log via `Core::print_less_often` (rate-limited).
 
@@ -651,6 +651,8 @@ Settings fan-out is now the substrate `Settings_Sync_Node` graph in the `hub-con
 **Value resolved at consume time, not at write time.** `Settings_Event_Writer` records only the option *name*; `Settings_Sync_Node` reads the current value when it consumes the event (and on its 300s tick re-reads + re-pushes every registered option). So a burst of writes to one option collapses to a single current-value push, and there's no stale-value race. ELN supplies the name→value mapping through the `newspack_nodes/settings_sync/value` filter.
 
 ## Job_Intake vs Firehose Routing
+
+(`Job_Intake` itself lives in the newspack-nodes substrate as `\Newspack_Nodes\Job_Intake`; substrate-only installs drain it via the stock `job-intake` topology — a subset of this plugin's `job-router.tsl`, never co-activated with it.)
 
 Two write paths into the job queue:
 
