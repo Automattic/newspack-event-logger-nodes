@@ -47,7 +47,7 @@ Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the 
 wp nodes cli combined.p0
 ```
 
-Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, `hub-control`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes ls`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (Worker-restart classification is unrelated to topology names: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — e.g. `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
+Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, `hub-control`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes status`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (Worker-restart classification is unrelated to topology names: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — e.g. `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
 
 From the prompt:
 
@@ -64,9 +64,9 @@ command_node "" ping                    # dispatch a verb at the cwd without typ
 
 Valid `ls` column flags are `-a`, `-c`, `-l`, `-s`, `-t` (combinable, e.g. `-alst`). There is no `-o` flag — substrate moved off the legacy `sink/owner` model to the rule-#2 `sink/target` model.
 
-For other pivots, use the matching reader id — the topology name plus partition, e.g. `job-worker.p0`, `request-builder.p0`, `aggregator.p0`. Run `wp nodes types` to see the topologies the substrate cataloged and `wp nodes ls` to see what's actually live — those are authoritative; topology names vary per-deployment via the substrate `topologies` config.
+For other pivots, use the matching reader id — the topology name plus partition, e.g. `job-worker.p0`, `request-builder.p0`, `aggregator.p0`. Run `wp nodes types` to see the topologies the substrate cataloged and `wp nodes status` to see what's actually live — those are authoritative; topology names vary per-deployment via the substrate `topologies` config.
 
-Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes ls' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes ls` to see what's actually live.
+Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes status' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes status` to see what's actually live.
 
 Scripted pivot sessions (`echo cmd | wp nodes cli foo.p0`) drain cleanly without a trailing `sleep` — substrate sends a TM_EOF on stdin close and waits for the worker's echo before exiting, so any in-flight response lands first.
 
@@ -138,7 +138,7 @@ Diagnostic flow:
 ```bash
 # Is this node a hub? Derived from active topologies, not an option.
 wp nodes types     # cataloged topologies
-wp nodes ls        # what's actually live — look for aggregator.pN / hub-control.p0
+wp nodes status        # what's actually live — look for aggregator.pN / hub-control.p0
 
 # Aggregator status / health — substrate-owned now (the `aggregator` CI moved
 # to newspack-nodes). Dispatch via the unified command-protocol endpoint:
@@ -161,7 +161,7 @@ If a hub is missing entries from a spoke: check the substrate `Remote_Source_Nod
 
 **Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at `MAX_DATA_SIZE` (3840B) — category tagged `" (truncated)"`, data clipped to a 1000-char excerpt — so the handler never saw a parseable payload (an `error_log` notice marks it). Use `JobIntake::queue()` instead.
 
-**Settings sync silently doing nothing.** Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology. An option change always records a settings event (substrate `Settings_Event_Writer` → `settings.p0`); nothing fans it out unless `hub-control` is live and per-spoke `HTTP_Out` nodes are wired — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check `wp nodes ls` for a live `hub-control.p0` and that the operator wired spoke `HTTP_Out` nodes. Both `enable_workers` (v0.5.0) and `enable_aggregator` were retired.
+**Settings sync silently doing nothing.** Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology. An option change always records a settings event (substrate `Settings_Event_Writer` → `settings.p0`); nothing fans it out unless `hub-control` is live and per-spoke `HTTP_Out` nodes are wired — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check `wp nodes status` for a live `hub-control.p0` and that the operator wired spoke `HTTP_Out` nodes. Both `enable_workers` (v0.5.0) and `enable_aggregator` were retired.
 
 **Cache warmer.** The refresh-ahead cache warmer was extracted to its own plugin, `newspack-cache-cozy` (v0.15.0). It no longer lives here — debug it from that plugin's repo.
 

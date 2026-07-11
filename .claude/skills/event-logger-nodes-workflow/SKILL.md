@@ -171,7 +171,7 @@ wp nodes reqgrep --follow
 
 For dashboard changes: open the relevant page and verify the panels render. Browser DevTools network tab will show REST traffic. Telemetry dashboards land at `/wp-admin/admin.php?page=event-logger-*` (`event-logger-overview`, `event-logger-errors`, `event-logger-gyroscope`, `event-logger-requests`); the Settings / hook-catalog tree (`settings`) is served at `page=newspack-event-logger-nodes`. The aggregator admin page is now substrate-owned (newspack-nodes), not routed here.
 
-For job handler changes: queue a job (via the legitimate caller), wait, check `wp nodes ls` for job-workers heartbeat, optionally reqgrep for the rid.
+For job handler changes: queue a job (via the legitimate caller), wait, check `wp nodes status` for job-workers heartbeat, optionally reqgrep for the rid.
 
 ## Patterns That Trip People Up
 
