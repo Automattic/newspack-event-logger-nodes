@@ -40,13 +40,32 @@ class SettingsSyncResolverTest extends TestCase {
 		$this->assertSame( Config::load_config_defaults()['rules'], $resolved );
 	}
 
-	/** A non-blank value passes through unchanged for a synced option. */
+	/** A non-blank ruleset with only inline/skip rules passes through unchanged. */
 	public function test_non_blank_synced_value_passes_through(): void {
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
 			[ [ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ] ],
 			'newspack_event_logger_nodes_rules'
 		);
 		$this->assertSame( [ [ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ] ], $resolved );
+	}
+
+	/**
+	 * A pointer (mc-tier) rule's hooks live in a SEPARATE durable option that
+	 * settings-sync never carries; the resolver must inline them so the spoke
+	 * receives the ruleset hook-complete (else it logs "hooks missing" forever).
+	 */
+	public function test_pointer_rule_hooks_are_inlined_for_transport(): void {
+		$GLOBALS['_wp_options'] = [
+			\Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'heavy' ) => [ 'init', 'wp', 'shutdown' ],
+		];
+
+		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
+			[ [ 'id' => 'heavy', 'pattern' => '/x/', 'action' => 'log', 'hooks' => null, 'hooks_in' => 'mc' ] ],
+			'newspack_event_logger_nodes_rules'
+		);
+
+		$this->assertSame( 'inline', $resolved[0]['hooks_in'], 'pointer hooks must be inlined for the wire' );
+		$this->assertSame( [ 'init', 'wp', 'shutdown' ], $resolved[0]['hooks'] );
 	}
 
 	/** A blank value for a NON-synced option passes through unchanged (no resolution). */
