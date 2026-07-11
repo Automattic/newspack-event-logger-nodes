@@ -251,6 +251,134 @@ class Admin {
 		);
 	}
 
+	/**
+	 * Reset-to-defaults handler — admin-post target.
+	 *
+	 * Nonce + permission checks before deleting any options.
+	 */
+	public function handle_reset_settings(): void {
+		self::verify_admin_post( self::RESET_NONCE, self::RESET_ACTION );
+
+		// Derive reset list from Schema so this works pre-register_settings().
+		$options = Settings_Schema::get()->setting_option_names();
+
+		foreach ( $options as $option ) {
+			if ( \str_starts_with( $option, self::OPTION_PREFIX ) ) {
+				\delete_option( $option );
+			}
+		}
+
+		$redirect = \function_exists( 'admin_url' )
+			? \add_query_arg(
+				[
+					'page'  => self::MENU_SLUG,
+					'reset' => '1',
+				],
+				\admin_url( 'options-general.php' )
+			)
+			: '';
+		if ( '' !== $redirect ) {
+			\wp_safe_redirect( $redirect );
+			exit;
+		}
+		exit;
+	}
+
+	/**
+	 * Shared admin-post gate: verify the POSTed nonce (read from $nonce_field
+	 * against $action) and the caller's capability, `wp_die`-ing on either
+	 * failure. Both admin-post handlers run this identical check first.
+	 *
+	 * @param string $nonce_field POST key carrying the nonce.
+	 * @param string $action      Nonce action to verify against.
+	 */
+	private static function verify_admin_post( string $nonce_field, string $action ): void {
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$nonce = isset( $_POST[ $nonce_field ] ) && \is_string( $_POST[ $nonce_field ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ $nonce_field ] ) ) : '';
+		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, $action ) ) {
+			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
+		}
+		if ( ! self::current_user_allowed() ) {
+			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
+		}
+	}
+
+	/**
+	 * Permission gate: `manage_options` baseline + optional `allowed_users`
+	 * whitelist from Config.
+	 *
+	 * Empty `allowed_users` means "all users with manage_options". When the
+	 * whitelist is populated, the current user's `user_login` must be a member.
+	 * This is intentional — manage_options is required even for whitelisted
+	 * users, so a demoted account loses access immediately without needing the
+	 * whitelist updated.
+	 *
+	 * @return bool True if user is allowed.
+	 */
+	public static function current_user_allowed(): bool {
+		if ( ! \current_user_can( 'manage_options' ) ) {
+			return false;
+		}
+
+		$config        = Config::load_config();
+		$allowed_users = $config['allowed_users'] ?? [];
+		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
+			return true;
+		}
+
+		if ( ! \function_exists( 'wp_get_current_user' ) ) {
+			return true; // CLI / no user context — don't lock out CLI admins.
+		}
+		$current_user = \wp_get_current_user();
+		return \in_array( $current_user->user_login, $allowed_users, true );
+	}
+
+	/**
+	 * Flush memcache stats by rotating the schema salt. Every existing
+	 * `evlog[:salt]:p{N}:…` key orphans instantly and ages out by TTL.
+	 * request-workers are restarted because FlameBuilder caches `prefix`
+	 * at construction — without a restart the live FlameBuilder keeps
+	 * writing under the OLD salt, defeating the flush.
+	 */
+	public function handle_flush_stats(): void {
+		self::verify_admin_post( self::FLUSH_STATS_NONCE, self::FLUSH_STATS_ACTION );
+
+		// flush_all() only rotates the salt option; no memcache handle needed.
+		$config       = Config::load_config();
+		$max_lifespan = $config['max_lifespan'] ?? 86400;
+		$stats        = new Stats_Store( 0, Core::num_int( $max_lifespan ) );
+		$stats->flush_all();
+
+		// Restart all workers: they cache the salt prefix at construction.
+		$restarted = 0;
+		try {
+			$workers   = Bootstrap::expand_workers();
+			$base_dir  = RuntimeConfig::get_base_directory();
+			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
+		} catch ( \Throwable $e ) {
+			// Best-effort; next supervisor spawn picks up the salt regardless.
+			\Newspack_Nodes\Core::print_less_often(
+				'Stats flush: restart_workers failed — ' . $e->getMessage()
+			);
+		}
+
+		$redirect = \function_exists( 'admin_url' )
+			? \add_query_arg(
+				[
+					'page'      => self::MENU_SLUG,
+					'flushed'   => '1',
+					'restarted' => $restarted,
+				],
+				\admin_url( 'options-general.php' )
+			)
+			: '';
+		if ( '' !== $redirect ) {
+			\wp_safe_redirect( $redirect );
+			exit;
+		}
+		exit;
+	}
+
 	public function render_settings_page(): void {
 		if ( ! self::current_user_allowed() ) {
 			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
@@ -316,36 +444,6 @@ class Admin {
 	}
 
 	/**
-	 * Permission gate: `manage_options` baseline + optional `allowed_users`
-	 * whitelist from Config.
-	 *
-	 * Empty `allowed_users` means "all users with manage_options". When the
-	 * whitelist is populated, the current user's `user_login` must be a member.
-	 * This is intentional — manage_options is required even for whitelisted
-	 * users, so a demoted account loses access immediately without needing the
-	 * whitelist updated.
-	 *
-	 * @return bool True if user is allowed.
-	 */
-	public static function current_user_allowed(): bool {
-		if ( ! \current_user_can( 'manage_options' ) ) {
-			return false;
-		}
-
-		$config        = Config::load_config();
-		$allowed_users = $config['allowed_users'] ?? [];
-		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
-			return true;
-		}
-
-		if ( ! \function_exists( 'wp_get_current_user' ) ) {
-			return true; // CLI / no user context — don't lock out CLI admins.
-		}
-		$current_user = \wp_get_current_user();
-		return \in_array( $current_user->user_login, $allowed_users, true );
-	}
-
-	/**
 	 * `pre_update_option` filter: skip writing options whose value still equals the default.
 	 *
 	 * @param mixed  $value     New option value about to be written.
@@ -400,104 +498,6 @@ class Admin {
 			self::MENU_SLUG,
 			[ $this, 'render_settings_page' ]
 		);
-	}
-
-	/**
-	 * Shared admin-post gate: verify the POSTed nonce (read from $nonce_field
-	 * against $action) and the caller's capability, `wp_die`-ing on either
-	 * failure. Both admin-post handlers run this identical check first.
-	 *
-	 * @param string $nonce_field POST key carrying the nonce.
-	 * @param string $action      Nonce action to verify against.
-	 */
-	private static function verify_admin_post( string $nonce_field, string $action ): void {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$nonce = isset( $_POST[ $nonce_field ] ) && \is_string( $_POST[ $nonce_field ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ $nonce_field ] ) ) : '';
-		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, $action ) ) {
-			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
-		}
-		if ( ! self::current_user_allowed() ) {
-			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
-		}
-	}
-
-	/**
-	 * Reset-to-defaults handler — admin-post target.
-	 *
-	 * Nonce + permission checks before deleting any options.
-	 */
-	public function handle_reset_settings(): void {
-		self::verify_admin_post( self::RESET_NONCE, self::RESET_ACTION );
-
-		// Derive reset list from Schema so this works pre-register_settings().
-		$options = Settings_Schema::get()->setting_option_names();
-
-		foreach ( $options as $option ) {
-			if ( \str_starts_with( $option, self::OPTION_PREFIX ) ) {
-				\delete_option( $option );
-			}
-		}
-
-		$redirect = \function_exists( 'admin_url' )
-			? \add_query_arg(
-				[
-					'page'  => self::MENU_SLUG,
-					'reset' => '1',
-				],
-				\admin_url( 'options-general.php' )
-			)
-			: '';
-		if ( '' !== $redirect ) {
-			\wp_safe_redirect( $redirect );
-			exit;
-		}
-		exit;
-	}
-
-	/**
-	 * Flush memcache stats by rotating the schema salt. Every existing
-	 * `evlog[:salt]:p{N}:…` key orphans instantly and ages out by TTL.
-	 * request-workers are restarted because FlameBuilder caches `prefix`
-	 * at construction — without a restart the live FlameBuilder keeps
-	 * writing under the OLD salt, defeating the flush.
-	 */
-	public function handle_flush_stats(): void {
-		self::verify_admin_post( self::FLUSH_STATS_NONCE, self::FLUSH_STATS_ACTION );
-
-		// flush_all() only rotates the salt option; no memcache handle needed.
-		$config       = Config::load_config();
-		$max_lifespan = $config['max_lifespan'] ?? 86400;
-		$stats        = new Stats_Store( 0, Core::num_int( $max_lifespan ) );
-		$stats->flush_all();
-
-		// Restart all workers: they cache the salt prefix at construction.
-		$restarted = 0;
-		try {
-			$workers   = Bootstrap::expand_workers();
-			$base_dir  = RuntimeConfig::get_base_directory();
-			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
-		} catch ( \Throwable $e ) {
-			// Best-effort; next supervisor spawn picks up the salt regardless.
-			\Newspack_Nodes\Core::print_less_often(
-				'Stats flush: restart_workers failed — ' . $e->getMessage()
-			);
-		}
-
-		$redirect = \function_exists( 'admin_url' )
-			? \add_query_arg(
-				[
-					'page'      => self::MENU_SLUG,
-					'flushed'   => '1',
-					'restarted' => $restarted,
-				],
-				\admin_url( 'options-general.php' )
-			)
-			: '';
-		if ( '' !== $redirect ) {
-			\wp_safe_redirect( $redirect );
-			exit;
-		}
-		exit;
 	}
 
 	/**

@@ -580,27 +580,6 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Finalize a tracked rid once its `process (complete)` line arrives: print
-	 * the assembled request (unless --incomplete suppresses completed output)
-	 * and evict it from the in-flight cache. The shared tail of both
-	 * group_and_output branches.
-	 *
-	 * @param LRU_Cache $inflight In-flight request cache.
-	 * @param \stdClass $state    The rid's accumulated state.
-	 * @param string    $rid      Request id.
-	 * @param string    $key      This entry's `k` field.
-	 */
-	private function finalize_if_complete( LRU_Cache $inflight, \stdClass $state, string $rid, string $key ): void {
-		if ( 'process (complete)' !== $key ) {
-			return;
-		}
-		if ( ! $this->incomplete ) {
-			$this->output_request( self::to_lines( $state->lines ), $rid );
-		}
-		$inflight->delete( $rid );
-	}
-
-	/**
 	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
 	 * built in the command's setup before any line processing; a null here means
 	 * a caller invoked a processing method before setup, which is a bug.
@@ -638,6 +617,27 @@ class Reqgrep_Command {
 		$lines[]      = $line;
 		$state->bytes = $bytes + $line_bytes;
 		return true;
+	}
+
+	/**
+	 * Finalize a tracked rid once its `process (complete)` line arrives: print
+	 * the assembled request (unless --incomplete suppresses completed output)
+	 * and evict it from the in-flight cache. The shared tail of both
+	 * group_and_output branches.
+	 *
+	 * @param LRU_Cache $inflight In-flight request cache.
+	 * @param \stdClass $state    The rid's accumulated state.
+	 * @param string    $rid      Request id.
+	 * @param string    $key      This entry's `k` field.
+	 */
+	private function finalize_if_complete( LRU_Cache $inflight, \stdClass $state, string $rid, string $key ): void {
+		if ( 'process (complete)' !== $key ) {
+			return;
+		}
+		if ( ! $this->incomplete ) {
+			$this->output_request( self::to_lines( $state->lines ), $rid );
+		}
+		$inflight->delete( $rid );
 	}
 
 	/**
