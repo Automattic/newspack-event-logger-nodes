@@ -89,25 +89,6 @@
 	gap: 8px;
 }
 
-.custom-event-btn {
-	font-size: 13px !important;
-	padding: 6px 12px !important;
-	border-radius: base.$border-radius !important;
-	transition: background 0.15s ease !important;
-
-	&:hover {
-		background: var(--paper-2, var(--np-surface-subtle)) !important;
-	}
-}
-
-.custom-event-apply {
-	margin-left: auto;
-	font-size: 13px !important;
-	padding: 6px 16px !important;
-	border-radius: base.$border-radius !important;
-	font-weight: 500 !important;
-}
-
 // =============================================================================
 // Event Grid
 // =============================================================================
@@ -288,10 +269,6 @@
 
 	.custom-event-count {
 		color: var(--ink-3);
-	}
-
-	.custom-event-btn:hover {
-		background: var(--paper-3) !important;
 	}
 
 	.custom-event-checkbox + .custom-event-swatch::before {
