@@ -235,6 +235,52 @@ final class Rule_Set {
 		return [];
 	}
 
+	/**
+	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
+	 * each from its durable option (or mc). The transport-safe form of a ruleset:
+	 * self-contained, no dangling durable-option references. Non-pointer entries
+	 * (and non-array junk) pass through untouched. Used by to_sync_array() and by
+	 * the settings-sync value filter so a hub's ruleset reaches spokes hook-complete.
+	 *
+	 * @param array<int|string, mixed> $rules_array Stored rule maps (Rule::to_array()).
+	 * @return array<int, mixed>
+	 */
+	public static function hydrate_array( array $rules_array ): array {
+		$out = [];
+		foreach ( $rules_array as $entry ) {
+			if ( \is_array( $entry ) && Rule::HOOKS_MC === ( $entry['hooks_in'] ?? '' ) ) {
+				/** @var array<string, mixed> $entry pointer rule map. */
+				$hooks = self::hooks_for( Rule::from_array( $entry ) );
+				// Stay a pointer on []: inlining empty wipes the spoke's hooks.
+				if ( [] !== $hooks ) {
+					$entry['hooks']    = $hooks;
+					$entry['hooks_in'] = Rule::HOOKS_INLINE;
+				}
+			}
+			$out[] = $entry;
+		}
+		return $out;
+	}
+
+	/**
+	 * Apply a synced (hydrated) ruleset on a spoke: rebuild Rule objects and
+	 * route them through save(), which RE-TIERS locally — heavy rules' inline
+	 * hooks are written back out to this site's own durable option + mc mirror,
+	 * keeping OPTION_RULES small. The inverse of to_sync_array().
+	 *
+	 * @param array<int|string, mixed> $rules_array Hydrated rule maps off the wire.
+	 */
+	public static function apply_synced( array $rules_array ): void {
+		$rules = [];
+		foreach ( $rules_array as $entry ) {
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry hydrated rule shape (Rule::to_array()). */
+				$rules[] = Rule::from_array( $entry );
+			}
+		}
+		( new self( [] ) )->save( $rules );
+	}
+
 	public static function mc_key( string $id ): string {
 		return self::MC_HOOKS_PREFIX . $id;
 	}

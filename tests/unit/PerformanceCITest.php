@@ -30,6 +30,8 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Rule;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
@@ -1085,42 +1087,49 @@ class PerformanceCITest extends TestCase {
 	// `set <option> <value>`.
 	// -------------------------------------------------------------------------
 
-	public function test_set_verb_writes_array_option_csv_split(): void {
-		// The per-URL ruleset is now the synced array option (Task 10). A bare
-		// csv value that is not JSON falls back to the csv split.
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_rules "a.com,b.com"'
-		);
+	public function test_decode_array_value_falls_back_to_csv_split(): void {
+		// A synced array-option value that is not JSON splits on commas
+		// (decode_array_value's csv fallback). Tested directly — the only array
+		// option, the ruleset, now re-tiers on set() instead of storing raw.
+		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
+		$ref->setAccessible( true );
+		$this->assertSame( [ 'a.com', 'b.com' ], $ref->invoke( null, 'a.com,b.com' ) );
+	}
+
+	public function test_array_option_json_preserves_associative_keys(): void {
+		// A JSON array-option value is json_decoded and sanitize_settings_array keeps
+		// the keys — the old csv-split flattened an assoc map to a list of "1"s.
+		$decode = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
+		$decode->setAccessible( true );
+		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$sanitize->setAccessible( true );
+
+		$decoded = $decode->invoke( null, (string) \json_encode( [ 'advancedemail' => true, 'amazons3' => true ] ) );
 
 		$this->assertSame(
-			[ 'a.com', 'b.com' ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules']
+			[ 'advancedemail' => true, 'amazons3' => true ],
+			$sanitize->invoke( null, $decoded, 'array' )
 		);
 	}
 
-	public function test_set_verb_preserves_associative_array_via_json(): void {
-		// The rules option ships as JSON (built through Command_Args::format, so the
-		// quotes are escaped on the wire); the receiver must json_decode it and keep
-		// the keys — the old csv-split flattened it to a meaningless list of "1"s.
+	public function test_set_verb_re_tiers_a_synced_heavy_ruleset(): void {
+		// The synced ruleset arrives hook-hydrated; set() must route it through
+		// Rule_Set::apply_synced so a heavy rule re-tiers to THIS site's durable
+		// option locally, not a raw update_option that bloats autoloaded OPTION_RULES.
+		$big  = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		$rule = ( new Rule( 'big', '/heavy/', Rule::ACTION_LOG, hooks: $big ) )->to_array();
 		$args = \Newspack_Nodes\Command_Args::format(
-			[
-				'newspack_event_logger_nodes_rules',
-				(string) \json_encode( [ 'advancedemail' => true, 'amazons3' => true ] ),
-			],
+			[ 'newspack_event_logger_nodes_rules', (string) \json_encode( [ $rule ] ) ],
 			[]
 		);
 
 		$interpreter = new Performance_CI_Node();
 		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
 
-		$this->assertSame(
-			[ 'advancedemail' => true, 'amazons3' => true ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules']
-		);
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'big' ) ], 'the heavy rule\'s hooks must land in a local durable option' );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
+		$this->assertSame( 'mc', $stored['hooks_in'], 'OPTION_RULES must hold a small pointer, not the inline blob' );
+		$this->assertNull( $stored['hooks'] );
 	}
 
 	public function test_sanitize_settings_value_float_bounds(): void {
@@ -1172,23 +1181,16 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
 	}
 
-	public function test_set_verb_preserves_nested_array_via_json(): void {
-		// A nested map must recurse one level and keep the structure (sanitize_array
-		// recursion branch), not flatten or reject it.
-		$args = \Newspack_Nodes\Command_Args::format(
-			[
-				'newspack_event_logger_nodes_rules',
-				(string) \json_encode( [ 'group' => [ 'inner' => 'val' ] ] ),
-			],
-			[]
-		);
-
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
+	public function test_array_option_json_preserves_nested_structure(): void {
+		// A nested map recurses one level and keeps the structure (sanitize_array
+		// recursion branch), not flattened or rejected. Tested on the sanitizer
+		// directly — the ruleset option itself now re-tiers on set().
+		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$sanitize->setAccessible( true );
 
 		$this->assertSame(
 			[ 'group' => [ 'inner' => 'val' ] ],
-			$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules']
+			$sanitize->invoke( null, [ 'group' => [ 'inner' => 'val' ] ], 'array' )
 		);
 	}
 

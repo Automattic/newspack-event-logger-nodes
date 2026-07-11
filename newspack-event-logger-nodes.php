@@ -148,23 +148,27 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
  * @return mixed The resolved value.
  */
 function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string $option ) {
-	if ( '' !== $value && false !== $value ) {
-		return $value;
+	if ( '' === $value || false === $value ) {
+		// Route to the OWNING config's defaults (substrate keys aren't ELN's).
+		if ( 0 === \strpos( $option, 'newspack_event_logger_nodes_' ) ) {
+			$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
+			$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
+		} elseif ( 0 === \strpos( $option, 'newspack_nodes_' ) && \class_exists( '\Newspack_Nodes\Config' ) ) {
+			$config_key = \substr( $option, \strlen( 'newspack_nodes_' ) );
+			$defaults   = \Newspack_Nodes\Config::load_config_defaults();
+		} else {
+			$config_key = $option;
+			$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
+		}
+		$value = $defaults[ $config_key ] ?? $value;
 	}
 
-	// Route to the OWNING config's defaults (substrate keys aren't in ELN's).
-	if ( 0 === \strpos( $option, 'newspack_event_logger_nodes_' ) ) {
-		$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
-		$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
-	} elseif ( 0 === \strpos( $option, 'newspack_nodes_' ) && \class_exists( '\Newspack_Nodes\Config' ) ) {
-		$config_key = \substr( $option, \strlen( 'newspack_nodes_' ) );
-		$defaults   = \Newspack_Nodes\Config::load_config_defaults();
-	} else {
-		$config_key = $option;
-		$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
+	// Inline pointer hooks so the ruleset ships hook-complete to spokes.
+	if ( \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES === $option && \is_array( $value ) ) {
+		$value = \Newspack_Event_Logger_Nodes\Rule_Set::hydrate_array( $value );
 	}
 
-	return $defaults[ $config_key ] ?? $value;
+	return $value;
 }
 
 ( static function (): void {

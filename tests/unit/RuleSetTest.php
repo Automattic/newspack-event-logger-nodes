@@ -207,6 +207,82 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( 'mc', $stored['hooks_in'], 'the rule must stay pointer-tier, not get re-inlined to []' );
 	}
 
+	/** The stored (post-save) rule-map list, as settings-sync reads it off the option. */
+	private function stored_rule_maps(): array {
+		return \array_map( static fn ( Rule $r ): array => $r->to_array(), Rule_Set::load()->rules() );
+	}
+
+	public function test_hydrate_array_inlines_pointer_rule_hooks(): void {
+		$big = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		( new Rule_Set( [] ) )->save( [ new Rule( 'big', '/heavy/', Rule::ACTION_LOG, hooks: $big ) ] );
+
+		$sync = Rule_Set::hydrate_array( $this->stored_rule_maps() );
+
+		$this->assertCount( 1, $sync );
+		$this->assertSame( Rule::HOOKS_INLINE, $sync[0]['hooks_in'], 'pointer hooks must be inlined for transport' );
+		$this->assertSame( $big, $sync[0]['hooks'] );
+	}
+
+	public function test_hydrate_array_leaves_an_unresolvable_pointer_as_a_pointer(): void {
+		// Hub-side durable option missing (mc down too): hooks_for() → []. Inlining
+		// [] would make the spoke re-tier to empty and delete its own good hooks, so
+		// the entry must stay a pointer, NOT become inline-[].
+		$pointer = ( new Rule( 'gone', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC ) )->to_array();
+
+		$sync = Rule_Set::hydrate_array( [ $pointer ] );
+
+		$this->assertSame( Rule::HOOKS_MC, $sync[0]['hooks_in'], 'an unresolvable pointer must not downgrade to inline-empty' );
+		$this->assertNull( $sync[0]['hooks'] );
+	}
+
+	public function test_hydrate_array_passes_inline_and_skip_rules_through(): void {
+		( new Rule_Set( [] ) )->save( [
+			new Rule( 'log1', '/x/', Rule::ACTION_LOG, hooks: [ 'init' ] ),
+			new Rule( 'skip1', '/y/', Rule::ACTION_SKIP ),
+		] );
+
+		$sync = Rule_Set::hydrate_array( $this->stored_rule_maps() );
+
+		$this->assertSame( [ 'init' ], $sync[0]['hooks'] );
+		$this->assertSame( Rule::HOOKS_INLINE, $sync[0]['hooks_in'] );
+		$this->assertSame( 'skip', $sync[1]['action'] );
+	}
+
+	public function test_apply_synced_retiers_hydrated_large_rule_to_a_durable_option(): void {
+		$big  = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		$wire = [ ( new Rule( 'big', '/heavy/', Rule::ACTION_LOG, hooks: $big ) )->to_array() ];
+
+		Rule_Set::apply_synced( $wire );
+
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'big' ) ], 'spoke must persist the hooks to its own durable option' );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
+		$this->assertSame( 'mc', $stored['hooks_in'], 'a large synced rule must re-tier to a pointer, not bloat OPTION_RULES' );
+		$this->assertNull( $stored['hooks'] );
+	}
+
+	public function test_sync_round_trip_preserves_pointer_hooks_across_the_wire(): void {
+		// The bug: settings-sync ships OPTION_RULES verbatim, so a pointer rule's
+		// hooks (a SEPARATE durable option) never reach the spoke and hooks_for()
+		// reports "hooks missing". hydrate_array()+apply_synced() must close that gap.
+		$big = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		( new Rule_Set( [] ) )->save( [ new Rule( 'big', '/heavy/', Rule::ACTION_LOG, hooks: $big ) ] );
+
+		// Hub serializes for transport; the wire carries ONLY this (no durable option).
+		$wire = Rule_Set::hydrate_array( $this->stored_rule_maps() );
+
+		// Spoke starts clean — its durable option + rules list are absent.
+		unset( $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'big' ) ] );
+		unset( $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );
+
+		Rule_Set::apply_synced( $wire );
+
+		$this->assertSame(
+			$big,
+			Rule_Set::hooks_for( Rule_Set::load()->rules()[0] ),
+			'the spoke must resolve the full hook list the hub instrumented'
+		);
+	}
+
 	public function test_hooks_for_inline_returns_inline_list(): void {
 		$rule = new Rule( 'd4', '/x/', Rule::ACTION_LOG, hooks: [ 'a', 'b' ] );
 		$this->assertSame( [ 'a', 'b' ], Rule_Set::hooks_for( $rule ) );

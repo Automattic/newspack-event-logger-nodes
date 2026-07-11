@@ -32,6 +32,7 @@ use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -1278,6 +1279,16 @@ class Performance_CI_Node extends Service_CI_Node {
 				$sanitized = self::sanitize_settings_value( $value, $type );
 				if ( null === $sanitized ) {
 					throw new \RuntimeException( 'invalid value for option' );
+				}
+
+				// Re-tier the synced ruleset locally, not a raw update_option.
+				if ( Rule_Set::OPTION_RULES === $option && \is_array( $sanitized ) ) {
+					Rule_Set::apply_synced( $sanitized );
+					AppConfig::reset();
+					return [
+						'option'  => $option,
+						'updated' => true,
+					];
 				}
 
 				// Autoload per Config::autoload_for; emits settings event.
