@@ -29,7 +29,7 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 $_newspack_event_logger_nodes_load = static function (): void {
-	// XXX: One-release BC alias — Job_Intake moved to the substrate (Newspack_Nodes). Remove next release.
+	// XXX: BC alias; Job_Intake moved to substrate; remove next release.
 	\class_exists( 'Newspack_Event_Logger_Nodes\\Job_Intake', false )
 		|| \class_alias( \Newspack_Nodes\Job_Intake::class, 'Newspack_Event_Logger_Nodes\\Job_Intake' );
 
@@ -67,9 +67,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
 	);
 
-	// Node-graph settings-sync path: the value-resolver filter Settings_Sync_Node
-	// consults at consume time. The option-change writer (Settings_Event_Writer)
-	// now lives in and is initialized by the substrate.
+	// Settings-sync value-resolver filter (writer now lives in the substrate).
 	\add_filter(
 		'newspack_nodes/settings_sync/value',
 		'newspack_event_logger_nodes_resolve_settings_sync_value',
@@ -103,7 +101,7 @@ if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
 	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_bootstrap, 11 );
 }
 
-// XXX: One-time ruleset migration on activation (the deploy deactivates then reinstalls+activates).
+// XXX: one-time ruleset migration on activation (deploy reinstalls+activates).
 if ( \function_exists( 'register_activation_hook' ) ) {
 	\register_activation_hook(
 		__FILE__,
@@ -154,10 +152,7 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 		return $value;
 	}
 
-	// Route to the OWNING config's defaults: substrate (`newspack_nodes_`) keys
-	// live in \Newspack_Nodes\Config, not ELN's. Resolving a substrate key against
-	// ELN's defaults misses (it isn't there), ships blank, and a reset-to-default
-	// silently fails to propagate.
+	// Route to the OWNING config's defaults (substrate keys aren't in ELN's).
 	if ( 0 === \strpos( $option, 'newspack_event_logger_nodes_' ) ) {
 		$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
 		$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
@@ -349,9 +344,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			'before'
 		);
 
-		// The rules editor (settings) AND the performance dashboard's "Log this URL"
-		// (overview) both render the Hooks / Custom-Events pickers, which read the
-		// recommended-hooks + custom-event-color lists off `window`.
+		// settings + overview both render pickers from these window lists.
 		if ( 'settings' === $tree || 'overview' === $tree ) {
 			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config();
 			$recommended         = $cfg['recommended_log_events'] ?? [];
