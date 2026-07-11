@@ -21,12 +21,7 @@
 
 import { useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import {
-	Modal,
-	Button,
-	TextControl,
-	SelectControl,
-} from '@wordpress/components';
+import { Modal, TextControl, SelectControl } from '@wordpress/components';
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
 import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
@@ -147,15 +142,16 @@ export default function RuleEditModal( {
 							<span className="rule-edit-field-label">
 								{ __( 'Hooks', 'newspack-event-logger-nodes' ) }
 							</span>
-							<Button
-								variant="secondary"
+							<button
+								type="button"
+								className="button"
 								onClick={ () => setIsHooksOpen( true ) }
 							>
 								{ __(
 									'Select Hooks',
 									'newspack-event-logger-nodes'
 								) }
-							</Button>
+							</button>
 							<span className="rule-edit-field-count">
 								{ sprintf(
 									// translators: %d: number of selected hooks.
@@ -177,15 +173,16 @@ export default function RuleEditModal( {
 									'newspack-event-logger-nodes'
 								) }
 							</span>
-							<Button
-								variant="secondary"
+							<button
+								type="button"
+								className="button"
 								onClick={ () => setIsCustomOpen( true ) }
 							>
 								{ __(
 									'Select Events',
 									'newspack-event-logger-nodes'
 								) }
-							</Button>
+							</button>
 							<span className="rule-edit-field-count">
 								{ sprintf(
 									// translators: %d: number of selected custom events.
@@ -270,12 +267,16 @@ export default function RuleEditModal( {
 			</div>
 
 			<div className="rule-edit-actions">
-				<Button variant="tertiary" onClick={ onCancel }>
+				<button type="button" className="button" onClick={ onCancel }>
 					{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
-				</Button>
-				<Button variant="primary" onClick={ handleSave }>
+				</button>
+				<button
+					type="button"
+					className="button button-primary"
+					onClick={ handleSave }
+				>
 					{ __( 'Save rule', 'newspack-event-logger-nodes' ) }
-				</Button>
+				</button>
 			</div>
 
 			<HookSelectorModal

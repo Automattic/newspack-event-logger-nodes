@@ -9,7 +9,6 @@ import { useState, useMemo, useEffect } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import {
 	Modal,
-	Button,
 	SearchControl,
 	CheckboxControl,
 	Spinner,
@@ -348,7 +347,11 @@ export default function HookSelectorModal( {
 					) }
 				/>
 				<div className="hook-selector-actions">
-					<Button variant="tertiary" onClick={ selectAll }>
+					<button
+						type="button"
+						className="button"
+						onClick={ selectAll }
+					>
 						{ isFiltered
 							? sprintf(
 									// translators: %d: number of hooks matching the current search filter.
@@ -362,25 +365,37 @@ export default function HookSelectorModal( {
 									'Select All',
 									'newspack-event-logger-nodes'
 							  ) }
-					</Button>
-					<Button variant="tertiary" onClick={ selectRecommended }>
+					</button>
+					<button
+						type="button"
+						className="button"
+						onClick={ selectRecommended }
+					>
 						{ __( 'Recommended', 'newspack-event-logger-nodes' ) }
-					</Button>
-					<Button variant="tertiary" onClick={ clearAll }>
+					</button>
+					<button
+						type="button"
+						className="button"
+						onClick={ clearAll }
+					>
 						{ isFiltered
 							? __(
 									'Clear Matches',
 									'newspack-event-logger-nodes'
 							  )
 							: __( 'Clear All', 'newspack-event-logger-nodes' ) }
-					</Button>
-					<Button variant="primary" onClick={ handleApply }>
+					</button>
+					<button
+						type="button"
+						className="button button-primary"
+						onClick={ handleApply }
+					>
 						{ sprintf(
 							// translators: %d: number of currently selected hooks.
 							__( 'Apply (%d)', 'newspack-event-logger-nodes' ),
 							totalSelected
 						) }
-					</Button>
+					</button>
 				</div>
 			</div>
 

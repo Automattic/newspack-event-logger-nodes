@@ -6,12 +6,7 @@
 
 import { useState, useMemo, useEffect } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import {
-	Modal,
-	Button,
-	SearchControl,
-	CheckboxControl,
-} from '@wordpress/components';
+import { Modal, SearchControl, CheckboxControl } from '@wordpress/components';
 import '../styles/custom-event-selector.scss';
 
 /**
@@ -127,31 +122,31 @@ export default function CustomEventSelectorModal( {
 					className="custom-event-search"
 				/>
 				<div className="custom-event-actions">
-					<Button
-						variant="tertiary"
+					<button
+						type="button"
+						className="button"
 						onClick={ selectAll }
-						className="custom-event-btn"
 					>
 						{ __( 'Select All', 'newspack-event-logger-nodes' ) }
-					</Button>
-					<Button
-						variant="tertiary"
+					</button>
+					<button
+						type="button"
+						className="button"
 						onClick={ clearAll }
-						className="custom-event-btn"
 					>
 						{ __( 'Clear All', 'newspack-event-logger-nodes' ) }
-					</Button>
-					<Button
-						variant="primary"
+					</button>
+					<button
+						type="button"
+						className="button button-primary"
 						onClick={ handleApply }
-						className="custom-event-apply"
 					>
 						{ sprintf(
 							// translators: %d: number of currently selected events.
 							__( 'Apply (%d)', 'newspack-event-logger-nodes' ),
 							totalSelected
 						) }
-					</Button>
+					</button>
 				</div>
 			</div>
 

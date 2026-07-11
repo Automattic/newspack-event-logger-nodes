@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Logging-rules editor buttons now use the canonical stock `.button`** instead of `@wordpress/components` `<Button>` (`.components-button`), so they render as standard rounded WordPress buttons themed by the shared `wp-reskin`/`skin-adaptive-buttons` mixins — matching the rest of the dashboards. Affects the "Add rule" modal (Select Hooks / Select Events / Cancel / Save rule) and the hook / custom-event selector modals it opens. Also deletes the redundant `.custom-event-btn`/`.custom-event-apply` SCSS that re-declared button appearance (radius/padding/font/hover) already owned by the shared source.
+
 ## [0.29.0] - 2026-07-10
 
 **Requires newspack-nodes ≥ 0.34.0** (the release carrying `\Newspack_Nodes\Job_Intake`, the substrate class this release delegates to).
