@@ -25,6 +25,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
+	use \Newspack_Nodes\Deferred_Clean_Stop;
 
 	/** Default LRU cache capacity. */
 	public const DEFAULT_BUCKET_SIZE = 100;
@@ -139,6 +140,8 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
+		// Per-message deferral: clear a stale stop from a prior fill().
+		$this->clear_pending_stop();
 		$type_raw = $message[ Message::TYPE ];
 		$type     = Core::as_int( $type_raw );
 		if ( $type & Message::TM_REQUEST ) {
@@ -255,6 +258,7 @@ class Request_Builder_Node extends Timer_Node {
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
 		if ( $request->is_runaway ?? false ) {
+			$this->raise_pending_stop();
 			return;
 		}
 
@@ -298,6 +302,8 @@ class Request_Builder_Node extends Timer_Node {
 			}
 			$this->cache->delete( $rid );
 		}
+
+		$this->raise_pending_stop();
 	}
 
 	/**
@@ -382,7 +388,7 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TO ]        = $this->errors_target;
 		$message[ Message::KEY ]       = $rid;
 		$message[ Message::VALUE ]     = $entry;
-		$this->sink->fill( $message );
+		$this->guarded( fn () => $this->sink->fill( $message ) );
 	}
 
 	/**
@@ -773,7 +779,7 @@ class Request_Builder_Node extends Timer_Node {
 		$rid_raw                   = $request->rid ?? '';
 		$message[ Message::KEY ]       = (string) $rid_raw;
 		$message[ Message::VALUE ]     = (array) $request;
-		parent::fill( $message );
+		$this->guarded( fn () => parent::fill( $message ) );
 		$this->emit_compact_summary( $request );
 	}
 
@@ -795,7 +801,7 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TO ]        = $this->completed_target;
 		$message[ Message::KEY ]       = $summary['rid'];
 		$message[ Message::VALUE ]     = $summary;
-		$this->sink->fill( $message );
+		$this->guarded( fn () => $this->sink->fill( $message ) );
 	}
 
 	/**

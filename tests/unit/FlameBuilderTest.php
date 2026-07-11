@@ -300,6 +300,45 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 0, $this->stats_count( $fb ) );
 	}
 
+	public function test_clean_stop_on_the_flame_forward_still_accumulates_stats_and_raises_clean(): void {
+		// When the flame-doc forward triggers a cooperative stop (the partition wrote the
+		// doc, then pump() signaled it), FlameBuilder must still accumulate the request's
+		// stats — its recoverable state — and re-raise as CLEAN, so the Consumer commits
+		// past the line instead of replaying it and double-counting the stats.
+		$this->set_rule();
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->connect_node( 'flames:partition' ); // non-empty target so store_flame forwards.
+		$fb->sink( new class extends \Newspack_Nodes\Node {
+			public function fill( array $message ): void {
+				throw new \Newspack_Nodes\Worker_Should_Stop();
+			}
+		} );
+
+		try {
+			$this->fill_request( $fb, $this->completed_request() );
+			$this->fail( 'expected a clean stop to propagate' );
+		} catch ( \Newspack_Nodes\Worker_Should_Stop_Clean $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+
+		$this->assertSame( 1, $this->stats_count( $fb ), 'stats accumulated despite the stop on the flame forward' );
+	}
+
+	public function test_a_stale_pending_stop_does_not_leak_into_a_later_message(): void {
+		// pending_stop is a PER-MESSAGE deferral. A non-Worker_Should_Stop throwable escaping
+		// one fill() after a guarded() catch (dead-lettered, worker survives) must not strand
+		// it into the next message — else that innocent line would be clean-stopped + dropped.
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+
+		$ref = new \ReflectionProperty( $fb, 'pending_stop' );
+		$ref->setValue( $fb, new \Newspack_Nodes\Worker_Should_Stop() );
+
+		$this->fill_request( $fb, $this->completed_request() );
+		$this->assertNull( $ref->getValue( $fb ), 'fill() clears any stale pending_stop at entry' );
+	}
+
 	public function test_non_bytestream_message_skipped(): void {
 		$fb                    = new Flame_Builder_Node();
 		$message                   = Message::new_message();
@@ -393,6 +432,26 @@ class FlameBuilderTest extends TestCase {
 		foreach ( $flame['children'] as $c ) {
 			$this->assertSame( 'init', $c['name'], 'suffix stripped before store' );
 		}
+	}
+
+	public function test_save_state_persists_current_flame_stats_without_a_periodic_flush(): void {
+		// stats_cache (per-URL flame trees) must be co-committed with the cursor at
+		// save_state, exactly like the `pending` aggregates — else a clean recycle advances
+		// past messages whose flame data was only in RAM (drained to the store only every
+		// FLUSH_INTERVAL_SEC), losing up to a flush window of per-URL flame data.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 100.0 ] ) );
+
+		// No periodic flush() — only the checkpoint's save_state().
+		$fb->save_state();
+
+		$stats = $store->get_url_stats( Log_Manager::url_hash( '/x' ) );
+		$this->assertNotNull( $stats, 'save_state drains the current flame stats to the store' );
+		$this->assertSame( 1, $stats['flame_raw']['count'] );
 	}
 
 	// --- Per-URL aggregate (sums-not-means) -------------------------------

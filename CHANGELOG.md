@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-11
+
+### Fixed
+
+- **`Request_Builder` and `Flame_Builder` finish their per-message bookkeeping before a cooperative stop unwinds, so a clean recycle no longer replays + dedups the last line.** When a downstream partition write triggers the stop (the substrate now writes durably, then signals it), each snapshot node defers the `Worker_Should_Stop` around its downstream forwards (Tee-style, first one wins), completes the message — Request_Builder evicts the completed request from its in-flight cache; Flame_Builder still accumulates the request's stats — then re-raises `Worker_Should_Stop_Clean` so the Consumer commits past the line. Pairs with the substrate's precise-checkpoint change (newspack-nodes ≥ 0.37.0); previously the completing line replayed and was deduped, dropping the assembled request doc / double-nothing the stats. (`Digest_Builder` is a pure accumulator — no downstream forward — and needs no change.)
+- **`Flame_Builder::save_state()` now co-commits the current per-URL flame trees with the cursor, not just the `pending` aggregates.** `accumulate_all_stats()` writes both the aggregate sums (`pending`, saved in the offsetlog frame) and the per-URL flame trees + profiles (`stats_cache`), but `stats_cache` only reached durability via the periodic `flush()` (every `FLUSH_INTERVAL_SEC`). A clean recycle advanced the cursor past messages whose flame trees were only in RAM → up to a flush window of per-URL flame data silently lost on every recycle. `save_state()` now drains the current `stats_cache` to the store (shared `mirror_url_stats()` helper, `set_url_stats` overwrites so it's idempotent with the next `flush()`) before writing the mirror, so the flame trees commit at the same cursor as `pending`.
+- **The snapshot nodes' deferred-stop no longer leaks across messages.** `pending_stop` is a per-message deferral; if a non-`Worker_Should_Stop` throwable escaped a `fill()` after a `guarded()` catch (the Consumer dead-letters it and the worker survives), the stale deferral stranded into the next message and clean-stopped that innocent, RAM-only line — dropped on the replay-less resume. Both `Request_Builder` and `Flame_Builder` now clear `pending_stop` at `fill()` entry.
+
 ## [0.30.0] - 2026-07-11
 
 ### Changed
