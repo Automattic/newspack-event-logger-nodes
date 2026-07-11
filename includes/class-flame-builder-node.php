@@ -48,25 +48,25 @@ class Flame_Builder_Node extends Node {
 	/** Pre-compiled regex patterns for flame data parsing. */
 	const PATTERN_START    = '/^(.+?) \(start\)$/';
 
+	/** Aggregate/category entries unseen for this many seconds expire (1 hour). */
+	private const AGGREGATE_EXPIRY_SEC = 3600;
+
 	/** Minutes per time-series bucket. */
 	private const BUCKET_MINUTES = 5;
+
+	/** Cap on the per-process string-intern table (dedupes json_decode zvals). */
+	private const INTERN_TABLE_LIMIT = 50000;
 
 	/** Security limits for recursion and unbounded growth. */
 	private const MAX_RECURSION_DEPTH = 50;
 	private const MAX_STACK_DEPTH     = 50;
 
+	/** Max URLs retained per hourly bucket in the URL index (top-N by count). */
+	private const MAX_URLS_PER_BUCKET = 500;
+
 	/** LRU cache for per-URL stats accumulators. */
 	private const STATS_CACHE_BUCKET_SIZE = 1000;
 	private const STATS_CACHE_NUM_BUCKETS = 5;
-
-	/** Cap on the per-process string-intern table (dedupes json_decode zvals). */
-	private const INTERN_TABLE_LIMIT = 50000;
-
-	/** Aggregate/category entries unseen for this many seconds expire (1 hour). */
-	private const AGGREGATE_EXPIRY_SEC = 3600;
-
-	/** Max URLs retained per hourly bucket in the URL index (top-N by count). */
-	private const MAX_URLS_PER_BUCKET = 500;
 
 	/** Per-URL namespaces bounded to top-N by traffic when mirrored. NS_URL (the
 	 *  flame profiles) is the STARTING default only — the live bound is $flame_topn
@@ -1216,42 +1216,6 @@ class Flame_Builder_Node extends Node {
 		$this->reset_pending();
 	}
 
-	/**
-	 * Cap a single bucket's categories to top N by time, preserving 'total'.
-	 *
-	 * Key-preserving and key-agnostic: decoded memcache buckets can carry int
-	 * keys (numeric category names); the body only names 'total'/'Other'.
-	 *
-	 * @template TKey of array-key
-	 * @param array<TKey, mixed> $cats Category buckets.
-	 * @return array<TKey|string, mixed>
-	 */
-	private static function cap_single_bucket( array $cats, int $max_values ): array {
-		if ( \count( $cats ) <= $max_values ) {
-			return $cats;
-		}
-		$total = $cats['total'] ?? null;
-		unset( $cats['total'] );
-		\uasort( $cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
-		$top    = \array_slice( $cats, 0, $max_values - 2, true );
-		$rest_t = $rest_c = $rest_n = 0;
-		foreach ( \array_slice( $cats, $max_values - 2 ) as $v ) {
-			if ( ! \is_array( $v ) ) {
-				continue;
-			}
-			$rest_t += \is_numeric( $v['t'] ?? null ) ? $v['t'] : 0;
-			$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
-			$rest_n += \is_numeric( $v['n'] ?? null ) ? $v['n'] : 0;
-		}
-		if ( $rest_t > 0 || $rest_c > 0 ) {
-			$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
-		}
-		if ( $total ) {
-			$top['total'] = $total;
-		}
-		return $top;
-	}
-
 	private function reset_pending(): void {
 		$this->pending = [
 			'hourly'                => [],
@@ -1660,6 +1624,42 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		\ksort( $existing );
+	}
+
+	/**
+	 * Cap a single bucket's categories to top N by time, preserving 'total'.
+	 *
+	 * Key-preserving and key-agnostic: decoded memcache buckets can carry int
+	 * keys (numeric category names); the body only names 'total'/'Other'.
+	 *
+	 * @template TKey of array-key
+	 * @param array<TKey, mixed> $cats Category buckets.
+	 * @return array<TKey|string, mixed>
+	 */
+	private static function cap_single_bucket( array $cats, int $max_values ): array {
+		if ( \count( $cats ) <= $max_values ) {
+			return $cats;
+		}
+		$total = $cats['total'] ?? null;
+		unset( $cats['total'] );
+		\uasort( $cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
+		$top    = \array_slice( $cats, 0, $max_values - 2, true );
+		$rest_t = $rest_c = $rest_n = 0;
+		foreach ( \array_slice( $cats, $max_values - 2 ) as $v ) {
+			if ( ! \is_array( $v ) ) {
+				continue;
+			}
+			$rest_t += \is_numeric( $v['t'] ?? null ) ? $v['t'] : 0;
+			$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
+			$rest_n += \is_numeric( $v['n'] ?? null ) ? $v['n'] : 0;
+		}
+		if ( $rest_t > 0 || $rest_c > 0 ) {
+			$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
+		}
+		if ( $total ) {
+			$top['total'] = $total;
+		}
+		return $top;
 	}
 
 	// Auto-tune: noisy hooks + significant events with distributed-lock.

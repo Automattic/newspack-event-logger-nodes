@@ -35,6 +35,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * 3 buckets x 200s = 600s (10 min) before oldest bucket is evicted.
 	 */
 	private const BUCKET_ROTATION_S = 200;
+	private const INTERN_MAX_KEY_LENGTH  = 256;
+
+	/** String-intern table: cap on entries and max keyword length to intern. */
+	private const INTERN_TABLE_LIMIT     = 50000;
 
 	/**
 	 * Maximum entries stored per request (for the detail view Log Entries table).
@@ -52,15 +56,11 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	private const MAX_PAYLOAD_SCAN_LENGTH = 8192;
 
-	/** Maximum stack depth before request is considered runaway and evicted. */
-	private const MAX_STACK_DEPTH = 50;
-
-	/** String-intern table: cap on entries and max keyword length to intern. */
-	private const INTERN_TABLE_LIMIT     = 50000;
-	private const INTERN_MAX_KEY_LENGTH  = 256;
-
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
+
+	/** Maximum stack depth before request is considered runaway and evicted. */
+	private const MAX_STACK_DEPTH = 50;
 
 	/** @var LRU_Cache In-flight requests, keyed by rid. */
 	public $cache;
