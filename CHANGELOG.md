@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Requires newspack-nodes ≥ the release carrying `\Newspack_Nodes\Job_Intake`** (the substrate class this release delegates to).
+
+### Removed
+
+- **`Job_Intake` moved to the newspack-nodes substrate** (`\Newspack_Nodes\Job_Intake`). A one-release `class_alias` keeps the old `Newspack_Event_Logger_Nodes\Job_Intake` FQN loadable for out-of-tree callers — removed next release. Topologies are UNCHANGED: `job-router.tsl` and `combined.tsl` keep their jobintake legs (the substrate's new stock `job-intake` topology is a standalone subset for substrate-only installs, conflict-gated against both). `Job_Router_Node::MAX_JOB_SIZE` now derives from the substrate's canonical `Job_Intake::MAX_JOB_SIZE`.
+
 ### Changed
 
 - **`Job_Intake`'s constructor drops its half-dead `class_exists( '\Newspack_Nodes\Config' )` guard** — the next line already called the substrate Config unconditionally, and the plugin hard-requires newspack-nodes. Behavior-neutral. Test infra: the WP Settings-API / escaping / i18n stubs consolidated from per-test-file copies into `tests/bootstrap.php` (with a shared `RedirectException` helper), so every suite — including ones run in isolation — sees one set of definitions.

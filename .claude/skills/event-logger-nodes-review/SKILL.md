@@ -35,7 +35,7 @@ A diff that unifies these into one error-handling style is wrong. If you see new
 
 LogManager writes to the firehose under a `MAX_DATA_SIZE = 3840` byte cap (kept under PIPE_BUF's 4096). Anything larger is silently clipped: the category gets ` (truncated)` appended and the data is replaced with a single 1000-char `m` string (`['m' => substr(json,0,1000).'...']`, plus an `error_log`) — destroys the job payload.
 
-The right path for large jobs is `JobIntake::queue($handler, $payload)`. JobIntake auto-locks via Lock and uses an `allow_large_writes()` Partition (`MAX_JOB_SIZE = 33554432` — a 32MB cap, matching `Job_Router_Node`).
+The right path for large jobs is `\Newspack_Nodes\Job_Intake::queue($handler, $payload)` (the class lives in the substrate). It auto-locks via Lock and uses an `allow_large_writes()` Partition (`Job_Intake::MAX_JOB_SIZE` — the canonical 32MB cap `Job_Router_Node` derives from).
 
 A diff that introduces a new producer of potentially-large jobs and routes them through LogManager is silently broken. Reviewer must check: does `wp_json_encode($payload)` ever exceed 4KB? If yes, must use JobIntake.
 
