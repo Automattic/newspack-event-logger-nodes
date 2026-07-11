@@ -141,6 +141,50 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
+	public function test_clean_stop_on_a_completing_forward_finishes_bookkeeping_and_raises_clean(): void {
+		// When the completed-request forward triggers a cooperative stop (the partition
+		// wrote the doc, then pump() signaled the stop), RequestBuilder must finish its
+		// per-message bookkeeping — evict the request from the in-flight cache so the
+		// snapshot stays consistent — and re-raise as CLEAN, so the Consumer commits past
+		// the line instead of replaying + deduping it (which would drop the written doc).
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->sink( new class extends \Newspack_Nodes\Node {
+			public function fill( array $message ): void {
+				throw new \Newspack_Nodes\Worker_Should_Stop();
+			}
+		} );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /post/123' ] );
+
+		try {
+			$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+			$this->fail( 'expected a clean stop to propagate' );
+		} catch ( \Newspack_Nodes\Worker_Should_Stop_Clean $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+
+		$this->assertSame( 0, $this->cache_size( $rb ), 'the completed request was evicted before the stop unwound' );
+	}
+
+	public function test_a_stale_pending_stop_does_not_leak_into_a_later_message(): void {
+		// pending_stop is a PER-MESSAGE deferral. If a non-Worker_Should_Stop throwable
+		// escapes one fill() after a guarded() catch (the Consumer dead-letters it and the
+		// worker survives), the stale deferral must not strand into the next message — else
+		// that innocent, RAM-only line would be clean-stopped and dropped on the resume.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->sink( new Capture_Sink_Node() );
+
+		$ref = new \ReflectionProperty( $rb, 'pending_stop' );
+		$ref->setValue( $rb, new \Newspack_Nodes\Worker_Should_Stop() );
+
+		// A benign mid-request line (no durable forward) must NOT re-raise the stale stop.
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->assertNull( $ref->getValue( $rb ), 'fill() clears any stale pending_stop at entry' );
+	}
+
 	public function test_complete_without_url_skipped(): void {
 		// CLI bootstrap with no REQUEST_URI: process completes but request{} never
 		// fired, so url is empty. Don't emit (not addressable).

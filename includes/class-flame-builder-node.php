@@ -24,6 +24,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Flame_Builder_Node extends Node {
 	use \Newspack_Nodes\Schema_Reflection;
+	use \Newspack_Nodes\Deferred_Clean_Stop;
 
 	/** Dimension field mapping: dim key => request field name. */
 	const DIM_FIELDS = [
@@ -193,6 +194,8 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
+		// Per-message deferral: clear a stale stop from a prior fill().
+		$this->clear_pending_stop();
 		$this->reload_stats_from_partition(); // cold-boot warm once ready.
 		$type_raw = $message[ Message::TYPE ];
 		$type     = Core::int( $type_raw );
@@ -233,9 +236,11 @@ class Flame_Builder_Node extends Node {
 		// Periodic flush.
 		$now_f = \microtime( true );
 		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
-			$this->flush();
+			$this->guarded( fn () => $this->flush() );
 			$this->last_flush_time = $now_f;
 		}
+
+		$this->raise_pending_stop();
 	}
 
 	/** @param array<int, mixed> $message Incoming command Message. */
@@ -441,7 +446,8 @@ class Flame_Builder_Node extends Node {
 		$message[ Message::TO ]        = $this->target;
 		$message[ Message::KEY ]       = $flame_data['rid'];
 		$message[ Message::VALUE ]     = $flame_data;
-		$this->sink->fill( $message );
+		// Deferred on a stop so the caller still accumulates stats.
+		$this->guarded( fn () => $this->sink->fill( $message ) );
 		return true;
 	}
 
@@ -1091,27 +1097,8 @@ class Flame_Builder_Node extends Node {
 			$this->promote_pending_bucket();
 		}
 
-		// Flush per-URL stats accumulators (combined flame + profiles) to mc.
-		$stats_store = $this->stats_store;
-		if ( null !== $stats_store ) {
-			$now = $this->now_ts();
-			foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
-				if ( ! \is_array( $aggregate ) || ( ! \is_string( $url_hash ) && ! \is_int( $url_hash ) ) ) {
-					continue;
-				}
-				$url_hash = (string) $url_hash;
-				/** @var array<string, mixed> $aggregate */
-				// Finalized flame for display; keep flame_raw for merging.
-				$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
-				$count_raw              = $flame['count'] ?? 0;
-				$total_count            = Core::num_int( $count_raw );
-				$aggregate['flame_raw'] = $flame;
-				self::finalize_flame_node( $flame, $total_count );
-				$aggregate['flame']         = $flame;
-				$aggregate['last_modified'] = $now;
-				$stats_store->set_url_stats( $url_hash, $aggregate );
-			}
-		}
+		// Drain per-URL flame/profile stats to the store.
+		$this->mirror_url_stats();
 
 		// Flush combined hourly, leaderboard, and URL stats to memcache.
 		$this->persist_aggregate_stats();
@@ -1902,11 +1889,44 @@ class Flame_Builder_Node extends Node {
 	 * @return array<string, mixed>
 	 */
 	public function save_state(): array {
+		// Co-commit the current flame trees with the cursor, like pending.
+		$this->mirror_url_stats();
 		$this->flush_stats_mirror();
 		return [
 			'pending_bucket' => $this->pending_bucket,
 			'pending'        => $this->pending,
 		];
+	}
+
+	/**
+	 * Drain the current per-URL flame/profile stats_cache into the store (memcache + the
+	 * mirror seam). Shared by flush() and save_state() so the flame trees co-commit with
+	 * the cursor at every checkpoint, not only on the FLUSH_INTERVAL_SEC cadence.
+	 * set_url_stats overwrites with the full aggregate and does NOT reset stats_cache, so
+	 * a save_state drain plus the next flush() is idempotent (no double-count).
+	 */
+	private function mirror_url_stats(): void {
+		$stats_store = $this->stats_store;
+		if ( null === $stats_store ) {
+			return;
+		}
+		$now = $this->now_ts();
+		foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
+			if ( ! \is_array( $aggregate ) || ( ! \is_string( $url_hash ) && ! \is_int( $url_hash ) ) ) {
+				continue;
+			}
+			$url_hash = (string) $url_hash;
+			/** @var array<string, mixed> $aggregate */
+			// Finalized flame for display; keep flame_raw for merging.
+			$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
+			$count_raw              = $flame['count'] ?? 0;
+			$total_count            = Core::num_int( $count_raw );
+			$aggregate['flame_raw'] = $flame;
+			self::finalize_flame_node( $flame, $total_count );
+			$aggregate['flame']         = $flame;
+			$aggregate['last_modified'] = $now;
+			$stats_store->set_url_stats( $url_hash, $aggregate );
+		}
 	}
 
 	/**
