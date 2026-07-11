@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-11
+
 ### Changed
 
 - **Dropped the now-redundant `delete_on_blank: false` from the three bool settings** (`enable_logging`, `log_memory`, `flush_every_line`). The substrate's `Config_System\Field` now derives blank-delete from type (`'bool' !== $type`), so a checkbox opts out automatically. Behavior-identical.
