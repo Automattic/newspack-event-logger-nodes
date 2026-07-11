@@ -231,8 +231,7 @@ final class Rule_Set {
 			/** @var string[] $durable hooks list persisted by save(). */
 			return $durable;
 		}
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		\error_log( \sprintf( 'Newspack ELN: hooks missing for pointer rule "%s" (mc + durable option both absent).', $rule->id ) );
+		Core::print_less_often( \sprintf( 'Newspack ELN: hooks missing for pointer rule "%s" (mc + durable option both absent).', $rule->id ) );
 		return [];
 	}
 
@@ -250,8 +249,7 @@ final class Rule_Set {
 			return self::seed_from_config();
 		}
 		if ( ! \is_array( $raw ) ) {
-			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			\error_log( 'Newspack ELN: corrupt rules option; seeding from config.' );
+			Core::stderr( 'Newspack ELN: corrupt rules option; seeding from config.' );
 			return self::seed_from_config();
 		}
 		$rules = [];
