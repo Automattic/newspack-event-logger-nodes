@@ -55,8 +55,6 @@ class Settings_Schema {
 					type: 'bool',
 					label: static fn(): string => \__( 'Enable Logging', 'newspack-event-logger-nodes' ),
 					section: $general,
-					// An unchecked box is a real "off" override, not a reset.
-					delete_on_blank: false,
 					// Cached in LM singleton (every worker) → restart all.
 					restart: 'all',
 					sanitize: 'absint',
@@ -72,7 +70,6 @@ class Settings_Schema {
 					type: 'bool',
 					label: static fn(): string => \__( 'Log Memory', 'newspack-event-logger-nodes' ),
 					section: $debugging,
-					delete_on_blank: false,
 					// Cached in LM per-process singleton (every worker).
 					restart: 'all',
 					sanitize: 'absint',
@@ -83,7 +80,6 @@ class Settings_Schema {
 					type: 'bool',
 					label: static fn(): string => \__( 'Flush Every Line', 'newspack-event-logger-nodes' ),
 					section: $debugging,
-					delete_on_blank: false,
 					// Cached in LM per-process singleton (every worker).
 					restart: 'all',
 					sanitize: 'absint',

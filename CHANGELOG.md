@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dropped the now-redundant `delete_on_blank: false` from the three bool settings** (`enable_logging`, `log_memory`, `flush_every_line`). The substrate's `Config_System\Field` now derives blank-delete from type (`'bool' !== $type`), so a checkbox opts out automatically. Behavior-identical.
 - **Diagnostics route through `Core::` logging instead of raw `error_log()`.** The per-tick "hooks missing for pointer rule" flood and the "corrupt rules option" load error (`Rule_Set`), `Log_Manager`'s data-truncation notice, and `Hook_Categorizer`'s two pattern-rejection warnings now use `Core::print_less_often()` (rate-limited — emit once, suppress repeats) or `Core::stderr()` — matching the substrate convention, so the high-frequency messages stop flooding the log and gain the node stderr chain + REPL visibility.
 
 ### Fixed
