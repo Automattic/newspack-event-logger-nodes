@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Requires newspack-nodes ≥ the release carrying `\Newspack_Nodes\Job_Intake`** (the substrate class this release delegates to).
+## [0.29.0] - 2026-07-10
+
+**Requires newspack-nodes ≥ 0.34.0** (the release carrying `\Newspack_Nodes\Job_Intake`, the substrate class this release delegates to).
 
 ### Removed
 
