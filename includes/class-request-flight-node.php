@@ -70,13 +70,13 @@ class Request_Flight_Node extends Timer_Node {
 		$out = [];
 		$now = ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
 		foreach ( $patron->cache->iterate() as $rid => $request ) {
-			// Rebuild string-keyed prop map so extract_* gets array<string,mixed>.
+			// Rebuild string-keyed prop map so extract_* gets array<str,mixed>.
 			if ( ! $request instanceof \stdClass ) {
 				continue;
 			}
 			$vars = \get_object_vars( $request );
 			$r    = \array_combine( \array_map( '\strval', \array_keys( $vars ) ), \array_values( $vars ) );
-			// Process-start ts: mu-profiler wall-clock load ts (before plugins load).
+			// Process-start ts: mu-profiler wall-clock load (before plugins).
 			$ts_v          = $r['timestamp'] ?? 0;
 			$start_time    = Core::as_float( $ts_v );
 			$last_log_v    = $r['last_log_ts'] ?? $start_time;

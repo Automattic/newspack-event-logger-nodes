@@ -36,7 +36,7 @@ export class PerfErrorsViewNode extends Node {
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		// Ring buffer: write at _head (mod maxEntries), oldest overwritten; O(1).
+		// Ring buffer: write at _head mod maxEntries, oldest overwritten; O(1).
 		this._ring = [];
 		this._head = 0;
 		this._count = 0;
@@ -53,11 +53,11 @@ export class PerfErrorsViewNode extends Node {
 	fill( message ) {
 		const value = message[ VALUE ];
 		if ( value && typeof value === 'object' && value.action ) {
-			// Control changes: LOW-frequency path — publish so button/banner re-render.
+			// LOW-freq control change — publish (button/banner re-render).
 			this._control( value );
 			this._publish();
 		} else {
-			// Raw stream envelope: validate, enrich, append. HIGH-freq — no publish.
+			// Raw envelope: validate, enrich, append. HIGH-freq — no publish.
 			this._appendEnvelope( message );
 		}
 	}
@@ -95,7 +95,7 @@ export class PerfErrorsViewNode extends Node {
 		if ( ! rid ) {
 			return;
 		}
-		// SseInNode streams a `connected` sentinel envelope too; it's not an error.
+		// SseInNode streams a `connected` sentinel too; it's not an error.
 		if ( 'connected' === rid ) {
 			return;
 		}
@@ -114,7 +114,7 @@ export class PerfErrorsViewNode extends Node {
 
 		this.entryCounter += 1;
 		this._writeEntry( {
-			// Monotonic per-mount counter as the React key (distinct DOM per dup rid).
+			// Monotonic per-mount React key (distinct DOM per dup rid).
 			seq: this.entryCounter,
 			id: this.entryCounter,
 			rid,

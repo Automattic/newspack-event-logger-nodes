@@ -252,7 +252,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	const { paused: isPaused, connectionError } = view;
 
 	const [ filter, setFilter ] = useState( '' );
-	// Rendered entry buffer + RPS, fed from the rAF at frame rate (read off node).
+	// Rendered entry buffer + RPS, fed from rAF at frame rate (read off node).
 	const [ entries, setEntries ] = useState( [] );
 	const [ requestsPerSecond, setRequestsPerSecond ] = useState( 0 );
 
@@ -283,10 +283,10 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	const isAdjustingScrollRef = useRef( false ); // skip programmatic scroll.
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 ); // offset in rows.
 
-	// Newest seq + filter already smooth-scrolled for (compensate once per row).
+	// Newest seq+filter already smooth-scrolled for (compensate per row).
 	const lastCompensatedSeqRef = useRef( null );
 	const lastCompensatedFilterRef = useRef( filter );
-	// Last state pushed to React; skip idle frames (topSeq/count detect change).
+	// Last state pushed to React; skip idle frames (topSeq/count change).
 	const pushedRef = useRef( {
 		topSeq: -1,
 		count: -1,
@@ -309,7 +309,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		? Math.max( 0, Math.floor( ( now - lastEventTimeRef.current ) / 1000 ) )
 		: null;
 
-	// rAF loop: snapshot+filter node.entries, decay offset, push only on change.
+	// rAF loop: snapshot+filter entries, decay offset, push on change.
 	useEffect( () => {
 		const animate = () => {
 			const node = Core.node( VIEW_NODE );
@@ -321,17 +321,17 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			lastEventTimeRef.current =
 				Core.node( LINK_NODE )?.lastEventTime() ?? null;
 
-			// Snapshot+filter the buffer so a mid-frame append can't mutate the draw.
+			// Snapshot+filter buffer so a mid-frame append can't mutate draw.
 			const snapshot = filterRef.current
 				? buffer.filter( ( e ) =>
 						e.url.toLowerCase().includes( filterLower )
 				  )
 				: buffer.slice();
 
-			// Newest seq of the filtered view drives change detection (cap-robust).
+			// Newest filtered seq drives change detection (cap-robust).
 			const topSeq = snapshot.length ? snapshot[ 0 ].seq : 0;
 
-			// Decay offset toward 0; update virtualization on row-boundary crossings.
+			// Decay offset toward 0; virtualize on row-boundary crossings.
 			const content = contentRef.current;
 			if ( content && Math.abs( offsetRef.current ) > 0.5 ) {
 				offsetRef.current += ( 0 - offsetRef.current ) * 0.01;
@@ -344,7 +344,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				Math.abs( offsetRef.current ) / ROW_HEIGHT
 			);
 
-			// Push derived state only when seq/count/filter/RPS changed (skip idle).
+			// Push derived state when seq/count/filter/RPS changed (skip idle).
 			const pushed = pushedRef.current;
 			if (
 				topSeq !== pushed.topSeq ||
@@ -437,13 +437,13 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		[ entries, filter, filterLower ]
 	);
 
-	// Smooth-scroll compensation lands in the same paint as its row (no flicker).
+	// Smooth-scroll compensation lands in same paint as its row (no flicker).
 	useLayoutEffect( () => {
 		const topSeq = filteredEntries.length ? filteredEntries[ 0 ].seq : 0;
 		const prevSeq = lastCompensatedSeqRef.current;
 		const filterChanged = lastCompensatedFilterRef.current !== filter;
 		lastCompensatedFilterRef.current = filter;
-		// Don't advance the baseline past an empty list (first row is the baseline).
+		// Don't advance baseline past an empty list (first row is baseline).
 		if ( topSeq > 0 ) {
 			lastCompensatedSeqRef.current = topSeq;
 		}

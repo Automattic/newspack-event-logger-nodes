@@ -196,7 +196,7 @@ class Log_Manager {
 	private $topic           = null;
 
 	public function __construct() {
-		// Assign self FIRST: load_config() re-enters instance(); null would recurse.
+		// Assign self FIRST: load_config() re-enters instance(); null recurses.
 		self::$instance = $this;
 		$this->config = Config::load_config();
 		if ( empty( $this->config['enable_logging'] ) ) {
@@ -341,7 +341,7 @@ class Log_Manager {
 		if ( $this->started || ! $this->enabled || $this->finished ) {
 			return $this->started ?? false;
 		}
-		// started=true first: init_firehose re-enters ensure_started() (recursion).
+		// started=true first: init_firehose re-enters ensure_started().
 		$this->started = true;
 		\register_shutdown_function( [ $this, 'finish' ] );
 		$this->init_firehose( $this->config );
@@ -355,7 +355,7 @@ class Log_Manager {
 	 * @param array<string, mixed> $config
 	 */
 	private function init_firehose( array $config ): void {
-		// request_id FIRST: the Topic ctor re-enters message(), which needs a rid.
+		// request_id FIRST: Topic ctor re-enters message(), which needs a rid.
 		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
 		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
@@ -384,7 +384,7 @@ class Log_Manager {
 			if ( null !== $ci ) {
 				$this->topic->sink( $ci );
 			} else {
-				// CI not built yet (load order): relay hooks Topic to CI on first message.
+				// CI not built yet (load order): relay hooks Topic to CI later.
 				$this->topic->sink( new Callback_Node( [ $this, 'relay_topic_to_ci' ] ) );
 			}
 		}
@@ -467,11 +467,11 @@ class Log_Manager {
 				continue;
 			}
 			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', Core::as_string( $value ) ) ?? '';
-			// Redact URL secrets in any value carrying a query, not just HTTP_REFERER.
+			// Redact URL secrets in values with a query, not just HTTP_REFERER.
 			if ( false !== \strpos( $sanitized, '?' ) ) {
 				$sanitized = self::redact_url( $sanitized );
 			}
-			// Cap AFTER redaction so truncation can't hide a secret's query boundary.
+			// Cap AFTER redaction so truncation can't hide a secret's boundary.
 			if ( \strlen( $sanitized ) > self::ENV_VALUE_MAX ) {
 				$sanitized = \substr( $sanitized, 0, self::ENV_VALUE_MAX ) . '…';
 			}
@@ -645,7 +645,7 @@ class Log_Manager {
 	 * @return string 12-character hex hash.
 	 */
 	public static function url_hash( string $url ): string {
-		// Hash full string: surviving '?' is the ?worker_type marker — don't strip.
+		// Hash full string: surviving '?' is ?worker_type mark — don't strip.
 		$hash1 = self::fnv1a32( $url );
 		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
 		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
@@ -720,7 +720,7 @@ class Log_Manager {
 	 * sub-scopes — pair with end_job_context() in a finally block.
 	 */
 	public static function begin_job_context( string $handler ): void {
-		// $_SERVER is string-keyed by design (superglobal snapshot for restore).
+		// $_SERVER is string-keyed (superglobal snapshot for restore).
 		/** @var array<string, mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
 		$snapshot                 = $_SERVER;

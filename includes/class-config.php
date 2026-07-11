@@ -99,12 +99,12 @@ class Config {
 		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
-			// Validate filter return (may be any type); color maps are string-keyed.
+			// Validate filter return (any type); color maps are string-keyed.
 			/** @var array<string, mixed> $colors */
 			$colors = Core::arr( $filtered );
 		}
 
-		// Merge discovered events from remote spokes (available but not selected).
+		// Merge discovered events from remote spokes (available, not selected).
 		if ( \function_exists( 'get_option' ) ) {
 			$discovered = \get_option( self::OPTION_DISCOVERED_EVENTS, [] );
 			if ( \is_array( $discovered ) ) {
@@ -146,7 +146,7 @@ class Config {
 		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
 		$defaults  = \array_merge( $substrate, self::load_config_defaults() );
 
-		// Presence overlay: any stored option (even ''/[]/false/0) beats the default.
+		// Presence overlay: stored option (even ''/[]/false/0) beats default.
 		$schema = Settings_Schema::get();
 		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
 			$defaults,

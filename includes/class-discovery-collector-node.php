@@ -103,7 +103,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * @param array<array-key,mixed> $payload One spoke's discovery payload.
 	 */
 	private function merge_discovery( array $payload ): void {
-		// Fresh snapshot: merge below read-modify-writes WP options (avoid clobber).
+		// Fresh snapshot: merge below RMWs WP options (avoid clobber).
 		RuntimeConfig::invalidate_options_cache();
 
 		$hooks  = [];
@@ -122,7 +122,7 @@ class Discovery_Collector_Node extends Timer_Node {
 			}
 		}
 
-		// Collect discovered custom events (sanitize remote strings before storage).
+		// Collect discovered custom events (sanitize remote strings first).
 		$remote_events = $payload['custom_events'] ?? [];
 		if ( \is_array( $remote_events ) ) {
 			foreach ( $remote_events as $event ) {
@@ -146,7 +146,7 @@ class Discovery_Collector_Node extends Timer_Node {
 		if ( ! empty( $events ) ) {
 			$this->stage_discovered( Config::OPTION_DISCOVERED_EVENTS, \array_keys( $events ) );
 		}
-		// Custom-event names never stage as hooks (belt+suspenders w/ spoke filter).
+		// Custom-event names never stage as hooks (belt+suspenders w/ filter).
 		$hook_names = \array_keys( \array_diff_key( $hooks, $events ) );
 		if ( ! empty( $hook_names ) ) {
 			$this->stage_discovered( Config::OPTION_DISCOVERED_HOOKS, $hook_names );
@@ -170,7 +170,7 @@ class Discovery_Collector_Node extends Timer_Node {
 
 		foreach ( $names as $name ) {
 			if ( ! isset( $discovered[ $name ] ) ) {
-				// Cap total accumulated names to prevent unbounded option growth.
+				// Cap accumulated names to prevent unbounded option growth.
 				if ( \count( $discovered ) >= self::MAX_EVENTS ) {
 					break;
 				}

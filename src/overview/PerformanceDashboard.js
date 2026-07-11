@@ -67,7 +67,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	// Page-wide server filter state (lifted from OverviewSection).
 	const [ serverFilter, setServerFilter ] = useState( '' );
 
-	// Breakdown selector state (lifted so the dim rides the combined /overview).
+	// Breakdown selector state (lifted so the dim rides combined /overview).
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
@@ -75,7 +75,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const [ searchLoading, setSearchLoading ] = useState( false );
 	const [ requestPartition, setRequestPartition ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
-		// Load from localStorage with validation against allowed dropdown values.
+		// Load from localStorage, validated against allowed dropdown values.
 		const validValues = DASHBOARD_REFRESH_OPTIONS.map(
 			( opt ) => opt.value
 		);
@@ -123,7 +123,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return overview.breakdowns[ chartBreakdown ] ?? null;
 	}, [ overview, chartBreakdown ] );
 
-	// serverNames stays sticky: don't overwrite on a one-server scoped response.
+	// serverNames stays sticky: don't overwrite on one-server scoped reply.
 	const [ serverNames, setServerNames ] = useState( [] );
 	useEffect( () => {
 		if ( ! serverBreakdownData || serverFilter ) {
@@ -136,7 +136,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		setServerNames( Array.from( names ).sort() );
 	}, [ serverBreakdownData, serverFilter ] );
 
-	// resolveRequestId for ?request= deep links; reaches resolveRequest via a ref.
+	// resolveRequestId for ?request= deep links; reaches resolveRequest by ref.
 	const resolveRequestId = useCallback( async ( rid ) => {
 		const data = await commandResolveRef.current?.( rid );
 		if ( ! data || ! data.url_hash || data.partition === undefined ) {
@@ -401,7 +401,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const canLogUrl =
 		!! ruleUrl &&
 		__( 'Unknown URL', 'newspack-event-logger-nodes' ) !== ruleUrl;
-	// Strip origin so the exact rule matches REQUEST_URI ('?' = match sentinel).
+	// Strip origin so exact rule matches REQUEST_URI ('?' = match sentinel).
 	const rulePath = ruleUrl ? ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) : '';
 	// Append the sentinel only for a URL that lacks a '?'; else use path as-is.
 	const needsSentinel = ruleUrl && ! rulePath.includes( '?' );
@@ -452,7 +452,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		);
 	}, [ canLogUrl, existingRule, exactPattern ] );
 
-	// Save: upsert the exact rule, close only RuleEditModal, error inline on fail.
+	// Save: upsert exact rule, close only RuleEditModal, error inline on fail.
 	const saveRule = useCallback(
 		async ( draft ) => {
 			const res = await upsertRule( draft );
@@ -583,7 +583,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 							: selectedUrl.url
 					}
 					onRequestClose={ () => {
-						// Keep the URL modal open while the nested editor is open.
+						// Keep URL modal open while the nested editor is open.
 						if ( ruleDraft ) {
 							return;
 						}

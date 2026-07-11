@@ -66,7 +66,7 @@ export default function TagInputField( {
 		if ( hiddenInput ) {
 			hiddenInput.value = JSON.stringify( values );
 		}
-		// Controlled use (RuleEditModal): observe the tag list, not the carrier.
+		// Controlled use (RuleEditModal): observe the tag list, not carrier.
 		if ( onChange ) {
 			onChange( values );
 		}

@@ -67,7 +67,7 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 
 	const dots = currentHundredth - lastHundredth;
 
-	// First entry, exact 100ms boundary, or crossed one (>9 dots skipped a mark).
+	// First entry, exact 100ms boundary, or crossed (>9 dots skipped a mark).
 	if ( lastHundredth < 0 || currentHundredth % 10 === 0 || dots > 9 ) {
 		return {
 			displayTime: formatFullTimestamp( ts ),
@@ -138,7 +138,7 @@ export const computeIndentedEntries = ( entries ) => {
 						? pairStack[ pairStack.length - 1 ].pairId
 						: null;
 				while ( h < currentHundredth ) {
-					// Placeholder ts from the hundredth counter (recomputed later).
+					// Placeholder ts from hundredth counter (recomputed later).
 					result.push( {
 						n: '',
 						k: '',
@@ -166,7 +166,7 @@ export const computeIndentedEntries = ( entries ) => {
 			lastHundredth = Math.round( ts * 100 );
 		}
 
-		// Track start/complete pairs; displayTime is recomputed per visible set.
+		// Track start/complete pairs; displayTime recomputed per visible set.
 		let pairId = null;
 		realCount++;
 		if ( startMatch ) {
@@ -176,7 +176,7 @@ export const computeIndentedEntries = ( entries ) => {
 		} else if ( completeMatch && matchedIdx >= 0 ) {
 			// Found matching start - use its pairId.
 			pairId = pairStack[ matchedIdx ].pairId;
-			// Remove only the matched entry; children outliving their parent stay.
+			// Remove only the matched entry; children outliving parent stay.
 			pairStack.splice( matchedIdx, 1 );
 			result.push( {
 				...entry,
@@ -228,7 +228,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 			const isOutermost = baseName === 'process';
 
 			if ( ! isOutermost && ! expandedSet.has( entry.pairId ) ) {
-				// Collapsed: scan forward to find matching complete, emit merged row.
+				// Collapsed: scan forward for complete, emit merged row.
 				let childCount = 0;
 				let completeEntry = null;
 				let j = i + 1;
@@ -249,7 +249,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 				result.push( {
 					...entry,
 					k: baseName,
-					// Use complete's ts so the next comparison starts after this pair.
+					// Use complete ts so next compare starts after pair.
 					ts: completeEntry?.ts || entry.ts,
 					startTs: entry.ts,
 					duration_ms: completeEntry?.duration_ms ?? null,
@@ -338,7 +338,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 				}
 			}
 
-			// Phase 2: timestamps only, escalating intervals (100ms, 1s, 10s, 1m, ...).
+			// Phase 2: timestamps only, escalating (100ms, 1s, 10s, 1m, ...).
 			if ( h <= runEndH ) {
 				const intervals = [ 10, 100, 1000, 6000 ];
 				let intervalIdx = 0;

@@ -273,7 +273,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					continue;
 				}
 				foreach ( $bucket_data as $hash_or_url => $stats ) {
-					// Inner key is the URL hash; derive one if keyed by URL string instead.
+					// Inner key is URL hash; derive one if keyed by URL string.
 					$stat_arr = Core::arr( $stats );
 					if ( isset( $stat_arr['url'] ) ) {
 						$url  = Core::as_string( $stat_arr['url'] );
@@ -307,12 +307,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
 					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
 					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
-					// Accept sum_ms (FlameBuilder) or sum_req_time seconds (Aggregator).
+					// sum_ms (FlameBuilder) or sum_req_time secs (Aggregator).
 					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
 						? Core::as_float( $stat_arr['sum_ms'] )
 						: Core::as_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
 					$entry['sum_peak_mb'] += Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
-					// Fold min_ms only from timed buckets; skips untimed/poisoned sentinels.
+					// Fold min_ms only from timed buckets; skip sentinels.
 					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
 						$stat_min        = Core::as_float( $stat_arr['min_ms'] );
 						$entry['min_ms'] = isset( $entry['min_ms'] )
@@ -383,7 +383,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( 0 === $count ) {
 					continue;
 				}
-				// Accept sum_ms (FlameBuilder) or sum_req_time seconds (Aggregator).
+				// sum_ms (FlameBuilder) or sum_req_time secs (Aggregator).
 				$sum_ms = isset( $stats['sum_ms'] )
 					? Core::as_float( $stats['sum_ms'] )
 					: Core::as_float( $stats['sum_req_time'] ?? 0 ) * 1000.0;
@@ -991,7 +991,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Optional args: server scopes results; breakdown is a comma-sep dim list.
+				// Optional args: server scopes; breakdown = comma-sep dim list.
 				$opts       = Command_Args::parse( $args )['options'];
 				$server     = (string) ( $opts['server'] ?? '' );
 				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
@@ -1129,7 +1129,7 @@ class Performance_CI_Node extends Service_CI_Node {
 							'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
 							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
 							'last_updated' => $entry['last_updated'] ?? 0,
-							// Per-URL time series (UrlDetailView + urlRequestsPerSecond).
+							// Per-URL time series (UrlDetailView + rps).
 							'time_series'  => self::build_url_time_series( $hash ),
 						];
 						break;
@@ -1236,7 +1236,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Recompute total_hooks here so the response contract stays stable.
+				// Recompute total_hooks so the response contract stays stable.
 				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 				$total       = 0;
 				foreach ( $by_category as $list ) {
@@ -1259,7 +1259,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Positional receiver: set one option per command; Settings_Sync fans out.
+				// Positional: one option per command; Settings_Sync fans out.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
 
 				$option = Core::str( $option );
@@ -1270,7 +1270,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
 				}
 
-				// Value rides the wire as a string; array options carry JSON, decoded here.
+				// Wire value is string; array options carry JSON, decoded here.
 				$type      = self::SETTINGS_OPTIONS[ $option ];
 				$raw_value = Core::str( $value_arg );
 				$value     = 'array' === $type ? self::decode_array_value( $raw_value ) : $raw_value;
@@ -1280,7 +1280,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
 
-				// Autoload follows Config::autoload_for; the write emits a settings event.
+				// Autoload per Config::autoload_for; emits settings event.
 				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				AppConfig::reset();
 

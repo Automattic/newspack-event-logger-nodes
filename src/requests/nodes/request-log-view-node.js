@@ -59,7 +59,7 @@ export class RequestLogViewNode extends Node {
 	constructor( maxEntries ) {
 		super();
 		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		// Ring buffer: write at _head (mod maxEntries), oldest overwritten; O(1).
+		// Ring buffer: write at _head mod maxEntries, oldest overwritten; O(1).
 		this._ring = [];
 		this._head = 0;
 		this._count = 0;
@@ -76,11 +76,11 @@ export class RequestLogViewNode extends Node {
 	fill( message ) {
 		const value = message[ VALUE ];
 		if ( value && value.action ) {
-			// Control changes: LOW-frequency path — publish so button/label re-render.
+			// LOW-freq control change — publish (button/label re-render).
 			this._control( value );
 			this._publish();
 		} else if ( value ) {
-			// Request row: HIGH-freq — update node.entries/rps only (rAF reads them).
+			// Request row: HIGH-freq — update entries/rps only (rAF reads).
 			this._appendRow( value );
 		}
 	}
@@ -95,7 +95,7 @@ export class RequestLogViewNode extends Node {
 		}
 	}
 
-	// Clear buffer + counter + RPS window (matches handleClear in RequestStream).
+	// Clear buffer + counter + RPS window (matches RequestStream handleClear).
 	_clear() {
 		this.entries = [];
 		this.entryCounter = 0;
@@ -112,7 +112,7 @@ export class RequestLogViewNode extends Node {
 		} );
 	}
 
-	// Defensively shape a completed-request VALUE, then enrich to a render entry.
+	// Defensively shape completed-request VALUE, then enrich to render entry.
 	_appendRow( req ) {
 		if ( this.paused ) {
 			return;
@@ -127,7 +127,7 @@ export class RequestLogViewNode extends Node {
 		const url = clip( req.url, MAX_URL_LENGTH );
 		this.entryCounter += 1;
 		this._writeEntry( {
-			// Monotonic per-mount key so dup rids get distinct DOM (no scroll jump).
+			// Monotonic per-mount key; dup rids → distinct DOM (no jump).
 			seq: this.entryCounter,
 			rid: req.rid || '',
 			url,

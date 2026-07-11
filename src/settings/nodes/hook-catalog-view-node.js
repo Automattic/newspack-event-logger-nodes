@@ -47,10 +47,10 @@ export class HookCatalogViewNode extends Node {
 		const name = value.name;
 		const payload = value.payload;
 
-		// Settle any pending promise for this ID; if matched, caller owns the error.
+		// Settle pending promise for this ID; if matched, caller owns error.
 		const pendingMatched = this.replies.settle( message );
 
-		// hooks_registered refreshes the catalog; uncorrelated errors go global.
+		// hooks_registered refreshes catalog; uncorrelated errors go global.
 		if ( isError && ! pendingMatched ) {
 			this._applyError( payload );
 			this._publish();

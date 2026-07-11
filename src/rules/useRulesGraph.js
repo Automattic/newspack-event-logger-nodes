@@ -100,7 +100,7 @@ export function useRulesGraph( opts = {} ) {
 
 			bumpBuild( ( n ) => n + 1 );
 
-			// Fire one immediate uncorrelated list; its reply refreshes the view.
+			// Fire one immediate uncorrelated list; its reply refreshes view.
 			shell.fill( buildCommand( 'list', '', makeOpId() ) );
 
 			return () => {

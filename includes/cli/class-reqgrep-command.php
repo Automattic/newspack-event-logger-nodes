@@ -340,7 +340,7 @@ class Reqgrep_Command {
 			$tenth    = (int) ( ( $ts - \floor( $ts ) ) * 10 );
 			$time_str = \gmdate( 'Y-m-d H:i:s', (int) $ts ) . ".{$tenth}";
 
-			// Dot rows at escalating intervals so a long gap stays O(log gap) rows.
+			// Dot rows at escalating intervals so long gaps stay O(log gap).
 			if ( $this->fmt_last_timestamp ) {
 				$last_sec = (int) $this->fmt_last_timestamp;
 				$curr_sec = (int) $ts;
@@ -365,7 +365,7 @@ class Reqgrep_Command {
 			}
 		}
 
-		// Build the message body. Arrays pretty-print as JSON; strings stay verbatim.
+		// Build message body. Arrays pretty-print as JSON; strings verbatim.
 		$message = '';
 		if ( isset( $entry['m'] ) ) {
 			if ( \is_array( $entry['m'] ) ) {
@@ -557,7 +557,7 @@ class Reqgrep_Command {
 			$inflight->set( $rid, $state );
 			$this->finalize_if_complete( $inflight, $state, $rid, $key );
 		} else {
-			// Not matching — stash in history. Bound per-rid lines to defend memory.
+			// Not matching — stash in history; bound per-rid lines (memory).
 			$recent_idx = \count( $this->history ) - 1;
 			if ( ! isset( $this->history[ $recent_idx ][ $rid ] ) ) {
 				$this->history[ $recent_idx ][ $rid ] = [];
@@ -566,7 +566,7 @@ class Reqgrep_Command {
 				$this->history[ $recent_idx ][ $rid ][] = $line;
 			}
 
-			// Rotate history buckets when current overflows; trim to num_buckets.
+			// Rotate history buckets on overflow; trim to num_buckets.
 			if ( \count( $this->history[ $recent_idx ], COUNT_RECURSIVE ) > $this->bucket_size ) {
 				$this->history[] = [];
 			}
@@ -605,7 +605,7 @@ class Reqgrep_Command {
 		if ( ! \is_array( $state->lines ) ) {
 			$state->lines = [];
 		}
-		// Reference, not copy: append mutates the property in place (avoid COW).
+		// Reference, not copy: append mutates property in place (avoid COW).
 		/** @var list<string> $lines */
 		$lines = &$state->lines;
 		if ( $bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {

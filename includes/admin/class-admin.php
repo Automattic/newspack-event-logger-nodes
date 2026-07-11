@@ -434,7 +434,7 @@ class Admin {
 				<?php \wp_nonce_field( self::RESET_ACTION, self::RESET_NONCE ); ?>
 			</form>
 			<?php
-			// Let child plugins inject sections below the form via settings_after_form.
+			// Child plugins add sections below form via settings_after_form.
 			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
 			Field_Reset_Assets::enqueue();
 			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
@@ -460,7 +460,7 @@ class Admin {
 		if ( ! \array_key_exists( $key, $defaults ) ) {
 			return $value;
 		}
-		// Normalize bool defaults to int so the strict compare matches absint 0/1.
+		// Normalize bool defaults to int so strict compare matches absint 0/1.
 		$default = $defaults[ $key ];
 		if ( \is_bool( $default ) ) {
 			$default = self::bool_to_int( $default );
@@ -518,7 +518,7 @@ class Admin {
 
 		$schema->register_options( self::OPTIONS_GROUP );
 
-		// Reset / delete-on-blank gate: drops the row so the file default returns.
+		// Reset/delete-on-blank: drops the row so the file default returns.
 		Reset_Gate::register( self::RESET_MARK_FIELD, self::$option_names, self::$delete_on_blank_options );
 
 		$schema->register_sections_and_fields( self::SETTINGS_PAGE );

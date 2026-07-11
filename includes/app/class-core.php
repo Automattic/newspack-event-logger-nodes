@@ -93,7 +93,7 @@ class Core {
 			if ( 'plugin_loaded' === $hook_name ) {
 				continue;
 			}
-			// Skip internal filters: instrumenting them re-enters LogManager bootstrap.
+			// Skip internal filters: instrumenting re-enters LM bootstrap.
 			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
 				continue;
 			}
@@ -111,7 +111,7 @@ class Core {
 	 * @return mixed
 	 */
 	public function hook_start( $v = null ) {
-		// Resolve LM fresh per-call so suspend/resume picks up the current scope.
+		// Resolve LM fresh per-call so suspend/resume gets the current scope.
 		$lm = Log_Manager::instance();
 		if ( ! $lm->enabled ) {
 			return $v;
@@ -120,7 +120,7 @@ class Core {
 		$hook_name = \current_filter() ?: '';
 		$category  = $hook_name . ' hook';
 
-		// Log filter value as 'm', truncated (preview; full value is the filter).
+		// Log filter value as 'm', truncated (preview; full value is filter).
 		$m = '';
 		if ( isset( $v ) && \is_string( $v ) ) {
 			$m = \strlen( $v ) > 1024 ? \substr( $v, 0, 1024 ) : $v;
@@ -135,7 +135,7 @@ class Core {
 		}
 		$lm->start( $category, [ 'm' => $m, 'l' => '' ] );
 
-		// Wrap significant-hook callbacks every call (catches late registrations).
+		// Wrap significant-hook callbacks each call for late registrations.
 		if ( isset( $this->significant[ $hook_name ] ) ) {
 			$this->wrap_callbacks( $hook_name );
 		}
@@ -176,17 +176,17 @@ class Core {
 				$accepted_args = (int) $cb['accepted_args'];
 				$name          = self::short_name( $original );
 
-				// Skip wrappers we already created (prevents double-wrap on recursion).
+				// Skip wrappers already made (no double-wrap on recursion).
 				if ( $original instanceof \Closure && isset( $this->wrapper_ids[ \spl_object_id( $original ) ] ) ) {
 					continue;
 				}
 
-				// By-ref callbacks can't be wrapped: func_get_args() drops the reference.
+				// By-ref callbacks can't be wrapped: func_get_args() drops ref.
 				if ( self::callback_has_ref_param( $original ) ) {
 					continue;
 				}
 
-				// Wrap with timing; resolve LM per-call so it survives suspend/resume.
+				// Wrap timing; resolve LM per-call to survive suspend/resume.
 				$label   = "{$name} @{$priority}";
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$lm   = Log_Manager::instance();

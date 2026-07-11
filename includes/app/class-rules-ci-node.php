@@ -145,7 +145,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						$set       = Rule_Set::load();
 						$remaining = [];
 						foreach ( $set->rules() as $r ) {
-							// Drop the edited rule and any rule sharing its pattern (pattern = id).
+							// Drop rule + pattern-mates (pattern = id).
 							if ( ( '' !== $incoming->id && $r->id === $incoming->id ) || $r->pattern === $incoming->pattern ) {
 								continue;
 							}
