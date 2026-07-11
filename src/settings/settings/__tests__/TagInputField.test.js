@@ -242,6 +242,21 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
+	it( 'renders the Select Hooks button as a stock button', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'hooks',
+				initialValues: [],
+				showHookSelector: true,
+			} )
+		);
+		const button = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Select Hooks' );
+		expect( button.classList.contains( 'button' ) ).toBe( true );
+		unmount();
+	} );
+
 	it( 'renders custom-event-selector mode', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
@@ -270,6 +285,21 @@ describe( 'TagInputField', () => {
 			button.click();
 		} );
 		expect( container.textContent ).toContain( 'CUSTOM_MODAL_OPEN' );
+		unmount();
+	} );
+
+	it( 'renders the Select Events button as a stock button', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				fieldName: 'events',
+				initialValues: [],
+				showCustomSelector: true,
+			} )
+		);
+		const button = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Select Events' );
+		expect( button.classList.contains( 'button' ) ).toBe( true );
 		unmount();
 	} );
 

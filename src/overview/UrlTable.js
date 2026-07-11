@@ -524,7 +524,7 @@ export default function UrlTable( {
 						<div className="event-logger-table__pagination-controls">
 							<button
 								type="button"
-								className="event-logger-table__pagination-btn"
+								className="event-logger-table__pagination-btn button button-small"
 								disabled={ currentPage <= 1 }
 								onClick={ () =>
 									setCurrentPage( ( p ) => p - 1 )
@@ -546,7 +546,7 @@ export default function UrlTable( {
 							</span>
 							<button
 								type="button"
-								className="event-logger-table__pagination-btn"
+								className="event-logger-table__pagination-btn button button-small"
 								disabled={ currentPage >= totalPages }
 								onClick={ () =>
 									setCurrentPage( ( p ) => p + 1 )

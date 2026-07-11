@@ -59,9 +59,14 @@
 	overflow-wrap: break-word;
 }
 
-// Override WordPress Button component styles for tag remove button
+// The @wordpress/components icon Button already draws a transparent,
+// hover-lit control; only the pill-fit sizing is local (drop the chrome
+// re-theme so the button keeps its themed component look).
 button.components-button.event-logger-tag-remove {
 	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	width: 18px;
 	height: 18px;
 	min-width: 18px;
@@ -70,20 +75,6 @@ button.components-button.event-logger-tag-remove {
 	max-height: 18px;
 	padding: 0;
 	margin-left: 2px;
-	background: transparent;
-	border: none;
-	border-radius: 50%;
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: var(--ink-3, var(--np-text-secondary));
-	transition: all 0.15s ease;
-
-	&:hover {
-		background: rgba(0, 0, 0, 0.1);
-		color: var(--ink, var(--np-text));
-	}
 
 	svg {
 		width: 14px;
@@ -132,15 +123,6 @@ button.components-button.event-logger-tag-remove {
 			// Match the console's tee-target chips (`.topology-edit-chip`): quiet
 			// --ink-3 border, not the garish full --cyan.
 			border-color: var(--ink-3);
-			color: var(--ink);
-		}
-	}
-
-	button.components-button.event-logger-tag-remove {
-		color: var(--ink-3);
-
-		&:hover {
-			background: rgba(255, 255, 255, 0.1);
 			color: var(--ink);
 		}
 	}
