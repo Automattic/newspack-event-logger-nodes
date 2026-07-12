@@ -318,7 +318,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		if ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
 			$substrate = \Newspack_Nodes\Config::load_config();
 			/** @var int|float|string|bool|null $raw_lifespan */
-			$raw_lifespan      = $substrate['max_lifespan'] ?? 86400;
+			$raw_lifespan      = $substrate['min_lifetime'] ?? 86400;
 			$retention_seconds = (int) $raw_lifespan;
 		}
 		$hook_categories = [ '_colors' => [], '_patterns' => [] ];

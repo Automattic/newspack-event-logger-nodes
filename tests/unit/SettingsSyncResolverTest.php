@@ -103,8 +103,8 @@ class SettingsSyncResolverTest extends TestCase {
 
 	/**
 	 * A remote_* option is a first-class substrate setting with its OWN default
-	 * (remote_max_lifespan=3600), distinct from the hub's canonical key
-	 * (max_lifespan=86400). The resolver must return the remote default — NOT strip
+	 * (remote_min_lifetime=3600), distinct from the hub's canonical key
+	 * (min_lifetime=86400). The resolver must return the remote default — NOT strip
 	 * `^remote_` to the canonical key — so the spoke gets the remote geometry the
 	 * operator sees on the Nodes Runtime page, not the hub's retention.
 	 */
@@ -112,9 +112,9 @@ class SettingsSyncResolverTest extends TestCase {
 		$defaults = \Newspack_Nodes\Config::load_config_defaults();
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
 			false,
-			'newspack_nodes_remote_max_lifespan'
+			'newspack_nodes_remote_min_lifetime'
 		);
-		$this->assertSame( $defaults['remote_max_lifespan'], $resolved );
-		$this->assertNotSame( $defaults['max_lifespan'], $resolved );
+		$this->assertSame( $defaults['remote_min_lifetime'], $resolved );
+		$this->assertNotSame( $defaults['min_lifetime'], $resolved );
 	}
 }

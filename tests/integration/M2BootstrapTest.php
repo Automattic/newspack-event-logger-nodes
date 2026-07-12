@@ -300,8 +300,8 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_settings_controller_class_is_gone(): void {
 		// M5.2b cut RemoteManager off /settings; the legacy route now has
 		// zero callers. Settings_CI.update takes the same four substrate
-		// integer settings (num_partitions, num_segments, segment_size,
-		// max_lifespan) with the same bounds + manage_options gate.
+		// integer settings (num_partitions, max_segments, segment_size,
+		// min_lifetime) with the same bounds + manage_options gate.
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\SettingsController' ),
 			'Legacy SettingsController must be deleted; Settings_CI.update replaces it (M2 Task 3).'
