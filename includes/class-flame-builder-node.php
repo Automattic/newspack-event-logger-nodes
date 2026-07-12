@@ -2024,9 +2024,7 @@ class Flame_Builder_Node extends Node {
 						$partition = (int) $parts[0];
 
 						// Substrate retention config; store uses Core::$memd.
-						$config           = \Newspack_Event_Logger_Nodes\Config::load_config();
-						$max_lifespan_raw = $config['min_lifetime'] ?? 86400;
-						$max_lifespan     = Core::num_int( $max_lifespan_raw, 86400 );
+						$max_lifespan = Core::num_int( \Newspack_Event_Logger_Nodes\Config::value( 'min_lifetime' ), 86400 );
 
 						$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store( $partition, $max_lifespan );
 

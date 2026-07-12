@@ -343,17 +343,15 @@ class Log_Manager {
 		// started=true first: init_firehose re-enters ensure_started().
 		$this->started = true;
 		\register_shutdown_function( [ $this, 'finish' ] );
-		$this->init_firehose( $this->config );
+		$this->init_firehose();
 		$this->log_process();
 		return true;
 	}
 
 	/**
 	 * Finish initialization
-	 *
-	 * @param array<string, mixed> $config
 	 */
-	private function init_firehose( array $config ): void {
+	private function init_firehose(): void {
 		// request_id FIRST: Topic ctor re-enters message(), which needs a rid.
 		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
@@ -365,14 +363,14 @@ class Log_Manager {
 		}
 
 		$dir_template        = Config::get_logs_directory() . '/firehose.p{partition}';
-		$num_partitions      = Core::as_int( $config['num_partitions'] ?? 1 );
+		$num_partitions      = Core::as_int( Config::value( 'num_partitions' ) );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
-		$segment_size = Core::as_int( $config['segment_size'] ?? Partition_Node::DEFAULT_SEGMENT_SIZE );
-		$min_segments = Core::as_int( $config['min_segments'] ?? Partition_Node::DEFAULT_MIN_SEGMENTS );
-		$max_segments = Core::as_int( $config['max_segments'] ?? Partition_Node::DEFAULT_MAX_SEGMENTS );
-		$min_lifetime = Core::as_int( $config['min_lifetime'] ?? Partition_Node::DEFAULT_MIN_LIFETIME );
-		$max_lifetime = Core::as_int( $config['max_lifetime'] ?? Partition_Node::DEFAULT_MAX_LIFETIME );
+		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
+		$min_segments = Core::as_int( Config::value( 'min_segments' ) );
+		$max_segments = Core::as_int( Config::value( 'max_segments' ) );
+		$min_lifetime = Core::as_int( Config::value( 'min_lifetime' ) );
+		$max_lifetime = Core::as_int( Config::value( 'max_lifetime' ) );
 		$existing = Core::node( '_firehose:topic' );
 		if ( $existing instanceof Topic_Node ) {
 			$this->topic = $existing;
