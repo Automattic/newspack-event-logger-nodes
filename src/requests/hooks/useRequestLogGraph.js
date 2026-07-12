@@ -85,7 +85,7 @@ export function useRequestLogGraph( opts = {} ) {
 			const link = interpreter.makeNode(
 				'RemoteLink',
 				LINK,
-				`completed ${ baseUrl } ${ nonce }`
+				`completed.* ${ baseUrl } ${ nonce }`
 			);
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;

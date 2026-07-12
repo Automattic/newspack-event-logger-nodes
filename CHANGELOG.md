@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The gyroscope, request-log, and error-log dashboards subscribe by glob** (`gyroscope.*`, `completed.*`, `errors.*`) instead of a bare feed name, matching the substrate's new layout-agnostic SSE resolver — the server no longer expands a bare `{feed}` into `.p{N}` partitions; the client names its convention with `{feed}.*`. **Requires newspack-nodes with the glob `open_subscription`** (the resolver change ships together).
+
 ### Added
 
 - **Argument tooltips: app node `node_schema` constructor arguments now carry descriptions** — `Discovery_Collector`'s `interval_seconds` and `Request_Builder`'s `bucket_size` / `num_buckets` — so the topology console shows a tooltip for each. A new `AppNodeSchemaCoverageTest` gate fails if any app node_schema argument lacks a description. (Consumes the substrate's `CtorField` tooltip wiring in newspack-nodes.)
