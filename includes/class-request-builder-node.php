@@ -1205,8 +1205,8 @@ class Request_Builder_Node extends Timer_Node {
 			'category'    => 'Transform',
 			'description' => 'Assembles per-request firehose lines into completed-request docs; emits errors to a named partition.',
 			'arguments'        => [
-				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE ],
-				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS ],
+				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE, 'description' => 'Max in-flight requests held per LRU bucket before rotating to a fresh one (default 100).' ],
+				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS, 'description' => 'Number of rotating LRU buckets for in-flight requests; the oldest is evicted when full (capacity ~ bucket_size x num_buckets, default 3).' ],
 			],
 			'commands'       => [
 				[
