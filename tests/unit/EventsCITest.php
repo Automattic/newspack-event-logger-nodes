@@ -8,7 +8,7 @@
  *   stats  — merge of per-partition hourly buckets into a single time_series
  *            array.
  *
- * Substrate config (num_partitions, max_lifespan, base_directory) is seeded
+ * Substrate config (num_partitions, min_lifetime, base_directory) is seeded
  * via TestCase::use_base_dir(), matching SettingsCITest / StatusCITest. The
  * shared `Core::$memd` handle is seeded with an in-memory `\Memcached` so the
  * stats path is exercised without a real memcache server.
@@ -65,7 +65,7 @@ class EventsCITest extends TestCase {
 
 	public function test_stats_verb_returns_merged_hourly_buckets(): void {
 		// Seed one partition with one hourly bucket via Stats_Store.
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400 ] );
 		$store = new Stats_Store( 0, 86400 );
 		$store->set_hourly( [
 			'2026-05-17-10' => [ 'count' => 3, 'sum_ms' => 1500.0, 'sum_peak_mb' => 30.0 ],
@@ -87,7 +87,7 @@ class EventsCITest extends TestCase {
 
 	public function test_stats_verb_merges_across_partitions(): void {
 		// Two partitions, same hour bucket — verb sums into one row.
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2, 'max_lifespan' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2, 'min_lifetime' => 86400 ] );
 		( new Stats_Store( 0, 86400 ) )->set_hourly( [
 			'2026-05-17-10' => [ 'count' => 2, 'sum_ms' => 1000.0, 'sum_peak_mb' => 20.0 ],
 		] );
@@ -108,7 +108,7 @@ class EventsCITest extends TestCase {
 	public function test_stats_verb_sorts_buckets_by_hour(): void {
 		// Two hour buckets, out of order in storage — ksort puts the
 		// earlier hour first in the output array.
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400 ] );
 		$store = new Stats_Store( 0, 86400 );
 		$store->set_hourly( [
 			'2026-05-17-12' => [ 'count' => 1, 'sum_ms' => 100.0, 'sum_peak_mb' => 1.0 ],
@@ -127,7 +127,7 @@ class EventsCITest extends TestCase {
 		// Cache-down (Core::$memd null): Stats_Store::get_hourly returns [], the
 		// verb returns the empty time_series envelope rather than throwing.
 		// Matches the legacy controller's fail-soft contract for stats reads.
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400 ] );
 		Core::$memd = null;
 
 		$interpreter     = new Events_CI_Node();

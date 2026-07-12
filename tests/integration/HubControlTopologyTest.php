@@ -119,10 +119,10 @@ class HubControlTopologyTest extends TestCase {
 		// value onward to ITS spokes. Registry is a LIST of {to,remote} per local.
 		$this->assertSame(
 			[
-				[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_segments' ],
-				[ 'to' => 'settings', 'remote' => 'newspack_nodes_remote_num_segments' ],
+				[ 'to' => 'settings', 'remote' => 'newspack_nodes_max_segments' ],
+				[ 'to' => 'settings', 'remote' => 'newspack_nodes_remote_max_segments' ],
 			],
-			$map['newspack_nodes_remote_num_segments']
+			$map['newspack_nodes_remote_max_segments']
 		);
 		$this->assertSame(
 			[ [ 'to' => 'settings', 'remote' => 'newspack_nodes_num_partitions' ] ],

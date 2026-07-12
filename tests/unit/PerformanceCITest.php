@@ -15,7 +15,7 @@
  *   request_detail  — full request + flame data for a known {rid, partition}
  *                     (lifted from PerfRequestsController::get_request).
  *
- * Substrate config (num_partitions, max_lifespan, base_directory) is seeded
+ * Substrate config (num_partitions, min_lifetime, base_directory) is seeded
  * via TestCase::use_base_dir(), matching SettingsCITest / EventsCITest. The
  * shared `Core::$memd` handle is seeded with an in-memory `\Memcached` so the
  * Stats_Store path is exercised without a real memcache server.
@@ -52,7 +52,7 @@ class PerformanceCITest extends TestCase {
 		$this->tmp  = '/tmp/performance-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
 		Core::$memd = new InMemoryMemcached();
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400 ] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
 		// Reset the hook-categorizer static caches and the WP hook globals
@@ -77,6 +77,42 @@ class PerformanceCITest extends TestCase {
 		$wp_filter  = [];
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
+	}
+
+	// -------------------------------------------------------------------------
+	// Stats-retention window: sourced from the substrate `min_lifetime` key
+	// (the [138]-renamed name for the min-retention age the readers already
+	// read as `max_lifespan`), NOT the deleted `max_lifespan` key.
+	// -------------------------------------------------------------------------
+
+	/** stats_stores() reads the retention window from the substrate `min_lifetime` config key. */
+	public function test_stats_stores_retention_reads_min_lifetime_config_key(): void {
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 4321 ] );
+
+		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
+		$method->setAccessible( true );
+		/** @var array<int,Stats_Store> $stores */
+		$stores = $method->invoke( null );
+
+		$this->assertNotEmpty( $stores );
+		$this->assertSame( 4321, $stores[0]->ttl() );
+	}
+
+	/** The retired `max_lifespan` key no longer feeds the window — it falls back to the default. */
+	public function test_stats_stores_retention_ignores_retired_max_lifespan_key(): void {
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 4321 ] );
+
+		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
+		$method->setAccessible( true );
+		/** @var array<int,Stats_Store> $stores */
+		$stores = $method->invoke( null );
+
+		$this->assertNotEmpty( $stores );
+		$this->assertSame(
+			86400,
+			$stores[0]->ttl(),
+			'retired substrate key must no longer feed the stats window'
+		);
 	}
 
 	// -------------------------------------------------------------------------

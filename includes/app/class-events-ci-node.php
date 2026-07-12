@@ -58,7 +58,7 @@ class Events_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
 						$config            = RuntimeConfig::load_config();
 						$num_partitions_v  = $config['num_partitions'] ?? 1;
-						$max_lifespan_v    = $config['max_lifespan'] ?? 86400;
+						$max_lifespan_v    = $config['min_lifetime'] ?? 86400;
 						$num_partitions    = Core::as_int( $num_partitions_v, 1 );
 						$max_lifespan      = Core::as_int( $max_lifespan_v, 86400 );
 

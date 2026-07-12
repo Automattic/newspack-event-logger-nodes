@@ -701,7 +701,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		$config         = RuntimeConfig::load_config();
 		$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
-		$max_lifespan   = Core::as_int( $config['max_lifespan'] ?? 86400 );
+		$max_lifespan   = Core::as_int( $config['min_lifetime'] ?? 86400 );
 		$stores         = [];
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$stores[] = new Stats_Store( $p, $max_lifespan );

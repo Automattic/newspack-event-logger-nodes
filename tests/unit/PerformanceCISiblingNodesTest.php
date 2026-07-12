@@ -31,7 +31,7 @@ class PerformanceCISiblingNodesTest extends TestCase {
 		parent::setUp();
 		$this->tmp = '/tmp/performance-ci-sibling-test-' . \uniqid();
 		\mkdir( $this->tmp . '/logs', 0755, true );
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400 ] );
 		$GLOBALS['_current_user_can'] = true;
 	}
 

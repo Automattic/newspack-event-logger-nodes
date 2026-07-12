@@ -111,8 +111,8 @@ class Admin {
 	/**
 	 * Application-level option names cleared by `handle_reset_settings()`.
 	 *
-	 * Substrate-level options (base_directory, num_partitions, num_segments,
-	 * segment_size, max_lifespan, memcache_servers) live on
+	 * Substrate-level options (base_directory, num_partitions, max_segments,
+	 * segment_size, min_lifetime, memcache_servers) live on
 	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. Application
 	 * admin only owns the keys below. (The aggregator spoke list is NOT here —
 	 * it's owned by the substrate `\Newspack_Nodes\Vault` and managed by its
@@ -345,7 +345,7 @@ class Admin {
 
 		// flush_all() only rotates the salt option; no memcache handle needed.
 		$config       = Config::load_config();
-		$max_lifespan = $config['max_lifespan'] ?? 86400;
+		$max_lifespan = $config['min_lifetime'] ?? 86400;
 		$stats        = new Stats_Store( 0, Core::num_int( $max_lifespan ) );
 		$stats->flush_all();
 
