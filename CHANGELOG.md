@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Topology retention geometry migrated to the substrate's split min/max schema.** Every `make_node Partition`/`Topic` line in the `.tsl` files now emits `… segment_size min_segments max_segments min_lifetime max_lifetime` (the old single `num_segments` / `max_lifespan` pair became a four-token count-plus-lifetime window), matching the migrated `Partition_Node`/`Topic_Node`/`Log_Node` argument order and the config keys `Log_Manager` already reads. New `min_segments`/`max_segments`/`min_lifetime`/`max_lifetime` config keys are read for the firehose Topic and every data partition; `num_segments`/`max_lifespan` remain for the substrate worker-geometry displays and `Stats_Store`'s stats-retention window.
 - **The gyroscope, request-log, and error-log dashboards subscribe by glob** (`gyroscope.*`, `completed.*`, `errors.*`) instead of a bare feed name, matching the substrate's new layout-agnostic SSE resolver — the server no longer expands a bare `{feed}` into `.p{N}` partitions; the client names its convention with `{feed}.*`. **Requires newspack-nodes with the glob `open_subscription`** (the resolver change ships together).
 
 ### Added

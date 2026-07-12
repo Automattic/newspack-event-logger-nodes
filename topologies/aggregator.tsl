@@ -18,5 +18,5 @@
 # vault_verify_ssl / vault_require_https config — not a per-topology setter.
 
 make_node Remote_Job_Rewrite remote-job-rewrite
-make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
+make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} <config:num_partitions> <config:segment_size> <config:min_segments> <config:max_segments> <config:min_lifetime> <config:max_lifetime>
 connect_node remote-job-rewrite firehose:topic
