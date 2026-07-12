@@ -22,6 +22,7 @@ use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Topology_Loader;
 use Newspack_Nodes\Topology_Registry;
@@ -69,8 +70,10 @@ class TopologyCompactSummaryTest extends TestCase {
 						'logs_dir'     => $tmp . '/logs',
 						'offsets_dir'  => $tmp . '/offsets',
 						'segment_size' => '1048576',
-						'num_segments' => '4',
-						'max_lifespan' => '3600',
+						'min_segments' => '3',
+						'max_segments' => '5',
+						'min_lifetime' => '120',
+						'max_lifetime' => '7200',
 					];
 				}
 				return $values[ $key ] ?? null;
@@ -168,5 +171,41 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertStringContainsString( 'cmd request-builder:config set_completed_target completed:tee', $dump );
 		$this->assertStringContainsString( 'cmd request-builder:config set_inflight_target gyroscope:partition', $dump );
 		$this->assertStringNotContainsString( 'set_inflight_interval', $dump );
+	}
+
+	/**
+	 * The `<config:segment_size> <config:min_segments> <config:max_segments>
+	 * <config:min_lifetime> <config:max_lifetime>` Partition line must resolve
+	 * all four new retention tokens from config in the new argument order.
+	 */
+	public function test_config_token_partition_carries_new_retention_geometry(): void {
+		$this->load_topology( 'combined' );
+
+		$errors = Core::node( 'errors:partition' );
+		$this->assertInstanceOf( Partition_Node::class, $errors );
+		$this->assertSame( 3, $this->partition_geometry( $errors, 'min_segments' ) );
+		$this->assertSame( 5, $this->partition_geometry( $errors, 'max_segments' ) );
+		$this->assertSame( 120, $this->partition_geometry( $errors, 'min_lifetime' ) );
+		$this->assertSame( 7200, $this->partition_geometry( $errors, 'max_lifetime' ) );
+	}
+
+	/**
+	 * The literal `1048576 <config:min_segments> <config:max_segments> 0 0`
+	 * Partition line keeps its two trailing zero lifetimes while picking up the
+	 * segment counts from config.
+	 */
+	public function test_literal_zero_partition_carries_new_retention_geometry(): void {
+		$this->load_topology( 'combined' );
+
+		$completed = Core::node( 'completed:partition' );
+		$this->assertInstanceOf( Partition_Node::class, $completed );
+		$this->assertSame( 3, $this->partition_geometry( $completed, 'min_segments' ) );
+		$this->assertSame( 5, $this->partition_geometry( $completed, 'max_segments' ) );
+		$this->assertSame( 0, $this->partition_geometry( $completed, 'min_lifetime' ) );
+		$this->assertSame( 0, $this->partition_geometry( $completed, 'max_lifetime' ) );
+	}
+
+	private function partition_geometry( Partition_Node $partition, string $prop ): int {
+		return ( new \ReflectionProperty( Partition_Node::class, $prop ) )->getValue( $partition );
 	}
 }
