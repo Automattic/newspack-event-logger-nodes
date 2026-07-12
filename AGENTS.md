@@ -16,9 +16,12 @@ Every code-writing turn — main Claude AND every subagent dispatched via the Ag
 
 1. **Invoke `superpowers:test-driven-development` BEFORE writing any code.** No production code without a failing test first.
 2. **Before every commit, main Claude runs `/code-review`** (replaces `superpowers:simplify`). It spawns its own review agents, so subagents CANNOT run it and do NOT commit; main Claude always runs it after a subagent finishes, then commits.
+3. **Make regressions loud** — two layers, both learned the hard way (green suites hid real bugs; `?? default` reads decoupled config silently for weeks):
+   - *Tests* must fail on the OLD code, using values **distinct from every default/fallback**. A test that seeds a value equal to the default (or only exercises the trivial case) still passes when the change is silently ignored — it proves nothing. Distinct values, watched failing first.
+   - *Runtime* — required config/inputs fail LOUD, never `?? default` a key you actually depend on. A renamed or typo'd key should throw at the boundary, not limp on a default. Read via the fail-loud `Config::value()` accessor (this plugin's own, validated against the shared substrate registry), not `$config['key'] ?? default`.
 
 Subagent prompts MUST include the literal phrase:
-> "Invoke `superpowers:test-driven-development` via the Skill tool BEFORE writing any code — mandatory, no exceptions. Do NOT commit: implement, run your tests, and report; main Claude runs `/code-review` and commits."
+> "Invoke `superpowers:test-driven-development` via the Skill tool BEFORE writing any code — mandatory, no exceptions; the failing test must use values distinct from every default/fallback. Do NOT commit: implement, run your tests, and report; main Claude runs `/code-review` and commits."
 
 Subagents have no memory of conversation conventions; omission is a workflow violation. See `~/.claude/rules/workflow-discipline.md`.
 

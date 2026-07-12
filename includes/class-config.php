@@ -91,10 +91,8 @@ class Config {
 	 * @return array<string, mixed> Associative array of event_name => hex_color.
 	 */
 	public static function get_custom_colors(): array {
-		$config = self::load_config();
-		$raw    = $config['custom_colors'] ?? [];
 		/** @var array<string, mixed> $colors */
-		$colors = Core::arr( $raw );
+		$colors = Core::arr( self::value( 'custom_colors' ) );
 
 		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
@@ -121,6 +119,42 @@ class Config {
 		\ksort( $colors, SORT_NATURAL | SORT_FLAG_CASE );
 
 		return $colors;
+	}
+
+	/**
+	 * Register this plugin's config keys with the shared substrate registry so
+	 * value() (and the substrate's is_declared) accept them. Mirrors the
+	 * substrate's own boot registration (schema overlay keys ∪ config-file
+	 * default keys). Wired into the deferred bootstrap; substrate keys are
+	 * declared by the substrate itself.
+	 */
+	public static function register_config_keys(): void {
+		if ( ! \class_exists( RuntimeConfig::class ) ) {
+			return;
+		}
+		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
+		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
+	}
+
+	/**
+	 * Fail-loud single-key read over THIS plugin's merged config, validated
+	 * against the shared substrate registry: an undeclared key throws instead of
+	 * limping on a `?? default`. A declared key resolves off the merged config
+	 * (substrate values layered under ELN defaults + option overlay);
+	 * declared-but-unset returns null.
+	 *
+	 * @api
+	 * @return mixed
+	 * @throws \RuntimeException If $key is not declared by any registered schema.
+	 */
+	public static function value( string $key ): mixed {
+		if ( ! RuntimeConfig::is_declared( $key ) ) {
+			throw new \RuntimeException(
+				\sprintf( "unknown config key '%s'", \esc_html( $key ) )
+			);
+		}
+		$config = self::load_config();
+		return \array_key_exists( $key, $config ) ? $config[ $key ] : null;
 	}
 
 	/**

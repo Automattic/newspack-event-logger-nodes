@@ -320,8 +320,7 @@ class Admin {
 			return false;
 		}
 
-		$config        = Config::load_config();
-		$allowed_users = $config['allowed_users'] ?? [];
+		$allowed_users = Config::value( 'allowed_users' );
 		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
 			return true;
 		}
@@ -344,8 +343,7 @@ class Admin {
 		self::verify_admin_post( self::FLUSH_STATS_NONCE, self::FLUSH_STATS_ACTION );
 
 		// flush_all() only rotates the salt option; no memcache handle needed.
-		$config       = Config::load_config();
-		$max_lifespan = $config['min_lifetime'] ?? 86400;
+		$max_lifespan = Config::value( 'min_lifetime' );
 		$stats        = new Stats_Store( 0, Core::num_int( $max_lifespan ) );
 		$stats->flush_all();
 

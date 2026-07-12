@@ -50,9 +50,7 @@ class Core {
 	public function __construct() {
 		// Bind hooks unconditionally; check enabled per-call (no cached LM).
 
-		$config               = Config::load_config();
-		$start_priority       = $config['hook_start_priority'] ?? 1;
-		$this->start_priority = RuntimeCore::num_int( $start_priority, 1 );
+		$this->start_priority = RuntimeCore::num_int( Config::value( 'hook_start_priority' ), 1 );
 
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );

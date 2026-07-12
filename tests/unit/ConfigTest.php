@@ -159,6 +159,37 @@ class ConfigTest extends TestCase {
 		}
 	}
 
+	// ── value(): fail-loud single-key read over the merged config ───────────
+
+	public function test_value_resolves_substrate_key(): void {
+		// A substrate key (declared by the substrate registry) resolves off the
+		// MERGED config; 555111 is distinct from the 86400 / 0 defaults it used
+		// to fall back to via `?? 86400`.
+		$conf = $this->temp_dir . '/value-substrate.php';
+		\file_put_contents( $conf, "<?php return [ 'min_lifetime' => 555111 ];\n" );
+		$this->allow_dir( $this->temp_dir );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
+		Config::reset();
+		$this->assertSame( 555111, Config::value( 'min_lifetime' ) );
+	}
+
+	public function test_value_resolves_application_key(): void {
+		// An ELN-own key (declared via the ELN key registration) resolves off the
+		// merged config; 31337 is distinct from the -10000 file default and the
+		// old `?? 1` fallback.
+		$conf = $this->temp_dir . '/value-app.php';
+		\file_put_contents( $conf, "<?php return [ 'hook_start_priority' => 31337 ];\n" );
+		$this->allow_dir( $this->temp_dir );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
+		Config::reset();
+		$this->assertSame( 31337, Config::value( 'hook_start_priority' ) );
+	}
+
+	public function test_value_throws_on_undeclared_key(): void {
+		$this->expectException( \RuntimeException::class );
+		Config::value( 'eln_never_declared_bogus_key' );
+	}
+
 	// ── WP option overrides ────────────────────────────────────────────────
 
 	public function test_present_empty_wp_option_overrides_file_default(): void {

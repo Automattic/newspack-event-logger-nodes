@@ -699,9 +699,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === Core::$memd ) {
 			return [];
 		}
-		$config         = RuntimeConfig::load_config();
-		$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
-		$max_lifespan   = Core::as_int( $config['min_lifetime'] ?? 86400 );
+		$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
+		$max_lifespan   = Core::as_int( AppConfig::value( 'min_lifetime' ), 86400 );
 		$stores         = [];
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$stores[] = new Stats_Store( $p, $max_lifespan );
@@ -719,8 +718,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private static function find_recent_requests_for_url( string $url_hash ): array {
-		$config         = RuntimeConfig::load_config();
-		$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
+		$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
 		$base_dir       = RuntimeConfig::get_base_directory();
 		$log_base       = $base_dir . '/logs';
 
@@ -1178,8 +1176,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'rid required' );
 				}
 
-				$config         = RuntimeConfig::load_config();
-				$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
+				$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
 				$base_dir       = RuntimeConfig::get_base_directory();
 				$log_base       = $base_dir . '/logs';
 				$scanned        = 0;
@@ -1214,8 +1211,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
 
-				$config         = RuntimeConfig::load_config();
-				$num_partitions = Core::as_int( $config['num_partitions'] ?? 1 );
+				$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
 				$base_dir       = RuntimeConfig::get_base_directory();
 				$log_base       = $base_dir . '/logs';
 

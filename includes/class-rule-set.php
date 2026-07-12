@@ -319,8 +319,7 @@ final class Rule_Set {
 	 * the option.
 	 */
 	private static function seed_from_config(): self {
-		$config = \class_exists( Config::class ) ? Config::load_config() : [];
-		$raw    = $config['rules'] ?? [];
+		$raw = Config::value( 'rules' );
 		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
 	}
 

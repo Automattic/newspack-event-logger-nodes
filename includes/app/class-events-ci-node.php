@@ -27,7 +27,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Command_Interpreter_Node;
-use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Service_CI_Node;
 
@@ -56,11 +56,8 @@ class Events_CI_Node extends Service_CI_Node {
 					'description' => 'Merge per-partition hourly buckets into one time_series.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						$config            = RuntimeConfig::load_config();
-						$num_partitions_v  = $config['num_partitions'] ?? 1;
-						$max_lifespan_v    = $config['min_lifetime'] ?? 86400;
-						$num_partitions    = Core::as_int( $num_partitions_v, 1 );
-						$max_lifespan      = Core::as_int( $max_lifespan_v, 86400 );
+						$num_partitions    = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
+						$max_lifespan      = Core::as_int( AppConfig::value( 'min_lifetime' ), 86400 );
 
 						$merged = [];
 						if ( null !== Core::$memd ) {
