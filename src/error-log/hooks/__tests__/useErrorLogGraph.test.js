@@ -171,15 +171,15 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useErrorLogGraph() );
 		// The unnamed SseIn opened against the `errors` subscribe topic.
-		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors' );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
-	test( 'opens an EventSource against /messages/stream?subscribe=errors when visible', () => {
+	test( 'opens an EventSource against /messages/stream?subscribe=errors.* when visible', () => {
 		renderHook( () => useErrorLogGraph() );
 		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors&_wpnonce=NONCE'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*&_wpnonce=NONCE'
 		);
 	} );
 
@@ -403,7 +403,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `errors` topic.
-		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors' );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );

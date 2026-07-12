@@ -73,7 +73,7 @@ export function useGyroscopeGraph() {
 			const link = interpreter.makeNode(
 				'RemoteLink',
 				LINK,
-				`gyroscope ${ baseUrl } ${ nonce }`
+				`gyroscope.* ${ baseUrl } ${ nonce }`
 			);
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;

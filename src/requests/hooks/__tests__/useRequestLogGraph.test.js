@@ -123,7 +123,7 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `completed` and routes to view (and heartbeat → _http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
 		// Unnamed SseIn opened on the `completed` subscribe topic.
-		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed' );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed.*' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
@@ -164,11 +164,11 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 		expect( Core.node( VIEW ).entries[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
-	test( 'opens an EventSource against /messages/stream?subscribe=completed when visible', () => {
+	test( 'opens an EventSource against /messages/stream?subscribe=completed.* when visible', () => {
 		renderHook( () => useRequestLogGraph() );
 		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=completed&_wpnonce=NONCE'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=completed.*&_wpnonce=NONCE'
 		);
 	} );
 
@@ -409,7 +409,7 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `completed` topic.
-		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed' );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );

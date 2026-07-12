@@ -125,7 +125,7 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `gyroscope` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useGyroscopeGraph() );
 		// The unnamed SseIn opened against the `gyroscope` subscribe topic.
-		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope' );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope.*' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
@@ -169,11 +169,11 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 		expect( Core.node( VIEW ).requests.has( 'watched' ) ).toBe( true );
 	} );
 
-	test( 'opens an EventSource against /messages/stream?subscribe=gyroscope when visible', () => {
+	test( 'opens an EventSource against /messages/stream?subscribe=gyroscope.* when visible', () => {
 		renderHook( () => useGyroscopeGraph() );
 		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=gyroscope&_wpnonce=NONCE'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=gyroscope.*&_wpnonce=NONCE'
 		);
 	} );
 
@@ -408,7 +408,7 @@ describe( 'useGyroscopeGraph — Core.reinit (Reset Graph)', () => {
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
 		// The rebuilt link reopened the unnamed SseIn on the `gyroscope` topic.
-		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope' );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );

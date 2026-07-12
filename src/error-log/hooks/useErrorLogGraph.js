@@ -89,7 +89,7 @@ export function useErrorLogGraph( opts = {} ) {
 			const link = interpreter.makeNode(
 				'RemoteLink',
 				LINK,
-				`errors ${ baseUrl } ${ nonce }`
+				`errors.* ${ baseUrl } ${ nonce }`
 			);
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
