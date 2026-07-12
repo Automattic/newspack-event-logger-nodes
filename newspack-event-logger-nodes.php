@@ -29,10 +29,6 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 $_newspack_event_logger_nodes_load = static function (): void {
-	// XXX: BC alias; Job_Intake moved to substrate; remove next release.
-	\class_exists( 'Newspack_Event_Logger_Nodes\\Job_Intake', false )
-		|| \class_alias( \Newspack_Nodes\Job_Intake::class, 'Newspack_Event_Logger_Nodes\\Job_Intake' );
-
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
 		\WP_CLI::add_command( 'nodes ruleset-bench', '\\Newspack_Event_Logger_Nodes\\CLI\\Ruleset_Bench_Command' );

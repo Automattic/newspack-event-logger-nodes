@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The one-release `Job_Intake` BC `class_alias` is gone.** `Newspack_Event_Logger_Nodes\Job_Intake` (aliased to the substrate `\Newspack_Nodes\Job_Intake` when the class moved in 0.29.0, "remove next release") is no longer registered — use the substrate FQN directly. Its pinning `JobIntakeAliasTest` is removed with it; no in-tree code referenced the old name.
+
 ## [0.32.0] - 2026-07-11
 
 ### Changed
