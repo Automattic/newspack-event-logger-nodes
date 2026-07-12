@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -971,7 +972,7 @@ class FlameBuilderTest extends TestCase {
 				[ 'name' => 'b', 'sum_value' => 3.0, 'children' => [] ],
 			],
 		];
-		Flame_Builder_Node::finalize_flame_node( $node, 1 );
+		Flame_Tree::finalize_flame_node( $node, 1 );
 		$this->assertEqualsWithDelta( 6.0, $node['value'], 1e-6 );
 	}
 
@@ -992,7 +993,7 @@ class FlameBuilderTest extends TestCase {
 			'count'     => 1,
 			'children'  => [],
 		];
-		Flame_Builder_Node::finalize_flame_node( $node, 1 );
+		Flame_Tree::finalize_flame_node( $node, 1 );
 		$this->assertArrayNotHasKey( 'sum_value', $node );
 		$this->assertArrayNotHasKey( 'seen_count', $node );
 		$this->assertArrayNotHasKey( 'ts', $node );
@@ -1804,7 +1805,7 @@ class FlameBuilderTest extends TestCase {
 			'name'     => 'orphan',
 			'children' => [],
 		];
-		Flame_Builder_Node::finalize_flame_node( $node, 0 );
+		Flame_Tree::finalize_flame_node( $node, 0 );
 		$this->assertSame( 0, $node['value'] );
 	}
 
@@ -1818,7 +1819,7 @@ class FlameBuilderTest extends TestCase {
 				[ 'name' => 'b', 'children' => [] ], // No sum_value.
 			],
 		];
-		Flame_Builder_Node::finalize_flame_node( $node, 1 );
+		Flame_Tree::finalize_flame_node( $node, 1 );
 		// Children sum = 5 + 0 = 5; parent had 2 → bumped to 5.
 		$this->assertEqualsWithDelta( 5.0, $node['value'], 1e-6 );
 	}

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-11
+
+### Changed
+
+- **Extracted the pure flame-graph algorithm into a `Flame_Tree` helper**, thinning `Flame_Builder_Node` by ~283 lines. The five stateless methods (`build_flame_data` — now taking `now_ts` as a param instead of reading the node clock —, `number_duplicate_siblings`, `strip_name_suffixes`, `merge_flame_children_incremental`, `finalize_flame_node`) plus their parsing constants move verbatim to `Flame_Tree`; `Flame_Builder_Node` calls `Flame_Tree::…`. Behavior-identical (full suite green); the now-standalone algorithm gains a focused `FlameTreeTest`. `AGGREGATE_EXPIRY_SEC` is a self-contained copy in each class (keep-in-sync note) rather than coupling the pure helper back to the node.
+- **Pre-push now runs the coverage suite and gates every class at ≥ 90% statement coverage** via a self-contained `scripts/coverage-gate.py` (clover parse borrowed from dndocker's `tools/coverage-summary.py`; `scripts/test-coverage-gate.sh` covers it). Skips gracefully off-dndocker.
+
 ## [0.31.0] - 2026-07-11
 
 ### Fixed
