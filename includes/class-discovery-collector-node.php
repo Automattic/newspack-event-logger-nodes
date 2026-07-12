@@ -194,7 +194,7 @@ class Discovery_Collector_Node extends Timer_Node {
 			'category'    => 'Monitor',
 			'description' => 'Periodically fans discovery.get to every spoke and union-merges replies into the hub options.',
 			'arguments'   => [
-				[ 'name' => 'interval_seconds', 'type' => 'int', 'required' => false, 'default' => (string) self::DEFAULT_INTERVAL_SECONDS ],
+				[ 'name' => 'interval_seconds', 'type' => 'int', 'required' => false, 'default' => (string) self::DEFAULT_INTERVAL_SECONDS, 'description' => 'Interval in seconds between discovery sweeps of the connected spokes (default 300).' ],
 			],
 			'commands'    => [],
 			'has_target'  => true,

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Argument tooltips: app node `node_schema` constructor arguments now carry descriptions** — `Discovery_Collector`'s `interval_seconds` and `Request_Builder`'s `bucket_size` / `num_buckets` — so the topology console shows a tooltip for each. A new `AppNodeSchemaCoverageTest` gate fails if any app node_schema argument lacks a description. (Consumes the substrate's `CtorField` tooltip wiring in newspack-nodes.)
+
 ### Removed
 
 - **The one-release `Job_Intake` BC `class_alias` is gone.** `Newspack_Event_Logger_Nodes\Job_Intake` (aliased to the substrate `\Newspack_Nodes\Job_Intake` when the class moved in 0.29.0, "remove next release") is no longer registered — use the substrate FQN directly. Its pinning `JobIntakeAliasTest` is removed with it; no in-tree code referenced the old name.
