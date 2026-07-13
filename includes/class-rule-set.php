@@ -44,27 +44,19 @@ final class Rule_Set {
 	 * One-time, idempotent, version-gated ruleset migration, run on activation
 	 * (the deploy deactivates then re-installs+activates). Steps: v0→v1 folds the
 	 * seven legacy options into a ruleset; v1→v2 rekeys stored ids to id_for(pattern).
-	 * Returns whether anything ran and whether a skip/log prefix overlap was
-	 * detected during v0→v1.
-	 *
-	 * @return array{migrated: bool, overlap: bool}
 	 */
-	public static function migrate_from_legacy(): array {
+	public static function migrate_from_legacy(): void {
 		$version = Core::as_int( \get_option( self::OPTION_SCHEMA_VERSION, 0 ) );
 		if ( $version >= self::SCHEMA_VERSION ) {
-			return [
-				'migrated' => false,
-				'overlap'  => false,
-			];
+			return;
 		}
-		$overlap = $version < 1 ? self::migrate_legacy_options() : false;
+		if ( $version < 1 ) {
+			self::migrate_legacy_options();
+		}
 		// Every sub-v2 install needs id rekey (cheap re-save on v0 fold-in).
 		self::rekey_ids();
 		\update_option( self::OPTION_SCHEMA_VERSION, self::SCHEMA_VERSION, true );
-		return [
-			'migrated' => true,
-			'overlap'  => $overlap,
-		];
+		return;
 	}
 
 	/**

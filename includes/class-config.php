@@ -30,7 +30,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Config {
 
-	/** One-time marker so `correct_option_autoload()` sweeps once per install. */
+	/** XXX: One-time marker so `correct_option_autoload()` sweeps once per install. */
 	public const AUTOLOAD_FIXED_OPTION = 'newspack_event_logger_nodes_autoload_fixed';
 
 	/** Staging option: custom-event names discovered across spokes (admin/health-check only). */
