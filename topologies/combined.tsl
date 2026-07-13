@@ -4,5 +4,11 @@
 # ORDER MATTERS: job-router wires firehose:consumer -> job-router; performance
 # then disconnects it and reroutes it through firehose:tee. Include performance
 # first and job-router's connect_node re-attaches the consumer, bypassing the tee.
+include request-builder
+include flame-builder
 include job-router
-include performance
+make_node Tee firehose:tee
+disconnect_node firehose:consumer
+connect_node firehose:consumer firehose:tee
+connect_node firehose:tee request-builder
+connect_node firehose:tee job-router
