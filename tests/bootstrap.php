@@ -720,6 +720,13 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 	'Newspack_Event_Logger_Nodes\\',
 	NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 );
+// ELN topologies `include` ACROSS the plugin boundary (job-router -> job-intake,
+// which the substrate ships), so its topology dir must resolve here too. In
+// production Bootstrap::ensure_runtime_wired() registers it; the harness bypasses
+// that. Without it every include-bearing topology throws on resolution.
+\Newspack_Nodes\Topology_Registry::register_builtin_dir(
+	\dirname( __DIR__, 2 ) . '/newspack-nodes/topologies'
+);
 \Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
 
 // Register the application `eln` token namespace so `<eln:…>` resolves in

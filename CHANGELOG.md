@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [0.34.0] - 2026-07-13
 
-- **`combined.tsl` includes `job-router` BEFORE `performance`.** Order is load-bearing: `job-router` wires `firehose:consumer → job-router`, and `performance` then disconnects it and reroutes it through `firehose:tee`. With `performance` first, `job-router`'s `connect_node` re-attached the consumer directly and the Tee was bypassed — the firehose never fanned out.
+### Changed
+
+- **Every Consumer offsetlog is `<topology>`-scoped.** An offsetlog is a reader's *cursor*, and the reader is the fleet. `request-builder` and `job-router` both tail the firehose, and `combined` wants ONE consumer feeding the Tee — which `include` only gives you if their `make_node` lines are byte-identical, i.e. if they name the same offsetlog. That made the two unsafe to run side by side (two fleets, one cursor). With the substrate's new `<topology>` token the declarations stay identical *and* each fleet gets its own cursor: `firehose.combined.p0` when composed, `firehose.request-builder.p0` / `firehose.job-router.p0` when standalone. The decomposed set co-runs conflict-free again, and `combined` still conflicts with each broken-out topology — they share a *log*, and only the cursor is fleet-scoped.
+
+  **Cursors move**, so each fleet's Consumer starts from offset 0 once and replays its log backlog; the old offsetlog dirs are reclaimed by the GC.
+
+- **The topology stack composes with `include` instead of copy-pasting.** `combined.tsl` is now `include request-builder` + `include flame-builder` + `include job-router` plus the lines that are genuinely its own: it makes `firehose:tee`, disconnects `firehose:consumer`, and routes it through the Tee out to both `request-builder` and `job-router`. That rewiring belongs to whoever composes both sides, which is `combined` — `performance.tsl` used to own it while referencing `job-router` without including it, so it could not stand alone and silently depended on being included in the right order. `performance.tsl` is now what its name says: `request-builder` + `flame-builder`.
+
+  **Requires newspack-nodes ≥ 0.41.0** for TSL `include`.
 
 ### Fixed
 
