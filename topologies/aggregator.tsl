@@ -9,8 +9,15 @@
 # Per-spoke Remote_Source nodes are NOT shipped in this stock topology — the
 # operator wires them on the console canvas, one per spoke/partition:
 #
-#   make_node Remote_Source spoke-<id> <vault-id> firehose <partition>
+#   make_node Remote_Source spoke-<id> <vault-id> firehose.p<partition> \
+#       <config:offsets_dir>/spoke-<id>.<topology>.p<partition> \
+#       <config:deadletter_dir>/spoke-<id>.p<partition>
 #   connect_node spoke-<id> remote-job-rewrite
+#
+# The offsetlog + deadletter dirs are ARGUMENTS (it reads like the Consumer it
+# is). Scope the cursor with `<topology>`: an offsetlog is a reader's cursor and
+# the reader is the FLEET, so two hubs pulling one spoke partition must not share
+# one. Omit them and it falls back to the legacy derived paths.
 #
 # Each substrate Remote_Source is self-sufficient (it patrons its own SSE_In +
 # HTTP_Out, owns its offsetlog, and publishes a status snapshot to
