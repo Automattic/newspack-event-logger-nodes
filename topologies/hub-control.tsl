@@ -23,14 +23,18 @@ make_node Settings_Sync settings-sync 300
 make_node Tee spokes:tee
 make_node Discovery_Collector discovery-collector 300
 
-cmd settings-sync:config add_setting newspack_nodes_remote_max_segments settings newspack_nodes_max_segments
-cmd settings-sync:config add_setting newspack_nodes_remote_segment_size settings newspack_nodes_segment_size
-cmd settings-sync:config add_setting newspack_nodes_remote_min_lifetime settings newspack_nodes_min_lifetime
-# Also seed each spoke's OWN remote_* copy so it propagates onward to ITS spokes.
-cmd settings-sync:config add_setting newspack_nodes_remote_max_segments settings newspack_nodes_remote_max_segments
-cmd settings-sync:config add_setting newspack_nodes_remote_segment_size settings newspack_nodes_remote_segment_size
-cmd settings-sync:config add_setting newspack_nodes_remote_min_lifetime settings newspack_nodes_remote_min_lifetime
 cmd settings-sync:config add_setting newspack_nodes_num_partitions settings newspack_nodes_num_partitions
+cmd settings-sync:config add_setting newspack_nodes_remote_segment_size settings newspack_nodes_segment_size
+cmd settings-sync:config add_setting newspack_nodes_remote_min_segments settings newspack_nodes_min_segments
+cmd settings-sync:config add_setting newspack_nodes_remote_max_segments settings newspack_nodes_max_segments
+cmd settings-sync:config add_setting newspack_nodes_remote_min_lifetime settings newspack_nodes_min_lifetime
+cmd settings-sync:config add_setting newspack_nodes_remote_max_lifetime settings newspack_nodes_max_lifetime
+# Also seed each spoke's OWN remote_* copy so it propagates onward to ITS spokes.
+cmd settings-sync:config add_setting newspack_nodes_remote_segment_size settings newspack_nodes_remote_segment_size
+cmd settings-sync:config add_setting newspack_nodes_remote_min_segments settings newspack_nodes_remote_min_segments
+cmd settings-sync:config add_setting newspack_nodes_remote_max_segments settings newspack_nodes_remote_max_segments
+cmd settings-sync:config add_setting newspack_nodes_remote_min_lifetime settings newspack_nodes_remote_min_lifetime
+cmd settings-sync:config add_setting newspack_nodes_remote_max_lifetime settings newspack_nodes_remote_max_lifetime
 # The per-URL ruleset absorbed the former URL filters, hook lists, custom
 # events, significant events, and auto-tune thresholds (Task 10) — the hub now
 # fans out the single `rules` option instead of the seven retired settings.
