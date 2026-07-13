@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-12
+
 ### Changed
 
 - **`hub-control.tsl` settings-sync map follows the substrate's renamed remote-geometry keys.** ELN ships its own `hub-control` topology that shadows the substrate's, so its `add_setting` lines must track the substrate rename: `newspack_nodes_remote_num_segments` → `newspack_nodes_remote_max_segments` and `newspack_nodes_remote_max_lifespan` → `newspack_nodes_remote_min_lifetime` on both the hub→spoke remap (`→ settings newspack_nodes_max_segments` / `newspack_nodes_min_lifetime`) and the spoke's own remote_* self-map; `remote_segment_size` is unchanged. Stale duplicate substrate keys (`num_segments`/`max_lifespan`) were also dropped from the test config fixtures now that the substrate exposes `max_segments`/`min_lifetime`.
