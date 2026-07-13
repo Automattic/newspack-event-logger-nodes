@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The topology stack composes with `include` instead of copy-pasting.** `combined.tsl` is now `include request-builder` + `include flame-builder` + `include job-router` plus the lines that are genuinely its own: it makes `firehose:tee`, disconnects `firehose:consumer`, and routes it through the Tee out to both `request-builder` and `job-router`. That rewiring belongs to whoever composes both sides, which is `combined` — `performance.tsl` used to own it while referencing `job-router` without including it, so it could not stand alone and silently depended on being included in the right order. `performance.tsl` is now what its name says: `request-builder` + `flame-builder`.
 
-  **Requires newspack-nodes ≥ 0.41.0** for TSL `include`.
+  **Requires newspack-nodes ≥ 0.42.0** for TSL `include` and the `<topology>` token.
 
 ### Fixed
 
