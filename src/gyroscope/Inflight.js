@@ -32,6 +32,7 @@ import {
 	getDurationClass,
 	getStateColor,
 	getStatusClass,
+	getTextColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
@@ -44,6 +45,12 @@ const VIEW_NODE = 'gyroscope:view';
 const LINK_NODE = 'gyroscope:link';
 // The low-frequency view model before the view node publishes one.
 const EMPTY_VIEW = { connectionError: false };
+
+// Hook-category colors are operator-editable, so the ink follows the chip.
+const badgeStyle = ( background ) => ( {
+	backgroundColor: background,
+	color: getTextColor( background ),
+} );
 
 /**
  * Column definitions with tooltips.
@@ -392,9 +399,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span key={ col } role="cell">
 						<span
 							className="event-logger-state-badge"
-							style={ {
-								backgroundColor: getStateColor( req.state ),
-							} }
+							style={ badgeStyle( getStateColor( req.state ) ) }
 						>
 							{ req.state === 'include template'
 								? 'template'
@@ -505,12 +510,11 @@ export default function Inflight( { maxRows = 20 } ) {
 						<span
 							key={ category }
 							className="event-logger-state-badge"
-							style={ {
-								backgroundColor:
-									window.eventLoggerHookCategories?._colors?.[
-										category
-									] || '#9e9e9e',
-							} }
+							style={ badgeStyle(
+								window.eventLoggerHookCategories?._colors?.[
+									category
+								] || '#9e9e9e'
+							) }
 						>
 							{ category }
 						</span>
@@ -519,9 +523,7 @@ export default function Inflight( { maxRows = 20 } ) {
 						<span
 							key={ state }
 							className="event-logger-state-badge"
-							style={ {
-								backgroundColor: getStateColor( state ),
-							} }
+							style={ badgeStyle( getStateColor( state ) ) }
 						>
 							{ state }
 						</span>

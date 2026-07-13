@@ -75,6 +75,7 @@ describe( 'Inflight', () => {
 		while ( mounted.length ) {
 			mounted.pop().unmount();
 		}
+		delete window.eventLoggerHookCategories;
 		jest.useRealTimers();
 		// Clear localStorage between tests so persisted state doesn't leak.
 		window.localStorage.clear();
@@ -137,6 +138,30 @@ describe( 'Inflight', () => {
 		tickRefresh();
 		expect( node.snapshot ).toHaveBeenCalledWith( 100 );
 		expect( container.textContent ).toContain( 'r1' );
+	} );
+
+	it( 'inks a pale state badge dark so the label stays legible', () => {
+		window.eventLoggerHookCategories = {
+			_colors: { Settings: '#CDDC39' },
+			_patterns: { Settings: [ '^option_' ] },
+		};
+		registerViewFixture( {
+			rows: [
+				{
+					rid: 'r-pale',
+					url: '/x',
+					state: 'option_home hook',
+					what: 'x',
+				},
+			],
+		} );
+		const { container } = mount();
+		tickRefresh();
+		const badge = [
+			...container.querySelectorAll( '.event-logger-state-badge' ),
+		].find( ( el ) => 'option_home hook' === el.textContent );
+		expect( badge.style.backgroundColor ).toBe( 'rgb(205, 220, 57)' );
+		expect( badge.style.color ).toBe( 'rgb(30, 30, 30)' );
 	} );
 
 	it( 'displays the requests/second read from the node on a refresh tick', () => {
