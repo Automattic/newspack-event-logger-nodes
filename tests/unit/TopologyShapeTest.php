@@ -133,21 +133,32 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** A Consumer's snapshot target must match the node its offset filename encodes (`<log>.<node>.p<partition>`). */
-	public function test_snapshot_node_matches_offset_filename_convention(): void {
+	/**
+	 * An offsetlog is a reader's CURSOR, and the reader is the FLEET: two
+	 * processes tailing one log need two cursors. So every Consumer offsetlog is
+	 * `<topology>`-scoped (distinct across fleets) and distinct within its own
+	 * topology (distinct across readers). That pair is the whole invariant — it
+	 * replaces the old "the offset filename names the snapshot node" convention,
+	 * which broke the moment two topologies wanted to SHARE a reader via include
+	 * (dedup needs byte-identical make_node lines).
+	 */
+	public function test_every_consumer_offsetlog_is_fleet_scoped_and_unique(): void {
 		foreach ( $this->topology_files() as $path ) {
-			$name      = \basename( $path );
-			$topo      = $this->parse_topology( $path );
-			$snapshots = $this->snapshot_map( $topo['cmds'] );
+			$name = \basename( $path );
+			$topo = $this->parse_topology( $path );
+			$seen = [];
 			foreach ( $topo['consumers'] as $consumer => $offset ) {
-				if ( ! isset( $snapshots[ $consumer ] ) ) {
-					continue; // No snapshot — the offset node is stateless or unused.
-				}
-				$this->assertSame(
-					$this->offset_snapshot_node( $offset ),
-					$snapshots[ $consumer ],
-					"$name: consumer '$consumer' snapshots '{$snapshots[ $consumer ]}' but its offset filename names a different node"
+				$this->assertStringContainsString(
+					'<topology>',
+					$offset,
+					"$name: consumer '$consumer' offsetlog '$offset' is not fleet-scoped — two fleets tailing this log would share one cursor"
 				);
+				$this->assertArrayNotHasKey(
+					$offset,
+					$seen,
+					"$name: consumers '$consumer' and '" . ( $seen[ $offset ] ?? '' ) . "' share the offsetlog '$offset'"
+				);
+				$seen[ $offset ] = $consumer;
 			}
 		}
 	}
@@ -207,7 +218,16 @@ class TopologyShapeTest extends TestCase {
 		$edges     = [];
 		$cmds      = [];
 
-		foreach ( \file( $path, \FILE_IGNORE_NEW_LINES ) as $line ) {
+		// Read the FLATTENED statements, not the raw file: a topology that
+		// `include`s others owns few lines of its own, and every directive here
+		// must be checked against the graph it actually builds.
+		$name  = \basename( $path, '.tsl' );
+		$lines = \array_column(
+			\Newspack_Nodes\Topology_Registry::statements( $name )['statements'],
+			'line'
+		);
+
+		foreach ( $lines as $line ) {
 			// Strip whole-line and trailing `#` comments (no directive token contains '#').
 			$line = \trim( (string) \preg_replace( '/#.*$/', '', $line ) );
 			if ( '' === $line ) {
@@ -319,13 +339,6 @@ class TopologyShapeTest extends TestCase {
 			}
 		}
 		return null;
-	}
-
-	/** The snapshot-target node a Consumer's offset filename encodes: `<log>.<node>.p<partition>`. */
-	private function offset_snapshot_node( string $offset_path ): string {
-		$base = (string) \preg_replace( '/\.p(?:<partition>|\d+)$/', '', \basename( $offset_path ) );
-		$dot  = \strpos( $base, '.' );
-		return false === $dot ? '' : \substr( $base, $dot + 1 );
 	}
 
 	/** A node type is stateful when its resolved class implements save_state(). */
