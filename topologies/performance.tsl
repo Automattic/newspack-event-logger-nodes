@@ -3,8 +3,3 @@
 #
 include request-builder
 include flame-builder
-make Tee firehose:tee
-disconnect_node firehose:consumer
-connect_node firehose:consumer firehose:tee
-connect_node firehose:tee request-builder
-connect_node firehose:tee job-router
