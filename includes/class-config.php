@@ -122,11 +122,13 @@ class Config {
 	}
 
 	/**
-	 * Register this plugin's config keys with the shared substrate registry so
-	 * value() (and the substrate's is_declared) accept them. Mirrors the
-	 * substrate's own boot registration (schema overlay keys ∪ config-file
-	 * default keys). Wired into the deferred bootstrap; substrate keys are
-	 * declared by the substrate itself.
+	 * Declare this plugin's config keys (schema overlay keys ∪ config-file default
+	 * keys) with the shared substrate registry. Hooked to the substrate's
+	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
+	 * whenever it derives its declared set — including after a Config::reset(),
+	 * which wipes the registry. Declaring once at boot instead would lose these on
+	 * the next reload, and would come too late for the profiler's first log line
+	 * (plugins_loaded:-10001, ahead of this plugin's loader).
 	 */
 	public static function register_config_keys(): void {
 		if ( ! \class_exists( RuntimeConfig::class ) ) {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-07-13
+
+### Fixed
+
+- **Config keys are declared via the substrate's `DECLARE_ACTION` pull, so an early read can't fatal.** Key registration was wired only into the deferred `plugins_loaded:11` loader, but the profiler drop-in flushes its first log line at `plugins_loaded:-10001` — `Log_Manager::message()` → `ensure_started()` → `init_firehose()` — some 10k priorities earlier. Reads of app keys therefore raced the loader, and reads of SUBSTRATE keys (`num_partitions` et al., which a frontend request never declared) threw `RuntimeException: unknown config key 'num_partitions'` and 500'd the request. `register_config_keys()` is now hooked to `\Newspack_Nodes\Config::DECLARE_ACTION` at plugin-file scope (the action name is a literal there — this plugin sorts before `newspack-nodes`, so the substrate class isn't loadable yet to read the constant), and the substrate pulls it whenever it derives its declared set. The `plugins_loaded:11` declaration and the `value()`-time self-registration are both gone; there is one declaration path. Requires newspack-nodes >= 0.40.1.
+
 ## [0.33.1] - 2026-07-13
 
 ### Fixed

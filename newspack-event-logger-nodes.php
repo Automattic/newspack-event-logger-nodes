@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.33.1
+ * Version: 0.33.2
  * Author: Automattic
  * License: GPL-2.0-or-later
  * Requires Plugins: newspack-nodes
@@ -17,7 +17,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.33.1' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.33.2' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -29,13 +29,18 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
+// Substrate pulls this; literal name — we load before newspack-nodes.
+if ( \function_exists( 'add_action' ) ) {
+	\add_action(
+		'newspack_nodes/declare_config_keys',
+		[ \Newspack_Event_Logger_Nodes\Config::class, 'register_config_keys' ]
+	);
+}
+
 $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-
-	// Declare config keys before any Config::value() read (App\Core reads one).
-	\Newspack_Event_Logger_Nodes\Config::register_config_keys();
 
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
