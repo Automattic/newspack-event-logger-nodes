@@ -4,6 +4,7 @@
  * Description: Event-logger application built on newspack-nodes runtime.
  * Version: 0.33.0
  * Author: Automattic
+ * License: GPL-2.0-or-later
  * Requires Plugins: newspack-nodes
  * Requires at least: 6.5
  * Requires PHP: 8.2
@@ -29,6 +30,10 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
 $_newspack_event_logger_nodes_load = static function (): void {
+	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
+		return;
+	}
+
 	// Declare config keys before any Config::value() read (App\Core reads one).
 	\Newspack_Event_Logger_Nodes\Config::register_config_keys();
 
@@ -82,34 +87,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	}
 };
 
-$_newspack_event_logger_nodes_bootstrap = static function () use (
-	$_newspack_event_logger_nodes_load
-): void {
-	if ( ! \class_exists( '\Newspack_Nodes\Node' ) ) {
-		return;
-	}
-
-	$_newspack_event_logger_nodes_load();
-
-	\add_action( 'admin_init', [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
-};
-
-if ( \class_exists( '\Newspack_Nodes\Node' ) ) {
-	$_newspack_event_logger_nodes_bootstrap();
-} else {
-	\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_bootstrap, 11 );
-}
+\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
 
 // XXX: one-time ruleset migration on activation (deploy reinstalls+activates).
 if ( \function_exists( 'register_activation_hook' ) ) {
-	\register_activation_hook(
-		__FILE__,
-		static function (): void {
-			if ( \class_exists( '\Newspack_Nodes\Core' ) ) {
-				\Newspack_Event_Logger_Nodes\Rule_Set::migrate_from_legacy();
-			}
-		}
-	);
+	\register_activation_hook( __FILE__, [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
+	\register_activation_hook( __FILE__, [ '\\Newspack_Event_Logger_Nodes\\Rule_Set', 'migrate_from_legacy' ] );
 }
 
 const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
@@ -152,7 +135,7 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 		if ( 0 === \strpos( $option, 'newspack_event_logger_nodes_' ) ) {
 			$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
 			$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
-		} elseif ( 0 === \strpos( $option, 'newspack_nodes_' ) && \class_exists( '\Newspack_Nodes\Config' ) ) {
+		} elseif ( 0 === \strpos( $option, 'newspack_nodes_' ) ) {
 			$config_key = \substr( $option, \strlen( 'newspack_nodes_' ) );
 			$defaults   = \Newspack_Nodes\Config::load_config_defaults();
 		} else {
@@ -231,6 +214,9 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		if ( ! \function_exists( 'add_menu_page' ) ) {
 			return;
 		}
+		if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
+			return;
+		}
 		$performance_callback = static fn () => print( '<div id="event-logger-admin" class="event-logger-admin-page"></div>' );
 		\add_menu_page(
 			'Event Logger',
@@ -274,6 +260,9 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		if ( ! \function_exists( 'wp_enqueue_script' ) ) {
 			return;
 		}
+		if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
+			return;
+		}
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
 		$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
 		$page_to_tree = [
@@ -288,14 +277,10 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		}
 		$tree = $page_to_tree[ $page ];
 
-		if ( ! \class_exists( '\Newspack_Nodes\Admin\Admin' ) ) {
-			return;
-		}
-
 		$rest_url      = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
 		$nonce         = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
-		$restart_nonce       = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
-		$localized           = [
+		$restart_nonce = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
+		$localized     = [
 			'restUrl'      => \esc_url_raw( $rest_url ),
 			'nonce'        => $nonce,
 			'restartNonce'      => $restart_nonce,
@@ -318,12 +303,10 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 		}
 
 		$retention_seconds = 86400;
-		if ( \class_exists( '\\Newspack_Nodes\\Config' ) ) {
-			$substrate = \Newspack_Nodes\Config::load_config();
-			/** @var int|float|string|bool|null $raw_lifespan */
-			$raw_lifespan      = $substrate['min_lifetime'] ?? 86400;
-			$retention_seconds = (int) $raw_lifespan;
-		}
+		$substrate         = \Newspack_Nodes\Config::load_config();
+		/** @var int|float|string|bool|null $raw_lifespan */
+		$raw_lifespan      = $substrate['min_lifetime'] ?? 86400;
+		$retention_seconds = (int) $raw_lifespan;
 		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
 		$hook_categories_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'hook_categories.json';
 		if ( \file_exists( $hook_categories_path ) ) {
