@@ -356,7 +356,8 @@ class Admin {
 		} catch ( \Throwable $e ) {
 			// Best-effort; next supervisor spawn picks up the salt regardless.
 			\Newspack_Nodes\Core::print_less_often(
-				'Stats flush: restart_workers failed — ' . $e->getMessage()
+				'Stats flush: restart_workers failed — ',
+				$e->getMessage()
 			);
 		}
 

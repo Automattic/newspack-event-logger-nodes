@@ -63,7 +63,7 @@ final class Rule_Set {
 	 * v0→v1: synthesize a ruleset from the seven legacy options and delete them.
 	 * Returns whether a skip/log prefix overlap was detected.
 	 */
-	private static function migrate_legacy_options(): bool {
+	private static function migrate_legacy_options(): void {
 		$p            = 'newspack_event_logger_nodes_';
 		$legacy_keys  = [ 'log_urls', 'skip_urls', 'log_events', 'custom_events', 'significant_events', 'auto_disable_threshold', 'auto_protect_time_threshold' ];
 		$absent       = "\0__eln_absent__\0";
@@ -76,7 +76,7 @@ final class Rule_Set {
 		}
 		if ( ! $any_present ) {
 			// Nothing to migrate: leave rules absent; file-config seed owns it.
-			return false;
+			return;
 		}
 
 		$log_urls = self::string_list( \get_option( $p . 'log_urls', [] ) );
@@ -111,15 +111,11 @@ final class Rule_Set {
 		}
 		$rules = \array_values( $rules );
 
-		$overlap = self::detect_prefix_overlap( $skip, $log_urls );
-
 		( new self( [] ) )->save( $rules );
 
 		foreach ( $legacy_keys as $short ) {
 			\delete_option( $p . $short );
 		}
-
-		return $overlap;
 	}
 
 	/**
@@ -137,26 +133,6 @@ final class Rule_Set {
 	 */
 	public static function id_for( string $pattern ): string {
 		return Log_Manager::url_hash( $pattern );
-	}
-
-	/**
-	 * True when any skip pattern is a strict prefix of a log pattern, or vice-versa.
-	 *
-	 * @param string[] $skip
-	 * @param string[] $log
-	 */
-	private static function detect_prefix_overlap( array $skip, array $log ): bool {
-		// Case-insensitive to match Rule_Matcher (case-diff overlap flips it).
-		foreach ( $skip as $s ) {
-			$sl = \strtolower( $s );
-			foreach ( $log as $l ) {
-				$ll = \strtolower( $l );
-				if ( $sl !== $ll && ( \str_starts_with( $ll, $sl ) || \str_starts_with( $sl, $ll ) ) ) {
-					return true;
-				}
-			}
-		}
-		return false;
 	}
 
 	/**
@@ -223,7 +199,7 @@ final class Rule_Set {
 			/** @var string[] $durable hooks list persisted by save(). */
 			return $durable;
 		}
-		Core::print_less_often( \sprintf( 'Newspack ELN: hooks missing for pointer rule "%s" (mc + durable option both absent).', $rule->id ) );
+		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (mc + durable option both absent).' );
 		return [];
 	}
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`print_less_often()` call sites split throttle-key from varying payload (consumes the substrate's variadic port).** Migrated the ELN sites that baked per-call-varying data into the single throttled string — so the rate-limiter minted a fresh key every call and never suppressed, flooding worst exactly when the event was most frequent. Each now passes a STABLE category prefix as the first arg (the throttle key) and the varying values as trailing `...$extra` args (printed on first sight, never keyed): the headline `Request_Builder_Node` `duplicate message` / `missing message` / `multiple requests with ID` / `trace timed out` warnings (per-message `seq_n`/`rid`/`url`/`duration_ms`), plus `Job_Router_Node` `invalid handler name`, `Hook_Categorizer`'s two pattern-rejected warnings, `Rule_Set`'s `hooks missing for pointer rule`, and the admin `restart_workers failed` notice. `Log_Manager`'s `data truncated for category` notice keeps the **category IN the key** (with only the varying size in payload) so each category whose payload is being dropped surfaces its own line rather than collapsing to whichever truncated first — the category is a bounded, meaningful discriminator for a data-loss warning. Emitted text is byte-for-byte unchanged — only the split point moved. Left unchanged: `Job_Router_Node`'s two `$handler`-leading messages (no stable leading prefix; splitting would reword the text), `Remote_Job_Rewrite_Node`'s constant-only message (fully static), and `Flame_Builder_Node`'s `stats_partition` message (per-node-stable).
+
 ## [0.33.0] - 2026-07-12
 
 ### Changed

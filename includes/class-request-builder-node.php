@@ -205,16 +205,16 @@ class Request_Builder_Node extends Timer_Node {
 
 		$expected = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
 		if ( 'process (start)' === $keyword && $expected > 1 ) {
-			$this->print_less_often( 'WARNING: multiple requests with ID: ' . $rid );
+			$this->print_less_often( 'WARNING: multiple requests with ID: ', $rid );
 			$expected = 1;
 			$request->expected_n = 1;
 		}
 		if ( $seq_n < $expected ) {
-			$this->print_less_often( 'INFO: duplicate message: expected #' . $expected . ', got #' . $seq_n . ' on ' . $rid );
+			$this->print_less_often( 'INFO: duplicate message: expected #', (string) $expected, ', got #', (string) $seq_n, ' on ', $rid );
 			return;
 		}
 		if ( $seq_n > $expected ) {
-			$this->print_less_often( 'WARNING: missing message: expected #' . $expected . ', got #' . $seq_n . ' on ' . $rid );
+			$this->print_less_often( 'WARNING: missing message: expected #', (string) $expected, ', got #', (string) $seq_n, ' on ', $rid );
 			return;
 		}
 		$request->expected_n = $seq_n + 1;
@@ -746,7 +746,7 @@ class Request_Builder_Node extends Timer_Node {
 		$request->status_code   = $request->status_code ?? 0;
 		$request->state         = 'complete';
 		$url                    = \is_string( $request->url ?? null ) ? $request->url : '';
-		$this->print_less_often( 'WARNING: trace timed out on ' . $rid . ' (' . $url . ') after ' . $request->duration_ms . 'ms' );
+		$this->print_less_often( 'WARNING: trace timed out on ', $rid, ' (', $url, ') after ', (string) $request->duration_ms, 'ms' );
 		$this->emit_request( $request );
 	}
 

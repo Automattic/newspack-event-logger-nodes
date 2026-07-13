@@ -99,7 +99,7 @@ class Job_Router_Node extends Node {
 		$raw_handler = $body['handler'] ?? '';
 		$handler     = (string) $raw_handler;
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
-			$this->print_less_often( "invalid handler name: $handler" );
+			$this->print_less_often( 'invalid handler name: ', $handler );
 			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'invalid_handler', 'HANDLER', $handler ] ) );
 			return;
 		}

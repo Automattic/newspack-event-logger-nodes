@@ -302,7 +302,7 @@ class Log_Manager {
 		}
 		$data_json = \wp_json_encode( $data );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
-			Core::print_less_often( \sprintf( 'LogManager: data truncated for category "%s", size=%d (limit=%d).', $category, \strlen( $data_json ), self::MAX_DATA_SIZE ) );
+			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
 			$category .= ' (truncated)';
 			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
 		}

@@ -95,9 +95,9 @@ final class RulesetMigrationTest extends TestCase {
 			'auto_protect_time_threshold' => 2.0,
 		] );
 
-		$result = Rule_Set::migrate_from_legacy();
+		Rule_Set::migrate_from_legacy();
 
-		$this->assertTrue( $result['migrated'] );
+		$this->assertSame( Rule_Set::SCHEMA_VERSION, (int) \get_option( Rule_Set::OPTION_SCHEMA_VERSION, 0 ), 'migration ran + stamped the version' );
 		$rules = Rule_Set::load()->rules();
 		$root  = $this->rule_with_pattern( $rules, '/' );
 		$this->assertNotNull( $root );
@@ -157,11 +157,10 @@ final class RulesetMigrationTest extends TestCase {
 	public function test_fresh_install_with_no_legacy_options_leaves_the_rules_option_absent(): void {
 		// Nothing to migrate: the config seed owns the ruleset, so migration must
 		// not fabricate + persist a '/' rule that would shadow the config baseline.
-		$result = Rule_Set::migrate_from_legacy();
+		Rule_Set::migrate_from_legacy();
 
 		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'], 'a no-op migration must not write the rules option' );
 		$this->assertSame( 2, (int) \get_option( Rule_Set::OPTION_SCHEMA_VERSION, 0 ), 'the version still advances so it runs once' );
-		$this->assertFalse( $result['overlap'] );
 	}
 
 	public function test_rekey_migration_normalizes_a_positional_id_and_preserves_pointer_hooks(): void {
@@ -193,11 +192,12 @@ final class RulesetMigrationTest extends TestCase {
 		];
 		\update_option( Rule_Set::OPTION_SCHEMA_VERSION, 1, true );
 
-		$first  = Rule_Set::migrate_from_legacy();
-		$second = Rule_Set::migrate_from_legacy();
+		Rule_Set::migrate_from_legacy();
+		$this->assertSame( Rule_Set::SCHEMA_VERSION, (int) \get_option( Rule_Set::OPTION_SCHEMA_VERSION, 0 ), 'first run stamps the version' );
+		$after_first = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
 
-		$this->assertTrue( $first['migrated'] );
-		$this->assertFalse( $second['migrated'], 'a second run is a no-op' );
+		Rule_Set::migrate_from_legacy();
+		$this->assertSame( $after_first, $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ], 'a second run is a no-op' );
 		$this->assertSame( Log_Manager::url_hash( '/' ), Rule_Set::load()->rules()[0]->id );
 	}
 
@@ -221,21 +221,15 @@ final class RulesetMigrationTest extends TestCase {
 	public function test_migration_deletes_legacy_options_and_is_idempotent(): void {
 		$this->seed_legacy( [ 'log_urls' => [], 'log_events' => [ 'wp' ] ] );
 
-		$this->assertTrue( Rule_Set::migrate_from_legacy()['migrated'] );
+		Rule_Set::migrate_from_legacy();
+		$this->assertSame( Rule_Set::SCHEMA_VERSION, (int) \get_option( Rule_Set::OPTION_SCHEMA_VERSION, 0 ), 'migration ran + stamped the version' );
 		$this->assertOptionAbsent( 'newspack_event_logger_nodes_log_events' );
-		$this->assertFalse( Rule_Set::migrate_from_legacy()['migrated'] );
-	}
 
-	public function test_prefix_overlap_is_reported(): void {
-		$this->seed_legacy( [ 'skip_urls' => [ '/wp' ], 'log_urls' => [ '/wp-admin' ], 'log_events' => [] ] );
-
-		$this->assertTrue( Rule_Set::migrate_from_legacy()['overlap'] );
-	}
-
-	public function test_disjoint_lists_report_no_overlap(): void {
-		$this->seed_legacy( [ 'skip_urls' => [ '/wp-cron' ], 'log_urls' => [ '/shop/' ], 'log_events' => [] ] );
-
-		$this->assertFalse( Rule_Set::migrate_from_legacy()['overlap'] );
+		// A re-seeded legacy option must survive a second run — the version gate
+		// makes it a no-op, so a re-consumed option would prove the gate broke.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'] = [ 'init' ];
+		Rule_Set::migrate_from_legacy();
+		$this->assertSame( [ 'init' ], $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_events'], 'a second run does not re-migrate' );
 	}
 
 	public function test_hooks_over_inline_limit_migrate_to_a_durable_pointer_rule(): void {
