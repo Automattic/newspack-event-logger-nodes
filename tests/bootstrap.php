@@ -700,6 +700,24 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMem
 
 require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
+// The application defers register_config_keys() to the plugins_loaded pri-11
+// closure, which does not fire in the unit-test harness — so register ELN's
+// own config keys explicitly here (mirrors the substrate's ensure_runtime_wired
+// above). Without it Config::value() throws `unknown config key` on ELN keys
+// like 'rules' / 'hook_start_priority'.
+\Newspack_Event_Logger_Nodes\Config::register_config_keys();
+
+// Register ELN's node-class namespaces + stock topology dir the same way the
+// plugins_loaded pri-11 closure does in production (the harness bypasses it):
+//  - the top-level prefix resolves make_node('Discovery_Collector', …) etc.
+//  - the App\ prefix resolves the service CIs (make_node('Discovery_CI', …)).
+// Without them make_node silently no-ops and dispatch routes NOT_AVAILABLE.
+\Newspack_Nodes\Topology_Registry::register_plugin(
+	'Newspack_Event_Logger_Nodes\\',
+	NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+);
+\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
+
 // Register the application `eln` token namespace so `<eln:…>` resolves in
 // tests (mirrors the substrate bootstrap's register_token_namespace() call).
 // Routes through Config::resolve_eln_token so prod + tests share derivation.

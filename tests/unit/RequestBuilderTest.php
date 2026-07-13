@@ -122,6 +122,33 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
+	/**
+	 * A flood of missing-message warnings with DIFFERENT sequence numbers must
+	 * throttle on the stable category prefix — not mint a fresh key per seq_n.
+	 * The pre-split call baked $seq_n into the throttled string, so every call
+	 * keyed uniquely and never suppressed (it logged loudest under the worst
+	 * flood). Distinct seq values 5/9/13 (not the trivial 0/1) prove the split.
+	 */
+	public function test_missing_message_flood_throttles_on_stable_prefix(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$buf = '';
+		Core::set_stderr_handler(
+			function ( $message ) use ( &$buf ) {
+				$buf .= $message;
+			}
+		);
+		// process (start) sets expected_n = 2; each of these overshoots it, so
+		// $expected stays 2 while $seq_n varies — only seq_n differs per call.
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->fill( $rb, 5, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 9, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 13, 'r1', 'request', [ 'm' => 'GET /x' ] );
+
+		$this->assertSame( 1, \substr_count( $buf, 'missing message' ), 'flood collapses to one emission under the stable prefix' );
+		$this->assertStringContainsString( 'expected #2, got #5 on r1', $buf, 'the one emission carries the first payload' );
+	}
+
 	public function test_complete_with_url_emits_assembled_request(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();

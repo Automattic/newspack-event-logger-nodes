@@ -305,13 +305,13 @@ class Hook_Categorizer {
 					}
 					// Reject patterns with nested quantifiers (ReDoS risk).
 					if ( \preg_match( '/[+*?]\}?\)?[+*?{]/', $pattern ) ) {
-						Core::print_less_often( \sprintf( '[EventLoggerNodes] Hook categorizer pattern rejected (nested quantifier): %s', \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) ) );
+						Core::print_less_often( '[EventLoggerNodes] Hook categorizer pattern rejected (nested quantifier): ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
 						continue;
 					}
 					// Use \x01 delimiter to avoid injection/escaping issues.
 					$safe_regex = "\x01" . $pattern . "\x01";
 					if ( false === @\preg_match( $safe_regex, '' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Validating user-supplied regex.
-						Core::print_less_often( \sprintf( '[EventLoggerNodes] Invalid hook categorizer pattern rejected: %s', \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) ) );
+						Core::print_less_often( '[EventLoggerNodes] Invalid hook categorizer pattern rejected: ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
 						continue;
 					}
 					if ( \preg_match( $safe_regex, $hook_name ) ) {

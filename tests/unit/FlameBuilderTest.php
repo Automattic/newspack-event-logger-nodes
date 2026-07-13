@@ -64,7 +64,11 @@ class FlameBuilderTest extends TestCase {
 		$dir               = \sys_get_temp_dir() . '/flamestats_' . \uniqid();
 		$this->temp_dirs[] = $dir;
 		$p = new \Newspack_Nodes\Partition_Node();
-		$p->arguments( $dir );
+		// Pin a 64 MiB segment so every mirror frame lands in one un-pruned segment.
+		// The `<config:segment_size>` default resolves via a process-global token
+		// resolver other tests mutate; leaving it unpinned makes this sink's
+		// retention (and thus what a test can read back) order-dependent.
+		$p->arguments( "{$dir} 67108864" );
 		$p->name( $name );
 		$p->void_warranty();
 		return $p;
