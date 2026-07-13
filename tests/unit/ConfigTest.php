@@ -14,6 +14,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_Utils;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -24,6 +25,9 @@ class ConfigTest extends TestCase {
 
 	/** Saved snapshot of `Config::$allowed_config_dirs` so tests can mutate freely. */
 	private array $saved_allowed_dirs = [];
+
+	/** Saved snapshot of the substrate's `Config::$registered_keys` (a process-wide static). */
+	private array $saved_registered_keys = [];
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -37,6 +41,9 @@ class ConfigTest extends TestCase {
 		// Snapshot the allowlist; allow_dir() restores from this in tearDown.
 		$ref                      = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
 		$this->saved_allowed_dirs = $ref->getValue();
+		// Snapshot the declared-key registry; simulate_unwired_request() empties it.
+		$keys                        = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
+		$this->saved_registered_keys = $keys->getValue();
 	}
 
 	protected function tearDown(): void {
@@ -47,6 +54,9 @@ class ConfigTest extends TestCase {
 		// Restore allowed_config_dirs in case allow_dir() was used.
 		$ref = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
 		$ref->setValue( null, $this->saved_allowed_dirs );
+		// Restore the declared-key registry (emptied by simulate_unwired_request).
+		$keys = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
+		$keys->setValue( null, $this->saved_registered_keys );
 		parent::tearDown();
 	}
 
@@ -120,6 +130,43 @@ class ConfigTest extends TestCase {
 		$d1 = Config::load_config_defaults();
 		$d2 = Config::load_config_defaults();
 		$this->assertSame( $d1, $d2 );
+	}
+
+	public function test_value_reads_substrate_and_app_keys_without_runtime_wiring(): void {
+		// The staging fatal: the profiler drop-in flushes its first log line at
+		// plugins_loaded:-10001, before the substrate wires its runtime (it never
+		// does on a frontend request) and before this plugin's plugins_loaded:11
+		// loader registers its keys. Both Configs must self-declare on first read.
+		// 7 / true are distinct from the shipped defaults (1 / false).
+		$this->allow_dir( $this->temp_dir );
+		$conf = $this->temp_dir . '/unwired.php';
+		\file_put_contents( $conf, "<?php return [ 'num_partitions' => 7, 'flush_every_line' => true ];\n" );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
+		$this->simulate_unwired_request();
+		$this->assertSame( 7, Config::value( 'num_partitions' ) );
+		$this->assertTrue( Config::value( 'flush_every_line' ) );
+	}
+
+	public function test_plugin_file_hooks_declaration_onto_the_substrate_pull(): void {
+		// In production this hook is the ONLY thing that declares this plugin's keys,
+		// and the plugin file must name the action with a LITERAL (this plugin sorts
+		// before newspack-nodes, so the class isn't loadable there to read the const).
+		// Assert against the constant: a rename in the substrate — or a dropped
+		// registration — otherwise surfaces as "unknown config key" 500s in production
+		// while both test suites stay green.
+		$hooked = $GLOBALS['_eln_boot_actions'][ RuntimeConfig::DECLARE_ACTION ] ?? [];
+		$this->assertContains( [ Config::class, 'register_config_keys' ], $hooked );
+	}
+
+	/**
+	 * A fresh frontend process: nothing declared, no runtime wired — only the
+	 * plugin file's DECLARE_ACTION hook, which is all production has at that point.
+	 */
+	private function simulate_unwired_request(): void {
+		$ref = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
+		$ref->setValue( null, [] );
+		\add_action( RuntimeConfig::DECLARE_ACTION, [ Config::class, 'register_config_keys' ] );
+		Config::reset();
 	}
 
 	// ── File-overlay env override ──────────────────────────────────────────

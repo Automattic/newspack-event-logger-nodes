@@ -700,11 +700,15 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMem
 
 require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 
-// The application defers register_config_keys() to the plugins_loaded pri-11
-// closure, which does not fire in the unit-test harness — so register ELN's
-// own config keys explicitly here (mirrors the substrate's ensure_runtime_wired
-// above). Without it Config::value() throws `unknown config key` on ELN keys
-// like 'rules' / 'hook_start_priority'.
+// Snapshot what the plugin file registered at load time: ConfigTest asserts the
+// declaration hook is among them, since the eager declaration below would
+// otherwise mask a missing (or renamed) DECLARE_ACTION registration.
+$GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
+
+// Requiring the plugin file above hooks register_config_keys() to the substrate's
+// DECLARE_ACTION, which is how production declares these. Declare once here too:
+// many tests wipe $GLOBALS['_wp_actions'] for isolation, dropping that hook before
+// the first read, and the registry is monotone — declaring now survives the wipe.
 \Newspack_Event_Logger_Nodes\Config::register_config_keys();
 
 // Register ELN's node-class namespaces + stock topology dir the same way the
