@@ -4,12 +4,10 @@
 #                                         ├─→ Partition (jobs:partition)
 #   Tail (jobintake.log) ─────────────────┘
 
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.job-router.p<partition>
-make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.jobs.p<partition>
+include job-intake
+
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.p<partition>
 make_node Job_Router job-router
-make_node Partition jobs:partition <config:logs_dir>/jobs.p<partition> <config:segment_size> <config:min_segments> <config:max_segments> <config:min_lifetime> <config:max_lifetime>
 cmd firehose:consumer:config set_multi_writer true
-cmd jobs:partition:config void_warranty
 connect_node firehose:consumer job-router
 connect_node job-router jobs:partition
-connect_node jobintake:consumer jobs:partition
