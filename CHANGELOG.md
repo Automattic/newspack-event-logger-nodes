@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gyroscope in-flight state badges are legible again.** The badge hardcoded white text (`.event-logger-state-badge { color: $white }`) while its background came from the hook-category palette, most of which is pale — an `option_home hook` chip (`#CDDC39`) or a `pre_kses hook` chip (`#BDBDBD`) rendered white-on-pale at ~1.5:1 contrast. Every badge (row state, category legend, process/complete legend) now takes its ink from the substrate's new `getTextColor()`, which chooses dark or white per background luminance. Requires newspack-nodes with `getTextColor()`.
+
 ## [0.33.2] - 2026-07-13
 
 ### Fixed
