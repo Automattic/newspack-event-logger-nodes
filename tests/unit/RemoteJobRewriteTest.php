@@ -69,7 +69,7 @@ class RemoteJobRewriteTest extends TestCase {
 		$this->assertSame( 'not-an-array', $this->sink->captured[0][ Message::VALUE ] );
 	}
 
-	public function test_oversized_post_rewrite_message_is_dropped(): void {
+	public function test_oversized_post_rewrite_message_is_not_dropped(): void {
 		// Pad so the packed message exceeds the PIPE_BUF cap after rewrite.
 		$big = \str_repeat( 'x', Partition_Node::MAX_LINE_SIZE + 1024 );
 		$m   = $this->msg( [ 'k' => 'job', 'm' => $big ] );
@@ -78,6 +78,6 @@ class RemoteJobRewriteTest extends TestCase {
 
 		$this->node->fill( $m );
 
-		$this->assertCount( 0, $this->sink->captured );
+		$this->assertCount( 1, $this->sink->captured );
 	}
 }
