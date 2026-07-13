@@ -43,10 +43,6 @@ class Remote_Job_Rewrite_Node extends Node {
 		if ( \is_array( $value ) && 'job' === ( $value['k'] ?? null ) ) {
 			$value['k']                = 'remote_job';
 			$message[ Message::VALUE ] = $value;
-			if ( Message::packed_size( $message ) > Partition_Node::MAX_LINE_SIZE ) {
-				Core::print_less_often( 'Remote_Job_Rewrite: dropping entry > ' . Partition_Node::MAX_LINE_SIZE . ' bytes after rewrite' );
-				return;
-			}
 		}
 		parent::fill( $message );
 	}
