@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every Consumer now declares a dead-letter dir.** `firehose:consumer` (request-builder, job-router), `requests:consumer` (flame-builder) and `settings:consumer` (hub-control) all omitted it, so poison was logged and dropped instead of quarantined — the substrate disables the DLQ when the dir is empty. The aggregator spoke gets one too, now that `Remote_Source` no longer derives an implicit path.
+
 ## [0.34.1] - 2026-07-13
 
 ### Changed

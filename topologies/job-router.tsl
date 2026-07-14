@@ -6,7 +6,7 @@
 
 include job-intake
 
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.<topology>.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.<topology>.p<partition> <config:deadletter_dir>/firehose.<topology>.p<partition>
 make_node Job_Router job-router
 cmd firehose:consumer:config set_multi_writer true
 connect_node firehose:consumer job-router
