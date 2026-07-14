@@ -1185,10 +1185,6 @@ class Flame_Builder_Node extends Node {
 		}
 	}
 
-	private function now_ts(): int {
-		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
-	}
-
 	// Bucket-key helper.
 
 	/**
@@ -1636,6 +1632,10 @@ class Flame_Builder_Node extends Node {
 			$aggregate['last_modified'] = $now;
 			$stats_store->set_url_stats( $url_hash, $aggregate );
 		}
+	}
+
+	private function now_ts(): int {
+		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
 	}
 
 	/**

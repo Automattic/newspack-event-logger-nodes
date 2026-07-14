@@ -25,11 +25,11 @@ final class Flame_Tree {
 	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
 	const PATTERN_START    = '/^(.+?) \(start\)$/';
 
-	private const MAX_RECURSION_DEPTH = 50;
-	private const MAX_STACK_DEPTH     = 50;
-
 	/** Expire aggregate children not seen within this window. Keep in sync with Flame_Builder_Node's copy. */
 	private const AGGREGATE_EXPIRY_SEC = 3600;
+
+	private const MAX_RECURSION_DEPTH = 50;
+	private const MAX_STACK_DEPTH     = 50;
 
 	/**
 	 * Build a flame graph from a request's log entries.

@@ -122,23 +122,6 @@ class Config {
 	}
 
 	/**
-	 * Declare this plugin's config keys (schema overlay keys ∪ config-file default
-	 * keys) with the shared substrate registry. Hooked to the substrate's
-	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
-	 * whenever it derives its declared set — including after a Config::reset(),
-	 * which wipes the registry. Declaring once at boot instead would lose these on
-	 * the next reload, and would come too late for the profiler's first log line
-	 * (plugins_loaded:-10001, ahead of this plugin's loader).
-	 */
-	public static function register_config_keys(): void {
-		if ( ! \class_exists( RuntimeConfig::class ) ) {
-			return;
-		}
-		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
-		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
-	}
-
-	/**
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config
@@ -271,6 +254,23 @@ class Config {
 		}
 
 		return $config[ $key ] ?? null;
+	}
+
+	/**
+	 * Declare this plugin's config keys (schema overlay keys ∪ config-file default
+	 * keys) with the shared substrate registry. Hooked to the substrate's
+	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
+	 * whenever it derives its declared set — including after a Config::reset(),
+	 * which wipes the registry. Declaring once at boot instead would lose these on
+	 * the next reload, and would come too late for the profiler's first log line
+	 * (plugins_loaded:-10001, ahead of this plugin's loader).
+	 */
+	public static function register_config_keys(): void {
+		if ( ! \class_exists( RuntimeConfig::class ) ) {
+			return;
+		}
+		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
+		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
 	}
 
 	/**
