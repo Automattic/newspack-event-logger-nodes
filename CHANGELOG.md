@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-07-13
+
+### Changed
+
+- **`combined` composes the performance stack through the nested `performance` include** instead of pulling `request-builder` and `flame-builder` in directly. `performance.tsl` is exactly those two includes, so the graph is unchanged — but it now says so structurally, and the substrate's nested-hull work ([148], newspack-nodes 0.43.0) renders the nesting rather than flattening it into one undifferentiated group.
+
+- **`aggregator.tsl` documents `Remote_Source`'s offsetlog + deadletter arguments** ([147], newspack-nodes 0.43.0). The dirs are ARGUMENTS now, not hardcoded config reads, so the cursor path can carry `<topology>` and two hubs pulling the same spoke partition no longer share one offsetlog. Omitting them falls back to the legacy derived paths, so existing topologies are unaffected.
+
 ## [0.34.0] - 2026-07-13
 
 ### Changed
