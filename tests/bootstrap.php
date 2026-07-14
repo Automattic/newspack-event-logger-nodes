@@ -686,6 +686,7 @@ if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
 }
 
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/newspack-nodes.php';
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TopologyDurability.php';
 // The substrate no longer wires its runtime at plugin-file scope (it defers to
 // Bootstrap::ensure_runtime_wired() at REST/admin/CLI/cron entry points), so
 // boot it explicitly here — registers the node-class namespaces, the
