@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-07-15
+
 ### Changed
 
 - **Local config overrides now honor the operator's explicit file selection.** `LOCAL_NEWSPACK_NODES_CONF` accepts any canonical, readable regular `.php` file instead of restricting overrides to the active plugin and WordPress roots; an explicitly invalid path or returned value tree throws instead of silently falling back to bundled defaults. The merged application view preserves effective substrate values after their `newspack_nodes_*` WordPress option overlay for substrate-owned keys, while overlapping application-owned keys such as `allowed_users` remain under the independent `newspack_event_logger_nodes_*` option/config contract. Requires the accompanying Newspack Nodes release with the relaxed shared `Config_Utils` contract.
