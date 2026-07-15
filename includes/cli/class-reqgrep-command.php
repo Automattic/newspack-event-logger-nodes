@@ -174,7 +174,7 @@ class Reqgrep_Command {
 	 * default: 10
 	 * ---
 	 *
-	 * [--path=<path>]
+	 * [--firehose=<path>]
 	 * : Override firehose base directory. Must be inside the configured logs dir.
 	 *
 	 * ## EXAMPLES
@@ -206,7 +206,7 @@ class Reqgrep_Command {
 		$this->cat_offset    = isset( $assoc_args['recent'] ) ? 'recent' : 'start';
 
 		$this->config         = Config::load_config();
-		$path_arg             = $assoc_args['path'] ?? null;
+		$path_arg             = $assoc_args['firehose'] ?? null;
 		$this->base_dir       = \is_string( $path_arg ) ? $path_arg : Config::get_logs_directory() . '/firehose.log';
 		$num_partitions_cfg   = $this->config['num_partitions'] ?? 1;
 		$this->num_partitions = Core::num_int( $num_partitions_cfg );
@@ -225,9 +225,9 @@ class Reqgrep_Command {
 				}
 			);
 
-		// Validate explicit --path against the configured logs directory.
-		if ( isset( $assoc_args['path'] ) ) {
-			$path_value = Core::str( $assoc_args['path'] );
+		// Validate explicit --firehose against the configured logs directory.
+		if ( isset( $assoc_args['firehose'] ) ) {
+			$path_value = Core::str( $assoc_args['firehose'] );
 			$real_path  = \realpath( $path_value );
 			if ( false === $real_path ) {
 				\WP_CLI::error( 'Invalid path: ' . $path_value );

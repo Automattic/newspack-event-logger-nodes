@@ -31,9 +31,6 @@ class Ruleset_Bench_Command {
 	 * [--iterations=<n>]
 	 * : Timed iterations per grid cell. Default 200.
 	 *
-	 * [--path=<path>]
-	 * : WordPress path.
-	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp nodes ruleset-bench --iterations=500
