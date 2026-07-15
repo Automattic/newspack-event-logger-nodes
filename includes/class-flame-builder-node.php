@@ -1476,7 +1476,7 @@ class Flame_Builder_Node extends Node {
 	 * checkpoint die with a crash — every partition frame is already committed, so
 	 * recovery replays them exactly once with no double-count.
 	 */
-	public function set_stats_partition( string $name ): void {
+	public function set_stats_target( string $name ): void {
 		$this->stats_partition = \trim( $name );
 		$this->arm_stats_mirror();
 	}
@@ -1891,7 +1891,7 @@ class Flame_Builder_Node extends Node {
 	 * writes go straight to the partition at flush (bypassing the sink), so
 	 * without this override the partition renders disconnected even while it
 	 * fills. What actually gets mirrored is driven by set_snapshot_node +
-	 * set_stats_partition, not by this method.
+	 * set_stats_target, not by this method.
 	 *
 	 * @api Used by substrate.
 	 * @param array<int, string>|string|null $value New primary target or null to get current target.
@@ -1936,7 +1936,7 @@ class Flame_Builder_Node extends Node {
 			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
 		}
 		if ( '' !== $this->stats_partition ) {
-			$out .= "cmd {$this->name}:config set_stats_partition {$this->stats_partition}\n";
+			$out .= "cmd {$this->name}:config set_stats_target {$this->stats_partition}\n";
 		}
 		if ( 0 !== $this->flame_topn ) {
 			$out .= "cmd {$this->name}:config set_flame_topn {$this->flame_topn}\n";
@@ -2035,14 +2035,14 @@ class Flame_Builder_Node extends Node {
 					},
 				],
 				[
-					'name'        => 'set_stats_partition',
+					'name'        => 'set_stats_target',
 					'description' => 'Mirror stats writes to a durable Partition and reload from it on cold boot (non-Atomic deployments).',
-					'args'        => [ [ 'name' => 'node', 'type' => 'string', 'required' => false, 'default' => '' ] ],
+					'args'        => [ [ 'name' => 'target', 'type' => 'node_name', 'required' => false, 'default' => '' ] ],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
 						// Store name; resolve lazily (empty=disabled).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_stats_partition( \trim( $args ) );
+						$patron->set_stats_target( \trim( $args ) );
 						return 'ok';
 					},
 				],

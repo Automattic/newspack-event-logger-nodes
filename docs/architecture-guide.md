@@ -59,7 +59,8 @@ This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesa
 |                                |                       +---> gyroscope.log      |
 |                                |                                                |
 |                                +-------> Job_Router_Node     ----> jobs.log     |
-|    Consumer(jobintake.log) -------------> jobs.log (direct)                     |
+|                                               ^                                 |
+|    Consumer(jobintake.log) -------------------+                                 |
 |    Consumer(requests.log)  -------------> Flame_Builder_Node -> flames.log      |
 |                                              +---> Stats_Store -> mc            |
 |                                                                                 |
@@ -182,7 +183,7 @@ make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <co
 make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.jobs.p<partition>
 make_node Request_Builder request-builder 100 3
 make_node Flame_Builder flame-builder
-make_node Job_Router job-router
+make_node Job_Router job-router 60
 make_node Partition completed:partition <config:logs_dir>/completed.p<partition> 1048576 <config:num_segments> 0
 make_node Partition gyroscope:partition <config:logs_dir>/gyroscope.p<partition> 1048576 <config:num_segments> 0
 make_node Partition errors:partition <config:logs_dir>/errors.p<partition> ...
@@ -199,7 +200,7 @@ cmd firehose:consumer:config set_snapshot_node request-builder
 cmd firehose:consumer:config set_multi_writer true
 cmd requests:consumer:config set_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
-cmd flame-builder:config set_stats_partition <eln:stats_mirror_node>
+cmd flame-builder:config set_stats_target <eln:stats_mirror_node>
 cmd flame-builder:config set_is_hub <eln:is_hub>
 cmd flame-stats:partition:config void_warranty
 cmd requests:partition:config void_warranty
@@ -216,10 +217,10 @@ connect_node completed:tee gyroscope:partition
 connect_node requests:consumer flame-builder
 connect_node flame-builder flames:partition
 connect_node job-router jobs:partition
-connect_node jobintake:consumer jobs:partition
+connect_node jobintake:consumer job-router
 ```
 
-The Tee is on the firehose side because that source fans out to two targets (`request-builder` + `job-router`). The jobintake Consumer here connects directly to `jobs:partition` (the intake side is already routed at write time, so it bypasses `Job_Router` in this topology). **A Consumer's `connect_node()` goes to a Tee only when the source has more than one target.** Single-target inputs connect directly. Number of Tees = number of source-fan-outs, not number of sources.
+The Tee is on the firehose side because that source fans out to two targets (`request-builder` + `job-router`). The jobintake Consumer has one target, so it connects directly to `job-router`; both nested firehose jobs and flat intake jobs now pass through the same normalization and stale-age guard before `jobs:partition`. **A Consumer's `connect_node()` goes to a Tee only when the source has more than one target.** Single-target inputs connect directly. Number of Tees = number of source-fan-outs, not number of sources.
 
 `cmd <partition>:config void_warranty` on the output Partitions lifts the per-message cap to 10MB *without* a per-Partition lock — each is written by exactly one worker fleet, and the substrate refuses to spawn a topology set where two fleets write the same partition, so the exclusivity lock that `allow_large_writes` carries is redundant here (v0.16.0). `Request_Builder` JSON regularly exceeds the 4KB PIPE_BUF atomic-append ceiling on pages with many timed hooks. The `completed:tee` fan-out carries the per-request compact summary `Request_Builder` emits at request-complete time; `gyroscope:partition` additionally receives the periodic in-flight snapshots from the hidden `Request_Flight_Node` sibling, which fire on the Router's 1s TIMER (enabled by a non-empty `set_inflight_target`, with no separate interval knob). The `cmd firehose:consumer:config set_snapshot_node request-builder` line wires the consumer's offsetlog to checkpoint `Request_Builder`'s in-flight cache, so in-flight requests survive a worker respawn (v0.16.0); the parallel `cmd requests:consumer:config set_snapshot_node flame-builder` checkpoints `Flame_Builder`'s pending stats the same way. `cmd firehose:consumer:config set_multi_writer true` tells the firehose Consumer to expect concurrent producers (many FPM workers append to `firehose.pN`).
 
@@ -263,7 +264,7 @@ make_node Partition flames:partition <config:logs_dir>/flames.p<partition> <conf
 make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 cmd requests:consumer:config set_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
-cmd flame-builder:config set_stats_partition <eln:stats_mirror_node>
+cmd flame-builder:config set_stats_target <eln:stats_mirror_node>
 cmd flame-builder:config set_is_hub <eln:is_hub>
 cmd flames:partition:config void_warranty
 cmd flames:partition:config with_index flame-index
@@ -272,7 +273,7 @@ connect_node requests:consumer flame-builder
 connect_node flame-builder flames:partition
 ```
 
-`configure_stats <partition>` constructs the per-partition `Stats_Store`. Auto-tune thresholds are no longer topology tokens — they moved onto each LOG rule (v0.26.0), so `set_auto_tune` / `set_significant_events` are gone; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). `set_stats_partition <eln:stats_mirror_node>` optionally mirrors the memcache stats into the durable `flame-stats:partition` (off unless `stats_mirror_node` is set — Atomic has durable memcache; local/docker opts in). The offset paths carry a consumer-name suffix (`requests.flame-builder.p<partition>`) so each fleet checkpoints its own cursor. The `<config:…>` tokens resolve against the substrate Config (`logs_dir`, `num_partitions`, `segment_size`, etc.); the `<eln:…>` tokens resolve against the application Config (`stats_mirror_node`, `is_hub`) — the v0.4.0 split that gave app-owned values their own token namespace so substrate-only resolvers can't accidentally swallow them.
+`configure_stats <partition>` constructs the per-partition `Stats_Store`. Auto-tune thresholds are no longer topology tokens — they moved onto each LOG rule (v0.26.0), so `set_auto_tune` / `set_significant_events` are gone; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). `set_stats_target <eln:stats_mirror_node>` optionally mirrors the memcache stats into the durable `flame-stats:partition` (off unless `stats_mirror_node` is set — Atomic has durable memcache; local/docker opts in). The offset paths carry a consumer-name suffix (`requests.flame-builder.p<partition>`) so each fleet checkpoints its own cursor. The `<config:…>` tokens resolve against the substrate Config (`logs_dir`, `num_partitions`, `segment_size`, etc.); the `<eln:…>` tokens resolve against the application Config (`stats_mirror_node`, `is_hub`) — the v0.4.0 split that gave app-owned values their own token namespace so substrate-only resolvers can't accidentally swallow them.
 
 ### `topologies/job-router.tsl`
 
@@ -281,16 +282,16 @@ The job-routing half. Tails `firehose.log` + `jobintake.log`; `Job_Router` norma
 ```tsl
 make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.job-router.p<partition>
 make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.jobs.p<partition>
-make_node Job_Router job-router
+make_node Job_Router job-router 60
 make_node Partition jobs:partition <config:logs_dir>/jobs.p<partition> ...
 cmd firehose:consumer:config set_multi_writer true
 cmd jobs:partition:config void_warranty
 connect_node firehose:consumer job-router
 connect_node job-router jobs:partition
-connect_node jobintake:consumer jobs:partition
+connect_node jobintake:consumer job-router
 ```
 
-The firehose Consumer feeds `job-router` (which extracts the `k:"job"`/`k:"remote_job"` entries from the firehose stream); the jobintake Consumer connects **directly** to `jobs:partition`, since `Job_Intake::queue()` already wrote each entry in normalized job shape — same as in `combined`. `Job_Router_Node` can read either source (it disambiguates by the Consumer name stamped on the Message FROM — see [Job_Router_Node](#job_router_node)), but the shipped topologies only route the firehose side through it.
+Both Consumers feed `job-router`. It selects a nested array under `m` when present and otherwise treats the entry itself as the job body, so firehose and Job Intake records take one normalization path. Routing does not depend on the Consumer name in `Message::FROM`. The positional `60` is the default maximum job age in seconds; topology-console edits may supply a different numeric, finite, non-negative `stale_timeout`.
 
 ### `topologies/aggregator.tsl`
 
@@ -437,19 +438,21 @@ Replaces the legacy `AutoTuneHandlers` six-listener pattern (hub @ priority 5 + 
 
 ### Job_Router_Node
 
-Multi-input routing. Reads firehose AND jobintake; disambiguates source via Message FROM — Consumer stamps FROM with its own node name (`firehose:consumer`, `jobintake:consumer`), and Job_Router_Node inspects the string to know which input the line came from. The body schema differs slightly between the two sources (firehose wraps under `m`; jobintake is flat), so Job_Router_Node normalizes both into a `{ k, handler, parameters, ts }` shape before forwarding to `jobs.log` for Job_Worker_Node to dispatch. The job kind is carried under `k` (not `type`) end-to-end as of v0.16.1 — the same `k` the firehose category, `Job_Intake`, and the substrate `Job_Worker_Node` all read, so there's no rename at any hop.
+Multi-input routing. Reads firehose AND jobintake without interpreting `Message::FROM`: an array under `entry['m']` is the body, otherwise the entry itself is the body. Both shapes normalize into `{ k, handler, parameters, ts }` before forwarding to `jobs.log` for Job_Worker_Node to dispatch. The job kind is carried under `k` (not `type`) end-to-end, and both `job` and `remote_job` are preserved for either body shape.
 
-| FROM contains | Body key | Allowed kinds |
-|---------------|----------|---------------|
-| `firehose:consumer` | `entry['m']` (nested) | `job` or `remote_job` |
-| `jobintake:consumer` | `entry` (flat) | `job` only — `remote_job` rewritten to `job` |
+| Entry shape | Selected body | Allowed kinds |
+|-------------|---------------|---------------|
+| Nested array under `m` | `entry['m']` | `job` or `remote_job` |
+| No nested array | `entry` | `job` or `remote_job` |
 
 Validation:
 
 - Handler name pattern `/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/`
-- `MAX_JOB_SIZE` — derives from `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE` (32MB, the canonical cap)
+- `parameters` must be an array when present; omission normalizes to `[]`
+- `stale_timeout` is a positional float argument, default `60`, and fails loudly unless numeric, finite, and non-negative; an age exactly equal to the timeout is accepted
+- Job timestamps must be numeric and finite; missing, malformed, non-finite, or older timestamps are dropped
 
-Unknown handlers, oversized lines, and invalid handler names log via `Core::print_less_often` (rate-limited).
+Invalid handler names, non-array parameters, and stale entries emit a drop audit. Router-level size rejection is not duplicated here: producers use `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE` when they need the canonical intake limit, and the downstream Partition enforces writes. Job_Worker_Node handles valid-but-unregistered handler names after reading `jobs.log`.
 
 Job_Worker_Node (downstream) reads `jobs.log` and looks up the handler in `newspack_nodes/job_handlers` (kind=job) or `newspack_nodes/remote_job_handlers` (kind=remote_job) via `load_handlers_from_filters()`, which the worker calls in its constructor at topology bootstrap. Registration is filter-only; there are no programmatic setter methods.
 

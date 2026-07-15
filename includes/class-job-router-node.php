@@ -13,13 +13,6 @@
  * `newspack_nodes/{job,remote_job}_handlers` filters without coordinating
  * with the firehose-workers fleet.
  *
- * Sources (disambiguated via Message::FROM, stamped by upstream Consumer):
- * - firehose:  entries the request lifecycle wrote to firehose.log via
- *              LogManager::message('job', ['m' => {type, handler, parameters}]).
- *              The job body is nested under `m`; the entry-level `k` is 'job'.
- * - jobintake: entries the JobIntake API wrote directly to jobintake.log.
- *              The job body lives at the top level; `k` carries the type.
- *
  * Output shape (one wire form for jobs.log, regardless of source) — the kind
  * stays under `k`, the same field Job_Intake writes and Job_Worker dispatches
  * on, so nothing downstream has to rename it:
@@ -28,8 +21,7 @@
  * SECURITY:
  * - Handler name must match HANDLER_NAME_PATTERN before reaching disk.
  * - Parameters must be array-shaped or absent.
- * - Pre-pack size guard caps oversized entries before they reach the
- *   Partition layer.
+ * - Entries older than the configured stale timeout are dropped before disk.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -45,12 +37,40 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 class Job_Router_Node extends Node {
+	use \Newspack_Nodes\Schema_Reflection;
+
+	public const DEFAULT_STALE_TIMEOUT = 60.0;
 
 	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 
 	public const KIND_JOB        = 'job';
 	public const KIND_REMOTE_JOB = 'remote_job';
-	public const MAX_JOB_SIZE    = \Newspack_Nodes\Job_Intake::MAX_JOB_SIZE;
+
+	private float $stale_timeout = self::DEFAULT_STALE_TIMEOUT;
+
+	/**
+	 * Parse the maximum accepted job age while retaining the raw argument for
+	 * topology dump round-trips.
+	 *
+	 * @api Used by the substrate during make_node construction.
+	 * @param string|null $args Maximum job age in seconds, or null to read back.
+	 */
+	public function arguments( ?string $args = null ): string {
+		if ( null === $args ) {
+			return parent::arguments();
+		}
+		$tokens = \preg_split( '/\s+/', \trim( $args ), -1, \PREG_SPLIT_NO_EMPTY );
+		if ( false === $tokens ) {
+			throw new \LogicException( 'Unable to parse stale_timeout argument' );
+		}
+		$raw_timeout = $tokens[0] ?? self::DEFAULT_STALE_TIMEOUT;
+		$timeout     = \is_numeric( $raw_timeout ) ? (float) $raw_timeout : null;
+		if ( null === $timeout || ! \is_finite( $timeout ) || 0.0 > $timeout ) {
+			throw new \InvalidArgumentException( 'stale_timeout must be numeric, finite, and non-negative' );
+		}
+		$this->parse_schema_args( $args );
+		return $args;
+	}
 
 	public function fill( array $message ): void {
 		++$this->counter;
@@ -59,73 +79,46 @@ class Job_Router_Node extends Node {
 		if ( ! ( $type_flags & Message::TM_STRUCT ) ) {
 			return;
 		}
+
 		$entry = $message[ Message::VALUE ];
 		if ( ! \is_array( $entry ) ) {
 			return;
 		}
 
-		// Consumer stamps FROM: `firehose:consumer` / `jobintake:consumer`.
-		/** @var int|float|string|bool|null $raw_from */
-		$raw_from     = $message[ Message::FROM ] ?? '';
-		$from         = (string) $raw_from;
-		$is_firehose  = ( false !== \strpos( $from, 'firehose:consumer' ) );
-		$is_jobintake = ( false !== \strpos( $from, 'jobintake:consumer' ) );
-		if ( ! $is_firehose && ! $is_jobintake ) {
-			return; // Not from a known job source — drop silently.
-		}
-
 		// Pluck the job body. Firehose wraps it under `m`; jobintake is flat.
-		$body = $is_firehose
-			? ( \is_array( $entry['m'] ?? null ) ? $entry['m'] : null )
-			: $entry;
-		if ( ! \is_array( $body ) ) {
-			return;
-		}
+		$body = \is_array( $entry['m'] ?? null ) ? $entry['m'] : $entry;
 
 		// Dispatch kind = entry `k` (not body) so hub job→remote_job wins.
-		/** @var int|float|string|bool|null $raw_type */
-		$raw_type = $entry['k'] ?? '';
-		$type     = (string) $raw_type;
+		$type = Core::as_string( $entry['k'] ?? '' );
 		if ( self::KIND_JOB !== $type && self::KIND_REMOTE_JOB !== $type ) {
 			return;
 		}
 
-		// jobintake is always local — never escalate to remote dispatch.
-		if ( $is_jobintake && self::KIND_REMOTE_JOB === $type ) {
-			$type = self::KIND_JOB;
-		}
-
-		/** @var int|float|string|bool|null $raw_handler */
-		$raw_handler = $body['handler'] ?? '';
-		$handler     = (string) $raw_handler;
+		$handler = Core::as_string( $body['handler'] ?? '' );
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
-			$this->print_less_often( 'invalid handler name: ', $handler );
-			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'invalid_handler', 'HANDLER', $handler ] ) );
+			$this->drop_message( $message, "invalid handler name: {$handler}" );
 			return;
 		}
 
 		$parameters = $body['parameters'] ?? [];
 		if ( ! \is_array( $parameters ) ) {
-			$this->print_less_often( "$handler has non-array parameters; dropping" );
-			$this->set_state( 'DROPPED', \implode( ' ', [ 'REASON', 'non_array_params', 'HANDLER', $handler ] ) );
+			$this->drop_message( $message, "{$handler} has non-array parameters" );
 			return;
 		}
 
-		$normalized = [
+		$raw_timestamp = $body['ts'] ?? $entry['ts'] ?? null;
+		$normalized    = [
 			'k'          => $type,
 			'handler'    => $handler,
 			'parameters' => $parameters,
-			'ts'         => $body['ts'] ?? $entry['ts'] ?? \microtime( true ),
+			'ts'         => $raw_timestamp,
 		];
 
-		// Pre-pack size guard: fail earlier than Partition for a clearer error.
-		$encoded = \wp_json_encode( $normalized );
-		if ( false !== $encoded && \strlen( $encoded ) > self::MAX_JOB_SIZE ) {
-			$this->print_less_often( "$handler entry exceeds MAX_JOB_SIZE; dropping" );
-			$this->set_state(
-				'DROPPED',
-				\implode( ' ', [ 'REASON', 'OVERSIZE', 'HANDLER', $handler, 'SIZE', \strlen( $encoded ) ] )
-			);
+		// Stale guard: fail if the entry exceeds the configured maximum age.
+		$timestamp = \is_numeric( $raw_timestamp ) ? (float) $raw_timestamp : null;
+		if ( null === $timestamp || ! \is_finite( $timestamp ) || Core::$now - $timestamp > $this->stale_timeout ) {
+			$this->drop_message( $message, 'stale entry' );
+			$this->stderr( 'stale entry: ' . \wp_json_encode( $normalized, JSON_PRETTY_PRINT ) );
 			return;
 		}
 
@@ -138,9 +131,16 @@ class Job_Router_Node extends Node {
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Routing',
-			'description' => 'Splits firehose entries by `k` field; routes job entries to jobs:partition.',
-			'arguments'        => [],
-			'commands'       => [],
+			'description' => 'Normalizes nested or flat job entries and routes them to jobs:partition.',
+			'arguments'   => [
+				[
+					'name'        => 'stale_timeout',
+					'type'        => 'float',
+					'default'     => self::DEFAULT_STALE_TIMEOUT,
+					'description' => 'Maximum job age in seconds; entries older than this are dropped.',
+				],
+			],
+			'commands'    => [],
 		];
 	}
 }

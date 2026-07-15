@@ -1,13 +1,19 @@
 # Job_Router topology
 #
-#   Tail (firehose.log)  ──→ Job_Router ──┐
-#                                         ├─→ Partition (jobs:partition)
-#   Tail (jobintake.log) ─────────────────┘
+#   Tail (firehose.log)  ────┐
+#                            ├──→ Job_Router ──→ Partition (jobs:partition)
+#   Tail (jobintake.log) ────┘
 
-include job-intake
+# include job-intake
+make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.<topology>.p<partition> <config:deadletter_dir>/jobintake.<topology>.p<partition>
+make_node Partition jobs:partition <config:logs_dir>/jobs.p<partition> <config:segment_size> <config:min_segments> <config:max_segments> <config:min_lifetime> <config:max_lifetime>
+cmd jobs:partition:config void_warranty
+connect_node jobintake:consumer jobs:partition
 
 make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.<topology>.p<partition> <config:deadletter_dir>/firehose.<topology>.p<partition>
-make_node Job_Router job-router
+make_node Job_Router job-router 60
 cmd firehose:consumer:config set_multi_writer true
+disconnect_node jobintake:consumer
+connect_node jobintake:consumer job-router
 connect_node firehose:consumer job-router
 connect_node job-router jobs:partition
