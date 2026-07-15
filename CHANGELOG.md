@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Flame Builder stats-mirror command and PHP setter are now `set_stats_target`.** The schema declares its optional argument as a `node_name`, matching the other graph-producing config commands. Together with token-aware substrate graph folding, a configured mirror now renders `flame-stats` beneath `flame-builder`; an empty `<eln:stats_mirror_node>` still disables the mirror. Requires the accompanying Newspack Nodes release that provides config-target token folding through `resolved_config_edges`.
+
+- **Job Router now runs nested firehose jobs and flat Job Intake jobs through one source-agnostic normalization path.** Both `job` and `remote_job` kinds are preserved without gating on `Message::FROM`, and the stock jobintake Consumer feeds Job Router before `jobs:partition`. A new positional `stale_timeout` argument controls the maximum accepted job age (default `60` seconds; the exact boundary is accepted); it fails loudly unless numeric, finite, and non-negative. Missing, non-numeric, non-finite, or older timestamps are audited and dropped. The unused public `Job_Router_Node::MAX_JOB_SIZE` alias is removed with the duplicated router size gate; callers that need the producer limit use `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE`, while the downstream Partition enforces writes.
+
 ### Fixed
 
 - **Row striping broke under a search filter in the Request Log and Error Log.** Each row baked in an `isEven` flag at INGEST time (`entryCounter % 2`), so it reflected the row's position in the full stream, not the filtered view. Filtering out rows left the survivors with a stream-parity that no longer alternated — adjacent visible rows shared a shade. Both dashboards now stripe from the rendered (filtered, virtualization-absolute) index `startIndex + i`, the way the Gyroscope Inflight table already did. The dead `isEven` field is gone from both view nodes.

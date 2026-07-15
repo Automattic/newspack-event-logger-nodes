@@ -53,7 +53,7 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** Every Flame_Builder wires its output partition + the stats mirror, configure_stats BEFORE set_stats_partition. */
+	/** Every Flame_Builder wires its output partition + the stats mirror, configure_stats BEFORE set_stats_target. */
 	public function test_flame_builder_topologies_wire_the_stats_mirror(): void {
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
@@ -68,24 +68,73 @@ class TopologyShapeTest extends TestCase {
 				);
 
 				$configure = $this->first_cmd_index( $topo['cmds'], $fb, 'configure_stats' );
-				$set_part  = $this->first_cmd_index( $topo['cmds'], $fb, 'set_stats_partition' );
+				$set_target = $this->first_cmd_index( $topo['cmds'], $fb, 'set_stats_target' );
 				$this->assertNotNull( $configure, "$name: $fb missing configure_stats" );
-				$this->assertNotNull( $set_part, "$name: $fb missing set_stats_partition" );
-				$this->assertLessThan( $set_part, $configure, "$name: $fb runs set_stats_partition before configure_stats — the mirror wires before the store it needs exists" );
+				$this->assertNotNull( $set_target, "$name: $fb missing set_stats_target" );
+				$this->assertLessThan( $set_target, $configure, "$name: $fb runs set_stats_target before configure_stats — the mirror wires before the store it needs exists" );
 			}
 		}
 	}
 
-	/** set_stats_partition is fed the config token, never a hardcoded node name (empty token = disabled). */
-	public function test_set_stats_partition_uses_the_config_token(): void {
+	public function test_dashboard_graph_places_the_stats_log_under_flame_builder(): void {
+		\Newspack_Nodes\Core::register_config_namespace(
+			'eln',
+			static fn ( string $key ): ?string => 'stats_mirror_node' === $key ? 'flame-stats:partition' : null
+		);
+		\Newspack_Nodes\Topology_Registry::reset();
+		\Newspack_Nodes\Topology_Registry::register_plugin(
+			'Newspack_Event_Logger_Nodes\\',
+			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+		);
+		\Newspack_Nodes\Topology_Registry::register_builtin_dir(
+			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
+		);
+
+		foreach ( [ 'combined', 'performance', 'flame-builder' ] as $topology ) {
+			$edges = \Newspack_Nodes\Topology_Registry::graph_for( $topology )['edges'];
+			$this->assertContains(
+				[ 'flame-builder', 'flame-stats:partition' ],
+				$edges,
+				"$topology: flame-stats is not downstream of flame-builder"
+			);
+			if ( 'flame-builder' === $topology ) {
+				continue;
+			}
+			foreach ( [ 'completed:tee', 'errors:partition', 'gyroscope:partition' ] as $target ) {
+				$this->assertContains(
+					[ 'request-builder', $target ],
+					$edges,
+					"$topology: request-builder lost its $target branch"
+				);
+			}
+		}
+	}
+
+	/** set_stats_target is fed the config token, never a hardcoded node name (empty token = disabled). */
+	public function test_set_stats_target_uses_the_config_token(): void {
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
 			foreach ( $topo['cmds'] as $cmd ) {
-				if ( 'set_stats_partition' === $cmd['verb'] ) {
-					$this->assertSame( '<eln:stats_mirror_node>', $cmd['args'][0] ?? null, "$name: set_stats_partition must take <eln:stats_mirror_node>, not a hardcoded node" );
+				if ( 'set_stats_target' === $cmd['verb'] ) {
+					$this->assertSame( '<eln:stats_mirror_node>', $cmd['args'][0] ?? null, "$name: set_stats_target must take <eln:stats_mirror_node>, not a hardcoded node" );
 				}
 			}
+		}
+	}
+
+	/** Standalone and composed job routers keep the documented 60-second default explicit. */
+	public function test_job_router_topologies_pass_the_default_stale_timeout(): void {
+		foreach ( [ 'job-router', 'combined' ] as $topology ) {
+			$statements = \array_column(
+				\Newspack_Nodes\Topology_Registry::statements( $topology )['statements'],
+				'line'
+			);
+			$this->assertContains(
+				'make_node Job_Router job-router 60',
+				$statements,
+				"$topology: Job_Router must receive the documented 60-second stale timeout"
+			);
 		}
 	}
 
@@ -178,7 +227,7 @@ class TopologyShapeTest extends TestCase {
 			$flame_builders += \count( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) );
 			$consumers      += \count( $topo['consumers'] );
 			foreach ( $topo['cmds'] as $cmd ) {
-				if ( 'set_stats_partition' === $cmd['verb'] ) {
+				if ( 'set_stats_target' === $cmd['verb'] ) {
 					++$stats_verbs;
 				}
 			}
@@ -189,7 +238,7 @@ class TopologyShapeTest extends TestCase {
 			}
 		}
 		$this->assertGreaterThan( 0, $flame_builders, 'no Flame_Builder nodes — a rename silently disabled the stats-mirror guards' );
-		$this->assertGreaterThan( 0, $stats_verbs, 'no set_stats_partition cmds — a rename silently disabled the token guard' );
+		$this->assertGreaterThan( 0, $stats_verbs, 'no set_stats_target cmds — a rename silently disabled the token guard' );
 		$this->assertGreaterThan( 0, $consumers, 'no Consumer nodes — a rename silently disabled the snapshot guard' );
 		$this->assertGreaterThan( 0, $stateful_consumers, 'no consumer reaches a stateful node — a rewire made the snapshot guard vacuous' );
 		$this->assertTrue( $this->is_stateful_type( 'Flame_Builder' ), 'Flame_Builder no longer resolves as stateful — a stale classmap makes the snapshot guard vacuous' );

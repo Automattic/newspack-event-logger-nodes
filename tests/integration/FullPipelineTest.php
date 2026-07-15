@@ -59,7 +59,8 @@ class FullPipelineTest extends TestCase {
 
 	public function test_full_pipeline_topic_consumer_tee_request_builder_flame_builder_job_router(): void {
 		// Producer: write firehose lines mixing a request lifecycle and a job.
-		$topic = new Topic_Node();
+		$topic         = new Topic_Node();
+		$job_timestamp = Core::$now - 14.75;
 		$topic->arguments( "{$this->tmp}/firehose.p{partition} {1}" );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
@@ -76,7 +77,7 @@ class FullPipelineTest extends TestCase {
 				'handler'    => 'echo_job',
 				'parameters' => [ 'val' => 42 ],
 			],
-			'ts'  => 1,
+			'ts'  => $job_timestamp,
 		] );
 		$this->topic_write( $topic, '/x', [ 'n' => 6, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
@@ -120,7 +121,8 @@ class FullPipelineTest extends TestCase {
 		$tee->connect_node( 'request-builder' );
 		$tee->connect_node( 'job-router' );
 
-		// Consumer must be named so JobRouter recognizes the source via FROM.
+		// Keep the production Consumer name even though JobRouter routes by entry
+		// shape and does not gate valid jobs on Message::FROM.
 		$consumer = new Consumer_Node();
 		$consumer->arguments( "{$this->tmp}/firehose.p0 {$this->tmp}/offsets/r/p0" );
 		$consumer->name( 'firehose:consumer' );

@@ -1973,7 +1973,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
 		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
@@ -1996,7 +1996,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
 		$p->flush();
@@ -2015,7 +2015,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		// Buffer writes but never checkpoint — a crash loses them, no double-count.
 		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
@@ -2036,7 +2036,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		// No set_flame_topn() → the production default of 0: the per-URL flame
 		// mirror is OFF, so no `url:` frames persist regardless of traffic.
@@ -2059,7 +2059,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 		$topn = 10;
 		$fb->set_flame_topn( $topn );
 
@@ -2089,7 +2089,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		// 105 distinct URLs, highest-traffic inserted FIRST (rank DESCENDING) so eviction
 		// order != insertion order — a rank that misreads the value shape would fall back to
@@ -2123,7 +2123,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		$fb->set_flame_topn( 10 ); // enable the flame mirror to exercise the gate
 
@@ -2153,7 +2153,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 		$fb->save_state(); // Drive the lazy cold-boot reload.
 
 		$this->assertSame( [ 'from-memcache' => [ 'count' => 1 ] ], $store->get_hourly(), 'warm memcache preserved' );
@@ -2172,25 +2172,25 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 		$fb->save_state(); // Drive the lazy cold-boot reload.
 
 		$this->assertSame( [], $store->get_hourly(), 'decayed-out entry not restored' );
 	}
 
-	public function test_set_stats_partition_before_store_records_name_but_stays_inert(): void {
+	public function test_set_stats_target_before_store_records_name_but_stays_inert(): void {
 		$p  = $this->make_partition( 'flames-stats' );
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		// Misordered: no set_stats_store first. Late-bind still records the name
 		// (advertised for round-trip), but with no store the mirror never arms.
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 		$this->fill_request( $fb, $this->completed_request() );
 		$p->flush();
 		foreach ( $p->get_segments( true ) as $seg ) {
 			$this->assertSame( 0, (int) $seg['size'], 'no store → mirror inert, partition stays empty' );
 		}
-		$this->assertStringContainsString( 'set_stats_partition flames-stats', $fb->dump_config() );
+		$this->assertStringContainsString( 'set_stats_target flames-stats', $fb->dump_config() );
 	}
 
 	public function test_large_mirror_writes_land_when_partition_void_warranty(): void {
@@ -2204,7 +2204,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 
 		$fb->set_flame_topn( 10 ); // enable the flame mirror
 		// >4KB and carries profiling detail so it survives the top-N gate.
@@ -2237,26 +2237,27 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 		$fb->save_state(); // Drive the lazy cold-boot reload.
 
 		$this->assertSame( [ 'v2' => [ 'count' => 2 ] ], $store->get_hourly(), 'last frame for a key wins; every frame is committed' );
 	}
 
-	public function test_node_schema_declares_set_stats_partition_verb(): void {
-		$verb_names = \array_column( Flame_Builder_Node::node_schema()['commands'], 'name' );
-		$this->assertContains( 'set_stats_partition', $verb_names );
+	public function test_node_schema_declares_set_stats_target_as_a_node_reference(): void {
+		$commands = \array_column( Flame_Builder_Node::node_schema()['commands'], null, 'name' );
+		$this->assertArrayHasKey( 'set_stats_target', $commands );
+		$this->assertSame( 'node_name', $commands['set_stats_target']['args'][0]['type'] );
 	}
 
-	public function test_flame_builder_set_stats_partition_verb_round_trips(): void {
+	public function test_flame_builder_set_stats_target_verb_round_trips(): void {
 		Core::$memd = new InMemoryMemcached();
 		$p  = $this->make_partition( 'flames-stats' );
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_partition', 'flames-stats' ) );
+		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', 'flames-stats' ) );
 		$dump = $fb->dump_config();
-		$this->assertStringContainsString( 'cmd fb:config set_stats_partition flames-stats', $dump );
+		$this->assertStringContainsString( 'cmd fb:config set_stats_target flames-stats', $dump );
 	}
 
 	public function test_set_stats_store_after_partition_arms_the_mirror(): void {
@@ -2267,7 +2268,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->name( 'fb' );
 		// Reversed order (or a configure_stats re-run): the partition name is set
 		// before the store, so set_stats_store must arm the mirror itself.
-		$fb->set_stats_partition( $p->name() );
+		$fb->set_stats_target( $p->name() );
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb->set_stats_store( $store );
 
@@ -2278,7 +2279,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'set_stats_store arms the mirror when a partition name is already set' );
 	}
 
-	public function test_set_stats_partition_verb_late_binds_a_forward_referenced_node(): void {
+	public function test_set_stats_target_verb_late_binds_a_forward_referenced_node(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
@@ -2289,7 +2290,7 @@ class FlameBuilderTest extends TestCase {
 		// The verb runs BEFORE the partition's make_node — the ordering a
 		// console-serialized override produces. It must store the name, not
 		// fail on the not-yet-built node.
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_partition', 'late:stats' ) );
+		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', 'late:stats' ) );
 
 		// Partition created afterward, then a buffered aggregate + checkpoint.
 		$p = $this->make_partition( 'late:stats' );
