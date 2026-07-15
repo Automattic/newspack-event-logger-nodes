@@ -334,6 +334,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 			return {
 				totalRequests: overview?.total_requests ?? 0,
 				globalAvgMs: overview?.global_avg_ms ?? 0,
+				globalAvgPeakMb: overview?.global_avg_peak_mb ?? 0,
 				requestsPerSecond: globalRequestsPerSecond,
 				totalUrls,
 				isFiltered: false,
@@ -342,11 +343,13 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		const buckets = Object.keys( serverBreakdownData ).sort();
 		let totalC = 0;
 		let totalS = 0;
+		let totalM = 0;
 		for ( const key of buckets ) {
 			const entry = serverBreakdownData[ key ]?.[ serverFilter ];
 			if ( entry ) {
 				totalC += entry.c || 0;
 				totalS += entry.s || 0;
+				totalM += entry.m || 0;
 			}
 		}
 		// Req/s: use up to 12 complete buckets, skip the most recent.
@@ -362,6 +365,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		return {
 			totalRequests: totalC,
 			globalAvgMs: totalC > 0 ? totalS / totalC : 0,
+			globalAvgPeakMb: totalC > 0 ? totalM / totalC : 0,
 			requestsPerSecond: reqPerSec,
 			totalUrls,
 			isFiltered: true,

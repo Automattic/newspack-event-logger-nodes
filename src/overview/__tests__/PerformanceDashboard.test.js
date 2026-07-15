@@ -493,22 +493,31 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'computes filteredOverviewStats when serverFilter is set', async () => {
+	it( 'computes every server-filtered stat from the server breakdown', async () => {
 		const serverBuckets = {};
 		for ( let i = 0; i < 20; i++ ) {
 			const k = `b${ String( i ).padStart( 2, '0' ) }`;
-			serverBuckets[ k ] = { 'edge-01': { c: 50, s: 250 } };
+			serverBuckets[ k ] = {
+				'edge-01':
+					i % 2 === 0
+						? { c: 37, s: 3700, m: 259 }
+						: { c: 41, s: 4920, m: 328 },
+				'edge-02': { c: 11, s: 1430, m: 99 },
+			};
 		}
 		mockView = loadedView( {
 			overview: {
 				data: {
 					total_requests: 2000,
+					global_avg_ms: 91,
+					global_avg_peak_mb: 12.3,
 					aggregate_time_series: {},
 					breakdowns: { server: serverBuckets, status: {} },
 				},
 				loading: false,
 				error: null,
 			},
+			urls: { data: [], total: 37, loading: false, error: null },
 		} );
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -520,9 +529,15 @@ describe( 'PerformanceDashboard', () => {
 			globalThis.__overviewProps.setServerFilter( 'edge-01' );
 		} );
 		await flushEffects();
-		expect( globalThis.__overviewProps.filteredStats.isFiltered ).toBe(
-			true
-		);
+		const stats = globalThis.__overviewProps.filteredStats;
+		expect( stats ).toMatchObject( {
+			totalRequests: 780,
+			requestsPerSecond: 468 / 3600,
+			totalUrls: 37,
+			isFiltered: true,
+		} );
+		expect( stats.globalAvgMs ).toBeCloseTo( 86200 / 780 );
+		expect( stats.globalAvgPeakMb ).toBeCloseTo( 5870 / 780 );
 		unmount();
 	} );
 

@@ -493,13 +493,17 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Sum-merge dimensional buckets across all partitions for one dim/server.
+	 * The server dimension is the global routing index: Flame Builder deliberately
+	 * omits its redundant per-server copy, so keep that dimension global while a
+	 * server scope narrows every other dimension.
 	 * Mirror of PerfOverviewController::merge_dim_across_partitions.
 	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
+		$store_server = 'server' === $dimension ? '' : $server;
 		$merged = [];
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_dim_buckets_into( $merged, $store->get_dimensional( $dimension, $server ) );
+			self::merge_dim_buckets_into( $merged, $store->get_dimensional( $dimension, $store_server ) );
 		}
 		\ksort( $merged );
 		return $merged;

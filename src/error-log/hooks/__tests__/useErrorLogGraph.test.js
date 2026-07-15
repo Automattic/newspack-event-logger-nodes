@@ -354,6 +354,29 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		act( () => result.current.clear() );
 		expect( Core.node( VIEW ).entries ).toHaveLength( 0 );
 	} );
+
+	test( 'setFilter() filters incoming rows before the view buffer', () => {
+		const { result } = renderHook( () => useErrorLogGraph() );
+		act( () => result.current.setFilter( 'needle-317' ) );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack( errorEnvelope( 'miss', { k: 'other', m: 'other' } ) )
+			);
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					errorEnvelope( 'match', {
+						k: 'error',
+						m: 'needle-317 result',
+					} )
+				)
+			);
+		} );
+		expect(
+			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
+		).toEqual( [ 'match' ] );
+	} );
 } );
 
 describe( 'useErrorLogGraph — teardown', () => {
@@ -439,5 +462,30 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 
 		// Rebuilt view defaults paused:false; the hook re-applies the pause.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
+	} );
+
+	test( 'reinit preserves the active admission filter', () => {
+		const { result } = renderHook( () => useErrorLogGraph() );
+		act( () => result.current.setFilter( 'needle-733' ) );
+		act( () => Core.reinit() );
+
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack( errorEnvelope( 'miss', { k: 'other', m: 'other' } ) )
+			);
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					errorEnvelope( 'match', {
+						k: 'error',
+						m: 'needle-733 result',
+					} )
+				)
+			);
+		} );
+		expect(
+			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
+		).toEqual( [ 'match' ] );
 	} );
 } );

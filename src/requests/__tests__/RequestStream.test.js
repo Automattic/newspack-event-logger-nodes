@@ -75,7 +75,6 @@ function entry( overrides = {} ) {
 		timestamp: 1748960000,
 		remote_addr: '10.0.0.1',
 		user_agent: 'curl/7',
-		isEven: false,
 		...overrides,
 	};
 }
@@ -83,6 +82,7 @@ function entry( overrides = {} ) {
 describe( 'RequestStream', () => {
 	let setPaused;
 	let clear;
+	let setStreamFilter;
 	let rafCbs;
 	const mounted = [];
 
@@ -91,8 +91,13 @@ describe( 'RequestStream', () => {
 		window.localStorage.clear();
 		setPaused = jest.fn();
 		clear = jest.fn();
+		setStreamFilter = jest.fn();
 		useRequestLogGraph.mockClear();
-		useRequestLogGraph.mockReturnValue( { setPaused, clear } );
+		useRequestLogGraph.mockReturnValue( {
+			setPaused,
+			clear,
+			setFilter: setStreamFilter,
+		} );
 
 		// Capture rAF callbacks so a test can drive exactly one frame.
 		rafCbs = [];
@@ -147,6 +152,30 @@ describe( 'RequestStream', () => {
 		expect( container.textContent ).toContain( 'r-flow' );
 	} );
 
+	it( 'refreshes equal-shaped rows when the view node is rebuilt', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 2, rid: 'old-second' } ),
+				entry( { seq: 1, rid: 'old-first' } ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 2, rid: 'rebuilt-second-733' } ),
+				entry( { seq: 1, rid: 'rebuilt-first-521' } ),
+			],
+		} );
+		tickFrame();
+
+		expect( container.textContent ).toContain( 'rebuilt-first-521' );
+		expect( container.textContent ).toContain( 'rebuilt-second-733' );
+		expect( container.textContent ).not.toContain( 'old-first' );
+		expect( container.textContent ).not.toContain( 'old-second' );
+	} );
+
 	it( 'pause button reflects the view model and calls setPaused on click', () => {
 		registerViewFixture( { paused: false } );
 		const { container } = mount();
@@ -192,10 +221,10 @@ describe( 'RequestStream', () => {
 		).toBeTruthy();
 	} );
 
-	it( 'filter input narrows URL-matching entries', () => {
-		registerViewFixture( {
+	it( 'renders the replacement buffer after sending a filter to the view node', () => {
+		const node = registerViewFixture( {
 			entries: [
-				entry( { seq: 2, rid: 'rB', url: '/baz', isEven: true } ),
+				entry( { seq: 2, rid: 'rB', url: '/baz' } ),
 				entry( { seq: 1, rid: 'rA', url: '/foo/bar' } ),
 			],
 		} );
@@ -205,6 +234,12 @@ describe( 'RequestStream', () => {
 		expect( container.textContent ).toContain( 'rB' );
 		const input = container.querySelector( '.newspack-nodes-search-input' );
 		expect( input ).toBeTruthy();
+		setStreamFilter.mockImplementation( () => {
+			node.entries = [
+				entry( { seq: 2, rid: 'replacementB', url: '/foo/b' } ),
+				entry( { seq: 1, rid: 'replacementA', url: '/foo/a' } ),
+			];
+		} );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
 			'value'
@@ -214,41 +249,112 @@ describe( 'RequestStream', () => {
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
 		tickFrame();
-		expect( container.textContent ).toContain( 'rA' );
+		expect( setStreamFilter ).toHaveBeenCalledWith( 'foo' );
+		expect( container.textContent ).toContain( 'replacementA' );
+		expect( container.textContent ).toContain( 'replacementB' );
+		expect( container.textContent ).not.toContain( 'rA' );
 		expect( container.textContent ).not.toContain( 'rB' );
 	} );
 
-	it( 'stripes rows by filtered position, not by ingest parity', () => {
-		// Every OTHER ingested row is filtered out, so their pre-filter isEven
-		// alternates the same way — striping on it would make the visible rows
-		// all one shade. Parity must come from the filtered index.
-		registerViewFixture( {
-			entries: [
-				entry( { seq: 4, rid: 'kA', url: '/keep', isEven: true } ),
-				entry( { seq: 3, rid: 'dropA', url: '/skip', isEven: false } ),
-				entry( { seq: 2, rid: 'kB', url: '/keep', isEven: true } ),
-				entry( { seq: 1, rid: 'dropB', url: '/skip', isEven: false } ),
-			],
+	it( 'keeps buffered stripes stable on a live prepend while scrolled', () => {
+		const firstAnchor = entry( {
+			seq: 2,
+			rid: 'first-anchor',
+		} );
+		const secondAnchor = entry( {
+			seq: 1,
+			rid: 'second-anchor',
+		} );
+		const node = registerViewFixture( {
+			entries: [ firstAnchor, secondAnchor ],
 		} );
 		const { container } = mount();
 		tickFrame();
+		const list = container.querySelector(
+			'.event-logger-request-stream-list'
+		);
+		list.scrollTop = 99;
+		act( () => list.dispatchEvent( new Event( 'scroll' ) ) );
+		const findRow = ( rid ) =>
+			[
+				...container.querySelectorAll(
+					'.event-logger-request-stream-entry'
+				),
+			].find( ( row ) => row.textContent.includes( rid ) );
+		const firstStripe = findRow( firstAnchor.rid ).classList.contains(
+			'row-even'
+		);
+		const secondStripe = findRow( secondAnchor.rid ).classList.contains(
+			'row-even'
+		);
+
+		node.entries = [
+			entry( {
+				seq: 3,
+				rid: 'new-buffered-entry',
+			} ),
+			firstAnchor,
+			secondAnchor,
+		];
+		tickFrame();
+
+		expect(
+			findRow( firstAnchor.rid ).classList.contains( 'row-even' )
+		).toBe( firstStripe );
+		expect(
+			findRow( secondAnchor.rid ).classList.contains( 'row-even' )
+		).toBe( secondStripe );
+		const rows = container.querySelectorAll(
+			'.event-logger-request-stream-entry[role="row"]'
+		);
+		expect( rows ).toHaveLength( 3 );
+		expect( rows[ 0 ].classList.contains( 'row-even' ) ).not.toBe(
+			rows[ 1 ].classList.contains( 'row-even' )
+		);
+		expect( rows[ 1 ].classList.contains( 'row-even' ) ).not.toBe(
+			rows[ 2 ].classList.contains( 'row-even' )
+		);
+	} );
+
+	it( 'rebases scroll animation state when the admission filter changes', () => {
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, rid: 'before-rebase' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		node.entries = [
+			entry( { seq: 2, rid: 'sliding-row' } ),
+			entry( { seq: 1, rid: 'before-rebase' } ),
+		];
+		tickFrame();
+		const list = container.querySelector(
+			'.event-logger-request-stream-list'
+		);
+		const content = container.querySelector(
+			'.event-logger-request-stream-content'
+		);
+		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+		act( () => {
+			list.scrollTop = 99;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		setStreamFilter.mockImplementation( () => {
+			node.entries = [];
+		} );
 		const input = container.querySelector( '.newspack-nodes-search-input' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
 			'value'
 		).set;
 		act( () => {
-			setter.call( input, 'keep' );
+			setter.call( input, 'rebase-733' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		tickFrame();
 
-		const rows = container.querySelectorAll(
-			'.event-logger-request-stream-entry[role="row"]'
-		);
-		expect( rows ).toHaveLength( 2 );
-		expect( rows[ 0 ].classList.contains( 'row-even' ) ).toBe( true );
-		expect( rows[ 1 ].classList.contains( 'row-odd' ) ).toBe( true );
+		expect( list.scrollTop ).toBe( 0 );
+		expect( content.style.transform ).toBe( '' );
+		act( () => list.dispatchEvent( new Event( 'scroll' ) ) );
+		expect( content.style.transform ).toBe( '' );
 	} );
 
 	it( 'renders user_agent and remote_addr columns when entry carries them', () => {

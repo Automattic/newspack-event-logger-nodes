@@ -24,8 +24,8 @@
  * and RECONNECTS from the last seen offset on refocus. The `connected → slot` bridge
  * and slot keep-alive live inside RemoteLink.
  *
- * Returns the thin control callbacks the view calls — `setPaused` and
- * `clear`. These are dispatched HOOK-DIRECT to the view node
+ * Returns the thin control callbacks the view calls — `setPaused`, `clear`, and
+ * `setFilter`. These are dispatched HOOK-DIRECT to the view node
  * (`viewRef.current.fill`), an external bridge: they are NOT routed through
  * the graph.
  */
@@ -58,9 +58,10 @@ const controlMsg = ( value ) => {
 /**
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View buffer cap (default 5000).
- * @return {{ setPaused: Function, clear: Function }} Control callbacks for the
- *   thin React view (the view's own state is read via useNodeState). Reset Graph
- *   is driven by the overlay via `Core.reinit`, stashed by mountExospine.
+ * @return {{ setPaused: Function, clear: Function, setFilter: Function }}
+ *   Control callbacks for the thin React view (the view's own state is read via
+ *   useNodeState). Reset Graph is driven by the overlay via `Core.reinit`,
+ *   stashed by mountExospine.
  */
 export function useErrorLogGraph( opts = {} ) {
 	const optsRef = useRef( opts );
@@ -73,6 +74,7 @@ export function useErrorLogGraph( opts = {} ) {
 	// Mirror isPaused into a ref so reinit mountNodes sees current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
+	const filterRef = useRef( '' );
 
 	// First connect tails; a reconnect resumes from last offset (no gap-drop).
 	const { viewRef } = useVisibilityGatedLink( {
@@ -108,6 +110,14 @@ export function useErrorLogGraph( opts = {} ) {
 			if ( isPausedRef.current ) {
 				view.fill( controlMsg( { action: 'pause', paused: true } ) );
 			}
+			if ( filterRef.current ) {
+				view.fill(
+					controlMsg( {
+						action: 'filter',
+						filter: filterRef.current,
+					} )
+				);
+			}
 
 			return { link, view };
 		},
@@ -131,5 +141,15 @@ export function useErrorLogGraph( opts = {} ) {
 		}
 	};
 
-	return { setPaused, clear };
+	const setFilter = ( filter ) => {
+		if ( 'string' !== typeof filter ) {
+			throw new TypeError( 'error log filter must be a string' );
+		}
+		filterRef.current = filter;
+		if ( viewRef.current ) {
+			viewRef.current.fill( controlMsg( { action: 'filter', filter } ) );
+		}
+	};
+
+	return { setPaused, clear, setFilter };
 }

@@ -259,10 +259,12 @@ export default function OverviewSection( {
 								) }
 							</span>
 						</div>
-						{ overview.global_avg_peak_mb > 0 && (
+						{ filteredStats.globalAvgPeakMb > 0 && (
 							<div className="event-logger-stat">
 								<span className="event-logger-stat-value">
-									{ overview.global_avg_peak_mb.toFixed( 1 ) }
+									{ filteredStats.globalAvgPeakMb.toFixed(
+										1
+									) }
 									MB
 								</span>
 								<span className="event-logger-stat-label">

@@ -404,6 +404,37 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 4, $result['breakdowns']['status']['2026-05-17-10-00']['200']['c'] );
 	}
 
+	public function test_overview_server_scope_keeps_the_global_server_dimension(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$store->set_dimensional( 'server', [
+			'2026-05-17-10-00' => [
+				'edge-amber.example' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
+				'edge-violet.example' => [ 'c' => 11, 's' => 1430.0, 'm' => 99.0 ],
+			],
+		] );
+		$store->set_dimensional(
+			'status',
+			[
+				'2026-05-17-10-00' => [
+					'2xx' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
+				],
+			],
+			'edge-amber.example'
+		);
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'overview',
+			'--server=edge-amber.example --breakdown=server,status'
+		);
+
+		$this->assertSame( 37, $result['breakdowns']['server']['2026-05-17-10-00']['edge-amber.example']['c'] );
+		$this->assertSame( 11, $result['breakdowns']['server']['2026-05-17-10-00']['edge-violet.example']['c'] );
+		$this->assertSame( 37, $result['breakdowns']['status']['2026-05-17-10-00']['2xx']['c'] );
+	}
+
 	public function test_overview_verb_breakdown_filters_unknown_dims(): void {
 		// Unknown dim names are filtered out so a typo'd query param can't surface
 		// arbitrary memcache reads (legacy L107-108 `in_array(...,DIMENSIONS,true)`).
