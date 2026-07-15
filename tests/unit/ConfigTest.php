@@ -1,12 +1,6 @@
 <?php
 /**
- * Tests for Config (file overlay + WP options + path validation + kill_readers).
- *
- * Ported from `tests/unit/ConfigTest.php` in the legacy `newspack-event-logger-plugins`
- * monorepo, with namespace renames and `kill_readers()` semantics moved here from
- * Supervisor (the legacy home). Reflection is used to exercise private surfaces:
- * `validate_config_path()`, `validate_config_values()`, matches the legacy test
- * pattern so we cover the same code paths.
+ * Tests for Config file overlays and WordPress options.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -23,9 +17,6 @@ class ConfigTest extends TestCase {
 
 	private string $temp_dir;
 
-	/** Saved snapshot of `Config::$allowed_config_dirs` so tests can mutate freely. */
-	private array $saved_allowed_dirs = [];
-
 	/** Saved snapshot of the substrate's `Config::$registered_keys` (a process-wide static). */
 	private array $saved_registered_keys = [];
 
@@ -33,14 +24,11 @@ class ConfigTest extends TestCase {
 		parent::setUp();
 		Config::reset();
 		$this->temp_dir = '/tmp/newspack-event-logger-nodes-test-config-' . \uniqid();
-		@\mkdir( $this->temp_dir, 0755, true );
+		\mkdir( $this->temp_dir, 0755, true );
 		// Clear WP option store between tests.
 		$GLOBALS['_wp_options'] = [];
 		// Clear any LOCAL_NEWSPACK_NODES_CONF leftover.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' );
-		// Snapshot the allowlist; allow_dir() restores from this in tearDown.
-		$ref                      = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
-		$this->saved_allowed_dirs = $ref->getValue();
 		// Snapshot the declared-key registry; simulate_unwired_request() empties it.
 		$keys                        = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
 		$this->saved_registered_keys = $keys->getValue();
@@ -51,9 +39,6 @@ class ConfigTest extends TestCase {
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' );
 		$GLOBALS['_wp_options'] = [];
-		// Restore allowed_config_dirs in case allow_dir() was used.
-		$ref = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
-		$ref->setValue( null, $this->saved_allowed_dirs );
 		// Restore the declared-key registry (emptied by simulate_unwired_request).
 		$keys = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
 		$keys->setValue( null, $this->saved_registered_keys );
@@ -97,6 +82,36 @@ class ConfigTest extends TestCase {
 		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
 	}
 
+	public function test_substrate_option_wins_shared_file_value_in_application_view(): void {
+		$override_path = $this->temp_dir . '/shared-precedence-8317.php';
+		\file_put_contents(
+			$override_path,
+			"<?php return [ 'num_partitions' => 3, 'hook_start_priority' => 42423 ];\n"
+		);
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
+		\update_option( 'newspack_nodes_num_partitions', 8 );
+		Config::reset();
+
+		$this->assertSame( 8, RuntimeConfig::load_config()['num_partitions'] );
+		$config = Config::load_config();
+		$this->assertSame( 8, $config['num_partitions'] );
+		$this->assertSame( 42423, $config['hook_start_priority'] );
+	}
+
+	public function test_substrate_option_does_not_override_application_owned_key(): void {
+		$override_path = $this->temp_dir . '/overlapping-ownership-7319.php';
+		\file_put_contents(
+			$override_path,
+			"<?php return [ 'allowed_users' => [ 'application-file-7319' ] ];\n"
+		);
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
+		\update_option( 'newspack_nodes_allowed_users', [ 'substrate-option-2843' ] );
+		\delete_option( 'newspack_event_logger_nodes_allowed_users' );
+		Config::reset();
+
+		$this->assertSame( [ 'application-file-7319' ], Config::load_config()['allowed_users'] );
+	}
+
 	public function test_correct_option_autoload_applies_policy(): void {
 		// One-time sweep flips existing installs to match autoload_for():
 		// hot-path scalars autoloaded; the admin-only discovered_events staging
@@ -138,7 +153,6 @@ class ConfigTest extends TestCase {
 		// does on a frontend request) and before this plugin's plugins_loaded:11
 		// loader registers its keys. Both Configs must self-declare on first read.
 		// 7 / true are distinct from the shipped defaults (1 / false).
-		$this->allow_dir( $this->temp_dir );
 		$conf = $this->temp_dir . '/unwired.php';
 		\file_put_contents( $conf, "<?php return [ 'num_partitions' => 7, 'flush_every_line' => true ];\n" );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
@@ -171,15 +185,12 @@ class ConfigTest extends TestCase {
 
 	// ── File-overlay env override ──────────────────────────────────────────
 
-	public function test_local_env_override_loads_overlay(): void {
+	public function test_local_env_override_loads_external_overlay(): void {
 		$override_path = $this->temp_dir . '/override.php';
 		\file_put_contents(
 			$override_path,
 			"<?php return [ 'enable_logging' => false, 'hook_start_priority' => 4242 ];\n"
 		);
-		// Allow temp_dir by hacking the allowlist via reflection (matches
-		// legacy bootstrap pattern). Tests need a writable allowed dir.
-		$this->allow_dir( $this->temp_dir );
 
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
 		Config::reset();
@@ -188,40 +199,27 @@ class ConfigTest extends TestCase {
 		$this->assertSame( 4242, $config['hook_start_priority'] );
 	}
 
-	public function test_local_env_override_outside_allowed_dirs_rejected(): void {
-		$ref = new \ReflectionMethod( Config::class, 'validate_config_path' );
+	public function test_invalid_local_env_override_throws(): void {
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->temp_dir . '/missing-config.php' );
+		Config::reset();
 
-		// /var/tmp is not in the allowlist (and isn't the plugin dir).
-		$outside_dir = '/var/tmp/newspack-nodes-test-evil-' . \uniqid();
-		@\mkdir( $outside_dir, 0755, true );
-		$path = $outside_dir . '/evil-config.php';
-		\file_put_contents( $path, "<?php return [];\n" );
-
-		try {
-			$result = $ref->invoke( null, $path );
-			$this->assertNull( $result );
-		} finally {
-			@\unlink( $path );
-			@\rmdir( $outside_dir );
-		}
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'LOCAL_NEWSPACK_NODES_CONF' );
+		Config::load_config_defaults();
 	}
 
-	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
-	#[\PHPUnit\Framework\Attributes\PreserveGlobalState( false )]
-	public function test_runtime_wordpress_content_root_is_allowed(): void {
-		$root = \sys_get_temp_dir() . '/eln-portable-wp-content-' . \uniqid();
-		\mkdir( $root, 0755, true );
-		\define( 'WP_CONTENT_DIR', $root );
-		$path = $root . '/distinct-runtime-config.php';
-		\file_put_contents( $path, "<?php return [];\n" );
+	public function test_non_array_local_env_override_throws(): void {
+		$override_path = $this->temp_dir . '/non-array-config.php';
+		\file_put_contents(
+			$override_path,
+			"<?php return 'eln-invalid-config-sentinel-63841';\n"
+		);
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
+		Config::reset();
 
-		try {
-			$method = new \ReflectionMethod( Config::class, 'validate_config_path' );
-			$this->assertSame( \realpath( $path ), $method->invoke( null, $path ) );
-		} finally {
-			\unlink( $path );
-			\rmdir( $root );
-		}
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'config must return array' );
+		Config::load_config_defaults();
 	}
 
 	// ── value(): fail-loud single-key read over the merged config ───────────
@@ -232,7 +230,6 @@ class ConfigTest extends TestCase {
 		// to fall back to via `?? 86400`.
 		$conf = $this->temp_dir . '/value-substrate.php';
 		\file_put_contents( $conf, "<?php return [ 'min_lifetime' => 555111 ];\n" );
-		$this->allow_dir( $this->temp_dir );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
 		Config::reset();
 		$this->assertSame( 555111, Config::value( 'min_lifetime' ) );
@@ -244,7 +241,6 @@ class ConfigTest extends TestCase {
 		// old `?? 1` fallback.
 		$conf = $this->temp_dir . '/value-app.php';
 		\file_put_contents( $conf, "<?php return [ 'hook_start_priority' => 31337 ];\n" );
-		$this->allow_dir( $this->temp_dir );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
 		Config::reset();
 		$this->assertSame( 31337, Config::value( 'hook_start_priority' ) );
@@ -298,18 +294,6 @@ class ConfigTest extends TestCase {
 		$logs1 = Config::get_logs_directory();
 		$logs2 = Config::get_logs_directory();
 		$this->assertSame( $logs1, $logs2 );
-	}
-
-	// ── validate_config_path ──────────────────────────────────────────────
-
-	public function test_validate_config_path_rejects_non_php(): void {
-		$ref = new \ReflectionMethod( Config::class, 'validate_config_path' );
-		$this->assertNull( $ref->invoke( null, '/tmp/config.txt' ) );
-	}
-
-	public function test_validate_config_path_rejects_null_byte(): void {
-		$ref = new \ReflectionMethod( Config::class, 'validate_config_path' );
-		$this->assertNull( $ref->invoke( null, "/tmp/evil\0config.php" ) );
 	}
 
 	// ── validate_config_values ────────────────────────────────────────────
@@ -372,20 +356,5 @@ class ConfigTest extends TestCase {
 		$colors = Config::get_custom_colors();
 		$this->assertArrayHasKey( 'h', $colors );
 		$this->assertSame( '#ffa726', $colors['h'] );
-	}
-
-	// ── Helpers ───────────────────────────────────────────────────────────
-
-	/**
-	 * Append a directory to the allowed-config-dirs allowlist for the
-	 * duration of the test. Used by `test_local_env_override_loads_overlay`
-	 * so a writable temp dir can host the override file. Mirrors the legacy
-	 * test bootstrap's reflection hack.
-	 */
-	private function allow_dir( string $dir ): void {
-		$ref  = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
-		$dirs   = $ref->getValue();
-		$dirs[] = $dir;
-		$ref->setValue( null, $dirs );
 	}
 }

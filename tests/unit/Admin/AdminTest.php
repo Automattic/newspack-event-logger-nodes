@@ -166,12 +166,6 @@ class AdminTest extends TestCase {
 		$GLOBALS['_current_user_can'] = true;
 
 		// Inject allowed_users via the LOCAL_NEWSPACK_NODES_CONF env override.
-		// Config::validate_config_path() restricts overrides to allowed dirs;
-		// add /tmp via reflection for the duration of the test.
-		$ref           = new \ReflectionProperty( Config::class, 'allowed_config_dirs' );
-		$saved_allowed = $ref->getValue();
-		$ref->setValue( null, [ ...$saved_allowed, '/tmp' ] );
-
 		$config_file = '/tmp/admin-test-conf-' . \uniqid() . '.php';
 		\file_put_contents(
 			$config_file,
@@ -190,8 +184,7 @@ class AdminTest extends TestCase {
 			$this->assertFalse( Admin::current_user_allowed() );
 		} finally {
 			\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
-			@\unlink( $config_file );
-			$ref->setValue( null, $saved_allowed );
+			\unlink( $config_file );
 		}
 	}
 
