@@ -115,6 +115,7 @@ const getKeywordClass = ( keyword ) => {
  */
 const ErrorRow = memo( function ErrorRow( {
 	entry,
+	rowIndex,
 	visibleColumns,
 	gridTemplate,
 } ) {
@@ -122,7 +123,7 @@ const ErrorRow = memo( function ErrorRow( {
 		<div
 			role="row"
 			className={ `event-logger-error-log-entry ${
-				entry.isEven ? 'row-even' : 'row-odd'
+				rowIndex % 2 === 0 ? 'row-even' : 'row-odd'
 			}` }
 			style={ { gridTemplateColumns: gridTemplate } }
 		>
@@ -534,10 +535,11 @@ export default function ErrorLog() {
 							<div
 								style={ { height: offsetTop, flexShrink: 0 } }
 							/>
-							{ visibleEntries.map( ( entry ) => (
+							{ visibleEntries.map( ( entry, i ) => (
 								<ErrorRow
 									key={ entry.id }
 									entry={ entry }
+									rowIndex={ startIndex + i }
 									visibleColumns={ visibleColumns }
 									gridTemplate={ gridTemplate }
 								/>

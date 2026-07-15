@@ -121,7 +121,6 @@ export class PerfErrorsViewNode extends Node {
 			ts: value.ts || 0,
 			k: value.k || '',
 			m,
-			isEven: this.entryCounter % 2 === 0,
 		} );
 		this._updateRequestsPerSecond( 1 );
 	}

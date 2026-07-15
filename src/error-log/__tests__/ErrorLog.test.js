@@ -222,6 +222,38 @@ describe( 'ErrorLog', () => {
 		expect( container.textContent ).not.toContain( 'r1' );
 	} );
 
+	it( 'stripes rows by filtered position, not by ingest parity', () => {
+		// Drop every other ingested row; striping on the pre-filter parity would
+		// make the survivors all one shade. Parity must come from filtered index.
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 4, id: 4, rid: 'kA', k: 'keep', m: 'a' } ),
+				entry( { seq: 3, id: 3, rid: 'dA', k: 'skip', m: 'b' } ),
+				entry( { seq: 2, id: 2, rid: 'kB', k: 'keep', m: 'c' } ),
+				entry( { seq: 1, id: 1, rid: 'dB', k: 'skip', m: 'd' } ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+		const input = container.querySelector( 'input[type="text"]' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'keep' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		tickFrame();
+
+		const rows = container.querySelectorAll(
+			'.event-logger-error-log-entry[role="row"]'
+		);
+		expect( rows ).toHaveLength( 2 );
+		expect( rows[ 0 ].classList.contains( 'row-even' ) ).toBe( true );
+		expect( rows[ 1 ].classList.contains( 'row-odd' ) ).toBe( true );
+	} );
+
 	it( 'classifies error/warning/info keywords via CSS class', () => {
 		registerViewFixture( {
 			entries: [

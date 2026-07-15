@@ -218,6 +218,39 @@ describe( 'RequestStream', () => {
 		expect( container.textContent ).not.toContain( 'rB' );
 	} );
 
+	it( 'stripes rows by filtered position, not by ingest parity', () => {
+		// Every OTHER ingested row is filtered out, so their pre-filter isEven
+		// alternates the same way — striping on it would make the visible rows
+		// all one shade. Parity must come from the filtered index.
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 4, rid: 'kA', url: '/keep', isEven: true } ),
+				entry( { seq: 3, rid: 'dropA', url: '/skip', isEven: false } ),
+				entry( { seq: 2, rid: 'kB', url: '/keep', isEven: true } ),
+				entry( { seq: 1, rid: 'dropB', url: '/skip', isEven: false } ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+		const input = container.querySelector( '.newspack-nodes-search-input' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'keep' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		tickFrame();
+
+		const rows = container.querySelectorAll(
+			'.event-logger-request-stream-entry[role="row"]'
+		);
+		expect( rows ).toHaveLength( 2 );
+		expect( rows[ 0 ].classList.contains( 'row-even' ) ).toBe( true );
+		expect( rows[ 1 ].classList.contains( 'row-odd' ) ).toBe( true );
+	} );
+
 	it( 'renders user_agent and remote_addr columns when entry carries them', () => {
 		window.localStorage.setItem(
 			'event-logger-stream-columns',

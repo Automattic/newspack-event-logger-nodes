@@ -129,6 +129,7 @@ const formatTime = ( ts ) => {
  */
 const StreamRow = memo( function StreamRow( {
 	entry,
+	rowIndex,
 	visibleColumns,
 	gridTemplate,
 } ) {
@@ -136,7 +137,7 @@ const StreamRow = memo( function StreamRow( {
 		<div
 			role="row"
 			className={ `event-logger-request-stream-entry ${
-				entry.isEven ? 'row-even' : 'row-odd'
+				rowIndex % 2 === 0 ? 'row-even' : 'row-odd'
 			}` }
 			style={ { gridTemplateColumns: gridTemplate } }
 		>
@@ -679,10 +680,11 @@ export default function RequestStream( { maxEntries = 500 } ) {
 							<div
 								style={ { height: offsetTop, flexShrink: 0 } }
 							/>
-							{ visibleEntries.map( ( entry ) => (
+							{ visibleEntries.map( ( entry, i ) => (
 								<StreamRow
 									key={ entry.seq }
 									entry={ entry }
+									rowIndex={ startIndex + i }
 									visibleColumns={ visibleColumns }
 									gridTemplate={ gridTemplate }
 								/>
