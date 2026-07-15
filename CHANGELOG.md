@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-07-15
+
 ### Fixed
 
 - **`wp nodes reqgrep` and `wp nodes ruleset-bench` no longer shadow WP-CLI global arguments.** Both declared options whose names collide with WP-CLI globals, so WP-CLI warned at registration. `ruleset-bench`'s `[--path]` was a pure redeclaration of the global WordPress `--path` (never read) and is removed. `reqgrep`'s firehose-base-directory override moved from `[--path]` to `[--firehose]` — the old name collided with the global `--path` (which WP-CLI consumes before the command runs), so the override could never actually receive a value.
