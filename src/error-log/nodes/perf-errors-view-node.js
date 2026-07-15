@@ -18,17 +18,18 @@ const MAX_M_LENGTH = 1000;
  *   does NOT publish. The React view reads the VISIBLE window straight off the
  *   node each animation frame via `entriesCount` + `entryAt(i)` (newest-first) —
  *   O(rows-on-screen), not O(buffer). `entries` materializes the whole buffer
- *   newest-first for the filter path + tests only; it is NOT on the frame path.
+ *   newest-first for the React snapshot and tests.
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError })` — the pause button and the
  *   reconnect banner, consumed by `useNodeState('perferrors:view','view')`.
  *
  * `fill()` distinguishes its two inputs by `VALUE.action`:
  * - control (`VALUE = { action, … }`, KEY empty) comes HOOK-DIRECT from
- *   `useErrorLogGraph` (pause / clear / connection-status).
+ *   `useErrorLogGraph` (pause / clear / filter / connection-status).
  * - everything else is treated as a stream envelope and routed through
  *   `_appendEnvelope`, which drops envelopes with no rid, non-object/array
- *   VALUE, or the `connected` sentinel, and clips `m` at 1000 chars.
+ *   VALUE, the `connected` sentinel, or entries outside the active filter, and
+ *   clips `m` at 1000 chars.
  *
  * Buffer + entry-enrichment logic migrated verbatim from `ErrorLog.js`.
  */
@@ -47,6 +48,7 @@ export class PerfErrorsViewNode extends Node {
 		this.rps = 0;
 		this.paused = false;
 		this.connectionError = false;
+		this.filter = '';
 		this._publish();
 	}
 
@@ -67,9 +69,24 @@ export class PerfErrorsViewNode extends Node {
 			this.paused = value.paused;
 		} else if ( 'clear' === value.action ) {
 			this._clear();
+		} else if ( 'filter' === value.action ) {
+			this._setFilter( value.filter );
 		} else if ( 'connection' === value.action ) {
 			this.connectionError = value.connectionError;
 		}
+	}
+
+	_setFilter( filter ) {
+		if ( 'string' !== typeof filter ) {
+			throw new TypeError( 'error log filter must be a string' );
+		}
+		const normalized = filter.toLowerCase();
+		if ( normalized === this.filter ) {
+			return;
+		}
+		this.filter = normalized;
+		this.entries = [];
+		this.entryCounter = 0;
 	}
 
 	// Clear buffer + counter + RPS window (matches handleClear in ErrorLog).
@@ -111,6 +128,18 @@ export class PerfErrorsViewNode extends Node {
 		if ( typeof m === 'string' && m.length > MAX_M_LENGTH ) {
 			m = m.substring( 0, MAX_M_LENGTH ) + '...';
 		}
+		const k = value.k || '';
+		this._updateRequestsPerSecond( 1 );
+		if (
+			this.filter &&
+			! [ rid, k, m ].some(
+				( field ) =>
+					'string' === typeof field &&
+					field.toLowerCase().includes( this.filter )
+			)
+		) {
+			return;
+		}
 
 		this.entryCounter += 1;
 		this._writeEntry( {
@@ -119,10 +148,9 @@ export class PerfErrorsViewNode extends Node {
 			id: this.entryCounter,
 			rid,
 			ts: value.ts || 0,
-			k: value.k || '',
+			k,
 			m,
 		} );
-		this._updateRequestsPerSecond( 1 );
 	}
 
 	// Errors/sec over a 10s window: per-second buckets, O(1) per error.

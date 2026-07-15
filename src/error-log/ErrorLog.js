@@ -7,8 +7,8 @@
  * This is a THIN view over the `perferrors:view` node graph (mounted by
  * `useErrorLogGraph`). The graph owns all data: the substrate's `perferrors:link` holds
  * the EventSource connection and streams envelopes directly into
- * `perferrors:view`, which shapes them into rows and owns the buffer + view
- * model. This component only renders.
+ * `perferrors:view`, which shapes and filters them before they enter its buffer.
+ * This component only renders.
  *
  * Two read paths, matching the view node's two cadences:
  * - LOW frequency: `useNodeState('perferrors:view','view')` for
@@ -115,7 +115,6 @@ const getKeywordClass = ( keyword ) => {
  */
 const ErrorRow = memo( function ErrorRow( {
 	entry,
-	rowIndex,
 	visibleColumns,
 	gridTemplate,
 } ) {
@@ -123,7 +122,7 @@ const ErrorRow = memo( function ErrorRow( {
 		<div
 			role="row"
 			className={ `event-logger-error-log-entry ${
-				rowIndex % 2 === 0 ? 'row-even' : 'row-odd'
+				entry.seq % 2 === 0 ? 'row-even' : 'row-odd'
 			}` }
 			style={ { gridTemplateColumns: gridTemplate } }
 		>
@@ -194,7 +193,7 @@ const ErrorRow = memo( function ErrorRow( {
  */
 export default function ErrorLog() {
 	// Mount the node graph; it returns the thin control callbacks.
-	const { setPaused, clear } = useErrorLogGraph();
+	const { setPaused, clear, setFilter: setViewFilter } = useErrorLogGraph();
 
 	// Low-frequency view model (pause button + reconnect banner + empty-state).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -214,14 +213,14 @@ export default function ErrorLog() {
 	const isAdjustingScrollRef = useRef( false );
 	const [ animOffsetRows, setAnimOffsetRows ] = useState( 0 );
 
-	// Newest seq+filter already smooth-scrolled for (compensate per row).
+	// Newest buffered seq already smooth-scrolled for (compensate per row).
 	const lastCompensatedSeqRef = useRef( null );
-	const lastCompensatedFilterRef = useRef( filter );
-	// Last state pushed to React; skip idle frames (topSeq/count change).
-	const pushedRef = useRef( { topSeq: -1, count: -1, filter: null } );
-	// Filter kept in a ref so the rAF reads the latest without re-subscribing.
-	const filterRef = useRef( filter );
-	filterRef.current = filter;
+	// Last state pushed to React; skip idle frames (view/seq/count change).
+	const pushedRef = useRef( {
+		viewNode: null,
+		topSeq: -1,
+		count: -1,
+	} );
 	// Last RemoteLink lastEventTime() the rAF observed — drives "Xs ago".
 	const lastEventTimeRef = useRef( null );
 
@@ -235,29 +234,20 @@ export default function ErrorLog() {
 		? Math.max( 0, Math.floor( ( now - lastEventTimeRef.current ) / 1000 ) )
 		: null;
 
-	// A row matches the filter on keyword, message, or request id.
-	const matchesFilter = ( e, needle ) =>
-		e.k?.toLowerCase().includes( needle ) ||
-		e.m?.toLowerCase().includes( needle ) ||
-		e.rid?.toLowerCase().includes( needle );
-
-	// rAF loop: snapshot+filter entries, decay offset, push on change.
+	// rAF loop: snapshot pre-filtered entries, decay offset, push on change.
 	useEffect( () => {
 		const animate = () => {
 			const node = Core.node( VIEW_NODE );
 			const buffer = node?.entries ?? [];
-			const filterLower = filterRef.current.toLowerCase();
 
 			// Staleness = connection liveness (link lastEventTime passthrough).
 			lastEventTimeRef.current =
 				Core.node( LINK_NODE )?.lastEventTime() ?? null;
 
-			// Snapshot+filter buffer so a mid-frame append can't mutate draw.
-			const snapshot = filterRef.current
-				? buffer.filter( ( e ) => matchesFilter( e, filterLower ) )
-				: buffer.slice();
+			// Copy admitted rows so a mid-frame append cannot mutate this draw.
+			const snapshot = buffer.slice();
 
-			// Newest filtered seq drives change detection (cap-robust).
+			// Newest buffered seq drives change detection (cap-robust).
 			const topSeq = snapshot.length ? snapshot[ 0 ].seq : 0;
 
 			// Decay offset toward 0; virtualize on row-boundary crossings.
@@ -273,17 +263,17 @@ export default function ErrorLog() {
 				Math.abs( offsetRef.current ) / ROW_HEIGHT
 			);
 
-			// Push snapshot only when seq/count/filter changed (skip idle).
+			// Push snapshot only when seq/count changed (skip idle).
 			const pushed = pushedRef.current;
 			if (
+				node !== pushed.viewNode ||
 				topSeq !== pushed.topSeq ||
-				snapshot.length !== pushed.count ||
-				filterRef.current !== pushed.filter
+				snapshot.length !== pushed.count
 			) {
 				setEntries( snapshot );
+				pushed.viewNode = node;
 				pushed.topSeq = topSeq;
 				pushed.count = snapshot.length;
-				pushed.filter = filterRef.current;
 			}
 			setAnimOffsetRows( ( prev ) =>
 				prev === currentOffsetRows ? prev : currentOffsetRows
@@ -327,35 +317,23 @@ export default function ErrorLog() {
 		wasAtTopRef.current = isAtTop;
 	}, [] );
 
-	// Filtered entries.
-	const filterLower = filter.toLowerCase();
-	const filteredEntries = useMemo(
-		() =>
-			filter
-				? entries.filter( ( e ) => matchesFilter( e, filterLower ) )
-				: entries,
-		[ entries, filter, filterLower ]
-	);
-
 	// Smooth-scroll compensation lands in same paint as its row (no flicker).
 	useLayoutEffect( () => {
-		const topSeq = filteredEntries.length ? filteredEntries[ 0 ].seq : 0;
+		const topSeq = entries.length ? entries[ 0 ].seq : 0;
 		const prevSeq = lastCompensatedSeqRef.current;
-		const filterChanged = lastCompensatedFilterRef.current !== filter;
-		lastCompensatedFilterRef.current = filter;
 		// Don't advance baseline past an empty list (first row is baseline).
 		if ( topSeq > 0 ) {
 			lastCompensatedSeqRef.current = topSeq;
 		}
 
-		// Baseline, filter switch, or no newer row → no smooth scroll.
-		if ( null === prevSeq || filterChanged || topSeq <= prevSeq ) {
+		// Baseline or no newer row → no smooth scroll.
+		if ( null === prevSeq || topSeq <= prevSeq ) {
 			return;
 		}
 
 		// Newly-prepended rows = the leading run with seq newer than last time.
-		const firstOld = filteredEntries.findIndex( ( e ) => e.seq <= prevSeq );
-		const newRows = -1 === firstOld ? filteredEntries.length : firstOld;
+		const firstOld = entries.findIndex( ( e ) => e.seq <= prevSeq );
+		const newRows = -1 === firstOld ? entries.length : firstOld;
 
 		const list = listRef.current;
 		const isAtTop = ! list || list.scrollTop < ROW_HEIGHT;
@@ -370,7 +348,7 @@ export default function ErrorLog() {
 			isAdjustingScrollRef.current = true;
 			list.scrollTop += newRows * ROW_HEIGHT;
 		}
-	}, [ filteredEntries, filter ] );
+	}, [ entries ] );
 
 	// Grid template.
 	const gridTemplate = useMemo(
@@ -385,19 +363,41 @@ export default function ErrorLog() {
 	const { startIndex, endIndex, offsetTop, totalHeight } = useVirtualization(
 		listRef,
 		ROW_HEIGHT,
-		filteredEntries.length,
+		entries.length,
 		'self',
 		animOffsetRows * ROW_HEIGHT
 	);
-	const visibleEntries = filteredEntries.slice( startIndex, endIndex );
+	const visibleEntries = entries.slice( startIndex, endIndex );
+	// A new admission projection starts at the origin with no inherited motion.
+	const rebaseRenderedRows = () => {
+		lastCompensatedSeqRef.current = null;
+		pushedRef.current.topSeq = -1;
+		pushedRef.current.count = -1;
+		setEntries( [] );
+		offsetRef.current = 0;
+		savedOffsetRef.current = 0;
+		setAnimOffsetRows( 0 );
+		isAdjustingScrollRef.current = false;
+		wasAtTopRef.current = true;
+		if ( contentRef.current ) {
+			contentRef.current.style.transform = '';
+		}
+		if ( listRef.current ) {
+			listRef.current.scrollTop = 0;
+		}
+	};
+
+	const handleFilterChange = ( event ) => {
+		const nextFilter = event.target.value;
+		setFilter( nextFilter );
+		rebaseRenderedRows();
+		setViewFilter( nextFilter );
+	};
 
 	// Clear all entries via the graph; the next frame shows 0 entries.
 	const handleClear = () => {
 		clear();
-		lastCompensatedSeqRef.current = null; // re-baseline: no post-clear slide.
-		pushedRef.current = { topSeq: 0, count: 0, filter: filterRef.current };
-		setEntries( [] );
-		offsetRef.current = 0;
+		rebaseRenderedRows();
 	};
 
 	return (
@@ -419,7 +419,7 @@ export default function ErrorLog() {
 							'newspack-event-logger-nodes'
 						) }
 						value={ filter }
-						onChange={ ( e ) => setFilter( e.target.value ) }
+						onChange={ handleFilterChange }
 					/>
 					<span className="newspack-nodes-toolbar-stats">
 						<span className="newspack-nodes-toolbar-stats__count">
@@ -428,10 +428,10 @@ export default function ErrorLog() {
 								_n(
 									'%d entry',
 									'%d entries',
-									filteredEntries.length,
+									entries.length,
 									'newspack-event-logger-nodes'
 								),
-								filteredEntries.length
+								entries.length
 							) }
 						</span>
 						{ staleSec !== null && (
@@ -518,7 +518,7 @@ export default function ErrorLog() {
 					ref={ contentRef }
 					style={ { minHeight: totalHeight } }
 				>
-					{ filteredEntries.length === 0 ? (
+					{ entries.length === 0 ? (
 						<div className="event-logger-error-log-empty">
 							{ isPaused
 								? __(
@@ -535,11 +535,10 @@ export default function ErrorLog() {
 							<div
 								style={ { height: offsetTop, flexShrink: 0 } }
 							/>
-							{ visibleEntries.map( ( entry, i ) => (
+							{ visibleEntries.map( ( entry ) => (
 								<ErrorRow
 									key={ entry.id }
 									entry={ entry }
-									rowIndex={ startIndex + i }
 									visibleColumns={ visibleColumns }
 									gridTemplate={ gridTemplate }
 								/>

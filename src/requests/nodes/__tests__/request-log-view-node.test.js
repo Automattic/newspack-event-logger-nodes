@@ -66,6 +66,30 @@ test( 'appends rows newest-first to node.entries (no publish)', () => {
 	expect( v.entries ).toHaveLength( 3 );
 } );
 
+test( 'filters rows before they enter the buffer', () => {
+	const v = makeView( 'requestlog:view' );
+	v.fill( rowMsg( row( { rid: 'before-filter', url: '/old' } ) ) );
+	v.fill( controlMsg( { action: 'filter', filter: 'needle-317' } ) );
+	v.fill( rowMsg( row( { rid: 'miss', url: '/other' } ) ) );
+	v.fill( rowMsg( row( { rid: 'first-match', url: '/needle-317/first' } ) ) );
+	v.fill(
+		rowMsg( row( { rid: 'second-match', url: '/NEEDLE-317/second' } ) )
+	);
+
+	expect( v.entries.map( ( entry ) => entry.rid ) ).toEqual( [
+		'second-match',
+		'first-match',
+	] );
+	expect( v.entries.map( ( entry ) => entry.seq ) ).toEqual( [ 2, 1 ] );
+} );
+
+test( 'rejects a non-string admission filter', () => {
+	const v = makeView( 'requestlog:view' );
+	expect( () =>
+		v.fill( controlMsg( { action: 'filter', filter: { bad: 317 } } ) )
+	).toThrow( 'request log filter must be a string' );
+} );
+
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
 	const v = makeView( 'requestlog:view' );
 	const spy = jest.spyOn( v, 'setState' );
@@ -94,7 +118,7 @@ test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP
 	expect( v.entries[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
 } );
 
-test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () => {
+test( 'enriches each row with seq, urlHash, and timestamp', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'first', url: '/a', end_time: 111 } ) ) );
 	v.fill( rowMsg( row( { rid: 'second', url: '/b', end_time: 222 } ) ) );

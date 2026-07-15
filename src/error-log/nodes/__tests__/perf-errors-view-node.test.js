@@ -58,6 +58,30 @@ test( 'appends rows newest-first with seq, capped', () => {
 	expect( v.entries[ 0 ].seq ).toBe( 3 );
 } );
 
+test( 'filters envelopes before they enter the buffer', () => {
+	const v = makeView( 'perferrors:view' );
+	v.fill( envMsg( 'before-filter', { k: 'old', m: 'old' } ) );
+	v.fill( controlMsg( { action: 'filter', filter: 'needle-317' } ) );
+	v.fill( envMsg( 'miss', { k: 'other', m: 'other' } ) );
+	v.fill( envMsg( 'needle-317-rid', { k: 'other', m: 'other' } ) );
+	v.fill( envMsg( 'keyword-match', { k: 'NEEDLE-317', m: 'other' } ) );
+	v.fill( envMsg( 'message-match', { k: 'other', m: 'needle-317 text' } ) );
+
+	expect( v.entries.map( ( entry ) => entry.rid ) ).toEqual( [
+		'message-match',
+		'keyword-match',
+		'needle-317-rid',
+	] );
+	expect( v.entries.map( ( entry ) => entry.seq ) ).toEqual( [ 3, 2, 1 ] );
+} );
+
+test( 'rejects a non-string admission filter', () => {
+	const v = makeView( 'perferrors:view' );
+	expect( () =>
+		v.fill( controlMsg( { action: 'filter', filter: { bad: 317 } } ) )
+	).toThrow( 'error log filter must be a string' );
+} );
+
 test( 'RPS tracking aggregates per second, not one entry per error (bounded window)', () => {
 	// Perf: the errors/sec window is per-second buckets, not one per error.
 	const v = makeView( 'perferrors:view', { maxEntries: 100000 } );
@@ -98,7 +122,7 @@ test( 'entryAt + entriesCount respect the cap (oldest overwritten) on a small ri
 	expect( v.entryAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
 } );
 
-test( 'enriches each row with seq, id (= seq), rid, ts, k, m and an even/odd flag', () => {
+test( 'enriches each row with seq, id (= seq), rid, ts, k, and m', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'first', { ts: 111, k: 'error', m: 'one' } ) );
 	v.fill( envMsg( 'second', { ts: 222, k: 'warning', m: 'two' } ) );

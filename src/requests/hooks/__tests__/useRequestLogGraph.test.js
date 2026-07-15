@@ -360,6 +360,34 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		act( () => result.current.clear() );
 		expect( Core.node( VIEW ).entries ).toHaveLength( 0 );
 	} );
+
+	test( 'setFilter() filters incoming rows before the view buffer', () => {
+		const { result } = renderHook( () => useRequestLogGraph() );
+		act( () => result.current.setFilter( 'needle-317' ) );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					completedEnvelope( {
+						rid: 'miss',
+						url: '/other',
+					} )
+				)
+			);
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					completedEnvelope( {
+						rid: 'match',
+						url: '/needle-317/result',
+					} )
+				)
+			);
+		} );
+		expect(
+			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
+		).toEqual( [ 'match' ] );
+	} );
 } );
 
 describe( 'useRequestLogGraph — teardown', () => {
@@ -445,5 +473,30 @@ describe( 'useRequestLogGraph — Core.reinit (Reset Graph)', () => {
 
 		// Rebuilt view defaults paused:false; hook re-applies surviving pause.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
+	} );
+
+	test( 'reinit preserves the active admission filter', () => {
+		const { result } = renderHook( () => useRequestLogGraph() );
+		act( () => result.current.setFilter( 'needle-733' ) );
+		act( () => Core.reinit() );
+
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack( completedEnvelope( { rid: 'miss', url: '/other' } ) )
+			);
+			FakeEventSource.last.dispatch(
+				'msg',
+				pack(
+					completedEnvelope( {
+						rid: 'match',
+						url: '/needle-733/result',
+					} )
+				)
+			);
+		} );
+		expect(
+			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
+		).toEqual( [ 'match' ] );
 	} );
 } );

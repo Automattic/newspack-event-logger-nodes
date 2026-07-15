@@ -55,9 +55,10 @@ const controlMsg = ( value ) => {
 /**
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View buffer cap (default 1000).
- * @return {{ setPaused: Function, clear: Function }} Control callbacks for the
- *   thin React view (the view's own state is read via useNodeState). Reset Graph
- *   is driven by the overlay via `Core.reinit`, stashed by mountExospine.
+ * @return {{ setPaused: Function, clear: Function, setFilter: Function }}
+ *   Control callbacks for the thin React view (the view's own state is read via
+ *   useNodeState). Reset Graph is driven by the overlay via `Core.reinit`,
+ *   stashed by mountExospine.
  */
 export function useRequestLogGraph( opts = {} ) {
 	const optsRef = useRef( opts );
@@ -70,6 +71,7 @@ export function useRequestLogGraph( opts = {} ) {
 	// Mirror isPaused into a ref so reinit mountNodes sees current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
+	const filterRef = useRef( '' );
 
 	// First connect tails; a reconnect resumes from last offset (no gap-drop).
 	const { viewRef } = useVisibilityGatedLink( {
@@ -104,6 +106,14 @@ export function useRequestLogGraph( opts = {} ) {
 			if ( isPausedRef.current ) {
 				view.fill( controlMsg( { action: 'pause', paused: true } ) );
 			}
+			if ( filterRef.current ) {
+				view.fill(
+					controlMsg( {
+						action: 'filter',
+						filter: filterRef.current,
+					} )
+				);
+			}
 
 			return { link, view };
 		},
@@ -127,5 +137,15 @@ export function useRequestLogGraph( opts = {} ) {
 		}
 	};
 
-	return { setPaused, clear };
+	const setFilter = ( filter ) => {
+		if ( 'string' !== typeof filter ) {
+			throw new TypeError( 'request log filter must be a string' );
+		}
+		filterRef.current = filter;
+		if ( viewRef.current ) {
+			viewRef.current.fill( controlMsg( { action: 'filter', filter } ) );
+		}
+	};
+
+	return { setPaused, clear, setFilter };
 }

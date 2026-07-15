@@ -72,7 +72,6 @@ function entry( overrides = {} ) {
 		ts: 1748960000,
 		k: 'error',
 		m: 'boom',
-		isEven: false,
 		...overrides,
 	};
 }
@@ -80,6 +79,7 @@ function entry( overrides = {} ) {
 describe( 'ErrorLog', () => {
 	let setPaused;
 	let clear;
+	let setStreamFilter;
 	let rafCbs;
 	const mounted = [];
 
@@ -87,8 +87,13 @@ describe( 'ErrorLog', () => {
 		Core.reset();
 		setPaused = jest.fn();
 		clear = jest.fn();
+		setStreamFilter = jest.fn();
 		useErrorLogGraph.mockClear();
-		useErrorLogGraph.mockReturnValue( { setPaused, clear } );
+		useErrorLogGraph.mockReturnValue( {
+			setPaused,
+			clear,
+			setFilter: setStreamFilter,
+		} );
 
 		// Capture rAF callbacks so a test can drive exactly one frame.
 		rafCbs = [];
@@ -145,6 +150,30 @@ describe( 'ErrorLog', () => {
 		expect( container.textContent ).toContain( 'boom' );
 	} );
 
+	it( 'refreshes equal-shaped rows when the view node is rebuilt', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 2, id: 2, rid: 'old-second' } ),
+				entry( { seq: 1, id: 1, rid: 'old-first' } ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 2, id: 22, rid: 'rebuilt-second-733' } ),
+				entry( { seq: 1, id: 11, rid: 'rebuilt-first-521' } ),
+			],
+		} );
+		tickFrame();
+
+		expect( container.textContent ).toContain( 'rebuilt-first-521' );
+		expect( container.textContent ).toContain( 'rebuilt-second-733' );
+		expect( container.textContent ).not.toContain( 'old-first' );
+		expect( container.textContent ).not.toContain( 'old-second' );
+	} );
+
 	it( 'pause button reflects the view model and calls setPaused on click', () => {
 		registerViewFixture( { paused: false } );
 		const { container } = mount();
@@ -191,8 +220,8 @@ describe( 'ErrorLog', () => {
 		).toBeNull();
 	} );
 
-	it( 'filter input narrows matching entries', () => {
-		registerViewFixture( {
+	it( 'renders the replacement buffer after sending a filter to the view node', () => {
+		const node = registerViewFixture( {
 			entries: [
 				entry( { seq: 2, id: 2, rid: 'r2', k: 'warn', m: 'second' } ),
 				entry( {
@@ -209,6 +238,22 @@ describe( 'ErrorLog', () => {
 		expect( container.textContent ).toContain( 'r1' );
 		expect( container.textContent ).toContain( 'r2' );
 		const input = container.querySelector( 'input[type="text"]' );
+		setStreamFilter.mockImplementation( () => {
+			node.entries = [
+				entry( {
+					seq: 2,
+					id: 22,
+					rid: 'replacementB',
+					k: 'warn',
+				} ),
+				entry( {
+					seq: 1,
+					id: 11,
+					rid: 'replacementA',
+					k: 'warn',
+				} ),
+			];
+		} );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
 			'value'
@@ -218,40 +263,111 @@ describe( 'ErrorLog', () => {
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
 		tickFrame();
-		expect( container.textContent ).toContain( 'r2' );
+		expect( setStreamFilter ).toHaveBeenCalledWith( 'warn' );
+		expect( container.textContent ).toContain( 'replacementA' );
+		expect( container.textContent ).toContain( 'replacementB' );
 		expect( container.textContent ).not.toContain( 'r1' );
+		expect( container.textContent ).not.toContain( 'r2' );
 	} );
 
-	it( 'stripes rows by filtered position, not by ingest parity', () => {
-		// Drop every other ingested row; striping on the pre-filter parity would
-		// make the survivors all one shade. Parity must come from filtered index.
-		registerViewFixture( {
-			entries: [
-				entry( { seq: 4, id: 4, rid: 'kA', k: 'keep', m: 'a' } ),
-				entry( { seq: 3, id: 3, rid: 'dA', k: 'skip', m: 'b' } ),
-				entry( { seq: 2, id: 2, rid: 'kB', k: 'keep', m: 'c' } ),
-				entry( { seq: 1, id: 1, rid: 'dB', k: 'skip', m: 'd' } ),
-			],
+	it( 'keeps buffered stripes stable on a live prepend while scrolled', () => {
+		const firstAnchor = entry( {
+			seq: 2,
+			id: 2,
+			rid: 'first-anchor',
+		} );
+		const secondAnchor = entry( {
+			seq: 1,
+			id: 1,
+			rid: 'second-anchor',
+		} );
+		const node = registerViewFixture( {
+			entries: [ firstAnchor, secondAnchor ],
 		} );
 		const { container } = mount();
 		tickFrame();
-		const input = container.querySelector( 'input[type="text"]' );
+		const list = container.querySelector( '.event-logger-error-log-list' );
+		list.scrollTop = 99;
+		act( () => list.dispatchEvent( new Event( 'scroll' ) ) );
+		const findRow = ( rid ) =>
+			[
+				...container.querySelectorAll(
+					'.event-logger-error-log-entry'
+				),
+			].find( ( row ) => row.textContent.includes( rid ) );
+		const firstStripe = findRow( firstAnchor.rid ).classList.contains(
+			'row-even'
+		);
+		const secondStripe = findRow( secondAnchor.rid ).classList.contains(
+			'row-even'
+		);
+
+		node.entries = [
+			entry( {
+				seq: 3,
+				id: 3,
+				rid: 'new-buffered-entry',
+			} ),
+			firstAnchor,
+			secondAnchor,
+		];
+		tickFrame();
+
+		expect(
+			findRow( firstAnchor.rid ).classList.contains( 'row-even' )
+		).toBe( firstStripe );
+		expect(
+			findRow( secondAnchor.rid ).classList.contains( 'row-even' )
+		).toBe( secondStripe );
+		const rows = container.querySelectorAll(
+			'.event-logger-error-log-entry[role="row"]'
+		);
+		expect( rows ).toHaveLength( 3 );
+		expect( rows[ 0 ].classList.contains( 'row-even' ) ).not.toBe(
+			rows[ 1 ].classList.contains( 'row-even' )
+		);
+		expect( rows[ 1 ].classList.contains( 'row-even' ) ).not.toBe(
+			rows[ 2 ].classList.contains( 'row-even' )
+		);
+	} );
+
+	it( 'rebases scroll animation state when the admission filter changes', () => {
+		const node = registerViewFixture( {
+			entries: [ entry( { seq: 1, id: 1, rid: 'before-rebase' } ) ],
+		} );
+		const { container } = mount();
+		tickFrame();
+		node.entries = [
+			entry( { seq: 2, id: 2, rid: 'sliding-row' } ),
+			entry( { seq: 1, id: 1, rid: 'before-rebase' } ),
+		];
+		tickFrame();
+		const list = container.querySelector( '.event-logger-error-log-list' );
+		const content = container.querySelector(
+			'.event-logger-error-log-content'
+		);
+		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+		act( () => {
+			list.scrollTop = 99;
+			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
+		} );
+		setStreamFilter.mockImplementation( () => {
+			node.entries = [];
+		} );
+		const input = container.querySelector( '.newspack-nodes-search-input' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
 			'value'
 		).set;
 		act( () => {
-			setter.call( input, 'keep' );
+			setter.call( input, 'rebase-733' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		tickFrame();
 
-		const rows = container.querySelectorAll(
-			'.event-logger-error-log-entry[role="row"]'
-		);
-		expect( rows ).toHaveLength( 2 );
-		expect( rows[ 0 ].classList.contains( 'row-even' ) ).toBe( true );
-		expect( rows[ 1 ].classList.contains( 'row-odd' ) ).toBe( true );
+		expect( list.scrollTop ).toBe( 0 );
+		expect( content.style.transform ).toBe( '' );
+		act( () => list.dispatchEvent( new Event( 'scroll' ) ) );
+		expect( content.style.transform ).toBe( '' );
 	} );
 
 	it( 'classifies error/warning/info keywords via CSS class', () => {

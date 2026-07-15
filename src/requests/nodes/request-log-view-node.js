@@ -37,8 +37,8 @@ const urlHash = ( url ) => fnv1a( url || '' );
  *   view reads the VISIBLE window straight off the node each animation frame via
  *   `entriesCount` + `entryAt(i)` (newest-first) — O(rows-on-screen), not
  *   O(buffer) — so a high-volume stream never re-renders or re-copies per frame.
- *   `entries` materializes the whole buffer newest-first for the filter path +
- *   tests only; it is NOT on the frame path.
+ *   `entries` materializes the whole buffer newest-first for the React snapshot
+ *   and tests.
  * - LOW frequency (control): only `_control` publishes the small view model via
  *   `setState('view', { paused, connectionError })` — the pause button, the
  *   empty-state label, and the reconnect banner, consumed by
@@ -47,9 +47,10 @@ const urlHash = ( url ) => fnv1a( url || '' );
  * `fill()` accepts two TM_STRUCT shapes:
  * - a row (`VALUE` = the raw completed-request envelope from `_sse`): defensively
  *   shaped (drop missing-url, clip url@2000, clip user_agent@500, default-fill)
- *   then enriched + appended newest-first to a capped buffer (unless paused),
- *   updating requests/second + last-event time.
- * - a control (`VALUE = { action, … }`): `pause`, `clear`, `connection`.
+ *   then admitted by the active URL filter and appended newest-first to a capped
+ *   buffer (unless paused), updating requests/second + last-event time.
+ * - a control (`VALUE = { action, … }`): `pause`, `clear`, `filter`,
+ *   `connection`.
  *
  * Buffer + RPS + entry-enrichment logic migrated verbatim from `RequestStream.js`.
  * The defensive shaping was inlined from the (now-deleted) `requestlog:transform`
@@ -70,6 +71,7 @@ export class RequestLogViewNode extends Node {
 		this.rps = 0;
 		this.paused = false;
 		this.connectionError = false;
+		this.filter = '';
 		this._publish();
 	}
 
@@ -90,9 +92,24 @@ export class RequestLogViewNode extends Node {
 			this.paused = value.paused;
 		} else if ( 'clear' === value.action ) {
 			this._clear();
+		} else if ( 'filter' === value.action ) {
+			this._setFilter( value.filter );
 		} else if ( 'connection' === value.action ) {
 			this.connectionError = value.connectionError;
 		}
+	}
+
+	_setFilter( filter ) {
+		if ( 'string' !== typeof filter ) {
+			throw new TypeError( 'request log filter must be a string' );
+		}
+		const normalized = filter.toLowerCase();
+		if ( normalized === this.filter ) {
+			return;
+		}
+		this.filter = normalized;
+		this.entries = [];
+		this.entryCounter = 0;
 	}
 
 	// Clear buffer + counter + RPS window (matches RequestStream handleClear).
@@ -125,6 +142,10 @@ export class RequestLogViewNode extends Node {
 			return;
 		}
 		const url = clip( req.url, MAX_URL_LENGTH );
+		this._updateRequestsPerSecond( 1 );
+		if ( this.filter && ! url.toLowerCase().includes( this.filter ) ) {
+			return;
+		}
 		this.entryCounter += 1;
 		this._writeEntry( {
 			// Monotonic per-mount key; dup rids → distinct DOM (no jump).
@@ -139,7 +160,6 @@ export class RequestLogViewNode extends Node {
 			remote_addr: req.remote_addr || '',
 			user_agent: clip( req.user_agent || '', MAX_UA_LENGTH ),
 		} );
-		this._updateRequestsPerSecond( 1 );
 	}
 
 	// Requests/sec over a 10s window: per-second buckets, O(1) per request.

@@ -88,16 +88,23 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
-	it( 'shows the peak-memory stat only when global_avg_peak_mb > 0', () => {
+	it( 'shows the peak-memory stat only when the displayed stats include it', () => {
 		const { container: a, unmount: ua } = mount( {} );
 		expect( a.textContent ).not.toContain( 'Avg Peak Memory' );
 		ua();
 
-		const { container: b, unmount: ub } = mount( {
-			global_avg_peak_mb: 12.3,
-		} );
+		const { container: b, unmount: ub } = mount(
+			{ global_avg_peak_mb: 12.3 },
+			{
+				filteredStats: {
+					...baseStats,
+					globalAvgPeakMb: 4.7,
+				},
+			}
+		);
 		expect( b.textContent ).toContain( 'Avg Peak Memory' );
-		expect( b.textContent ).toContain( '12.3' );
+		expect( b.textContent ).toContain( '4.7' );
+		expect( b.textContent ).not.toContain( '12.3' );
 		ub();
 	} );
 
