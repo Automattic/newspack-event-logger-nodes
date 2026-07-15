@@ -44,8 +44,8 @@ abstract class TestCase extends RuntimeTestCase {
 		parent::use_base_dir( $dir, $extras );
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			// Mirror the substrate helper's whitelist trick. The app's
-			// Config::validate_config_path() permits only /usr/src + the
-			// plugin dir by default, so without this the per-test config
+			// Config::validate_config_path() permits runtime/plugin roots,
+			// so without this the per-test config
 			// file under /tmp is rejected — load_config_defaults() falls
 			// back to the bundled plugin defaults and tests that depend
 			// on the `$extras` override silently see the wrong defaults.

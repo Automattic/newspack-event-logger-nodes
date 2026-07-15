@@ -745,8 +745,8 @@ require_once __DIR__ . '/Helpers/RedirectException.php';
 
 // Widen the substrate Config's allowed_config_dirs so tests using
 // `LOCAL_NEWSPACK_NODES_CONF=...path-inside-this-plugin/tests/configs/...php`
-// validate. Production paths in `/usr/src` are covered by the default
-// allowlist; this is a host-development-only nudge.
+// validate. Runtime plugin/WordPress roots are covered by default; this is a
+// host-development-only nudge for arbitrary test scratch paths.
 ( static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Config' ) ) {
 		return;

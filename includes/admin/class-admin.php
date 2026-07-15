@@ -159,6 +159,8 @@ class Admin {
 		);
 	}
 
+	// -- Private renderers --------------------------------------------------
+
 	/**
 	 * Echo a boolean checkbox via the shared Settings_Renderer: checked from the
 	 * stored option (file-default fallback), the `data-nn-reset-default` hint from
@@ -227,8 +229,6 @@ class Admin {
 	private static function bool_to_int( $value ): int {
 		return (int) (bool) $value;
 	}
-
-	// -- Private renderers --------------------------------------------------
 
 	/** Hidden-input name that flags $field for per-field reset (deleted on Save). */
 	private static function reset_mark_name( string $field ): string {
