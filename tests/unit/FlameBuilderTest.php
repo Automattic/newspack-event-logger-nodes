@@ -1717,8 +1717,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 4, $stats['flame_raw']['count'] );
 	}
 
-	// --- Bucket rotation across multiple buckets --------------------------
-
 	// --- Stack depth safety + edge cases of build_flame_data --------------
 
 	public function test_label_and_detail_attached_to_flame_nodes(): void {

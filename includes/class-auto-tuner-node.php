@@ -73,6 +73,8 @@ class Auto_Tuner_Node extends Node {
 		return false;
 	}
 
+	// --- Apply --------------------------------------------------------------
+
 	/**
 	 * @param string[] $items Hooks to disable, unless protected by the rule's significant_events.
 	 */
@@ -122,8 +124,6 @@ class Auto_Tuner_Node extends Node {
 			}
 		);
 	}
-
-	// --- Apply --------------------------------------------------------------
 
 	/**
 	 * Load the rule set, mutate the rule identified by `$rule_id`, and save it

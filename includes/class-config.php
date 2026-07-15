@@ -47,7 +47,6 @@ class Config {
 	 * @var array<int, string>
 	 */
 	private static $allowed_config_dirs = [
-		'/usr/src',
 	];
 
 	/**
@@ -221,6 +220,18 @@ class Config {
 	 */
 	private static function validate_config_path( string $path ): ?string {
 		$dirs = [ ...self::$allowed_config_dirs, \dirname( __DIR__ ) ];
+		if ( \defined( 'WP_CONTENT_DIR' ) ) {
+			$dirs[] = WP_CONTENT_DIR;
+		}
+		if ( \defined( 'ABSPATH' ) && '/' !== ABSPATH ) {
+			$dirs[] = ABSPATH;
+		}
+		$dirs = \array_values(
+			\array_filter(
+				$dirs,
+				static fn ( string $dir ): bool => DIRECTORY_SEPARATOR !== \realpath( $dir )
+			)
+		);
 		return Config_Utils::validate_config_path( $path, $dirs, 'Newspack_Event_Logger_Nodes\\Config' );
 	}
 
