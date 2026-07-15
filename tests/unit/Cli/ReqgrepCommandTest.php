@@ -1110,7 +1110,7 @@ class ReqgrepCommandTest extends TestCase {
 			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ 'invoke-rid' ],
-				[ 'path' => $path ]
+				[ 'firehose' => $path ]
 			);
 			$out = self::joined( $captured );
 
@@ -1123,6 +1123,16 @@ class ReqgrepCommandTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 			$this->rmdir_recursive( $base_dir );
 		}
+	}
+
+	public function test_synopsis_uses_firehose_not_global_path(): void {
+		// `--path` collides with WP-CLI's global --path (which WP-CLI consumes
+		// before the command runs), so the firehose-dir override must use its
+		// own name. Guard the rename against regressing to the global.
+		$doc = ( new \ReflectionMethod( \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command::class, '__invoke' ) )->getDocComment();
+		$this->assertIsString( $doc );
+		$this->assertStringNotContainsString( '[--path', $doc );
+		$this->assertStringContainsString( '[--firehose', $doc );
 	}
 
 	public function test_invoke_errors_when_path_does_not_exist(): void {
@@ -1139,7 +1149,7 @@ class ReqgrepCommandTest extends TestCase {
 
 			$this->expectException( \RuntimeException::class );
 			$this->expectExceptionMessageMatches( '/Invalid path/' );
-			$cmd->__invoke( [ '.' ], [ 'path' => '/never/exists/anywhere' ] );
+			$cmd->__invoke( [ '.' ], [ 'firehose' => '/never/exists/anywhere' ] );
 		} finally {
 			$GLOBALS['_wp_actions'] = [];
 			\Newspack_Nodes\Config::reset();
@@ -1165,7 +1175,7 @@ class ReqgrepCommandTest extends TestCase {
 
 			$this->expectException( \RuntimeException::class );
 			$this->expectExceptionMessageMatches( '/Path must be within the logs directory/' );
-			$cmd->__invoke( [ '.' ], [ 'path' => $elsewhere ] );
+			$cmd->__invoke( [ '.' ], [ 'firehose' => $elsewhere ] );
 		} finally {
 			$GLOBALS['_wp_actions'] = [];
 			\Newspack_Nodes\Config::reset();
@@ -1191,7 +1201,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'path'        => "{$base_dir}/logs/firehose.log",
+					'firehose'        => "{$base_dir}/logs/firehose.log",
 					'bucket-size' => '99999', // > 10000 cap.
 					'num-buckets' => '99999', // > 100 cap.
 				]
@@ -1225,7 +1235,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'path'        => "{$base_dir}/logs/firehose.log",
+					'firehose'        => "{$base_dir}/logs/firehose.log",
 					'bucket-size' => '0',  // Below min 1.
 					'num-buckets' => '0',  // Below min 1.
 				]
@@ -1266,7 +1276,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'path'   => "{$base_dir}/logs/firehose.log",
+					'firehose'   => "{$base_dir}/logs/firehose.log",
 					'recent' => true,
 				]
 			);
@@ -1296,7 +1306,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'path' => "{$base_dir}/logs/firehose.log",
+					'firehose' => "{$base_dir}/logs/firehose.log",
 					'raw'  => true,
 				]
 			);
@@ -1326,7 +1336,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'path'       => "{$base_dir}/logs/firehose.log",
+					'firehose'       => "{$base_dir}/logs/firehose.log",
 					'incomplete' => true,
 				]
 			);

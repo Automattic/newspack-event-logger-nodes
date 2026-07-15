@@ -35,6 +35,15 @@ final class RulesetBenchCommandTest extends TestCase {
 		Core::$memd = $this->prev_memd;
 	}
 
+	public function test_synopsis_does_not_shadow_global_path(): void {
+		// Declaring `[--path]` in the synopsis collides with WP-CLI's built-in
+		// global --path and makes registration warn. The command uses the global
+		// WordPress path; the synopsis must not redeclare it.
+		$doc = ( new \ReflectionMethod( Ruleset_Bench_Command::class, '__invoke' ) )->getDocComment();
+		$this->assertIsString( $doc );
+		$this->assertStringNotContainsString( '--path', $doc );
+	}
+
 	public function test_synthetic_hooks_are_unique_and_sized(): void {
 		$hooks = Ruleset_Bench_Command::synthetic_hooks( 65 );
 		$this->assertCount( 65, $hooks );
