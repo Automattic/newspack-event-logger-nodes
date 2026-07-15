@@ -10,9 +10,9 @@
  *
  * Substrate keys (base_directory, partitioning, memcache_servers, topologies,
  * and the remote-spoke geometry `remote_*` settings) are owned by the nodes
- * Settings_Schema under `newspack_nodes_*` and reach ELN via the
- * `array_merge(RuntimeConfig::load_config(), …)` layering in Config::load_config
- * — they are NEVER declared here.
+ * Settings_Schema under `newspack_nodes_*`. Config::load_config imports their
+ * effective substrate values after removing ELN-owned names, so each plugin's
+ * option namespace remains authoritative. They are NEVER declared here.
  *
  * Labels + section titles are lazy `fn(): string` thunks so building the Schema
  * for overlay_keys() (which a frontend request does via Config) never calls a

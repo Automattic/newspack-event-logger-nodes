@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Local config override validation now follows the active plugin and WordPress content roots.** It no longer grants a fixed `/usr/src` container prefix, so relocated installs and worktrees use the same runtime-derived trust boundary.
+- **Local config overrides now honor the operator's explicit file selection.** `LOCAL_NEWSPACK_NODES_CONF` accepts any canonical, readable regular `.php` file instead of restricting overrides to the active plugin and WordPress roots; an explicitly invalid path or returned value tree throws instead of silently falling back to bundled defaults. The merged application view preserves effective substrate values after their `newspack_nodes_*` WordPress option overlay for substrate-owned keys, while overlapping application-owned keys such as `allowed_users` remain under the independent `newspack_event_logger_nodes_*` option/config contract. Requires the accompanying Newspack Nodes release with the relaxed shared `Config_Utils` contract.
 
 - **The Flame Builder stats-mirror command and PHP setter are now `set_stats_target`.** The schema declares its optional argument as a `node_name`, matching the other graph-producing config commands. Together with token-aware substrate graph folding, a configured mirror now renders `flame-stats` beneath `flame-builder`; an empty `<eln:stats_mirror_node>` still disables the mirror. Requires the accompanying Newspack Nodes release that provides config-target token folding through `resolved_config_edges`.
 

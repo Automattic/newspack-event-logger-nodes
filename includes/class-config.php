@@ -40,16 +40,6 @@ class Config {
 	public const OPTION_DISCOVERED_HOOKS = 'newspack_event_logger_nodes_discovered_hooks';
 
 	/**
-	 * Allowed directories for local config override files.
-	 *
-	 * Only config files within these directories (or subdirectories) are allowed.
-	 *
-	 * @var array<int, string>
-	 */
-	private static $allowed_config_dirs = [
-	];
-
-	/**
 	 * Cached config (file defaults + WordPress options + substrate values).
 	 *
 	 * @var array<string, mixed>|null
@@ -124,7 +114,7 @@ class Config {
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config
-	 * (substrate values layered under ELN defaults + option overlay);
+	 * (each key comes from its owning plugin's defaults + option overlay);
 	 * declared-but-unset returns null.
 	 *
 	 * @api
@@ -150,6 +140,7 @@ class Config {
 	 * the layering split.
 	 *
 	 * @return array<string, mixed> Configuration array.
+	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
 	 */
 	public static function load_config(): array {
 		if ( null !== self::$config ) {
@@ -160,12 +151,14 @@ class Config {
 			return [];
 		}
 
-		// Layer substrate config first; application values win on collisions.
-		$substrate = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
-		$defaults  = \array_merge( $substrate, self::load_config_defaults() );
+		// Import effective substrate values without overriding ELN-owned keys.
+		$schema           = Settings_Schema::get();
+		$application_keys = \array_fill_keys( $schema->overlay_keys(), true );
+		$substrate        = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
+		$substrate        = \array_diff_key( $substrate, $application_keys );
+		$defaults         = \array_merge( self::load_config_defaults(), $substrate );
 
 		// Presence overlay: stored option (even ''/[]/false/0) beats default.
-		$schema = Settings_Schema::get();
 		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
 			$defaults,
 			$schema->overlay_keys(),
@@ -181,6 +174,7 @@ class Config {
 	 * Load configuration defaults from file only (no WordPress options).
 	 *
 	 * @return array<string, mixed> Configuration defaults from file.
+	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
 	 */
 	public static function load_config_defaults(): array {
 		if ( null !== self::$config_defaults ) {
@@ -197,42 +191,27 @@ class Config {
 			'Newspack_Event_Logger_Nodes\\Config'
 		);
 		$local_config_file = \getenv( 'LOCAL_NEWSPACK_NODES_CONF' );
-		if ( $local_config_file ) {
-			$validated_path = self::validate_config_path( $local_config_file );
-			if ( $validated_path ) {
-				$config = Config_Utils::load_config_file(
-					$config,
-					$validated_path,
-					'Newspack_Event_Logger_Nodes\\Config'
+		if ( false !== $local_config_file && '' !== $local_config_file ) {
+			$validated_path = Config_Utils::validate_config_path(
+				$local_config_file,
+				[ DIRECTORY_SEPARATOR ],
+				'Newspack_Event_Logger_Nodes\\Config'
+			);
+			if ( null === $validated_path ) {
+				throw new \RuntimeException(
+					'LOCAL_NEWSPACK_NODES_CONF does not name a canonical readable PHP config file'
 				);
 			}
+			$config = Config_Utils::load_config_file(
+				$config,
+				$validated_path,
+				'Newspack_Event_Logger_Nodes\\Config'
+			);
 		}
 
 		self::$config_defaults = $config;
 
 		return self::$config_defaults;
-	}
-
-	/**
-	 * Validate a config-override path against the application's allowed
-	 * directories (plus the plugin dir itself as a fallback). Wraps
-	 * Config_Utils::validate_config_path with the application's list.
-	 */
-	private static function validate_config_path( string $path ): ?string {
-		$dirs = [ ...self::$allowed_config_dirs, \dirname( __DIR__ ) ];
-		if ( \defined( 'WP_CONTENT_DIR' ) ) {
-			$dirs[] = WP_CONTENT_DIR;
-		}
-		if ( \defined( 'ABSPATH' ) && '/' !== ABSPATH ) {
-			$dirs[] = ABSPATH;
-		}
-		$dirs = \array_values(
-			\array_filter(
-				$dirs,
-				static fn ( string $dir ): bool => DIRECTORY_SEPARATOR !== \realpath( $dir )
-			)
-		);
-		return Config_Utils::validate_config_path( $path, $dirs, 'Newspack_Event_Logger_Nodes\\Config' );
 	}
 
 	/**
