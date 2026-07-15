@@ -49,7 +49,7 @@ const controlMsg = ( payload ) => {
 	return m;
 };
 
-test( 'appends rows newest-first with seq + isEven, capped', () => {
+test( 'appends rows newest-first with seq, capped', () => {
 	const v = makeView( 'perferrors:view', { maxEntries: 2 } );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( envMsg( 'b', { ts: 2, k: 'warning', m: 'y' } ) );
@@ -109,7 +109,6 @@ test( 'enriches each row with seq, id (= seq), rid, ts, k, m and an even/odd fla
 		ts: 222,
 		k: 'warning',
 		m: 'two',
-		isEven: true,
 	} );
 	expect( v.entries[ 1 ] ).toEqual( {
 		seq: 1,
@@ -118,7 +117,6 @@ test( 'enriches each row with seq, id (= seq), rid, ts, k, m and an even/odd fla
 		ts: 111,
 		k: 'error',
 		m: 'one',
-		isEven: false,
 	} );
 } );
 
@@ -194,10 +192,9 @@ test( 'clear empties the buffer', () => {
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( controlMsg( { action: 'clear' } ) );
 	expect( v.entries ).toHaveLength( 0 );
-	// Counter reset: the next row is seq 1 / odd again.
+	// Counter reset: the next row is seq 1 again.
 	v.fill( envMsg( 'after', { ts: 2, k: 'error', m: 'y' } ) );
 	expect( v.entries[ 0 ].seq ).toBe( 1 );
-	expect( v.entries[ 0 ].isEven ).toBe( false );
 } );
 
 test( 'publishes an initial view model on construction', () => {

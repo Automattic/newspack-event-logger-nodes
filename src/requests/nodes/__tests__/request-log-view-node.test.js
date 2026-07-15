@@ -103,14 +103,12 @@ test( 'enriches each row with seq, urlHash, timestamp and an even/odd flag', () 
 		rid: 'second',
 		url: '/b',
 		timestamp: 222,
-		isEven: true,
 	} );
 	expect( typeof v.entries[ 0 ].urlHash ).toBe( 'string' );
 	expect( v.entries[ 1 ] ).toMatchObject( {
 		seq: 1,
 		rid: 'first',
 		timestamp: 111,
-		isEven: false,
 	} );
 } );
 
@@ -188,10 +186,9 @@ test( 'clear empties the buffer, counter and rps', () => {
 	v.fill( controlMsg( { action: 'clear' } ) );
 	expect( v.entries ).toHaveLength( 0 );
 	expect( v.rps ).toBe( 0 );
-	// Counter reset: the next row is seq 1 / odd again.
+	// Counter reset: the next row is seq 1 again.
 	v.fill( rowMsg( row( { rid: 'after' } ) ) );
 	expect( v.entries[ 0 ].seq ).toBe( 1 );
-	expect( v.entries[ 0 ].isEven ).toBe( false );
 } );
 
 test( 'the published model carries paused and connectionError', () => {

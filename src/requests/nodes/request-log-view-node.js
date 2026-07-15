@@ -129,16 +129,15 @@ export class RequestLogViewNode extends Node {
 		this._writeEntry( {
 			// Monotonic per-mount key; dup rids → distinct DOM (no jump).
 			seq: this.entryCounter,
+			timestamp: req.end_time || 0,
 			rid: req.rid || '',
+			method: req.method || 'GET',
 			url,
 			urlHash: urlHash( url ),
-			method: req.method || 'GET',
 			duration_ms: req.duration_ms || 0,
 			status_code: req.status_code || 0,
-			timestamp: req.end_time || 0,
 			remote_addr: req.remote_addr || '',
 			user_agent: clip( req.user_agent || '', MAX_UA_LENGTH ),
-			isEven: this.entryCounter % 2 === 0,
 		} );
 		this._updateRequestsPerSecond( 1 );
 	}

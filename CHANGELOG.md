@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Row striping broke under a search filter in the Request Log and Error Log.** Each row baked in an `isEven` flag at INGEST time (`entryCounter % 2`), so it reflected the row's position in the full stream, not the filtered view. Filtering out rows left the survivors with a stream-parity that no longer alternated — adjacent visible rows shared a shade. Both dashboards now stripe from the rendered (filtered, virtualization-absolute) index `startIndex + i`, the way the Gyroscope Inflight table already did. The dead `isEven` field is gone from both view nodes.
+
 ## [0.34.2] - 2026-07-14
 
 ### Fixed
