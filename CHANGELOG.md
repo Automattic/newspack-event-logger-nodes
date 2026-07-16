@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Flame_Builder_Node`'s `set_is_hub` schema default used the wrong token namespace.** It read `<config:is_hub>`, but `is_hub` is owned by the `eln` namespace, not the substrate `config` resolver — so it silently resolved to `''` → `false`, disabling hub mode whenever the schema default was used. Corrected to `<eln:is_hub>` (matching the shipped `flame-builder.tsl`). A new `ElnConfigTokenTest` guard walks the node schema and fails loud if any `<ns:key>` token default isn't owned by its namespace.
+
 ### Changed
 
 - **`Performance_CI` now rejects a non-JSON synced array-option value explicitly.** `Settings_Sync_Node::scalarize()` JSON-encodes arrays unconditionally, so the wire form is always JSON; the old comma-list "legacy senders" fallback in `decode_array_value()` was unreachable. A non-JSON value is now treated as a contract violation — rejected to `[]` with a rate-limited notice — instead of being silently comma-split. The orphaned `csv()` helper was removed.
