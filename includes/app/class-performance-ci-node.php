@@ -631,7 +631,6 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Sum-merge per-partition hourly buckets into one sorted time_series.
-	 * Same contract as Events_CI's stats verb.
 	 *
 	 * @return array<int, mixed>
 	 */

@@ -33,7 +33,7 @@ Content-Type: application/json
 }
 ```
 
-- `TO` is the service CI name. This plugin owns `performance`, `events`, `logger`, `discovery`, `rules`. The `status`, `settings`, and `aggregator` CIs are now substrate-owned (newspack-nodes); the old `servers` CI was replaced by the substrate `vault` CI. Sub-paths address a child node (rare in this plugin); most callers just name the CI.
+- `TO` is the service CI name. This plugin owns `performance`, `discovery`, `rules`. The `status`, `settings`, and `aggregator` CIs are now substrate-owned (newspack-nodes); the old `servers` CI was replaced by the substrate `vault` CI. (The former `logger` and `events` CIs were removed — `performance.hooks_registered` and `performance.overview` supersede them.) Sub-paths address a child node (rare in this plugin); most callers just name the CI.
 - `KEY` is the verb name on that CI.
 - `VALUE` is the verb arguments (JSON object). The substrate validates each argument against the CI's `node_schema()['commands'][*]['args']` declaration before dispatching.
 
@@ -41,7 +41,7 @@ The reply is a TM_COMMAND-shaped envelope routed back via the `TO=FROM` reply, w
 
 ## Service CIs
 
-Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci-node.php` (`<Name>_CI_Node`, e.g. `Discovery_CI_Node`) exposes. All five CIs declare their verbs in a static `node_schema()['commands']` array (name + args + handler); the inherited `Service_CI_Node` constructor builds the commands table from the schema, so none define a per-class constructor. **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
+Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci-node.php` (`<Name>_CI_Node`, e.g. `Discovery_CI_Node`) exposes. All three CIs declare their verbs in a static `node_schema()['commands']` array (name + args + handler); the inherited `Service_CI_Node` constructor builds the commands table from the schema, so none define a per-class constructor. **TO=`<ci-name>`, KEY=`<verb>`** addresses a verb.
 
 The verb handlers come from this plugin's `Newspack_Event_Logger_Nodes\App\` namespace: `newspack-event-logger-nodes.php` registers it via `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' )`, and the CIs mount on the substrate's `newspack_nodes/request_graph_ready` action.
 
@@ -61,15 +61,6 @@ Moved to the substrate `status` CI (newspack-nodes). `status.get` still reports 
 
 Moved to the substrate `settings` CI (newspack-nodes). It owns the substrate-key whitelist (`num_partitions`, `num_segments`, `segment_size`, `max_lifespan`). See `../newspack-nodes/API.md`.
 
-### `logger` — settings read
-
-| Verb | Args | Returns |
-|------|------|---------|
-| `config` | — | Full filterable **substrate** config (`Newspack_Nodes\Config::load_config()` result) — the substrate config snapshot, NOT the application `Config` superset. |
-| `hooks` | — | `{ hooks: [{name, category}], categories: {…} }` flattened via `Hook_Categorizer`. |
-
-Read-only — settings WRITES live on the `performance` CI (`set`).
-
 ### `rules` — per-URL logging ruleset CRUD
 
 Backs the "Logging Rules" editor on the settings page. All four verbs route through `Rule_Set` so the inline↔pointer hook-tiering and orphan-reconcile invariants are never bypassed by a raw `update_option`. A rule's id is derived from its URL pattern (`Rule_Set::id_for` = the pattern's `url_hash`) — the pattern is the identity, so the ruleset can never hold two differently-configured rules for one URL; a client-supplied id is ignored.
@@ -81,13 +72,7 @@ Backs the "Logging Rules" editor on the settings page. All four verbs route thro
 | `upsert` | `{ rule (required, JSON rule object) }` | `{ rule: {...} }` — single add/replace keyed by pattern. A same-pattern rule is replaced in place (preserving its id); an edit that carries the old id and changes the pattern rekeys and drops the old-pattern entry. This is the performance-dashboard "log this URL" path. |
 | `delete` | `{ id (required) }` | `{ deleted: bool }` — drop the matching rule and re-save. |
 
-### `events` — hourly-stats surface
-
-| Verb | Args | Returns |
-|------|------|---------|
-| `stats` | — | `{ data: { time_series: [{hour, count, sum_ms, sum_peak_mb}, ...] }, meta: {} }` — per-partition hourly buckets read from `Stats_Store` and merged. Fail-soft on memcache outage (empty `time_series`). Note the envelope shape differs from `performance.timing`, which returns `{ time_series: […] }` flat. |
-
-`events.stats` (and the `performance` stats verbs) build one `Stats_Store` per partition, reading `num_partitions` straight from substrate config — **unclamped**.
+The `performance` stats verbs build one `Stats_Store` per partition, reading `num_partitions` straight from substrate config — **unclamped**.
 
 ### `servers` — remote-spoke registry CRUD (replaced by the substrate `vault` CI)
 

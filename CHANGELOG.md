@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Deleted the orphaned `Logger_CI_Node` (`logger` CI) and `Events_CI_Node` (`events` CI).** Both were mounted REST CIs with no production callers: the settings hook picker reads `performance.hooks_registered` and the Overview hourly chart reads `performance.overview`, which reproduces the `events.stats` sum-merge exactly; `logger.config` had no JS consumer (the settings page renders config server-side). Removed the two classes, their mount lines, `LoggerCITest`/`EventsCITest`, the `M2Bootstrap`/`M2CommandDispatchE2E`/`ServiceCiHandlerGuard` entries, and the `docs/API.md` sections.
+
 ### Fixed
 
 - **`Flame_Builder_Node`'s `set_is_hub` schema default used the wrong token namespace.** It read `<config:is_hub>`, but `is_hub` is owned by the `eln` namespace, not the substrate `config` resolver — so it silently resolved to `''` → `false`, disabling hub mode whenever the schema default was used. Corrected to `<eln:is_hub>` (matching the shipped `flame-builder.tsl`). A new `ElnConfigTokenTest` guard walks the node schema and fails loud if any `<ns:key>` token default isn't owned by its namespace.

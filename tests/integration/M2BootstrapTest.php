@@ -47,7 +47,7 @@ class M2BootstrapTest extends TestCase {
 	 * service CI was registered under its canonical short name. This is the
 	 * INTEGRATED graph: `workers`/`aggregator`/`settings`/`status` are
 	 * substrate-mounted (`newspack_nodes_mount_substrate_cis`); `discovery`/
-	 * `logger`/`events`/`performance` are this plugin's app CIs. The assertion
+	 * `performance`/`rules` are this plugin's app CIs. The assertion
 	 * is that an ELN-installed environment yields the full set.
 	 *
 	 * `Core::node()` returns null for unknown names, so a non-null lookup
@@ -72,9 +72,8 @@ class M2BootstrapTest extends TestCase {
 			'status',
 			// ELN app CIs (newspack_event_logger_nodes_mount_service_cis):
 			'discovery',
-			'logger',
-			'events',
 			'performance',
+			'rules',
 		];
 		foreach ( $expected as $name ) {
 			$this->assertNotNull(
@@ -106,7 +105,7 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_logger_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\LoggerController' ),
-			'Legacy LoggerController class must be deleted; Logger_CI verbs replace it.'
+			'Legacy LoggerController class must be deleted; Performance_CI verbs replace it.'
 		);
 	}
 
@@ -260,7 +259,7 @@ class M2BootstrapTest extends TestCase {
 	public function test_legacy_events_controller_class_is_gone(): void {
 		$this->assertFalse(
 			\class_exists( '\\Newspack_Event_Logger_Nodes\\Rest\\EventsController' ),
-			'Legacy EventsController must be deleted; Events_CI.recent + .stats verbs replace it (M2 Task 5).'
+			'Legacy EventsController must be deleted; Performance_CI.overview replaces it.'
 		);
 	}
 
