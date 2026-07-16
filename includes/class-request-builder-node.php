@@ -232,7 +232,7 @@ class Request_Builder_Node extends Timer_Node {
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 		) {
-			$this->emit_error( $entry, $rid );
+			$this->emit_error( $entry, $rid, $request );
 		}
 
 		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
@@ -372,14 +372,24 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Emit an error/warning entry via the named errors_target.
 	 *
-	 * @param array<string, mixed> $entry Decoded entry.
-	 * @param string $rid   Request id — propagated to Message::KEY so
-	 *                      downstream readers can identify the request
-	 *                      without re-parsing the entry payload.
+	 * @param array<string, mixed> $entry   Decoded entry.
+	 * @param string               $rid     Request id — propagated to Message::KEY so
+	 *                                      downstream readers can identify the request
+	 *                                      without re-parsing the entry payload.
+	 * @param \stdClass             $request Active request state supplying authoritative URL context.
 	 */
-	private function emit_error( array $entry, string $rid ): void {
+	private function emit_error( array $entry, string $rid, \stdClass $request ): void {
 		if ( '' === $this->errors_target || null === $this->sink ) {
 			return;
+		}
+		unset( $entry['url'], $entry['method'] );
+		$url = self::resolved_request_url( $request );
+		if ( '' !== $url ) {
+			$entry['url'] = $url;
+		}
+		$method = \is_string( $request->request_method ?? null ) ? $request->request_method : '';
+		if ( '' !== $method ) {
+			$entry['method'] = $method;
 		}
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -389,6 +399,16 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::KEY ]       = $rid;
 		$message[ Message::VALUE ]     = $entry;
 		$this->guarded( fn () => $this->sink->fill( $message ) );
+	}
+
+	/** Resolve the URL exactly as completed-request outputs do. */
+	private static function resolved_request_url( \stdClass $request ): string {
+		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
+		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
+		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
+			return $url . '?' . $worker_type;
+		}
+		return $url;
 	}
 
 	/**
@@ -764,11 +784,9 @@ class Request_Builder_Node extends Timer_Node {
 	 * @param \stdClass $request Completed request envelope.
 	 */
 	public function emit_request( \stdClass $request ): void {
-		// Workers get ?worker_type URL row so they don't merge onto real URLs.
-		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
-		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
-		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
-			$request->url = $url . '?' . $worker_type;
+		$url = self::resolved_request_url( $request );
+		if ( '' !== $url ) {
+			$request->url = $url;
 		}
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;

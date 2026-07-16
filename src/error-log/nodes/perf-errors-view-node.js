@@ -1,15 +1,25 @@
 import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
+import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 
 const DEFAULT_MAX_ENTRIES = 5000;
 const RPS_WINDOW_SEC = 10;
 const MAX_M_LENGTH = 1000;
+const MAX_URL_LENGTH = 2000;
+
+// Clip a string at `max`, appending an ellipsis. Non-strings become empty.
+const clip = ( value, max ) => {
+	if ( 'string' !== typeof value ) {
+		return '';
+	}
+	return value.length > max ? value.substring( 0, max ) + '...' : value;
+};
 
 /**
  * `perferrors:view` — owns the Error Log view model.
  *
  * `_sse` targets the view directly. fill() receives raw 7-field envelopes
- * (KEY=rid, VALUE={ts, k, m, n}) and shapes them into rows inline via a tiny
- * dispatch in `_appendEnvelope`.
+ * (KEY=rid, VALUE={ts, k, m, n, method, url}) and shapes them into rows
+ * inline via a tiny dispatch in `_appendEnvelope`.
  *
  * Two cadences, deliberately split for performance (mirrors requestLogView):
  * - HIGH frequency (the error stream): `_appendEnvelope` validates + enriches
@@ -129,10 +139,13 @@ export class PerfErrorsViewNode extends Node {
 			m = m.substring( 0, MAX_M_LENGTH ) + '...';
 		}
 		const k = value.k || '';
+		const method = 'string' === typeof value.method ? value.method : '';
+		const rawUrl = 'string' === typeof value.url ? value.url : '';
+		const url = clip( rawUrl, MAX_URL_LENGTH );
 		this._updateRequestsPerSecond( 1 );
 		if (
 			this.filter &&
-			! [ rid, k, m ].some(
+			! [ rid, k, m, url ].some(
 				( field ) =>
 					'string' === typeof field &&
 					field.toLowerCase().includes( this.filter )
@@ -142,7 +155,7 @@ export class PerfErrorsViewNode extends Node {
 		}
 
 		this.entryCounter += 1;
-		this._writeEntry( {
+		const row = {
 			// Monotonic per-mount React key (distinct DOM per dup rid).
 			seq: this.entryCounter,
 			id: this.entryCounter,
@@ -150,7 +163,13 @@ export class PerfErrorsViewNode extends Node {
 			ts: value.ts || 0,
 			k,
 			m,
-		} );
+		};
+		if ( url ) {
+			row.method = method;
+			row.url = url;
+			row.urlHash = fnv1a( rawUrl );
+		}
+		this._writeEntry( row );
 	}
 
 	// Errors/sec over a 10s window: per-second buckets, O(1) per error.

@@ -7,11 +7,13 @@
  * ({ paused, connectionError }) publishes via setState('view', …).
  *
  * As of the chain collapse, `_sse` targets the view directly: fill() now
- * receives the raw 7-field envelope (KEY=rid, VALUE={ts, k, m, n}) and shapes
- * it into a row inline (no perferrors:transform). Control messages still come
- * HOOK-DIRECT from useErrorLogGraph (VALUE.action set, no KEY) and re-publish.
+ * receives the raw 7-field envelope
+ * (KEY=rid, VALUE={ts, k, m, n, method, url}) and shapes it into a row inline
+ * (no perferrors:transform). Control messages still come HOOK-DIRECT from
+ * useErrorLogGraph (VALUE.action set, no KEY) and re-publish.
  */
 
+import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import {
 	KEY,
 	VALUE,
@@ -32,7 +34,7 @@ function makeView( name, opts = {} ) {
 	return node;
 }
 
-// An envelope as the wire delivers it: KEY=rid, VALUE={ts, k, m, n}.
+// An envelope as the wire delivers it: KEY=rid, VALUE={ts, k, m, n, method, url}.
 const envMsg = ( rid, value ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -66,13 +68,30 @@ test( 'filters envelopes before they enter the buffer', () => {
 	v.fill( envMsg( 'needle-317-rid', { k: 'other', m: 'other' } ) );
 	v.fill( envMsg( 'keyword-match', { k: 'NEEDLE-317', m: 'other' } ) );
 	v.fill( envMsg( 'message-match', { k: 'other', m: 'needle-317 text' } ) );
+	v.fill(
+		envMsg( 'method-only-match', {
+			k: 'other',
+			m: 'other',
+			method: 'NEEDLE-317',
+			url: '/method-only',
+		} )
+	);
+	v.fill(
+		envMsg( 'url-match', {
+			k: 'other',
+			m: 'other',
+			method: 'PATCH',
+			url: '/NEEDLE-317/path',
+		} )
+	);
 
 	expect( v.entries.map( ( entry ) => entry.rid ) ).toEqual( [
+		'url-match',
 		'message-match',
 		'keyword-match',
 		'needle-317-rid',
 	] );
-	expect( v.entries.map( ( entry ) => entry.seq ) ).toEqual( [ 3, 2, 1 ] );
+	expect( v.entries.map( ( entry ) => entry.seq ) ).toEqual( [ 4, 3, 2, 1 ] );
 } );
 
 test( 'rejects a non-string admission filter', () => {
@@ -142,6 +161,47 @@ test( 'enriches each row with seq, id (= seq), rid, ts, k, and m', () => {
 		k: 'error',
 		m: 'one',
 	} );
+} );
+
+test( 'retains request URL context and hashes it for the URL detail link', () => {
+	const v = makeView( 'perferrors:view' );
+	const url = '/error-context-731?errors-worker-731';
+	v.fill(
+		envMsg( 'url-context-rid-731', {
+			ts: 731,
+			k: 'error',
+			m: 'sentinel failure 731',
+			method: 'PATCH',
+			url,
+		} )
+	);
+
+	expect( v.entries[ 0 ] ).toEqual(
+		expect.objectContaining( {
+			method: 'PATCH',
+			url,
+			urlHash: fnv1a( url ),
+		} )
+	);
+} );
+
+test( 'hashes the full request URL while clipping only its display value', () => {
+	const v = makeView( 'perferrors:view' );
+	const url = `/long-error-url-731/${ 'x731'.repeat(
+		525
+	) }?errors-worker-731`;
+	v.fill(
+		envMsg( 'long-url-rid-731', {
+			k: 'error',
+			m: 'long URL failure 731',
+			method: 'PATCH',
+			url,
+		} )
+	);
+
+	expect( v.entries[ 0 ].url ).toHaveLength( 2003 );
+	expect( v.entries[ 0 ].urlHash ).toBe( fnv1a( url ) );
+	expect( v.entries[ 0 ].urlHash ).not.toBe( fnv1a( v.entries[ 0 ].url ) );
 } );
 
 test( 'defaults missing optional VALUE fields (ts=0, k="", m="")', () => {
