@@ -466,7 +466,7 @@ Executes registered job handlers. Per-job try/catch isolates failures. Fires `be
 // \Newspack_Nodes\Job_Worker_Node — abridged
 public function fill( array $message ): void {
     $entry    = $message[ Message::VALUE ];
-    $kind     = $entry['type'] ?? '';                          // 'job' or 'remote_job'
+    $kind     = $entry['k'] ?? '';                             // 'job' or 'remote_job' (kind carried under `k` end-to-end)
     $handler  = $entry['handler'] ?? '';
     $handlers = ( 'remote_job' === $kind ) ? $this->remote_handlers : $this->local_handlers;
     try {

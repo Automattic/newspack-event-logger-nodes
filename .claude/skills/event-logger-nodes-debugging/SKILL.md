@@ -141,11 +141,13 @@ wp nodes types     # cataloged topologies
 wp nodes status        # what's actually live — look for aggregator.pN / hub-control.p0
 
 # Aggregator status / health — substrate-owned now (the `aggregator` CI moved
-# to newspack-nodes). Dispatch via the unified command-protocol endpoint:
+# to newspack-nodes). Dispatch via the unified command-protocol endpoint. The
+# body is a packed Message (JSONL) with the positional TYPE/TO/KEY/VALUE fields
+# (see docs/API.md), NOT a {to,verb} object:
 NONCE=$(wp eval 'echo wp_create_nonce("wp_rest");' --user=<admin>)
 curl -sk -X POST "<site>/wp-json/newspack-nodes/v1/command" \
   -H "X-WP-Nonce: $NONCE" -H "Content-Type: application/json" \
-  -d '{"to":"aggregator","verb":"status"}'
+  -d '{"TYPE":"TM_COMMAND","TO":"aggregator","KEY":"status"}'
 # Spoke credentials are managed through the substrate `vault` CI.
 ```
 
