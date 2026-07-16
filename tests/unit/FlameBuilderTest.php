@@ -485,6 +485,32 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 150.0, $stats['flame']['value'], 1e-6 );
 	}
 
+	public function test_cold_read_restores_current_shape_sums_from_the_store(): void {
+		// A fresh builder (cold stats_cache) cold-reads the persisted aggregate back
+		// through the flame_raw-restore branch and accumulates onto it. A current-shape
+		// (sums) value must survive that branch intact — this pins the live read the
+		// deleted EMA→sums migrations sat astride (they only fired on pre-fix values,
+		// which no longer exist). Distinct 140/260 → 400 / mean 200, count 2.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+
+		$seed = new Flame_Builder_Node();
+		$seed->set_stats_store( $store );
+		$this->fill_request( $seed, $this->completed_request( [ 'url' => '/cold', 'duration_ms' => 140.0 ] ) );
+		$seed->flush();
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cold', 'duration_ms' => 260.0 ] ) );
+		$fb->flush();
+
+		$stats = $store->get_url_stats( Log_Manager::url_hash( '/cold' ) );
+		$this->assertNotNull( $stats );
+		$this->assertEqualsWithDelta( 400.0, $stats['flame_raw']['sum_value'], 1e-6 );
+		$this->assertSame( 2, $stats['flame_raw']['count'] );
+		$this->assertEqualsWithDelta( 200.0, $stats['flame']['value'], 1e-6 );
+	}
+
 	public function test_url_index_min_ms_zero_for_untimed_only_url(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

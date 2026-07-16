@@ -251,6 +251,25 @@ class ConfigTest extends TestCase {
 		Config::value( 'eln_never_declared_bogus_key' );
 	}
 
+	public function test_recommended_log_events_resolves_through_value(): void {
+		// The admin-asset enqueue reads this via the fail-loud Config::value()
+		// accessor (not `$cfg[...] ?? []`), so the key MUST stay declared. A
+		// distinct single-hook override (not the shipped multi-hook default list)
+		// proves it round-trips through the merged config.
+		$conf = $this->temp_dir . '/value-recommended.php';
+		\file_put_contents( $conf, "<?php return [ 'recommended_log_events' => [ 'eln_bespoke_hook_88421' ] ];\n" );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
+		Config::reset();
+		$this->assertSame( [ 'eln_bespoke_hook_88421' ], Config::value( 'recommended_log_events' ) );
+	}
+
+	public function test_recommended_log_events_typo_fails_loud(): void {
+		// A near-miss key (dropped trailing `s`) throws instead of silently
+		// defaulting to [] the way the retired `?? []` read did.
+		$this->expectException( \RuntimeException::class );
+		Config::value( 'recommended_log_event' );
+	}
+
 	// ── WP option overrides ────────────────────────────────────────────────
 
 	public function test_present_empty_wp_option_overrides_file_default(): void {
