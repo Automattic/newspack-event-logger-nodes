@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.2] - 2026-07-15
+
 ### Fixed
 
 - **Long-lived dashboard command channels now share the substrate's renewable WordPress credentials.** Request Log, Error Log, Gyroscope, hook-catalog, and rules clients use the page-local `CommandClient.fromGlobal()` path, so an expired REST nonce is renewed and the failed command retried once without replacing explicitly configured remote credentials. Requires the accompanying Newspack Nodes release that provides bounded nonce renewal.
