@@ -57,8 +57,8 @@ const controlMsg = ( value ) => {
  * @param {number} [opts.maxEntries] View buffer cap (default 1000).
  * @return {{ setPaused: Function, clear: Function, setFilter: Function }}
  *   Control callbacks for the thin React view (the view's own state is read via
- *   useNodeState). Reset Graph is driven by the overlay via `Core.reinit`,
- *   stashed by mountExospine.
+ *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
+ *   bump — mountExospine subscribes this reused mount's rebuild to it.
  */
 export function useRequestLogGraph( opts = {} ) {
 	const optsRef = useRef( opts );

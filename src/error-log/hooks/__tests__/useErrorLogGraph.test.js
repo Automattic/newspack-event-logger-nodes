@@ -35,6 +35,7 @@ import {
 	Core,
 	Node,
 	useNodeState,
+	mountExospine,
 } from '@newspack-nodes/runtime';
 
 let mockPageVisible = true;
@@ -409,17 +410,21 @@ describe( 'useErrorLogGraph — teardown', () => {
 	} );
 } );
 
-describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
-	test( 'Core.reinit rebuilds the graph nodes fresh (backbone preserved)', () => {
+describe( 'useErrorLogGraph — graphGeneration Reset Graph', () => {
+	// Overlay owns the backbone; this dashboard is a reused mount whose
+	// spine.reinit is subscribed to graphGeneration (the real Reset trigger).
+	beforeEach( () => {
+		mountExospine();
+	} );
+	test( 'a graphGeneration bump rebuilds the graph nodes fresh (backbone preserved)', () => {
 		renderHook( () => useErrorLogGraph() );
 		const firstView = Core.node( VIEW );
 		const firstHttp = Core.node( HTTP );
 		const backbone = Core.node( INTERPRETER );
 		expect( firstView ).not.toBeNull();
-		expect( typeof Core.reinit ).toBe( 'function' );
 
 		act( () => {
-			Core.reinit();
+			Core.bumpGraphGeneration();
 		} );
 
 		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
@@ -431,7 +436,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
 
-	test( 'Core.reinit re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
+	test( 'a graphGeneration bump re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
 		const { result } = renderHook( () => {
 			useErrorLogGraph();
 			return useNodeState( VIEW, 'view' );
@@ -439,7 +444,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 		const firstView = Core.node( VIEW );
 
 		act( () => {
-			Core.reinit();
+			Core.bumpGraphGeneration();
 		} );
 		const freshView = Core.node( VIEW );
 		expect( freshView ).not.toBe( firstView );
@@ -457,7 +462,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
 
 		act( () => {
-			Core.reinit();
+			Core.bumpGraphGeneration();
 		} );
 
 		// Rebuilt view defaults paused:false; the hook re-applies the pause.
@@ -467,7 +472,7 @@ describe( 'useErrorLogGraph — Core.reinit (Reset Graph)', () => {
 	test( 'reinit preserves the active admission filter', () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
 		act( () => result.current.setFilter( 'needle-733' ) );
-		act( () => Core.reinit() );
+		act( () => Core.bumpGraphGeneration() );
 
 		act( () => {
 			FakeEventSource.last.dispatch(

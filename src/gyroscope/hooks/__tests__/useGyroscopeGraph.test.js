@@ -31,6 +31,7 @@ import {
 	Core,
 	Node,
 	useNodeState,
+	mountExospine,
 } from '@newspack-nodes/runtime';
 
 let mockPageVisible = true;
@@ -391,17 +392,21 @@ describe( 'useGyroscopeGraph — teardown', () => {
 	} );
 } );
 
-describe( 'useGyroscopeGraph — Core.reinit (Reset Graph)', () => {
-	test( 'Core.reinit rebuilds the graph nodes fresh (backbone preserved)', () => {
+describe( 'useGyroscopeGraph — graphGeneration Reset Graph', () => {
+	// Overlay owns the backbone; this dashboard is a reused mount whose
+	// spine.reinit is subscribed to graphGeneration (the real Reset trigger).
+	beforeEach( () => {
+		mountExospine();
+	} );
+	test( 'a graphGeneration bump rebuilds the graph nodes fresh (backbone preserved)', () => {
 		renderHook( () => useGyroscopeGraph() );
 		const firstView = Core.node( VIEW );
 		const firstHttp = Core.node( HTTP );
 		const backbone = Core.node( INTERPRETER );
 		expect( firstView ).not.toBeNull();
-		expect( typeof Core.reinit ).toBe( 'function' );
 
 		act( () => {
-			Core.reinit();
+			Core.bumpGraphGeneration();
 		} );
 
 		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
@@ -413,7 +418,7 @@ describe( 'useGyroscopeGraph — Core.reinit (Reset Graph)', () => {
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
 
-	test( 'Core.reinit re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
+	test( 'a graphGeneration bump re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
 		const { result } = renderHook( () => {
 			useGyroscopeGraph();
 			return useNodeState( VIEW, 'view' );
@@ -421,7 +426,7 @@ describe( 'useGyroscopeGraph — Core.reinit (Reset Graph)', () => {
 		const firstView = Core.node( VIEW );
 
 		act( () => {
-			Core.reinit();
+			Core.bumpGraphGeneration();
 		} );
 		const freshView = Core.node( VIEW );
 		expect( freshView ).not.toBe( firstView );
