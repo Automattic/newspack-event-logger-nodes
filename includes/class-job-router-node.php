@@ -114,7 +114,6 @@ class Job_Router_Node extends Node {
 		$timestamp = \is_numeric( $raw_timestamp ) ? (float) $raw_timestamp : null;
 		if ( null === $timestamp || ! \is_finite( $timestamp ) || Core::$now - $timestamp > $this->stale_timeout ) {
 			$this->drop_message( $message, 'stale entry' );
-			$this->stderr( 'stale entry: ' . \wp_json_encode( $normalized, JSON_PRETTY_PRINT ) );
 			return;
 		}
 
