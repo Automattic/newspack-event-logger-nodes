@@ -181,8 +181,6 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
 	$base_interpreter->make_node( 'Discovery_CI',   'discovery' );
-	$base_interpreter->make_node( 'Logger_CI',      'logger' );
-	$base_interpreter->make_node( 'Events_CI',      'events' );
 	$base_interpreter->make_node( 'Performance_CI', 'performance' );
 	$base_interpreter->make_node( 'Rules_CI',       'rules' );
 }

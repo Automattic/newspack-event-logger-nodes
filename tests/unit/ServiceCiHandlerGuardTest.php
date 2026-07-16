@@ -31,7 +31,6 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\App\Events_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -42,12 +41,11 @@ use Newspack_Nodes\Rest\Classes_CI_Node;
 class ServiceCiHandlerGuardTest extends TestCase {
 
 	/**
-	 * The two migrated CIs keyed by substrate `shell_name` (class short-name
+	 * The migrated CIs keyed by substrate `shell_name` (class short-name
 	 * minus the `_Node` suffix). Single source of truth for both the catalog
 	 * guard's expected set and the per-CI install guard's data provider.
 	 */
 	private const SHELL_NAMES = [
-		'Events_CI',
 		'Performance_CI',
 	];
 
@@ -173,7 +171,6 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 */
 	public static function provide_migrated_cis(): array {
 		return [
-			'Events_CI'      => [ static fn () => new Events_CI_Node() ],
 			'Performance_CI' => [ static fn () => new Performance_CI_Node() ],
 		];
 	}
