@@ -50,7 +50,7 @@ class Logger_CI_Node extends Service_CI_Node {
 					'name'        => 'config',
 					'description' => 'Return the full filterable substrate config.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 						// Full filterable config; settings UI needs this shape.
 						return RuntimeConfig::load_config();
 					},
@@ -59,7 +59,7 @@ class Logger_CI_Node extends Service_CI_Node {
 					'name'        => 'hooks',
 					'description' => 'Return a flattened { hooks: [{name, category}, ...], categories: {...} } view.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 						$hooks       = [];
 						$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 						$categories  = Hook_Categorizer::get_categories();

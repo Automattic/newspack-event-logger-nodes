@@ -265,7 +265,7 @@ class JobRouterTest extends TestCase {
 
 	public function test_stale_timeout_argument_controls_exact_boundary(): void {
 		$custom_timeout = 37.5;
-		$this->jr->arguments( (string) $custom_timeout );
+		$this->jr->arguments( [ (string) $custom_timeout ] );
 
 		$fresh = $this->jobintake_entry( 'job', 'fresh_job', [] );
 		$fresh['ts'] = Core::$now - 37.25;
@@ -282,23 +282,23 @@ class JobRouterTest extends TestCase {
 		$this->assertCount( 2, $this->sink->captured );
 		$this->assertSame( 'fresh_job', $this->sink->captured[0][ Message::VALUE ]['handler'] );
 		$this->assertSame( 'boundary_job', $this->sink->captured[1][ Message::VALUE ]['handler'] );
-		$this->assertSame( '37.5', $this->jr->arguments() );
+		$this->assertSame( [ '37.5' ], $this->jr->arguments() );
 		$this->assertStringContainsString( "make_node Job_Router job-router 37.5\n", $this->jr->dump_config() );
 	}
 
 	public function test_invalid_stale_timeout_arguments_fail_without_mutating_valid_config(): void {
-		$this->jr->arguments( '37.5' );
+		$this->jr->arguments( [ '37.5' ] );
 		$invalid_timeouts = [ '1e309', 'not-a-timeout-913', '-12.75' ];
 
 		foreach ( $invalid_timeouts as $invalid_timeout ) {
 			try {
-				$this->jr->arguments( $invalid_timeout );
+				$this->jr->arguments( [ $invalid_timeout ] );
 				$this->fail( "stale_timeout '$invalid_timeout' should fail" );
 			} catch ( \InvalidArgumentException $e ) {
 				$this->assertSame( 'stale_timeout must be numeric, finite, and non-negative', $e->getMessage() );
 			}
 
-			$this->assertSame( '37.5', $this->jr->arguments() );
+			$this->assertSame( [ '37.5' ], $this->jr->arguments() );
 			$this->assertStringContainsString( "make_node Job_Router job-router 37.5\n", $this->jr->dump_config() );
 		}
 	}

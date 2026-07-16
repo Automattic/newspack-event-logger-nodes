@@ -37,15 +37,16 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * interval falls back to the default 300s discovery cadence.
 	 *
 	 * @api Called by the substrate during make_node construction.
-	 * @param string|null $args Interval in seconds (digits), '' for the default, or null to read back.
-	 * @return string Last-set raw arguments string.
+	 * @param list<string>|null $args Interval in seconds (digits) at token 0, empty for the default, or null to read back.
+	 * @return list<string> Last-set argument tokens.
 	 */
-	public function arguments( ?string $args = null ): string {
+	public function arguments( ?array $args = null ): array {
 		if ( null === $args ) {
 			return $this->arguments;
 		}
 		$this->arguments = $args;
-		$seconds         = '' === $args ? self::DEFAULT_INTERVAL_SECONDS : (int) $args;
+		$first           = $args[0] ?? '';
+		$seconds         = '' === $first ? self::DEFAULT_INTERVAL_SECONDS : (int) $first;
 		$this->set_timer( $seconds * 1000 );
 		return $this->arguments;
 	}
@@ -90,7 +91,7 @@ class Discovery_Collector_Node extends Timer_Node {
 		$out[ Message::TO ]    = $target . '/discovery';
 		$out[ Message::VALUE ] = [
 			'name'      => 'get',
-			'arguments' => '',
+			'arguments' => [],
 		];
 		$this->sink->fill( $out );
 	}

@@ -61,7 +61,7 @@ class FullPipelineTest extends TestCase {
 		// Producer: write firehose lines mixing a request lifecycle and a job.
 		$topic         = new Topic_Node();
 		$job_timestamp = Core::$now - 14.75;
-		$topic->arguments( "{$this->tmp}/firehose.p{partition} {1}" );
+		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "{1}" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );
@@ -124,7 +124,7 @@ class FullPipelineTest extends TestCase {
 		// Keep the production Consumer name even though JobRouter routes by entry
 		// shape and does not gate valid jobs on Message::FROM.
 		$consumer = new Consumer_Node();
-		$consumer->arguments( "{$this->tmp}/firehose.p0 {$this->tmp}/offsets/r/p0" );
+		$consumer->arguments( [ "{$this->tmp}/firehose.p0", "{$this->tmp}/offsets/r/p0" ] );
 		$consumer->name( 'firehose:consumer' );
 		$consumer->sink( $tee );
 		$this->pump_consumer( $consumer );

@@ -68,7 +68,7 @@ class FlameBuilderTest extends TestCase {
 		// The `<config:segment_size>` default resolves via a process-global token
 		// resolver other tests mutate; leaving it unpinned makes this sink's
 		// retention (and thus what a test can read back) order-dependent.
-		$p->arguments( "{$dir} 67108864" );
+		$p->arguments( [ "{$dir}", "67108864" ] );
 		$p->name( $name );
 		$p->void_warranty();
 		return $p;
@@ -1015,7 +1015,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_flame_builder_set_is_hub_verb_round_trips(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_is_hub', 'true' ) );
+		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_is_hub', [ 'true' ] ) );
 		$dump = $fb->dump_config();
 		$this->assertStringContainsString( 'cmd fb:config set_is_hub true', $dump );
 	}
@@ -2253,7 +2253,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', 'flames-stats' ) );
+		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', [ 'flames-stats' ] ) );
 		$dump = $fb->dump_config();
 		$this->assertStringContainsString( 'cmd fb:config set_stats_target flames-stats', $dump );
 	}
@@ -2288,7 +2288,7 @@ class FlameBuilderTest extends TestCase {
 		// The verb runs BEFORE the partition's make_node — the ordering a
 		// console-serialized override produces. It must store the name, not
 		// fail on the not-yet-built node.
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', 'late:stats' ) );
+		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', [ 'late:stats' ] ) );
 
 		// Partition created afterward, then a buffered aggregate + checkpoint.
 		$p = $this->make_partition( 'late:stats' );

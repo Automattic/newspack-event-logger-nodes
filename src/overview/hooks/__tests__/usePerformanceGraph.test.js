@@ -466,7 +466,9 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 		const upsert = findVerb( client.batches, 'upsert' );
 		expect( upsert ).toBeTruthy();
 		expect( upsert[ TO ] ).toBe( 'rules' );
-		expect( upsert[ VALUE ].arguments ).toBe( JSON.stringify( input ) );
+		expect( upsert[ VALUE ].arguments ).toEqual( [
+			JSON.stringify( input ),
+		] );
 		expect( result ).toEqual( { rule: saved } );
 	} );
 
@@ -858,7 +860,7 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 		expect( client.send ).toHaveBeenCalledWith( {
 			to: 'performance',
 			verb: 'request_search',
-			args: 'r9',
+			args: [ 'r9' ],
 		} );
 		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
 	} );

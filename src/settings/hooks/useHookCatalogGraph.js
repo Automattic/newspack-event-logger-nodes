@@ -69,7 +69,7 @@ function buildCommand( verb, id ) {
 	m[ FROM ] = VIEW;
 	m[ TO ] = `${ HTTP }/performance`;
 	m[ ID ] = id;
-	m[ VALUE ] = { name: verb, arguments: '' };
+	m[ VALUE ] = { name: verb, arguments: [] };
 	return m;
 }
 

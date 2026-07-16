@@ -229,11 +229,13 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		expect( up ).toBeTruthy();
 		expect( up[ TO ] ).toBe( 'rules' );
 		expect( up[ FROM ] ).toBe( RECV );
-		// The whole arguments string is the raw JSON the CI json_decodes.
-		expect( up[ VALUE ].arguments ).toBe(
-			JSON.stringify( SAMPLE_RULES[ 0 ] )
+		// The whole raw JSON is one arg token the CI json_decodes ($args[0]).
+		expect( up[ VALUE ].arguments ).toEqual( [
+			JSON.stringify( SAMPLE_RULES[ 0 ] ),
+		] );
+		expect( JSON.parse( up[ VALUE ].arguments[ 0 ] ).pattern ).toBe(
+			'/blog'
 		);
-		expect( JSON.parse( up[ VALUE ].arguments ).pattern ).toBe( '/blog' );
 
 		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
@@ -257,9 +259,9 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 
 		const save = findVerb( client.batches, 'save' );
 		expect( save ).toBeTruthy();
-		expect( save[ VALUE ].arguments ).toBe(
-			JSON.stringify( SAMPLE_RULES )
-		);
+		expect( save[ VALUE ].arguments ).toEqual( [
+			JSON.stringify( SAMPLE_RULES ),
+		] );
 		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
@@ -283,7 +285,9 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		const del = findVerb( client.batches, 'delete' );
 		expect( del ).toBeTruthy();
 		expect( del[ FROM ] ).toBe( RECV );
-		expect( del[ VALUE ].arguments ).toBe( formatCommandArgs( [ 'r1' ] ) );
+		expect( del[ VALUE ].arguments ).toEqual(
+			formatCommandArgs( [ 'r1' ] )
+		);
 		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);

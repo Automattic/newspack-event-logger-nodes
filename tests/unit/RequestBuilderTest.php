@@ -749,7 +749,7 @@ class RequestBuilderTest extends TestCase {
 		// we call its fire_cb() directly (exactly what the Router calls each tick).
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( '100 2' ); // bucket_size=100 (no capacity rotation), num_buckets=2.
+		$rb->arguments( [ '100', '2' ] ); // bucket_size=100 (no capacity rotation), num_buckets=2.
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -777,7 +777,7 @@ class RequestBuilderTest extends TestCase {
 		// it (and the aggregator sees the resolution), carrying error_status='T'.
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( '100 2' );
+		$rb->arguments( [ '100', '2' ] );
 		$rb->set_completed_target( 'completed:tee' );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -810,7 +810,7 @@ class RequestBuilderTest extends TestCase {
 
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( '100 2' ); // named + _router present => hitchhike registers here.
+		$rb->arguments( [ '100', '2' ] ); // named + _router present => hitchhike registers here.
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -840,7 +840,7 @@ class RequestBuilderTest extends TestCase {
 		// After r2's set, r1's bucket is the oldest and gets evicted.
 		$rb      = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( "1 2" );
+		$rb->arguments( [ "1", "2" ] );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -981,7 +981,7 @@ class RequestBuilderTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'req_builder' );
 
-		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', 'errors:partition' );
+		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', [ 'errors:partition' ] );
 		$this->assertSame( 'ok', $result );
 
 		$dump = $rb->dump_config();
@@ -993,7 +993,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->name( 'req_builder' );
 
 		// Seed.
-		$this->assertSame( 'ok', $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', 'errors:partition' ) );
+		$this->assertSame( 'ok', $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', [ 'errors:partition' ] ) );
 		// Empty arg now clears the target instead of rejecting (live reconfiguration).
 		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target' );
 		$this->assertSame( 'ok', $result );
@@ -1122,7 +1122,7 @@ class RequestBuilderTest extends TestCase {
 		// hits the `empty( $request->url )` early return.
 		$rb      = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( "1 2" );
+		$rb->arguments( [ "1", "2" ] );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -1141,7 +1141,7 @@ class RequestBuilderTest extends TestCase {
 		// cache via restore_state and force a rotation.
 		$rb      = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( "1 2" );
+		$rb->arguments( [ "1", "2" ] );
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
@@ -1720,7 +1720,7 @@ class RequestBuilderTest extends TestCase {
 	public function test_constructible_via_no_arg_ctor_and_arguments_setter(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->arguments( '7 5' );
+		$rb->arguments( [ '7', '5' ] );
 		$ref = new \ReflectionClass( $rb );
 		$this->assertSame( 7, $ref->getProperty( 'bucket_size' )->getValue( $rb ) );
 		$this->assertSame( 5, $ref->getProperty( 'num_buckets' )->getValue( $rb ) );

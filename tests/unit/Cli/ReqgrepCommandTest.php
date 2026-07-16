@@ -826,7 +826,7 @@ class ReqgrepCommandTest extends TestCase {
 		$flat_dir = \preg_replace( '/\.log$/', '', $base_dir ) . ".p{$partition}";
 		\mkdir( $flat_dir, 0755, true );
 		$p = new \Newspack_Nodes\Partition_Node();
-		$p->arguments( $flat_dir );
+		$p->arguments( [ $flat_dir ] );
 		foreach ( $entries as $entry ) {
 			$message = $this->packed_struct( $entry );
 			$p->fill( $message );

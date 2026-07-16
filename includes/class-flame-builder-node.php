@@ -1999,9 +1999,10 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<config:is_hub>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$args = \strtolower( \trim( $args ) );
-						$bool = ( 'true' === $args || '1' === $args );
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = Core::as_string( $args[0] ?? '' );
+						$arg  = \strtolower( \trim( $arg ) );
+						$bool = ( 'true' === $arg || '1' === $arg );
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_is_hub( $bool );
@@ -2014,10 +2015,11 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = Core::as_string( $args[0] ?? '' );
 						// Constant valid pattern: preg_split never false here.
 						/** @var list<string> $parts */
-						$parts = \preg_split( '/\s+/', \trim( $args ) );
+						$parts = \preg_split( '/\s+/', \trim( $arg ) );
 						if ( \count( $parts ) < 1 || '' === $parts[0] ) {
 							return 'usage: configure_stats <partition>';
 						}
@@ -2038,11 +2040,12 @@ class Flame_Builder_Node extends Node {
 					'name'        => 'set_stats_target',
 					'description' => 'Mirror stats writes to a durable Partition and reload from it on cold boot (non-Atomic deployments).',
 					'args'        => [ [ 'name' => 'target', 'type' => 'node_name', 'required' => false, 'default' => '' ] ],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = Core::as_string( $args[0] ?? '' );
 						// Store name; resolve lazily (empty=disabled).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_stats_target( \trim( $args ) );
+						$patron->set_stats_target( \trim( $arg ) );
 						return 'ok';
 					},
 				],
@@ -2050,10 +2053,11 @@ class Flame_Builder_Node extends Node {
 					'name'        => 'set_flame_topn',
 					'description' => 'Cap how many per-URL flame profiles mirror to memcache (top-N by traffic). 0 (default) disables the flame-profile mirror.',
 					'args'        => [ [ 'name' => 'n', 'type' => 'int', 'required' => false, 'default' => 0 ] ],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = Core::as_string( $args[0] ?? '' );
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_flame_topn( (int) \trim( $args ) );
+						$patron->set_flame_topn( (int) \trim( $arg ) );
 						return 'ok';
 					},
 				],

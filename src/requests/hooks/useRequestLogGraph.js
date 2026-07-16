@@ -5,7 +5,7 @@
  *
  *   requestlog:link        (RemoteLink — composes + registers three children:
  *                          `requestlog:link:sse-in` (SseIn — EventSource ingress,
- *                          args `'completed {restUrl} {nonce}'`),
+ *                          ctor token `[ 'completed.*' ]`; restUrl/nonce from the global),
  *                          `requestlog:link:http` (HttpOut — POST /command boundary),
  *                          `requestlog:link:heartbeat` (Heartbeat — slot keep-alive),
  *                          and wires the `connected → slot` bridge to its own
@@ -77,18 +77,11 @@ export function useRequestLogGraph( opts = {} ) {
 	const { viewRef } = useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
-			const data =
-				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
-				{};
-			const baseUrl = data.restUrl || '/wp-json/';
-			const nonce = data.nonce || '';
 
-			// RemoteLink composes SseIn + HttpOut + Heartbeat children.
-			const link = interpreter.makeNode(
-				'RemoteLink',
-				LINK,
-				`completed.* ${ baseUrl } ${ nonce }`
-			);
+			// Subscribe topic is the only ctor token now.
+			const link = interpreter.makeNode( 'RemoteLink', LINK, [
+				'completed.*',
+			] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			link.client = CommandClient.fromGlobal();

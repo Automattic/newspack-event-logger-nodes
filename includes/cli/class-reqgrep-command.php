@@ -696,7 +696,7 @@ class Reqgrep_Command {
 		$sink       = new Callback_Node( $this->process_message( ... ) );
 		$consumer = new Consumer_Node();
 		$consumer->sink( $sink );
-		$consumer->arguments( $source_dir );
+		$consumer->arguments( [ $source_dir ] );
 		return $consumer;
 	}
 

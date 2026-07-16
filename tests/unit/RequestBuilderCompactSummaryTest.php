@@ -154,7 +154,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		// Invoke set_completed_target via the interpreter verb (not the direct setter).
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
-		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
+		$verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] );
 
 		$request = (object) [
 			'rid'            => 'r-1',
@@ -181,8 +181,8 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
-		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
-		$verbs['set_completed_target']( $interpreter, '' );  // clear
+		$verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] );
+		$verbs['set_completed_target']( $interpreter, [] );  // clear
 
 		$request = (object) [
 			'rid'            => 'r-1',
@@ -206,8 +206,8 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$rb->name( 'rb' );
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
-		$verbs['set_completed_target']( $interpreter, 'completed:tee' );
-		$verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' );
+		$verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] );
+		$verbs['set_inflight_target']( $interpreter, [ 'gyroscope:partition' ] );
 
 		$dump = $rb->dump_config();
 
