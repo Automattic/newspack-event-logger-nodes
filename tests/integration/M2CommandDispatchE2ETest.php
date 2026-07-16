@@ -189,7 +189,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 			'discovery.get'      => [ 'discovery',   'get',    '{}' ],
 			'status.get'         => [ 'status',      'get',    '{}' ],
 			'settings.get'       => [ 'settings',    'get',    '{}' ],
-			'aggregator.health'    => [ 'aggregator',  'health',   '{}' ],
+			'aggregator.summary'   => [ 'aggregator',  'summary',  '{}' ],
 			'performance.overview' => [ 'performance', 'overview', '{}' ],
 		];
 	}
