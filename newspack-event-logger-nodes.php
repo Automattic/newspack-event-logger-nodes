@@ -337,8 +337,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 
 		// settings + overview both render pickers from these window lists.
 		if ( 'settings' === $tree || 'overview' === $tree ) {
-			$cfg                 = \Newspack_Event_Logger_Nodes\Config::load_config();
-			$recommended         = $cfg['recommended_log_events'] ?? [];
+			$recommended         = \Newspack_Event_Logger_Nodes\Config::value( 'recommended_log_events' );
 			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
 			$custom_colors       = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
 			\wp_add_inline_script(

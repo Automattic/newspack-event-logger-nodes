@@ -367,25 +367,6 @@ class Flame_Builder_Node extends Node {
 				$aggregate['flame'] = $aggregate['flame_raw'];
 				unset( $aggregate['flame_raw'] );
 			}
-			// Migrate legacy flame shape (EMA running mean → sums).
-			$aggregate_flame = $aggregate['flame'] ?? null;
-			if ( isset( $aggregate_flame ) && ! ( \is_array( $aggregate_flame ) && isset( $aggregate_flame['sum_value'] ) ) ) {
-				$aggregate['flame'] = [
-					'name'      => 'aggregate',
-					'sum_value' => 0.0,
-					'count'     => 0,
-					'children'  => [],
-				];
-			}
-			// Migrate legacy profile shape.
-			$aggregate_profiles = $aggregate['profiles'] ?? null;
-			if ( isset( $aggregate_profiles ) && ! ( \is_array( $aggregate_profiles ) && isset( $aggregate_profiles['sum_req_time'] ) ) ) {
-				$aggregate['profiles'] = [
-					'count'        => 0,
-					'sum_req_time' => 0.0,
-					'categories'   => [],
-				];
-			}
 		}
 
 		$flame = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];

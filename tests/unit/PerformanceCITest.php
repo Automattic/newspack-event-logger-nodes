@@ -1154,13 +1154,14 @@ class PerformanceCITest extends TestCase {
 	// `set <option> <value>`.
 	// -------------------------------------------------------------------------
 
-	public function test_decode_array_value_falls_back_to_csv_split(): void {
-		// A synced array-option value that is not JSON splits on commas
-		// (decode_array_value's csv fallback). Tested directly — the only array
-		// option, the ruleset, now re-tiers on set() instead of storing raw.
+	public function test_decode_array_value_rejects_non_json(): void {
+		// A synced array-option value is JSON on the wire — Settings_Sync_Node
+		// scalarizes arrays via wp_json_encode unconditionally. A non-JSON value is
+		// a contract violation, explicitly rejected to [] (NOT csv-split into a
+		// 2-element list — the old "legacy senders" comma fallback was unreachable).
 		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
 		$ref->setAccessible( true );
-		$this->assertSame( [ 'a.com', 'b.com' ], $ref->invoke( null, 'a.com,b.com' ) );
+		$this->assertSame( [], $ref->invoke( null, 'zebra.example,quux.example' ) );
 	}
 
 	public function test_array_option_json_preserves_associative_keys(): void {
@@ -1290,7 +1291,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_set_verb_empty_array_value_yields_empty_list(): void {
-		// An empty value decodes (json fails → csv split of '') to [].
+		// An empty value is not JSON (json_decode('') is null) → explicitly rejected to [].
 		$interpreter = new Performance_CI_Node();
 		VerbHarness::fire(
 			$interpreter,

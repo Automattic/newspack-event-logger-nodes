@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Performance_CI` now rejects a non-JSON synced array-option value explicitly.** `Settings_Sync_Node::scalarize()` JSON-encodes arrays unconditionally, so the wire form is always JSON; the old comma-list "legacy senders" fallback in `decode_array_value()` was unreachable. A non-JSON value is now treated as a contract violation — rejected to `[]` with a rate-limited notice — instead of being silently comma-split. The orphaned `csv()` helper was removed.
+- **The admin-asset enqueue reads `recommended_log_events` through the fail-loud `Config::value()` accessor** instead of `$cfg['recommended_log_events'] ?? []`, so a renamed/typo'd key throws at the boundary rather than silently yielding an empty recommended-hooks list.
+
+### Removed
+
+- **Dropped the Flame Builder EMA→sums legacy-shape read migrations.** Two blocks in `accumulate_all_stats()` that rewrote pre-fix (EMA running-mean) persisted aggregates lacking `sum_value`/`sum_req_time` into the empty sums shape are gone; no pre-fix values survive, and the live current-shape (sums) read path — including the `flame_raw` raw-for-merge restore — is unchanged.
+
 ## [0.36.0] - 2026-07-16
 
 ### Changed

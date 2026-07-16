@@ -144,10 +144,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Decode a synced array-option value: JSON first (what Settings_Sync_Node now
-	 * ships — lossless for assoc maps like custom_events), falling back to a
-	 * comma-list for legacy senders. Only a decoded ARRAY is trusted; a bare
-	 * scalar / JSON-null falls back to the csv split.
+	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
+	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
+	 * non-JSON value is a contract violation: reject it explicitly to [] with a
+	 * rate-limited notice rather than silently mis-parsing it.
 	 *
 	 * @param string $raw The raw positional value off the wire.
 	 * @return array<array-key,mixed>
@@ -157,30 +157,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( \is_array( $decoded ) ) {
 			return $decoded;
 		}
-		return self::csv( [ 'v' => $raw ], 'v' );
-	}
-
-	/**
-	 * Split a Command_Args comma-list option into a trimmed, non-empty string
-	 * array. An absent key or an empty/flag value yields `[]`.
-	 *
-	 * @param array<string,string|true> $options Parsed options.
-	 * @param string                    $key     Option name.
-	 * @return array<int,string>
-	 */
-	private static function csv( array $options, string $key ): array {
-		$raw = $options[ $key ] ?? '';
-		if ( true === $raw || '' === $raw ) {
-			return [];
-		}
-		$out = [];
-		foreach ( \explode( ',', $raw ) as $item ) {
-			$item = \trim( $item );
-			if ( '' !== $item ) {
-				$out[] = $item;
-			}
-		}
-		return $out;
+		Core::print_less_often( 'PerformanceCI: rejected non-JSON synced array-option value' );
+		return [];
 	}
 
 	/**
