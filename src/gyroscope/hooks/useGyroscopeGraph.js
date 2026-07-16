@@ -55,7 +55,8 @@ const controlMsg = ( value ) => {
 /**
  * @return {Object} Empty — the view reads its model via useNodeState +
  *   Core.node(VIEW).snapshot(); the gyroscope dashboard has no control callbacks.
- *   Reset Graph is driven by the overlay via `Core.reinit`, stashed by mountExospine.
+ *   Reset Graph is driven by a `Core.bumpGraphGeneration()` bump — mountExospine
+ *   subscribes this reused mount's rebuild to it.
  */
 export function useGyroscopeGraph() {
 	const isPageVisible = usePageVisibility();
