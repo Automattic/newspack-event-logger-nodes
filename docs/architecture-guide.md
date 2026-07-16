@@ -458,32 +458,11 @@ Job_Worker_Node (downstream) reads `jobs.log` and looks up the handler in `newsp
 
 ### Job_Worker_Node
 
-> **Lives in the `newspack-nodes` substrate** (`\Newspack_Nodes\Job_Worker_Node`), not this plugin — generic async-job dispatch is runtime plumbing. The per-job *request context* (logger suspend, synthetic `/jobs/{handler}` `$_SERVER`) is this plugin's concern: it's supplied by `Log_Manager::begin/end_job_context`, hooked onto the substrate's `newspack_nodes/job_worker/{before,after}_job` actions.
+> **Lives in the `newspack-nodes` substrate** (`\Newspack_Nodes\Job_Worker_Node`), not this plugin. Generic async-job dispatch — per-job try/catch isolation, the `gc_collect_cycles()`-after-every-job discipline, the object-cache flush cadence, and the memory-watermark self-restart — is runtime plumbing; see its row in [`../../newspack-nodes/AGENTS.md`](../../newspack-nodes/AGENTS.md). Two things are THIS plugin's concern:
 
-Executes registered job handlers. Per-job try/catch isolates failures. Fires `before_job`/`after_job` actions around each handler (the after-action runs even on throw). Calls `gc_collect_cycles()` after every job; flushes the WP object cache every `CACHE_FLUSH_INTERVAL` (default 50) jobs; latches a `memory_pressure` flag at 80% of `memory_limit` so the topology drain predicate exits cleanly and the supervisor respawns into a fresh process.
+**Per-job request context.** The worker fires `newspack_nodes/job_worker/{before,after}_job` around each handler (the after-action runs even on throw). ELN hooks `Log_Manager::begin_job_context` / `end_job_context` onto them to suspend the request logger and stand up a synthetic `/jobs/{handler}` `$_SERVER`, so a job's own logging never bleeds into the request that enqueued it.
 
-```php
-// \Newspack_Nodes\Job_Worker_Node — abridged
-public function fill( array $message ): void {
-    $entry    = $message[ Message::VALUE ];
-    $kind     = $entry['k'] ?? '';                             // 'job' or 'remote_job' (kind carried under `k` end-to-end)
-    $handler  = $entry['handler'] ?? '';
-    $handlers = ( 'remote_job' === $kind ) ? $this->remote_handlers : $this->local_handlers;
-    try {
-        \do_action( 'newspack_nodes/job_worker/before_job', $handler );  // ELN hooks Log_Manager::begin_job_context
-        ( $handlers[ $handler ] )( $entry['parameters'] ?? [] );
-    } catch ( \Throwable $e ) { Core::print_less_often( /* ... */ ); }
-    finally { \do_action( 'newspack_nodes/job_worker/after_job', $handler ); } // → Log_Manager::end_job_context
-    ++$this->jobs_executed;
-    \gc_collect_cycles();
-    if ( ++$this->jobs_since_cache_flush >= self::CACHE_FLUSH_INTERVAL ) {
-        \wp_cache_flush();
-        $this->jobs_since_cache_flush = 0;
-    }
-}
-```
-
-Image-handler circular refs (`wp_generate_attachment_metadata` loading full-resolution images into GD) are the documented reason for the discipline. Preserve in any successor.
+**Handler registration + `k`-routing.** The worker reads each `jobs.log` entry's kind under `k` — `'job'` or `'remote_job'`, carried end-to-end (never `type`) — and dispatches against the matching filter: `k:"job"` → `newspack_nodes/job_handlers`, `k:"remote_job"` → `newspack_nodes/remote_job_handlers`. Registration is filter-only (no programmatic setters); a job type registers under whichever side(s) should handle it — see [Hub vs Spoke Topology](#hub-vs-spoke-topology).
 
 ### Remote_Job_Rewrite_Node
 
