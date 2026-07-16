@@ -62,6 +62,11 @@ const COLUMNS = {
 		),
 		width: '240px',
 	},
+	url: {
+		label: __( 'URL', 'newspack-event-logger-nodes' ),
+		tooltip: __( 'Request method and URL', 'newspack-event-logger-nodes' ),
+		width: 'auto',
+	},
 	keyword: {
 		label: __( 'Keyword', 'newspack-event-logger-nodes' ),
 		tooltip: __( 'Error/warning keyword', 'newspack-event-logger-nodes' ),
@@ -74,7 +79,7 @@ const COLUMNS = {
 	},
 };
 
-const DEFAULT_COLUMNS = [ 'time', 'rid', 'keyword', 'message' ];
+const DEFAULT_COLUMNS = [ 'time', 'rid', 'url', 'keyword', 'message' ];
 
 /**
  * Format timestamp to HH:MM:SS.mmm
@@ -153,6 +158,28 @@ const ErrorRow = memo( function ErrorRow( {
 								>
 									{ entry.rid }
 								</a>
+							</span>
+						);
+					case 'url':
+						return (
+							<span key={ col } role="cell" className="entry-url">
+								{ entry.url && (
+									<>
+										<span className="entry-method">
+											{ entry.method }
+										</span>{ ' ' }
+										<a
+											href={ `admin.php?page=event-logger-overview&url=${ entry.urlHash }` }
+											className="entry-url-link"
+											title={ __(
+												'View URL stats',
+												'newspack-event-logger-nodes'
+											) }
+										>
+											{ entry.url }
+										</a>
+									</>
+								) }
 							</span>
 						);
 					case 'keyword':
@@ -415,7 +442,7 @@ export default function ErrorLog() {
 						type="text"
 						className="newspack-nodes-search-input"
 						placeholder={ __(
-							'Filter by keyword, message, or request ID…',
+							'Filter by URL, keyword, message, or request ID…',
 							'newspack-event-logger-nodes'
 						) }
 						value={ filter }

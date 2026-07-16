@@ -150,6 +150,38 @@ describe( 'ErrorLog', () => {
 		expect( container.textContent ).toContain( 'boom' );
 	} );
 
+	it( 'renders the Request Log URL column with method and URL detail link', () => {
+		registerViewFixture( {
+			entries: [
+				entry( {
+					rid: 'url-context-rid-731',
+					method: 'PATCH',
+					url: '/error-context-731?errors-worker-731',
+					urlHash: 'url-hash-731',
+				} ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+
+		const headers = Array.from(
+			container.querySelectorAll( '[role="columnheader"]' )
+		).map( ( header ) => header.textContent );
+		expect( headers.slice( 0, 3 ) ).toEqual( [
+			'Time',
+			'Request ID',
+			'URL',
+		] );
+		const link = container.querySelector( '.entry-url-link' );
+		expect( link.textContent ).toBe(
+			'/error-context-731?errors-worker-731'
+		);
+		expect( link.getAttribute( 'href' ) ).toBe(
+			'admin.php?page=event-logger-overview&url=url-hash-731'
+		);
+		expect( link.parentElement.textContent ).toContain( 'PATCH' );
+	} );
+
 	it( 'refreshes equal-shaped rows when the view node is rebuilt', () => {
 		registerViewFixture( {
 			entries: [

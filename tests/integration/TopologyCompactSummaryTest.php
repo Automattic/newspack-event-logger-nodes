@@ -22,6 +22,7 @@ use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Topology_Loader;
@@ -187,6 +188,47 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertSame( 5, $this->partition_geometry( $errors, 'max_segments' ) );
 		$this->assertSame( 120, $this->partition_geometry( $errors, 'min_lifetime' ) );
 		$this->assertSame( 7200, $this->partition_geometry( $errors, 'max_lifetime' ) );
+	}
+
+	public function test_errors_partition_accepts_enriched_records_larger_than_pipe_buf(): void {
+		$this->load_topology( 'combined' );
+
+		$errors = Core::node( 'errors:partition' );
+		$this->assertInstanceOf( Partition_Node::class, $errors );
+
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::FROM ]      = 'request-builder';
+		$message[ Message::KEY ]       = 'large-error-rid-731';
+		$message[ Message::VALUE ]     = [
+			'ts' => 731.25,
+			'k'  => 'error',
+			'm'  => \str_repeat( 'payload-sentinel-731-', 170 ),
+		];
+		$this->assertLessThan( Partition_Node::MAX_LINE_SIZE, \strlen( Message::packed( $message ) . "\n" ) );
+		$message[ Message::VALUE ]['method'] = 'PATCH';
+		$message[ Message::VALUE ]['url']    = '/' . \str_repeat( 'url-sentinel-731-', 80 );
+		$this->assertGreaterThan( Partition_Node::MAX_LINE_SIZE, \strlen( Message::packed( $message ) . "\n" ) );
+
+		$errors->fill( $message );
+		$errors->flush();
+
+		$round_trip = null;
+		foreach ( $errors->get_segments( true ) as $segment ) {
+			$bytes = $errors->read_at( (int) $segment['id'], 0, (int) $segment['size'] );
+			foreach ( \explode( "\n", $bytes ) as $line ) {
+				if ( '' === $line ) {
+					continue;
+				}
+				$unpacked = Message::unpacked( $line );
+				if ( 'large-error-rid-731' === $unpacked[ Message::KEY ] ) {
+					$round_trip = $unpacked[ Message::VALUE ];
+				}
+			}
+		}
+
+		$this->assertIsArray( $round_trip, 'the enriched error record was dropped at the partition size cap' );
+		$this->assertSame( $message[ Message::VALUE ], $round_trip );
 	}
 
 	/**

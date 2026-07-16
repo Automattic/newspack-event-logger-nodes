@@ -667,6 +667,48 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 1, $by_to['main:target'] ?? [], 'main target only got the completed request' );
 	}
 
+	public function test_error_target_carries_active_request_url_and_method(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->connect_node( 'main:target' );
+		$rb->set_errors_target( 'errors:target' );
+
+		$this->fill( $rb, 1, 'url-context-rid-731', 'process (start)' );
+		$this->fill( $rb, 2, 'url-context-rid-731', 'request', [ 'm' => 'PATCH /error-context-731?token=private' ] );
+		$this->fill(
+			$rb,
+			3,
+			'url-context-rid-731',
+			'environment_v3',
+			[ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'errors-worker-731' ] ]
+		);
+		$this->fill(
+			$rb,
+			4,
+			'url-context-rid-731',
+			'error',
+			[
+				'm'      => 'sentinel failure 731',
+				'url'    => '/spoofed-error-url-731',
+				'method' => 'GET',
+			]
+		);
+		$this->fill( $rb, 5, 'url-context-rid-731', 'process (complete)' );
+
+		$by_target = [];
+		foreach ( $capture->captured as $message ) {
+			$by_target[ $message[ Message::TO ] ][] = $message;
+		}
+		$this->assertCount( 1, $by_target['errors:target'] ?? [] );
+		$this->assertCount( 1, $by_target['main:target'] ?? [] );
+		$error_value   = $by_target['errors:target'][0][ Message::VALUE ];
+		$request_value = $by_target['main:target'][0][ Message::VALUE ];
+		$this->assertSame( '/error-context-731?errors-worker-731', $error_value['url'] );
+		$this->assertSame( $request_value['url'], $error_value['url'] );
+		$this->assertSame( 'PATCH', $error_value['method'] );
+	}
+
 	public function test_suffix_error_warning_keywords_also_forwarded(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
