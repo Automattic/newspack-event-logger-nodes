@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-07-16
+
 ### Changed
 
 - **Migrated to the newspack-nodes token-array command contract.** TM_COMMAND `arguments` and node-constructor `arguments` are now a token array (`list<string>` argv) rather than a joined string, matching the substrate change. The App service CIs (`performance`, `events`, `logger`, `discovery`, `rules`) and the Node subclasses (`Request_Builder`, `Flame_Builder`, `Job_Router`, `Discovery_Collector`) read their verb/constructor arguments as tokens; the `rules` `save`/`upsert` verbs read the whole JSON blob as a single argument token; the `reqgrep` CLI, `Log_Manager`'s firehose Topic construction, and the dashboard hooks (`useRulesGraph`, `usePerformanceGraph`, `useRequestLogGraph`, `useErrorLogGraph`, `useGyroscopeGraph`, `useHookCatalogGraph`) all produce and consume token arrays. This fixes a latent wire bug in `useHookCatalogGraph`, which sent an empty-string `arguments` to the array-typed PHP command handler.
