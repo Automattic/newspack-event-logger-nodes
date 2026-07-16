@@ -94,19 +94,12 @@ export function useHookCatalogGraph( opts = {} ) {
 
 	// Mount the graph once: clip it onto the exospine.
 	useEffect( () => {
-		const data =
-			( typeof window !== 'undefined' && window.NewspackNodesData ) || {};
-
 		// Canonical backbone: everything → interpreter → router.
 		const { interpreter, http, teardown: teardownSpine } = mountExospine();
 
 		// _http is a backbone singleton (mountExospine owns it); reuse it.
 		http.client =
-			optsRef.current.commandClient ||
-			new CommandClient( {
-				baseUrl: data.restUrl || '/wp-json/',
-				nonce: data.nonce || '',
-			} );
+			optsRef.current.commandClient || CommandClient.fromGlobal();
 
 		// Application view-model node — receives every reply via TO=FROM.
 		interpreter.makeNode( 'HookCatalogView', VIEW );

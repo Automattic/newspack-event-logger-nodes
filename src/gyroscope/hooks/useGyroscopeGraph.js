@@ -77,7 +77,7 @@ export function useGyroscopeGraph() {
 			);
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
-			link.client = new CommandClient( { baseUrl, nonce } );
+			link.client = CommandClient.fromGlobal();
 
 			const tee = interpreter.makeNode( 'Tee', TEE );
 			tee.connectNode( VIEW );

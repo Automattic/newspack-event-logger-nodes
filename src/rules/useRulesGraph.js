@@ -80,16 +80,8 @@ export function useRulesGraph( opts = {} ) {
 
 	useEffect( () => {
 		const build = ( { interpreter, shell, http } ) => {
-			const data =
-				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
-				{};
-
 			http.client =
-				optsRef.current.commandClient ||
-				new CommandClient( {
-					baseUrl: data.restUrl || '/wp-json/',
-					nonce: data.nonce || '',
-				} );
+				optsRef.current.commandClient || CommandClient.fromGlobal();
 
 			const recv = interpreter.makeNode( 'Tee', RECV );
 			interpreter.makeNode( 'RulesView', VIEW );

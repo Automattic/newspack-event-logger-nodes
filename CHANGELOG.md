@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Long-lived dashboard command channels now share the substrate's renewable WordPress credentials.** Request Log, Error Log, Gyroscope, hook-catalog, and rules clients use the page-local `CommandClient.fromGlobal()` path, so an expired REST nonce is renewed and the failed command retried once without replacing explicitly configured remote credentials. Requires the accompanying Newspack Nodes release that provides bounded nonce renewal.
+
 - **Request Log and Error Log search now filters before the ring buffer.** Changing the search term clears and rebases the view node's ring, then only matching incoming rows consume buffer slots; React no longer repeatedly filters stored history. Accepted rows receive consecutive stable sequence numbers, so stripes remain alternating without changing color under live prepends or scrolling. Filter changes also reset the old ring's scroll animation, and render snapshots now include view-node identity so a rebuilt graph cannot leave equal-shaped stale rows on screen.
 
 - **Server-filtered performance overview cards now use the selected server's data.** The overview keeps its global server routing dimension while scoping the other breakdowns, matching Flame Builder's intentionally non-redundant storage. Total requests, average response, request rate, and average peak memory now come from the same selected-server series instead of mixing zeroed scoped lookups with global memory.
