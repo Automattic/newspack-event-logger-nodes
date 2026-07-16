@@ -23,6 +23,8 @@ jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	} ),
 } ) );
 
+import fs from 'fs';
+import path from 'path';
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import ErrorLog from '../ErrorLog';
@@ -180,6 +182,73 @@ describe( 'ErrorLog', () => {
 			'admin.php?page=event-logger-overview&url=url-hash-731'
 		);
 		expect( link.parentElement.textContent ).toContain( 'PATCH' );
+	} );
+
+	it( 'keeps the URL and message columns proportional regardless of content length', () => {
+		const longUrl = `/${ 'long-url-segment-731/'.repeat( 12 ) }`;
+		const longMessage = 'long-message-segment-947 '.repeat( 12 ).trim();
+		registerViewFixture( {
+			entries: [
+				entry( {
+					seq: 2,
+					rid: 'long-url-short-message-731',
+					method: 'GET',
+					url: longUrl,
+					urlHash: 'long-url-hash-731',
+					m: 'short-731',
+				} ),
+				entry( {
+					seq: 1,
+					rid: 'short-url-long-message-947',
+					method: 'POST',
+					url: '/s-947',
+					urlHash: 'short-url-hash-947',
+					m: longMessage,
+				} ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+
+		const rows = Array.from(
+			container.querySelectorAll( '.event-logger-error-log-entry' )
+		);
+		expect( rows ).toHaveLength( 2 );
+		expect( rows[ 0 ].textContent ).toContain( longUrl );
+		expect( rows[ 1 ].textContent ).toContain( longMessage );
+
+		const expectedTemplate =
+			'100px 240px minmax(0, 2fr) 240px minmax(0, 3fr)';
+		const templates = [
+			container.querySelector( '.event-logger-error-log-header-row' ),
+			...rows,
+		].map( ( row ) => row.style.gridTemplateColumns );
+		expect( templates ).toEqual( [
+			expectedTemplate,
+			expectedTemplate,
+			expectedTemplate,
+		] );
+		expect( templates.join( ' ' ) ).not.toContain( 'auto' );
+	} );
+
+	it( 'uses the canonical spacing token for horizontal row padding', () => {
+		const styles = fs.readFileSync(
+			path.join( __dirname, '..', 'styles', 'error-log.scss' ),
+			'utf8'
+		);
+		const horizontalPaddings = [
+			styles.match(
+				/\.event-logger-error-log-header-row\s*\{[^}]*padding:\s*\d+px\s+(\S+)\s*;/
+			)?.[ 1 ],
+			styles.match(
+				/\.event-logger-error-log-entry\s*\{[^}]*padding:\s*\d+px\s+(\S+)\s*;/
+			)?.[ 1 ],
+		];
+
+		expect( horizontalPaddings ).toEqual( [
+			'base.$space-md',
+			'base.$space-md',
+		] );
 	} );
 
 	it( 'refreshes equal-shaped rows when the view node is rebuilt', () => {
