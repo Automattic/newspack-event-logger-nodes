@@ -65,7 +65,7 @@ const COLUMNS = {
 	url: {
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		tooltip: __( 'Request method and URL', 'newspack-event-logger-nodes' ),
-		width: 'auto',
+		width: 'minmax(0, 2fr)',
 	},
 	keyword: {
 		label: __( 'Keyword', 'newspack-event-logger-nodes' ),
@@ -75,7 +75,7 @@ const COLUMNS = {
 	message: {
 		label: __( 'Message', 'newspack-event-logger-nodes' ),
 		tooltip: __( 'Error message', 'newspack-event-logger-nodes' ),
-		width: 'auto',
+		width: 'minmax(0, 3fr)',
 	},
 };
 

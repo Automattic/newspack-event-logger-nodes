@@ -65,7 +65,7 @@
 .event-logger-error-log-header-row {
 	display: grid;
 	gap: 12px;
-	padding: 6px 8px;
+	padding: 6px base.$space-md;
 	background: var(--paper-2);
 	border: 1px solid var(--paper-shadow);
 	border-bottom: none;
@@ -102,7 +102,7 @@
 	display: grid;
 	gap: 12px;
 	align-items: center;
-	padding: 8px 12px;
+	padding: 8px base.$space-md;
 	height: 33px;
 	box-sizing: border-box;
 	border-radius: 4px;

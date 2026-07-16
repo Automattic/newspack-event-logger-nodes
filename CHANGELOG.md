@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Error Log columns stay vertically aligned across rows with different URL and message lengths.** URL and Message now use deterministic fractional tracks instead of two independently content-sized `auto` tracks, and the header uses the same horizontal inset as its cells.
+
 - **`Flame_Builder_Node`'s `set_is_hub` schema default used the wrong token namespace.** It read `<config:is_hub>`, but `is_hub` is owned by the `eln` namespace, not the substrate `config` resolver — so it silently resolved to `''` → `false`, disabling hub mode whenever the schema default was used. Corrected to `<eln:is_hub>` (matching the shipped `flame-builder.tsl`). A new `ElnConfigTokenTest` guard walks the node schema and fails loud if any `<ns:key>` token default isn't owned by its namespace.
 
 ### Changed
