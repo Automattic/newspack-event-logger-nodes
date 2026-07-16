@@ -1978,7 +1978,7 @@ class Flame_Builder_Node extends Node {
 					'name'        => 'set_is_hub',
 					'description' => 'Toggle hub mode (per-server tracking).',
 					'args'        => [
-						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<config:is_hub>' ],
+						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<eln:is_hub>' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
 						$arg = Core::as_string( $args[0] ?? '' );

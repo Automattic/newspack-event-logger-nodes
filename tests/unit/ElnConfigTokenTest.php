@@ -69,4 +69,48 @@ class ElnConfigTokenTest extends TestCase {
 		Config::reset();
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
+
+	// --- schema-token / owned-empty guards ----------------------------------
+
+	public function test_stats_mirror_node_unset_is_owned_empty_under_strict(): void {
+		// Unset stats_mirror_node ('stats mirror off') is owned-empty, NOT
+		// unresolvable — strict resolution must return '' and not throw.
+		$this->assertSame( '', Core::resolve_config_token( 'eln', 'stats_mirror_node', true ) );
+	}
+
+	public function test_flame_builder_schema_token_defaults_are_owned(): void {
+		// Every <ns:key> token default in a node schema must be owned by a
+		// registered namespace. A wrong-namespace token (the <config:is_hub>
+		// footgun) resolves to '' silently in prod but THROWS under strict, which
+		// is exactly what schema-arg resolution now uses. This walks Flame_Builder's
+		// schema and fails loud if any token isn't owned.
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'aggregator' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$schema = \Newspack_Event_Logger_Nodes\Flame_Builder_Node::node_schema();
+		$tokens = [];
+		foreach ( $schema['arguments'] ?? [] as $arg ) {
+			$this->collect_schema_token( $arg, $tokens );
+		}
+		foreach ( $schema['commands'] ?? [] as $cmd ) {
+			foreach ( $cmd['args'] ?? [] as $arg ) {
+				$this->collect_schema_token( $arg, $tokens );
+			}
+		}
+		$this->assertNotEmpty( $tokens, 'expected at least one <ns:key> token default to exercise' );
+		foreach ( $tokens as $token ) {
+			// Throws (RuntimeException) if the namespace doesn't own the key.
+			Core::resolve_config_tokens( $token, true );
+		}
+		$this->addToAssertionCount( 1 );
+	}
+
+	/** @param array<string,mixed> $arg */
+	private function collect_schema_token( array $arg, array &$tokens ): void {
+		$default = $arg['default'] ?? null;
+		if ( \is_string( $default ) && \preg_match( '/<[a-zA-Z_]\w*:[a-zA-Z_]\w*>/', $default ) ) {
+			$tokens[] = $default;
+		}
+	}
 }
