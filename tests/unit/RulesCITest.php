@@ -61,7 +61,7 @@ class RulesCITest extends TestCase {
 	}
 
 	private function fire( string $verb, string $args = '' ): mixed {
-		return VerbHarness::fire( new Rules_CI_Node(), 'rules', $verb, $args );
+		return VerbHarness::fire( new Rules_CI_Node(), 'rules', $verb, '' === $args ? [] : [ $args ] );
 	}
 
 	// -------------------------------------------------------------------------

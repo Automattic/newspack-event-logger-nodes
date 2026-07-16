@@ -42,7 +42,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_completed_target', $verbs );
-		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, 'completed:tee' ) );
+		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] ) );
 		$this->assertSame( 'completed:tee', $this->read_private( $rb, 'completed_target' ) );
 	}
 
@@ -52,10 +52,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty target.
-		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, 'completed:tee' ) );
+		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] ) );
 		$this->assertSame( 'completed:tee', $this->read_private( $rb, 'completed_target' ) );
 		// Empty arg clears the target (returns 'ok', not 'usage:').
-		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, '' ) );
+		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, [] ) );
 		$this->assertSame( '', $this->read_private( $rb, 'completed_target' ) );
 	}
 
@@ -65,7 +65,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_inflight_target', $verbs );
-		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' ) );
+		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, [ 'gyroscope:partition' ] ) );
 		$this->assertSame( 'gyroscope:partition', $rb->flight()->target() );
 	}
 
@@ -75,10 +75,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty flight target.
-		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, 'gyroscope:partition' ) );
+		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, [ 'gyroscope:partition' ] ) );
 		$this->assertSame( 'gyroscope:partition', $rb->flight()->target() );
 		// Empty arg clears the flight target (returns 'ok', not 'usage:').
-		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, '' ) );
+		$this->assertSame( 'ok', $verbs['set_inflight_target']( $interpreter, [] ) );
 		$this->assertSame( '', $rb->flight()->target() );
 	}
 
@@ -88,10 +88,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty errors target.
-		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, 'errors:partition' ) );
+		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, [ 'errors:partition' ] ) );
 		$this->assertSame( 'errors:partition', $this->read_private( $rb, 'errors_target' ) );
 		// Empty arg clears the errors target.
-		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, '' ) );
+		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, [] ) );
 		$this->assertSame( '', $this->read_private( $rb, 'errors_target' ) );
 	}
 }

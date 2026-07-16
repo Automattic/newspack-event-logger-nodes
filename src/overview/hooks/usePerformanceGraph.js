@@ -224,7 +224,7 @@ export function usePerformanceGraph( opts = {} ) {
 			const udFetcher = interpreter.makeNode(
 				'Fetcher',
 				URLDETAIL_FETCHER,
-				`${ URLDETAIL_RECV } url_detail`
+				[ URLDETAIL_RECV, 'url_detail' ]
 			);
 			udFetcher.command_args = () =>
 				urlDetailArgs( optsRef.current.selectedUrl?.hash );
@@ -500,7 +500,7 @@ export function usePerformanceGraph( opts = {} ) {
 					await client.send( {
 						to: SERVER,
 						verb: 'request_search',
-						args: rid,
+						args: [ rid ],
 					} )
 				);
 			} catch ( err ) {
@@ -579,17 +579,17 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// listRules — current ruleset for the modal; resolves { rules }.
 	const listRules = useCallback(
-		() => awaitReply( URLDETAIL_VIEW, 'list', '', RULES_TARGET ),
+		() => awaitReply( URLDETAIL_VIEW, 'list', [], RULES_TARGET ),
 		[ awaitReply ]
 	);
 
-	// upsertRule — replace-by-pattern/append; args raw JSON. Resolves {rule}.
+	// upsertRule: whole raw JSON is one arg token (CI json_decodes $args[0]).
 	const upsertRule = useCallback(
 		( ruleObject ) =>
 			awaitReply(
 				URLDETAIL_VIEW,
 				'upsert',
-				JSON.stringify( ruleObject ),
+				[ JSON.stringify( ruleObject ) ],
 				RULES_TARGET
 			),
 		[ awaitReply ]

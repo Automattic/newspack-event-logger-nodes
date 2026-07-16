@@ -99,7 +99,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect( client.send ).toHaveBeenCalledWith( {
 		to: 'performance',
 		verb: 'request_detail',
-		args: 'abc123 --partition=2',
+		args: [ 'abc123', '--partition=2' ],
 	} );
 	const text = view.container.textContent;
 	expect( text ).toContain( 'Request:' ); // the rid heading

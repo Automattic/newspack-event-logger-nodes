@@ -120,10 +120,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * dimensions (here — not the ctor — because it depends on the positional args).
 	 *
 	 * @api Used by substrate.
-	 * @param string|null $args
-	 * @return string
+	 * @param list<string>|null $args
+	 * @return list<string>
 	 */
-	public function arguments( ?string $args = null ): string {
+	public function arguments( ?array $args = null ): array {
 		if ( null === $args ) {
 			return parent::arguments();
 		}
@@ -1233,12 +1233,12 @@ class Request_Builder_Node extends Timer_Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$args = \trim( $args );
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
 						// Empty arg clears target (disables secondary emit).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_errors_target( $args );
+						$patron->set_errors_target( $arg );
 						return 'ok';
 					},
 				],
@@ -1248,12 +1248,12 @@ class Request_Builder_Node extends Timer_Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$args = \trim( $args );
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
 						// Empty arg clears target (disables secondary emit).
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_completed_target( $args );
+						$patron->set_completed_target( $arg );
 						return 'ok';
 					},
 				],
@@ -1263,12 +1263,12 @@ class Request_Builder_Node extends Timer_Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, string $args ): string {
-						$args = \trim( $args );
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
 						// target() arms Router-TIMER hitchhike; empty stops it.
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->flight()->target( $args );
+						$patron->flight()->target( $arg );
 						return 'ok';
 					},
 				],

@@ -731,7 +731,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$partition = new Partition_Node();
 			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( "{$log_base}/requests.p{$p}" );
+			$partition->arguments( [ "{$log_base}/requests.p{$p}" ] );
 			$partition->with_index(
 				static function ( array $message, array $position ): ?string {
 					return Request_Builder_Node::format_index_entry( $message, $position );
@@ -794,7 +794,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$result   = null;
 		$requests = new Partition_Node();
 		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( "{$log_base}/requests.p{$partition}" );
+		$requests->arguments( [ "{$log_base}/requests.p{$partition}" ] );
 		$requests->with_index(
 			static function ( array $message, array $position ): ?string {
 				return Request_Builder_Node::format_index_entry( $message, $position );
@@ -834,7 +834,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$entries_count = 0;
 		$requests = new Partition_Node();
 		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( "{$log_base}/requests.p{$partition}" );
+		$requests->arguments( [ "{$log_base}/requests.p{$partition}" ] );
 		$requests->with_index(
 			static function ( array $message, array $position ): ?string {
 				return Request_Builder_Node::format_index_entry( $message, $position );
@@ -889,7 +889,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		for ( $p = 0; $p < $num_partitions; $p++ ) {
 			$flames = new Partition_Node();
 			self::name_scratch_partition( $flames, 'flames', $p );
-			$flames->arguments( "{$log_base}/flames.p{$p}" );
+			$flames->arguments( [ "{$log_base}/flames.p{$p}" ] );
 			$flames->with_index(
 				static function ( array $message, array $position ): ?string {
 					return Flame_Builder_Node::format_index_entry( $message, $position );
@@ -991,11 +991,11 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Optional args: server scopes; breakdown = comma-sep dim list.
-				$opts       = Command_Args::parse( $args )['options'];
+				$opts       = Command_Args::parse( self::arg_strings( $args ) )['options'];
 				$server     = (string) ( $opts['server'] ?? '' );
 				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
 				$categories = self::flag( $opts, 'categories' );
@@ -1043,10 +1043,10 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$opts    = Command_Args::parse( $args )['options'];
+				$opts    = Command_Args::parse( self::arg_strings( $args ) )['options'];
 				$sort    = (string) ( $opts['sort']   ?? 'count' );
 				$order   = (string) ( $opts['order']  ?? 'desc' );
 				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
@@ -1104,10 +1104,10 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$parsed = Command_Args::parse( $args );
+				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$opts   = $parsed['options'];
 				$hash   = $parsed['positional'][0] ?? '';
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
@@ -1172,10 +1172,10 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$rid = Command_Args::parse( $args )['positional'][0] ?? '';
+				$rid = Command_Args::parse( self::arg_strings( $args ) )['positional'][0] ?? '';
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
 				}
@@ -1205,10 +1205,10 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				$parsed = Command_Args::parse( $args );
+				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$rid    = $parsed['positional'][0] ?? '';
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
@@ -1234,7 +1234,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'name'        => 'hooks_registered',
 					'description' => 'Registered hooks grouped by category.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Recompute total_hooks so the response contract stays stable.
@@ -1257,11 +1257,11 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
 				// Positional: one option per command; Settings_Sync fans out.
-				[ $option, $value_arg ] = \array_pad( Command_Args::parse( $args )['positional'], 2, null );
+				[ $option, $value_arg ] = \array_pad( Command_Args::parse( self::arg_strings( $args ) )['positional'], 2, null );
 
 				$option = Core::str( $option );
 				if ( '' === $option ) {

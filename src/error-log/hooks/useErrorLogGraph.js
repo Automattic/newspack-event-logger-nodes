@@ -80,19 +80,10 @@ export function useErrorLogGraph( opts = {} ) {
 	const { viewRef } = useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
-			const data =
-				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
-				{};
-
-			const baseUrl = data.restUrl || '/wp-json/';
-			const nonce = data.nonce || '';
-
-			// RemoteLink composes SseIn + HttpOut + Heartbeat children.
-			const link = interpreter.makeNode(
-				'RemoteLink',
-				LINK,
-				`errors.* ${ baseUrl } ${ nonce }`
-			);
+			// Subscribe topic is the only ctor token now.
+			const link = interpreter.makeNode( 'RemoteLink', LINK, [
+				'errors.*',
+			] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			link.client = CommandClient.fromGlobal();

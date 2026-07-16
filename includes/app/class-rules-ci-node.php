@@ -101,7 +101,7 @@ class Rules_CI_Node extends Service_CI_Node {
 					'name'        => 'list',
 					'description' => 'All rules, with pointer-tier hooks resolved to the full list.',
 					'args'        => [],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 						$rules = \array_map(
 							static fn ( Rule $r ): array => self::wire_shape( $r ),
 							Rule_Set::load()->rules()
@@ -115,8 +115,8 @@ class Rules_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'rules', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						$decoded = self::decode_json_array( $args );
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+						$decoded = self::decode_json_array( self::arg_strings( $args )[0] ?? '' );
 						$rules   = [];
 						foreach ( $decoded as $entry ) {
 							if ( ! \is_array( $entry ) ) {
@@ -136,8 +136,8 @@ class Rules_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'rule', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						$decoded = self::decode_json_array( $args );
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+						$decoded = self::decode_json_array( self::arg_strings( $args )[0] ?? '' );
 						/** @var array<string, mixed> $decoded decoded rule object (Rule::to_array() shape). */
 						$incoming = Rule::from_array( $decoded );
 						$new_id   = Rule_Set::id_for( $incoming->pattern );
@@ -165,8 +165,8 @@ class Rules_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, string $args, array $envelope = [] ): array {
-						$id = Command_Args::parse( $args )['positional'][0] ?? '';
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+						$id = Command_Args::parse( self::arg_strings( $args ) )['positional'][0] ?? '';
 						if ( '' === $id ) {
 							throw new \RuntimeException( 'id required' );
 						}

@@ -38,10 +38,10 @@ class RequestBuilderValidationTest extends TestCase {
 		$rb->fill( $message );
 	}
 
-	private function builder( string $args = '' ): Request_Builder_Node {
+	private function builder( array $args = [] ): Request_Builder_Node {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		if ( '' !== $args ) {
+		if ( [] !== $args ) {
 			$rb->arguments( $args );
 		}
 		$rb->sink( new Capture_Sink_Node() );
@@ -129,7 +129,7 @@ class RequestBuilderValidationTest extends TestCase {
 
 	public function test_evicted_incomplete_request_logs_trace_timed_out(): void {
 		// bucket_size=1, num_buckets=2 → r_to's bucket is evicted when the next rid sets.
-		$rb = $this->builder( '1 2' );
+		$rb = $this->builder( [ '1', '2' ] );
 		$this->fill( $rb, 1, 'r_to', 'process (start)' );
 		$this->fill( $rb, 2, 'r_to', 'request', [ 'm' => 'GET /timeout' ] );
 

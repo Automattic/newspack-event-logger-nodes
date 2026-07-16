@@ -63,18 +63,10 @@ export function useGyroscopeGraph() {
 	// Clear the stale in-flight map on each reconnect; first connect tails.
 	useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
-			const data =
-				( typeof window !== 'undefined' && window.NewspackNodesData ) ||
-				{};
-			const baseUrl = data.restUrl || '/wp-json/';
-			const nonce = data.nonce || '';
-
-			// RemoteLink = SseIn+HttpOut+Heartbeat children (built lazily).
-			const link = interpreter.makeNode(
-				'RemoteLink',
-				LINK,
-				`gyroscope.* ${ baseUrl } ${ nonce }`
-			);
+			// Subscribe topic is the only ctor token now.
+			const link = interpreter.makeNode( 'RemoteLink', LINK, [
+				'gyroscope.*',
+			] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			link.client = CommandClient.fromGlobal();

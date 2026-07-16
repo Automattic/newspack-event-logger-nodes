@@ -42,12 +42,15 @@ class VerbHarness {
 	 * @param Command_Interpreter_Node $interpreter interpreter under test (already constructed).
 	 * @param string             $name Name to register the interpreter under (e.g. 'workers').
 	 * @param string             $verb Verb to invoke (e.g. 'list').
-	 * @param string             $args Literal-string argument tail (the `arguments` field);
-	 *                                 verbs parse it via Command_Args. Empty for nullary verbs.
+	 * @param array<int,string>|string $args Argument tokens (the `arguments` argv). A
+	 *                                 convenience string is whitespace-split into tokens;
+	 *                                 pass an explicit array when a token contains spaces
+	 *                                 (e.g. a JSON blob). Empty for nullary verbs.
 	 * @param string             $key  Optional KEY field for the inbound message.
 	 * @return mixed The verb's payload (structure for success verbs; error-message string for TM_ERROR).
 	 */
-	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, string $args = '', string $key = '' ): mixed {
+	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, array|string $args = [], string $key = '' ): mixed {
+		$arg_tokens = \is_array( $args ) ? \array_values( $args ) : ( '' === $args ? [] : \preg_split( '/\s+/', $args ) );
 		$router = new Router_Node(); $router->name( Node_Names::ROUTER );
 		$base   = new Command_Interpreter_Node(); $base->name( Node_Names::COMMAND_INTERPRETER ); $base->sink( $router );
 		$interpreter->name( $name );
@@ -70,7 +73,7 @@ class VerbHarness {
 		// json-encoded; only the envelope/wire (HTTP_In's packed Message) is JSON.
 		$message[ Message::VALUE ] = [
 			'name'      => $verb,
-			'arguments' => $args,
+			'arguments' => $arg_tokens,
 		];
 		// Exercises verb LOGIC, not authorization. Mark the command as in-process
 		// so the substrate's client-tier authorize gate (Message::LOCAL) passes.

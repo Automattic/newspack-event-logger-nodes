@@ -53,17 +53,13 @@ class Job_Router_Node extends Node {
 	 * topology dump round-trips.
 	 *
 	 * @api Used by the substrate during make_node construction.
-	 * @param string|null $args Maximum job age in seconds, or null to read back.
+	 * @param list<string>|null $args Maximum job age in seconds at token 0, or null to read back.
 	 */
-	public function arguments( ?string $args = null ): string {
+	public function arguments( ?array $args = null ): array {
 		if ( null === $args ) {
 			return parent::arguments();
 		}
-		$tokens = \preg_split( '/\s+/', \trim( $args ), -1, \PREG_SPLIT_NO_EMPTY );
-		if ( false === $tokens ) {
-			throw new \LogicException( 'Unable to parse stale_timeout argument' );
-		}
-		$raw_timeout = $tokens[0] ?? self::DEFAULT_STALE_TIMEOUT;
+		$raw_timeout = $args[0] ?? self::DEFAULT_STALE_TIMEOUT;
 		$timeout     = \is_numeric( $raw_timeout ) ? (float) $raw_timeout : null;
 		if ( null === $timeout || ! \is_finite( $timeout ) || 0.0 > $timeout ) {
 			throw new \InvalidArgumentException( 'stale_timeout must be numeric, finite, and non-negative' );

@@ -21,6 +21,7 @@ import {
 	Suspense,
 } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
+import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 // Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
@@ -82,7 +83,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 			.send( {
 				to: 'performance',
 				verb: 'request_detail',
-				args: `${ rid } --partition=${ partition }`,
+				args: formatCommandArgs( [ rid ], { partition } ),
 			} )
 			.then( ( reply ) => {
 				if ( ! mountedRef.current ) {

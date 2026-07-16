@@ -62,9 +62,9 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
 		$node = new Discovery_Collector_Node();
 		$node->name( 'discovery-collector' );
-		$node->arguments( '120' );
+		$node->arguments( [ '120' ] );
 
-		$this->assertSame( '120', $node->arguments(), 'arguments() with no arg returns the last raw string' );
+		$this->assertSame( [ '120' ], $node->arguments(), 'arguments() with no arg returns the last token list' );
 	}
 
 	public function test_fire_without_sink_is_a_no_op(): void {

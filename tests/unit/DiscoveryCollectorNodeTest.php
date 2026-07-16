@@ -93,7 +93,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertSame( 'spokes:tee/discovery', $out[ Message::TO ] );
 		$this->assertSame( 'discovery-collector', $out[ Message::FROM ] );
 		$this->assertSame( 'get', $out[ Message::VALUE ]['name'] );
-		$this->assertSame( '', $out[ Message::VALUE ]['arguments'] );
+		$this->assertSame( [], $out[ Message::VALUE ]['arguments'] );
 	}
 
 	public function test_arguments_arms_recurring_timer(): void {
@@ -104,7 +104,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$node = new Discovery_Collector_Node();
 		$node->name( 'discovery-collector' );
 
-		$node->arguments( '300' );
+		$node->arguments( [ '300' ] );
 
 		$this->assertSame( 300000, $node->interval_ms );
 		$this->assertFalse( $node->oneshot );
@@ -118,7 +118,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$node = new Discovery_Collector_Node();
 		$node->name( 'discovery-collector' );
 
-		$node->arguments( '' );
+		$node->arguments( [] );
 
 		$this->assertSame( 300000, $node->interval_ms );
 		$this->assertFalse( $node->oneshot );

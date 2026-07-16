@@ -151,8 +151,8 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( msg[ TO ] ).toBe( 'performance' );
 		expect( msg[ FROM ] ).toBe( VIEW );
 		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
-		// hooks_registered takes no args; empty args string, no payload.
-		expect( msg[ VALUE ].arguments ).toBe( '' );
+		// hooks_registered takes no args; empty token array, no payload.
+		expect( msg[ VALUE ].arguments ).toEqual( [] );
 		expect( msg[ VALUE ].payload ).toBeUndefined();
 	} );
 

@@ -14,9 +14,9 @@
  * TO=FROM, the router peels the receiver Tee, the Tee fans to the view, and the
  * view settles the Promise (and refreshes its render model on a `list` reply).
  *
- * Wire contract mirrors Rules_CI_Node: `save`/`upsert` pass the RAW JSON as the
- * whole command arguments string (the handler json_decodes it); `delete` passes
- * the id as a positional token; `list` takes no args. Mutations re-`list()` to
+ * Wire contract mirrors Rules_CI_Node: `save`/`upsert` pass the RAW JSON as a
+ * single arg token (the handler json_decodes `$args[0]`); `delete` passes the id
+ * as a positional token; `list` takes no args (`[]`). Mutations re-`list()` to
  * refresh the table.
  *
  * The command boundary is injectable: tests pass `opts.commandClient` (assigned
@@ -93,7 +93,7 @@ export function useRulesGraph( opts = {} ) {
 			bumpBuild( ( n ) => n + 1 );
 
 			// Fire one immediate uncorrelated list; its reply refreshes view.
-			shell.fill( buildCommand( 'list', '', makeOpId() ) );
+			shell.fill( buildCommand( 'list', [], makeOpId() ) );
 
 			return () => {
 				interpreterRef.current = null;
@@ -105,7 +105,7 @@ export function useRulesGraph( opts = {} ) {
 	}, [] );
 
 	// Dispatch a verb; the view settles the Promise by matching message[ID].
-	const dispatch = useCallback( ( verb, args = '' ) => {
+	const dispatch = useCallback( ( verb, args = [] ) => {
 		const shell = shellRef.current;
 		if ( ! shell ) {
 			return Promise.reject( new Error( 'graph not mounted' ) );
@@ -122,26 +122,26 @@ export function useRulesGraph( opts = {} ) {
 		return promise;
 	}, [] );
 
-	const list = useCallback( () => dispatch( 'list', '' ), [ dispatch ] );
+	const list = useCallback( () => dispatch( 'list', [] ), [ dispatch ] );
 
 	// Run a mutating verb, then re-list to refresh the table; failure rejects.
 	const runMutation = useCallback(
 		async ( verb, args ) => {
 			const result = await dispatch( verb, args );
-			dispatch( 'list', '' ).catch( () => {} );
+			dispatch( 'list', [] ).catch( () => {} );
 			return result;
 		},
 		[ dispatch ]
 	);
 
-	// save/upsert send raw JSON as the args string; delete sends the id token.
+	// save/upsert: raw JSON is ONE arg token (CI json_decodes $args[0]).
 	const saveAll = useCallback(
-		( rules ) => runMutation( 'save', JSON.stringify( rules ) ),
+		( rules ) => runMutation( 'save', [ JSON.stringify( rules ) ] ),
 		[ runMutation ]
 	);
 
 	const upsert = useCallback(
-		( rule ) => runMutation( 'upsert', JSON.stringify( rule ) ),
+		( rule ) => runMutation( 'upsert', [ JSON.stringify( rule ) ] ),
 		[ runMutation ]
 	);
 
