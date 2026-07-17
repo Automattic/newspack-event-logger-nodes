@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-07-16
+
 ### Removed
 
 - **Deleted the orphaned `Logger_CI_Node` (`logger` CI) and `Events_CI_Node` (`events` CI).** Both were mounted REST CIs with no production callers: the settings hook picker reads `performance.hooks_registered` and the Overview hourly chart reads `performance.overview`, which reproduces the `events.stats` sum-merge exactly; `logger.config` had no JS consumer (the settings page renders config server-side). Removed the two classes, their mount lines, `LoggerCITest`/`EventsCITest`, the `M2Bootstrap`/`M2CommandDispatchE2E`/`ServiceCiHandlerGuard` entries, and the `docs/API.md` sections.
