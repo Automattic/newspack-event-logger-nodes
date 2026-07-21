@@ -144,24 +144,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
-	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
-	 * non-JSON value is a contract violation: reject it explicitly to [] with a
-	 * rate-limited notice rather than silently mis-parsing it.
-	 *
-	 * @param string $raw The raw positional value off the wire.
-	 * @return array<array-key,mixed>
-	 */
-	private static function decode_array_value( string $raw ): array {
-		$decoded = \json_decode( $raw, true );
-		if ( \is_array( $decoded ) ) {
-			return $decoded;
-		}
-		Core::print_less_often( 'PerformanceCI: rejected non-JSON synced array-option value' );
-		return [];
-	}
-
-	/**
 	 * Type-coerce + bounds-check a single value for `set`. Mirrors
 	 * PerfSettingsController::sanitize_value — returns null when rejected.
 	 *
@@ -923,6 +905,24 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $partition->sink() && null !== $ci ) {
 			$partition->sink( $ci );
 		}
+	}
+
+	/**
+	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
+	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
+	 * non-JSON value is a contract violation: reject it explicitly to [] with a
+	 * rate-limited notice rather than silently mis-parsing it.
+	 *
+	 * @param string $raw The raw positional value off the wire.
+	 * @return array<array-key,mixed>
+	 */
+	private static function decode_array_value( string $raw ): array {
+		$decoded = \json_decode( $raw, true );
+		if ( \is_array( $decoded ) ) {
+			return $decoded;
+		}
+		Core::print_less_often( 'PerformanceCI: rejected non-JSON synced array-option value' );
+		return [];
 	}
 
 	/**
