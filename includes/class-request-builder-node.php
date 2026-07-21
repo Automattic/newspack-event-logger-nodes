@@ -401,16 +401,6 @@ class Request_Builder_Node extends Timer_Node {
 		$this->guarded( fn () => $this->sink->fill( $message ) );
 	}
 
-	/** Resolve the URL exactly as completed-request outputs do. */
-	private static function resolved_request_url( \stdClass $request ): string {
-		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
-		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
-		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
-			return $url . '?' . $worker_type;
-		}
-		return $url;
-	}
-
 	/**
 	 * Push state onto request stack.
 	 *
@@ -799,6 +789,16 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::VALUE ]     = (array) $request;
 		$this->guarded( fn () => parent::fill( $message ) );
 		$this->emit_compact_summary( $request );
+	}
+
+	/** Resolve the URL exactly as completed-request outputs do. */
+	private static function resolved_request_url( \stdClass $request ): string {
+		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
+		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
+		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
+			return $url . '?' . $worker_type;
+		}
+		return $url;
 	}
 
 	/**
