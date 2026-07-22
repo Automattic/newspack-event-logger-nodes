@@ -176,6 +176,7 @@ export class RequestLogViewNode extends Node {
 
 	// Defensively shape completed-request VALUE, then enrich to render entry.
 	_appendRow( req ) {
+		// Belt: drops frames arriving in the pause-click→async-close window.
 		if ( this.paused ) {
 			return;
 		}

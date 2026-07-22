@@ -474,6 +474,110 @@ describe( 'useRequestLogGraph — glob browse', () => {
 	} );
 } );
 
+describe( 'useRequestLogGraph — pause vs visibility precedence + replay survival', () => {
+	// Regression guard: pause and visibility are already combined into ONE
+	// isActive gate, so precedence holds by construction. This pins it against a
+	// future fork back to a separate visibility path (the genuinely red-first
+	// version lives on the substrate viewer hooks, which had a separate gate).
+	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED (no auto-resume)', () => {
+		const { result, rerender } = renderHook( () => useRequestLogGraph() );
+		act( () => {
+			FakeEventSource.last.dispatch(
+				'connected',
+				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+			);
+		} );
+		act( () => result.current.setPaused( true ) );
+		expect( FakeEventSource.last.closed ).toBe( true );
+		const afterPause = FakeEventSource.instances.length;
+		// Hiding then refocusing must NOT reopen a user-paused stream.
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		mockPageVisible = true;
+		act( () => rerender( { n: 2 } ) );
+		expect( FakeEventSource.instances.length ).toBe( afterPause );
+		expect( FakeEventSource.last.closed ).toBe( true );
+	} );
+
+	test( 'a paused replay resumes mid-replay and still flips to Live at the boundary', async () => {
+		const client = makeFakeClient( {
+			list_logs: [ { key: 'completed.p0', label: 'completed.p0' } ],
+			// Newest segment 9 is 500 bytes — the replay catch-up boundary.
+			log_status: { segments: [ { id: 9, size: 500 } ] },
+		} );
+		const { result } = renderHook( () =>
+			useRequestLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		await act( async () =>
+			result.current.browse.selectPartition( 'completed.p0' )
+		);
+		await act( async () =>
+			result.current.browse.browseSegment( { id: 9, size: 500 } )
+		);
+		const view = Core.node( VIEW );
+		expect( view.mode ).toBe( 'replay' );
+
+		// A replayed record short of the boundary keeps replay + a resume cursor.
+		const rec = completedEnvelope( { rid: 'r1', url: '/a' } );
+		rec[ FROM ] = 'completed.p0';
+		rec[ ID ] = '9:0:100';
+		act( () => FakeEventSource.last.dispatch( 'msg', pack( rec ) ) );
+		expect( view.mode ).toBe( 'replay' );
+
+		// Pause closes the stream but does NOT tear down the view: mode survives.
+		act( () => result.current.setPaused( true ) );
+		expect( view.mode ).toBe( 'replay' );
+
+		// Play resumes mid-replay at the exact next record, not a blind tail.
+		act( () => result.current.setPaused( false ) );
+		const url = FakeEventSource.last.url;
+		const positions = JSON.parse(
+			decodeURIComponent(
+				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
+			)
+		);
+		expect( positions ).toEqual( {
+			'completed.p0': { segment: 9, offset: 0 + 100 },
+		} );
+		expect( view.mode ).toBe( 'replay' );
+
+		// A post-resume record reaching the boundary flips Replay → Live.
+		const caughtUp = completedEnvelope( { rid: 'r2', url: '/b' } );
+		caughtUp[ FROM ] = 'completed.p0';
+		caughtUp[ ID ] = '9:400:150';
+		act( () => FakeEventSource.last.dispatch( 'msg', pack( caughtUp ) ) );
+		expect( view.mode ).toBe( 'live' );
+	} );
+
+	test( 'a GC-stale resume cursor is sent verbatim (server owns validation), never clamped or thrown client-side', () => {
+		// A resume whose offset the server has since GC'd past degrades via the
+		// existing server-side resume validation (Consumer segment / Tail inode
+		// checks). The client has no segment catalog at resume time, so it sends
+		// the last-seen cursor unclamped and lets the server degrade — it must
+		// not second-guess it or crash the UI.
+		const { result } = renderHook( () => useRequestLogGraph() );
+		const rec = completedEnvelope( { rid: 'old', url: '/a' } );
+		rec[ FROM ] = 'completed.p0';
+		// A far-past offset standing in for a since-GC'd cursor.
+		rec[ ID ] = '2:999000:120';
+		act( () => FakeEventSource.last.dispatch( 'msg', pack( rec ) ) );
+		act( () => result.current.setPaused( true ) );
+		expect( () =>
+			act( () => result.current.setPaused( false ) )
+		).not.toThrow();
+		const url = FakeEventSource.last.url;
+		const positions = JSON.parse(
+			decodeURIComponent(
+				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
+			)
+		);
+		expect( positions ).toEqual( {
+			'completed.p0': { segment: 2, offset: 999000 + 120 },
+		} );
+	} );
+} );
+
 describe( 'useRequestLogGraph — teardown', () => {
 	test( 'unmount tears down the RemoteLink children + the backbone and closes the EventSource', () => {
 		const { unmount } = renderHook( () => useRequestLogGraph() );

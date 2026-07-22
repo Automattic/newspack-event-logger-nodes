@@ -35,6 +35,7 @@ import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import StalenessIndicator from '@newspack-nodes/shared/components/StalenessIndicator';
 import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
 import './styles/error-log.scss';
 
@@ -480,24 +481,10 @@ export default function ErrorLog() {
 								entries.length
 							) }
 						</span>
-						{ staleSec !== null && (
-							<span
-								className="event-logger-error-log-age"
-								style={ {
-									color:
-										staleSec > 10 ? '#dba617' : '#757575',
-								} }
-							>
-								{ sprintf(
-									// translators: %d: seconds since the last error was received.
-									__(
-										'%ds ago',
-										'newspack-event-logger-nodes'
-									),
-									staleSec
-								) }
-							</span>
-						) }
+						<StalenessIndicator
+							paused={ isPaused }
+							staleSec={ staleSec }
+						/>
 					</span>
 					<button
 						className={ `button ${ isPaused ? 'is-paused' : '' }` }

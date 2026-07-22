@@ -175,6 +175,7 @@ export class PerfErrorsViewNode extends Node {
 		if ( ! value || typeof value !== 'object' || Array.isArray( value ) ) {
 			return;
 		}
+		// Belt: drops frames arriving in the pause-click→async-close window.
 		if ( this.paused ) {
 			return;
 		}
