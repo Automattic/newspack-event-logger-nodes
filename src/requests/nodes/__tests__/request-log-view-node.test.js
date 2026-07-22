@@ -219,11 +219,13 @@ test( 'clear empties the buffer, counter and rps', () => {
 	expect( v.entries[ 0 ].seq ).toBe( 1 );
 } );
 
-test( 'the published model carries paused and connectionError', () => {
+test( 'the published model carries paused, connectionError, and seek feedback', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
 	expect( Object.keys( v.setStateCache.view ).sort() ).toEqual( [
 		'connectionError',
+		'lastReceivedSegment',
+		'mode',
 		'paused',
 	] );
 } );
@@ -253,6 +255,8 @@ test( 'publishes an initial view model on construction', () => {
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
+		mode: 'live',
+		lastReceivedSegment: null,
 	} );
 } );
 
@@ -371,6 +375,70 @@ describe( 'requestlog:view — catalog-reply correlation (PendingReplies)', () =
 		m[ ID ] = '9:1024:256';
 		v.fill( m );
 		expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-803' ] );
+	} );
+} );
+
+// Seek/live feedback: only meaningful while browsing ONE partition dir, so it is
+// gated on `seekActive` (armed by a `select` control carrying a dir). Distinct
+// values (segments 98/105, offsets 1200) so a silently-dropped change fails loud.
+describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
+	const rowWithId = ( id, overrides = {} ) => {
+		const m = rowMsg( row( overrides ) );
+		m[ ID ] = id;
+		return m;
+	};
+
+	test( 'does not track breadcrumbs under the glob-live default (seekActive off)', () => {
+		const v = makeView( 'requestlog:view' );
+		v.fill( rowWithId( '98:0:40' ) );
+		expect( v.seekActive ).toBe( false );
+		expect( v.lastReceivedSegment ).toBe( null );
+		expect( v.mode ).toBe( 'live' );
+	} );
+
+	test( 'a select control with a dir arms tracking and follows the segment', () => {
+		const v = makeView( 'requestlog:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
+		expect( v.seekActive ).toBe( true );
+		v.fill( rowWithId( '98:0:40' ) );
+		expect( v.lastReceivedSegment ).toBe( 98 );
+		expect( v.setStateCache.view.lastReceivedSegment ).toBe( 98 );
+	} );
+
+	test( 'a select control with an empty dir disarms tracking and resets it', () => {
+		const v = makeView( 'requestlog:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
+		v.fill( rowWithId( '98:0:40' ) );
+		v.fill( controlMsg( { action: 'select', dir: '' } ) );
+		expect( v.seekActive ).toBe( false );
+		expect( v.lastReceivedSegment ).toBe( null );
+		v.fill( rowWithId( '77:0:40' ) );
+		expect( v.lastReceivedSegment ).toBe( null );
+	} );
+
+	test( 'browse enters replay and flips to live once a record reaches the end', () => {
+		const v = makeView( 'requestlog:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
+		v.fill(
+			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+		);
+		expect( v.mode ).toBe( 'replay' );
+		expect( v.setStateCache.view.mode ).toBe( 'replay' );
+		v.fill( rowWithId( '98:100:20' ) ); // behind the end segment
+		expect( v.mode ).toBe( 'replay' );
+		v.fill( rowWithId( '105:1160:40' ) ); // 1160 + 40 = 1200 → caught up
+		expect( v.mode ).toBe( 'live' );
+		expect( v.setStateCache.view.mode ).toBe( 'live' );
+	} );
+
+	test( 'follow returns the view to live', () => {
+		const v = makeView( 'requestlog:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
+		v.fill(
+			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+		);
+		v.fill( controlMsg( { action: 'follow' } ) );
+		expect( v.mode ).toBe( 'live' );
 	} );
 } );
 

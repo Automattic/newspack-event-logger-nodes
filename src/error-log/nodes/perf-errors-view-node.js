@@ -1,6 +1,7 @@
-import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
+import { Node, KEY, VALUE, ID } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
+import { SeekTracker } from '@newspack-nodes/shared/nodes/seekTracker';
 
 const DEFAULT_MAX_ENTRIES = 5000;
 const RPS_WINDOW_SEC = 10;
@@ -60,9 +61,20 @@ export class PerfErrorsViewNode extends Node {
 		this.paused = false;
 		this.connectionError = false;
 		this.filter = '';
+		// Seek feedback; armed for a single dir only (a glob mixes segments).
+		this.seek = new SeekTracker();
+		this.seekActive = false;
 		// Hook-stamped ID → { resolve, reject }; settled when its reply lands.
 		this.replies = new PendingReplies();
 		this._publish();
+	}
+
+	// Seek feedback surfaced for the published model (and view-node tests).
+	get mode() {
+		return this.seek.mode;
+	}
+	get lastReceivedSegment() {
+		return this.seek.lastReceivedSegment;
 	}
 
 	fill( message ) {
@@ -82,6 +94,9 @@ export class PerfErrorsViewNode extends Node {
 			this._publish();
 		} else {
 			// Raw envelope: validate, enrich, append. HIGH-freq — no publish.
+			if ( this.seekActive ) {
+				this._trackPosition( message );
+			}
 			this._appendEnvelope( message );
 		}
 	}
@@ -95,6 +110,22 @@ export class PerfErrorsViewNode extends Node {
 			this._setFilter( value.filter );
 		} else if ( 'connection' === value.action ) {
 			this.connectionError = value.connectionError;
+		} else if ( 'select' === value.action ) {
+			// Partition switch: reset the tracker; arm only for a single dir.
+			this.seekActive = !! value.dir;
+			this.seek.select();
+			this._clear();
+		} else if ( 'browse' === value.action ) {
+			this.seek.browse( value.endSegment ?? null, value.endOffset ?? 0 );
+		} else if ( 'follow' === value.action ) {
+			this.seek.follow();
+		}
+	}
+
+	// Track the record's breadcrumb; publish on segment/catch-up change only.
+	_trackPosition( message ) {
+		if ( this.seek.track( message[ ID ] ) ) {
+			this._publish();
 		}
 	}
 
@@ -125,6 +156,8 @@ export class PerfErrorsViewNode extends Node {
 		this.setState( 'view', {
 			paused: this.paused,
 			connectionError: this.connectionError,
+			mode: this.seek.mode,
+			lastReceivedSegment: this.seek.lastReceivedSegment,
 		} );
 	}
 
