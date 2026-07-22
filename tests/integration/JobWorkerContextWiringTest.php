@@ -41,6 +41,24 @@ class JobWorkerContextWiringTest extends TestCase {
 		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'], '$_SERVER restored after the job' );
 	}
 
+	public function test_handler_sees_job_id_appended_to_request_uri(): void {
+		// The substrate reads the entry's top-level `id` and fires before_job
+		// with ( handler, id ); ELN's listener builds /jobs/{handler}/{id}.
+		$_SERVER['REQUEST_URI'] = '/outer';
+
+		$jw   = new Job_Worker_Node();
+		$seen = null;
+		$this->register_job_handler( $jw, 'films_import', function () use ( &$seen ) { $seen = $_SERVER['REQUEST_URI']; } );
+
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'films_import', 'parameters' => [], 'id' => 'films-8842' ];
+		$jw->fill( $message );
+
+		$this->assertSame( '/jobs/films_import/films-8842', $seen, 'handler runs under the id-scoped job URI' );
+		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'], '$_SERVER restored after the job' );
+	}
+
 	public function test_server_restored_even_when_handler_throws(): void {
 		$_SERVER['REQUEST_URI'] = '/outer';
 

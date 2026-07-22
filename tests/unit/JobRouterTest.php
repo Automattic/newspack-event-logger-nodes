@@ -88,6 +88,34 @@ class JobRouterTest extends TestCase {
 		);
 	}
 
+	public function test_firehose_top_level_id_survives_into_normalized_record(): void {
+		// First-class job identity: the top-level `id` (sibling of `m`) must
+		// reach the written jobs entry so Job_Worker keys jobstats by handler:id.
+		$entry       = $this->firehose_entry( 'job', 'films_import', [ 'stage' => 'films' ] );
+		$entry['id'] = 'films-8842';
+		$this->jr->fill( $this->msg( 'firehose:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( 'films-8842', $this->sink->captured[0][ Message::VALUE ]['id'] );
+	}
+
+	public function test_jobintake_top_level_id_survives_into_normalized_record(): void {
+		$entry       = $this->jobintake_entry( 'job', 'process_image', [ 'url' => '/x.jpg' ] );
+		$entry['id'] = 'img-5309';
+		$this->jr->fill( $this->msg( 'jobintake:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( 'img-5309', $this->sink->captured[0][ Message::VALUE ]['id'] );
+	}
+
+	public function test_absent_id_omits_id_key_from_normalized_record(): void {
+		$entry = $this->firehose_entry( 'job', 'plain_job', [] );
+		$this->jr->fill( $this->msg( 'firehose:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertArrayNotHasKey( 'id', $this->sink->captured[0][ Message::VALUE ] );
+	}
+
 	public function test_nested_body_timestamp_takes_precedence_over_entry_timestamp(): void {
 		$entry = $this->firehose_entry( 'job', 'sync_user', [ 'id' => 42 ], Core::$now - 24.5 );
 		$entry['m']['ts'] = Core::$now - 5.25;

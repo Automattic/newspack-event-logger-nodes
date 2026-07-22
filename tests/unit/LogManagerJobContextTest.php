@@ -97,6 +97,20 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 	}
 
+	public function test_job_id_appends_to_request_uri(): void {
+		// The action-provided id builds the /jobs/{handler}/{id} URL the
+		// dashboards render — no longer baked into a compound handler string.
+		Log_Manager::begin_job_context( 'films_import', 'films-8842' );
+		$this->assertSame( '/jobs/films_import/films-8842', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
+	public function test_empty_job_id_yields_plain_handler_uri(): void {
+		Log_Manager::begin_job_context( 'films_import', '' );
+		$this->assertSame( '/jobs/films_import', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
 	public function test_supervisor_job_context_is_newspack_nodes(): void {
 		// The supervisor wrap passes 'newspack-nodes' so its row is
 		// /jobs/newspack-nodes (worker_type='supervisor' supplies the
