@@ -503,6 +503,127 @@ describe( 'RequestStream', () => {
 		expect( uaIdx ).toBeLessThan( durIdx );
 	} );
 
+	// A browse model the mocked graph hook hands back for the browse-UI tests.
+	function browseMock( overrides = {} ) {
+		return {
+			partitions: [],
+			selectedPartition: '',
+			selectPartition: jest.fn(),
+			segments: [],
+			mode: 'live',
+			segmentId: null,
+			follow: jest.fn(),
+			replay: jest.fn(),
+			browseSegment: jest.fn(),
+			...overrides,
+		};
+	}
+
+	describe( 'glob browse UI', () => {
+		it( 'renders neither the partition selector nor the sidebar by default', () => {
+			registerViewFixture();
+			useRequestLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock(),
+			} );
+			const { container } = mount();
+			expect(
+				container.querySelector( 'select.newspack-nodes-select' )
+			).toBeNull();
+			expect(
+				container.querySelector( '.newspack-nodes-log-browser' )
+			).toBeNull();
+		} );
+
+		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
+			registerViewFixture();
+			useRequestLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock( {
+					partitions: [
+						{ key: 'completed.p0', label: 'completed.p0' },
+						{ key: 'completed.p3', label: 'completed.p3' },
+					],
+				} ),
+			} );
+			const { container } = mount();
+			const select = container.querySelector(
+				'select.newspack-nodes-select'
+			);
+			expect( select ).toBeTruthy();
+			expect(
+				Array.from( select.options ).map( ( o ) => o.value )
+			).toEqual( [ '', 'completed.p0', 'completed.p3' ] );
+		} );
+
+		it( 'selecting a partition drives browse.selectPartition', () => {
+			registerViewFixture();
+			const selectPartition = jest.fn();
+			useRequestLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock( {
+					partitions: [
+						{ key: 'completed.p3', label: 'completed.p3' },
+					],
+					selectPartition,
+				} ),
+			} );
+			const { container } = mount();
+			const select = container.querySelector(
+				'select.newspack-nodes-select'
+			);
+			const setter = Object.getOwnPropertyDescriptor(
+				window.HTMLSelectElement.prototype,
+				'value'
+			).set;
+			act( () => {
+				setter.call( select, 'completed.p3' );
+				select.dispatchEvent(
+					new Event( 'change', { bubbles: true } )
+				);
+			} );
+			expect( selectPartition ).toHaveBeenCalledWith( 'completed.p3' );
+		} );
+
+		it( 'renders the segment sidebar with Live/Replay + segments when browsing', () => {
+			registerViewFixture();
+			const browse = browseMock( {
+				partitions: [ { key: 'completed.p3', label: 'completed.p3' } ],
+				selectedPartition: 'completed.p3',
+				segments: [ { id: 6, size: 4096 } ],
+				mode: 'browse',
+				segmentId: 6,
+			} );
+			useRequestLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse,
+			} );
+			const { container } = mount();
+			const sidebar = container.querySelector(
+				'.newspack-nodes-log-browser'
+			);
+			expect( sidebar ).toBeTruthy();
+			expect( sidebar.textContent ).toContain( 'Segment 6' );
+			act( () =>
+				sidebar
+					.querySelector( '.newspack-nodes-log-browser__item' )
+					.click()
+			);
+			expect( browse.browseSegment ).toHaveBeenCalledWith( {
+				id: 6,
+				size: 4096,
+			} );
+		} );
+	} );
+
 	it( 'sources the staleness display from the link connector lastEventTime', () => {
 		// Staleness = connection liveness; rAF reads the link's lastEventTime.
 		registerViewFixture( {

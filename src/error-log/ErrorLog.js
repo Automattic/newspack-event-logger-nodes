@@ -35,6 +35,7 @@ import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -226,8 +227,13 @@ const ErrorRow = memo( function ErrorRow( {
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function ErrorLog() {
-	// Mount the node graph; it returns the thin control callbacks.
-	const { setPaused, clear, setFilter: setViewFilter } = useErrorLogGraph();
+	// Mount the graph; returns the control callbacks + the browse model.
+	const {
+		setPaused,
+		clear,
+		setFilter: setViewFilter,
+		browse,
+	} = useErrorLogGraph();
 
 	// Low-frequency view model (pause button + reconnect banner + empty-state).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -434,6 +440,12 @@ export default function ErrorLog() {
 		rebaseRenderedRows();
 	};
 
+	// Switch partition; the hook clears the view, so rebase our rows.
+	const handleSelectPartition = ( key ) => {
+		browse?.selectPartition( key );
+		rebaseRenderedRows();
+	};
+
 	return (
 		<div
 			className="event-logger-error-log"
@@ -525,60 +537,71 @@ export default function ErrorLog() {
 				) }
 			/>
 
-			<div
-				role="row"
-				className="event-logger-error-log-header-row"
-				style={ { gridTemplateColumns: gridTemplate } }
-			>
-				{ visibleColumns.map( ( col ) => (
-					<span
-						key={ col }
-						role="columnheader"
-						className="event-logger-error-log-th"
-						title={ COLUMNS[ col ]?.tooltip }
+			<div className="event-logger-error-log-body">
+				<SegmentBrowseSidebar
+					browse={ browse }
+					onSelectPartition={ handleSelectPartition }
+				/>
+				<div className="event-logger-error-log-main">
+					<div
+						role="row"
+						className="event-logger-error-log-header-row"
+						style={ { gridTemplateColumns: gridTemplate } }
 					>
-						{ COLUMNS[ col ]?.label || col }
-					</span>
-				) ) }
-			</div>
-			<div
-				role="rowgroup"
-				className="event-logger-error-log-list"
-				ref={ listRef }
-				onScroll={ handleScroll }
-			>
-				<div
-					className="event-logger-error-log-content"
-					ref={ contentRef }
-					style={ { minHeight: totalHeight } }
-				>
-					{ entries.length === 0 ? (
-						<div className="event-logger-error-log-empty">
-							{ isPaused
-								? __(
-										'Paused - click play to resume',
-										'newspack-event-logger-nodes'
-								  )
-								: __(
-										'Waiting for errors…',
-										'newspack-event-logger-nodes'
-								  ) }
+						{ visibleColumns.map( ( col ) => (
+							<span
+								key={ col }
+								role="columnheader"
+								className="event-logger-error-log-th"
+								title={ COLUMNS[ col ]?.tooltip }
+							>
+								{ COLUMNS[ col ]?.label || col }
+							</span>
+						) ) }
+					</div>
+					<div
+						role="rowgroup"
+						className="event-logger-error-log-list"
+						ref={ listRef }
+						onScroll={ handleScroll }
+					>
+						<div
+							className="event-logger-error-log-content"
+							ref={ contentRef }
+							style={ { minHeight: totalHeight } }
+						>
+							{ entries.length === 0 ? (
+								<div className="event-logger-error-log-empty">
+									{ isPaused
+										? __(
+												'Paused - click play to resume',
+												'newspack-event-logger-nodes'
+										  )
+										: __(
+												'Waiting for errors…',
+												'newspack-event-logger-nodes'
+										  ) }
+								</div>
+							) : (
+								<>
+									<div
+										style={ {
+											height: offsetTop,
+											flexShrink: 0,
+										} }
+									/>
+									{ visibleEntries.map( ( entry ) => (
+										<ErrorRow
+											key={ entry.id }
+											entry={ entry }
+											visibleColumns={ visibleColumns }
+											gridTemplate={ gridTemplate }
+										/>
+									) ) }
+								</>
+							) }
 						</div>
-					) : (
-						<>
-							<div
-								style={ { height: offsetTop, flexShrink: 0 } }
-							/>
-							{ visibleEntries.map( ( entry ) => (
-								<ErrorRow
-									key={ entry.id }
-									entry={ entry }
-									visibleColumns={ visibleColumns }
-									gridTemplate={ gridTemplate }
-								/>
-							) ) }
-						</>
-					) }
+					</div>
 				</div>
 			</div>
 		</div>

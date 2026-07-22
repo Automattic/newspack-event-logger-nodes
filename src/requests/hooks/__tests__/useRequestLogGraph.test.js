@@ -29,6 +29,7 @@ import {
 	TM_STRUCT,
 	Core,
 	Node,
+	CommandClient,
 	useNodeState,
 	mountExospine,
 } from '@newspack-nodes/runtime';
@@ -39,6 +40,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => mockPageVisible,
 } ) );
 
+import { makeFakeCommandClient } from '@newspack-nodes/shared/test-utils/fakeCommandClient';
 import { useRequestLogGraph } from '../useRequestLogGraph';
 
 // Minimal FakeEventSource: static holds the last instance for tests to drive.
@@ -68,7 +70,22 @@ beforeEach( () => {
 	FakeEventSource.instances = [];
 	global.EventSource = FakeEventSource;
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
+	// The mount-time list_logs POST would hit the real client (no server under
+	// jsdom); default it to a resolving no-op. Browse tests inject their own.
+	jest.spyOn( CommandClient, 'fromGlobal' ).mockReturnValue( {
+		buildMessage: () => newMessage(),
+		postBatch: () => Promise.resolve( [] ),
+	} );
 } );
+
+afterEach( () => jest.restoreAllMocks() );
+
+// CommandClient double keyed by verb, built on the shared HttpOut-seam helper.
+function makeFakeClient( payloadByVerb = {} ) {
+	return makeFakeCommandClient(
+		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
+	);
+}
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
@@ -388,6 +405,72 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		expect(
 			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
 		).toEqual( [ 'match' ] );
+	} );
+} );
+
+describe( 'useRequestLogGraph — glob browse', () => {
+	test( 'exposes a browse model cataloging the `completed.*` partitions', async () => {
+		const client = makeFakeClient( {
+			list_logs: [
+				{ key: 'completed.p0', label: 'completed.p0' },
+				{ key: 'completed.p2', label: 'completed.p2' },
+				{ key: 'errors.p0', label: 'errors.p0' },
+			],
+		} );
+		const { result } = renderHook( () =>
+			useRequestLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		expect(
+			result.current.browse.partitions.map( ( p ) => p.key )
+		).toEqual( [ 'completed.p0', 'completed.p2' ] );
+	} );
+
+	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
+		const client = makeFakeClient( {
+			list_logs: [ { key: 'completed.p2', label: 'completed.p2' } ],
+		} );
+		const { result } = renderHook( () =>
+			useRequestLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed.*' );
+		await act( async () =>
+			result.current.browse.selectPartition( 'completed.p2' )
+		);
+		expect( FakeEventSource.last.url ).toContain(
+			'subscribe=completed.p2'
+		);
+		expect( FakeEventSource.last.url ).not.toContain(
+			'subscribe=completed.*'
+		);
+	} );
+
+	test( 'browsing a segment seeks that dir; the SSE url carries the positions', async () => {
+		const client = makeFakeClient( {
+			list_logs: [ { key: 'completed.p2', label: 'completed.p2' } ],
+			log_status: { segments: [ { id: 7, size: 4096 } ] },
+		} );
+		const { result } = renderHook( () =>
+			useRequestLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		await act( async () =>
+			result.current.browse.selectPartition( 'completed.p2' )
+		);
+		await act( async () =>
+			result.current.browse.browseSegment( { id: 7, size: 4096 } )
+		);
+		const url = FakeEventSource.last.url;
+		expect( url ).toContain( 'subscribe=completed.p2' );
+		const positions = JSON.parse(
+			decodeURIComponent(
+				url.split( 'positions=' )[ 1 ].split( '&' )[ 0 ]
+			)
+		);
+		expect( positions ).toEqual( {
+			'completed.p2': { segment: 7, offset: 0 },
+		} );
 	} );
 } );
 

@@ -18,7 +18,11 @@ import {
 	KEY,
 	VALUE,
 	TYPE,
+	ID,
 	TM_STRUCT,
+	TM_COMMAND,
+	TM_RESPONSE,
+	TM_ERROR,
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
@@ -292,6 +296,57 @@ test( 'publishes an initial view model on construction', () => {
 test( 'names the node', () => {
 	const v = makeView( 'perferrors:view' );
 	expect( v.name ).toBe( 'perferrors:view' );
+} );
+
+// A raw-logs catalog reply: TM_COMMAND|TM_RESPONSE, VALUE={ name, payload }.
+const catalogReply = ( id, name, payload, { error = false } = {} ) => {
+	const m = newMessage();
+	m[ TYPE ] = TM_COMMAND | TM_RESPONSE | ( error ? TM_ERROR : 0 );
+	m[ ID ] = id;
+	m[ VALUE ] = { name, payload };
+	return m;
+};
+
+describe( 'perferrors:view — catalog-reply correlation (PendingReplies)', () => {
+	test( 'settles a pending reply by message ID and does NOT append it as an entry', () => {
+		const v = makeView( 'perferrors:view' );
+		const seen = [];
+		v.replies.add(
+			'errlog-op-901',
+			( payload ) => seen.push( payload ),
+			() => {}
+		);
+		v.fill(
+			catalogReply( 'errlog-op-901', 'list_logs', [
+				{ key: 'errors.p7', label: 'errors.p7' },
+			] )
+		);
+		expect( seen ).toEqual( [
+			[ { key: 'errors.p7', label: 'errors.p7' } ],
+		] );
+		expect( v.entries ).toHaveLength( 0 );
+	} );
+
+	test( 'a TM_ERROR reply rejects the pending Promise', async () => {
+		const v = makeView( 'perferrors:view' );
+		const promise = new Promise( ( resolve, reject ) =>
+			v.replies.add( 'errlog-op-902', resolve, reject )
+		);
+		v.fill(
+			catalogReply( 'errlog-op-902', 'log_status', 'boom-902', {
+				error: true,
+			} )
+		);
+		await expect( promise ).rejects.toThrow( 'boom-902' );
+	} );
+
+	test( 'a stream envelope carrying a seek ID breadcrumb is still appended', () => {
+		const v = makeView( 'perferrors:view' );
+		const m = envMsg( 'r-seek-903', { ts: 1, k: 'error', m: 'x' } );
+		m[ ID ] = '3:512:100';
+		v.fill( m );
+		expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-903' ] );
+	} );
 } );
 
 describe( 'perferrors:view — nodeSchema', () => {
