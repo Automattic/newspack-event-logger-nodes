@@ -51,6 +51,19 @@ class RemoteJobRewriteTest extends TestCase {
 		$this->assertSame( 'jobs:partition', $out[ Message::TO ] );
 	}
 
+	public function test_top_level_id_survives_the_k_rewrite(): void {
+		// The k rewrite copies the whole map; the first-class `id` must not be
+		// stripped, or the hub loses per-job identity after aggregation.
+		$m = $this->msg( [ 'k' => 'job', 'handler' => 'hub_op', 'id' => 'films-8842', 'm' => 'x' ] );
+
+		$this->node->fill( $m );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$out = $this->sink->captured[0];
+		$this->assertSame( 'remote_job', $out[ Message::VALUE ]['k'] );
+		$this->assertSame( 'films-8842', $out[ Message::VALUE ]['id'] );
+	}
+
 	public function test_non_job_entry_is_forwarded_unchanged(): void {
 		$m = $this->msg( [ 'k' => 'flame', 'm' => 'y' ] );
 

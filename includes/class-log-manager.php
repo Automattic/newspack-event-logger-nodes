@@ -734,10 +734,12 @@ class Log_Manager {
 	 * Enter a background-job request context.
 	 *
 	 * The substrate's Job_Worker_Node fires `newspack_nodes/job_worker/before_job`
-	 * around each handler; this is the event-logger's hooked listener. It suspends
-	 * the parent LogManager, generates a fresh per-job UNIQUE_ID, and rewrites
-	 * $_SERVER to a synthetic `/jobs/{handler}` request so any LogManager the
-	 * handler spawns picks up job-scoped context.
+	 * with ( $handler, $id ) around each handler; this is the event-logger's hooked
+	 * listener. It suspends the parent LogManager, generates a fresh per-job
+	 * UNIQUE_ID, and rewrites $_SERVER to a synthetic `/jobs/{handler}/{id}` request
+	 * (plain `/jobs/{handler}` when the id is empty) so any LogManager the handler
+	 * spawns picks up job-scoped context. The id is the substrate's first-class job
+	 * identity, not a compound handler string or a smuggled parameter.
 	 *
 	 * Stack-based by design: the before/after-job actions thread no state, so the
 	 * original $_SERVER is pushed onto an internal LIFO restored by
@@ -746,8 +748,11 @@ class Log_Manager {
 	 * unpaired/throwing begin still leaves end_job_context a snapshot to pop.
 	 * Public static so handlers (and direct callers like cron) can nest their own
 	 * sub-scopes — pair with end_job_context() in a finally block.
+	 *
+	 * @param string $handler Job handler name.
+	 * @param string $id      First-class job identity ('' ⇒ no id segment).
 	 */
-	public static function begin_job_context( string $handler ): void {
+	public static function begin_job_context( string $handler, string $id = '' ): void {
 		// $_SERVER is string-keyed (superglobal snapshot for restore).
 		/** @var array<string, mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
@@ -757,8 +762,12 @@ class Log_Manager {
 		// LogManager::suspend() pushes the parent context onto its stack.
 		self::suspend();
 
+		$request_uri = '/jobs/' . \ltrim( $handler, '/' );
+		if ( '' !== $id ) {
+			$request_uri .= '/' . \ltrim( $id, '/' );
+		}
 		$_SERVER['UNIQUE_ID']      = self::generate_request_id();
-		$_SERVER['REQUEST_URI']    = '/jobs/' . \ltrim( $handler, '/' );
+		$_SERVER['REQUEST_URI']    = $request_uri;
 		$_SERVER['REQUEST_METHOD'] = 'POST';
 		$_SERVER['PATH_INFO']      = '';
 		$_SERVER['QUERY_STRING']   = '';

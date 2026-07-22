@@ -110,6 +110,12 @@ class Job_Router_Node extends Node {
 			'ts'         => $raw_timestamp,
 		];
 
+		// First-class identity: forward the top-level `id` (jobstats key).
+		$id = Core::as_string( $entry['id'] ?? '' );
+		if ( '' !== $id ) {
+			$normalized['id'] = $id;
+		}
+
 		// Stale guard: fail if the entry exceeds the configured maximum age.
 		$timestamp = \is_numeric( $raw_timestamp ) ? (float) $raw_timestamp : null;
 		if ( null === $timestamp || ! \is_finite( $timestamp ) || Core::$now - $timestamp > $this->stale_timeout ) {
