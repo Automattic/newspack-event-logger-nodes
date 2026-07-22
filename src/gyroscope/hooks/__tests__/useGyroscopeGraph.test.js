@@ -274,6 +274,7 @@ describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () =>
 						m[ KEY ] = 'rid-done';
 						m[ VALUE ] = {
 							rid: 'rid-done',
+							state: 'complete',
 							url: '/done',
 							duration_ms: 42,
 						};

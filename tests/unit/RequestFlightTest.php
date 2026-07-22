@@ -46,7 +46,7 @@ class RequestFlightTest extends TestCase {
 	}
 
 	/**
-	 * Every KEY='inflight' message the sink saw, in order.
+	 * Every in-flight record the sink saw (KEY=rid, matching the VALUE rid).
 	 *
 	 * @param array<int,array> $got
 	 * @return array<int,array>
@@ -54,13 +54,13 @@ class RequestFlightTest extends TestCase {
 	private function inflight_messages( array $got ): array {
 		return \array_values( \array_filter(
 			$got,
-			static fn ( $m ): bool => 'inflight' === ( $m[ Message::KEY ] ?? '' )
+			static fn ( $m ): bool => ( $m[ Message::KEY ] ?? '' ) === ( $m[ Message::VALUE ]['rid'] ?? null )
 		) );
 	}
 
 	public function test_fire_emits_one_message_per_inflight_request(): void {
-		// Per-record: one TM_STRUCT per in-flight request (KEY='inflight', rid in
-		// VALUE), NOT one batched list — that crossed the 4KB cap at ~10 concurrent.
+		// Per-record: one TM_STRUCT per in-flight request, KEY=rid (the
+		// Tachikoma shape), NOT one batched list — that crossed the 4KB cap.
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb-flight-e2e' );
 
@@ -79,7 +79,7 @@ class RequestFlightTest extends TestCase {
 		foreach ( $inflight as $m ) {
 			$this->assertSame( Message::TM_STRUCT, $m[ Message::TYPE ] );
 			$this->assertSame( 'gyroscope_partition', $m[ Message::TO ] );
-			$this->assertSame( 'inflight', $m[ Message::KEY ] );
+			$this->assertSame( $m[ Message::VALUE ]['rid'], $m[ Message::KEY ], 'KEY is always the rid' );
 			$this->assertSame( 'rb-flight-e2e:flight', $m[ Message::FROM ] );
 			// VALUE is a single record with the rid inside — not a batch array.
 			$this->assertIsArray( $m[ Message::VALUE ] );
@@ -304,9 +304,7 @@ class RequestFlightTest extends TestCase {
 
 		$router->fire_cb();
 
-		$emitted = \array_values(
-			\array_filter( $got, static fn( $m ) => 'inflight' === ( $m[ Message::KEY ] ?? '' ) )
-		);
+		$emitted = $this->inflight_messages( $got );
 		$this->assertCount( 1, $emitted, 'setting the target drove a Router-tick snapshot emit' );
 		$this->assertSame( 'gyroscope_partition', $emitted[0][ Message::TO ] );
 	}

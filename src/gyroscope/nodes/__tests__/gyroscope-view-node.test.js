@@ -37,19 +37,19 @@ function makeView( name ) {
 	return node;
 }
 
-// A wire envelope: ONE in-flight record — KEY='inflight', VALUE=single object.
+// A wire envelope: ONE in-flight record — KEY=rid (the Tachikoma shape).
 function inflightEnvelope( request ) {
 	const m = newMessage();
-	m[ KEY ] = 'inflight';
+	m[ KEY ] = request.rid ?? '';
 	m[ VALUE ] = request;
 	return m;
 }
 
-// A wire envelope as the EventSource delivers it: KEY=<rid>, VALUE=object.
+// A completion as produced: KEY=rid, VALUE always stamped state:'complete'.
 function completeEnvelope( request ) {
 	const m = newMessage();
 	m[ KEY ] = request.rid;
-	m[ VALUE ] = request;
+	m[ VALUE ] = { state: 'complete', ...request };
 	return m;
 }
 
@@ -124,17 +124,15 @@ test( 'a completion retires the matching in-flight entry, merging + marking comp
 	expect( req.status_code ).toBe( 200 );
 } );
 
-test( 'a completion whose rid is literally "inflight" still lands as a completion', () => {
-	// Adversarial header: X-A8C-Request-Id can be the string 'inflight', making
-	// KEY collide with the in-flight sentinel — state:'complete' must win.
+test( 'a rid literally named "inflight" routes purely by state', () => {
+	// No sentinel exists to collide with: KEY is always the rid and the
+	// server-owned state field alone discriminates.
 	const view = makeView( 'gyroscope:view' );
 	view.fill(
-		completeEnvelope( {
-			rid: 'inflight',
-			state: 'complete',
-			duration_ms: 4321,
-		} )
+		inflightEnvelope( { rid: 'inflight', state: 'render', url: '/x' } )
 	);
+	expect( view.requests.get( 'inflight' ).state ).toBe( 'render' );
+	view.fill( completeEnvelope( { rid: 'inflight', duration_ms: 4321 } ) );
 	expect( view.requests.get( 'inflight' ).state ).toBe( 'complete' );
 	expect( view.requests.get( 'inflight' ).est_ms ).toBe( 4321 );
 } );

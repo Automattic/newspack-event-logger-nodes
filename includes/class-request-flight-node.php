@@ -35,7 +35,7 @@ class Request_Flight_Node extends Timer_Node {
 	/**
 	 * Router-TIMER tick (Timer_Node::fire_cb guards the null-sink case and calls
 	 * this). Snapshot the patron's in-flight map and emit ONE TM_STRUCT message per
-	 * in-flight request (KEY='inflight', rid in VALUE) to the configured gyroscope
+	 * in-flight request (KEY=rid, the Tachikoma shape) to the configured gyroscope
 	 * target — never a single batched list, which crossed the 4KB cap under load.
 	 *
 	 * @api Used by substrate.
@@ -64,7 +64,7 @@ class Request_Flight_Node extends Timer_Node {
 			$message[ Message::TIMESTAMP ] = Core::$now;
 			$message[ Message::FROM ]      = $this->name;
 			$message[ Message::TO ]        = $this->target;
-			$message[ Message::KEY ]       = 'inflight';
+			$message[ Message::KEY ]       = Core::as_string( $row['rid'] ?? '' );
 			$message[ Message::VALUE ]     = $row;
 			$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
 			if ( null === $fitted ) {

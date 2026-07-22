@@ -1,4 +1,4 @@
-import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
+import { Node, VALUE } from '@newspack-nodes/runtime';
 
 const RPS_WINDOW_SEC = 10;
 
@@ -18,18 +18,18 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  *   `setState('view', { connectionError })` — the reconnect banner, consumed by
  *   `useNodeState('gyroscope:view','view')`.
  *
- * The producer emits ONE record per in-flight request (KEY='inflight', rid in
- * VALUE), not a batched list. This view is written ONCE, correct under BOTH
- * producer modes (full per-tick re-emit / delta) with NO mode awareness:
- * - `KEY === 'inflight'` + object VALUE with `rid`: upsert that request by rid,
- *   stamping a freshness time; NEVER overwrite one already marked complete (a
- *   late record may predate a completion already in the map). Under full re-emit
- *   this refreshes every row each tick; under delta, only advanced rows arrive.
- * - VALUE is an object with `rid` (KEY=rid): a completion — the source of
- *   RETIREMENT under both modes. Merge, mark state=complete, derive time/est_ms.
+ * The producer emits ONE record per in-flight request, KEY=rid — the Tachikoma
+ * shape: the key is always the request identity, and the server-built `state`
+ * field alone says what a record IS. This view is written ONCE, correct under
+ * BOTH producer modes (full per-tick re-emit / delta) with NO mode awareness:
+ * - object VALUE with `rid`, state `complete`: a completion — the source of
+ *   RETIREMENT under both modes. Merge, derive time/est_ms.
  *   `RequestBuilder`'s `completed:tee` fans these out at request-complete.
- * - `KEY === 'connected'` (substrate sentinel) and any unrecognized shape are
- *   dropped.
+ * - object VALUE with `rid`, any other state: an in-flight upsert by rid,
+ *   stamping a freshness time; NEVER overwrite one already marked complete (a
+ *   late record may predate a completion already in the map). Under full
+ *   re-emit this refreshes every row each tick; under delta only advanced rows.
+ * - rid-less shapes (the substrate `connected` sentinel included) are dropped.
  * - A local TM_STRUCT control message (VALUE.action: `clear` / `connection`):
  *   dispatched + published (low-frequency path).
  *
@@ -49,30 +49,21 @@ export class GyroscopeViewNode extends Node {
 	}
 
 	fill( message ) {
-		const key = message[ KEY ];
 		const value = message[ VALUE ];
 		if ( ! value ) {
 			return;
 		}
-		// @longform Inflight record. The rid is client-supplied (X-A8C header,
-		// not charset-confined), so ANY sentinel is spoofable as a rid; the
-		// server-owned state field is what routes that collision safely —
-		// completions always carry state 'complete', running rows never do.
-		if ( 'inflight' === key && value.rid && 'complete' !== value.state ) {
-			this._inflight( value );
-			return;
-		}
-		// Substrate sentinel — never a gyroscope record.
-		if ( 'connected' === key ) {
-			return;
-		}
-		// Wire envelope: completion (KEY=rid, single object with rid).
+		// Gyroscope record: it's in-flight if it's not complete.
 		if (
 			typeof value === 'object' &&
 			! Array.isArray( value ) &&
 			value.rid
 		) {
-			this._complete( value );
+			if ( 'complete' === value.state ) {
+				this._complete( value );
+			} else {
+				this._inflight( value );
+			}
 			return;
 		}
 		// Local control (TM_STRUCT { action, … }) — LOW-freq path; publish.
