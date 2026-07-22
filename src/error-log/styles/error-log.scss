@@ -143,6 +143,21 @@
 		font-weight: 600;
 	}
 
+	// Fleet alert: louder than a plain error — an oxide chip on the error surface.
+	&--alert {
+		color: base.$error-text;
+		font-weight: 700;
+		background: base.$error-surface;
+		padding: 1px base.$space-xs;
+		border-radius: base.$border-radius-sm;
+	}
+
+	// Substrate stderr diagnostic: muted, low-priority.
+	&--stderr {
+		color: var(--ink-3);
+		font-style: italic;
+	}
+
 	&--info {
 		color: var(--ink-3);
 	}

@@ -112,6 +112,13 @@ const getKeywordClass = ( keyword ) => {
 	if ( keyword === 'warning' || keyword.endsWith( '(warning)' ) ) {
 		return 'warning';
 	}
+	// Fleet alerts get a louder accent; substrate stderr a muted one.
+	if ( keyword === 'alert' ) {
+		return 'alert';
+	}
+	if ( keyword === 'stderr' ) {
+		return 'stderr';
+	}
 	return 'info';
 };
 

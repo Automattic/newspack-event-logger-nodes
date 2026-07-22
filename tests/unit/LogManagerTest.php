@@ -252,6 +252,28 @@ class LogManagerTest extends TestCase {
 		// The method should succeed regardless.
 	}
 
+	/**
+	 * The size guard must fire on invalid-UTF8 data too: `wp_json_encode` without
+	 * substitute flags returns false there, so the old guard SKIPPED truncation —
+	 * then Message::packed substitutes U+FFFD (6 escaped bytes/bad byte) and the
+	 * oversized record is silently dropped by the Partition. The stderr bridge now
+	 * routes arbitrary substrate bytes through here.
+	 */
+	public function test_message_truncates_oversized_invalid_utf8_data(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		// 4000 lone \xB1 bytes: invalid UTF-8, well over MAX_DATA_SIZE once escaped.
+		$lm->message( 'binstderr', [ 'm' => \str_repeat( "\xB1", 4000 ) ] );
+		$lm->finish();
+
+		$this->assertNotNull(
+			$this->find_last_entry( 'binstderr (truncated)' ),
+			'oversized invalid-UTF8 data must hit the truncation branch, not be dropped'
+		);
+	}
+
 	public function test_error_convenience_method(): void {
 		$this->require_config_or_skip();
 		$lm     = Log_Manager::instance();
@@ -271,6 +293,55 @@ class LogManagerTest extends TestCase {
 		$lm     = Log_Manager::instance();
 		$result = $lm->info( 'FYI' );
 		$this->assertTrue( $result );
+	}
+
+	public function test_alert_convenience_method(): void {
+		$this->require_config_or_skip();
+		$lm     = Log_Manager::instance();
+		$result = $lm->alert( 'Fleet is degraded' );
+		$this->assertTrue( $result );
+	}
+
+	public function test_alert_writes_a_k_alert_entry_to_the_firehose(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$lm->alert( 'fleet sentinel 8842' );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'alert' );
+		$this->assertNotNull( $entry, 'alert() must write a k=alert firehose entry' );
+		$this->assertSame( 'fleet sentinel 8842', $entry['m'] );
+	}
+
+	// ── started_instance() (bridge seam) ─────────────────────────────────────
+
+	public function test_started_instance_is_null_when_no_instance(): void {
+		Log_Manager::reset();
+		$this->assertNull( Log_Manager::started_instance() );
+	}
+
+	public function test_started_instance_is_null_before_first_message(): void {
+		$this->require_config_or_skip();
+		$lm = $this->fresh_log_manager();
+		$this->assertTrue( $lm->enabled, 'precondition: this request is logged' );
+		$this->assertNull( Log_Manager::started_instance(), 'enabled-but-unstarted must not count as started' );
+	}
+
+	public function test_started_instance_returns_the_started_instance(): void {
+		$this->require_config_or_skip();
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$this->assertSame( $lm, Log_Manager::started_instance() );
+	}
+
+	public function test_started_instance_is_null_after_finish(): void {
+		$this->require_config_or_skip();
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$lm->finish();
+		$this->assertNull( Log_Manager::started_instance() );
 	}
 
 	// ── start() / complete() ───────────────────────────────────────────────
