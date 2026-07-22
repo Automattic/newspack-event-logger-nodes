@@ -290,6 +290,8 @@ test( 'publishes an initial view model on construction', () => {
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
+		mode: 'live',
+		lastReceivedSegment: null,
 	} );
 } );
 
@@ -346,6 +348,70 @@ describe( 'perferrors:view — catalog-reply correlation (PendingReplies)', () =
 		m[ ID ] = '3:512:100';
 		v.fill( m );
 		expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-903' ] );
+	} );
+} );
+
+// Seek/live feedback: only meaningful while browsing ONE partition dir, so it is
+// gated on `seekActive` (armed by a `select` control carrying a dir). Distinct
+// values (segments 98/105, offset 1200) so a silently-dropped change fails loud.
+describe( 'perferrors:view — seek feedback (single-dir browse)', () => {
+	const envWithId = ( id, rid = 'e1' ) => {
+		const m = envMsg( rid, { ts: 1, k: 'error', m: 'x' } );
+		m[ ID ] = id;
+		return m;
+	};
+
+	test( 'does not track breadcrumbs under the glob-live default (seekActive off)', () => {
+		const v = makeView( 'perferrors:view' );
+		v.fill( envWithId( '98:0:40' ) );
+		expect( v.seekActive ).toBe( false );
+		expect( v.lastReceivedSegment ).toBe( null );
+		expect( v.mode ).toBe( 'live' );
+	} );
+
+	test( 'a select control with a dir arms tracking and follows the segment', () => {
+		const v = makeView( 'perferrors:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
+		expect( v.seekActive ).toBe( true );
+		v.fill( envWithId( '98:0:40' ) );
+		expect( v.lastReceivedSegment ).toBe( 98 );
+		expect( v.setStateCache.view.lastReceivedSegment ).toBe( 98 );
+	} );
+
+	test( 'a select control with an empty dir disarms tracking and resets it', () => {
+		const v = makeView( 'perferrors:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
+		v.fill( envWithId( '98:0:40' ) );
+		v.fill( controlMsg( { action: 'select', dir: '' } ) );
+		expect( v.seekActive ).toBe( false );
+		expect( v.lastReceivedSegment ).toBe( null );
+		v.fill( envWithId( '77:0:40' ) );
+		expect( v.lastReceivedSegment ).toBe( null );
+	} );
+
+	test( 'browse enters replay and flips to live once a record reaches the end', () => {
+		const v = makeView( 'perferrors:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
+		v.fill(
+			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+		);
+		expect( v.mode ).toBe( 'replay' );
+		expect( v.setStateCache.view.mode ).toBe( 'replay' );
+		v.fill( envWithId( '98:100:20' ) ); // behind the end segment
+		expect( v.mode ).toBe( 'replay' );
+		v.fill( envWithId( '105:1160:40' ) ); // 1160 + 40 = 1200 → caught up
+		expect( v.mode ).toBe( 'live' );
+		expect( v.setStateCache.view.mode ).toBe( 'live' );
+	} );
+
+	test( 'follow returns the view to live', () => {
+		const v = makeView( 'perferrors:view' );
+		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
+		v.fill(
+			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+		);
+		v.fill( controlMsg( { action: 'follow' } ) );
+		expect( v.mode ).toBe( 'live' );
 	} );
 } );
 

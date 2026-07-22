@@ -70,6 +70,7 @@ export default function SegmentBrowseSidebar( { browse, onSelectPartition } ) {
 					onReplay={ browse.replay }
 					items={ browse.segments }
 					selectedKey={ browse.segmentId }
+					activeKey={ browse.lastReceivedSegment }
 					onSelectItem={ browse.browseSegment }
 					itemKey={ ( s ) => s.id }
 					itemLabel={ ( s ) =>

@@ -33,6 +33,7 @@
 import { useState, useEffect, useRef, useCallback } from '@wordpress/element';
 import {
 	Core,
+	useNodeState,
 	newMessage,
 	TYPE,
 	FROM,
@@ -46,6 +47,7 @@ import useLogPositions, {
 	segmentPositions,
 	replayPositions,
 } from '@newspack-nodes/shared/hooks/useLogPositions';
+import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
 
 // The substrate service CI that catalogs on-disk logs + segments.
 const RAW_LOGS = 'raw-logs';
@@ -68,11 +70,11 @@ function catalogCommand( id, from, name, args ) {
 	return m;
 }
 
-// A view clear control (partition switch resets the pane, like a log switch).
-function clearControl() {
+// A TM_STRUCT control message routed by the view's fill() on its `action`.
+function viewControl( value ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = { action: 'clear' };
+	m[ VALUE ] = value;
 	return m;
 }
 
@@ -89,20 +91,36 @@ export default function useGlobBrowse( {
 	const [ selectedPartition, setSelectedPartition ] = useState( '' );
 	const [ segments, setSegments ] = useState( [] );
 
-	// Read the latest selection + active flag from the imperative handlers.
+	// Read the latest selection + active flag + segments from the handlers.
 	const selectedRef = useRef( selectedPartition );
 	selectedRef.current = selectedPartition;
 	const isActiveRef = useRef( isActive );
 	isActiveRef.current = isActive;
+	const segmentsRef = useRef( segments );
+	segmentsRef.current = segments;
 
-	// Live / segment / replay state for the SELECTED partition's LogBrowser.
+	// View-derived seek model (mode + received segment), NOT the click state.
+	const viewModel = useNodeState( viewName, 'view' );
+
+	// The CLICKED segment (LogBrowser selectedKey) tracked via useLogPositions.
 	const {
-		mode,
 		segmentId,
 		follow: lpFollow,
 		browseSegment: lpBrowse,
 		replay: lpReplay,
 	} = useLogPositions( selectedPartition );
+
+	// Enter replay on the view, carrying the captured boundary for catch-up.
+	const browseView = useCallback( () => {
+		const end = endPosition( segmentsRef.current );
+		Core.node( viewName )?.fill(
+			viewControl( {
+				action: 'browse',
+				endSegment: end?.segment ?? null,
+				endOffset: end?.offset ?? 0,
+			} )
+		);
+	}, [ viewName ] );
 
 	// Fire a catalog verb through the link's HttpOut; settle via view.replies.
 	const fetchCatalog = useCallback(
@@ -178,11 +196,13 @@ export default function useGlobBrowse( {
 		[ browseTargetRef, linkName ]
 	);
 
-	// Switch the browsed partition: reset the pane, narrow (or widen to glob).
+	// Switch partition: reset+arm the view's seek (dir), or widen to glob ('').
 	const selectPartition = useCallback(
 		( key ) => {
 			setSelectedPartition( key );
-			Core.node( viewName )?.fill( clearControl() );
+			Core.node( viewName )?.fill(
+				viewControl( { action: 'select', dir: key } )
+			);
 			reposition( key ? [ key ] : [ glob ], null );
 		},
 		[ glob, viewName, reposition ]
@@ -195,8 +215,9 @@ export default function useGlobBrowse( {
 			return;
 		}
 		lpFollow();
+		Core.node( viewName )?.fill( viewControl( { action: 'follow' } ) );
 		reposition( [ sel ], null );
-	}, [ lpFollow, reposition ] );
+	}, [ lpFollow, reposition, viewName ] );
 
 	const replay = useCallback( () => {
 		const sel = selectedRef.current;
@@ -204,8 +225,9 @@ export default function useGlobBrowse( {
 			return;
 		}
 		lpReplay();
+		browseView();
 		reposition( [ sel ], replayPositions( sel ) );
-	}, [ lpReplay, reposition ] );
+	}, [ lpReplay, reposition, browseView ] );
 
 	const browseSegment = useCallback(
 		( segment ) => {
@@ -214,9 +236,10 @@ export default function useGlobBrowse( {
 				return;
 			}
 			lpBrowse( segment.id );
+			browseView();
 			reposition( [ sel ], segmentPositions( sel, segment.id ) );
 		},
-		[ lpBrowse, reposition ]
+		[ lpBrowse, reposition, browseView ]
 	);
 
 	return {
@@ -224,7 +247,8 @@ export default function useGlobBrowse( {
 		selectedPartition,
 		selectPartition,
 		segments,
-		mode,
+		mode: viewModel?.mode ?? 'live',
+		lastReceivedSegment: viewModel?.lastReceivedSegment ?? null,
 		segmentId,
 		follow,
 		replay,

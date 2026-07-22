@@ -45,21 +45,32 @@ class FakeEventSource {
 	}
 }
 
-// Minimal settling view: swallows catalog replies, counts clear controls.
+// Minimal settling view: swallows catalog replies, records control messages,
+// and can publish a seek view model (what the real view node would publish).
 class FakeCatalogView extends Node {
 	constructor() {
 		super();
 		this.replies = new PendingReplies();
-		this.cleared = 0;
+		this.controls = [];
 	}
 	fill( message ) {
 		if ( this.replies.settle( message ) ) {
 			return;
 		}
 		const value = message[ VALUE ];
-		if ( value && 'clear' === value.action ) {
-			this.cleared += 1;
+		if ( value && value.action ) {
+			this.controls.push( value );
 		}
+	}
+	// The last control message of a given action (or undefined).
+	lastControl( action ) {
+		return [ ...this.controls ]
+			.reverse()
+			.find( ( c ) => action === c.action );
+	}
+	// Simulate the real view publishing its seek model for useNodeState.
+	publishView( model ) {
+		this.setState( 'view', model );
 	}
 }
 
@@ -253,7 +264,11 @@ describe( 'useGlobBrowse — reposition seeks', () => {
 			subscribe: [ 'errors.p3' ],
 			positions: null,
 		} );
-		expect( view.cleared ).toBe( 1 );
+		// The switch arms single-dir seek tracking on the view (dir carried).
+		expect( view.lastControl( 'select' ) ).toEqual( {
+			action: 'select',
+			dir: 'errors.p3',
+		} );
 	} );
 
 	test( 'selecting All partitions resubscribes the glob live', async () => {
@@ -289,7 +304,6 @@ describe( 'useGlobBrowse — reposition seeks', () => {
 		expect( browseTargetRef.current.positions ).toEqual( {
 			'errors.p3': { segment: 2, offset: 0 },
 		} );
-		expect( result.current.mode ).toBe( 'browse' );
 		expect( result.current.segmentId ).toBe( 2 );
 	} );
 
@@ -384,6 +398,82 @@ describe( 'useGlobBrowse — guards', () => {
 			result.current.browseSegment( { id: 1, size: 10 } );
 		} );
 		expect( setSubscribe ).not.toHaveBeenCalled();
+	} );
+} );
+
+describe( 'useGlobBrowse — seek feedback wiring', () => {
+	test( 'replay carries the captured live boundary (newest segment @ its size) into the view', async () => {
+		const { result, view } = await renderBrowse( {
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p3' } ],
+				log_status: {
+					segments: [
+						{ id: 98, size: 700 },
+						{ id: 105, size: 1200 },
+					],
+				},
+			},
+		} );
+		await act( async () => result.current.selectPartition( 'errors.p3' ) );
+		await act( async () => result.current.replay() );
+		// Newest segment 105 @ 1200 bytes is the boundary carried to the view.
+		expect( view.lastControl( 'browse' ) ).toEqual( {
+			action: 'browse',
+			endSegment: 105,
+			endOffset: 1200,
+		} );
+	} );
+
+	test( 'browseSegment carries the captured live boundary into the view', async () => {
+		const { result, view } = await renderBrowse( {
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p3' } ],
+				log_status: {
+					segments: [
+						{ id: 98, size: 700 },
+						{ id: 105, size: 1200 },
+					],
+				},
+			},
+		} );
+		await act( async () => result.current.selectPartition( 'errors.p3' ) );
+		await act( async () =>
+			result.current.browseSegment( { id: 98, size: 700 } )
+		);
+		expect( view.lastControl( 'browse' ) ).toEqual( {
+			action: 'browse',
+			endSegment: 105,
+			endOffset: 1200,
+		} );
+	} );
+
+	test( 'follow sends a follow control into the view', async () => {
+		const { result, view } = await renderBrowse( {
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p3' } ],
+				log_status: { segments: [ { id: 105, size: 1200 } ] },
+			},
+		} );
+		await act( async () => result.current.selectPartition( 'errors.p3' ) );
+		await act( async () =>
+			result.current.browseSegment( { id: 105, size: 1200 } )
+		);
+		await act( async () => result.current.follow() );
+		expect( view.lastControl( 'follow' ) ).toEqual( { action: 'follow' } );
+	} );
+
+	test( 'surfaces the view-derived mode + lastReceivedSegment (not the click)', async () => {
+		const { result, view } = await renderBrowse( {
+			payloadByVerb: { list_logs: [ { key: 'errors.p3' } ] },
+		} );
+		expect( result.current.mode ).toBe( 'live' );
+		expect( result.current.lastReceivedSegment ).toBe( null );
+		// The view flips to live at catch-up + tracks the received segment.
+		await act( async () => {
+			view.publishView( { mode: 'replay', lastReceivedSegment: 98 } );
+		} );
+		expect( result.current.mode ).toBe( 'replay' );
+		expect( result.current.lastReceivedSegment ).toBe( 98 );
 	} );
 } );
 

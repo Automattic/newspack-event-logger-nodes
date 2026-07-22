@@ -17,6 +17,7 @@ function browseMock( overrides = {} ) {
 		segments: [],
 		mode: 'live',
 		segmentId: null,
+		lastReceivedSegment: null,
 		follow: jest.fn(),
 		replay: jest.fn(),
 		browseSegment: jest.fn(),
@@ -148,6 +149,45 @@ test( 'clicking a segment calls browse.browseSegment; Live/Replay call follow/re
 		buttons.find( ( b ) => /Replay/.test( b.textContent ) ).click()
 	);
 	expect( browse.replay ).toHaveBeenCalled();
+} );
+
+test( 'the rail highlights the last-received segment over the clicked one', () => {
+	const { container } = mount( {
+		browse: browseMock( {
+			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
+			selectedPartition: 'errors.p6',
+			segments: [
+				{ id: 9, size: 2048 },
+				{ id: 8, size: 512 },
+			],
+			// Clicked segment 9, but records are arriving from segment 8.
+			segmentId: 9,
+			lastReceivedSegment: 8,
+		} ),
+		onSelectPartition: jest.fn(),
+	} );
+	const active = container.querySelector(
+		'.newspack-nodes-log-browser__item.is-active'
+	);
+	expect( active.textContent ).toContain( 'Segment 8' );
+} );
+
+test( 'a replay flips Live→Replay via the view-derived mode', () => {
+	const { container } = mount( {
+		browse: browseMock( {
+			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
+			selectedPartition: 'errors.p6',
+			segments: [ { id: 9, size: 2048 } ],
+			mode: 'replay',
+		} ),
+		onSelectPartition: jest.fn(),
+	} );
+	const replay = Array.from(
+		container.querySelectorAll(
+			'.newspack-nodes-log-browser__controls button'
+		)
+	).find( ( b ) => /Replay/.test( b.textContent ) );
+	expect( replay.classList.contains( 'is-active' ) ).toBe( true );
 } );
 
 test( 'formats a zero-byte segment as "0 B"', () => {
